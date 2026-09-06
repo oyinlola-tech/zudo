@@ -1,5 +1,12 @@
 # @zudojs/permissions
 
+## 0.0.4
+
+### Patch Changes
+
+- Updated dependencies [[`6bec11b`](https://github.com/oyinlola-tech/zudo/commit/6bec11bcd56041d3590d5fea932d4ea99ad1861d)]:
+  - @zudojs/http@0.0.4
+
 ## 0.0.3
 
 ### Patch Changes
