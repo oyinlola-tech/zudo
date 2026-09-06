@@ -1,5 +1,12 @@
 # @zudojs/testing
 
+## 0.0.3
+
+### Patch Changes
+
+- Updated dependencies [[`641c4c5`](https://github.com/oyinlola-tech/zudo/commit/641c4c5f9616d73e150b1598ae1b4abf05de23e4)]:
+  - @zudojs/http@0.0.3
+
 ## 0.0.2
 
 ### Patch Changes
