@@ -5,6 +5,58 @@
   var sections = document.querySelectorAll('section[data-category]');
   var pkgCards = document.querySelectorAll('.pkg-card');
   var searchInput = document.getElementById('pkgSearch');
+  var versionSelect = document.getElementById('versionSelect');
+  var visibleCountEl = document.getElementById('visibleCount');
+  var currentVersion = versionSelect ? versionSelect.value : '0.0.1';
+  var currentCategory = 'all';
+  var currentSearch = '';
+
+  // Update visible count
+  function updateVisibleCount() {
+    var visible = 0;
+    sections.forEach(function(section) {
+      if (section.style.display !== 'none') {
+        var cards = section.querySelectorAll('.pkg-card');
+        cards.forEach(function(card) {
+          if (card.style.display !== 'none') {
+            visible++;
+          }
+        });
+      }
+    });
+    if (visibleCountEl) {
+      visibleCountEl.textContent = visible;
+    }
+  }
+
+  // Apply all filters
+  function applyFilters() {
+    // Filter by version
+    pkgCards.forEach(function(card) {
+      var cardVersion = card.getAttribute('data-version') || '0.0.1';
+      var matchesVersion = cardVersion === currentVersion;
+      var matchesSearch = true;
+      
+      if (currentSearch) {
+        var name = (card.getAttribute('data-name') || '').toLowerCase();
+        var desc = (card.getAttribute('data-desc') || '').toLowerCase();
+        matchesSearch = name.includes(currentSearch) || desc.includes(currentSearch);
+      }
+      
+      card.style.display = (matchesVersion && matchesSearch) ? '' : 'none';
+    });
+
+    // Filter sections by category and hide empty ones
+    sections.forEach(function(section) {
+      var category = section.getAttribute('data-category');
+      var matchesCategory = currentCategory === 'all' || category === currentCategory;
+      var hasVisibleCards = section.querySelectorAll('.pkg-card[style=""], .pkg-card:not([style])').length > 0;
+      
+      section.style.display = (matchesCategory && hasVisibleCards) ? '' : 'none';
+    });
+
+    updateVisibleCount();
+  }
 
   // Filter by category
   filterBtns.forEach(function(btn) {
@@ -15,37 +67,24 @@
       });
       btn.classList.add('active');
       btn.setAttribute('aria-pressed', 'true');
-
-      var filter = btn.getAttribute('data-filter');
-
-      sections.forEach(function(section) {
-        if (filter === 'all') {
-          section.style.display = '';
-        } else {
-          var category = section.getAttribute('data-category');
-          if (category === filter) {
-            section.style.display = '';
-          } else {
-            section.style.display = 'none';
-          }
-        }
-      });
-
-      // Reset search when changing filter
-      if (searchInput) {
-        searchInput.value = '';
-        pkgCards.forEach(function(card) {
-          card.style.display = '';
-        });
-      }
+      currentCategory = btn.getAttribute('data-filter');
+      applyFilters();
     });
   });
+
+  // Version filter
+  if (versionSelect) {
+    versionSelect.addEventListener('change', function() {
+      currentVersion = versionSelect.value;
+      applyFilters();
+    });
+  }
 
   // Quick search filter
   if (searchInput) {
     searchInput.addEventListener('input', function() {
-      var query = searchInput.value.toLowerCase().trim();
-
+      currentSearch = searchInput.value.toLowerCase().trim();
+      
       // Reset category filter to "All"
       filterBtns.forEach(function(b) {
         b.classList.remove('active');
@@ -56,23 +95,12 @@
         allBtn.classList.add('active');
         allBtn.setAttribute('aria-pressed', 'true');
       }
-      sections.forEach(function(section) {
-        section.style.display = '';
-      });
-
-      pkgCards.forEach(function(card) {
-        if (!query) {
-          card.style.display = '';
-          return;
-        }
-        var name = (card.getAttribute('data-name') || '').toLowerCase();
-        var desc = (card.getAttribute('data-desc') || '').toLowerCase();
-        if (name.includes(query) || desc.includes(query)) {
-          card.style.display = '';
-        } else {
-          card.style.display = 'none';
-        }
-      });
+      currentCategory = 'all';
+      
+      applyFilters();
     });
   }
+
+  // Initialize count
+  updateVisibleCount();
 })();
