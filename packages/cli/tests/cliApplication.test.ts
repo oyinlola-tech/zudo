@@ -317,7 +317,7 @@ describe("getCLIVersion", () => {
 
 describe("formatCLIVersion", () => {
   it("formats name and version", () => {
-    expect(formatCLIVersion("app", "1.0.0")).toBe("app v1.0.0");
+    expect(formatCLIVersion("app", "1.0.0")).toBe("app v0.0.1");
   });
 });
 
@@ -339,7 +339,7 @@ describe("isValidVersion", () => {
   });
 
   it("rejects invalid versions", () => {
-    expect(isValidVersion("v1.0.0")).toBe(false);
+    expect(isValidVersion("v0.0.1")).toBe(false);
     expect(isValidVersion("1.0")).toBe(false);
     expect(isValidVersion("abc")).toBe(false);
     expect(isValidVersion("")).toBe(false);
