@@ -1,5 +1,11 @@
 # @zudojs/http
 
+## 0.0.6
+
+### Patch Changes
+
+- [`7d96ecb`](https://github.com/oyinlola-tech/zudo/commit/7d96ecb3bd1dbe83fdf4c3d9646e6b32770f7dd9) Thanks [@oyinlola-tech](https://github.com/oyinlola-tech)! - Add HTTP QUERY method support to @zudojs/http
+
 ## 0.0.5
 
 ### Patch Changes
