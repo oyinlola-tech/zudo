@@ -392,8 +392,8 @@ Mock adapters implement the base `Adapter` interface and can be configured with:
 
 `@zudojs/adapters` depends on:
 
-| Package              | Purpose                       |
-| -------------------- | ----------------------------- |
+| Package             | Purpose                       |
+| ------------------- | ----------------------------- |
 | `@zudojs/errors`    | Error hierarchy               |
 | `@zudojs/constants` | Branded types and constants   |
 | `@zudojs/types`     | Type guards and utility types |

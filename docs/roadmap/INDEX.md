@@ -18,8 +18,8 @@
 
 The foundational layer. These packages have no `@zudojs/*` dependencies (except `@zudojs/errors`).
 
-| Package                  | Status      | Notes                                                  |
-| ------------------------ | ----------- | ------------------------------------------------------ |
+| Package                 | Status      | Notes                                                  |
+| ----------------------- | ----------- | ------------------------------------------------------ |
 | `@zudojs/errors`        | ✅ Complete | Shared error base class, error codes, error categories |
 | `@zudojs/types`         | ✅ Complete | Type guards, utility types, converters                 |
 | `@zudojs/constants`     | ✅ Complete | Branded IDs, enums, serialization constants            |
@@ -40,8 +40,8 @@ The foundational layer. These packages have no `@zudojs/*` dependencies (except 
 
 Runtime building blocks that depend on foundation packages.
 
-| Package                  | Status      | Notes                                                 |
-| ------------------------ | ----------- | ----------------------------------------------------- |
+| Package                 | Status      | Notes                                                 |
+| ----------------------- | ----------- | ----------------------------------------------------- |
 | `@zudojs/events`        | ✅ Complete | Event bus, emitter, middleware, registry              |
 | `@zudojs/messaging`     | ✅ Complete | In-process message bus                                |
 | `@zudojs/lifecycle`     | ✅ Complete | State machine, dependency ordering, graceful shutdown |
@@ -62,8 +62,8 @@ Runtime building blocks that depend on foundation packages.
 
 Patterns and structures for building applications.
 
-| Package                  | Status      | Notes                                         |
-| ------------------------ | ----------- | --------------------------------------------- |
+| Package                 | Status      | Notes                                         |
+| ----------------------- | ----------- | --------------------------------------------- |
 | `@zudojs/core`          | ✅ Complete | Lifecycle, context, runtime, modules          |
 | `@zudojs/cqrs`          | ✅ Complete | Commands, queries, handlers                   |
 | `@zudojs/auth`          | ✅ Complete | JWT, sessions, password hashing               |
@@ -85,8 +85,8 @@ Patterns and structures for building applications.
 
 External interface packages.
 
-| Package         | Status      | Notes                                      |
-| --------------- | ----------- | ------------------------------------------ |
+| Package        | Status      | Notes                                      |
+| -------------- | ----------- | ------------------------------------------ |
 | `@zudojs/http` | ✅ Complete | HTTP request handling, routing, middleware |
 | `@zudojs/cli`  | ✅ Complete | Command-line interface                     |
 
@@ -98,8 +98,8 @@ External interface packages.
 
 Tooling for building, testing, and documenting Zudojs applications.
 
-| Package            | Status      | Notes                         |
-| ------------------ | ----------- | ----------------------------- |
+| Package           | Status      | Notes                         |
+| ----------------- | ----------- | ----------------------------- |
 | `@zudojs/testing` | ✅ Complete | Test helpers, fixtures, mocks |
 | `@zudojs/docs`    | ✅ Complete | Documentation infrastructure  |
 

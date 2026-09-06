@@ -17,7 +17,7 @@ Organizations making significant contributions to the ZudoJS ecosystem.
 | Company Name | [website](https://example.com) | Jan 2026 |
 -->
 
-*No organization sponsors yet. [Become the first](https://github.com/sponsors/oyinlola-tech?frequency=monthly&amount=100).*
+_No organization sponsors yet. [Become the first](https://github.com/sponsors/oyinlola-tech?frequency=monthly&amount=100)._
 
 ---
 
@@ -32,7 +32,7 @@ Startups and teams actively building with ZudoJS.
 | Startup Name | [website](https://example.com) | Feb 2026 |
 -->
 
-*No partners yet. [Become a partner](https://github.com/sponsors/oyinlola-tech?frequency=monthly&amount=50).*
+_No partners yet. [Become a partner](https://github.com/sponsors/oyinlola-tech?frequency=monthly&amount=50)._
 
 ---
 
@@ -47,7 +47,7 @@ Significant individual supporters of the ZudoJS project.
 | Name | [@username](https://github.com/username) |
 -->
 
-*No backers yet. [Become a backer](https://github.com/sponsors/oyinlola-tech?frequency=monthly&amount=15).*
+_No backers yet. [Become a backer](https://github.com/sponsors/oyinlola-tech?frequency=monthly&amount=15)._
 
 ---
 
@@ -62,7 +62,7 @@ Developers supporting ZudoJS through GitHub Sponsors.
 | Name | [@username](https://github.com/username) |
 -->
 
-*No supporters yet. [Become a supporter](https://github.com/sponsors/oyinlola-tech?frequency=monthly&amount=5).*
+_No supporters yet. [Become a supporter](https://github.com/sponsors/oyinlola-tech?frequency=monthly&amount=5)._
 
 ---
 
@@ -88,12 +88,12 @@ This page is automatically updated when new sponsors join. To request changes to
 
 ## Sponsorship Tiers
 
-| Tier | Monthly | Benefits |
-|------|---------|----------|
-| Supporter | $5 | Recognition, project updates |
-| Backer | $15 | Early roadmap updates, documentation recognition |
-| Partner | $50 | Priority feature consideration, partner recognition |
-| Organization | $100 | Logo placement, priority support consideration |
+| Tier         | Monthly | Benefits                                            |
+| ------------ | ------- | --------------------------------------------------- |
+| Supporter    | $5      | Recognition, project updates                        |
+| Backer       | $15     | Early roadmap updates, documentation recognition    |
+| Partner      | $50     | Priority feature consideration, partner recognition |
+| Organization | $100    | Logo placement, priority support consideration      |
 
 [View sponsorship details](https://github.com/oyinlola-tech/zudo/blob/main/.github/SPONSORSHIP.md)
 

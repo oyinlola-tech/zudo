@@ -126,8 +126,8 @@ Zudojs is organized as an npm workspaces monorepo. Each package has a focused re
 
 ### Foundation
 
-| Package               | Description                                           |
-| --------------------- | ----------------------------------------------------- |
+| Package              | Description                                           |
+| -------------------- | ----------------------------------------------------- |
 | `@zudojs/core`       | Lifecycle, context, runtime, modules                  |
 | `@zudojs/runtime`    | Application lifecycle orchestrator                    |
 | `@zudojs/container`  | DI container with token-based registration            |
@@ -142,8 +142,8 @@ Zudojs is organized as an npm workspaces monorepo. Each package has a focused re
 
 ### Application
 
-| Package                  | Description                                |
-| ------------------------ | ------------------------------------------ |
+| Package                 | Description                                |
+| ----------------------- | ------------------------------------------ |
 | `@zudojs/http`          | HTTP primitives, request handling, routing |
 | `@zudojs/schema`        | Schema definition and parsing engine       |
 | `@zudojs/serialization` | Data translation layer                     |
@@ -152,8 +152,8 @@ Zudojs is organized as an npm workspaces monorepo. Each package has a focused re
 
 ### Data and Infrastructure
 
-| Package                 | Description                                  |
-| ----------------------- | -------------------------------------------- |
+| Package                | Description                                  |
+| ---------------------- | -------------------------------------------- |
 | `@zudojs/database`     | Database clients, repositories, transactions |
 | `@zudojs/storage`      | Storage abstractions and lifecycle           |
 | `@zudojs/queue`        | Background job infrastructure                |
@@ -163,8 +163,8 @@ Zudojs is organized as an npm workspaces monorepo. Each package has a focused re
 
 ### Security
 
-| Package                | Description                                 |
-| ---------------------- | ------------------------------------------- |
+| Package               | Description                                 |
+| --------------------- | ------------------------------------------- |
 | `@zudojs/security`    | Input validation, CORS, CSRF, rate limiting |
 | `@zudojs/crypto`      | Cryptographic primitives                    |
 | `@zudojs/auth`        | JWT, sessions, password hashing             |
@@ -172,8 +172,8 @@ Zudojs is organized as an npm workspaces monorepo. Each package has a focused re
 
 ### Platform
 
-| Package                  | Description                           |
-| ------------------------ | ------------------------------------- |
+| Package                 | Description                           |
+| ----------------------- | ------------------------------------- |
 | `@zudojs/observability` | Metrics, tracing, context propagation |
 | `@zudojs/tenancy`       | Multi-tenant context and isolation    |
 | `@zudojs/feature-flags` | Feature flag evaluation and rollouts  |
@@ -181,8 +181,8 @@ Zudojs is organized as an npm workspaces monorepo. Each package has a focused re
 
 ### Development
 
-| Package            | Description                   |
-| ------------------ | ----------------------------- |
+| Package           | Description                   |
+| ----------------- | ----------------------------- |
 | `@zudojs/testing` | Test helpers, fixtures, mocks |
 | `@zudojs/docs`    | Documentation infrastructure  |
 

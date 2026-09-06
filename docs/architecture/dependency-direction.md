@@ -171,13 +171,13 @@ Leaf packages must have no `@zudojs/*` dependencies.
 
 ### 7.1 Tier Definitions
 
-| Tier | Name                     | Can Import From         | Examples                                                   |
-| ---- | ------------------------ | ----------------------- | ---------------------------------------------------------- |
-| 0    | Leaf                     | Nothing (external only) | `@zudojs/errors`, `@zudojs/types`                        |
+| Tier | Name                     | Can Import From         | Examples                                                |
+| ---- | ------------------------ | ----------------------- | ------------------------------------------------------- |
+| 0    | Leaf                     | Nothing (external only) | `@zudojs/errors`, `@zudojs/types`                       |
 | 1    | Foundation               | Tier 0                  | `@zudojs/container`, `@zudojs/logger`, `@zudojs/events` |
 | 2    | Application Architecture | Tier 0, Tier 1          | `@zudojs/core`, `@zudojs/cqrs`, `@zudojs/runtime`       |
-| 3    | Transport                | Tier 0, Tier 1, Tier 2  | `@zudojs/http`, `@zudojs/cli`                            |
-| 4    | Developer Experience     | Any                     | `@zudojs/testing`, `@zudojs/docs`                        |
+| 3    | Transport                | Tier 0, Tier 1, Tier 2  | `@zudojs/http`, `@zudojs/cli`                           |
+| 4    | Developer Experience     | Any                     | `@zudojs/testing`, `@zudojs/docs`                       |
 
 ### 7.2 Determining a Package's Tier
 
@@ -208,8 +208,8 @@ Peer dependencies are allowed when:
 
 ### 8.1 Current Peer Dependencies
 
-| Package                | Peer            | Tier | Purpose                         |
-| ---------------------- | --------------- | ---- | ------------------------------- |
+| Package               | Peer           | Tier | Purpose                         |
+| --------------------- | -------------- | ---- | ------------------------------- |
 | `@zudojs/permissions` | `@zudojs/http` | 3    | HTTP-specific permission guards |
 | `@zudojs/tenancy`     | `@zudojs/http` | 3    | HTTP-specific tenant resolution |
 
@@ -314,21 +314,21 @@ The tier system exists to serve the framework, not the other way around.
 
 ### 11.1 Acceptable Exceptions
 
-| Exception         | Condition                        | Example                                           |
-| ----------------- | -------------------------------- | ------------------------------------------------- |
+| Exception         | Condition                        | Example                                         |
+| ----------------- | -------------------------------- | ----------------------------------------------- |
 | Peer dependencies | Optional, documented, justified  | `@zudojs/permissions` peers with `@zudojs/http` |
-| Testing imports   | Tier 4 only, never in production | `@zudojs/testing` imports any package            |
-| Developer tooling | Not part of production bundle    | Build scripts, CLI tools                          |
+| Testing imports   | Tier 4 only, never in production | `@zudojs/testing` imports any package           |
+| Developer tooling | Not part of production bundle    | Build scripts, CLI tools                        |
 
 ### 11.2 Unacceptable Excuses
 
-| Excuse                        | Reality                                                                       |
-| ----------------------------- | ----------------------------------------------------------------------------- |
-| "It's just one small import"  | Small imports create hidden coupling that grows over time.                    |
-| "We need it for convenience"  | Convenience for one package becomes maintenance burden for all.               |
+| Excuse                        | Reality                                                                      |
+| ----------------------------- | ---------------------------------------------------------------------------- |
+| "It's just one small import"  | Small imports create hidden coupling that grows over time.                   |
+| "We need it for convenience"  | Convenience for one package becomes maintenance burden for all.              |
 | "It's only used in tests"     | If it's only used in tests, put it in `@zudojs/testing` or a dev dependency. |
-| "The other package is stable" | Stability is not a reason to violate architecture.                            |
-| "We'll refactor it later"     | Dependency direction is hard to refactor after the fact.                      |
+| "The other package is stable" | Stability is not a reason to violate architecture.                           |
+| "We'll refactor it later"     | Dependency direction is hard to refactor after the fact.                     |
 
 ---
 
@@ -356,9 +356,9 @@ Before merging any PR that adds, removes, or changes a dependency:
 | Encountering a cycle             | Extract shared code to lower-tier package.                |
 | Wanting a higher-tier dependency | Find lower-tier alternative or use peer dependency.       |
 
-| Command                                        | Purpose                                     |
-| ---------------------------------------------- | ------------------------------------------- |
-| `npm run architect:check`                      | Verify dependency direction and tier rules. |
+| Command                                       | Purpose                                     |
+| --------------------------------------------- | ------------------------------------------- |
+| `npm run architect:check`                     | Verify dependency direction and tier rules. |
 | `npm run typecheck --workspace=@zudojs/<pkg>` | Verify TypeScript compilation.              |
-| `npm test`                                     | Run all tests.                              |
-| `pnpm install`                                 | Install dependencies and update lockfile.   |
+| `npm test`                                    | Run all tests.                              |
+| `pnpm install`                                | Install dependencies and update lockfile.   |

@@ -37,8 +37,8 @@ Foundation → Runtime Primitives → Application Architecture → Infrastructur
 
 These packages depend on nothing except Node.js built-ins and external libraries.
 
-| Package           | Purpose                                                                 |
-| ----------------- | ----------------------------------------------------------------------- |
+| Package          | Purpose                                                                 |
+| ---------------- | ----------------------------------------------------------------------- |
 | `@zudojs/errors` | Shared error base class, error codes, error categories, error utilities |
 | `@zudojs/types`  | Type guards, utility types, converters, branded types                   |
 
@@ -54,8 +54,8 @@ These packages depend on nothing except Node.js built-ins and external libraries
 
 Depends only on Tier 0.
 
-| Package                  | Depends On                              | Purpose                                               |
-| ------------------------ | --------------------------------------- | ----------------------------------------------------- |
+| Package                 | Depends On                              | Purpose                                               |
+| ----------------------- | --------------------------------------- | ----------------------------------------------------- |
 | `@zudojs/constants`     | errors                                  | Branded IDs, enums, serialization constants           |
 | `@zudojs/container`     | errors                                  | DI container with token-based registration            |
 | `@zudojs/logger`        | errors                                  | Structured logging with transports                    |
@@ -95,8 +95,8 @@ Depends only on Tier 0.
 
 Depends on Tier 0 + Tier 1.
 
-| Package            | Depends On                                                 | Purpose                              |
-| ------------------ | ---------------------------------------------------------- | ------------------------------------ |
+| Package           | Depends On                                                 | Purpose                              |
+| ----------------- | ---------------------------------------------------------- | ------------------------------------ |
 | `@zudojs/core`    | errors, constants, messaging                               | Lifecycle, context, runtime, modules |
 | `@zudojs/cqrs`    | errors, events, messaging                                  | Commands, queries, handlers          |
 | `@zudojs/auth`    | errors, constants, permissions                             | JWT, sessions, password hashing      |
@@ -118,8 +118,8 @@ Depends on Tier 0 + Tier 1.
 
 Depends on Tier 0 + Tier 1 + Tier 2.
 
-| Package         | Depends On                     | Purpose                                    |
-| --------------- | ------------------------------ | ------------------------------------------ |
+| Package        | Depends On                     | Purpose                                    |
+| -------------- | ------------------------------ | ------------------------------------------ |
 | `@zudojs/http` | core, errors, logger, security | HTTP request handling, routing, middleware |
 | `@zudojs/cli`  | config, core, errors, logger   | Command-line interface                     |
 
@@ -136,8 +136,8 @@ Depends on Tier 0 + Tier 1 + Tier 2.
 
 Depends on any tier.
 
-| Package            | Depends On | Purpose                       |
-| ------------------ | ---------- | ----------------------------- |
+| Package           | Depends On | Purpose                       |
+| ----------------- | ---------- | ----------------------------- |
 | `@zudojs/testing` | many       | Test helpers, fixtures, mocks |
 | `@zudojs/docs`    | errors     | Documentation generation      |
 
@@ -177,22 +177,22 @@ Tier 4: testing, docs
 
 These patterns must **never** occur:
 
-| Pattern                  | Reason                                           |
-| ------------------------ | ------------------------------------------------ |
+| Pattern                 | Reason                                           |
+| ----------------------- | ------------------------------------------------ |
 | `errors → @zudojs/*`    | Leaf package must stay leaf                      |
 | `constants → @zudojs/*` | Leaf package must stay leaf                      |
 | `types → @zudojs/*`     | Leaf package must stay leaf                      |
-| `core → http`            | Core must not know about transport               |
-| `core → rpc`             | Core must not know about transport               |
-| `cqrs → http`            | CQRS must not know about transport               |
-| `events → http`          | Events must not know about transport             |
-| `http → rpc`             | Transport packages must not depend on each other |
-| `http → api`             | Transport packages must not depend on each other |
-| `rpc → http`             | Transport packages must not depend on each other |
-| `runtime → http`         | Runtime must not know about specific transports  |
-| `database → http`        | Infrastructure must not know about transport     |
-| `queue → http`           | Infrastructure must not know about transport     |
-| `testing → production`   | Testing must not be imported by production code  |
+| `core → http`           | Core must not know about transport               |
+| `core → rpc`            | Core must not know about transport               |
+| `cqrs → http`           | CQRS must not know about transport               |
+| `events → http`         | Events must not know about transport             |
+| `http → rpc`            | Transport packages must not depend on each other |
+| `http → api`            | Transport packages must not depend on each other |
+| `rpc → http`            | Transport packages must not depend on each other |
+| `runtime → http`        | Runtime must not know about specific transports  |
+| `database → http`       | Infrastructure must not know about transport     |
+| `queue → http`          | Infrastructure must not know about transport     |
+| `testing → production`  | Testing must not be imported by production code  |
 
 ---
 
@@ -206,8 +206,8 @@ Peer dependencies are allowed only when all three conditions are met:
 
 Current peer dependencies:
 
-| Package                | Peer            | Tier | Purpose                         |
-| ---------------------- | --------------- | ---- | ------------------------------- |
+| Package               | Peer           | Tier | Purpose                         |
+| --------------------- | -------------- | ---- | ------------------------------- |
 | `@zudojs/permissions` | `@zudojs/http` | 3    | HTTP-specific permission guards |
 | `@zudojs/tenancy`     | `@zudojs/http` | 3    | HTTP-specific tenant resolution |
 
@@ -434,9 +434,9 @@ When changing a package's dependencies:
 | 3 (Transport)   | Tier 0, Tier 1, Tier 2  | `http`, `cli`                   |
 | 4 (DX)          | Any                     | `testing`, `docs`               |
 
-| Action             | Command                                        |
-| ------------------ | ---------------------------------------------- |
-| Check architecture | `npm run architect:check`                      |
+| Action             | Command                                       |
+| ------------------ | --------------------------------------------- |
+| Check architecture | `npm run architect:check`                     |
 | Check types        | `npm run typecheck --workspace=@zudojs/<pkg>` |
 | Run tests          | `npm run test --workspace=@zudojs/<pkg>`      |
 | Build package      | `npm run build --workspace=@zudojs/<pkg>`     |

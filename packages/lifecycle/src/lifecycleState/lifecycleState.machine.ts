@@ -4,10 +4,7 @@
  * Lifecycle state machine — validates transitions and tracks current state.
  */
 
-import {
-  LifecycleState,
-  LIFECYCLE_VALID_TRANSITIONS,
-} from "@zudojs/constants";
+import { LifecycleState, LIFECYCLE_VALID_TRANSITIONS } from "@zudojs/constants";
 import { LifecycleStateError } from "@zudojs/errors";
 
 /**

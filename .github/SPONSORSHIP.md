@@ -22,16 +22,16 @@ Sponsorship directly funds the time and infrastructure needed to maintain and im
 
 ## What Sponsorship Supports
 
-| Area | Description |
-|------|-------------|
-| Core Development | Framework architecture, package implementations, API design |
-| New Packages | Extending the ecosystem with additional official packages |
-| CLI Improvements | Better project scaffolding, code generation, and developer tools |
-| Documentation | Guides, API references, tutorials, and examples |
-| Testing Infrastructure | Unit tests, integration tests, and CI/CD pipelines |
-| Security Maintenance | Vulnerability patches, dependency updates, security audits |
-| Performance Optimization | Profiling, benchmarking, and runtime improvements |
-| Community Tooling | Issue templates, contribution guides, and release automation |
+| Area                     | Description                                                      |
+| ------------------------ | ---------------------------------------------------------------- |
+| Core Development         | Framework architecture, package implementations, API design      |
+| New Packages             | Extending the ecosystem with additional official packages        |
+| CLI Improvements         | Better project scaffolding, code generation, and developer tools |
+| Documentation            | Guides, API references, tutorials, and examples                  |
+| Testing Infrastructure   | Unit tests, integration tests, and CI/CD pipelines               |
+| Security Maintenance     | Vulnerability patches, dependency updates, security audits       |
+| Performance Optimization | Profiling, benchmarking, and runtime improvements                |
+| Community Tooling        | Issue templates, contribution guides, and release automation     |
 
 ---
 
@@ -42,6 +42,7 @@ Sponsorship directly funds the time and infrastructure needed to maintain and im
 For individual developers who want to support ZudoJS.
 
 **Benefits:**
+
 - Recognition as a supporter in the project
 - Access to project updates
 - Contribution to the ecosystem's sustainability
@@ -55,6 +56,7 @@ For individual developers who want to support ZudoJS.
 For developers actively building with ZudoJS.
 
 **Benefits:**
+
 - Everything in Supporter
 - Early roadmap updates before public announcements
 - Recognition in the project documentation
@@ -68,6 +70,7 @@ For developers actively building with ZudoJS.
 For developers, startups, and small teams using ZudoJS in production.
 
 **Benefits:**
+
 - Everything in Backer
 - Priority consideration for feature requests
 - Early ecosystem announcements
@@ -82,6 +85,7 @@ For developers, startups, and small teams using ZudoJS in production.
 For companies building products with ZudoJS.
 
 **Benefits:**
+
 - Organization recognition in the project
 - Logo placement on the ZudoJS website (when available)
 - Priority support consideration
