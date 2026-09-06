@@ -478,6 +478,28 @@ See [SECURITY.md](./SECURITY.md) for instructions on responsible vulnerability d
 
 ---
 
+## Supporting ZudoJS
+
+ZudoJS is an open-source framework maintained by independent developers and contributors. It provides a modular foundation for building production-ready applications across backend, frontend, and fullstack architectures.
+
+Sponsorship helps support:
+
+- Core framework development
+- CLI tooling and developer experience
+- Official packages and integrations
+- Documentation and guides
+- Bug fixes and maintenance
+- Security updates and patches
+- Performance improvements
+- Community infrastructure
+- Long-term sustainability of the ecosystem
+
+If ZudoJS helps your project, consider supporting its development.
+
+[Become a Sponsor](https://github.com/sponsors/oyinlola-tech)
+
+---
+
 ## License
 
 Zudojs is licensed under the MIT License.
