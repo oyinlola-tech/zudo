@@ -1,5 +1,12 @@
 # @zudojs/auth
 
+## 0.0.2
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/permissions@0.0.2
+
 ## 1.0.0
 
 ### Major Changes

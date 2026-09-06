@@ -1,5 +1,12 @@
 # @zudojs/tenancy
 
+## 0.0.2
+
+### Patch Changes
+
+- Updated dependencies [[`8d91db6`](https://github.com/oyinlola-tech/zudo/commit/8d91db68f93219803db971f2f855ec55af6c8dbf)]:
+  - @zudojs/http@0.0.2
+
 ## 1.0.0
 
 ### Major Changes
