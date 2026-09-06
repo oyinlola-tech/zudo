@@ -12,6 +12,7 @@ export const HTTP_METHODS = [
   "OPTIONS",
   "TRACE",
   "CONNECT",
+  "QUERY",
 ] as const;
 
 /* -------------------------------------------------------------------------- */
@@ -132,6 +133,7 @@ export const HTTP_HEADERS = {
   X_FORWARDED_HOST: "x-forwarded-host",
   X_FORWARDED_PROTO: "x-forwarded-proto",
   X_REQUEST_ID: "x-request-id",
+  ACCEPT_QUERY: "accept-query",
 } as const;
 
 /* -------------------------------------------------------------------------- */
@@ -154,7 +156,7 @@ export const HTTP_CONTENT_TYPES = {
 /* Request Methods                                                            */
 /* -------------------------------------------------------------------------- */
 
-export const HTTP_SAFE_METHODS = ["GET", "HEAD", "OPTIONS"] as const;
+export const HTTP_SAFE_METHODS = ["GET", "HEAD", "OPTIONS", "QUERY"] as const;
 
 export const HTTP_IDEMPOTENT_METHODS = [
   "GET",
@@ -163,6 +165,7 @@ export const HTTP_IDEMPOTENT_METHODS = [
   "DELETE",
   "OPTIONS",
   "TRACE",
+  "QUERY",
 ] as const;
 
 /* -------------------------------------------------------------------------- */

@@ -19,6 +19,7 @@ export const HTTP_METHODS = {
   OPTIONS: "OPTIONS",
   TRACE: "TRACE",
   CONNECT: "CONNECT",
+  QUERY: "QUERY",
 } as const;
 
 export type HTTPMethod = (typeof HTTP_METHODS)[keyof typeof HTTP_METHODS];
@@ -32,6 +33,7 @@ export const SAFE_METHODS = [
   HTTP_METHODS.HEAD,
   HTTP_METHODS.OPTIONS,
   HTTP_METHODS.TRACE,
+  HTTP_METHODS.QUERY,
 ] as const;
 
 export type SafeHTTPMethod = (typeof SAFE_METHODS)[number];
@@ -43,6 +45,7 @@ export const IDEMPOTENT_METHODS = [
   HTTP_METHODS.DELETE,
   HTTP_METHODS.OPTIONS,
   HTTP_METHODS.TRACE,
+  HTTP_METHODS.QUERY,
 ] as const;
 
 export type IdempotentHTTPMethod = (typeof IDEMPOTENT_METHODS)[number];
@@ -51,6 +54,7 @@ export const BODY_METHODS = [
   HTTP_METHODS.POST,
   HTTP_METHODS.PUT,
   HTTP_METHODS.PATCH,
+  HTTP_METHODS.QUERY,
 ] as const;
 
 export type BodyHTTPMethod = (typeof BODY_METHODS)[number];
@@ -60,6 +64,7 @@ export const METHODS_WITH_OPTIONAL_BODY = [
   HTTP_METHODS.PUT,
   HTTP_METHODS.PATCH,
   HTTP_METHODS.DELETE,
+  HTTP_METHODS.QUERY,
 ] as const;
 
 /* -------------------------------------------------------------------------- */
@@ -164,6 +169,10 @@ export function isTRACE(method: string): boolean {
 
 export function isCONNECT(method: string): boolean {
   return normalizeMethod(method) === HTTP_METHODS.CONNECT;
+}
+
+export function isQUERY(method: string): boolean {
+  return normalizeMethod(method) === HTTP_METHODS.QUERY;
 }
 
 /* -------------------------------------------------------------------------- */
