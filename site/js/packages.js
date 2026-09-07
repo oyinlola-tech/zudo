@@ -7,7 +7,7 @@
   var searchInput = document.getElementById('pkgSearch');
   var versionSelect = document.getElementById('versionSelect');
   var visibleCountEl = document.getElementById('visibleCount');
-  var currentVersion = versionSelect ? versionSelect.value : '0.0.1';
+  var currentVersion = versionSelect ? versionSelect.value : '0.1.0';
   var currentCategory = 'all';
   var currentSearch = '';
 
