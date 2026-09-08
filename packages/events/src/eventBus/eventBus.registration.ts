@@ -13,7 +13,6 @@ import type { EventTypePattern } from "../eventTypes/eventType.type.js";
 import type {
   EventHandlerLike,
   EventHandlerOptions,
-  RegisteredEventHandler,
 } from "../eventHandler/eventHandler.core.js";
 
 import type { EventSubscription } from "../eventSubscription/eventSubscription.core.js";
@@ -25,35 +24,44 @@ import type {
 } from "../eventMiddleware/eventMiddleware.type.js";
 
 import {
-  createEventMiddlewareId,
-  isFunctionEventMiddleware,
-  isObjectEventMiddleware,
+  createEventMiddleware,
+  isEventMiddleware,
 } from "../eventMiddleware/eventMiddleware.helper.js";
+
+import type { RegisteredEventDefinition } from "../eventRegistry/eventRegistry.type.js";
+
+import type { EventBusMiddlewareItem } from "./eventBus.type.js";
 
 /**
  * Registers an event definition on the given registry.
  */
 export function busRegister<TType extends EventType, TPayload>(
-  registry: { register: Function },
+  registry: {
+    register: (
+      definition: EventDefinition<TType, TPayload>,
+    ) => RegisteredEventDefinition<TType, TPayload>;
+  },
   definition: EventDefinition<TType, TPayload>,
   ensureUsable: () => void,
-) {
+): RegisteredEventDefinition<TType, TPayload> {
   ensureUsable();
 
   return registry.register(definition);
+}
+
+interface HandlerSource {
+  on: <TEvent extends Event = Event>(
+    eventType: EventTypePattern,
+    handler: EventHandlerLike<TEvent>,
+    options: Omit<EventHandlerOptions, "eventType">,
+  ) => EventSubscription;
 }
 
 /**
  * Registers a handler on the emitter.
  */
 export function busOn<TEvent extends Event = Event>(
-  emitter: {
-    on: (
-      eventType: EventTypePattern,
-      handler: EventHandlerLike<TEvent>,
-      options: Omit<EventHandlerOptions, "eventType">,
-    ) => EventSubscription;
-  },
+  emitter: HandlerSource,
   eventType: EventTypePattern,
   handler: EventHandlerLike<TEvent>,
   options: Omit<EventHandlerOptions, "eventType"> = {},
@@ -68,13 +76,7 @@ export function busOn<TEvent extends Event = Event>(
  * Registers a one-time handler.
  */
 export function busOnce<TEvent extends Event = Event>(
-  emitter: {
-    on: (
-      eventType: EventTypePattern,
-      handler: EventHandlerLike<TEvent>,
-      options: Omit<EventHandlerOptions, "eventType">,
-    ) => EventSubscription;
-  },
+  emitter: HandlerSource,
   eventType: EventTypePattern,
   handler: EventHandlerLike<TEvent>,
   options: Omit<EventHandlerOptions, "eventType" | "once"> = {},
@@ -96,13 +98,7 @@ export function busOnce<TEvent extends Event = Event>(
  * Registers a wildcard handler.
  */
 export function busOnAny<TEvent extends Event = Event>(
-  emitter: {
-    on: (
-      eventType: EventTypePattern,
-      handler: EventHandlerLike<TEvent>,
-      options: Omit<EventHandlerOptions, "eventType">,
-    ) => EventSubscription;
-  },
+  emitter: HandlerSource,
   handler: EventHandlerLike<TEvent>,
   options: Omit<EventHandlerOptions, "eventType"> = {},
   ensureUsable: () => void,
@@ -126,22 +122,16 @@ export function busOff(
 }
 
 /**
- * Adds middleware to the bus.
+ * Adds middleware to the bus. The middleware is validated
+ * eagerly (invalid middleware or a non-finite priority throw
+ * here, not on the next publish).
  */
 export function busUse(
   busMiddleware: RegisteredEventMiddleware[],
   middleware: EventMiddlewareLike,
   options: EventMiddlewareOptions = {},
 ): () => void {
-  const id = options.id ?? createEventMiddlewareId();
-
-  const registered: RegisteredEventMiddleware = {
-    id,
-    description: options.description,
-    priority: options.priority ?? 0,
-    enabled: options.enabled ?? true,
-    middleware,
-  };
+  const registered = createEventMiddleware(middleware, options);
 
   busMiddleware.push(registered);
 
@@ -155,31 +145,43 @@ export function busUse(
 }
 
 /**
+ * Determines whether a value is an already registered middleware
+ * (created by createEventMiddleware or a builder helper).
+ */
+export function isRegisteredEventMiddleware(
+  value: unknown,
+): value is RegisteredEventMiddleware {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { id?: unknown }).id === "string" &&
+    typeof (value as { enabled?: unknown }).enabled === "boolean" &&
+    isEventMiddleware((value as { middleware?: unknown }).middleware)
+  );
+}
+
+/**
  * Normalizes a middleware item into a RegisteredEventMiddleware.
+ *
+ * `prefix` keeps generated ids stable per source ("bus-mw" for
+ * constructor middleware, "publish-mw" for per-publication
+ * middleware).
  */
 export function registerMiddlewareItem(
-  item: EventMiddlewareLike,
+  item: EventBusMiddlewareItem,
   index: number,
+  prefix = "bus-mw",
 ): RegisteredEventMiddleware {
-  const id = `bus-mw-${index}`;
-
-  if (isFunctionEventMiddleware(item)) {
-    return {
-      id,
-      priority: 0,
-      enabled: true,
-      middleware: item,
-    };
+  if (isRegisteredEventMiddleware(item)) {
+    return createEventMiddleware(item.middleware, {
+      id: item.id,
+      description: item.description,
+      priority: item.priority,
+      enabled: item.enabled,
+    });
   }
 
-  if (isObjectEventMiddleware(item)) {
-    return {
-      id,
-      priority: 0,
-      enabled: true,
-      middleware: item,
-    };
-  }
-
-  return item as RegisteredEventMiddleware;
+  return createEventMiddleware(item as EventMiddlewareLike, {
+    id: `${prefix}-${index}`,
+  });
 }

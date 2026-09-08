@@ -262,21 +262,39 @@ export class EventSubscriptionGroup implements EventSubscription {
 
   /**
    * Unsubscribes every subscription in the group.
+   *
+   * Every subscription is attempted even if one throws; the
+   * failures are then re-thrown together as an AggregateError and
+   * the failed subscriptions stay in the group so the call can be
+   * retried.
    */
   unsubscribe(): void {
     if (!this.active) {
       return;
     }
 
-    this.currentState = EventSubscriptionState.CANCELLED;
-
     const subscriptions = [...this.subscriptions];
 
-    this.subscriptions.clear();
+    const failures: unknown[] = [];
 
     for (const subscription of subscriptions) {
-      subscription.unsubscribe();
+      try {
+        subscription.unsubscribe();
+
+        this.subscriptions.delete(subscription);
+      } catch (error) {
+        failures.push(error);
+      }
     }
+
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        `${failures.length} of ${subscriptions.length} subscriptions failed to unsubscribe.`,
+      );
+    }
+
+    this.currentState = EventSubscriptionState.CANCELLED;
   }
 
   /**

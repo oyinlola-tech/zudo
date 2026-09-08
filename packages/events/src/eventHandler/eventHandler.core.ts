@@ -9,7 +9,13 @@ import type { Event, EventType } from "../eventTypes/eventDefinition.type.js";
 
 import type { EventTypePattern } from "../eventTypes/eventType.type.js";
 
-import { matchesEventType } from "../eventTypes/eventType.type.js";
+import {
+  isValidEventTypePattern,
+  matchesEventType,
+  normalizeEventTypePattern,
+} from "../eventTypes/eventType.type.js";
+
+import { EventTimeoutError } from "../eventErrors/eventError.base.js";
 
 /**
  * Result returned by an event handler.
@@ -122,6 +128,15 @@ export interface EventHandlerOptions {
    * Whether the handler should only execute once.
    */
   readonly once?: boolean;
+
+  /**
+   * Optional execution timeout in milliseconds.
+   *
+   * When the handler does not settle within this time the
+   * execution fails with EventTimeoutError. Defaults to no
+   * timeout.
+   */
+  readonly timeoutMs?: number;
 }
 
 /**
@@ -157,6 +172,11 @@ export interface RegisteredEventHandler<TEvent extends Event = Event> {
    * Optional description.
    */
   readonly description?: string;
+
+  /**
+   * Optional execution timeout in milliseconds.
+   */
+  readonly timeoutMs?: number;
 
   /**
    * Actual handler.
@@ -215,10 +235,48 @@ export function createEventHandler<TEvent extends Event = Event>(
   handler: EventHandlerLike<TEvent>,
   options: EventHandlerOptions = {},
 ): RegisteredEventHandler<TEvent> {
-  const eventType = options.eventType ?? "*";
-
   if (!isValidHandler(handler)) {
     throw new TypeError("Invalid event handler.");
+  }
+
+  const rawPattern = options.eventType ?? "*";
+
+  let eventType: EventTypePattern;
+
+  try {
+    eventType = normalizeEventTypePattern(rawPattern);
+  } catch {
+    throw new TypeError(`Invalid event type pattern "${String(rawPattern)}".`);
+  }
+
+  if (!isValidEventTypePattern(eventType)) {
+    throw new TypeError(`Invalid event type pattern "${String(rawPattern)}".`);
+  }
+
+  const priority = options.priority ?? 0;
+
+  if (typeof priority !== "number" || !Number.isFinite(priority)) {
+    throw new RangeError("Event handler priority must be a finite number.");
+  }
+
+  if (
+    options.id !== undefined &&
+    (typeof options.id !== "string" || options.id.length === 0)
+  ) {
+    throw new TypeError("Event handler id must be a non-empty string.");
+  }
+
+  const timeoutMs = options.timeoutMs;
+
+  if (
+    timeoutMs !== undefined &&
+    (typeof timeoutMs !== "number" ||
+      !Number.isFinite(timeoutMs) ||
+      timeoutMs <= 0)
+  ) {
+    throw new RangeError(
+      "Event handler timeoutMs must be a positive finite number.",
+    );
   }
 
   return Object.freeze({
@@ -226,13 +284,15 @@ export function createEventHandler<TEvent extends Event = Event>(
 
     eventType,
 
-    priority: options.priority ?? 0,
+    priority,
 
     enabled: options.enabled ?? true,
 
     once: options.once ?? false,
 
     description: options.description,
+
+    timeoutMs,
 
     handler,
   });
@@ -293,6 +353,48 @@ export async function executeEventHandler<TEvent extends Event>(
 }
 
 /**
+ * Executes a registered handler, applying its timeout when one
+ * is configured. A timed-out execution rejects with
+ * EventTimeoutError; the underlying handler keeps running but its
+ * eventual result is ignored.
+ */
+export async function executeRegisteredEventHandler<TEvent extends Event>(
+  registration: RegisteredEventHandler<TEvent>,
+  event: TEvent,
+  context: EventHandlerContext<TEvent>,
+): Promise<EventHandlerResult> {
+  const timeoutMs = registration.timeoutMs;
+
+  if (timeoutMs === undefined) {
+    return executeEventHandler(registration.handler, event, context);
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new EventTimeoutError(timeoutMs, {
+          eventType: event.type,
+          eventId: event.id,
+        }),
+      );
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([
+      executeEventHandler(registration.handler, event, context),
+      timeout,
+    ]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+/**
  * Determines whether a registered handler should process
  * a given event.
  */
@@ -316,9 +418,12 @@ export function handlerMatchesEvent<TEvent extends Event>(
 export function sortEventHandlers<TEvent extends Event>(
   handlers: readonly RegisteredEventHandler<TEvent>[],
 ): RegisteredEventHandler<TEvent>[] {
-  return [...handlers].sort(
-    (first, second) => second.priority - first.priority,
-  );
+  return [...handlers].sort((first, second) => {
+    const a = Number.isFinite(first.priority) ? first.priority : 0;
+    const b = Number.isFinite(second.priority) ? second.priority : 0;
+
+    return b - a;
+  });
 }
 
 /**

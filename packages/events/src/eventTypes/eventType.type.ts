@@ -8,6 +8,10 @@
 
 import type { Event, EventType } from "../eventTypes/eventDefinition.type.js";
 
+import type { EventPayloadMap } from "./eventPayload.type.js";
+
+export type { EventPayloadMap } from "./eventPayload.type.js";
+
 /**
  * A collection of event types.
  */
@@ -23,11 +27,6 @@ export type EventTypeList = readonly EventType[];
  * "*"
  */
 export type EventTypePattern = EventType | `${string}.*` | "*";
-
-/**
- * Type-safe mapping between event types and payloads.
- */
-export type EventPayloadMap = Record<EventType, unknown>;
 
 /**
  * Extracts the event type keys from a payload map.
@@ -46,7 +45,9 @@ export type EventUnion<TMap extends EventPayloadMap> = {
 /**
  * Validates an event type string.
  *
- * Zudojs event types use dot-separated lowercase names.
+ * Zudojs event types use dot-separated lowercase names. Wildcards
+ * are not part of an event type; they are only valid in patterns
+ * (see isValidEventTypePattern).
  *
  * Examples:
  *
@@ -70,11 +71,15 @@ export function isValidEventType(value: unknown): value is EventType {
     return false;
   }
 
-  return /^[a-z0-9_]+(?:[.-][a-z0-9_*]+)*$/.test(normalized);
+  return /^[a-z0-9_]+(?:[.-][a-z0-9_]+)*$/.test(normalized);
 }
 
 /**
  * Validates an event type pattern.
+ *
+ * Supported forms are an exact event type, a namespace wildcard
+ * ("user.*") and the catch-all "*". Wildcards in any other
+ * position ("user.*.created", "user.cre*") are rejected.
  */
 export function isValidEventTypePattern(
   value: unknown,
@@ -105,26 +110,23 @@ export function isValidEventTypePattern(
  * 4. Removes leading/trailing separators
  */
 export function normalizeEventType(type: string): EventType {
+  if (typeof type !== "string") {
+    throw new TypeError(`Invalid event type: "${String(type)}".`);
+  }
+
   const lower = type.trim().toLowerCase();
 
   let result = "";
   let lastWasDot = false;
-  let leadingDots = true;
 
   for (let i = 0; i < lower.length; i++) {
     const ch = lower[i]!;
-    if (ch === "/" || ch === "\\" || ch === ":") {
-      if (!lastWasDot) {
-        result += ".";
-        lastWasDot = true;
-      }
-    } else if (ch === ".") {
+    if (ch === "/" || ch === "\\" || ch === ":" || ch === ".") {
       if (!lastWasDot) {
         result += ".";
         lastWasDot = true;
       }
     } else {
-      leadingDots = false;
       result += ch;
       lastWasDot = false;
     }
@@ -202,14 +204,40 @@ export function getEventTypeSegments(type: EventType): readonly string[] {
 }
 
 /**
+ * Normalizes an event type pattern.
+ *
+ * "*" is returned unchanged, "User.*" becomes "user.*" and any
+ * other value is normalized as an event type.
+ */
+export function normalizeEventTypePattern(
+  pattern: string,
+): EventTypePattern {
+  if (pattern === "*") {
+    return "*";
+  }
+
+  if (typeof pattern === "string" && pattern.trim().endsWith(".*")) {
+    return `${normalizeEventType(pattern.trim().slice(0, -2))}.*`;
+  }
+
+  return normalizeEventType(pattern);
+}
+
+/**
  * Checks whether an event type matches a pattern.
  *
  * Supported:
  *
  * "user.created" matches "user.created"
  * "user.created" matches "user.*"
+ * "user"         matches "user.*" (a namespace pattern also
+ *                matches the bare namespace event)
  * "user.created" matches "*"
  * "order.created" does not match "user.*"
+ *
+ * Both arguments are expected to be normalized (see
+ * normalizeEventType / normalizeEventTypePattern); no
+ * normalization happens here.
  */
 export function matchesEventType(
   type: EventType,

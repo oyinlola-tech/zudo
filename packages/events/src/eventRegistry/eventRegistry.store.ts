@@ -3,7 +3,8 @@
  *
  * The registry owns event definitions and registered handlers.
  * It does not perform event dispatching. Dispatching belongs to
- * EventEmitter and higher-level routing belongs to EventBus.
+ * EventEmitter (which stores its handlers in a registry) and
+ * higher-level routing belongs to EventBus.
  */
 
 import type {
@@ -27,16 +28,25 @@ import {
   EventDefinitionNotFoundError,
   DuplicateEventHandlerError,
   EventHandlerNotFoundError,
+  EventRegistryDisposedError,
 } from "../eventErrors/eventError.base.js";
 
 import type {
+  DuplicateHandlerIdPolicy,
+  EventHandlerEntry,
+  EventHandlerStore,
+  EventRegistryErrorContext,
   EventRegistryOptions,
   EventRegistryChange,
   EventRegistryListener,
+  EventRegistryWarning,
   RegisteredEventDefinition,
 } from "./eventRegistry.type.js";
 
+import { DEFAULT_MAX_HANDLERS_PER_PATTERN } from "./eventRegistry.type.js";
+
 import {
+  normalizeRegistryEventType,
   registryRegister,
   registryRegisterHandler,
   registryUnregister,
@@ -61,30 +71,69 @@ export {
   EventDefinitionNotFoundError,
   DuplicateEventHandlerError,
   EventHandlerNotFoundError,
+  EventRegistryDisposedError,
 };
+
+interface ResolvedRegistryOptions {
+  readonly allowDuplicateDefinitions: boolean;
+  readonly onDuplicateHandlerId: DuplicateHandlerIdPolicy;
+  readonly maxHandlersPerPattern: number;
+  readonly onWarning: (warning: EventRegistryWarning) => void;
+  readonly onError?: (
+    error: unknown,
+    context: EventRegistryErrorContext,
+  ) => void;
+}
+
+function defaultWarning(warning: EventRegistryWarning): void {
+  console.warn(`[@zudojs/events] ${warning.message}`);
+}
 
 /**
  * Main event registry.
  */
-export class EventRegistry {
+export class EventRegistry implements EventHandlerStore {
   private readonly definitions = new Map<
     EventType,
     RegisteredEventDefinition
   >();
 
-  private readonly handlers = new Map<string, RegisteredEventHandler>();
+  private readonly handlers = new Map<string, EventHandlerEntry>();
 
   private readonly listeners = new Set<EventRegistryListener>();
 
-  private readonly options: Required<EventRegistryOptions>;
+  private readonly warnedPatterns = new Set<string>();
+
+  private readonly options: ResolvedRegistryOptions;
 
   private disposed = false;
 
   constructor(options: EventRegistryOptions = {}) {
+    const maxHandlersPerPattern =
+      options.maxHandlersPerPattern ?? DEFAULT_MAX_HANDLERS_PER_PATTERN;
+
+    if (
+      typeof maxHandlersPerPattern !== "number" ||
+      !Number.isFinite(maxHandlersPerPattern) ||
+      maxHandlersPerPattern < 0
+    ) {
+      throw new RangeError(
+        "maxHandlersPerPattern must be a non-negative finite number.",
+      );
+    }
+
     this.options = {
       allowDuplicateDefinitions: options.allowDuplicateDefinitions ?? false,
 
-      allowDuplicateHandlerIds: options.allowDuplicateHandlerIds ?? false,
+      onDuplicateHandlerId:
+        options.onDuplicateHandlerId ??
+        (options.allowDuplicateHandlerIds ? "replace" : "throw"),
+
+      maxHandlersPerPattern,
+
+      onWarning: options.onWarning ?? defaultWarning,
+
+      onError: options.onError,
     };
   }
 
@@ -113,6 +162,7 @@ export class EventRegistry {
       this.options,
       () => this.ensureActive(),
       (c) => this.notify(c),
+      this.warnedPatterns,
     );
   }
 
@@ -121,7 +171,7 @@ export class EventRegistry {
   ): RegisteredEventDefinition<TType, TPayload> | undefined {
     this.ensureActive();
 
-    return this.definitions.get(eventType) as
+    return this.definitions.get(normalizeRegistryEventType(eventType)) as
       RegisteredEventDefinition<TType, TPayload> | undefined;
   }
 
@@ -140,7 +190,7 @@ export class EventRegistry {
   has(eventType: EventType): boolean {
     this.ensureActive();
 
-    return this.definitions.has(eventType);
+    return this.definitions.has(normalizeRegistryEventType(eventType));
   }
 
   unregister(eventType: EventType): boolean {
@@ -155,7 +205,7 @@ export class EventRegistry {
   getHandler(handlerId: string): RegisteredEventHandler | undefined {
     this.ensureActive();
 
-    return this.handlers.get(handlerId);
+    return this.handlers.get(handlerId)?.registration;
   }
 
   requireHandler(handlerId: string): RegisteredEventHandler {
@@ -174,12 +224,19 @@ export class EventRegistry {
     return this.handlers.has(handlerId);
   }
 
+  /**
+   * Returns the subscription created for a handler id, if the
+   * handler is still registered.
+   */
+  getHandlerSubscription(handlerId: string): EventSubscription | undefined {
+    this.ensureActive();
+
+    return this.handlers.get(handlerId)?.subscription;
+  }
+
   unregisterHandler(handlerId: string): boolean {
-    return registryUnregisterHandler(
-      handlerId,
-      this.handlers,
-      () => this.ensureActive(),
-      (c) => this.notify(c),
+    return registryUnregisterHandler(handlerId, this.handlers, () =>
+      this.ensureActive(),
     );
   }
 
@@ -232,6 +289,8 @@ export class EventRegistry {
       () => this.ensureActive(),
       (c) => this.notify(c),
     );
+
+    this.warnedPatterns.clear();
   }
 
   dispose(): void {
@@ -252,12 +311,12 @@ export class EventRegistry {
   }
 
   private notify(change: EventRegistryChange): void {
-    registryNotify(change, this.listeners);
+    registryNotify(change, this.listeners, this.options.onError);
   }
 
   private ensureActive(): void {
     if (this.disposed) {
-      throw new Error("EventRegistry has already been disposed.");
+      throw new EventRegistryDisposedError();
     }
   }
 }

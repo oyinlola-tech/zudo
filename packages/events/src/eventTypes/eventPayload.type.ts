@@ -109,6 +109,25 @@ export function isObjectEventPayload(
  * event payload.
  */
 export function isJsonEventPayload(value: unknown): value is JsonEventPayload {
+  return isJsonValue(value, new WeakSet<object>(), 0);
+}
+
+/**
+ * Maximum nesting depth accepted by isJsonEventPayload.
+ */
+const MAX_JSON_PAYLOAD_DEPTH = 256;
+
+function isPlainObject(value: object): boolean {
+  const prototype = Object.getPrototypeOf(value);
+
+  return prototype === Object.prototype || prototype === null;
+}
+
+function isJsonValue(
+  value: unknown,
+  visited: WeakSet<object>,
+  depth: number,
+): boolean {
   if (
     value === null ||
     typeof value === "string" ||
@@ -121,17 +140,38 @@ export function isJsonEventPayload(value: unknown): value is JsonEventPayload {
     return Number.isFinite(value);
   }
 
-  if (Array.isArray(value)) {
-    return value.every((item) => isJsonEventPayload(item));
+  if (typeof value !== "object") {
+    return false;
   }
 
-  if (typeof value === "object") {
+  if (depth > MAX_JSON_PAYLOAD_DEPTH) {
+    return false;
+  }
+
+  if (visited.has(value)) {
+    // A cycle can never be serialized to JSON.
+    return false;
+  }
+
+  visited.add(value);
+
+  try {
+    if (Array.isArray(value)) {
+      return value.every((item) => isJsonValue(item, visited, depth + 1));
+    }
+
+    if (!isPlainObject(value)) {
+      // Date, Map, Set, class instances, typed arrays, ... are not
+      // JSON values even though JSON.stringify may accept them.
+      return false;
+    }
+
     return Object.values(value as Record<string, unknown>).every((item) =>
-      isJsonEventPayload(item),
+      isJsonValue(item, visited, depth + 1),
     );
+  } finally {
+    visited.delete(value);
   }
-
-  return false;
 }
 
 /**
@@ -201,31 +241,47 @@ export function cloneEventPayload<TPayload extends EventPayload>(
 
 /**
  * Deeply freezes an event payload.
+ *
+ * Cyclic and shared references are handled (each object is
+ * visited once), and an already frozen parent is still traversed
+ * so that unfrozen children are frozen too. ArrayBuffer views are
+ * left untouched because they cannot be frozen.
  */
 export function deepFreeze<T>(value: T): T {
-  if (value === null || typeof value !== "object") {
-    return value;
+  freezeRecursively(value, new WeakSet<object>());
+
+  return value;
+}
+
+function freezeRecursively(value: unknown, visited: WeakSet<object>): void {
+  if (
+    (typeof value !== "object" && typeof value !== "function") ||
+    value === null
+  ) {
+    return;
   }
 
-  if (Object.isFrozen(value)) {
-    return value;
+  if (visited.has(value)) {
+    return;
+  }
+
+  visited.add(value);
+
+  if (ArrayBuffer.isView(value)) {
+    return;
   }
 
   const object = value as Record<PropertyKey, unknown>;
 
   for (const key of Reflect.ownKeys(object)) {
-    const child = object[key];
+    const descriptor = Object.getOwnPropertyDescriptor(object, key);
 
-    if (
-      child !== null &&
-      typeof child === "object" &&
-      !Object.isFrozen(child)
-    ) {
-      deepFreeze(child);
+    if (descriptor && "value" in descriptor) {
+      freezeRecursively(descriptor.value, visited);
     }
   }
 
-  return Object.freeze(value);
+  Object.freeze(value);
 }
 
 /**

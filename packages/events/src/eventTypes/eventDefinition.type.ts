@@ -12,6 +12,10 @@ import type {
   CorrelationId as BaseCorrelationId,
 } from "@zudojs/constants";
 
+import { InvalidEventError } from "../eventErrors/eventError.base.js";
+
+import { normalizeEventType } from "./eventType.type.js";
+
 /**
  * Unique identifier for an event instance.
  * Re-exported from @zudojs/constants for type safety.
@@ -115,9 +119,10 @@ export interface Event<TPayload = EventPayload> {
  */
 export interface EventInput<TPayload = EventPayload> {
   /**
-   * Optional event identifier.
+   * Optional event identifier. Plain strings are accepted and
+   * branded on the created event.
    */
-  readonly id?: EventId;
+  readonly id?: EventId | string;
 
   /**
    * Event type.
@@ -140,9 +145,9 @@ export interface EventInput<TPayload = EventPayload> {
   readonly source?: EventSource;
 
   /**
-   * Optional correlation identifier.
+   * Optional correlation identifier. Plain strings are accepted.
    */
-  readonly correlationId?: EventCorrelationId;
+  readonly correlationId?: EventCorrelationId | string;
 
   /**
    * Optional causation identifier.
@@ -205,21 +210,44 @@ export function createEventId(): EventId {
  * Normalizes an event timestamp.
  */
 function normalizeTimestamp(timestamp: EventInput["timestamp"]): Date {
-  if (timestamp instanceof Date) {
-    return new Date(timestamp.getTime());
+  if (timestamp === undefined) {
+    return new Date();
   }
 
-  if (typeof timestamp === "number") {
-    const date = new Date(timestamp);
+  const date =
+    timestamp instanceof Date
+      ? new Date(timestamp.getTime())
+      : typeof timestamp === "number"
+        ? new Date(timestamp)
+        : undefined;
 
-    if (Number.isNaN(date.getTime())) {
-      throw new TypeError("Invalid event timestamp.");
-    }
-
-    return date;
+  if (date === undefined || Number.isNaN(date.getTime())) {
+    throw new InvalidEventError("Invalid event timestamp.");
   }
 
-  return new Date();
+  return date;
+}
+
+/**
+ * Normalizes and validates an event type, converting validation
+ * failures into InvalidEventError.
+ */
+function normalizeInputType(type: unknown, eventId?: string): EventType {
+  if (typeof type !== "string" || type.trim().length === 0) {
+    throw new InvalidEventError("Event type must be a non-empty string.", {
+      eventId,
+    });
+  }
+
+  try {
+    return normalizeEventType(type);
+  } catch (error) {
+    throw new InvalidEventError(`Invalid event type "${type}".`, {
+      eventType: type,
+      eventId,
+      cause: error,
+    });
+  }
 }
 
 /**
@@ -239,18 +267,30 @@ function normalizeMetadata(
 
 /**
  * Creates an immutable event.
+ *
+ * The event type is normalized (trimmed, lower-cased, separators
+ * collapsed) and validated; invalid types, ids and timestamps
+ * throw InvalidEventError. The top-level event object is frozen;
+ * the payload is left as supplied (use deepFreeze / the emitter's
+ * freezeEvents option for deep immutability).
  */
 export function createEvent<TPayload = EventPayload>(
   input: EventInput<TPayload>,
 ): Event<TPayload> {
-  if (typeof input.type !== "string" || input.type.trim().length === 0) {
-    throw new TypeError("Event type must be a non-empty string.");
+  if (typeof input !== "object" || input === null) {
+    throw new InvalidEventError("Event input must be an object.");
   }
 
-  const event: Event<TPayload> = {
-    id: input.id ?? createEventId(),
+  if (input.id !== undefined && typeof input.id !== "string") {
+    throw new InvalidEventError("Event id must be a string.");
+  }
 
-    type: input.type,
+  const type = normalizeInputType(input.type, input.id);
+
+  const event: Event<TPayload> = {
+    id: (input.id as EventId | undefined) ?? createEventId(),
+
+    type,
 
     payload: input.payload,
 
@@ -258,7 +298,7 @@ export function createEvent<TPayload = EventPayload>(
 
     source: input.source,
 
-    correlationId: input.correlationId,
+    correlationId: input.correlationId as EventCorrelationId | undefined,
 
     causationId: input.causationId,
 
@@ -274,12 +314,10 @@ export function createEvent<TPayload = EventPayload>(
 export function defineEvent<TType extends EventType, TPayload>(
   type: TType,
 ): EventDefinition<TType, TPayload> {
-  if (type.trim().length === 0) {
-    throw new TypeError("Event type must be a non-empty string.");
-  }
+  const normalized = normalizeInputType(type) as TType;
 
   return Object.freeze({
-    type,
+    type: normalized,
 
     create(
       payload: TPayload,
@@ -288,7 +326,7 @@ export function defineEvent<TType extends EventType, TPayload>(
       return createEvent({
         ...options,
 
-        type,
+        type: normalized,
 
         payload,
       });

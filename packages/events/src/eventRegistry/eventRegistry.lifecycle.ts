@@ -4,35 +4,37 @@
 
 import type { EventType } from "../eventTypes/eventDefinition.type.js";
 
-import type { RegisteredEventHandler } from "../eventHandler/eventHandler.core.js";
-
 import type {
+  EventHandlerEntry,
   EventRegistryChange,
+  EventRegistryErrorContext,
   EventRegistryListener,
   RegisteredEventDefinition,
 } from "./eventRegistry.type.js";
 
-import {
-  registryUnregister,
-  registryUnregisterHandler,
-} from "./eventRegistry.registration.js";
+import { registryUnregister } from "./eventRegistry.registration.js";
 
 /**
  * Clears all handlers and definitions from the registry.
+ *
+ * Every handler subscription is cancelled, so subscriptions held
+ * by callers report `active: false` afterwards.
  */
 export function registryClear(
   definitions: Map<EventType, RegisteredEventDefinition>,
-  handlers: Map<string, RegisteredEventHandler>,
+  handlers: Map<string, EventHandlerEntry>,
   ensureActive: () => void,
   notify: (change: EventRegistryChange) => void,
 ): void {
   ensureActive();
 
-  const handlerIds = [...handlers.keys()];
+  const entries = [...handlers.values()];
 
-  for (const handlerId of handlerIds) {
-    registryUnregisterHandler(handlerId, handlers, ensureActive, notify);
+  for (const entry of entries) {
+    entry.subscription.unsubscribe();
   }
+
+  handlers.clear();
 
   const eventTypes = [...definitions.keys()];
 
@@ -47,7 +49,7 @@ export function registryClear(
 export function registryDispose(
   disposed: boolean,
   definitions: Map<EventType, RegisteredEventDefinition>,
-  handlers: Map<string, RegisteredEventHandler>,
+  handlers: Map<string, EventHandlerEntry>,
   listeners: Set<EventRegistryListener>,
   ensureActive: () => void,
   notify: (change: EventRegistryChange) => void,
@@ -63,19 +65,28 @@ export function registryDispose(
 
 /**
  * Notifies registry listeners.
+ *
+ * Observer failures never break registry mutations; they are
+ * forwarded to the `onError` hook when one is configured.
  */
 export function registryNotify(
   change: EventRegistryChange,
   listeners: Set<EventRegistryListener>,
+  onError?: (error: unknown, context: EventRegistryErrorContext) => void,
 ): void {
   for (const listener of listeners) {
     try {
       listener(change);
-    } catch {
-      /**
-       * Registry observers must not be able to break
-       * registry mutations.
-       */
+    } catch (error) {
+      if (onError) {
+        try {
+          onError(error, { source: "observer", change });
+        } catch {
+          /**
+           * A failing error hook must not break the mutation either.
+           */
+        }
+      }
     }
   }
 }

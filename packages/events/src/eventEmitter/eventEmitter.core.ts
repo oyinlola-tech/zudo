@@ -1,12 +1,18 @@
 /**
  * Event emitter core class for Zudojs.
+ *
+ * The emitter dispatches events to handlers. Handlers are stored
+ * in an EventHandlerStore (an EventRegistry by default) so that a
+ * bus and its registry share one set of handlers.
  */
 
 import type { Event, EventInput } from "../eventTypes/eventDefinition.type.js";
 
 import type { EventTypePattern } from "../eventTypes/eventType.type.js";
 
-import { createEvent } from "../eventTypes/eventDefinition.type.js";
+import { createEvent, isEvent } from "../eventTypes/eventDefinition.type.js";
+
+import { deepFreeze } from "../eventTypes/eventPayload.type.js";
 
 import type {
   EventHandlerLike,
@@ -14,25 +20,26 @@ import type {
   RegisteredEventHandler,
 } from "../eventHandler/eventHandler.core.js";
 
-import {
-  createEventHandler,
-  createEventHandlerContext,
-  getMatchingEventHandlers,
-} from "../eventHandler/eventHandler.core.js";
+import { createEventHandlerContext } from "../eventHandler/eventHandler.core.js";
 
 import type { EventSubscription } from "../eventSubscription/eventSubscription.core.js";
 
+import { EventSubscriptionGroup } from "../eventSubscription/eventSubscription.core.js";
+
+import type { EventHandlerStore } from "../eventRegistry/eventRegistry.type.js";
+
+import { EventRegistry } from "../eventRegistry/eventRegistry.store.js";
+
 import {
-  EventSubscriptionGroup,
-  createEventSubscription,
-} from "../eventSubscription/eventSubscription.core.js";
+  EventEmitterDisposedError,
+  InvalidEventError,
+} from "../eventErrors/eventError.base.js";
 
 import type {
   EventEmitterOptions,
   EmitOptions,
   EventHandlerExecutionResult,
   EventEmitResult,
-  EmitterListener,
 } from "./eventEmitter.type.js";
 
 import { EventEmitterMode, EventErrorMode } from "./eventEmitter.type.js";
@@ -47,9 +54,11 @@ import { createAbortError } from "./eventEmitter.abort.js";
  * Main local event emitter.
  */
 export class EventEmitter {
-  private readonly listeners = new Map<string, EmitterListener>();
+  private readonly store: EventHandlerStore;
 
-  private readonly options: Required<EventEmitterOptions>;
+  private readonly options: Required<
+    Pick<EventEmitterOptions, "mode" | "errorMode" | "freezeEvents">
+  >;
 
   private disposed = false;
 
@@ -61,6 +70,13 @@ export class EventEmitter {
 
       freezeEvents: options.freezeEvents ?? true,
     };
+
+    this.store =
+      options.store ??
+      new EventRegistry({
+        maxHandlersPerPattern: options.maxListeners,
+        onWarning: options.onWarning,
+      });
   }
 
   on<TEvent extends Event = Event>(
@@ -70,12 +86,7 @@ export class EventEmitter {
   ): EventSubscription {
     this.ensureActive();
 
-    const registration = createEventHandler(handler, {
-      ...options,
-      eventType,
-    });
-
-    return this.addRegistration(registration as RegisteredEventHandler);
+    return this.store.registerHandler(eventType, handler, options);
   }
 
   once<TEvent extends Event = Event>(
@@ -96,16 +107,18 @@ export class EventEmitter {
     return this.on("*", handler, options);
   }
 
+  /**
+   * Cancels a subscription. Returns true when the subscription
+   * was active (and is now cancelled).
+   */
   off(subscription: EventSubscription): boolean {
     this.ensureActive();
 
-    const removed = this.listeners.delete(subscription.id);
+    const wasActive = subscription.active;
 
-    if (removed && subscription.active) {
-      subscription.unsubscribe();
-    }
+    subscription.unsubscribe();
 
-    return removed;
+    return wasActive;
   }
 
   async emit<TEvent extends Event>(
@@ -114,64 +127,85 @@ export class EventEmitter {
   ): Promise<EventEmitResult<TEvent>> {
     this.ensureActive();
 
+    if (!isEvent(event)) {
+      throw new InvalidEventError(
+        "emit() requires an Event (use emitEvent() for event input).",
+      );
+    }
+
     if (options.signal?.aborted) {
-      throw createAbortError();
+      throw createAbortError(event);
     }
 
     const mode = options.mode ?? this.options.mode;
 
     const errorMode = options.errorMode ?? this.options.errorMode;
 
-    const handlers = getMatchingEventHandlers(this.getRegistrations(), event);
+    const dispatched = this.options.freezeEvents ? deepFreeze(event) : event;
 
-    const context = createEventHandlerContext(event, {
+    const handlers = this.store.getHandlersForEvent(
+      dispatched,
+    ) as readonly RegisteredEventHandler<TEvent>[];
+
+    const context = createEventHandlerContext(dispatched, {
       signal: options.signal,
       metadata: options.metadata,
     });
-
-    if (handlers.length === 0) {
-      return {
-        event,
-        handled: false,
-        results: [],
-        errors: [],
-      };
-    }
 
     const results: EventHandlerExecutionResult[] = [];
 
     const errors: unknown[] = [];
 
-    const removeOnceHandler = (handlerId: string) =>
-      this.removeHandler(handlerId);
+    if (handlers.length === 0) {
+      return {
+        event: dispatched,
+        handled: false,
+        results,
+        errors,
+        succeeded: 0,
+        failed: 0,
+      };
+    }
+
+    const hooks = {
+      isRegistered: (handlerId: string) => this.store.hasHandler(handlerId),
+
+      removeOnce: (handlerId: string) => {
+        this.store.unregisterHandler(handlerId);
+      },
+    };
 
     if (mode === EventEmitterMode.PARALLEL) {
       await emitParallel(
         handlers,
-        event,
+        dispatched,
         context,
         errorMode,
         results,
         errors,
-        removeOnceHandler,
+        hooks,
       );
     } else {
       await emitSequential(
         handlers,
-        event,
+        dispatched,
         context,
         errorMode,
         results,
         errors,
-        removeOnceHandler,
+        hooks,
       );
     }
 
+    const succeeded = results.filter((result) => result.ok).length;
+
     return {
-      event,
-      handled: results.length > 0,
+      event: dispatched,
+      handled: succeeded > 0,
       results,
       errors,
+      succeeded,
+      failed: results.length - succeeded,
     };
   }
 
@@ -185,25 +219,26 @@ export class EventEmitter {
   }
 
   get listenerCount(): number {
-    return this.listeners.size;
+    return this.store.handlerCount;
+  }
+
+  /**
+   * Returns the handler store backing this emitter.
+   */
+  getStore(): EventHandlerStore {
+    return this.store;
   }
 
   getRegistrations(): readonly RegisteredEventHandler[] {
-    return [...this.listeners.values()].map(({ registration }) => registration);
+    return this.store.getHandlers();
   }
 
   removeAllListeners(): void {
     this.ensureActive();
 
-    const subscriptions = [...this.listeners.values()].map(
-      ({ subscription }) => subscription,
-    );
-
-    for (const subscription of subscriptions) {
-      subscription.unsubscribe();
+    for (const registration of this.store.getHandlers()) {
+      this.store.unregisterHandler(registration.id);
     }
-
-    this.listeners.clear();
   }
 
   createSubscriptionGroup(): EventSubscriptionGroup {
@@ -226,42 +261,9 @@ export class EventEmitter {
     return this.disposed;
   }
 
-  private addRegistration(
-    registration: RegisteredEventHandler,
-  ): EventSubscription {
-    const subscription = createEventSubscription(
-      () => {
-        this.listeners.delete(registration.id);
-      },
-      {
-        id: registration.id,
-        description: registration.description,
-      },
-    );
-
-    this.listeners.set(registration.id, {
-      registration,
-      subscription,
-    });
-
-    return subscription;
-  }
-
-  private removeHandler(id: string): void {
-    const listener = this.listeners.get(id);
-
-    if (!listener) {
-      return;
-    }
-
-    this.listeners.delete(id);
-
-    listener.subscription.unsubscribe();
-  }
-
   private ensureActive(): void {
     if (this.disposed) {
-      throw new Error("EventEmitter has already been disposed.");
+      throw new EventEmitterDisposedError();
     }
   }
 }

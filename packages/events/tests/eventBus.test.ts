@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { EventBus, EventBusState } from "../src/eventBus/eventBus.core.js";
+import { EventBusState } from "../src/eventBus/eventBus.core.js";
 
 import {
   createEventBus,
@@ -9,10 +9,12 @@ import {
 
 import type { Event } from "../src/eventTypes/eventDefinition.type.js";
 
-import type {
-  EventMiddleware,
-  EventMiddlewareLike,
-} from "../src/eventMiddleware/eventMiddleware.type.js";
+import {
+  createEvent,
+  defineEvent,
+} from "../src/eventTypes/eventDefinition.type.js";
+
+import type { EventMiddleware } from "../src/eventMiddleware/eventMiddleware.type.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -26,13 +28,10 @@ interface TestEvent extends Event {
 }
 
 function makeTestEvent(value = "hello"): TestEvent {
-  return {
+  return createEvent({
     type: "test.event",
     payload: { value },
-    id: `evt-${Date.now()}`,
-    timestamp: new Date(),
-    version: 1,
-  };
+  }) as TestEvent;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,10 +91,7 @@ describe("EventBus", () => {
   it("unregisters event definitions", () => {
     const bus = createEventBus();
 
-    bus.register({
-      type: "test.event",
-      version: 1,
-    });
+    bus.register(defineEvent("test.event"));
 
     expect(bus.hasEvent("test.event")).toBe(true);
     bus.unregister("test.event");

@@ -1,18 +1,15 @@
 import { describe, it, expect } from "vitest";
 import {
   createEvent,
-  createEventId,
   isEvent,
   defineEvent,
   createDerivedEvent,
-  withEventMetadata,
   describeEvent,
   getEventType,
   getEventPayload,
 } from "../src/eventTypes/eventDefinition.type.js";
 import {
   isValidEventType,
-  isValidEventTypePattern,
   matchesEventType,
   normalizeEventType,
   createEventType,

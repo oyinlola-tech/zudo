@@ -4,43 +4,41 @@
 
 import type { Event, EventType } from "../eventTypes/eventDefinition.type.js";
 
-import {
-  normalizeEventType,
-  matchesEventType,
-} from "../eventTypes/eventType.type.js";
-
 import type { RegisteredEventHandler } from "../eventHandler/eventHandler.core.js";
 
-import type { RegisteredEventDefinition } from "./eventRegistry.type.js";
+import { getMatchingEventHandlers } from "../eventHandler/eventHandler.core.js";
+
+import type {
+  EventHandlerEntry,
+  RegisteredEventDefinition,
+} from "./eventRegistry.type.js";
+
+import { normalizeRegistryEventType } from "./eventRegistry.registration.js";
 
 /**
- * Returns handlers matching an event.
+ * Returns enabled handlers matching an event, sorted by priority,
+ * exactly as the emitter would dispatch them.
  */
 export function getHandlersForEvent(
-  handlers: Map<string, RegisteredEventHandler>,
+  handlers: Map<string, EventHandlerEntry>,
   event: Event,
 ): readonly RegisteredEventHandler[] {
-  return [...handlers.values()].filter((handler) => {
-    if (!handler.enabled) {
-      return false;
-    }
-
-    return matchesEventType(event.type, handler.eventType);
-  });
+  return getMatchingEventHandlers(getAllHandlers(handlers), event);
 }
 
 /**
- * Returns handlers matching an event type.
+ * Returns enabled handlers matching an event type, sorted by
+ * priority. The type is normalized before matching.
  */
 export function getHandlersForType(
-  handlers: Map<string, RegisteredEventHandler>,
+  handlers: Map<string, EventHandlerEntry>,
   eventType: EventType,
 ): readonly RegisteredEventHandler[] {
-  const type = normalizeEventType(eventType);
+  const type = normalizeRegistryEventType(eventType);
 
-  return [...handlers.values()].filter((handler) =>
-    matchesEventType(type, handler.eventType),
-  );
+  return getMatchingEventHandlers(getAllHandlers(handlers), {
+    type,
+  } as Event);
 }
 
 /**
@@ -53,10 +51,10 @@ export function getAllDefinitions(
 }
 
 /**
- * Returns all handlers as an array.
+ * Returns all handlers as an array (registration order).
  */
 export function getAllHandlers(
-  handlers: Map<string, RegisteredEventHandler>,
+  handlers: Map<string, EventHandlerEntry>,
 ): readonly RegisteredEventHandler[] {
-  return [...handlers.values()];
+  return [...handlers.values()].map((entry) => entry.registration);
 }

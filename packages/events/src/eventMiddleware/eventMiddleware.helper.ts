@@ -4,8 +4,6 @@
 
 import type { Event } from "../eventTypes/eventDefinition.type.js";
 
-import { EventMiddlewareError } from "../eventErrors/eventError.base.js";
-
 import type {
   EventMiddlewareContext,
   EventMiddlewareNext,

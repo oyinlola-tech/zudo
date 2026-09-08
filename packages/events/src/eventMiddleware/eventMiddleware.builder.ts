@@ -4,7 +4,10 @@
 
 import type { Event } from "../eventTypes/eventDefinition.type.js";
 
-import { EventMiddlewareError } from "../eventErrors/eventError.base.js";
+import {
+  EventDispatchAbortedError,
+  EventMiddlewareError,
+} from "../eventErrors/eventError.base.js";
 
 import type {
   EventMiddlewareContext,
@@ -14,16 +17,6 @@ import type {
 } from "./eventMiddleware.type.js";
 
 import { createEventMiddleware } from "./eventMiddleware.helper.js";
-
-/**
- * Creates an AbortError without relying on a runtime-specific
- * DOMException implementation.
- */
-function createAbortError(): EventMiddlewareError {
-  return new EventMiddlewareError("Event middleware execution was aborted.", {
-    cause: new Error("AbortSignal was aborted."),
-  });
-}
 
 /**
  * Creates a middleware that executes before downstream
@@ -166,7 +159,10 @@ export function abortableEventMiddleware(
 ): RegisteredEventMiddleware {
   return beforeEvent(async (context) => {
     if (context.signal.aborted) {
-      throw createAbortError();
+      throw new EventDispatchAbortedError("Event dispatch was aborted.", {
+        eventType: context.event?.type,
+        eventId: context.event?.id,
+      });
     }
   }, options);
 }

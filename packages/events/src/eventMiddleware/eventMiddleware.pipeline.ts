@@ -5,6 +5,7 @@
 import type { Event } from "../eventTypes/eventDefinition.type.js";
 
 import {
+  EventDispatchAbortedError,
   EventMiddlewareError,
   toEventError,
 } from "../eventErrors/eventError.base.js";
@@ -32,6 +33,11 @@ import {
  *     → handler
  *   ← middleware B
  * ← middleware A
+ *
+ * Only errors thrown by a middleware function itself are wrapped
+ * in EventMiddlewareError. Errors coming back through next() —
+ * handler failures, aborts, downstream middleware errors — are
+ * re-thrown untouched so callers can discriminate them.
  */
 export async function executeEventMiddlewarePipeline<
   TEvent extends Event,
@@ -53,7 +59,7 @@ export async function executeEventMiddlewarePipeline<
 
   const dispatch = async (currentIndex: number): Promise<TResult> => {
     if (context.signal.aborted) {
-      throw createAbortError();
+      throw createAbortError(context);
     }
 
     if (currentIndex === activeMiddleware.length) {
@@ -82,6 +88,15 @@ export async function executeEventMiddlewarePipeline<
 
     let nextCalled = false;
 
+    /**
+     * Errors that surfaced through next() belong to downstream
+     * code, not to this middleware; they must pass through
+     * unwrapped.
+     */
+    let downstreamThrew = false;
+
+    let downstreamError: unknown;
+
     const next = async () => {
       if (nextCalled) {
         throw new EventMiddlewareError(
@@ -97,7 +112,15 @@ export async function executeEventMiddlewarePipeline<
 
       nextCalled = true;
 
-      return dispatch(currentIndex + 1);
+      try {
+        return await dispatch(currentIndex + 1);
+      } catch (error) {
+        downstreamThrew = true;
+
+        downstreamError = error;
+
+        throw error;
+      }
     };
 
     try {
@@ -117,7 +140,14 @@ export async function executeEventMiddlewarePipeline<
 
       return result;
     } catch (error) {
-      if (error instanceof EventMiddlewareError) {
+      if (downstreamThrew && error === downstreamError) {
+        throw error;
+      }
+
+      if (
+        error instanceof EventMiddlewareError ||
+        error instanceof EventDispatchAbortedError
+      ) {
         throw error;
       }
 
@@ -150,11 +180,14 @@ export async function executeEventMiddlewarePipeline<
 }
 
 /**
- * Creates an AbortError without relying on a runtime-specific
- * DOMException implementation.
+ * Creates the abort error thrown when the pipeline observes an
+ * aborted signal.
  */
-function createAbortError(): EventMiddlewareError {
-  return new EventMiddlewareError("Event middleware execution was aborted.", {
-    cause: new Error("AbortSignal was aborted."),
+function createAbortError(
+  context: EventMiddlewareContext<Event>,
+): EventDispatchAbortedError {
+  return new EventDispatchAbortedError("Event dispatch was aborted.", {
+    eventType: context.event?.type,
+    eventId: context.event?.id,
   });
 }

@@ -1,47 +1,39 @@
 # @zudojs/events
 
-## 1.0.0
+## Unreleased
 
-### Major Changes
+### Fixes
 
-- [`16f14c3`](https://github.com/oyinlola-tech/zudo/commit/16f14c36d05f664d914bc6e1b9de70f67ff55860) Thanks [@oyinlola-tech](https://github.com/oyinlola-tech)! - BREAKING CHANGE: Rename all packages from `@zudojs/*` to `@zudojs/*` and `@zudojs/cli` to `zudojs-cli`.
+- `EventBus.stop()` now moves the bus to a `STOPPED` state; publishing or subscribing on a stopped bus throws `EventBusStoppedError` instead of silently restarting it.
+- The emitter stores its handlers in the bus registry, so handlers registered through `bus.getRegistry().registerHandler()` are dispatched and `bus.getHandlers()` / `registry.getHandlers()` agree.
+- Registering a handler with an id that already exists throws `DuplicateEventHandlerError` (registry option `onDuplicateHandlerId: "replace"` opts into replacement); cancelling an old subscription can no longer remove a newer handler with the same id.
+- Registry subscriptions are tracked: `clear()` / `dispose()` cancel them, and `unsubscribe()` after dispose is a no-op.
+- The middleware pipeline only wraps errors thrown by a middleware itself; handler failures (`EventHandlerError`) and aborts (`EventDispatchAbortedError`) pass through unwrapped. A middleware that does not call `next()` yields a `shortCircuited` result instead of a `TypeError`.
+- Once-handlers are removed before they run, so a throwing or concurrently dispatched once-handler never fires twice.
+- Event types are normalised at every entry point (`createEvent`, `defineEvent`, handler patterns, registry lookups); a registered definition always produces publishable events.
+- `freezeEvents` is implemented (deep, cycle-safe); `deepFreeze` and `isJsonEventPayload` no longer overflow on cyclic input.
+- `handled` is only true when a handler succeeded; results carry `ok`, `succeeded` and `failed`.
+- Abort is reported uniformly as `EventDispatchAbortedError` (with partial `results` / `errors`).
+- `createEventHandler` validates priority, id, pattern and `timeoutMs`; `bus.use()` validates middleware eagerly; per-publication middleware ids are stable (`publish-mw-<n>`).
+- `createEvent` rejects invalid types, ids and `NaN` dates with `InvalidEventError`; `emit` / `publish` reject non-events.
+- Wildcards are only valid as a trailing `.*` in patterns, never inside event types.
+- `EventSubscriptionGroup.unsubscribe()` attempts every subscription and aggregates failures.
+- Disposed emitters/registries throw `EventEmitterDisposedError` / `EventRegistryDisposedError`; the bus throws `EventBusDisposedError`; unregistered types throw `EventTypeNotFoundError`.
 
-  - Scoped packages: `@zudojs/adapters`, `@zudojs/api`, `@zudojs/auth`, etc.
-  - CLI package: `zudojs-cli` (unscoped)
-  - All internal imports, docs, CI, and examples updated
+### Additions
 
-  Migration:
+- `EventBusState.STOPPED`, `EventBusStoppedError`, `EventBusDisposedError`, `EventListenerLimitExceededError`.
+- `maxListeners` / `maxHandlersPerPattern` leak warnings with an `onWarning` hook; `onError` hook on the bus and registry.
+- Per-handler `timeoutMs` backed by `EventTimeoutError`.
+- `bus.emit()` accepts `EventInput` as well as `Event`; `bus.unregister(type, { removeHandlers })`.
+- `EventPublishResult.succeeded` / `failed` / `shortCircuited`; `EventEmitResult.succeeded` / `failed`; `EventHandlerExecutionResult.ok`.
+- Previously unexported helpers are now public: `matchesEventType`, `normalizeEventTypePattern`, `getEventAction`, `getEventTypeSegments`, `isSameEventNamespace`, `isChildEventType`, `createEventTypePattern`, `defineEventTypes`, `defineEventType`, `eventMatchesType`, `filterEventsByType`, `tryNormalizeEventType`, `assertEventType`, `createObjectEventPayload`, `createJsonEventPayload`, `cloneEventPayload`, `deepFreeze`, `stripUndefinedValues`, `mergeEventPayloads`, `staticPayload`, `definePayloadFactory`, `describeEventPayload`, `isRegisteredEventMiddleware`, `isEventEmitResult`.
+- `EventInput.id` / `correlationId` accept plain strings.
 
-  ```bash
-  # Old
-  npm install @zudojs/cli
-  npm install @zudojs/errors
+### Packaging
 
-  # New
-  npm install zudojs-cli
-  npm install @zudojs/errors
-  ```
+- Sourcemaps are no longer published; `sideEffects: false`; tests are type-checked (`tsconfig.test.json`).
 
-### Patch Changes
+## 0.1.0
 
-- Updated dependencies [[`16f14c3`](https://github.com/oyinlola-tech/zudo/commit/16f14c36d05f664d914bc6e1b9de70f67ff55860)]:
-  - @zudojs/constants@1.0.0
-  - @zudojs/errors@1.0.0
-
-## 0.1.2
-
-### Patch Changes
-
-- [`8b4c2fe`](https://github.com/oyinlola-tech/zudo/commit/8b4c2febb0d91668bc23fd69f06fc94647abb908) Thanks [@oyinlola-tech](https://github.com/oyinlola-tech)! - Fix changeset validation workflow and publish all packages to npm.
-- Updated dependencies [[`8b4c2fe`](https://github.com/oyinlola-tech/zudo/commit/8b4c2febb0d91668bc23fd69f06fc94647abb908)]:
-  - @zudojs/errors@0.1.2
-  - @zudojs/constants@0.1.2
-
-## 0.1.1
-
-### Patch Changes
-
-- [`35faf04`](https://github.com/oyinlola-tech/zudo/commit/35faf049b7ff9e300cf2030f48ac108813c912c4) Thanks [@oyinlola-tech](https://github.com/oyinlola-tech)! - Initial publication of all Zudojs packages with namespace migration, new middleware, and fixes.
-- Updated dependencies [[`35faf04`](https://github.com/oyinlola-tech/zudo/commit/35faf049b7ff9e300cf2030f48ac108813c912c4)]:
-  - @zudojs/errors@0.1.1
-  - @zudojs/constants@0.1.1
+- Initial release under the `@zudojs` scope.
