@@ -5,6 +5,7 @@ import {
   createMockAdapterRegistry,
   createMockHealth,
   AdapterRegistry,
+  AdapterNotFoundError,
 } from "../src/index.js";
 
 describe("AdapterRegistry", () => {
@@ -50,6 +51,61 @@ describe("AdapterRegistry", () => {
 
     registry.clear();
 
+    expect(registry.size).toBe(0);
+  });
+
+  it("require() returns a registered adapter or throws AdapterNotFoundError", () => {
+    const registry = new AdapterRegistry();
+    const adapter = createMockAdapter({ name: "test" });
+    registry.register(adapter);
+
+    expect(registry.require("test")).toBe(adapter);
+    expect(() => registry.require("missing")).toThrow(AdapterNotFoundError);
+  });
+
+  it("removeAndDispose() stops and disposes the adapter", async () => {
+    const calls: string[] = [];
+    const registry = new AdapterRegistry();
+    registry.register(
+      createMockAdapter({
+        name: "disposable",
+        stop: () => {
+          calls.push("stop");
+        },
+        dispose: () => {
+          calls.push("dispose");
+        },
+      }),
+    );
+
+    expect(await registry.removeAndDispose("disposable")).toBe(true);
+    expect(calls).toEqual(["stop", "dispose"]);
+    expect(registry.has("disposable")).toBe(false);
+    expect(await registry.removeAndDispose("disposable")).toBe(false);
+  });
+
+  it("disposeAll() disposes every adapter and aggregates failures", async () => {
+    const disposed: string[] = [];
+    const registry = new AdapterRegistry();
+    registry.register(
+      createMockAdapter({
+        name: "ok",
+        dispose: () => {
+          disposed.push("ok");
+        },
+      }),
+    );
+    registry.register(
+      createMockAdapter({
+        name: "broken",
+        dispose: () => {
+          throw new Error("cannot release");
+        },
+      }),
+    );
+
+    await expect(registry.disposeAll()).rejects.toThrow(AggregateError);
+    expect(disposed).toEqual(["ok"]);
     expect(registry.size).toBe(0);
   });
 });
