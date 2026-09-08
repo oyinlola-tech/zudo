@@ -20,7 +20,8 @@
     search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
     menu: '<svg class="ic-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg><svg class="ic-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
     up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
-    mark: '<svg class="zh-mark" viewBox="0 0 80 80" fill="none" aria-hidden="true"><rect x="2" y="2" width="76" height="76" fill="#C0392B" stroke="#FAFAF9" stroke-width="4"/><path d="M18 22h44L18 58h44" stroke="#FAFAF9" stroke-width="9" stroke-linecap="square" stroke-linejoin="miter" fill="none"/></svg>',
+    mark: '<svg class="zh-mark" viewBox="0 0 80 80" fill="none" aria-hidden="true"><rect x="3" y="3" width="74" height="74" fill="#C0392B" stroke="#FAFAF9" stroke-width="6"/><path d="M20 24h40L20 56h40" stroke="#FAFAF9" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter" fill="none"/></svg>',
+    word: '<svg class="zh-wordmark" viewBox="0 0 220 44" fill="none" aria-hidden="true"><g stroke="currentColor" stroke-width="12" stroke-linecap="square" stroke-linejoin="miter"><path d="M6 6H34L6 38H34"/><path d="M64 6V38H92V6"/><path d="M122 6H140L150 16V28L140 38H122Z"/><path d="M180 6H208V38H180Z"/></g></svg>',
   };
 
   /* ---------- navigation model ---------- */
@@ -130,7 +131,7 @@
       '<header class="zh" id="zudoHeader">' +
         '<div class="zh-inner">' +
           '<a class="zh-brand" href="/" aria-label="Zudo home">' + ICON.mark +
-            '<span class="zh-word">ZUDO</span><span class="zh-ver">v' + VERSION + '</span></a>' +
+            '<span class="zh-word">' + ICON.word + '<span class="sr-only">Zudo</span></span><span class="zh-ver">v' + VERSION + '</span></a>' +
           '<nav class="zh-nav" aria-label="Primary">' + links + '</nav>' +
           '<div class="zh-actions">' +
             '<button type="button" class="zh-btn zh-search" id="zudoSearchTrigger" aria-label="Search documentation">' +
@@ -182,7 +183,7 @@
         '<div class="zf-inner">' +
           '<div class="zf-grid">' +
             '<div class="zf-brand">' +
-              '<a class="zh-brand" href="/" aria-label="Zudo home">' + ICON.mark + '<span class="zh-word">ZUDO</span><span class="zh-ver">v' + VERSION + '</span></a>' +
+              '<a class="zh-brand" href="/" aria-label="Zudo home">' + ICON.mark + '<span class="zh-word">' + ICON.word + '<span class="sr-only">Zudo</span></span><span class="zh-ver">v' + VERSION + '</span></a>' +
               '<p class="zf-tagline">A modular TypeScript framework for scalable, maintainable, production-ready applications.</p>' +
               '<div class="zf-install"><code><span class="p">$</span> npm install @zudojs/core</code>' +
                 '<button type="button" id="zudoFooterCopy" aria-label="Copy install command">COPY</button></div>' +

@@ -132,8 +132,21 @@
     });
   }
 
+  /* ---------- tables scroll instead of overflowing ---------- */
+
+  function initTables() {
+    document.querySelectorAll('main table').forEach(function (t) {
+      if (t.parentNode.classList.contains('table-wrap')) return;
+      var wrap = document.createElement('div');
+      wrap.className = 'table-wrap';
+      t.parentNode.insertBefore(wrap, t);
+      wrap.appendChild(t);
+    });
+  }
+
   function init() {
     initSidebar();
+    initTables();
     initToc();
     initCopy();
     initAnchors();
