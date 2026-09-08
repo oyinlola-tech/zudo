@@ -537,3 +537,500 @@ describe("index exports", () => {
     expect(mod.CacheOperation.GET).toBe("get");
   });
 });
+
+// ─── Regression: namespace is a scope boundary, not a pattern ──────────────
+
+describe("CacheService — namespace validation", () => {
+  // Regression (CACHE-01, CRITICAL): buildPattern validated nothing, so
+  // `clear({ namespace: req.params.tenantId })` with tenantId = "*" was a
+  // full-cache-destruction primitive that reported a plausible count.
+  it("refuses a wildcard namespace on clear()", async () => {
+    await service.set("s1", "a", { namespace: "tenant-a" });
+    await service.set("s2", "b", { namespace: "tenant-b" });
+
+    await expect(service.clear({ namespace: "*" })).rejects.toThrow();
+
+    expect(await service.has("s1", { namespace: "tenant-a" })).toBe(true);
+    expect(await service.has("s2", { namespace: "tenant-b" })).toBe(true);
+  });
+
+  it("refuses a namespace containing the separator", async () => {
+    await expect(service.clear({ namespace: "a:b" })).rejects.toThrow();
+    await expect(
+      service.invalidateByPattern("*", { namespace: "a:*" }),
+    ).rejects.toThrow();
+  });
+
+  it("refuses a malformed pattern", async () => {
+    await expect(service.clear({ pattern: "a:b" })).rejects.toThrow();
+    await expect(service.invalidateByPattern("user (1)")).rejects.toThrow();
+  });
+
+  // Regression (CACHE-01, pattern side): on a service with no namespace,
+  // invalidateByPattern("*") used to match — and delete — every namespaced
+  // key the service ever wrote.
+  it("does not let a pattern reach into a namespace it did not name", async () => {
+    await service.set("plain", "a");
+    await service.set("scoped", "b", { namespace: "tenant-a" });
+
+    const result = await service.invalidateByPattern("*");
+    expect(result.cleared).toBe(1);
+    expect(await service.has("scoped", { namespace: "tenant-a" })).toBe(true);
+  });
+
+  it("spans namespaces only with an explicit ** pattern", async () => {
+    await service.set("plain", "a");
+    await service.set("scoped", "b", { namespace: "tenant-a" });
+    const result = await service.invalidateByPattern("**");
+    expect(result.cleared).toBe(2);
+  });
+});
+
+// ─── Regression: cross-namespace tag isolation ─────────────────────────────
+
+describe("CacheService — tag scoping", () => {
+  // Regression (CACHE-03): tags lived in one flat global map, so tenant A's
+  // invalidateByTag(["users"]) silently purged tenant B's entries and the
+  // reported count included the foreign deletions.
+  it("invalidateByTag never touches another namespace", async () => {
+    const tenantA = createCacheService({
+      adapter,
+      config: { namespace: "tenant-a" },
+    });
+    const tenantB = createCacheService({
+      adapter,
+      config: { namespace: "tenant-b" },
+    });
+
+    await tenantA.set("u1", "a", { tags: ["users"] });
+    await tenantB.set("u1", "b", { tags: ["users"] });
+
+    const result = await tenantA.invalidateByTag(["users"]);
+
+    expect(result.cleared).toBe(1);
+    expect((await tenantA.get("u1")).hit).toBe(false);
+    expect((await tenantB.get("u1")).hit).toBe(true);
+  });
+
+  it("honours a per-call tag namespace", async () => {
+    await service.set("k1", "a", { namespace: "tenant-a", tags: ["users"] });
+    await service.set("k2", "b", { namespace: "tenant-b", tags: ["users"] });
+
+    const result = await service.invalidateByTag(["users"], {
+      namespace: "tenant-a",
+    });
+    expect(result.cleared).toBe(1);
+    expect(await service.has("k2", { namespace: "tenant-b" })).toBe(true);
+  });
+
+  it("rejects malformed tags", async () => {
+    await expect(service.set("k", "v", { tags: [""] })).rejects.toThrow();
+    await expect(service.invalidateByTag([""])).rejects.toThrow();
+  });
+});
+
+// ─── Regression: locks are scoped and qualified ────────────────────────────
+
+describe("CacheService — lock scoping", () => {
+  // Regression (CACHE-15): withLock passed the raw key straight through, so
+  // lock names were neither prefixed nor namespaced and two tenants using
+  // the same name collided.
+  it("does not contend across namespaces", async () => {
+    let inner = "not-run";
+    await service.withLock(
+      "import",
+      async () => {
+        await service.withLock(
+          "import",
+          async () => {
+            inner = "ran";
+          },
+          { namespace: "tenant-b", retryAttempts: 0 },
+        );
+      },
+      { namespace: "tenant-a", retryAttempts: 0 },
+    );
+    expect(inner).toBe("ran");
+  });
+
+  it("still contends within one namespace", async () => {
+    await expect(
+      service.withLock(
+        "import",
+        async () =>
+          service.withLock("import", async () => "inner", {
+            retryAttempts: 0,
+          }),
+        { retryAttempts: 0 },
+      ),
+    ).rejects.toThrow(/Could not acquire lock/);
+  });
+
+  it("validates the lock name like a key", async () => {
+    await expect(service.withLock("bad:name", async () => 1)).rejects.toThrow();
+  });
+});
+
+// ─── Regression: enabled: false covers every entry point ───────────────────
+
+describe("CacheService — disabled covers invalidation, locks and health", () => {
+  const disabledService = () =>
+    createCacheService({ adapter, config: { enabled: false } });
+
+  // Regression (CACHE-12): the kill switch guarded only get/set/delete/has/
+  // clear/ttl/expire/getOrSet, so a disabled cache still issued deletes and
+  // contended locks against a store the operator had taken out of service.
+  it("returns cleared: 0 from invalidateByTag without touching the adapter", async () => {
+    await service.set("k", "v", { tags: ["t"] });
+    const disabled = disabledService();
+    expect(await disabled.invalidateByTag(["t"])).toEqual({ cleared: 0 });
+    expect((await service.get("k")).hit).toBe(true);
+  });
+
+  it("returns cleared: 0 from invalidateByPattern without touching the adapter", async () => {
+    await service.set("user.1", "v");
+    const disabled = disabledService();
+    expect(await disabled.invalidateByPattern("user.*")).toEqual({
+      cleared: 0,
+    });
+    expect((await service.get("user.1")).hit).toBe(true);
+  });
+
+  it("throws rather than running a critical section unlocked", async () => {
+    const disabled = disabledService();
+    let ran = false;
+    await expect(
+      disabled.withLock("resource", async () => {
+        ran = true;
+      }),
+    ).rejects.toMatchObject({ code: "CACHE_DISABLED" });
+    expect(ran).toBe(false);
+  });
+
+  it("reports healthy with a disabled marker", async () => {
+    const health = await disabledService().healthCheck();
+    expect(health.healthy).toBe(true);
+    expect(health.disabled).toBe(true);
+  });
+});
+
+// ─── Regression: failSilently covers every fallible method ─────────────────
+
+describe("CacheService — failSilently coverage", () => {
+  const brokenService = () => {
+    const broken = createMemoryCacheAdapter();
+    const down = async () => {
+      throw new Error("adapter down");
+    };
+    broken.get = down as typeof broken.get;
+    broken.set = down as typeof broken.set;
+    broken.delete = down as typeof broken.delete;
+    broken.has = down as typeof broken.has;
+    broken.clear = down as typeof broken.clear;
+    broken.ttl = down as typeof broken.ttl;
+    broken.expire = down as typeof broken.expire;
+    return createCacheService({
+      adapter: broken,
+      config: { failSilently: true },
+    });
+  };
+
+  // Regression (CACHE-13): clear/ttl/expire/invalidate* had no try/catch at
+  // all, so the first cache.clear() during an incident took the request down
+  // even though the operator had switched the cache to non-load-bearing.
+  it("degrades clear() to cleared: 0", async () => {
+    const svc = brokenService();
+    await expect(svc.clear()).resolves.toEqual({ cleared: 0 });
+    await expect(svc.clear({ pattern: "user.*" })).resolves.toEqual({
+      cleared: 0,
+    });
+  });
+
+  it("degrades ttl() to undefined and expire() to false", async () => {
+    const svc = brokenService();
+    await expect(svc.ttl("k")).resolves.toBeUndefined();
+    await expect(svc.expire("k", 1_000)).resolves.toBe(false);
+  });
+
+  it("degrades invalidateByTag/invalidateByPattern to cleared: 0", async () => {
+    const svc = brokenService();
+    await expect(svc.invalidateByTag(["t"])).resolves.toEqual({ cleared: 0 });
+    await expect(svc.invalidateByPattern("user.*")).resolves.toEqual({
+      cleared: 0,
+    });
+  });
+
+  it("still throws on key and pattern validation errors", async () => {
+    const svc = brokenService();
+    await expect(svc.get("bad:key")).rejects.toThrow();
+    await expect(svc.clear({ namespace: "*" })).rejects.toThrow();
+  });
+});
+
+// ─── Regression: metadata round-trips ──────────────────────────────────────
+
+describe("CacheService — entry metadata", () => {
+  // Regression (CACHE-08): CacheService.set had no metadata parameter, and
+  // getOrSet accepted one and silently dropped it; nothing could read the
+  // entry back.
+  it("round-trips metadata through set/get", async () => {
+    await service.set("k", "v", { metadata: { source: "db" } });
+    const result = await service.get<string>("k");
+    expect(result.entry?.metadata).toEqual({ source: "db" });
+    expect(result.entry?.tags).toEqual([]);
+  });
+
+  it("round-trips metadata supplied through getOrSet", async () => {
+    await service.getOrSet("k", async () => "v", {
+      metadata: { source: "compute" },
+    });
+    const result = await service.get("k");
+    expect(result.entry?.metadata).toEqual({ source: "compute" });
+  });
+
+  it("carries the deserialized value on entry when a serializer is set", async () => {
+    const { JsonCacheSerializer } = await import("../src/serializer.js");
+    const svc = createCacheService({
+      adapter: createMemoryCacheAdapter(),
+      config: { serializer: new JsonCacheSerializer() },
+    });
+    await svc.set("k", { n: 1 }, { metadata: { v: 2 } });
+    const result = await svc.get<{ n: number }>("k");
+    expect(result.value).toEqual({ n: 1 });
+    expect(result.entry?.value).toEqual({ n: 1 });
+    expect(result.entry?.metadata).toEqual({ v: 2 });
+  });
+});
+
+// ─── Regression: events are reachable ──────────────────────────────────────
+
+describe("CacheService — subscribe", () => {
+  // Regression (CACHE-06): DefaultCacheStore emitted six event types and
+  // offered subscribe(), but the field was typed CacheStore and private, so
+  // every event was constructed on the hot path and dispatched to nobody.
+  it("delivers hit, miss, set and delete events", async () => {
+    const seen: string[] = [];
+    const subscription = service.subscribe("*", (event) => {
+      seen.push(event.type);
+    });
+
+    await service.set("k", "v");
+    await service.get("k");
+    await service.get("missing");
+    await service.delete("k");
+
+    expect(seen).toContain("cache.set");
+    expect(seen).toContain("cache.hit");
+    expect(seen).toContain("cache.miss");
+    expect(seen).toContain("cache.delete");
+    subscription.unsubscribe();
+  });
+
+  it("stops delivering after unsubscribe", async () => {
+    let count = 0;
+    const subscription = service.subscribe("cache.set", () => {
+      count++;
+    });
+    await service.set("a", 1);
+    subscription.unsubscribe();
+    await service.set("b", 2);
+    expect(count).toBe(1);
+  });
+});
+
+// ─── Regression: middleware is reachable from the factory ──────────────────
+
+describe("CacheService — middlewares", () => {
+  // Regression (CACHE-07): createCacheStore accepted middlewares but
+  // CacheService never forwarded any and CacheConfig had no field for them,
+  // so the documented extension point was unreachable from the only
+  // documented entry point.
+  it("runs configured middlewares around adapter operations", async () => {
+    const calls: string[] = [];
+    const svc = createCacheService({
+      adapter: createMemoryCacheAdapter(),
+      config: {
+        middlewares: [
+          async (ctx, next) => {
+            calls.push(String(ctx.operation));
+            return next();
+          },
+        ],
+      },
+    });
+    await svc.set("k", "v");
+    const result = await svc.get<string>("k");
+    expect(result.value).toBe("v");
+    expect(calls).toEqual(["set", "get"]);
+  });
+});
+
+// ─── Regression: metrics surfaces are reachable ────────────────────────────
+
+describe("CacheService — metrics accessors", () => {
+  // Regression (CACHE-11): latency samples, histograms and hot keys were
+  // computed and retained on every operation for accessors no consumer of
+  // createCacheService could reach.
+  it("exposes latency stats, histogram, hot keys and reset", async () => {
+    await service.set("k", "v");
+    await service.get("k");
+    await service.get("k");
+
+    const latency = service.getLatencyStats("get" as never);
+    expect(latency!.count).toBeGreaterThan(0);
+
+    const histogram = service.getLatencyHistogram("get" as never);
+    expect(histogram!.length).toBeGreaterThan(0);
+
+    const hot = service.getHotKeys(5);
+    expect(hot!.length).toBeGreaterThan(0);
+    expect(hot![0]!.key).toContain("k");
+
+    service.resetStats();
+    expect(service.getStats()!.hits).toBe(0);
+    expect(service.getHotKeys()).toEqual([]);
+  });
+
+  it("returns null when stats collection is disabled", () => {
+    const svc = createCacheService({
+      adapter,
+      config: { collectStats: false },
+    });
+    expect(svc.getStats()).toBeNull();
+    expect(svc.getHotKeys()).toBeNull();
+    expect(svc.getLatencyStats("get" as never)).toBeNull();
+  });
+});
+
+// ─── size() ────────────────────────────────────────────────────────────────
+
+describe("CacheService — size", () => {
+  it("reports the adapter's live entry count", async () => {
+    await service.set("a", 1);
+    await service.set("b", 2);
+    expect(await service.size()).toBe(2);
+  });
+
+  it("returns undefined when disabled", async () => {
+    const disabled = createCacheService({
+      adapter,
+      config: { enabled: false },
+    });
+    expect(await disabled.size()).toBeUndefined();
+  });
+});
+
+// ─── Batch API ─────────────────────────────────────────────────────────────
+
+describe("CacheService — batch", () => {
+  // The exported CacheBatchOperation/CacheBatchResult types described a
+  // batch API that did not exist (CACHE-26); this is it.
+  it("applies get/set/delete in order and reports each result", async () => {
+    const results = await service.batch([
+      { type: "set", key: "a", value: 1 },
+      { type: "get", key: "a" },
+      { type: "delete", key: "a" },
+      { type: "get", key: "a" },
+    ]);
+
+    expect(results).toHaveLength(4);
+    expect(results.every((r) => r.success)).toBe(true);
+    expect((results[1]!.result as { value: unknown }).value).toBe(1);
+    expect((results[2]!.result as { deleted: boolean }).deleted).toBe(true);
+    expect((results[3]!.result as { hit: boolean }).hit).toBe(false);
+  });
+
+  it("reports a failing operation without aborting the batch", async () => {
+    const results = await service.batch([
+      { type: "set", key: "bad:key", value: 1 },
+      { type: "set", key: "good", value: 2 },
+    ]);
+    expect(results[0]!.success).toBe(false);
+    expect(results[0]!.error).toBeDefined();
+    expect(results[1]!.success).toBe(true);
+    expect((await service.get("good")).hit).toBe(true);
+  });
+
+  it("honours set options and a batch-level namespace", async () => {
+    await service.batch(
+      [{ type: "set", key: "k", value: "v", options: { tags: ["t"] } }],
+      { namespace: "tenant-a" },
+    );
+    expect(await service.has("k", { namespace: "tenant-a" })).toBe(true);
+    expect(await service.has("k")).toBe(false);
+  });
+});
+
+// ─── Regression: getOrSet with forceRefresh alongside concurrent callers ───
+
+describe("CacheService — getOrSet forceRefresh concurrency", () => {
+  it("does not leave a stale in-flight entry behind", async () => {
+    let calls = 0;
+    const slow = async () => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 20));
+      return `v${calls}`;
+    };
+
+    const [refreshed, normal] = await Promise.all([
+      service.getOrSet("k", slow, { forceRefresh: true }),
+      service.getOrSet("k", slow),
+    ]);
+
+    expect(refreshed.value).toBeDefined();
+    expect(normal.value).toBeDefined();
+    // Whatever interleaving occurred, the in-flight map must be empty and a
+    // later call must serve the cached value rather than recompute.
+    const after = await service.getOrSet("k", async () => "recomputed");
+    expect(after.cached).toBe(true);
+    expect(after.value).not.toBe("recomputed");
+  });
+});
+
+// ─── disconnect() clears service-local state ───────────────────────────────
+
+describe("CacheService — disconnect", () => {
+  it("drops tag mappings and in-flight computations", async () => {
+    await service.set("k", "v", { tags: ["t"] });
+    await service.disconnect();
+    // The tag mappings are gone, so a later invalidateByTag clears nothing.
+    expect(await service.invalidateByTag(["t"])).toEqual({ cleared: 0 });
+  });
+});
+
+// ─── Regression: locks can be shared across service instances ──────────────
+
+describe("CacheService — shared lock store", () => {
+  // Regression (CACHE-15): CacheService called createLockManager() per
+  // instance, so two services in one process shared no locks at all, while
+  // the exported defaultLockStore singleton was used by nothing.
+  it("two services sharing a lock store contend with each other", async () => {
+    const { InMemoryLockStore } = await import("../src/lock.js");
+    const lockStore = new InMemoryLockStore();
+    const a = createCacheService({ adapter, config: { lockStore } });
+    const b = createCacheService({ adapter, config: { lockStore } });
+
+    await expect(
+      a.withLock(
+        "rebuild",
+        async () =>
+          b.withLock("rebuild", async () => "inner", {
+            retryAttempts: 0,
+          }),
+        { retryAttempts: 0 },
+      ),
+    ).rejects.toThrow(/Could not acquire lock/);
+  });
+
+  it("services with independent stores do not contend", async () => {
+    const a = createCacheService({ adapter });
+    const b = createCacheService({ adapter });
+    const result = await a.withLock(
+      "rebuild",
+      async () =>
+        b.withLock("rebuild", async () => "inner", { retryAttempts: 0 }),
+      { retryAttempts: 0 },
+    );
+    expect(result).toBe("inner");
+  });
+});

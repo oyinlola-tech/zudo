@@ -9,7 +9,6 @@
 import type {
   HttpMiddleware,
   HttpMiddlewareContext,
-  HttpMiddlewareResult,
 } from "../../httpMiddleware.type.js";
 
 import type { HttpResponseContext as ResponseContext } from "../../../httpResponse/httpResponse.context.js";

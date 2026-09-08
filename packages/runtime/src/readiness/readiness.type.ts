@@ -52,4 +52,9 @@ export interface ReadinessOptions {
    * @default true
    */
   readonly autoMarkReady?: boolean;
+  /**
+   * How long a single check may run before it is recorded as failed, in
+   * milliseconds. Defaults to 5000; set to `0` to disable the bound.
+   */
+  readonly checkTimeout?: number;
 }

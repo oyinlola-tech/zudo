@@ -69,11 +69,16 @@ export {
   normalizePath,
   validateRequestTarget,
   isSafeUrl,
+  isPrivateHostname,
+  containsTraversal,
+  fullyDecodeUri,
 } from "./url/index.js";
 
 /* ─── Body Validation ────────────────────────────────────────────────────── */
 export {
   DEFAULT_BODY_LIMITS,
+  parseMediaType,
+  validateBodyFraming,
   validateContentLength,
   validateBodySize,
   getBodyLimitForContentType,
@@ -106,11 +111,13 @@ export { cors } from "./cors/cors.namespace.js";
 export {
   generateCsrfToken,
   validateCsrfToken,
+  verifyDoubleSubmit,
   requiresCsrfProtection,
   extractCsrfTokenFromHeaders,
   extractCsrfTokenFromCookies,
   generateCsrfCookie,
 } from "./csrf/index.js";
+export type { CsrfTokenOptions, CsrfCookieOptions } from "./csrf/index.js";
 
 /* ─── Rate Limiting ──────────────────────────────────────────────────────── */
 export {
@@ -119,6 +126,7 @@ export {
   createRateLimiter,
   extractClientIp,
 } from "./rateLimit/index.js";
+export type { RateLimiterOptions, ClientIpOptions } from "./rateLimit/index.js";
 export { rateLimit } from "./rateLimit/rateLimit.namespace.js";
 
 /* ─── Security Headers ───────────────────────────────────────────────────── */
@@ -138,6 +146,7 @@ export {
   sanitizeString,
   sanitizeObject,
   isSafeString,
+  withoutStickyFlags,
   detectThreats,
   escapeHtml,
   stripHtml,

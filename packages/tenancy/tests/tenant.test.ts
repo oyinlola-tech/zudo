@@ -15,11 +15,11 @@ describe("createTenantId", () => {
   });
 
   it("throws on empty string", () => {
-    expect(() => createTenantId("")).toThrow("TenantId cannot be empty");
+    expect(() => createTenantId("")).toThrow(/Invalid tenant ID/);
   });
 
   it("throws on whitespace-only string", () => {
-    expect(() => createTenantId("   ")).toThrow("TenantId cannot be empty");
+    expect(() => createTenantId("   ")).toThrow(/Invalid tenant ID/);
   });
 });
 
@@ -43,7 +43,7 @@ describe("createMemoryTenantRepository", () => {
   it("stores and retrieves tenants by ID", async () => {
     const repo = createMemoryTenantRepository();
     repo.add(tenantA);
-    expect(await repo.findById("acme")).toEqual(tenantA);
+    expect(await repo.findById(createTenantId("acme"))).toEqual(tenantA);
   });
 
   it("retrieves tenants by slug", async () => {
@@ -54,7 +54,7 @@ describe("createMemoryTenantRepository", () => {
 
   it("returns undefined for missing tenants", async () => {
     const repo = createMemoryTenantRepository();
-    expect(await repo.findById("missing")).toBeUndefined();
+    expect(await repo.findById(createTenantId("missing"))).toBeUndefined();
   });
 
   it("lists all tenants", () => {
@@ -67,8 +67,8 @@ describe("createMemoryTenantRepository", () => {
   it("removes tenants", async () => {
     const repo = createMemoryTenantRepository();
     repo.add(tenantA);
-    repo.remove("acme");
-    expect(await repo.findById("acme")).toBeUndefined();
+    repo.remove(createTenantId("acme"));
+    expect(await repo.findById(createTenantId("acme"))).toBeUndefined();
   });
 });
 

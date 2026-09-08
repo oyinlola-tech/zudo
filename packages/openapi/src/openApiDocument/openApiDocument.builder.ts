@@ -1,198 +1,149 @@
-import type { OpenAPIDocument } from "../openApiTypes/openApiTypes.core.js";
+import type {
+  OpenAPIDocument,
+  OpenAPIExample,
+  OpenAPIHeader,
+  OpenAPIInfo,
+  OpenAPIParameter,
+  OpenAPIPathItem,
+  OpenAPIRequestBody,
+  OpenAPIResponse,
+  OpenAPISchema,
+  OpenAPISecurityRequirement,
+  OpenAPISecurityScheme,
+  OpenAPIServer,
+  OpenAPITag,
+} from "../openApiTypes/openApiTypes.core.js";
+import type { OpenAPIRoute } from "../openApiRegistry/openApiRegistry.type.js";
+import { OpenAPIRegistryImpl } from "../openApiRegistry/openApiRegistry.core.js";
 import { DEFAULT_OPENAPI_VERSION } from "../openApiConstants/openApiConstants.core.js";
 
 export interface OpenAPIDocumentOptions {
-  readonly info: {
-    readonly title: string;
-    readonly version: string;
-    readonly description?: string;
-    readonly summary?: string;
-    readonly termsOfService?: string;
-    readonly contact?: {
-      readonly name?: string;
-      readonly url?: string;
-      readonly email?: string;
-    };
-    readonly license?: { readonly name: string; readonly url?: string };
-  };
+  readonly info: OpenAPIInfo;
   readonly openapi?: string;
-  readonly servers?: readonly {
-    readonly url: string;
-    readonly description?: string;
-    readonly variables?: Readonly<
-      Record<
-        string,
-        {
-          readonly enum?: readonly string[];
-          readonly default: string;
-          readonly description?: string;
-        }
-      >
-    >;
-  }[];
-  readonly tags?: readonly {
-    readonly name: string;
-    readonly description?: string;
-  }[];
-  readonly security?: readonly Record<string, readonly string[]>[];
+  readonly servers?: readonly OpenAPIServer[];
+  readonly tags?: readonly OpenAPITag[];
+  readonly security?: readonly OpenAPISecurityRequirement[];
 }
 
-interface MutableDocument {
-  openapi: string;
-  info: {
-    title: string;
-    version: string;
-    description?: string;
-    summary?: string;
-    termsOfService?: string;
-    contact?: { name?: string; url?: string; email?: string };
-    license?: { name: string; url?: string };
-  };
-  servers?: {
-    url: string;
-    description?: string;
-    variables?: Record<
-      string,
-      { enum?: readonly string[]; default: string; description?: string }
-    >;
-  }[];
-  paths: Record<string, unknown>;
-  components?: Record<string, unknown>;
-  security?: Record<string, readonly string[]>[];
-  tags?: { name: string; description?: string }[];
-}
-
+/**
+ * Fluent builder for a document assembled by hand.
+ *
+ * It is a thin facade over {@link OpenAPIRegistryImpl}, so a document built
+ * this way and one generated from routes go through the same assembly and
+ * validation rules. Two independent assemblers is how the generated documents
+ * ended up unable to express servers, tags or security at all.
+ */
 export class OpenAPIDocumentBuilder {
-  private readonly document: MutableDocument;
+  private readonly registry: OpenAPIRegistryImpl;
 
   constructor(options: OpenAPIDocumentOptions) {
-    this.document = {
-      openapi: options.openapi ?? DEFAULT_OPENAPI_VERSION,
-      info: { ...options.info },
-      servers: options.servers?.map((s) => ({ ...s })),
-      paths: {},
-      components: {},
-      security: options.security?.map((s) => ({ ...s })),
-      tags: options.tags?.map((t) => ({ ...t })),
-    };
+    this.registry = new OpenAPIRegistryImpl(
+      options.openapi ?? DEFAULT_OPENAPI_VERSION,
+    );
+    this.registry.setInfo(options.info);
+    for (const server of options.servers ?? []) this.registry.addServer(server);
+    for (const tag of options.tags ?? []) this.registry.setTag(tag);
+    for (const requirement of options.security ?? []) {
+      this.registry.addSecurityRequirement(requirement);
+    }
   }
 
-  public version(version: string): this {
-    this.document.openapi = version;
+  /** The document's `info` object. */
+  public info(info: OpenAPIInfo): this {
+    this.registry.setInfo(info);
     return this;
   }
 
-  public addServer(server: {
-    readonly url: string;
-    readonly description?: string;
-    readonly variables?: Readonly<
-      Record<
-        string,
-        {
-          readonly enum?: readonly string[];
-          readonly default: string;
-          readonly description?: string;
-        }
-      >
-    >;
-  }): this {
-    this.document.servers = [...(this.document.servers ?? []), { ...server }];
+  public addServer(server: OpenAPIServer): this {
+    this.registry.addServer(server);
     return this;
   }
 
-  public addTag(tag: {
-    readonly name: string;
-    readonly description?: string;
-  }): this {
-    this.document.tags = [...(this.document.tags ?? []), { ...tag }];
+  public addTag(tag: OpenAPITag): this {
+    this.registry.setTag(tag);
     return this;
   }
 
-  public addSecurity(security: Record<string, readonly string[]>): this {
-    this.document.security = [
-      ...(this.document.security ?? []),
-      { ...security },
-    ];
+  public addSecurity(security: OpenAPISecurityRequirement): this {
+    this.registry.addSecurityRequirement(security);
     return this;
   }
 
-  public addPath(path: string, pathItem: Record<string, unknown>): this {
-    this.document.paths[path] = pathItem;
+  /** Adds one operation. Repeated method+path combinations replace. */
+  public addRoute(route: OpenAPIRoute): this {
+    this.registry.setRoute(route);
     return this;
   }
 
-  public addSchema(name: string, schema: unknown): this {
-    const components = this.document.components ?? {};
-    this.document.components = {
-      ...components,
-      schemas: { ...(components.schemas ?? {}), [name]: schema },
-    };
+  /**
+   * Adds a whole path item.
+   *
+   * Each operation on it is registered individually, so the document keeps
+   * one path entry per path with the methods merged, as the specification
+   * requires.
+   */
+  public addPath(path: string, pathItem: OpenAPIPathItem): this {
+    const methods = [
+      "get",
+      "put",
+      "post",
+      "delete",
+      "options",
+      "head",
+      "patch",
+      "trace",
+    ] as const;
+
+    for (const method of methods) {
+      const operation = pathItem[method];
+      if (operation) this.registry.setRoute({ method, path, operation });
+    }
     return this;
   }
 
-  public addResponse(name: string, response: unknown): this {
-    const components = this.document.components ?? {};
-    this.document.components = {
-      ...components,
-      responses: { ...(components.responses ?? {}), [name]: response },
-    };
+  public addSchema(name: string, schema: OpenAPISchema): this {
+    this.registry.registerSchema(name, schema);
     return this;
   }
 
-  public addParameter(name: string, parameter: unknown): this {
-    const components = this.document.components ?? {};
-    this.document.components = {
-      ...components,
-      parameters: { ...(components.parameters ?? {}), [name]: parameter },
-    };
+  public addResponse(name: string, response: OpenAPIResponse): this {
+    this.registry.registerResponse(name, response);
     return this;
   }
 
-  public addSecurityScheme(name: string, scheme: unknown): this {
-    const components = this.document.components ?? {};
-    this.document.components = {
-      ...components,
-      securitySchemes: {
-        ...(components.securitySchemes ?? {}),
-        [name]: scheme,
-      },
-    };
+  public addParameter(name: string, parameter: OpenAPIParameter): this {
+    this.registry.registerParameter(name, parameter);
+    return this;
+  }
+
+  public addRequestBody(name: string, body: OpenAPIRequestBody): this {
+    this.registry.registerRequestBody(name, body);
+    return this;
+  }
+
+  public addHeader(name: string, header: OpenAPIHeader): this {
+    this.registry.registerHeader(name, header);
+    return this;
+  }
+
+  public addExample(name: string, example: OpenAPIExample): this {
+    this.registry.registerExample(name, example);
+    return this;
+  }
+
+  public addSecurityScheme(name: string, scheme: OpenAPISecurityScheme): this {
+    this.registry.registerSecurityScheme(name, scheme);
     return this;
   }
 
   public build(): Readonly<OpenAPIDocument> {
-    const paths =
-      Object.keys(this.document.paths).length === 0
-        ? {}
-        : (this.document.paths as OpenAPIDocument["paths"]);
-    const components: Record<string, unknown> = {};
-    if (this.document.components) {
-      for (const [key, value] of Object.entries(this.document.components)) {
-        if (
-          value &&
-          typeof value === "object" &&
-          Object.keys(value).length > 0
-        ) {
-          components[key] = Object.freeze({ ...(value as object) });
-        }
-      }
-    }
-    return Object.freeze({
-      openapi: this.document.openapi,
-      info: Object.freeze(this.document.info) as OpenAPIDocument["info"],
-      servers: this.document.servers?.length
-        ? Object.freeze(this.document.servers)
-        : undefined,
-      paths: Object.freeze(paths) as OpenAPIDocument["paths"],
-      ...(Object.keys(components).length > 0
-        ? { components: Object.freeze(components) }
-        : {}),
-      security: this.document.security?.length
-        ? Object.freeze(this.document.security)
-        : undefined,
-      tags: this.document.tags?.length
-        ? Object.freeze(this.document.tags)
-        : undefined,
-    }) as Readonly<OpenAPIDocument>;
+    return this.registry.generate();
   }
+}
+
+/** Creates a document builder. */
+export function createOpenAPIDocumentBuilder(
+  options: OpenAPIDocumentOptions,
+): OpenAPIDocumentBuilder {
+  return new OpenAPIDocumentBuilder(options);
 }

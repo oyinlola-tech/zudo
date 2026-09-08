@@ -24,4 +24,9 @@ export {
 
 export type { GuardableRequest, GuardResult } from "./httpSecurity.guard.js";
 
-export { guardRequest } from "./httpSecurity.guard.js";
+export {
+  guardRequest,
+  createRequestGuard,
+  assertRequestAllowed,
+  HttpRequestGuardError,
+} from "./httpSecurity.guard.js";

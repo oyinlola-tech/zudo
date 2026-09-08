@@ -75,8 +75,14 @@ export async function parseRequestBody<T = ParsedBody>(
 
   const format = detectBodyFormat(contentType);
 
-  if (options.strictContentType && format === "raw" && contentType) {
-    throw new UnsupportedBodyTypeError(contentType);
+  /*
+   * `strictContentType` means "only accept media types this parser
+   * understands". Omitting the header is easier than supplying an
+   * unrecognised one, so a missing Content-Type must be rejected too or the
+   * option only blocks the harmless case.
+   */
+  if (options.strictContentType && format === "raw") {
+    throw new UnsupportedBodyTypeError(contentType ?? "(missing)");
   }
 
   const body = await parseByFormat<T>(request, format, options);
@@ -138,7 +144,6 @@ async function parseByFormat<T>(
         request,
         limit: options.limit ?? DEFAULT_BODY_LIMIT,
         encoding: options.encoding ?? DEFAULT_BODY_ENCODING,
-        strict: options.strict,
       }) as T;
 
     case "multipart":
@@ -151,6 +156,10 @@ async function parseByFormat<T>(
 
         maxFields: options.multipart?.maxFields,
 
+        maxFieldSize: options.multipart?.maxFieldSize,
+
+        maxParts: options.multipart?.maxParts,
+
         encoding:
           options.multipart?.encoding ??
           options.encoding ??
@@ -162,7 +171,6 @@ async function parseByFormat<T>(
         request,
         limit: options.limit ?? DEFAULT_BODY_LIMIT,
         encoding: options.encoding ?? DEFAULT_BODY_ENCODING,
-        strict: options.strict,
       }) as T;
 
     case "raw":
@@ -171,7 +179,6 @@ async function parseByFormat<T>(
         request,
         limit: options.limit ?? DEFAULT_BODY_LIMIT,
         encoding: options.encoding ?? DEFAULT_BODY_ENCODING,
-        strict: options.strict,
       }) as T;
   }
 }
@@ -200,7 +207,6 @@ export async function parseFormBody(
     request,
     limit: options.limit ?? DEFAULT_BODY_LIMIT,
     encoding: options.encoding ?? DEFAULT_BODY_ENCODING,
-    strict: options.strict,
   });
 }
 
@@ -212,7 +218,6 @@ export async function parseTextBody(
     request,
     limit: options.limit ?? DEFAULT_BODY_LIMIT,
     encoding: options.encoding ?? DEFAULT_BODY_ENCODING,
-    strict: options.strict,
   });
 }
 
@@ -224,7 +229,6 @@ export async function parseRawBody(
     request,
     limit: options.limit ?? DEFAULT_BODY_LIMIT,
     encoding: options.encoding ?? DEFAULT_BODY_ENCODING,
-    strict: options.strict,
   });
 }
 
@@ -240,6 +244,10 @@ export async function parseMultipartBody(
     maxFiles: options.multipart?.maxFiles,
 
     maxFields: options.multipart?.maxFields,
+
+    maxFieldSize: options.multipart?.maxFieldSize,
+
+    maxParts: options.multipart?.maxParts,
 
     encoding:
       options.multipart?.encoding ?? options.encoding ?? DEFAULT_BODY_ENCODING,
@@ -269,6 +277,14 @@ export function createBodyParser(options: BodyParserOptions = {}): BodyParser {
 /* Request Inspection                                                         */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Reports whether a request is framed as carrying a body.
+ *
+ * A message carrying both `Content-Length` and `Transfer-Encoding` is
+ * rejected rather than being resolved in favour of either framing — RFC 9112
+ * §6.1 requires that, and silently picking one is the CL.TE half of a
+ * request-smuggling differential.
+ */
 export function hasRequestBody(request: IncomingMessage): boolean {
   const method = request.method?.toUpperCase();
 
@@ -315,21 +331,49 @@ export function getRequestContentType(
 /* Content Length                                                             */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Reads `Content-Length`, rejecting duplicate headers whose values disagree
+ * and a message that also carries `Transfer-Encoding`.
+ */
 export function getRequestContentLength(
   request: IncomingMessage,
 ): number | undefined {
-  const value = request.headers["content-length"];
+  const header = request.headers["content-length"];
 
-  const raw = Array.isArray(value) ? value[0] : value;
-
-  if (typeof raw !== "string") {
+  if (header === undefined) {
     return undefined;
   }
 
-  const length = Number(raw);
+  const values = (Array.isArray(header) ? header : [header]).flatMap((entry) =>
+    typeof entry === "string" ? entry.split(",") : [],
+  );
 
-  if (!Number.isSafeInteger(length) || length < 0) {
-    throw new InvalidContentLengthError(raw);
+  if (values.length === 0) {
+    return undefined;
+  }
+
+  let length: number | undefined;
+
+  for (const value of values) {
+    const raw = value.trim();
+
+    const parsed = Number(raw);
+
+    if (!/^\d+$/.test(raw) || !Number.isSafeInteger(parsed)) {
+      throw new InvalidContentLengthError(raw);
+    }
+
+    if (length !== undefined && parsed !== length) {
+      throw new InvalidContentLengthError(values.join(", "));
+    }
+
+    length = parsed;
+  }
+
+  if (request.headers["transfer-encoding"] !== undefined) {
+    throw new InvalidContentLengthError(
+      "Content-Length and Transfer-Encoding must not both be present.",
+    );
   }
 
   return length;

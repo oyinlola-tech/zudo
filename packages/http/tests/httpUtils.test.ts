@@ -343,6 +343,41 @@ describe("URL Utilities", () => {
     expect(isIPLiteral("http://127.0.0.1")).toBe(true);
     expect(isIPLiteral("http://example.com")).toBe(false);
   });
+
+  it("should detect loopback across IPv6 and non-canonical IPv4 forms", async () => {
+    const { isLocalhost } = await import("../src/httpUrl/http.url.js");
+
+    expect(isLocalhost("http://[::1]")).toBe(true);
+    expect(isLocalhost("http://[0:0:0:0:0:0:0:1]")).toBe(true);
+    expect(isLocalhost("http://[::ffff:127.0.0.1]")).toBe(true);
+    expect(isLocalhost("http://0.0.0.0")).toBe(true);
+    expect(isLocalhost("http://[2001:db8::1]")).toBe(false);
+  });
+
+  it("should detect private host literals in every address form", async () => {
+    const { isPrivateHostLiteral } = await import("../src/httpUrl/http.url.js");
+
+    expect(isPrivateHostLiteral("http://10.0.0.1")).toBe(true);
+    expect(isPrivateHostLiteral("http://172.16.0.1")).toBe(true);
+    expect(isPrivateHostLiteral("http://192.168.1.1")).toBe(true);
+    expect(isPrivateHostLiteral("http://169.254.169.254")).toBe(true);
+    expect(isPrivateHostLiteral("http://[fc00::1]")).toBe(true);
+    expect(isPrivateHostLiteral("http://[fe80::1]")).toBe(true);
+    expect(isPrivateHostLiteral("http://[::ffff:169.254.169.254]")).toBe(true);
+    expect(isPrivateHostLiteral("http://[2001:db8::1]")).toBe(false);
+    expect(isPrivateHostLiteral("http://93.184.216.34")).toBe(false);
+  });
+
+  it("should detect loopback in the non-canonical numeric IPv4 forms", async () => {
+    const { isLocalhost, isIPLiteral } =
+      await import("../src/httpUrl/http.url.js");
+
+    expect(isLocalhost("http://2130706433")).toBe(true);
+    expect(isLocalhost("http://0177.0.0.1")).toBe(true);
+    expect(isLocalhost("http://0x7f.0.0.1")).toBe(true);
+    expect(isLocalhost("http://127.1")).toBe(true);
+    expect(isIPLiteral("http://example.com.")).toBe(false);
+  });
 });
 
 describe("Request Utilities", () => {

@@ -31,6 +31,11 @@ export const CLIENT_ERROR_STATUS_CODES = Object.freeze({
 
   PAYLOAD_TOO_LARGE: 413,
 
+  /**
+   * RFC 9110 name for 413; `PAYLOAD_TOO_LARGE` is the RFC 7231 spelling.
+   */
+  CONTENT_TOO_LARGE: 413,
+
   URI_TOO_LONG: 414,
 
   UNSUPPORTED_MEDIA_TYPE: 415,
@@ -44,6 +49,11 @@ export const CLIENT_ERROR_STATUS_CODES = Object.freeze({
   MISDIRECTED_REQUEST: 421,
 
   UNPROCESSABLE_ENTITY: 422,
+
+  /**
+   * RFC 9110 name for 422; `UNPROCESSABLE_ENTITY` is the RFC 4918 spelling.
+   */
+  UNPROCESSABLE_CONTENT: 422,
 
   LOCKED: 423,
 

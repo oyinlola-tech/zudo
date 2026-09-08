@@ -18,6 +18,8 @@
   /* ---------- sidebar ---------- */
 
   function initSidebar() {
+    var mainEl = document.querySelector('main');
+    if (mainEl) mainEl.classList.add('doc-main');
     var sidebar = document.querySelector('.doc-sidebar');
     if (!sidebar) return;
     sidebar.id = sidebar.id || 'docSidebar';
@@ -36,8 +38,6 @@
     }
 
     // Mobile toolbar + drawer
-    var main = document.querySelector('main');
-    if (main) main.classList.add('doc-main');
     var h1 = document.querySelector('main h1');
     var bar = document.createElement('div');
     bar.className = 'doc-mobilebar';
@@ -88,36 +88,6 @@
     }
   }
 
-  /* ---------- copy buttons ---------- */
-
-  function initCopy() {
-    document.querySelectorAll('.code-block, .api-signature, pre').forEach(function (block) {
-      if (block.closest('.pg') || block.parentNode.classList.contains('code-wrap')) return;
-      var wrapper = document.createElement('div');
-      wrapper.className = 'code-wrap';
-      wrapper.style.position = 'relative';
-      block.parentNode.insertBefore(wrapper, block);
-      wrapper.appendChild(block);
-
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'copy-btn';
-      btn.textContent = 'COPY';
-      btn.setAttribute('aria-label', 'Copy code');
-      btn.addEventListener('click', function () {
-        var text = block.textContent.replace(/^\s*\d+\s{2,}/gm, '');
-        var done = function () {
-          btn.textContent = 'COPIED';
-          btn.classList.add('is-done');
-          setTimeout(function () { btn.textContent = 'COPY'; btn.classList.remove('is-done'); }, 1800);
-        };
-        if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, done);
-        else done();
-      });
-      wrapper.appendChild(btn);
-    });
-  }
-
   /* ---------- anchor links ---------- */
 
   function initAnchors() {
@@ -148,7 +118,6 @@
     initSidebar();
     initTables();
     initToc();
-    initCopy();
     initAnchors();
   }
 

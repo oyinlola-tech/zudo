@@ -20,64 +20,11 @@ export type {
   ConstraintOptions,
 } from "./validationConstraints.base.js";
 
-// String constraints
-export {
-  nonEmptyString,
-  minLength,
-  maxLength,
-  lengthBetween,
-  matches,
-  email,
-  uuid,
-  httpUrl,
-  ascii,
-  digits,
-  letters,
-  slug,
-} from "./validationConstraints.string.js";
+// Scalar constraints: strings, numbers, dates
+export * from "./scalar/index.js";
 
-// Number constraints
-export {
-  min,
-  max,
-  between,
-  finiteNumber,
-  integer,
-  positive,
-  nonNegative,
-  even,
-  odd,
-} from "./validationConstraints.number.js";
+// Collection constraints: arrays and membership
+export * from "./collection/index.js";
 
-// Collection constraints
-export { oneOf, noneOf } from "./validationConstraints.collection.js";
-
-// Date constraints
-export { isoDate, futureDate, pastDate } from "./validationConstraints.date.js";
-
-// Array constraints
-export {
-  minItems,
-  maxItems,
-  exactItems,
-  everyItem,
-  someItem,
-} from "./validationConstraints.array.js";
-
-// Circular reference detection
-export {
-  assertNoCircularReference,
-  hasCircularReference,
-} from "./validationConstraints.circular.js";
-
-// Depth checking
-export {
-  getSerializationDepth,
-  assertDepthWithinLimit,
-} from "./validationConstraints.depth.js";
-
-// Size estimation
-export {
-  estimateSerializedSize,
-  assertSizeWithinLimit,
-} from "./validationConstraints.size.js";
+// Structural guards: depth, size, and circular references
+export * from "./structure/index.js";

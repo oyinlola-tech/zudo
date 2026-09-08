@@ -6,7 +6,7 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
-import { addIssue } from "../schemaBase/index.js";
+import { addIssue, failValidation } from "../schemaBase/index.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
 /**
@@ -28,7 +28,7 @@ export class EnumSchema<T extends string | number> extends Schema<T> {
         expected: this._values.map((v) => JSON.stringify(v)).join(", "),
         received: JSON.stringify(input),
       });
-      throw new Error("Validation failed");
+      failValidation();
     }
     return input as T;
   }

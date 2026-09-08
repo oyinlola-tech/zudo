@@ -32,10 +32,20 @@ export function isNonEmptyString(value: unknown): value is string {
 }
 
 /**
- * Check if a value is a positive number.
+ * Check if a value is a finite number.
+ */
+export function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/**
+ * Check if a value is a positive, finite number.
+ *
+ * `Infinity` is excluded: a positive-number guard is normally protecting a
+ * size, a count or a price, none of which have a meaningful infinite value.
  */
 export function isPositiveNumber(value: unknown): value is number {
-  return typeof value === "number" && value > 0 && !Number.isNaN(value);
+  return isFiniteNumber(value) && value > 0;
 }
 
 /**
@@ -67,28 +77,89 @@ export function isUrl(value: unknown): value is string {
 
 /**
  * Check if a value is a valid email string.
+ *
+ * This is the monorepo's single email check; `@zudojs/validation` re-exports
+ * it as the `email` constraint. Two implementations previously disagreed
+ * about the same address, so a value accepted at the edge could be rejected
+ * halfway through a request.
  */
 export function isEmail(value: unknown): value is string {
   if (typeof value !== "string") return false;
-  return /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(value);
-}
-
-/**
- * Check if a value is a valid UUID v4 string.
- */
-export function isUuid(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+  if (value.includes("..")) return false;
+  return /^[^\s@,;<>"[\]\\]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/iu.test(
     value,
   );
 }
 
 /**
- * Check if a value is a valid ISO 8601 date string.
+ * Check if a value is a UUID string of any defined version.
+ *
+ * Accepts versions 1 through 8 — UUIDv7 included — plus the nil and max
+ * UUIDs. Use {@link isUuidV4} when the version genuinely matters.
+ */
+export function isUuid(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  if (value === "00000000-0000-0000-0000-000000000000") return true;
+  if (value.toLowerCase() === "ffffffff-ffff-ffff-ffff-ffffffffffff") {
+    return true;
+  }
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+    value,
+  );
+}
+
+/**
+ * Check if a value is specifically a UUID v4 string.
+ */
+export function isUuidV4(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+    value,
+  );
+}
+
+/**
+ * Check if a value is a valid ISO 8601 date string, with or without a time.
+ *
+ * Validates the calendar date as well as the shape, and accepts numeric UTC
+ * offsets. Checking digit counts alone accepted `2024-13-45T99:99:99Z` and
+ * rejected `2024-01-01T00:00:00+02:00` — wrong in both directions.
+ *
+ * Use {@link isIsoDateTimeString} where a time component is required.
  */
 export function isIsoDateString(value: unknown): value is string {
   if (typeof value !== "string") return false;
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z?$/.test(value);
+
+  if (
+    !/^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/u.test(
+      value,
+    )
+  ) {
+    return false;
+  }
+
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return false;
+
+  const [year, month, day] = value.slice(0, 10).split("-").map(Number);
+  const asUtc = new Date(Date.UTC(year!, month! - 1, day!));
+
+  return (
+    asUtc.getUTCFullYear() === year &&
+    asUtc.getUTCMonth() === month! - 1 &&
+    asUtc.getUTCDate() === day
+  );
+}
+
+/**
+ * Check if a value is a valid ISO 8601 date-time string.
+ *
+ * Like {@link isIsoDateString}, but a time component is mandatory.
+ */
+export function isIsoDateTimeString(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  if (!/[T ]\d{2}:\d{2}/u.test(value)) return false;
+  return isIsoDateString(value);
 }
 
 /**
@@ -119,14 +190,25 @@ export function isFunction(
 }
 
 /**
- * Check if a value is a Promise.
+ * Check if a value is a native Promise.
  */
 export function isPromise(value: unknown): value is Promise<unknown> {
+  return value instanceof Promise;
+}
+
+/**
+ * Check if a value is awaitable.
+ *
+ * Narrows to `PromiseLike`, not `Promise`: a plain thenable is safe to
+ * `await` but has no `.catch()` or `.finally()`, so claiming it is a Promise
+ * makes those calls throw at the point the guard was supposed to make safe.
+ */
+export function isThenable(value: unknown): value is PromiseLike<unknown> {
+  if (value instanceof Promise) return true;
   return (
-    value instanceof Promise ||
-    (typeof value === "object" &&
-      value !== null &&
-      "then" in value &&
-      typeof (value as Record<string, unknown>).then === "function")
+    typeof value === "object" &&
+    value !== null &&
+    "then" in value &&
+    typeof (value as Record<string, unknown>).then === "function"
   );
 }

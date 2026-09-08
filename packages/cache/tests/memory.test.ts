@@ -7,7 +7,11 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 
-import { MemoryCacheAdapter, createMemoryCacheAdapter } from "../src/memory.js";
+import {
+  MemoryCacheAdapter,
+  createMemoryCacheAdapter,
+  estimateValueBytes,
+} from "../src/memory.js";
 
 // ─── Setup ─────────────────────────────────────────────────────────────────
 
@@ -399,5 +403,189 @@ describe("MemoryCacheAdapter — TTL validation", () => {
       adapter.set("k", "v", { ttl: 25 * 60 * 60 * 1000 }),
     ).rejects.toThrow();
     await expect(adapter.expire("k", 0)).rejects.toThrow();
+  });
+});
+
+// ─── Regression: get() returns the full entry ──────────────────────────────
+
+describe("MemoryCacheAdapter — entry metadata", () => {
+  // Regression (CACHE-08): createdAt/tags/metadata were stored on every set
+  // and could never be read back — CacheGetResult.entry was never populated
+  // by anything in the package.
+  it("populates entry with tags, metadata and timestamps on a hit", async () => {
+    await adapter.set("k", "v", {
+      ttl: 60_000,
+      tags: ["users", "profile"],
+      metadata: { source: "db", etag: "abc" },
+    });
+    const result = await adapter.get<string>("k");
+    expect(result.hit).toBe(true);
+    expect(result.entry).toBeDefined();
+    expect(result.entry!.key).toBe("k");
+    expect(result.entry!.value).toBe("v");
+    expect(result.entry!.tags).toEqual(["users", "profile"]);
+    expect(result.entry!.metadata).toEqual({ source: "db", etag: "abc" });
+    expect(result.entry!.createdAt).toBeInstanceOf(Date);
+    expect(result.entry!.expiresAt).toBeInstanceOf(Date);
+  });
+
+  it("reports a null expiresAt for entries that never expire", async () => {
+    await adapter.set("k", "v", { ttl: null });
+    const result = await adapter.get("k");
+    expect(result.entry!.expiresAt).toBeNull();
+  });
+
+  it("omits entry on a miss", async () => {
+    const result = await adapter.get("nope");
+    expect(result.entry).toBeUndefined();
+  });
+});
+
+// ─── Regression: LRU eviction ──────────────────────────────────────────────
+
+describe("MemoryCacheAdapter — LRU eviction", () => {
+  // Regression (CACHE-23): eviction was FIFO by insertion order and get()
+  // never refreshed recency, so the hottest key was evicted as soon as it
+  // was the oldest write.
+  it("keeps a recently read key and evicts the truly cold one", async () => {
+    const small = createMemoryCacheAdapter({ maxEntries: 3 });
+    await small.set("hot", 1);
+    await small.set("cold", 2);
+    await small.set("warm", 3);
+
+    // Read "hot" so it is the most recently used despite being oldest.
+    expect((await small.get("hot")).hit).toBe(true);
+
+    await small.set("new", 4);
+
+    expect((await small.get("hot")).hit).toBe(true);
+    expect((await small.get("cold")).hit).toBe(false);
+    expect((await small.get("new")).hit).toBe(true);
+  });
+});
+
+// ─── Regression: memory budget ─────────────────────────────────────────────
+
+describe("MemoryCacheAdapter — memory budget", () => {
+  // Regression (CACHE-17): DEFAULT_MAX_MEMORY_BYTES was an exported,
+  // documented knob that nothing read, so 10_000 x 1 MB entries were happily
+  // retained under a "50 MB budget".
+  it("evicts to stay within maxBytes", async () => {
+    const tiny = createMemoryCacheAdapter({
+      maxEntries: 1_000,
+      maxBytes: 4_000,
+    });
+    const payload = "x".repeat(1_000); // ~2 KB as UTF-16
+    for (let i = 0; i < 10; i++) await tiny.set(`k${i}`, payload);
+
+    expect(tiny.estimatedBytes).toBeLessThanOrEqual(4_000);
+    expect(await tiny.size()).toBeLessThan(10);
+    // The most recent write always survives.
+    expect((await tiny.get("k9")).hit).toBe(true);
+  });
+
+  it("releases budget on delete and clear", async () => {
+    const tiny = createMemoryCacheAdapter({ maxBytes: 1_000_000 });
+    await tiny.set("a", "x".repeat(100));
+    expect(tiny.estimatedBytes).toBeGreaterThan(0);
+    await tiny.delete("a");
+    expect(tiny.estimatedBytes).toBe(0);
+
+    await tiny.set("b", "y".repeat(100));
+    await tiny.clear();
+    expect(tiny.estimatedBytes).toBe(0);
+  });
+
+  it("does not double-count an overwritten key", async () => {
+    const tiny = createMemoryCacheAdapter({ maxBytes: 1_000_000 });
+    await tiny.set("a", "x".repeat(100));
+    const first = tiny.estimatedBytes;
+    await tiny.set("a", "x".repeat(100));
+    expect(tiny.estimatedBytes).toBe(first);
+  });
+
+  it("estimates larger values as larger", () => {
+    expect(estimateValueBytes("x".repeat(1_000))).toBeGreaterThan(
+      estimateValueBytes("x"),
+    );
+    expect(estimateValueBytes({ a: 1, b: 2, c: 3 })).toBeGreaterThan(
+      estimateValueBytes({}),
+    );
+  });
+
+  it("terminates on cyclic values", () => {
+    const cyclic: Record<string, unknown> = { a: 1 };
+    cyclic.self = cyclic;
+    expect(estimateValueBytes(cyclic)).toBeGreaterThan(0);
+  });
+});
+
+// ─── Regression: exact-deadline expiry ─────────────────────────────────────
+
+describe("MemoryCacheAdapter — exact deadline", () => {
+  // Regression (CACHE-21): isExpired used a strict `>`, so an entry was
+  // still live *at* its deadline and ttl() could report 0 for a key it also
+  // reported as present.
+  it("is a miss at the deadline, not one millisecond after", async () => {
+    await adapter.set("k", "v", { ttl: 1 });
+    await new Promise((r) => setTimeout(r, 2));
+    expect(await adapter.has("k")).toBe(false);
+    expect((await adapter.get("k")).hit).toBe(false);
+    expect(await adapter.ttl("k")).toBeUndefined();
+  });
+
+  it("never reports ttl 0 for a present key", async () => {
+    await adapter.set("k", "v", { ttl: 20 });
+    for (let i = 0; i < 40; i++) {
+      const remaining = await adapter.ttl("k");
+      if (remaining === undefined) break;
+      expect(remaining).not.toBe(0);
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    expect(await adapter.has("k")).toBe(false);
+  });
+});
+
+// ─── size() ────────────────────────────────────────────────────────────────
+
+describe("MemoryCacheAdapter — size", () => {
+  it("reports the number of live entries", async () => {
+    await adapter.set("a", 1);
+    await adapter.set("b", 2);
+    expect(await adapter.size()).toBe(2);
+  });
+
+  it("excludes expired entries", async () => {
+    await adapter.set("live", 1, { ttl: 60_000 });
+    await adapter.set("dead", 1, { ttl: 1 });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(await adapter.size()).toBe(1);
+  });
+});
+
+// ─── Regression: segment-bounded glob patterns ─────────────────────────────
+
+describe("MemoryCacheAdapter — pattern scoping", () => {
+  // Regression (CACHE-01/02): `*` used to cross the separator, so a pattern
+  // written for one scope reached into every nested one.
+  it("does not let * cross the key separator", async () => {
+    await adapter.set("zudojs:plain", 1);
+    await adapter.set("zudojs:tenant-a:secret", 2);
+    const result = await adapter.clear({ pattern: "zudojs:*" });
+    expect(result.cleared).toBe(1);
+    expect((await adapter.get("zudojs:tenant-a:secret")).hit).toBe(true);
+  });
+
+  it("spans namespaces with an explicit ** segment", async () => {
+    await adapter.set("zudojs:plain", 1);
+    await adapter.set("zudojs:tenant-a:secret", 2);
+    const result = await adapter.clear({ pattern: "zudojs:**" });
+    expect(result.cleared).toBe(2);
+  });
+
+  it("rejects an over-long pattern instead of scanning with it", async () => {
+    await expect(
+      adapter.clear({ pattern: "*".repeat(1_000) }),
+    ).rejects.toThrow();
   });
 });

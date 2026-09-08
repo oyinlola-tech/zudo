@@ -6,7 +6,14 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
-import { addIssue, childContext } from "../schemaBase/index.js";
+import {
+  addIssue,
+  childContext,
+  failValidation,
+  enterComposite,
+  leaveComposite,
+  rethrowUnexpected,
+} from "../schemaBase/index.js";
 import { SchemaIssueCode, SCHEMA_FORBIDDEN_KEYS } from "@zudojs/constants";
 import { StringSchema } from "../schemaPrimitives/index.js";
 
@@ -35,10 +42,24 @@ export class RecordSchema<TValue> extends Schema<Record<string, TValue>> {
         expected: "record",
         received: Array.isArray(input) ? "array" : typeof input,
       });
-      throw new Error("Validation failed");
+      failValidation();
     }
 
-    const obj = input as Record<string, unknown>;
+    if (!enterComposite(ctx, input)) {
+      failValidation();
+    }
+
+    try {
+      return this._parseEntries(ctx, input as Record<string, unknown>);
+    } finally {
+      leaveComposite(ctx, input);
+    }
+  }
+
+  private _parseEntries(
+    ctx: SchemaParseContext,
+    obj: Record<string, unknown>,
+  ): Record<string, TValue> {
     const result: Record<string, TValue> = {};
 
     let failed = false;
@@ -57,15 +78,25 @@ export class RecordSchema<TValue> extends Schema<Record<string, TValue>> {
       const valueCtx = childContext(ctx, key);
 
       try {
-        this._keySchema._parse(keyCtx, key);
-        result[key] = this._valueSchema._parse(valueCtx, obj[key]);
-      } catch {
+        // Use the *parsed* key: a key schema that trims or lowercases had no
+        // effect while the raw key was used for the assignment.
+        const parsedKey = this._keySchema._parse(keyCtx, key);
+        const value = this._valueSchema._parse(valueCtx, obj[key]);
+        Object.defineProperty(result, parsedKey, {
+          value,
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+      } catch (error) {
+        rethrowUnexpected(error);
         failed = true;
+        if (ctx.options.abortEarly) break;
       }
     }
 
     if (failed) {
-      throw new Error("Validation failed");
+      failValidation();
     }
 
     return result;

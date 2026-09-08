@@ -9,32 +9,69 @@ import {
   DuplicateRoleError,
   InvalidRoleError,
 } from "../permissionErrors/index.js";
+import { isValidPermission } from "../permission/permission.core.js";
 
 /** Options for the role registry. */
 export interface RoleRegistryOptions {
   /** Allow overwriting existing roles. Defaults to false. */
   readonly allowOverride?: boolean;
+  /**
+   * Reject permission strings that are not `resource:action`. Defaults to
+   * true — a malformed grant can never match, so accepting one registers a
+   * permission that silently does nothing.
+   */
+  readonly validatePermissions?: boolean;
+}
+
+/** A role registry, usable directly as the engine's `roles` source. */
+export interface RoleRegistry {
+  define(definition: RoleDefinition): void;
+  get(name: string): RoleDefinition | undefined;
+  has(name: string): boolean;
+  names(): readonly string[];
+  all(): readonly RoleDefinition[];
+  remove(name: string): boolean;
+  clear(): void;
 }
 
 /**
  * Create a role registry.
+ *
+ * Pass it straight to `createPermissionEngine({ roles: registry })`.
  */
-export function createRoleRegistry(options?: RoleRegistryOptions) {
+export function createRoleRegistry(
+  options?: RoleRegistryOptions,
+): RoleRegistry {
   const roles = new Map<string, RoleDefinition>();
   const allowOverride = options?.allowOverride ?? false;
+  const validatePermissions = options?.validatePermissions ?? true;
 
   return {
     /**
      * Register a role definition.
+     *
+     * A role with no permissions of its own is valid: a role that exists only
+     * to combine others through `inherits` is the normal way to build a
+     * hierarchy.
      */
     define(definition: RoleDefinition): void {
       if (!definition.name || definition.name.trim() === "") {
         throw new InvalidRoleError("Role name cannot be empty");
       }
-      if (!definition.permissions || definition.permissions.length === 0) {
+      if (!Array.isArray(definition.permissions)) {
         throw new InvalidRoleError(
-          `Role "${definition.name}" must have at least one permission`,
+          `Role "${definition.name}" must declare a permissions array`,
         );
+      }
+      if (validatePermissions) {
+        for (const permission of definition.permissions) {
+          if (!isValidPermission(permission)) {
+            throw new InvalidRoleError(
+              `Role "${definition.name}" grants "${permission}", which is not a ` +
+                `valid "resource:action" permission`,
+            );
+          }
+        }
       }
 
       if (roles.has(definition.name) && !allowOverride) {
@@ -44,44 +81,26 @@ export function createRoleRegistry(options?: RoleRegistryOptions) {
       roles.set(definition.name, Object.freeze({ ...definition }));
     },
 
-    /**
-     * Get a role by name.
-     */
     get(name: string): RoleDefinition | undefined {
       return roles.get(name);
     },
 
-    /**
-     * Check if a role exists.
-     */
     has(name: string): boolean {
       return roles.has(name);
     },
 
-    /**
-     * Get all registered role names.
-     */
     names(): readonly string[] {
-      return Array.from(roles.keys());
+      return [...roles.keys()];
     },
 
-    /**
-     * Get all registered role definitions.
-     */
     all(): readonly RoleDefinition[] {
-      return Array.from(roles.values());
+      return [...roles.values()];
     },
 
-    /**
-     * Remove a role from the registry.
-     */
     remove(name: string): boolean {
       return roles.delete(name);
     },
 
-    /**
-     * Clear all registered roles.
-     */
     clear(): void {
       roles.clear();
     },

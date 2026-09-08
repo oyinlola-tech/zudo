@@ -18,6 +18,8 @@ export interface QueueInfo {
  * Registry for queue instances.
  */
 export interface QueueRegistry {
+  /** Close every registered queue and clear the registry. */
+  closeAll(): Promise<void>;
   /** Register a queue. */
   register<TData>(queue: Queue<TData>): void;
   /** Get a queue by name. */

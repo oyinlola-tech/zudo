@@ -8,6 +8,7 @@ export {
   createPropagationContext,
   derivePropagationContext,
   getCurrentContext,
+  requireCurrentContext,
   AsyncPropagationManager,
   createPropagationManager,
 } from "./propagation.core.js";

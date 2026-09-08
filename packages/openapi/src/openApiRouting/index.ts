@@ -9,10 +9,16 @@ export type {
   RouteOpenAPIMetadata,
   RouteParameterMetadata,
   RouteInfo,
-} from "./routeScanner.core.js";
+  OpenAPIHttpMethod,
+} from "./routeMetadata.type.js";
+
 export {
   toOpenAPIPath,
+  extractPathParameters,
   convertRouteToOpenAPI,
+  buildResponses,
+  isOpenAPIMethod,
   ZUDOLIB_TO_OPENAPI_METHODS,
 } from "./routeConverter.core.js";
+
 export { OpenAPIRouteScannerImpl } from "./routeScanner.core.js";

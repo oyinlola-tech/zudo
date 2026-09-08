@@ -6,7 +6,7 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
-import { addIssue } from "../schemaBase/index.js";
+import { addIssue, failValidation } from "../schemaBase/index.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
 /**
@@ -35,7 +35,7 @@ export class TransformModifierSchema<TInput, TOutput> extends Schema<
         path: [...ctx.path],
         message: `Transform failed: ${String(error)}`,
       });
-      throw new Error("Validation failed");
+      failValidation();
     }
   }
 }

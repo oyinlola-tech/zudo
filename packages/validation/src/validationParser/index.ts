@@ -1,7 +1,8 @@
 /**
  * @zudojs/validation/validationParser
  *
- * Schema parsing and type inference.
+ * Reusable parsers built from validation schemas.
  */
 
 export * from "./validationParser.core.js";
+export * from "./validationParser.collection.js";

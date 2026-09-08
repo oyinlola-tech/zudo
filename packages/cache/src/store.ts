@@ -26,6 +26,7 @@ import type {
   CacheStore,
   CacheTTL,
 } from "./types.js";
+import type { CacheErrorCode } from "./types-config.js";
 import { CacheError, CacheOperation } from "./errors.js";
 import { deleteManyViaDelete } from "./utils.js";
 
@@ -79,8 +80,11 @@ export class DefaultCacheStore implements CacheStore {
     value: TValue,
     options?: CacheSetOptions,
   ): Promise<CacheSetResult> {
-    return this.executeWithMiddleware(CacheOperation.SET, key, () =>
-      this.adapter.set<TValue>(key, value, options),
+    return this.executeWithMiddleware(
+      CacheOperation.SET,
+      key,
+      () => this.adapter.set<TValue>(key, value, options),
+      { ttl: options?.ttl },
     );
   }
 
@@ -133,7 +137,12 @@ export class DefaultCacheStore implements CacheStore {
     for (const result of results) {
       if (!result.success) continue;
       this.metrics?.incrementSet(result.key);
-      this.emit({ type: "cache.set", key: result.key, occurredAt: new Date() });
+      this.emit({
+        type: "cache.set",
+        key: result.key,
+        occurredAt: new Date(),
+        ...(options?.ttl !== undefined ? { ttl: options.ttl } : {}),
+      });
     }
     return results;
   }
@@ -174,6 +183,11 @@ export class DefaultCacheStore implements CacheStore {
     );
   }
 
+  /** Number of live entries, when the underlying adapter can report it. */
+  async size(): Promise<number | undefined> {
+    return this.adapter.size?.();
+  }
+
   subscribe(
     eventType: CacheEvent["type"] | "*",
     handler: CacheEventHandler,
@@ -207,7 +221,11 @@ export class DefaultCacheStore implements CacheStore {
     }
   }
 
-  private recordGetOutcome(key: string, hit: boolean, latencyMs?: number): void {
+  private recordGetOutcome(
+    key: string,
+    hit: boolean,
+    latencyMs?: number,
+  ): void {
     if (hit) {
       this.metrics?.incrementHit(key);
       this.emit({ type: "cache.hit", key, occurredAt: new Date(), latencyMs });
@@ -221,6 +239,7 @@ export class DefaultCacheStore implements CacheStore {
     operation: CacheOperation,
     key: string,
     fn: () => Promise<T>,
+    details?: { readonly ttl?: CacheTTL },
   ): Promise<T> {
     const context: CacheMiddlewareContext = {
       key,
@@ -238,7 +257,12 @@ export class DefaultCacheStore implements CacheStore {
           this.recordGetOutcome(key, hitResult.hit, latencyMs);
         } else if (operation === CacheOperation.SET) {
           this.metrics?.incrementSet(key);
-          this.emit({ type: "cache.set", key, occurredAt: new Date() });
+          this.emit({
+            type: "cache.set",
+            key,
+            occurredAt: new Date(),
+            ...(details?.ttl !== undefined ? { ttl: details.ttl } : {}),
+          });
         } else if (operation === CacheOperation.DELETE) {
           this.metrics?.incrementDelete(key);
           this.emit({
@@ -259,22 +283,47 @@ export class DefaultCacheStore implements CacheStore {
         this.metrics?.incrementError(key);
         this.emit({ type: "cache.error", key, occurredAt: new Date(), error });
         if (error instanceof CacheError) throw error;
+        const code: CacheErrorCode = "CACHE_OPERATION_FAILED";
         throw new CacheError(`Cache ${operation} failed for key "${key}".`, {
+          code,
           cause: error,
           operation,
           key,
         });
       }
     };
-    let index = 0;
-    const chain = async (): Promise<T> => {
+    // The position is a parameter, not shared mutable state: a middleware
+    // that calls next() twice (retry middlewares do) re-enters at the same
+    // position instead of skipping the middlewares after it.
+    const chain = async (index: number): Promise<T> => {
       if (index >= this.middlewares.length) return execute();
       const middleware = this.middlewares[index];
-      index++;
-      if (middleware === undefined) return execute();
-      return middleware(context, chain) as Promise<T>;
+      if (middleware === undefined) return chain(index + 1);
+      const result = await middleware(context, () => chain(index + 1));
+      return this.narrowMiddlewareResult<T>(result, operation, key);
     };
-    return chain();
+    return chain(0);
+  }
+
+  /**
+   * A middleware that forgets to return `next()`'s result resolves
+   * `undefined`, which would otherwise be laundered into `T` by an unchecked
+   * cast and surface as a `TypeError` far from the cause. Only `ttl` may
+   * legitimately resolve `undefined`.
+   */
+  private narrowMiddlewareResult<T>(
+    result: unknown,
+    operation: CacheOperation,
+    key: string,
+  ): T {
+    if (result === undefined && operation !== CacheOperation.TTL) {
+      const code: CacheErrorCode = "CACHE_MIDDLEWARE_RESULT_MISSING";
+      throw new CacheError(
+        `A cache middleware resolved undefined for ${operation} on key "${key}". Middlewares must return the result of next().`,
+        { code, operation, key },
+      );
+    }
+    return result as T;
   }
 }
 

@@ -3,6 +3,7 @@
  */
 
 import type { ContentTypeParameter } from "./httpContentType.type.js";
+import { escapeHeaderQuotedString } from "../httpHeaders/security/httpHeaders.security.js";
 
 export function isValidToken(value: string): boolean {
   return /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(value);
@@ -80,12 +81,23 @@ export function parseParameter(
   };
 }
 
+/**
+ * Emits a parameter value as a token or a `quoted-string`.
+ *
+ * Delegates the quoting to `httpHeaders/security`, which rejects CR, LF, NUL
+ * and every other C0/DEL control character rather than letting it reach the
+ * wire.
+ *
+ * @param value - The raw parameter value.
+ * @returns The token or quoted-string form.
+ * @throws {TypeError} If the value contains a forbidden control character.
+ */
 export function quoteParameterValue(value: string): string {
   if (isValidToken(value)) {
     return value;
   }
 
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  return `"${escapeHeaderQuotedString(value)}"`;
 }
 
 export function unquoteParameterValue(value: string): string {

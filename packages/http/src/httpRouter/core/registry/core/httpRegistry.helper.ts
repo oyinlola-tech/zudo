@@ -36,10 +36,10 @@ export function normalizeMethod(method: string): string {
 export function normalizeMethods(
   method: string | readonly string[],
 ): readonly string[] {
-  if (Array.isArray(method)) {
-    return method.map(normalizeMethod);
-  }
-  return [normalizeMethod(method)];
+  const methods: readonly string[] =
+    typeof method === "string" ? [method] : method;
+
+  return methods.map(normalizeMethod);
 }
 
 /**
@@ -95,6 +95,6 @@ export function matchesLookup(
  * Extracts the sequence number from a path for sorting.
  */
 export function extractSequence(path: string): number {
-  const match = path.match(/:(\d+)/);
-  return match ? parseInt(match[1], 10) : 0;
+  const sequence = /:(\d+)/.exec(path)?.[1];
+  return sequence === undefined ? 0 : parseInt(sequence, 10);
 }

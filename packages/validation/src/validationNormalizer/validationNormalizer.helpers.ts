@@ -27,9 +27,40 @@ export function normalizeUnicode(value: string): string {
   return value.normalize("NFC");
 }
 
-/** Normalizes an email address. */
+/**
+ * Normalizes Unicode text using NFKC, folding compatibility forms.
+ *
+ * Use this wherever the result identifies something. NFC is canonical only:
+ * it leaves ligatures and fullwidth forms distinct from their ASCII
+ * spellings, so two visually identical identifiers survive as two values.
+ */
+export function normalizeUnicodeCompatibility(value: string): string {
+  return value.normalize("NFKC");
+}
+
+/**
+ * Case-folds a string for identifier comparison.
+ *
+ * `toLowerCase` is a locale-sensitive display transform. Folding through
+ * upper- then lower-case is the closest stable approximation available
+ * without ICU, and is what identifier comparison needs.
+ */
+export function foldCase(value: string): string {
+  return value.toUpperCase().toLowerCase();
+}
+
+/**
+ * Normalizes an email address.
+ *
+ * Only the domain is lowercased. The local part is case-sensitive per RFC
+ * 5321, and folding it can merge two distinct mailboxes.
+ */
 export function normalizeEmail(value: string): string {
-  return normalizeUnicode(normalizeWhitespace(value)).toLowerCase();
+  const trimmed = normalizeUnicodeCompatibility(normalizeWhitespace(value));
+  const at = trimmed.lastIndexOf("@");
+  if (at === -1) return trimmed;
+
+  return `${trimmed.slice(0, at)}@${foldCase(trimmed.slice(at + 1))}`;
 }
 
 /** Normalizes a URL by removing surrounding whitespace. */
@@ -37,9 +68,15 @@ export function normalizeUrl(value: string): string {
   return normalizeWhitespace(normalizeUnicode(value));
 }
 
-/** Normalizes an identifier by trimming and lowercasing it. */
+/**
+ * Normalizes an identifier by trimming, compatibility-folding and case-folding.
+ *
+ * The output identifies an account or a resource, so it uses NFKC and a case
+ * fold rather than NFC and `toLowerCase`: otherwise two spellings that render
+ * identically normalize to two different identifiers.
+ */
 export function normalizeIdentifier(value: string): string {
-  return normalizeLowercase(normalizeWhitespace(normalizeUnicode(value)));
+  return foldCase(normalizeWhitespace(normalizeUnicodeCompatibility(value)));
 }
 
 /** Removes surrounding quotes from a string. */
@@ -60,12 +97,18 @@ export function removeBom(value: string): string {
   return value.replace(/^\uFEFF/u, "");
 }
 
-/** Normalizes an array by applying a normalizer to every item. */
+/**
+ * Normalizes an array by applying a normalizer to every item.
+ *
+ * The normalizer is invoked with the value only. Passing it straight to `map`
+ * would also hand it the index and the array, which silently overrides the
+ * optional second parameter of functions like `parseInt`.
+ */
 export function normalizeArray<T>(
   values: readonly T[],
   normalizer: (value: T) => T,
 ): T[] {
-  return values.map(normalizer);
+  return values.map((value) => normalizer(value));
 }
 
 /** Normalizes an array asynchronously. */
@@ -73,7 +116,7 @@ export async function normalizeArrayAsync<T>(
   values: readonly T[],
   normalizer: (value: T) => T | Promise<T>,
 ): Promise<T[]> {
-  return Promise.all(values.map(normalizer));
+  return Promise.all(values.map((value) => normalizer(value)));
 }
 
 /** Composes multiple normalizers into one. */

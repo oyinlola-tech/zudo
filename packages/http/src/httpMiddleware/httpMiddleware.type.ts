@@ -102,5 +102,7 @@ export interface InternalMiddleware {
 
   readonly sequence?: number;
 
+  readonly metadata?: Readonly<Record<string, unknown>>;
+
   enabled: boolean;
 }

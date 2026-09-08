@@ -14,6 +14,7 @@ export interface CacheOrComputeResult<TValue> {
   readonly cached: boolean;
 }
 
+/** A single operation in a `CacheService.batch()` call. */
 export interface CacheBatchOperation {
   readonly type: "get" | "set" | "delete";
   readonly key: CacheKey;
@@ -21,13 +22,10 @@ export interface CacheBatchOperation {
   readonly options?: CacheSetOptions;
 }
 
+/** The outcome of one `CacheBatchOperation`, in submission order. */
 export interface CacheBatchResult {
   readonly operation: CacheBatchOperation;
   readonly success: boolean;
   readonly result?: unknown;
   readonly error?: unknown;
 }
-
-export type CacheResult<TValue> =
-  | { readonly success: true; readonly value: TValue }
-  | { readonly success: false; readonly error: unknown };

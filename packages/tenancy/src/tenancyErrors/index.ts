@@ -14,6 +14,7 @@ export {
   TenantResolutionConflictError,
   TenantUnavailableError,
   TenantAccessDeniedError,
+  TenantTrustLevelError,
   TenantAlreadyExistsError,
   TenantProvisioningError,
   TenantIsolationError,

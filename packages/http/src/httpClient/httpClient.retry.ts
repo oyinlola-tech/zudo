@@ -54,13 +54,48 @@ export function shouldRetryStatus(
  */
 export function shouldRetryError(
   error: unknown,
-  _method: string,
+  method: string,
   retry?: HttpRetryOptions,
 ): boolean {
   if (!retry?.retries) return false;
   if (!retry.retryOnNetworkError) return false;
-  const name = error instanceof Error ? error.constructor.name : "";
-  return name === "TypeError" || name === "FetchError";
+
+  /*
+   * A connection that drops after the server processed the request is
+   * indistinguishable from one that never arrived, so replaying a
+   * non-idempotent method duplicates its side effects. `retryMethods` exists
+   * for exactly this and was honoured only on the status path.
+   */
+  if (!retry.retryMethods?.includes(method as HttpClientMethod)) return false;
+
+  return isRetryableNetworkError(error);
+}
+
+/**
+ * Narrows "is this a transport failure?" to errors that really are one.
+ *
+ * A bare `instanceof TypeError` also catches a body that has already been
+ * consumed and parse failures, which are permanent and were being retried
+ * until the budget ran out.
+ */
+function isRetryableNetworkError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  if (error.constructor.name === "FetchError") {
+    return true;
+  }
+
+  if (error.name === "HttpClientNetworkError") {
+    return true;
+  }
+
+  if (!(error instanceof TypeError)) {
+    return false;
+  }
+
+  return !/body|disturbed|already (been )?(used|read)/i.test(error.message);
 }
 
 /**
@@ -72,11 +107,11 @@ export function calculateRetryDelay(
 ): number {
   const base = retry.retryDelay ?? 1000;
   const max = retry.maxRetryDelay ?? 30_000;
-  const ms =
-    retry.backoff === "fixed"
-      ? base
-      : Math.min(base * Math.pow(2, attempt), max);
-  return ms + Math.random() * 1000;
+  const ms = retry.backoff === "fixed" ? base : base * Math.pow(2, attempt);
+
+  /* Clamp *after* jitter, and on the fixed branch too, or `maxRetryDelay`
+   * is not actually a maximum. */
+  return Math.min(ms + Math.random() * 1000, max);
 }
 
 /**

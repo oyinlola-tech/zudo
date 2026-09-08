@@ -6,6 +6,8 @@
 
 export {
   createEnvelope,
+  assertValidEnvelope,
+  contentTypeForFormat,
   unwrapEnvelope,
   serializeToEnvelope,
   deserializeFromEnvelope,

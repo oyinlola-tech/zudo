@@ -12,6 +12,15 @@ export class PriorityQueue {
    * Inserts a schedule into the priority queue.
    */
   enqueue(schedule: Schedule): void {
+    const time = schedule.nextRunAt?.getTime();
+    if (typeof time !== "number" || Number.isNaN(time)) {
+      // Every heap comparison against NaN is false, so an invalid date never
+      // sinks: it parks itself at the head of the queue and blocks everything
+      // genuinely due behind it.
+      throw new RangeError(
+        `Cannot enqueue schedule "${schedule.id}": nextRunAt is not a valid date`,
+      );
+    }
     this.heap.push(schedule);
     this.bubbleUp(this.heap.length - 1);
   }
@@ -58,11 +67,19 @@ export class PriorityQueue {
 
     if (index < this.heap.length && last !== undefined) {
       this.heap[index] = last;
+      // Bubble first; if it moved, the element now at `index` is an ancestor
+      // of that subtree and cannot sink, so sinking is a no-op. If it did not
+      // move, sinking is the correction that is needed.
       this.bubbleUp(index);
       this.sinkDown(index);
     }
 
     return true;
+  }
+
+  /** Returns true when a schedule with the given id is queued. */
+  has(id: string): boolean {
+    return this.heap.some((schedule) => schedule.id === id);
   }
 
   /**

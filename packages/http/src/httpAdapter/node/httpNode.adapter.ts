@@ -7,7 +7,12 @@
  * @module httpAdapter/node/adapter
  */
 
-import { Server, ServerResponse, createServer } from "node:http";
+import {
+  IncomingMessage,
+  Server,
+  ServerResponse,
+  createServer,
+} from "node:http";
 
 import { HttpRequestContext } from "../../httpRequest/httpRequest.context.js";
 
@@ -24,6 +29,8 @@ import type { HttpHandlerResult } from "../http.adapter.js";
 
 import type { HttpResponseWriter } from "../../httpResponse/httpResponse.writer.js";
 
+import { writeResponse } from "../../httpResponse/httpResponse.writer.js";
+
 import type {
   NodeAdapterOptions,
   NodeServerAddress,
@@ -34,21 +41,16 @@ import {
   DEFAULT_HOST,
   DEFAULT_PORT,
   DEFAULT_MAX_BODY_SIZE,
+  NODE_DEFAULT_HEADERS_TIMEOUT,
+  NODE_DEFAULT_REQUEST_TIMEOUT,
+  NODE_DEFAULT_KEEP_ALIVE_TIMEOUT,
   validatePort,
   validateMaxBodySize,
 } from "./httpNode.type.js";
 
 import { NodeResponseWriter } from "./httpNode.response.js";
 
-import {
-  getNodeRequestHeaders,
-  getNodeRequestProtocol,
-  getNodeRequestHostname,
-  getNodeRequestPort,
-  getNodeRemoteAddress,
-  parseNodeQuery,
-  createNodeRequestContext,
-} from "./httpNode.request.js";
+import { createNodeRequestContext } from "./httpNode.request.js";
 
 import {
   isIncomingMessage,
@@ -57,6 +59,8 @@ import {
   configureServer,
   listen,
   closeServer,
+  readNodeRequestBody,
+  NodeRequestBodyTooLargeError,
   isResponseContextLike,
 } from "./httpNode.server.js";
 
@@ -81,6 +85,12 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
 
   private readonly trustProxy:
     boolean | number | string | readonly string[] | undefined;
+
+  private readonly maxConnections: number | undefined;
+
+  private readonly connectionsCheckingInterval: number;
+
+  private readonly shutdownGraceMs: number | undefined;
 
   private readonly events: NodeAdapterEvents;
 
@@ -113,17 +123,28 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
       options.maxBodySize ?? DEFAULT_MAX_BODY_SIZE,
     );
 
-    this.requestTimeout = options.requestTimeout;
+    this.requestTimeout =
+      options.requestTimeout ?? NODE_DEFAULT_REQUEST_TIMEOUT;
 
-    this.headersTimeout = options.headersTimeout;
+    this.headersTimeout =
+      options.headersTimeout ?? NODE_DEFAULT_HEADERS_TIMEOUT;
 
-    this.keepAliveTimeout = options.keepAliveTimeout;
+    this.keepAliveTimeout =
+      options.keepAliveTimeout ?? NODE_DEFAULT_KEEP_ALIVE_TIMEOUT;
 
     this.connectionTimeout = options.connectionTimeout;
 
+    this.maxConnections = options.maxConnections;
+
+    this.connectionsCheckingInterval =
+      options.connectionsCheckingInterval ??
+      Math.min(30_000, this.headersTimeout);
+
+    this.shutdownGraceMs = options.shutdownGraceMs;
+
     this.trustProxy = options.trustProxy;
 
-    this.events = {};
+    this.events = options.events ?? {};
 
     this.server = options.server;
 
@@ -214,6 +235,8 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
     const context = this.createRequest(request);
 
     try {
+      await this.attachNodeBody(request, context);
+
       const result = await this.executeNodeHandler(context);
 
       const responseContext = this.normalizeResult(result);
@@ -222,6 +245,36 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
     } catch (error) {
       await this.handleNodeError(error, context, response);
     }
+  }
+
+  /**
+   * Reads the request body (subject to `maxBodySize`) and attaches it to the
+   * context.
+   *
+   * Without this the adapter hands handlers a context with no body at all, and
+   * the configured `maxBodySize` limit is never applied to anything.
+   */
+  private async attachNodeBody(
+    request: IncomingMessage,
+    context: HttpRequestContext,
+  ): Promise<void> {
+    const method = (request.method ?? "GET").toUpperCase();
+
+    if (method === "GET" || method === "HEAD") {
+      return;
+    }
+
+    const hasLength = request.headers["content-length"] !== undefined;
+
+    const hasEncoding = request.headers["transfer-encoding"] !== undefined;
+
+    if (!hasLength && !hasEncoding) {
+      return;
+    }
+
+    const body = await readNodeRequestBody(request, this.maxBodySize);
+
+    context.setBody(body);
   }
 
   private async executeNodeHandler(
@@ -263,6 +316,21 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
 
     const context = createResponseContext();
 
+    if (error instanceof NodeRequestBodyTooLargeError) {
+      /*
+       * The request body was never drained, so this connection cannot be
+       * safely reused for a following request.
+       */
+      context.setHeader("connection", "close");
+
+      await this.writeNodeResponse(
+        response,
+        context.setStatus(413).json({ error: "Payload Too Large" }),
+      );
+
+      return;
+    }
+
     if (this.errorHandler) {
       try {
         const result = await this.errorHandler(error, request);
@@ -290,10 +358,48 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
   ): Promise<void> {
     const writer = this.createWriter(response);
 
-    await this.writeNodeResponse(response, context);
+    await writeResponse(context, writer);
 
     if (!response.writableEnded) {
       writer.end();
+    }
+  }
+
+  /**
+   * Runs `handle` for a Node request/response pair without ever letting the
+   * resulting promise reject.
+   *
+   * `createServer`'s callback is synchronous, so a rejection from `handle`
+   * would otherwise escape as an unhandled rejection and terminate the
+   * process under Node's default `--unhandled-rejections=throw`.
+   */
+  private dispatchNodeRequest(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): void {
+    this.handle({ request, response }).catch((error: unknown) => {
+      this.emitAdapterError(error);
+
+      if (!response.writableEnded) {
+        response.destroy(error instanceof Error ? error : undefined);
+      }
+    });
+  }
+
+  private emitAdapterError(error: unknown): void {
+    const listener = this.events.onError;
+
+    if (typeof listener !== "function") {
+      return;
+    }
+
+    try {
+      listener(error instanceof Error ? error : new Error(String(error)));
+    } catch {
+      /*
+       * A failing error listener must not itself escape and re-trigger the
+       * unhandled-rejection path this method exists to close.
+       */
     }
   }
 
@@ -303,22 +409,19 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
     }
 
     if (!this.server) {
-      this.server = createServer((request, response) => {
-        void this.handle({
-          request,
-          response,
-        });
-      });
+      this.server = createServer(
+        { connectionsCheckingInterval: this.connectionsCheckingInterval },
+        (request, response) => {
+          this.dispatchNodeRequest(request, response);
+        },
+      );
 
       this.ownsServer = true;
     } else {
       this.server.removeAllListeners("request");
 
       this.server.on("request", (request, response) => {
-        void this.handle({
-          request,
-          response,
-        });
+        this.dispatchNodeRequest(request, response);
       });
     }
 
@@ -327,9 +430,30 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
       headersTimeout: this.headersTimeout,
       keepAliveTimeout: this.keepAliveTimeout,
       connectionTimeout: this.connectionTimeout,
+      maxConnections: this.maxConnections,
+    });
+
+    this.server.on("clientError", (error, socket) => {
+      this.emitAdapterError(error);
+
+      if (socket.writable) {
+        socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+      }
+
+      socket.destroy();
     });
 
     await listen(this.server, this.port, this.host);
+
+    const address = this.address;
+
+    if (address && this.events.onListening) {
+      try {
+        this.events.onListening(address);
+      } catch {
+        /* A listener failure must not abort a successful start. */
+      }
+    }
 
     await super.start();
   }
@@ -341,10 +465,18 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
       return;
     }
 
-    await closeServer(this.server);
+    await closeServer(this.server, { graceMs: this.shutdownGraceMs });
 
     if (this.ownsServer) {
       this.server = undefined;
+    }
+
+    if (this.events.onClose) {
+      try {
+        this.events.onClose();
+      } catch {
+        /* A listener failure must not turn a clean stop into a failure. */
+      }
     }
 
     await super.stop();

@@ -11,6 +11,8 @@ import { literalSchema } from "../schemaPrimitives/index.js";
 import {
   nullSchema,
   undefinedSchema,
+  bigintSchema,
+  symbolSchema,
   anySchema,
   unknownSchema,
   neverSchema,
@@ -20,7 +22,10 @@ import { arraySchema } from "../schemaStructures/index.js";
 import { tupleSchema } from "../schemaStructures/index.js";
 import { recordSchema } from "../schemaStructures/index.js";
 import { mapSchema, setSchema } from "../schemaStructures/index.js";
-import { unionSchema } from "../schemaComposition/index.js";
+import {
+  unionSchema,
+  discriminatedUnionSchema,
+} from "../schemaComposition/index.js";
 import { intersectionSchema } from "../schemaComposition/index.js";
 import { lazySchema } from "../schemaComposition/index.js";
 import { enumSchema } from "../schemaComposition/index.js";
@@ -53,12 +58,8 @@ export const schema = {
   string: stringSchema,
   number: numberSchema,
   boolean: booleanSchema,
-  bigint: () => {
-    throw new Error("BigInt schema not yet implemented");
-  },
-  symbol: () => {
-    throw new Error("Symbol schema not yet implemented");
-  },
+  bigint: bigintSchema,
+  symbol: symbolSchema,
 
   // Sentinels
   null: nullSchema,
@@ -81,6 +82,7 @@ export const schema = {
 
   // Composition
   union: unionSchema,
+  discriminatedUnion: discriminatedUnionSchema,
   intersection: intersectionSchema,
   lazy: lazySchema,
 

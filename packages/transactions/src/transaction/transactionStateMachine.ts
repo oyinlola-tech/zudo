@@ -7,7 +7,7 @@ import { TransactionStateError } from "../transactionErrors/transactionError.typ
 
 /** Valid state transitions. */
 const VALID_TRANSITIONS: Record<TransactionState, TransactionState[]> = {
-  pending: ["active", "failed"],
+  pending: ["active", "rolling_back", "failed"],
   active: ["committing", "rolling_back", "failed"],
   committing: ["committed", "failed", "rolling_back"],
   committed: [],
@@ -25,9 +25,28 @@ export function createTransitionFunction(
 ): (to: TransactionState) => void {
   return (to: TransactionState): void => {
     const current = getState();
-    if (!VALID_TRANSITIONS[current]?.includes(to)) {
+    if (!canTransition(current, to)) {
       throw new TransactionStateError(current, `transition to ${to}`);
     }
     setState(to);
   };
+}
+
+/**
+ * Whether a state transition is permitted.
+ *
+ * Error handlers use this before transitioning, so a failure raised from a
+ * terminal state cannot be replaced by a TransactionStateError about the
+ * transition itself.
+ */
+export function canTransition(
+  from: TransactionState,
+  to: TransactionState,
+): boolean {
+  return VALID_TRANSITIONS[from]?.includes(to) ?? false;
+}
+
+/** Whether a state admits no further transitions. */
+export function isTerminal(state: TransactionState): boolean {
+  return (VALID_TRANSITIONS[state]?.length ?? 0) === 0;
 }

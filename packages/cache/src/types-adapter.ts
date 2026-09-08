@@ -51,10 +51,8 @@ export interface CacheAdapter {
    */
   ttl?(key: CacheKey): Promise<number | null | undefined>;
   expire?(key: CacheKey, ttl: CacheTTL): Promise<boolean>;
+  /** Number of live entries currently held, when the adapter can report it. */
+  size?(): Promise<number | undefined>;
 }
 
 export interface CacheStore extends CacheAdapter {}
-
-export type CacheAdapterFactory<TOptions = unknown> = (
-  options: TOptions,
-) => CacheAdapter | Promise<CacheAdapter>;

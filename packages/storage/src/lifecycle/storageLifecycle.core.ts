@@ -7,10 +7,36 @@
 
 import { StorageError } from "@zudojs/errors";
 import type {
+  StorageHealth,
   StorageLifecycle,
   StorageLifecyclePhase,
-  StorageHealth,
 } from "../types/storage.type.js";
+
+/** Runs an operation across components, collecting rather than short-circuiting. */
+async function forEachComponent(
+  components: readonly StorageLifecycle[],
+  operation: string,
+  run: (component: StorageLifecycle) => Promise<void>,
+): Promise<void> {
+  const results = await Promise.allSettled(components.map(run));
+  const failures = results.filter(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+
+  if (failures.length === 0) return;
+
+  throw new StorageError(
+    `${failures.length} of ${components.length} components failed to ${operation}`,
+    {
+      code: "STORAGE_LIFECYCLE_OPERATION_FAILED",
+      statusCode: 500,
+      cause: new AggregateError(
+        failures.map((failure) => failure.reason),
+        `Component ${operation} failures`,
+      ),
+    },
+  );
+}
 
 /**
  * Lifecycle manager that coordinates storage component initialization,
@@ -22,16 +48,28 @@ export class StorageLifecycleManager implements StorageLifecycle {
 
   /**
    * Register a storage component for lifecycle management.
+   *
+   * A component registered once the manager is already past `initializing`
+   * is initialized immediately, so it cannot sit in the registry un-started.
    */
-  register(component: StorageLifecycle): void {
+  async register(component: StorageLifecycle): Promise<void> {
     this.components.push(component);
+    if (this.phase === "ready") await component.initialize();
   }
 
   async initialize(): Promise<void> {
+    if (this.phase === "ready") return;
     this.phase = "initializing";
-    for (const component of this.components) {
-      await component.initialize();
+
+    try {
+      for (const component of this.components) {
+        await component.initialize();
+      }
+    } catch (error) {
+      this.phase = "uninitialized";
+      throw error;
     }
+
     this.phase = "ready";
   }
 
@@ -52,14 +90,12 @@ export class StorageLifecycleManager implements StorageLifecycle {
       this.components.map((c) => c.healthCheck()),
     );
 
-    const healthy = results.every(
-      (r) => r.status === "fulfilled" && r.value.healthy,
-    );
+    const healthy =
+      this.components.length > 0 &&
+      results.every((r) => r.status === "fulfilled" && r.value.healthy);
 
     const latencyMs = results.reduce((max, r) => {
-      if (r.status === "fulfilled") {
-        return Math.max(max, r.value.latencyMs);
-      }
+      if (r.status === "fulfilled") return Math.max(max, r.value.latencyMs);
       return max;
     }, 0);
 
@@ -76,13 +112,19 @@ export class StorageLifecycleManager implements StorageLifecycle {
 
   async drain(): Promise<void> {
     this.phase = "draining";
-    await Promise.all(this.components.map((c) => c.drain()));
-    this.phase = "drained";
+    try {
+      await forEachComponent(this.components, "drain", (c) => c.drain());
+    } finally {
+      this.phase = "drained";
+    }
   }
 
   async shutdown(): Promise<void> {
-    this.phase = "shutdown";
-    await Promise.all(this.components.map((c) => c.shutdown()));
+    try {
+      await forEachComponent(this.components, "shutdown", (c) => c.shutdown());
+    } finally {
+      this.phase = "shutdown";
+    }
   }
 
   getPhase(): StorageLifecyclePhase {

@@ -4,14 +4,14 @@
  * Core types for routing, route definitions, and router context.
  */
 
-import type { HttpRequestContext as RequestContext } from "../../httpRequest/httpRequest.context.js";
+import type { HttpRequestContext as RequestContext } from "../../../httpRequest/httpRequest.context.js";
 
-import type { HttpResponseContext as ResponseContext } from "../../httpResponse/httpResponse.context.js";
+import type { HttpResponseContext as ResponseContext } from "../../../httpResponse/httpResponse.context.js";
 
 import type {
   HttpMiddleware,
   HttpMiddlewareContext,
-} from "../../httpMiddleware/httpMiddleware.type.js";
+} from "../../../httpMiddleware/httpMiddleware.type.js";
 
 export type HttpMethod =
   | "GET"
@@ -110,6 +110,49 @@ export interface HttpRouterRequestContext {
   readonly method: string;
   readonly signal: AbortSignal;
   readonly state: Map<string, unknown>;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Compiled Routes                                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A literal path segment that must match verbatim.
+ */
+export interface CompiledSegmentLiteral {
+  readonly type: "literal";
+  readonly value: string;
+}
+
+/**
+ * A named parameter segment, optionally constrained by a regular expression.
+ */
+export interface CompiledSegmentParameter {
+  readonly type: "parameter";
+  readonly name: string;
+  readonly optional: boolean;
+  readonly pattern: RegExp | undefined;
+}
+
+/**
+ * A trailing wildcard segment that captures the remainder of the path.
+ */
+export interface CompiledSegmentWildcard {
+  readonly type: "wildcard";
+  readonly name: string;
+}
+
+export type CompiledSegment =
+  CompiledSegmentLiteral | CompiledSegmentParameter | CompiledSegmentWildcard;
+
+/**
+ * A route definition paired with its compiled path segments.
+ */
+export interface CompiledRoute {
+  readonly definition: MatchedRoute;
+  readonly segments: readonly CompiledSegment[];
+  readonly score: number;
+  readonly strictTrailingSlash: boolean;
 }
 
 /* -------------------------------------------------------------------------- */

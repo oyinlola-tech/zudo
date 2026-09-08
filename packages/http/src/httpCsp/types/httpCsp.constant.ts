@@ -40,12 +40,13 @@ export const CSP_DIRECTIVES = Object.freeze([
   "require-sri-for",
   "require-trusted-types-for",
   "trusted-types",
-  "script-src-elem",
-  "script-src-attr",
-  "style-src-elem",
-  "style-src-attr",
-  "wasm-unsafe-eval",
-  "worker-src",
 ] as const);
+/*
+ * The five duplicated entries (script-src-elem, script-src-attr,
+ * style-src-elem, style-src-attr, worker-src) and `wasm-unsafe-eval` — which
+ * is a source expression, not a directive — have been removed. The list is the
+ * public vocabulary of directive names; a source expression in it would make
+ * `wasm-unsafe-eval` a valid `CSPDirectiveName`.
+ */
 
 export type CSPDirectiveName = (typeof CSP_DIRECTIVES)[number];

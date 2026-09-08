@@ -1,5 +1,5 @@
 /**
- * Core transaction type definitions.
+ * Core permission type definitions.
  *
  * @module permissionTypes
  */
@@ -12,6 +12,8 @@ export {
 
 export {
   type RuleEffect,
+  type RuleCombiningAlgorithm,
+  type RuleEvaluation,
   type PermissionRule,
   type PermissionConditionFn,
   type PermissionContext,

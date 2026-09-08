@@ -15,8 +15,8 @@ describe("getDefaultTrust", () => {
     expect(getDefaultTrust("jwt")).toBe("trusted");
   });
 
-  it("returns verified for header", () => {
-    expect(getDefaultTrust("header")).toBe("verified");
+  it("returns untrusted for header, which is client-supplied on the wire", () => {
+    expect(getDefaultTrust("header")).toBe("untrusted");
   });
 
   it("returns untrusted for path", () => {
@@ -78,7 +78,7 @@ describe("assertTrustLevel", () => {
 describe("tenantKey", () => {
   it("generates a scoped key", () => {
     expect(tenantKey(createTenantId("acme"), "user:123")).toBe(
-      "tenant:acme:user:123",
+      "tenant:acme:user\\:123",
     );
   });
 
@@ -92,7 +92,7 @@ describe("tenantKey", () => {
 describe("createTenantCacheKey", () => {
   it("generates a cache key", () => {
     expect(createTenantCacheKey(createTenantId("acme"), "user:123")).toBe(
-      "tenant:acme:user:123",
+      "tenant:acme:user\\:123",
     );
   });
 });

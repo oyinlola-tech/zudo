@@ -6,8 +6,18 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
-import { addIssue, childContext } from "../schemaBase/index.js";
-import { SchemaIssueCode } from "@zudojs/constants";
+import {
+  addIssue,
+  childContext,
+  failValidation,
+  enterComposite,
+  leaveComposite,
+  rethrowUnexpected,
+} from "../schemaBase/index.js";
+import {
+  SchemaIssueCode,
+  SCHEMA_DEFAULT_MAX_ARRAY_LENGTH,
+} from "@zudojs/constants";
 
 /** Configuration for array schema. */
 interface ArraySchemaConfig<T> {
@@ -38,32 +48,57 @@ export class ArraySchema<TOutput> extends Schema<TOutput[]> {
         expected: "array",
         received: typeof input,
       });
-      throw new Error("Validation failed");
+      failValidation();
     }
 
-    this._validateLength(ctx, input.length);
+    if (!enterComposite(ctx, input)) {
+      failValidation();
+    }
 
-    const result: TOutput[] = [];
-    let failed = false;
-    for (let i = 0; i < input.length; i++) {
-      const childCtx = childContext(ctx, i);
-      try {
-        result.push(this._config.itemSchema._parse(childCtx, input[i]));
-      } catch {
-        failed = true;
+    try {
+      this._validateLength(ctx, input.length);
+
+      const result: TOutput[] = [];
+      let failed = false;
+      for (let i = 0; i < input.length; i++) {
+        const childCtx = childContext(ctx, i);
+        try {
+          result.push(this._config.itemSchema._parse(childCtx, input[i]));
+        } catch (error) {
+          rethrowUnexpected(error);
+          failed = true;
+          if (ctx.options.abortEarly) break;
+        }
       }
-    }
 
-    if (failed) {
-      throw new Error("Validation failed");
-    }
+      if (failed) {
+        failValidation();
+      }
 
-    return result;
+      return result;
+    } finally {
+      leaveComposite(ctx, input);
+    }
   }
 
   private _validateLength(ctx: SchemaParseContext, length: number): void {
     const c = this._config;
     let failed = false;
+
+    // A default ceiling, so an unbounded array schema does not validate a
+    // million attacker-supplied elements. Callers who need more say so with
+    // an explicit `.max()`.
+    const hardMax = c.max ?? SCHEMA_DEFAULT_MAX_ARRAY_LENGTH;
+    if (length > hardMax) {
+      addIssue(ctx, {
+        code: SchemaIssueCode.TOO_LARGE,
+        path: [...ctx.path],
+        message: `Array must have at most ${hardMax} items`,
+        expected: `<= ${hardMax}`,
+        received: String(length),
+      });
+      failed = true;
+    }
 
     if (c.min !== undefined && length < c.min) {
       addIssue(ctx, {
@@ -97,7 +132,7 @@ export class ArraySchema<TOutput> extends Schema<TOutput[]> {
     }
 
     if (failed) {
-      throw new Error("Validation failed");
+      failValidation();
     }
   }
 

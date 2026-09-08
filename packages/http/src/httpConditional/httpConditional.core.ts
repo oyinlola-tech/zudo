@@ -5,6 +5,8 @@
  * If-Unmodified-Since and related conditional request semantics.
  */
 
+import { createHash } from "node:crypto";
+
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -32,6 +34,14 @@ export interface ConditionalResult {
   readonly notModified: boolean;
   readonly preconditionFailed: boolean;
   readonly statusCode?: 304 | 412;
+  /**
+   * Whether a `Range` header may be honoured for this request.
+   *
+   * `false` when an `If-Range` condition was supplied and did not match the
+   * current representation; RFC 9110 section 13.1.5 then requires the server
+   * to ignore `Range` and return the full 200 response.
+   */
+  readonly rangeApplicable: boolean;
 }
 
 export type ConditionalMethod =
@@ -88,21 +98,56 @@ export function parseEntityTag(
   };
 }
 
+/**
+ * RFC 9110 section 8.8.3 `etagc = "!" / %x23-7E / obs-text`.
+ *
+ * DQUOTE is not a member and there is no `quoted-pair` inside an entity-tag,
+ * so a value containing one cannot be represented and must be rejected
+ * rather than escaped.
+ */
+const ETAGC_PATTERN = /^[\u0021\u0023-\u007e\u0080-\u00ff]*$/;
+
+/**
+ * Formats an entity tag for the wire.
+ *
+ * @param tag - The tag value, or a parsed {@link EntityTag}.
+ * @param weak - Whether to emit the `W/` weakness indicator.
+ * @returns The formatted entity tag.
+ * @throws {TypeError} If the value contains a character outside `etagc` —
+ *   notably DQUOTE, CR, LF or NUL, which would otherwise split the response.
+ */
 export function formatEntityTag(tag: EntityTag | string, weak = false): string {
   if (typeof tag === "object") {
     weak = tag.weak;
     tag = tag.value;
   }
 
-  const escaped = tag.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  if (!ETAGC_PATTERN.test(tag)) {
+    throw new TypeError(
+      "Entity tag values must contain only RFC 9110 etagc characters.",
+    );
+  }
 
-  return `${weak ? "W/" : ""}"${escaped}"`;
+  return `${weak ? "W/" : ""}"${tag}"`;
 }
 
 /* -------------------------------------------------------------------------- */
 /* ETag Lists                                                                 */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Parses an entity-tag list header into its tags.
+ *
+ * @remarks
+ * The wildcard `*` yields an **empty** list, which is indistinguishable from
+ * "no parseable tags". Callers making a precondition decision must use
+ * {@link parseEntityTagCondition}, or pair this with {@link isWildcardETag};
+ * treating an empty result as "no precondition" turns `If-Match: *` — the
+ * strongest possible precondition — into no precondition at all.
+ *
+ * @param value - The raw header value.
+ * @returns The parsed entity tags.
+ */
 export function parseEntityTagList(
   value: string | undefined | null,
 ): readonly EntityTag[] {
@@ -123,6 +168,29 @@ export function parseEntityTagList(
 
 export function isWildcardETag(value: string | undefined | null): boolean {
   return value?.trim() === "*";
+}
+
+/**
+ * Parses an entity-tag list header, distinguishing the `*` wildcard from an
+ * empty or unparseable list.
+ *
+ * @param value - The raw header value.
+ * @returns The wildcard flag, whether the header was present, and the tags.
+ */
+export function parseEntityTagCondition(value: string | undefined | null): {
+  readonly present: boolean;
+  readonly wildcard: boolean;
+  readonly tags: readonly EntityTag[];
+} {
+  if (value === undefined || value === null) {
+    return { present: false, wildcard: false, tags: [] };
+  }
+
+  if (isWildcardETag(value)) {
+    return { present: true, wildcard: true, tags: [] };
+  }
+
+  return { present: true, wildcard: false, tags: parseEntityTagList(value) };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -185,6 +253,42 @@ export function matchesETagList(
 /* Date Parsing                                                               */
 /* -------------------------------------------------------------------------- */
 
+const MONTH_NAMES = [
+  "jan",
+  "feb",
+  "mar",
+  "apr",
+  "may",
+  "jun",
+  "jul",
+  "aug",
+  "sep",
+  "oct",
+  "nov",
+  "dec",
+];
+
+const IMF_FIXDATE =
+  /^[A-Za-z]{3}, (\d{2}) ([A-Za-z]{3}) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$/;
+
+const RFC850_DATE =
+  /^[A-Za-z]+day, (\d{2})-([A-Za-z]{3})-(\d{2}) (\d{2}):(\d{2}):(\d{2}) GMT$/;
+
+const ASCTIME_DATE =
+  /^[A-Za-z]{3} ([A-Za-z]{3}) ([\d ]\d) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/;
+
+/**
+ * Parses an HTTP-date.
+ *
+ * Only the three formats RFC 9110 section 5.6.7 defines are accepted:
+ * IMF-fixdate, the obsolete RFC 850 form, and the asctime form. Every one is
+ * interpreted as UTC — `Date.parse` reads asctime as *server-local* time, so
+ * delegating to it silently skews every `If-Modified-Since` comparison on a
+ * server that is not running in UTC.
+ *
+ * @param value - The raw header value.
+ * @returns The parsed instant, or `undefined` if it is not an HTTP-date.
+ */
 export function parseHTTPDate(
   value: string | undefined | null,
 ): Date | undefined {
@@ -192,13 +296,113 @@ export function parseHTTPDate(
     return undefined;
   }
 
-  const timestamp = Date.parse(value);
+  const trimmed = value.trim();
 
-  if (Number.isNaN(timestamp)) {
+  const imf = IMF_FIXDATE.exec(trimmed);
+
+  if (imf) {
+    return buildUTCDate(imf[3], imf[2], imf[1], imf[4], imf[5], imf[6]);
+  }
+
+  const rfc850 = RFC850_DATE.exec(trimmed);
+
+  if (rfc850) {
+    const twoDigitYear = Number(rfc850[3]);
+
+    /*
+     * RFC 9110 section 5.6.7: a two-digit year more than 50 years in the
+     * future is interpreted as the most recent year in the past with the
+     * same last two digits.
+     */
+    const century = twoDigitYear >= 70 ? 1900 : 2000;
+
+    return buildUTCDate(
+      String(century + twoDigitYear),
+      rfc850[2],
+      rfc850[1],
+      rfc850[4],
+      rfc850[5],
+      rfc850[6],
+    );
+  }
+
+  const asctime = ASCTIME_DATE.exec(trimmed);
+
+  if (asctime) {
+    return buildUTCDate(
+      asctime[6],
+      asctime[1],
+      asctime[2],
+      asctime[3],
+      asctime[4],
+      asctime[5],
+    );
+  }
+
+  return undefined;
+}
+
+/**
+ * Builds a UTC instant from captured HTTP-date components.
+ *
+ * @param year - Four-digit year.
+ * @param month - Three-letter English month abbreviation.
+ * @param day - Day of month.
+ * @param hour - Hour.
+ * @param minute - Minute.
+ * @param second - Second.
+ * @returns The instant, or `undefined` if any component is out of range.
+ */
+function buildUTCDate(
+  year: string | undefined,
+  month: string | undefined,
+  day: string | undefined,
+  hour: string | undefined,
+  minute: string | undefined,
+  second: string | undefined,
+): Date | undefined {
+  const monthIndex = MONTH_NAMES.indexOf((month ?? "").toLowerCase());
+
+  if (monthIndex === -1) {
     return undefined;
   }
 
-  return new Date(timestamp);
+  const numericYear = Number(year);
+
+  const numericDay = Number((day ?? "").trim());
+
+  const numericHour = Number(hour);
+
+  const numericMinute = Number(minute);
+
+  const numericSecond = Number(second);
+
+  if (
+    numericDay < 1 ||
+    numericDay > 31 ||
+    numericHour > 23 ||
+    numericMinute > 59 ||
+    numericSecond > 60
+  ) {
+    return undefined;
+  }
+
+  const timestamp = Date.UTC(
+    numericYear,
+    monthIndex,
+    numericDay,
+    numericHour,
+    numericMinute,
+    Math.min(numericSecond, 59),
+  );
+
+  const date = new Date(timestamp);
+
+  if (date.getUTCDate() !== numericDay || date.getUTCMonth() !== monthIndex) {
+    return undefined;
+  }
+
+  return date;
 }
 
 export function normalizeHTTPDate(value: Date | string): Date | undefined {
@@ -352,12 +556,33 @@ export function evaluateIfNoneMatch(
 /* Conditional Request Evaluation                                             */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Evaluates every conditional request header in RFC 9110 section 13.2.2
+ * precedence order.
+ *
+ * `If-Range` is evaluated last and reported through
+ * {@link ConditionalResult.rangeApplicable}: when it is present and does not
+ * match the current representation, the caller must ignore the `Range`
+ * header and send the full 200 response.
+ *
+ * @param method - The request method.
+ * @param headers - The conditional request headers.
+ * @param resource - The current representation's validators.
+ * @returns The evaluation outcome.
+ */
 export function evaluateConditionalRequest(
   method: string | undefined,
   headers: ConditionalHeaders,
   resource: ConditionalResource,
 ): ConditionalResult {
   const normalizedMethod = (method ?? "GET").trim().toUpperCase();
+
+  /*
+   * A Range may only be honoured when either no If-Range was sent or the
+   * If-Range condition matches the current representation.
+   */
+  const rangeApplicable =
+    headers.ifRange === undefined || matchesIfRange(headers.ifRange, resource);
 
   /*
    * If-Match takes precedence over If-Unmodified-Since.
@@ -371,6 +596,7 @@ export function evaluateConditionalRequest(
       notModified: false,
       preconditionFailed: true,
       statusCode: PRECONDITION_FAILED_STATUS,
+      rangeApplicable,
     };
   }
 
@@ -387,6 +613,7 @@ export function evaluateConditionalRequest(
       notModified: false,
       preconditionFailed: true,
       statusCode: PRECONDITION_FAILED_STATUS,
+      rangeApplicable,
     };
   }
 
@@ -406,6 +633,7 @@ export function evaluateConditionalRequest(
         notModified: true,
         preconditionFailed: false,
         statusCode: NOT_MODIFIED_STATUS,
+        rangeApplicable,
       };
     }
 
@@ -414,6 +642,7 @@ export function evaluateConditionalRequest(
       notModified: false,
       preconditionFailed: true,
       statusCode: PRECONDITION_FAILED_STATUS,
+      rangeApplicable,
     };
   }
 
@@ -428,6 +657,7 @@ export function evaluateConditionalRequest(
       notModified: true,
       preconditionFailed: false,
       statusCode: NOT_MODIFIED_STATUS,
+      rangeApplicable,
     };
   }
 
@@ -435,7 +665,24 @@ export function evaluateConditionalRequest(
     matched: false,
     notModified: false,
     preconditionFailed: false,
+    rangeApplicable,
   };
+}
+
+/**
+ * Reports whether a `Range` header may be honoured for this request.
+ *
+ * @param headers - The conditional request headers.
+ * @param resource - The current representation's validators.
+ * @returns `false` when `If-Range` was sent and does not match.
+ */
+export function isRangeApplicable(
+  headers: ConditionalHeaders,
+  resource: ConditionalResource,
+): boolean {
+  return headers.ifRange === undefined
+    ? true
+    : matchesIfRange(headers.ifRange, resource);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -479,24 +726,30 @@ export function shouldReturnPreconditionFailed(
 /* ETag Generation                                                            */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Number of hex characters kept from the SHA-256 digest (128 bits).
+ */
+const ETAG_DIGEST_LENGTH = 32;
+
+/**
+ * Generates an entity tag from a representation.
+ *
+ * The digest is SHA-256 truncated to 128 bits. A 32-bit non-cryptographic
+ * hash is unusable here: a strong ETag asserts byte equality, and a 2^32
+ * output space makes a colliding representation findable in roughly 2^16
+ * trials, which is a cache-poisoning primitive.
+ *
+ * @param value - The representation to digest.
+ * @param weak - Whether to emit a weak validator.
+ * @returns The formatted entity tag.
+ */
 export function generateETag(value: string | Uint8Array, weak = false): string {
-  let hash = 2166136261;
+  const digest = createHash("sha256")
+    .update(typeof value === "string" ? Buffer.from(value, "utf8") : value)
+    .digest("hex")
+    .slice(0, ETAG_DIGEST_LENGTH);
 
-  if (typeof value === "string") {
-    for (let index = 0; index < value.length; index += 1) {
-      hash ^= value.charCodeAt(index);
-      hash = Math.imul(hash, 16777619);
-    }
-  } else {
-    for (const byte of value) {
-      hash ^= byte;
-      hash = Math.imul(hash, 16777619);
-    }
-  }
-
-  const unsigned = hash >>> 0;
-
-  return formatEntityTag(unsigned.toString(16), weak);
+  return formatEntityTag(digest, weak);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -557,7 +810,7 @@ function splitCommaSeparated(value: string): string[] {
       continue;
     }
 
-    if (character === "\\") {
+    if (quoted && character === "\\") {
       current += character;
       escaped = true;
       continue;

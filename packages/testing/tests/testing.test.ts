@@ -47,11 +47,11 @@ describe("createTestContext", () => {
 
     ctx.logs.record("info", "test message");
     expect(ctx.logs.entries).toHaveLength(1);
-    expect(ctx.logs.entries[0].message).toBe("test message");
+    expect(ctx.logs.entries[0]?.message).toBe("test message");
 
     ctx.events.record("test.event", { id: "1" });
     expect(ctx.events.entries).toHaveLength(1);
-    expect(ctx.events.entries[0].type).toBe("test.event");
+    expect(ctx.events.entries[0]?.type).toBe("test.event");
 
     ctx.messages.record("test.message", { id: "2" });
     expect(ctx.messages.entries).toHaveLength(1);
@@ -106,10 +106,10 @@ describe("createSpyLogger", () => {
     spy.error("fail");
 
     expect(spy.calls).toHaveLength(2);
-    expect(spy.calls[0].message).toBe("hello");
-    expect(spy.calls[0].method).toBe("info");
-    expect(spy.calls[1].message).toBe("fail");
-    expect(spy.calls[1].method).toBe("error");
+    expect(spy.calls[0]?.message).toBe("hello");
+    expect(spy.calls[0]?.method).toBe("info");
+    expect(spy.calls[1]?.message).toBe("fail");
+    expect(spy.calls[1]?.method).toBe("error");
   });
 
   it("finds calls by method and message", () => {

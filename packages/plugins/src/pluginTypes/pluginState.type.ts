@@ -21,11 +21,14 @@ export type PluginState =
 export const VALID_STATE_TRANSITIONS: Readonly<
   Record<PluginState, readonly PluginState[]>
 > = {
-  registered: ["installing"],
+  registered: ["installing", "disposing"],
   installing: ["installed", "failed"],
-  installed: ["initializing", "stopping"],
+  // A plugin that installed but never started still holds resources, so
+  // it must have a route to disposal; without one an aborted startup
+  // stranded it permanently.
+  installed: ["initializing", "stopping", "disposing", "failed"],
   initializing: ["initialized", "failed"],
-  initialized: ["starting", "stopping"],
+  initialized: ["starting", "stopping", "disposing", "failed"],
   starting: ["started", "failed"],
   started: ["stopping"],
   stopping: ["stopped", "failed"],

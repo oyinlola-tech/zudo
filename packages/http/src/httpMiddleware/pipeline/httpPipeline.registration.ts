@@ -44,17 +44,28 @@ export function createRegistration(
         enabled: middleware.enabled,
       });
     } else {
-      use(entries, middleware, () => createId(entries, sequence++));
+      use(entries, middleware, () => createId(entries, sequence++), {
+        sequence: entries.length,
+      });
     }
   }
 
   return { entries, metadata, sequence };
 }
 
+export interface UseRegistrationOptions {
+  readonly name?: string;
+  readonly priority?: number;
+  readonly enabled?: boolean;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+  readonly sequence?: number;
+}
+
 export function use(
   entries: InternalMiddleware[],
   middleware: HttpMiddleware,
   createId: () => string,
+  options: UseRegistrationOptions = {},
 ): () => void {
   if (typeof middleware !== "function") {
     throw new TypeError("HTTP middleware must be a function.");
@@ -65,9 +76,15 @@ export function use(
   entries.push({
     id,
     middleware,
-    name: id,
-    priority: 0,
-    enabled: true,
+    name: options.name ?? id,
+    priority: normalizePriority(options.priority),
+    /*
+     * `sequence` is the registration-order tiebreaker `list()` sorts on. It
+     * must be stored or equal priorities collapse to an arbitrary order.
+     */
+    sequence: options.sequence ?? entries.length,
+    metadata: options.metadata,
+    enabled: options.enabled ?? true,
   });
 
   return () => {

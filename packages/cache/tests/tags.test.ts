@@ -167,3 +167,112 @@ describe("InMemoryTagStore — trackedKeys", () => {
     expect([...tagStore.trackedKeys()].sort()).toEqual(["k1", "k2"]);
   });
 });
+
+// ─── Regression: namespace-scoped tags ─────────────────────────────────────
+
+describe("InMemoryTagStore — namespace scoping", () => {
+  // Regression (CACHE-03): CacheTagOptions.namespace was named `_options`
+  // and discarded, so tags lived in one flat global map and one tenant's
+  // invalidateByTag deleted another tenant's entries.
+  it("keeps the same tag independent across namespaces", async () => {
+    await tagStore.add("zudojs:tenant-a:u1", ["users"], {
+      namespace: "tenant-a",
+    });
+    await tagStore.add("zudojs:tenant-b:u1", ["users"], {
+      namespace: "tenant-b",
+    });
+
+    expect(await tagStore.getKeys("users", { namespace: "tenant-a" })).toEqual([
+      "zudojs:tenant-a:u1",
+    ]);
+    expect(await tagStore.getKeys("users", { namespace: "tenant-b" })).toEqual([
+      "zudojs:tenant-b:u1",
+    ]);
+    // The un-namespaced scope is its own scope, not a superset.
+    expect(await tagStore.getKeys("users")).toEqual([]);
+  });
+
+  it("invalidates only the requested namespace", async () => {
+    await tagStore.add("a1", ["users"], { namespace: "tenant-a" });
+    await tagStore.add("b1", ["users"], { namespace: "tenant-b" });
+
+    const result = await tagStore.invalidate("users", {
+      namespace: "tenant-a",
+    });
+    expect(result.cleared).toBe(1);
+    expect(await tagStore.getKeys("users", { namespace: "tenant-b" })).toEqual([
+      "b1",
+    ]);
+  });
+
+  it("scopes remove(), count() and tagsForKey()", async () => {
+    await tagStore.add("k", ["t"], { namespace: "a" });
+    await tagStore.add("k", ["t"], { namespace: "b" });
+    expect(tagStore.count("t", { namespace: "a" })).toBe(1);
+    expect(tagStore.tagsForKey("k", { namespace: "b" })).toEqual(["t"]);
+
+    await tagStore.remove("k", ["t"], { namespace: "a" });
+    expect(tagStore.count("t", { namespace: "a" })).toBe(0);
+    expect(tagStore.count("t", { namespace: "b" })).toBe(1);
+  });
+
+  it("lists tags per namespace", async () => {
+    await tagStore.add("k", ["one"], { namespace: "a" });
+    await tagStore.add("k", ["two"], { namespace: "b" });
+    expect(tagStore.tags({ namespace: "a" })).toEqual(["one"]);
+    expect(tagStore.tags({ namespace: "b" })).toEqual(["two"]);
+  });
+});
+
+// ─── Regression: invalidate() does not leak reverse mappings ───────────────
+
+describe("InMemoryTagStore — invalidate cleanup", () => {
+  // Regression (CACHE-09): invalidate() removed the forward mapping but
+  // left an empty keyToTags Set per key forever, so a long-running service
+  // leaked one Map entry per distinct key ever tagged and trackedKeys()
+  // reported keys with no tags at all.
+  it("drops keys that end up with no tags", async () => {
+    await tagStore.add("k1", ["users"]);
+    await tagStore.add("k2", ["users"]);
+    expect(tagStore.trackedKeys()).toHaveLength(2);
+
+    await tagStore.invalidate("users");
+
+    expect(tagStore.trackedKeys()).toEqual([]);
+    expect(tagStore.tags()).toEqual([]);
+  });
+
+  it("keeps keys that still carry other tags", async () => {
+    await tagStore.add("k1", ["users", "sessions"]);
+    await tagStore.invalidate("users");
+    expect(tagStore.trackedKeys()).toEqual(["k1"]);
+    expect(tagStore.tagsForKey("k1")).toEqual(["sessions"]);
+  });
+
+  it("does not leak across repeated tag/invalidate cycles", async () => {
+    for (let i = 0; i < 200; i++) {
+      await tagStore.add(`key-${i}`, ["batch"]);
+      await tagStore.invalidate("batch");
+    }
+    expect(tagStore.trackedKeys()).toEqual([]);
+  });
+
+  it("remove() drops a key once its last tag is gone", async () => {
+    await tagStore.add("k", ["only"]);
+    await tagStore.remove("k", ["only"]);
+    expect(tagStore.trackedKeys()).toEqual([]);
+  });
+});
+
+// ─── Regression: tag validation ────────────────────────────────────────────
+
+describe("InMemoryTagStore — tag validation", () => {
+  it("rejects empty and oversized tags", async () => {
+    await expect(tagStore.add("k", [""])).rejects.toThrow();
+    await expect(tagStore.add("k", ["t".repeat(200)])).rejects.toThrow();
+  });
+
+  it("rejects tags containing the scope separator", async () => {
+    await expect(tagStore.add("k", ["a\u0000b"])).rejects.toThrow();
+  });
+});

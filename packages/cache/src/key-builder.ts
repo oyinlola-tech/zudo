@@ -18,6 +18,7 @@ import {
   MAX_KEY_LENGTH,
 } from "./constants.js";
 import { cacheInvalidKeyError } from "./errors.js";
+import { assertValidPatternPart } from "./utils.js";
 
 /* -------------------------------------------------------------------------- */
 /* Default Key Builder                                                        */
@@ -80,16 +81,35 @@ export class DefaultKeyBuilder implements CacheKeyBuilder {
     return fullKey;
   }
 
+  /**
+   * Builds a fully-qualified glob pattern.
+   *
+   * Prefix and namespace are *identity* parts — they are the scope boundary
+   * a pattern operation must stay inside — so they are validated exactly as
+   * `build()` validates them. A namespace of `"*"` is rejected rather than
+   * silently widening the pattern to every namespace. Only the trailing
+   * pattern segment may contain `*` and `?`.
+   */
   buildPattern(pattern: string, options?: CacheKeyOptions): string {
     const separator = options?.separator ?? this.globalSeparator;
     const namespace = options?.namespace ?? this.currentNamespace;
     const prefix = options?.prefix ?? this.globalPrefix;
 
-    const parts: string[] = [];
-    if (prefix) parts.push(prefix);
-    if (namespace) parts.push(namespace);
-    parts.push(pattern);
-    return parts.join(separator);
+    const identityParts: string[] = [];
+    if (prefix) identityParts.push(prefix);
+    if (namespace) identityParts.push(namespace);
+    for (const part of identityParts) this.validatePart(part, separator);
+
+    assertValidPatternPart(pattern, separator);
+
+    const fullPattern = [...identityParts, pattern].join(separator);
+    if (fullPattern.length > MAX_KEY_LENGTH) {
+      throw cacheInvalidKeyError(
+        fullPattern,
+        `Cache pattern exceeds maximum length of ${MAX_KEY_LENGTH} characters.`,
+      );
+    }
+    return fullPattern;
   }
 
   namespace(namespace: CacheNamespace): CacheKeyBuilder {

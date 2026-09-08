@@ -11,14 +11,30 @@ import {
   XSS_PATTERNS,
 } from "../types/security.type.js";
 
-/** Null byte pattern. */
-const NULL_BYTE_PATTERN = /\x00/g;
+/**
+ * Null byte and control character patterns.
+ *
+ * Two variants of each: the plain form is used with {@link RegExp.test}, the
+ * `g` form only with {@link String.replace}. A global regex keeps `lastIndex`
+ * between `test` calls and resumes from there on the next one, so sharing a
+ * single `/g` pattern across both uses makes the test report `false` for input
+ * it matched moments earlier.
+ */
+const NULL_BYTE_PATTERN = /\x00/;
+const NULL_BYTE_PATTERN_GLOBAL = /\x00/g;
 
-/** Control character pattern (except tab, newline, carriage return). */
-const CONTROL_CHAR_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
+/** Control characters, excluding tab, newline, and carriage return. */
+const CONTROL_CHAR_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/;
+const CONTROL_CHAR_PATTERN_GLOBAL = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
+
+/** Default maximum recursion depth for {@link sanitizeObject}. */
+const DEFAULT_MAX_DEPTH = 32;
 
 /**
  * Checks if a string contains SQL injection patterns.
+ *
+ * A heuristic with a high false-positive rate on ordinary prose — never the
+ * only defence against injection. Parameterise your queries.
  *
  * @param input - The string to check.
  * @returns True if SQL injection patterns are detected.
@@ -64,11 +80,17 @@ export function sanitizeString(
 
   // Strip null bytes
   if (config?.stripNullBytes !== false) {
-    sanitized = sanitized.replace(NULL_BYTE_PATTERN, "");
+    sanitized = sanitized.replace(NULL_BYTE_PATTERN_GLOBAL, "");
   }
 
   // Strip control characters
-  sanitized = sanitized.replace(CONTROL_CHAR_PATTERN, "");
+  sanitized = sanitized.replace(CONTROL_CHAR_PATTERN_GLOBAL, "");
+
+  // Normalize Unicode — collapses visually identical sequences so that
+  // downstream comparisons and length checks see one canonical form.
+  if (config?.normalizeUnicode) {
+    sanitized = sanitized.normalize("NFC");
+  }
 
   // Truncate if max length configured
   if (config?.maxStringLength && sanitized.length > config.maxStringLength) {
@@ -84,7 +106,81 @@ export function sanitizeString(
 }
 
 /**
+ * Sanitizes a value of any shape, recursing into arrays and plain objects.
+ *
+ * Arrays stay arrays at every level, cycles are detected and replaced with
+ * `undefined` rather than overflowing the stack, and recursion stops at
+ * `config.maxDepth`.
+ */
+function sanitizeValue(
+  value: unknown,
+  config: InputSanitizationConfig | undefined,
+  seen: WeakSet<object>,
+  depth: number,
+  maxDepth: number,
+): unknown {
+  if (typeof value === "string") {
+    return sanitizeString(value, config);
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+
+  if (depth >= maxDepth) {
+    return undefined;
+  }
+
+  // A repeat visit means a cycle: recursing would never terminate.
+  if (seen.has(value)) {
+    return undefined;
+  }
+  seen.add(value);
+
+  try {
+    if (Array.isArray(value)) {
+      return value.map((item) =>
+        sanitizeValue(item, config, seen, depth + 1, maxDepth),
+      );
+    }
+
+    // Anything with its own semantics (Date, Map, RegExp, class instances) is
+    // passed through untouched — spreading it would silently turn it into a
+    // plain object and lose that behaviour.
+    if (!isPlainObject(value)) {
+      return value;
+    }
+
+    const result: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (
+        config?.preventPrototypePollution !== false &&
+        containsPrototypePollution(key)
+      ) {
+        continue;
+      }
+      result[key] = sanitizeValue(child, config, seen, depth + 1, maxDepth);
+    }
+    return result;
+  } finally {
+    // Leaving this branch: a sibling may legitimately reference the same
+    // object without that being a cycle.
+    seen.delete(value);
+  }
+}
+
+/** True when the value is a plain object (`{}` or `Object.create(null)`). */
+function isPlainObject(value: object): boolean {
+  const proto = Object.getPrototypeOf(value) as object | null;
+  return proto === null || proto === Object.prototype;
+}
+
+/**
  * Sanitizes an object by recursively cleaning its values.
+ *
+ * Cycles and over-deep structures are handled: a repeated reference or a
+ * branch past `config.maxDepth` (default 32) becomes `undefined` instead of
+ * exhausting the stack.
  *
  * @param obj - The object to sanitize.
  * @param config - Optional sanitization configuration.
@@ -94,40 +190,8 @@ export function sanitizeObject<T extends Record<string, unknown>>(
   obj: T,
   config?: InputSanitizationConfig,
 ): T {
-  const sanitized = { ...obj } as Record<string, unknown>;
-
-  for (const [key, value] of Object.entries(sanitized)) {
-    // Check for prototype pollution keys
-    if (config?.preventPrototypePollution !== false) {
-      if (containsPrototypePollution(key)) {
-        delete sanitized[key];
-        continue;
-      }
-    }
-
-    // Sanitize string values
-    if (typeof value === "string") {
-      sanitized[key] = sanitizeString(value, config);
-    } else if (typeof value === "object" && value !== null) {
-      // Recursively sanitize nested objects
-      if (Array.isArray(value)) {
-        sanitized[key] = value.map((item) =>
-          typeof item === "object" && item !== null
-            ? sanitizeObject(item as Record<string, unknown>, config)
-            : typeof item === "string"
-              ? sanitizeString(item, config)
-              : item,
-        );
-      } else {
-        sanitized[key] = sanitizeObject(
-          value as Record<string, unknown>,
-          config,
-        );
-      }
-    }
-  }
-
-  return sanitized as T;
+  const maxDepth = config?.maxDepth ?? DEFAULT_MAX_DEPTH;
+  return sanitizeValue(obj, config, new WeakSet(), 0, maxDepth) as T;
 }
 
 /**
@@ -148,12 +212,24 @@ export function isSafeString(input: string, allowedPattern?: RegExp): boolean {
     return false;
   }
 
-  // Check custom pattern
-  if (allowedPattern && !allowedPattern.test(input)) {
+  // Check custom pattern. A caller-supplied `g`/`y` regex carries `lastIndex`
+  // between calls, so it is normalised before use.
+  if (allowedPattern && !withoutStickyFlags(allowedPattern).test(input)) {
     return false;
   }
 
   return true;
+}
+
+/**
+ * Returns an equivalent regex with the `g` and `y` flags removed.
+ *
+ * Both flags make `test` stateful via `lastIndex`; for a one-shot boolean
+ * check they only introduce order-dependent results.
+ */
+export function withoutStickyFlags(pattern: RegExp): RegExp {
+  const flags = pattern.flags.replace(/[gy]/g, "");
+  return flags === pattern.flags ? pattern : new RegExp(pattern.source, flags);
 }
 
 /**
@@ -187,6 +263,11 @@ export function detectThreats(input: string): string[] {
 /**
  * HTML-escapes a string to prevent XSS.
  *
+ * Escapes the five characters that matter in element text and quoted attribute
+ * values. It does not make a string safe for an unquoted attribute, inside a
+ * `<script>` or `<style>` block, or in a URL position — those contexts need
+ * their own encoding.
+ *
  * @param input - The string to escape.
  * @returns The escaped string.
  */
@@ -197,13 +278,22 @@ export function escapeHtml(input: string): string {
     ">": "&gt;",
     '"': "&quot;",
     "'": "&#39;",
+    "`": "&#96;",
   };
 
-  return input.replace(/[&<>"']/g, (char) => map[char] ?? char);
+  return input.replace(/[&<>"'`]/g, (char) => map[char] ?? char);
 }
 
 /**
  * Strips HTML tags from a string.
+ *
+ * This removes tag syntax; it is **not** an HTML sanitizer. The result is safe
+ * to treat as plain text, but must still be escaped with {@link escapeHtml}
+ * before being inserted back into a document — use a dedicated sanitizer if
+ * you need to keep markup.
+ *
+ * An unterminated `<` consumes the remainder of the input, which is the safe
+ * direction: a truncated tag never survives into the output.
  *
  * @param input - The string to strip.
  * @returns The string with HTML tags removed.

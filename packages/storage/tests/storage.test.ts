@@ -4,7 +4,7 @@
  * Comprehensive tests for all storage modules.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -27,7 +27,6 @@ import type {
   StorageHealth,
   PoolStats,
   StorageLifecycle,
-  StorageLifecyclePhase,
 } from "../src/types/storage.type.js";
 
 /* ─── Mock Database ───────────────────────────────────────────────────────── */
@@ -60,7 +59,7 @@ class MockConnection implements Connection {
 }
 
 class MockDatabase implements Database {
-  private connected = false;
+  connected = false;
 
   async connect(): Promise<void> {
     this.connected = true;
@@ -496,7 +495,7 @@ describe("HealthChecker", () => {
     const report = await checker.checkAll();
     expect(report.healthy).toBe(true);
     expect(report.components).toHaveLength(1);
-    expect(report.components[0].name).toBe("db");
+    expect(report.components[0]?.name).toBe("db");
   });
 
   it("handles unhealthy components", async () => {
@@ -537,7 +536,7 @@ describe("HealthChecker", () => {
     checker.register("db", broken);
     const report = await checker.checkAll();
     expect(report.healthy).toBe(false);
-    expect(report.components[0].health.status).toBe("error");
+    expect(report.components[0]?.health.status).toBe("error");
   });
 
   it("returns null for unknown component", async () => {

@@ -11,7 +11,7 @@ import { HttpError as BaseHttpError } from "@zudojs/errors";
 
 import type { HttpErrorOptions } from "./httpError.type.js";
 
-import { normalizeHeaders, getStatusText } from "./httpError.helper.js";
+import { normalizeHeaders, getStatusText } from "./httpError.util.js";
 
 /**
  * HTTP error with response-specific properties.
@@ -72,6 +72,8 @@ export class HttpError extends BaseHttpError {
       details: this.details,
       expose: this.expose,
       metadata: this.metadata,
+      /* An additive transform must not sever the original error chain. */
+      cause: this.cause,
     });
   }
 
@@ -85,8 +87,7 @@ export class HttpError extends BaseHttpError {
       details,
       expose: this.expose,
       metadata: this.metadata,
+      cause: this.cause,
     });
   }
 }
-
-export { getStatusText };

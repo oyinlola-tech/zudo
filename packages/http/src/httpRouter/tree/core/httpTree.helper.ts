@@ -35,6 +35,11 @@ export function insertSegment(
   }
 
   const [segment, ...rest] = segments;
+
+  if (segment === undefined) {
+    return;
+  }
+
   let child = node.children.get(segment);
 
   if (!child) {
@@ -62,6 +67,11 @@ export function removeRouteFromTree(
   }
 
   const [segment, ...rest] = segments;
+
+  if (segment === undefined) {
+    return false;
+  }
+
   const child = node.children.get(segment);
 
   if (!child) {

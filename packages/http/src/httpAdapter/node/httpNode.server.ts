@@ -50,6 +50,7 @@ export function configureServer(
     readonly headersTimeout?: number;
     readonly keepAliveTimeout?: number;
     readonly connectionTimeout?: number;
+    readonly maxConnections?: number;
   },
 ): void {
   if (options.requestTimeout !== undefined) {
@@ -78,6 +79,17 @@ export function configureServer(
       options.connectionTimeout,
       "connectionTimeout",
     );
+  }
+
+  if (options.maxConnections !== undefined) {
+    if (
+      !Number.isInteger(options.maxConnections) ||
+      options.maxConnections < 1
+    ) {
+      throw new RangeError("maxConnections must be a positive integer.");
+    }
+
+    server.maxConnections = options.maxConnections;
   }
 }
 
@@ -115,13 +127,38 @@ export function listen(
   });
 }
 
-export function closeServer(server: Server): Promise<void> {
+/**
+ * Closes a listening server.
+ *
+ * `server.close()` on its own stops accepting new connections but waits
+ * indefinitely for every existing socket to end, including idle keep-alive
+ * sockets that no request is using. Idle sockets are therefore closed
+ * immediately, and after `graceMs` any connection still in flight is closed
+ * too so shutdown cannot be held open by a client.
+ *
+ * @param server - The server to close.
+ * @param options - `graceMs` is how long in-flight requests are given before
+ *   their sockets are destroyed. `0` closes everything immediately;
+ *   `Infinity` waits forever (the old behaviour).
+ */
+export function closeServer(
+  server: Server,
+  options: { readonly graceMs?: number } = {},
+): Promise<void> {
   if (!server.listening) {
     return Promise.resolve();
   }
 
+  const graceMs = options.graceMs ?? 10_000;
+
   return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
     server.close((error) => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+
       if (error) {
         reject(error);
 
@@ -130,6 +167,20 @@ export function closeServer(server: Server): Promise<void> {
 
       resolve();
     });
+
+    /* Idle keep-alive sockets are never going to end on their own. */
+    server.closeIdleConnections();
+
+    if (Number.isFinite(graceMs)) {
+      timer = setTimeout(
+        () => {
+          server.closeAllConnections();
+        },
+        Math.max(0, graceMs),
+      );
+
+      timer.unref?.();
+    }
   });
 }
 
@@ -246,7 +297,12 @@ export function readNodeRequestBody(
     const length = Number(declaredLength);
 
     if (Number.isFinite(length) && length > limit) {
-      request.destroy();
+      /*
+       * Pause rather than destroy: the caller still needs a live socket to
+       * answer with 413. Destroying here makes the client see a dropped
+       * connection instead of the status.
+       */
+      request.pause();
 
       return Promise.reject(new NodeRequestBodyTooLargeError(limit, length));
     }
@@ -286,7 +342,7 @@ export function readNodeRequestBody(
       total += data.byteLength;
 
       if (total > limit) {
-        request.destroy();
+        request.pause();
 
         fail(new NodeRequestBodyTooLargeError(limit, total));
 

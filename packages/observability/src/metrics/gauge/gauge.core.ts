@@ -5,6 +5,7 @@
  */
 
 import type { Gauge } from "../../types.js";
+import { MetricValueError } from "../../errors/index.js";
 
 /**
  * In-memory gauge. Tracks a value that can be set, incremented, or decremented.
@@ -19,15 +20,24 @@ export class DefaultGauge implements Gauge {
     this.labels = labels;
   }
 
+  private assertFinite(value: number): void {
+    if (!Number.isFinite(value)) {
+      throw new MetricValueError(this.name, value, "must be finite");
+    }
+  }
+
   setValue(value: number): void {
+    this.assertFinite(value);
     this.value = value;
   }
 
   increment(value = 1): void {
+    this.assertFinite(value);
     this.value += value;
   }
 
   decrement(value = 1): void {
+    this.assertFinite(value);
     this.value -= value;
   }
 

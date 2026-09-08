@@ -13,6 +13,7 @@ export type {
   PluginConfig,
   PluginLogger,
   PluginEvents,
+  PluginDisposable,
 } from "./pluginContext.type.js";
 export type { Plugin } from "./plugin.type.js";
 export type { PluginErrorOptions } from "@zudojs/errors";

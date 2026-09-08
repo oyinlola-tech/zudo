@@ -241,33 +241,23 @@ export function isKnownStatusCode(status: number): status is HTTPStatusCode {
   return Object.values(STATUS_CODES).includes(status as HTTPStatusCode);
 }
 
-export function isInformationalStatusCode(
-  status: number,
-): status is InformationalStatusCode {
+export function isInformationalStatusCode(status: number): boolean {
   return status >= 100 && status < 200;
 }
 
-export function isSuccessStatusCode(
-  status: number,
-): status is SuccessStatusCode {
+export function isSuccessStatusCode(status: number): boolean {
   return status >= 200 && status < 300;
 }
 
-export function isRedirectionStatusCode(
-  status: number,
-): status is RedirectionStatusCode {
+export function isRedirectionStatusCode(status: number): boolean {
   return status >= 300 && status < 400;
 }
 
-export function isClientErrorStatusCode(
-  status: number,
-): status is ClientErrorStatusCode {
+export function isClientErrorStatusCode(status: number): boolean {
   return status >= 400 && status < 500;
 }
 
-export function isServerErrorStatusCode(
-  status: number,
-): status is ServerErrorStatusCode {
+export function isServerErrorStatusCode(status: number): boolean {
   return status >= 500 && status < 600;
 }
 

@@ -1,3 +1,5 @@
+import { getStatusText } from "../httpStatus/httpStatus.lookup.js";
+
 /* -------------------------------------------------------------------------- */
 /* HTTP Methods                                                               */
 /* -------------------------------------------------------------------------- */
@@ -19,7 +21,15 @@ export const HTTP_METHODS = [
 /* HTTP Status Codes                                                          */
 /* -------------------------------------------------------------------------- */
 
-export const HTTP_STATUS = {
+/**
+ * Convenience map of the commonly used status codes.
+ *
+ * @remarks
+ * This is a **partial** table. `src/httpStatus` carries the complete RFC 9110
+ * set; prefer `STATUS` / `STATUS_CODES` from there for anything beyond the
+ * codes listed below.
+ */
+export const HTTP_STATUS = Object.freeze({
   CONTINUE: 100,
   SWITCHING_PROTOCOLS: 101,
   PROCESSING: 102,
@@ -67,7 +77,7 @@ export const HTTP_STATUS = {
   SERVICE_UNAVAILABLE: 503,
   GATEWAY_TIMEOUT: 504,
   HTTP_VERSION_NOT_SUPPORTED: 505,
-} as const;
+} as const);
 
 /* -------------------------------------------------------------------------- */
 /* Default Values                                                             */
@@ -156,7 +166,16 @@ export const HTTP_CONTENT_TYPES = {
 /* Request Methods                                                            */
 /* -------------------------------------------------------------------------- */
 
-export const HTTP_SAFE_METHODS = ["GET", "HEAD", "OPTIONS", "QUERY"] as const;
+/**
+ * Methods RFC 9110 section 9.2.1 defines as safe.
+ */
+export const HTTP_SAFE_METHODS = [
+  "GET",
+  "HEAD",
+  "OPTIONS",
+  "TRACE",
+  "QUERY",
+] as const;
 
 export const HTTP_IDEMPOTENT_METHODS = [
   "GET",
@@ -269,55 +288,64 @@ export const HTTP_SERVER_EVENTS = {
 /* Response Messages                                                          */
 /* -------------------------------------------------------------------------- */
 
-export const HTTP_STATUS_MESSAGES: Readonly<Record<number, string>> = {
-  100: "Continue",
-  101: "Switching Protocols",
-  102: "Processing",
+/**
+ * Reason phrases for the commonly used status codes.
+ *
+ * @remarks
+ * **Partial.** Read it through {@link getHTTPStatusMessage}, which delegates
+ * to `httpStatus`'s complete table; indexing this record directly yields
+ * `undefined` for codes such as 451.
+ */
+export const HTTP_STATUS_MESSAGES: Readonly<Record<number, string>> =
+  Object.freeze({
+    100: "Continue",
+    101: "Switching Protocols",
+    102: "Processing",
 
-  200: "OK",
-  201: "Created",
-  202: "Accepted",
-  203: "Non-Authoritative Information",
-  204: "No Content",
-  205: "Reset Content",
-  206: "Partial Content",
+    200: "OK",
+    201: "Created",
+    202: "Accepted",
+    203: "Non-Authoritative Information",
+    204: "No Content",
+    205: "Reset Content",
+    206: "Partial Content",
 
-  300: "Multiple Choices",
-  301: "Moved Permanently",
-  302: "Found",
-  303: "See Other",
-  304: "Not Modified",
-  307: "Temporary Redirect",
-  308: "Permanent Redirect",
+    300: "Multiple Choices",
+    301: "Moved Permanently",
+    302: "Found",
+    303: "See Other",
+    304: "Not Modified",
+    307: "Temporary Redirect",
+    308: "Permanent Redirect",
 
-  400: "Bad Request",
-  401: "Unauthorized",
-  402: "Payment Required",
-  403: "Forbidden",
-  404: "Not Found",
-  405: "Method Not Allowed",
-  406: "Not Acceptable",
-  407: "Proxy Authentication Required",
-  408: "Request Timeout",
-  409: "Conflict",
-  410: "Gone",
-  411: "Length Required",
-  412: "Precondition Failed",
-  413: "Payload Too Large",
-  414: "URI Too Long",
-  415: "Unsupported Media Type",
-  416: "Range Not Satisfiable",
-  417: "Expectation Failed",
-  422: "Unprocessable Entity",
-  429: "Too Many Requests",
+    400: "Bad Request",
+    401: "Unauthorized",
+    402: "Payment Required",
+    403: "Forbidden",
+    404: "Not Found",
+    405: "Method Not Allowed",
+    406: "Not Acceptable",
+    407: "Proxy Authentication Required",
+    408: "Request Timeout",
+    409: "Conflict",
+    410: "Gone",
+    411: "Length Required",
+    412: "Precondition Failed",
+    413: "Payload Too Large",
+    414: "URI Too Long",
+    415: "Unsupported Media Type",
+    416: "Range Not Satisfiable",
+    417: "Expectation Failed",
+    422: "Unprocessable Entity",
+    429: "Too Many Requests",
 
-  500: "Internal Server Error",
-  501: "Not Implemented",
-  502: "Bad Gateway",
-  503: "Service Unavailable",
-  504: "Gateway Timeout",
-  505: "HTTP Version Not Supported",
-};
+    500: "Internal Server Error",
+    501: "Not Implemented",
+    502: "Bad Gateway",
+    503: "Service Unavailable",
+    504: "Gateway Timeout",
+    505: "HTTP Version Not Supported",
+  });
 
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
@@ -341,12 +369,28 @@ export function isIdempotentHTTPMethod(method: string): boolean {
   );
 }
 
+/**
+ * Returns the reason phrase for a status code.
+ *
+ * Delegates to `httpStatus`, which carries the complete RFC 9110 table.
+ * {@link HTTP_STATUS_MESSAGES} covers only the common codes, so reading it
+ * directly emitted `HTTP/1.1 451 Unknown Status` on the wire.
+ *
+ * @param statusCode - The status code.
+ * @returns The reason phrase, or `"Unknown Status"`.
+ */
 export function getHTTPStatusMessage(statusCode: number): string {
-  return HTTP_STATUS_MESSAGES[statusCode] ?? "Unknown Status";
+  return getStatusText(statusCode);
 }
 
+/**
+ * Reports whether a status code is an error status.
+ *
+ * @param statusCode - The status code.
+ * @returns `true` for 4xx and 5xx only; `999` and `Infinity` are not statuses.
+ */
 export function isHTTPErrorStatus(statusCode: number): boolean {
-  return statusCode >= 400;
+  return statusCode >= 400 && statusCode < 600;
 }
 
 export function isHTTPSuccessStatus(statusCode: number): boolean {

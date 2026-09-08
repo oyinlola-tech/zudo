@@ -10,6 +10,24 @@ import type { SessionId } from "@zudojs/constants";
 export type { SessionId } from "@zudojs/constants";
 
 /**
+ * Brands a plain string as a {@link SessionId}.
+ *
+ * `SessionId` is a branded type with no public constructor, so callers holding
+ * an id from a session store, a cookie or a request parameter have no way to
+ * produce one without a cast. This is that constructor.
+ *
+ * @param value - Non-empty session identifier.
+ * @returns The same string, typed as a `SessionId`.
+ * @throws {TypeError} If `value` is not a non-empty string.
+ */
+export function toSessionId(value: string): SessionId {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError("toSessionId: value must be a non-empty string.");
+  }
+  return value as SessionId;
+}
+
+/**
  * Server-side session representation.
  */
 export interface AuthSession {
@@ -25,10 +43,19 @@ export interface AuthSession {
   readonly createdAt: Date;
   /** Last activity time */
   readonly lastActivityAt: Date;
-  /** Session expiration time */
+  /**
+   * Session expiration time.
+   *
+   * With sliding expiration this moves forward on every `touch()`, but never
+   * past `createdAt + absoluteTtlSeconds` when an absolute lifetime was
+   * requested.
+   */
   readonly expiresAt: Date;
-  /** Whether the session is active */
-  readonly active: boolean;
+  /**
+   * Hard deadline for the session, when one was requested at creation.
+   * `touch()` never extends `expiresAt` beyond this.
+   */
+  readonly absoluteExpiresAt?: Date;
   /** Session metadata */
   readonly metadata?: Record<string, unknown>;
 }
@@ -40,7 +67,14 @@ export interface CreateSessionOptions {
   readonly userId: UserId;
   readonly userAgent?: string;
   readonly ip?: string;
+  /** Idle timeout in seconds; refreshed by `touch()` (default: 86400). */
   readonly ttlSeconds?: number;
+  /**
+   * Absolute maximum session lifetime in seconds, measured from creation.
+   * Without it a session that is touched once per idle window never expires,
+   * so a stolen session id is valid indefinitely.
+   */
+  readonly absoluteTtlSeconds?: number;
   readonly metadata?: Record<string, unknown>;
 }
 

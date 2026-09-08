@@ -5,6 +5,7 @@
  */
 
 import type { CorsConfig } from "../types/security.type.js";
+import { withoutStickyFlags } from "../input/input.core.js";
 
 /** Default CORS configuration (restrictive). */
 const DEFAULT_CORS_CONFIG: Required<Omit<CorsConfig, "origin">> & {
@@ -28,6 +29,29 @@ export interface CorsHeaders {
   "Access-Control-Expose-Headers"?: string;
   "Access-Control-Allow-Credentials"?: string;
   "Access-Control-Max-Age"?: string;
+  Vary?: string;
+}
+
+/**
+ * Rejects a configuration that pairs a wildcard origin with credentials.
+ *
+ * Browsers refuse the combination outright, so shipping it is not a leak so
+ * much as a policy that silently never works. Failing here turns a confusing
+ * runtime symptom into a startup error.
+ */
+function assertConfigCoherent(config: CorsConfig): void {
+  if (!config.credentials) return;
+
+  const origin = config.origin;
+  const hasWildcard =
+    origin === "*" || (Array.isArray(origin) && origin.includes("*"));
+
+  if (hasWildcard) {
+    throw new Error(
+      'CORS: credentials cannot be combined with a wildcard origin ("*"). ' +
+        "Enumerate the allowed origins, or supply a function or RegExp.",
+    );
+  }
 }
 
 /**
@@ -41,6 +65,8 @@ export function isOriginAllowed(
   origin: string | undefined,
   config: CorsConfig,
 ): string | undefined {
+  assertConfigCoherent(config);
+
   if (!origin) {
     return undefined;
   }
@@ -57,9 +83,10 @@ export function isOriginAllowed(
     return allowedOrigin(origin) ? origin : undefined;
   }
 
-  // Regex check
+  // Regex check. A `g` or `y` flag would make `test` stateful via `lastIndex`,
+  // so the same origin would alternate between allowed and denied.
   if (allowedOrigin instanceof RegExp) {
-    return allowedOrigin.test(origin) ? origin : undefined;
+    return withoutStickyFlags(allowedOrigin).test(origin) ? origin : undefined;
   }
 
   // String check
@@ -86,25 +113,70 @@ export function isOriginAllowed(
 }
 
 /**
+ * True when the allow-origin value depends on the request's Origin header.
+ *
+ * A reflected value must be accompanied by `Vary: Origin`, or a shared cache
+ * will hand one origin's response — and its `Access-Control-Allow-Origin` — to
+ * a different origin.
+ */
+function isReflected(config: CorsConfig): boolean {
+  const origin = config.origin;
+  if (origin === undefined) return false;
+  if (origin === "*") return false;
+  // A single literal string always produces the same header; everything else
+  // (array, RegExp, predicate) varies with the request.
+  return typeof origin !== "string";
+}
+
+/**
  * Generates CORS headers for a preflight request.
  *
  * @param requestOrigin - The request Origin header.
  * @param config - CORS configuration.
+ * @param request - Optional preflight request details. When supplied, the
+ *   requested method and headers are validated and an unacceptable preflight
+ *   returns no CORS headers at all.
  * @returns CORS headers to set on the response.
  */
 export function generatePreflightHeaders(
   requestOrigin: string | undefined,
   config: CorsConfig,
+  request?: {
+    readonly method?: string;
+    readonly headers?: readonly string[];
+  },
 ): CorsHeaders {
   const headers: CorsHeaders = {};
 
+  // Vary is set even when the origin is rejected: the decision itself depends
+  // on the Origin header, so the negative response is equally uncacheable
+  // across origins.
+  if (isReflected(config)) {
+    headers.Vary = "Origin";
+  }
+
   const allowedOrigin = isOriginAllowed(requestOrigin, config);
-  if (allowedOrigin) {
-    headers["Access-Control-Allow-Origin"] = allowedOrigin;
-  } else {
+  if (!allowedOrigin) {
     // No matching origin — don't set CORS headers
     return headers;
   }
+
+  // Reject the preflight outright when it asks for something not permitted,
+  // rather than answering with a policy the browser will then enforce against.
+  if (
+    request?.method !== undefined &&
+    !isMethodAllowed(request.method, config)
+  ) {
+    return headers;
+  }
+  if (
+    request?.headers !== undefined &&
+    getDisallowedHeaders([...request.headers], config).length > 0
+  ) {
+    return headers;
+  }
+
+  headers["Access-Control-Allow-Origin"] = allowedOrigin;
 
   const methods = config.methods ?? DEFAULT_CORS_CONFIG.methods;
   headers["Access-Control-Allow-Methods"] = methods.join(", ");
@@ -136,6 +208,10 @@ export function generateSimpleHeaders(
 ): CorsHeaders {
   const headers: CorsHeaders = {};
 
+  if (isReflected(config)) {
+    headers.Vary = "Origin";
+  }
+
   const allowedOrigin = isOriginAllowed(requestOrigin, config);
   if (allowedOrigin) {
     headers["Access-Control-Allow-Origin"] = allowedOrigin;
@@ -162,7 +238,9 @@ export function generateSimpleHeaders(
  */
 export function isMethodAllowed(method: string, config: CorsConfig): boolean {
   const allowedMethods = config.methods ?? DEFAULT_CORS_CONFIG.methods;
-  return allowedMethods.includes(method.toUpperCase());
+  return allowedMethods.some(
+    (allowed) => allowed.toUpperCase() === method.toUpperCase(),
+  );
 }
 
 /**
@@ -182,5 +260,5 @@ export function getDisallowedHeaders(
     ),
   );
 
-  return headers.filter((h) => !allowedHeaders.has(h.toLowerCase()));
+  return headers.filter((h) => !allowedHeaders.has(h.trim().toLowerCase()));
 }

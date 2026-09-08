@@ -12,6 +12,15 @@ export interface BackoffOptions {
   readonly maxDelay?: number;
   /** Multiplier for exponential backoff. */
   readonly multiplier?: number;
+  /**
+   * Randomisation applied to the computed delay.
+   *
+   * `"full"` spreads retries uniformly over `[0, delay]`, `"equal"` keeps
+   * half the delay fixed, `"none"` (the default) leaves the delay
+   * deterministic. Jitter prevents jobs that failed together from
+   * retrying together.
+   */
+  readonly jitter?: "none" | "full" | "equal";
 }
 
 /**

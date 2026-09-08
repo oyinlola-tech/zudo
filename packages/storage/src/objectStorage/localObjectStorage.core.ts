@@ -4,60 +4,59 @@
  * Filesystem-based object storage for development and testing.
  */
 
-import {
-  readFile,
-  writeFile,
-  unlink,
-  stat,
-  mkdir,
-  readdir,
-} from "node:fs/promises";
-import { join, dirname } from "node:path";
-import { StorageError } from "@zudojs/errors";
+import { readFile, stat, unlink } from "node:fs/promises";
 import type {
-  ObjectStorage,
-  ObjectPutOptions,
-  ObjectMetadata,
-  ObjectData,
   ListObjectsResult,
+  ObjectData,
+  ObjectMetadata,
+  ObjectPutOptions,
+  ObjectStorage,
 } from "../types/storage.type.js";
+import type { ListOptions } from "./localObjectStorage.list.js";
+import { listObjects } from "./localObjectStorage.list.js";
+import {
+  assertRealPathContained,
+  resolveBasePath,
+  resolveKeyPath,
+} from "./localObjectStorage.path.js";
+import {
+  DEFAULT_MAX_OBJECT_BYTES,
+  assertWithinBudget,
+  collectStream,
+  writeAtomic,
+} from "./localObjectStorage.write.js";
+
+/** Options for the local object storage. */
+export interface LocalObjectStorageOptions {
+  /** Maximum accepted object size in bytes. Defaults to 64 MiB. */
+  readonly maxObjectBytes?: number;
+}
 
 /**
  * Local filesystem object storage implementation.
  */
 export class LocalObjectStorage implements ObjectStorage {
-  constructor(private readonly basePath: string) {}
+  private readonly basePath: string;
+  private readonly maxObjectBytes: number;
+
+  constructor(basePath: string, options?: LocalObjectStorageOptions) {
+    this.basePath = resolveBasePath(basePath);
+    this.maxObjectBytes = options?.maxObjectBytes ?? DEFAULT_MAX_OBJECT_BYTES;
+  }
 
   async put(
     key: string,
     data: Uint8Array | ReadableStream<Uint8Array>,
     options?: ObjectPutOptions,
   ): Promise<ObjectMetadata> {
-    const filePath = this.resolvePath(key);
-    await mkdir(dirname(filePath), { recursive: true });
+    const filePath = await this.resolve(key);
 
-    let buffer: Buffer;
-    if (data instanceof Uint8Array) {
-      buffer = Buffer.from(data);
-    } else {
-      // Read stream to buffer
-      const chunks: Uint8Array[] = [];
-      const reader = data.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-      }
-      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-      buffer = Buffer.alloc(totalLength);
-      let offset = 0;
-      for (const chunk of chunks) {
-        buffer.set(chunk, offset);
-        offset += chunk.length;
-      }
-    }
+    const buffer =
+      data instanceof Uint8Array
+        ? assertWithinBudget(data, this.maxObjectBytes)
+        : await collectStream(data, this.maxObjectBytes);
 
-    await writeFile(filePath, buffer);
+    await writeAtomic(filePath, buffer);
 
     const stats = await stat(filePath);
     return {
@@ -70,42 +69,52 @@ export class LocalObjectStorage implements ObjectStorage {
   }
 
   async get(key: string): Promise<ObjectData | null> {
-    const filePath = this.resolvePath(key);
+    const filePath = await this.resolve(key);
 
+    let buffer: Buffer;
+    let stats: Awaited<ReturnType<typeof stat>>;
     try {
-      const stats = await stat(filePath);
-      const buffer = await readFile(filePath);
-
-      const metadata: ObjectMetadata = {
-        key,
-        size: stats.size,
-        lastModified: stats.mtime,
-      };
-
-      return {
-        metadata,
-        body: new ReadableStream({
-          start(controller) {
-            controller.enqueue(new Uint8Array(buffer));
-            controller.close();
-          },
-        }),
-        async arrayBuffer() {
-          return buffer.buffer;
-        },
-      };
+      stats = await stat(filePath);
+      buffer = await readFile(filePath);
     } catch {
       return null;
     }
+
+    const metadata: ObjectMetadata = {
+      key,
+      size: stats.size,
+      lastModified: stats.mtime,
+    };
+
+    return {
+      metadata,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array(buffer));
+          controller.close();
+        },
+      }),
+      async arrayBuffer(): Promise<ArrayBuffer> {
+        return buffer.buffer.slice(
+          buffer.byteOffset,
+          buffer.byteOffset + buffer.byteLength,
+        ) as ArrayBuffer;
+      },
+    };
   }
 
   async delete(key: string): Promise<void> {
-    const filePath = this.resolvePath(key);
-    await unlink(filePath);
+    const filePath = await this.resolve(key);
+    try {
+      await unlink(filePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
   }
 
   async exists(key: string): Promise<boolean> {
-    const filePath = this.resolvePath(key);
+    const filePath = await this.resolve(key);
     try {
       await stat(filePath);
       return true;
@@ -115,14 +124,10 @@ export class LocalObjectStorage implements ObjectStorage {
   }
 
   async metadata(key: string): Promise<ObjectMetadata | null> {
-    const filePath = this.resolvePath(key);
+    const filePath = await this.resolve(key);
     try {
       const stats = await stat(filePath);
-      return {
-        key,
-        size: stats.size,
-        lastModified: stats.mtime,
-      };
+      return { key, size: stats.size, lastModified: stats.mtime };
     } catch {
       return null;
     }
@@ -130,53 +135,15 @@ export class LocalObjectStorage implements ObjectStorage {
 
   async list(
     prefix?: string,
-    options?: {
-      readonly maxKeys?: number;
-      readonly continuationToken?: string;
-    },
+    options?: ListOptions,
   ): Promise<ListObjectsResult> {
-    const dirPath = prefix ? this.resolvePath(prefix) : this.basePath;
-    const maxKeys = options?.maxKeys ?? 1000;
-
-    try {
-      const entries = await readdir(dirPath, { recursive: true });
-      const objects: ObjectMetadata[] = [];
-
-      for (const entry of entries.slice(0, maxKeys)) {
-        const fullPath = join(dirPath, entry as string);
-        try {
-          const stats = await stat(fullPath);
-          if (stats.isFile()) {
-            const key = fullPath.slice(this.basePath.length + 1);
-            objects.push({
-              key,
-              size: stats.size,
-              lastModified: stats.mtime,
-            });
-          }
-        } catch {
-          // Skip inaccessible entries
-        }
-      }
-
-      return {
-        objects,
-        isTruncated: entries.length > maxKeys,
-      };
-    } catch {
-      return { objects: [], isTruncated: false };
-    }
+    return listObjects(this.basePath, prefix, options);
   }
 
-  private resolvePath(key: string): string {
-    // Prevent path traversal
-    const resolved = join(this.basePath, key);
-    if (!resolved.startsWith(this.basePath)) {
-      throw new StorageError(`Path traversal detected: ${key}`, {
-        code: "STORAGE_PATH_TRAVERSAL",
-        statusCode: 400,
-      });
-    }
-    return resolved;
+  /** Resolve a key to a contained absolute path, following symlinks. */
+  private async resolve(key: string): Promise<string> {
+    const filePath = resolveKeyPath(this.basePath, key);
+    await assertRealPathContained(this.basePath, filePath, key);
+    return filePath;
   }
 }

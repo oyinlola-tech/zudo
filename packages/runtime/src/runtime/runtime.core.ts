@@ -37,6 +37,8 @@ import { executeStartup, rollbackStartup } from "../startup/index.js";
 
 import { executeShutdown } from "../shutdown/index.js";
 
+import type { LifecycleFailure } from "../lifecycle/lifecycle.type.js";
+
 import { SignalHandler } from "../signalHandler/index.js";
 
 import { ReadinessTracker } from "../readiness/index.js";
@@ -133,6 +135,7 @@ export class DefaultRuntime implements Runtime {
   private _stoppedAt?: Date;
   private _failedAt?: Date;
   private _error?: RuntimeError;
+  private _shutdownFailures: readonly LifecycleFailure[] = [];
 
   private readonly options: ResolvedRuntimeOptions;
   private readonly modules: ReadonlyMap<string, Module>;
@@ -160,6 +163,7 @@ export class DefaultRuntime implements Runtime {
       logger: dependencies.logger,
       container: dependencies.container,
       eventBus: dependencies.eventBus,
+      metadata: this.options.metadata,
     });
 
     this.lifecycle = new LifecycleManager(
@@ -208,6 +212,7 @@ export class DefaultRuntime implements Runtime {
       stoppedAt: this._stoppedAt,
       failedAt: this._failedAt,
       error: this._error,
+      shutdownFailures: this._shutdownFailures,
     });
   }
 
@@ -231,6 +236,14 @@ export class DefaultRuntime implements Runtime {
    * registered readiness checks.
    */
   public get health(): RuntimeHealth {
+    if (!this.options.trackHealth) {
+      return Object.freeze({
+        state: "unknown" as const,
+        checks: Object.freeze([]),
+        timestamp: new Date(),
+      });
+    }
+
     return computeRuntimeHealth(this._state, this.readinessTracker.getState());
   }
 
@@ -330,6 +343,14 @@ export class DefaultRuntime implements Runtime {
   /**
    * Stops the runtime.
    */
+  /**
+   * Stops the runtime.
+   *
+   * A failed runtime is stoppable: startup rollback only reaches modules
+   * that were started, so this is the operator's route to releasing
+   * everything else. It is also idempotent — stopping an already-stopped
+   * runtime is a no-op rather than an error.
+   */
   public async stop(): Promise<void> {
     if (this._state === "stopped") {
       return;
@@ -342,6 +363,7 @@ export class DefaultRuntime implements Runtime {
     if (this._state === "created") {
       this._state = "stopped";
       this._stoppedAt = new Date();
+      this.signalHandler.unregister();
       return;
     }
 
@@ -370,6 +392,10 @@ export class DefaultRuntime implements Runtime {
       this.emitEvent("runtime.initializing");
     }
 
+    // Registered before startup rather than after: a SIGTERM arriving
+    // while modules are still coming up must be handled, not ignored.
+    this.signalHandler.register(() => this.handleShutdownSignal());
+
     try {
       await executeStartup(
         this.lifecycle,
@@ -377,11 +403,28 @@ export class DefaultRuntime implements Runtime {
         this._contextBase.eventBus,
         this.logger,
         this.options.emitEvents,
+        this.options.startupTimeout,
       );
 
       this.transitionTo("running");
       this._startedAt = new Date();
-      this.readinessTracker.markReady("Runtime started successfully.");
+
+      // Evaluate any checks registered before startup instead of
+      // declaring readiness over the top of them. Force-marking ready
+      // here reported a runtime as ready while a dependency check was
+      // failing.
+      await this.readinessTracker.runChecks();
+
+      if (this.readinessTracker.hasChecks()) {
+        if (!this.ready) {
+          this.logger.warn(
+            "Runtime started, but one or more readiness checks are failing.",
+            { reason: this.readinessTracker.getState().reason },
+          );
+        }
+      } else {
+        this.readinessTracker.markReady("Runtime started successfully.");
+      }
 
       if (this.options.emitEvents) {
         this.emitEvent("runtime.running");
@@ -390,19 +433,11 @@ export class DefaultRuntime implements Runtime {
           createReadinessEventPayload(
             this.options.runtimeId,
             "running",
-            true,
-            "Runtime started successfully.",
+            this.ready,
+            this.readinessTracker.getState().reason,
           ),
         );
       }
-
-      this.signalHandler.register(() => {
-        this.stop().catch((error) => {
-          this.logger.error("Shutdown failed.", {
-            errorMessage: error.message,
-          });
-        });
-      });
 
       this.logger.info("Runtime is ready.", {
         runtimeId: this.options.runtimeId,
@@ -431,7 +466,16 @@ export class DefaultRuntime implements Runtime {
       }
 
       try {
-        await rollbackStartup(this.lifecycle, this.logger);
+        const rollbackFailures = await rollbackStartup(
+          this.lifecycle,
+          this.logger,
+        );
+
+        if (rollbackFailures.length > 0) {
+          this.logger.error("Rollback completed with failures.", {
+            failedModules: rollbackFailures.map((failure) => failure.moduleId),
+          });
+        }
       } catch (rollbackError) {
         this.logger.error("Rollback failed.", {
           errorMessage:
@@ -459,7 +503,7 @@ export class DefaultRuntime implements Runtime {
     }
 
     try {
-      await executeShutdown(
+      const result = await executeShutdown(
         this.lifecycle,
         this.options.runtimeId,
         this._contextBase.eventBus,
@@ -468,18 +512,27 @@ export class DefaultRuntime implements Runtime {
         this.options.emitEvents,
       );
 
+      this._shutdownFailures = result.failures;
+
       this.transitionTo("stopped");
       this._stoppedAt = new Date();
-
-      this.signalHandler.unregister();
 
       if (this.options.emitEvents) {
         this.emitEvent("runtime.stopped");
       }
 
-      this.logger.info("Runtime stopped.", {
-        runtimeId: this.options.runtimeId,
-      });
+      if (result.failures.length > 0) {
+        // A teardown that dropped modules on the floor must not read as
+        // a clean stop; `status.shutdownFailures` records what failed.
+        this.logger.warn("Runtime stopped with module failures.", {
+          runtimeId: this.options.runtimeId,
+          failedModules: result.failures.map((failure) => failure.moduleId),
+        });
+      } else {
+        this.logger.info("Runtime stopped.", {
+          runtimeId: this.options.runtimeId,
+        });
+      }
     } catch (error) {
       const runtimeError = toRuntimeError(error, "shutdown");
 
@@ -505,6 +558,24 @@ export class DefaultRuntime implements Runtime {
       this.transitionTo("failed");
 
       throw runtimeError;
+    } finally {
+      // Released on both paths: leaving handlers attached after a failed
+      // stop keeps the process listening for a signal it can no longer
+      // act on.
+      this.signalHandler.unregister();
+    }
+  }
+
+  /**
+   * Runs shutdown in response to a termination signal.
+   */
+  private async handleShutdownSignal(): Promise<void> {
+    try {
+      await this.stop();
+    } catch (error) {
+      this.logger.error("Shutdown failed.", {
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -535,7 +606,7 @@ export class DefaultRuntime implements Runtime {
    * callers compare against a value captured before the change.
    */
   private emitHealthChange(previousHealth: RuntimeHealthState): void {
-    if (!this.options.emitEvents) {
+    if (!this.options.emitEvents || !this.options.trackHealth) {
       return;
     }
 

@@ -8,6 +8,9 @@ import type {
   ConnectionPoolOptions,
   PoolStats,
 } from "../types/storage.type.js";
+import type { PoolState } from "./connectionPool.lifecycle.js";
+import { checkPoolHealth, drainPool } from "./connectionPool.lifecycle.js";
+import { WaitQueue } from "./connectionPool.waiters.js";
 
 /** Default pool options. */
 const DEFAULT_POOL_OPTIONS: ConnectionPoolOptions = {
@@ -23,12 +26,9 @@ export class ConnectionPool {
   private readonly options: ConnectionPoolOptions;
   private readonly available: Connection[] = [];
   private readonly inUse = new Set<Connection>();
-  private readonly waitQueue: Array<{
-    resolve: (conn: Connection) => void;
-    reject: (err: Error) => void;
-    timer: ReturnType<typeof setTimeout>;
-  }> = [];
-  private connectionIdCounter = 0;
+  private readonly waitQueue = new WaitQueue();
+  private pending = 0;
+  private initialized = false;
   private closed = false;
 
   constructor(
@@ -38,56 +38,66 @@ export class ConnectionPool {
     this.options = { ...DEFAULT_POOL_OPTIONS, ...options };
   }
 
-  /** Initialize the pool with minimum connections. */
+  /** Initialize the pool with minimum connections. Idempotent. */
   async initialize(): Promise<void> {
+    if (this.initialized || this.closed) return;
+    this.initialized = true;
+
     const initial = Math.min(this.options.min, this.options.max);
     for (let i = 0; i < initial; i++) {
-      const conn = await this.createConnection();
-      this.available.push(conn);
+      this.available.push(await this.factory());
     }
   }
 
-  /** Acquire a connection from the pool. */
+  /**
+   * Acquire a connection from the pool.
+   *
+   * The slot is reserved before the factory is awaited, so concurrent callers
+   * cannot each observe the same under-limit count and overshoot `max`.
+   */
   async acquire(): Promise<Connection> {
-    if (this.closed) {
-      throw new StorageError("Pool is closed", {
-        code: "STORAGE_CONNECTION_POOL_CLOSED",
-        statusCode: 503,
-      });
-    }
+    this.assertOpen();
 
     while (this.available.length > 0) {
       const conn = this.available.pop()!;
-      if (await this.isConnectionAlive(conn)) {
+      this.inUse.add(conn);
+      if (await this.isAlive(conn)) return conn;
+
+      this.inUse.delete(conn);
+      await this.close(conn);
+      this.assertOpen();
+    }
+
+    if (this.total() < this.options.max) {
+      this.pending++;
+      try {
+        const conn = await this.factory();
         this.inUse.add(conn);
         return conn;
+      } finally {
+        this.pending--;
       }
-      await this.safeClose(conn);
     }
 
-    if (this.inUse.size < this.options.max) {
-      const conn = await this.createConnection();
-      this.inUse.add(conn);
-      return conn;
-    }
-
-    return this.waitForConnection();
+    return this.waitQueue.wait(this.options.acquireTimeout);
   }
 
-  /** Release a connection back to the pool. */
+  /**
+   * Release a connection back to the pool.
+   *
+   * A connection this pool did not issue, or one released twice, is ignored:
+   * re-admitting it would hand the same connection to two callers.
+   */
   async release(connection: Connection): Promise<void> {
-    this.inUse.delete(connection);
+    if (!this.inUse.delete(connection)) return;
 
     if (this.closed) {
-      await this.safeClose(connection);
+      await this.close(connection);
       return;
     }
 
-    if (this.waitQueue.length > 0) {
-      const waiter = this.waitQueue.shift()!;
-      clearTimeout(waiter.timer);
+    if (this.waitQueue.handOff(connection)) {
       this.inUse.add(connection);
-      waiter.resolve(connection);
       return;
     }
 
@@ -107,68 +117,50 @@ export class ConnectionPool {
   /** Get pool statistics. */
   getStats(): PoolStats {
     return {
-      total: this.available.length + this.inUse.size,
+      total: this.total(),
       idle: this.available.length,
       active: this.inUse.size,
-      waiting: this.waitQueue.length,
+      waiting: this.waitQueue.size,
     };
   }
 
   /** Drain all connections gracefully. */
   async drain(): Promise<void> {
     this.closed = true;
-
-    for (const waiter of this.waitQueue) {
-      clearTimeout(waiter.timer);
-      waiter.reject(new Error("Pool is draining"));
-    }
-    this.waitQueue.length = 0;
-
-    while (this.available.length > 0) {
-      const conn = this.available.pop()!;
-      await this.safeClose(conn);
-    }
-
-    const drainTimeout = 30_000;
-    const start = Date.now();
-    while (this.inUse.size > 0 && Date.now() - start < drainTimeout) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-
-    for (const conn of this.inUse) {
-      await this.safeClose(conn);
-    }
-    this.inUse.clear();
+    await drainPool(this.state());
   }
 
   /** Check if the pool is healthy. */
   async healthCheck(): Promise<{ healthy: boolean; stats: PoolStats }> {
-    const stats = this.getStats();
-
-    if (this.available.length === 0 && this.inUse.size === 0) {
-      try {
-        const conn = await this.createConnection();
-        this.available.push(conn);
-        return { healthy: true, stats: this.getStats() };
-      } catch {
-        return { healthy: false, stats };
-      }
-    }
-
-    for (const conn of this.available) {
-      if (await this.isConnectionAlive(conn)) return { healthy: true, stats };
-    }
-
-    return { healthy: this.inUse.size > 0, stats };
+    return checkPoolHealth(this.state());
   }
 
-  private async createConnection(): Promise<Connection> {
-    const conn = await this.factory();
-    this.connectionIdCounter++;
-    return conn;
+  private state(): PoolState {
+    return {
+      available: this.available,
+      inUse: this.inUse,
+      waitQueue: this.waitQueue,
+      factory: this.factory,
+      isAlive: (conn) => this.isAlive(conn),
+      close: (conn) => this.close(conn),
+      stats: () => this.getStats(),
+    };
   }
 
-  private async isConnectionAlive(conn: Connection): Promise<boolean> {
+  private total(): number {
+    return this.available.length + this.inUse.size + this.pending;
+  }
+
+  private assertOpen(): void {
+    if (this.closed) {
+      throw new StorageError("Pool is closed", {
+        code: "STORAGE_CONNECTION_POOL_CLOSED",
+        statusCode: 503,
+      });
+    }
+  }
+
+  private async isAlive(conn: Connection): Promise<boolean> {
     try {
       return await conn.ping();
     } catch {
@@ -176,23 +168,11 @@ export class ConnectionPool {
     }
   }
 
-  private async safeClose(conn: Connection): Promise<void> {
+  private async close(conn: Connection): Promise<void> {
     try {
       await conn.close();
     } catch {
       /* Ignore close errors */
     }
-  }
-
-  private waitForConnection(): Promise<Connection> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const idx = this.waitQueue.findIndex((w) => w.resolve === resolve);
-        if (idx !== -1) this.waitQueue.splice(idx, 1);
-        reject(new Error("Acquire timeout: no connection available"));
-      }, this.options.acquireTimeout);
-
-      this.waitQueue.push({ resolve, reject, timer });
-    });
   }
 }

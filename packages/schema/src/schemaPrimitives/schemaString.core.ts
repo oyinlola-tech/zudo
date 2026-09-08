@@ -6,8 +6,12 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
-import { addIssue } from "../schemaBase/index.js";
-import { SchemaIssueCode, SCHEMA_STRING_FORMATS } from "@zudojs/constants";
+import { addIssue, failValidation } from "../schemaBase/index.js";
+import {
+  SchemaIssueCode,
+  SCHEMA_STRING_FORMATS,
+  SCHEMA_DEFAULT_MAX_STRING_LENGTH,
+} from "@zudojs/constants";
 import { OptionalModifierSchema } from "../schemaModifiers/schemaOptionalNullable.core.js";
 import { NullableModifierSchema } from "../schemaModifiers/schemaOptionalNullable.core.js";
 import { DefaultSchema } from "../schemaModifiers/schemaDefault.core.js";
@@ -47,7 +51,22 @@ export class StringSchema extends Schema<string> {
         expected: "string",
         received: typeof input,
       });
-      throw new Error("Validation failed");
+      failValidation();
+    }
+
+    // Bound the input before any pattern runs against it. Without a ceiling a
+    // caller-supplied regex is handed unbounded attacker input, which is how a
+    // format check becomes a CPU denial of service.
+    const hardMax = this._config.max ?? SCHEMA_DEFAULT_MAX_STRING_LENGTH;
+    if (input.length > hardMax) {
+      addIssue(ctx, {
+        code: SchemaIssueCode.TOO_LARGE,
+        path: [...ctx.path],
+        message: `String must be at most ${hardMax} characters`,
+        expected: `<= ${hardMax}`,
+        received: String(input.length),
+      });
+      failValidation();
     }
 
     let value = input;
@@ -114,7 +133,7 @@ export class StringSchema extends Schema<string> {
       if (fmtFailed) failed = true;
     }
     if (failed) {
-      throw new Error("Validation failed");
+      failValidation();
     }
   }
 
@@ -132,10 +151,19 @@ export class StringSchema extends Schema<string> {
       date: SCHEMA_STRING_FORMATS.DATE,
       time: SCHEMA_STRING_FORMATS.TIME,
       ipv4: SCHEMA_STRING_FORMATS.IPV4,
+      ipv6: SCHEMA_STRING_FORMATS.IPV6,
       hexColor: SCHEMA_STRING_FORMATS.HEX_COLOR,
+      phone: SCHEMA_STRING_FORMATS.PHONE,
     };
     const pattern = formats[format];
-    if (pattern && !pattern.test(value)) {
+    if (!pattern) {
+      // An unrecognised format used to mean "no check at all", so a typo
+      // silently turned the constraint off.
+      throw new Error(
+        `Unknown string format "${format}". Known formats: ${Object.keys(formats).sort().join(", ")}`,
+      );
+    }
+    if (!pattern.test(value)) {
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_FORMAT,
         path: [...ctx.path],
@@ -162,9 +190,18 @@ export class StringSchema extends Schema<string> {
     return new StringSchema({ ...this._config, length });
   }
 
-  /** Matches a regex pattern. */
+  /**
+   * Matches a regex pattern.
+   *
+   * The `g` and `y` flags are stripped: both make `RegExp.test` stateful via
+   * `lastIndex`, so a schema built once and reused per request would alternate
+   * between accepting and rejecting the same value.
+   */
   public regex(pattern: RegExp): StringSchema {
-    return new StringSchema({ ...this._config, pattern });
+    const flags = pattern.flags.replace(/[gy]/g, "");
+    const normalized =
+      flags === pattern.flags ? pattern : new RegExp(pattern.source, flags);
+    return new StringSchema({ ...this._config, pattern: normalized });
   }
 
   /** Validates email format. */
@@ -200,6 +237,21 @@ export class StringSchema extends Schema<string> {
   /** Validates IPv4 format. */
   public ipv4(): StringSchema {
     return new StringSchema({ ...this._config, format: "ipv4" });
+  }
+
+  /** Validates IPv6 format. */
+  public ipv6(): StringSchema {
+    return new StringSchema({ ...this._config, format: "ipv6" });
+  }
+
+  /** Validates time-of-day format. */
+  public time(): StringSchema {
+    return new StringSchema({ ...this._config, format: "time" });
+  }
+
+  /** Validates phone number format. */
+  public phone(): StringSchema {
+    return new StringSchema({ ...this._config, format: "phone" });
   }
 
   /** Validates hex color format. */

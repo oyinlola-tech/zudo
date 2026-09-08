@@ -8,6 +8,7 @@
  */
 
 export * from "./httpTrustProxy.type.js";
+export * from "./httpTrustProxy.ip.js";
 export * from "./httpTrustProxy.compilation.js";
 export * from "./httpTrustProxy.parsing.js";
 export * from "./httpTrustProxy.helper.js";

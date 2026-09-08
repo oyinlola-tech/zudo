@@ -60,4 +60,11 @@ export interface TransactionContext {
   get(): Transaction | undefined;
   /** Run a callback within a transaction context. */
   run<T>(transaction: Transaction, callback: () => Promise<T>): Promise<T>;
+  /**
+   * Run a callback with no transaction in scope.
+   *
+   * Used by the `not_supported` and `requires_new` propagation modes, which
+   * must suspend an enclosing transaction rather than join it.
+   */
+  exit<T>(callback: () => Promise<T>): Promise<T>;
 }

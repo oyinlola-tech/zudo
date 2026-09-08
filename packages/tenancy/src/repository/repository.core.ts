@@ -8,19 +8,55 @@ import type { TenantId } from "../tenancyTypes/tenantIdentity.js";
 import type { Tenant } from "../tenancyTypes/tenantInterface.js";
 import type { TenantRepository } from "../tenancyTypes/repositoryTypes.js";
 import type { TenantDomain } from "../tenancyTypes/tenancyOptions.js";
-import { TenantNotFoundError } from "../tenancyErrors/tenancyError.types.js";
+
+/** A tenant plus the custom domains that resolve to it. */
+export interface TenantWithDomains {
+  readonly tenant: Tenant;
+  readonly domains?: readonly string[];
+}
+
+/** Normalizes a domain for case-insensitive lookup. */
+function normalizeDomain(domain: string): string {
+  return domain.trim().toLowerCase();
+}
+
+/** The in-memory repository plus its write surface. */
+export interface MemoryTenantRepository extends TenantRepository {
+  /** Look a tenant up by its slug. Always present on this implementation. */
+  findBySlug(slug: string): Promise<Tenant | undefined>;
+  /** Look a tenant up by a registered custom domain. */
+  findByDomain(domain: string): Promise<Tenant | undefined>;
+  /** Insert or replace a tenant, re-indexing its slug and domains. */
+  add(tenant: Tenant, domains?: readonly string[]): void;
+  /** Remove a tenant and every index entry pointing at it. */
+  remove(id: TenantId): void;
+  /** Every tenant currently stored. */
+  all(): readonly Tenant[];
+  /** Domains mapped to the given tenant. */
+  domainsOf(id: TenantId): readonly string[];
+}
 
 /**
  * Create an in-memory tenant repository.
+ *
+ * Secondary indexes are rebuilt on every write. A tenant whose slug or domain
+ * changed must not stay reachable under its previous one: the stale entry
+ * would keep serving the pre-update record, including its pre-suspension
+ * status.
  */
-export function createMemoryTenantRepository(): TenantRepository & {
-  add(tenant: Tenant): void;
-  remove(id: TenantId): void;
-  all(): readonly Tenant[];
-} {
+export function createMemoryTenantRepository(): MemoryTenantRepository {
   const tenants = new Map<string, Tenant>();
-  const bySlug = new Map<string, Tenant>();
-  const byDomain = new Map<string, Tenant>();
+  const bySlug = new Map<string, TenantId>();
+  const byDomain = new Map<string, TenantId>();
+
+  function unindex(id: TenantId): void {
+    for (const [slug, owner] of bySlug) {
+      if (owner === id) bySlug.delete(slug);
+    }
+    for (const [domain, owner] of byDomain) {
+      if (owner === id) byDomain.delete(domain);
+    }
+  }
 
   return {
     async findById(id: TenantId): Promise<Tenant | undefined> {
@@ -28,28 +64,38 @@ export function createMemoryTenantRepository(): TenantRepository & {
     },
 
     async findBySlug(slug: string): Promise<Tenant | undefined> {
-      return bySlug.get(slug);
+      const id = bySlug.get(slug.trim().toLowerCase());
+      return id ? tenants.get(id) : undefined;
     },
 
     async findByDomain(domain: string): Promise<Tenant | undefined> {
-      return byDomain.get(domain);
+      const id = byDomain.get(normalizeDomain(domain));
+      return id ? tenants.get(id) : undefined;
     },
 
-    add(tenant: Tenant): void {
+    add(tenant: Tenant, domains?: readonly string[]): void {
+      unindex(tenant.id);
       tenants.set(tenant.id, tenant);
-      if (tenant.slug) bySlug.set(tenant.slug, tenant);
+
+      if (tenant.slug) bySlug.set(tenant.slug.trim().toLowerCase(), tenant.id);
+      for (const domain of domains ?? []) {
+        byDomain.set(normalizeDomain(domain), tenant.id);
+      }
     },
 
     remove(id: TenantId): void {
-      const tenant = tenants.get(id);
-      if (tenant) {
-        tenants.delete(id);
-        if (tenant.slug) bySlug.delete(tenant.slug);
-      }
+      unindex(id);
+      tenants.delete(id);
     },
 
     all(): readonly Tenant[] {
       return Array.from(tenants.values());
+    },
+
+    domainsOf(id: TenantId): readonly string[] {
+      return Array.from(byDomain.entries())
+        .filter(([, owner]) => owner === id)
+        .map(([domain]) => domain);
     },
   };
 }
@@ -62,15 +108,15 @@ export function createDomainRegistry() {
 
   return {
     register(domain: string, tenantId: TenantId): void {
-      domains.set(domain, tenantId);
+      domains.set(normalizeDomain(domain), tenantId);
     },
 
     unregister(domain: string): void {
-      domains.delete(domain);
+      domains.delete(normalizeDomain(domain));
     },
 
     resolve(domain: string): TenantId | undefined {
-      return domains.get(domain);
+      return domains.get(normalizeDomain(domain));
     },
 
     all(): readonly TenantDomain[] {

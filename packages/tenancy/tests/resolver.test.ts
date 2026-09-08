@@ -6,6 +6,11 @@ import {
   createPathResolver,
   createJwtResolver,
 } from "../src/index.js";
+import type {
+  HeaderContext,
+  JwtContext,
+  TenantResolver,
+} from "../src/index.js";
 
 describe("createHeaderResolver", () => {
   it("resolves tenant from header", async () => {
@@ -134,11 +139,21 @@ describe("createJwtResolver", () => {
 });
 
 describe("createResolverChain", () => {
-  const headerResolver = createHeaderResolver({ priority: 80 });
-  const jwtResolver = createJwtResolver({ priority: 100 });
+  /** Resolvers read different accessors; a chain is typed over their union. */
+  type ChainContext = HeaderContext & JwtContext;
 
-  it("returns first matching resolver result", async () => {
-    const chain = createResolverChain([headerResolver, jwtResolver]);
+  const headerResolver = createHeaderResolver({
+    priority: 80,
+  }) as TenantResolver<ChainContext>;
+  const jwtResolver = createJwtResolver({
+    priority: 100,
+  }) as TenantResolver<ChainContext>;
+
+  it("returns the highest-priority match and stops there by default", async () => {
+    const chain = createResolverChain<ChainContext>([
+      headerResolver,
+      jwtResolver,
+    ]);
     const result = await chain.resolve({
       getHeader: (name: string) =>
         name === "x-tenant-id" ? "from-header" : undefined,
@@ -146,19 +161,23 @@ describe("createResolverChain", () => {
     });
     // JWT has higher priority (100 > 80)
     expect(result.resolution?.tenantId).toBe("from-jwt");
-    expect(result.candidates).toHaveLength(2);
+    expect(result.candidates).toHaveLength(1);
   });
 
   it("returns undefined when no resolvers match", async () => {
-    const chain = createResolverChain([headerResolver]);
+    const chain = createResolverChain<ChainContext>([headerResolver]);
     const result = await chain.resolve({
       getHeader: () => undefined,
+      getClaims: () => undefined,
     });
     expect(result.resolution).toBeUndefined();
   });
 
-  it("detects conflicts", async () => {
-    const chain = createResolverChain([headerResolver, jwtResolver]);
+  it("detects conflicts when asked to collect every candidate", async () => {
+    const chain = createResolverChain<ChainContext>(
+      [headerResolver, jwtResolver],
+      { detectConflicts: true, throwOnConflict: false },
+    );
     const result = await chain.resolve({
       getHeader: (name: string) =>
         name === "x-tenant-id" ? "header-tenant" : undefined,
@@ -168,10 +187,11 @@ describe("createResolverChain", () => {
     expect(result.candidates).toHaveLength(2);
   });
 
-  it("throws on conflict when configured", async () => {
-    const chain = createResolverChain([headerResolver, jwtResolver], {
-      throwOnConflict: true,
-    });
+  it("throws on conflict by default", async () => {
+    const chain = createResolverChain<ChainContext>(
+      [headerResolver, jwtResolver],
+      { detectConflicts: true },
+    );
     await expect(
       chain.resolve({
         getHeader: (name: string) =>

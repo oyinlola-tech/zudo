@@ -6,13 +6,10 @@
 
 import type { TenantId } from "../tenancyTypes/tenantIdentity.js";
 import type { Tenant } from "../tenancyTypes/tenantInterface.js";
+import type { TenantResolution } from "../tenancyTypes/resolverTypes.js";
 import type {
-  TenantResolver,
-  TenantResolution,
-} from "../tenancyTypes/resolverTypes.js";
-import type {
-  TenantRepository,
   TenantCache,
+  TenantRepository,
 } from "../tenancyTypes/repositoryTypes.js";
 import type { TenantContextStorage } from "../context/contextStorage.core.js";
 import {
@@ -20,11 +17,21 @@ import {
   TenantUnavailableError,
 } from "../tenancyErrors/tenancyError.types.js";
 
+/** Default lifetime of a cached tenant record, in milliseconds. */
+export const DEFAULT_TENANT_CACHE_TTL_MS = 30_000;
+
 /** Options for the tenant manager. */
 export interface TenantManagerOptions {
   readonly repository: TenantRepository;
   readonly cache?: TenantCache;
   readonly storage: TenantContextStorage;
+  /**
+   * How long a cached tenant may be served before it is re-read.
+   *
+   * Bounds the window in which a suspended tenant keeps being served from
+   * cache. Set to 0 to disable caching entirely.
+   */
+  readonly cacheTtlMs?: number;
 }
 
 /**
@@ -32,19 +39,32 @@ export interface TenantManagerOptions {
  */
 export function createTenantManager(options: TenantManagerOptions) {
   const { repository, cache, storage } = options;
+  const ttl = options.cacheTtlMs ?? DEFAULT_TENANT_CACHE_TTL_MS;
+  const cachedAt = new Map<string, number>();
+
+  function isFresh(id: TenantId): boolean {
+    const at = cachedAt.get(id);
+    return at !== undefined && Date.now() - at < ttl;
+  }
 
   async function loadTenant(id: TenantId): Promise<Tenant | undefined> {
-    // Check cache first
-    if (cache) {
+    if (cache && ttl > 0 && isFresh(id)) {
       const cached = await cache.get(id);
       if (cached) return cached;
     }
 
-    // Load from repository
     const tenant = await repository.findById(id);
-    if (tenant && cache) {
-      await cache.set(tenant);
+
+    if (cache && ttl > 0) {
+      if (tenant) {
+        await cache.set(tenant);
+        cachedAt.set(id, Date.now());
+      } else {
+        await cache.delete(id);
+        cachedAt.delete(id);
+      }
     }
+
     return tenant;
   }
 
@@ -73,6 +93,15 @@ export function createTenantManager(options: TenantManagerOptions) {
     },
 
     /**
+     * Require a tenant that is also in an active state.
+     */
+    async requireActive(id: TenantId): Promise<Tenant> {
+      const tenant = await this.require(id);
+      this.assertActive(tenant);
+      return tenant;
+    },
+
+    /**
      * Validate that a tenant is in an active state.
      */
     assertActive(tenant: Tenant): void {
@@ -92,8 +121,12 @@ export function createTenantManager(options: TenantManagerOptions) {
 
     /**
      * Invalidate a cached tenant.
+     *
+     * Call after any write that changes a tenant's status, so the change is
+     * visible before the TTL would have expired.
      */
     async invalidate(id: TenantId): Promise<void> {
+      cachedAt.delete(id);
       if (cache) await cache.delete(id);
     },
   };

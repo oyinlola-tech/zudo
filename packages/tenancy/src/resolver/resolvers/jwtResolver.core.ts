@@ -8,7 +8,7 @@ import type {
   TenantResolver,
   TenantResolution,
 } from "../../tenancyTypes/resolverTypes.js";
-import { createTenantId } from "../../tenancyTypes/tenantIdentity.js";
+import { tryCreateTenantId } from "../../tenancyTypes/tenantIdentity.js";
 
 /** JWT claims with tenant_id. */
 interface JwtClaims {
@@ -17,7 +17,7 @@ interface JwtClaims {
 }
 
 /** Context with a getClaims method. */
-interface JwtContext {
+export interface JwtContext {
   getClaims(): JwtClaims | undefined;
 }
 
@@ -45,14 +45,10 @@ export function createJwtResolver(
       const claims = context.getClaims();
       if (!claims) return undefined;
 
-      const tenantId = claims[claimKey];
-      if (typeof tenantId !== "string" || !tenantId) return undefined;
+      const tenantId = tryCreateTenantId(claims[claimKey]);
+      if (!tenantId) return undefined;
 
-      return {
-        tenantId: createTenantId(tenantId),
-        source: "jwt",
-        trust: "trusted",
-      };
+      return { tenantId, source: "jwt", trust: "trusted" };
     },
   };
 }

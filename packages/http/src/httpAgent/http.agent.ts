@@ -8,6 +8,8 @@ import {
   type AgentOptions as HTTPSAgentOptions,
 } from "node:https";
 
+import { createHash } from "node:crypto";
+
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -60,12 +62,16 @@ export const DEFAULT_AGENT_SCHEDULING: "fifo" | "lifo" = "lifo";
 /* -------------------------------------------------------------------------- */
 
 export function createHTTPAgent(options: HTTPAgentConfig = {}): HTTPAgent {
+  validateAgentOptions(options);
+
   const agentOptions = normalizeAgentOptions(options);
 
   return new HTTPAgent(agentOptions);
 }
 
 export function createHTTPSAgent(options: HTTPSAgentConfig = {}): HTTPSAgent {
+  validateAgentOptions(options);
+
   const agentOptions = normalizeHTTPSAgentOptions(options);
 
   return new HTTPSAgent(agentOptions);
@@ -219,7 +225,16 @@ export function getOrCreateAgent(
 ): HTTPAgentInstance {
   const registryKey = normalizeRegistryKey(key);
 
-  const existing = agentRegistry.get(registryKey);
+  /*
+   * The key includes the TLS-relevant options. Keying on protocol+host alone
+   * meant the first caller's `ca`/`cert`/`servername`/`rejectUnauthorized`
+   * silently applied to every later caller for that host: a staging call
+   * passing `rejectUnauthorized: false` would have disabled certificate
+   * verification for a caller that had pinned a CA, with no way to detect it.
+   */
+  const cacheKey = `${registryKey}|${tlsFingerprint(options)}`;
+
+  const existing = agentRegistry.get(cacheKey);
 
   if (existing) {
     return existing;
@@ -232,9 +247,46 @@ export function getOrCreateAgent(
       : (options.protocol ?? "http"),
   });
 
-  agentRegistry.set(registryKey, agent);
+  agentRegistry.set(cacheKey, agent);
 
   return agent;
+}
+
+/**
+ * Builds a stable fingerprint of the TLS-relevant fields of an agent config.
+ */
+function tlsFingerprint(options: HTTPAgentConfig | HTTPSAgentConfig): string {
+  const tls = options as HTTPSAgentConfig;
+
+  const parts = [
+    describeCredential(tls.ca),
+    describeCredential(tls.cert),
+    describeCredential(tls.key),
+    tls.servername ?? "",
+    tls.rejectUnauthorized === undefined ? "" : String(tls.rejectUnauthorized),
+  ];
+
+  return parts.join("|");
+}
+
+function describeCredential(value: unknown): string {
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return createHash("sha256").update(value).digest("hex");
+  }
+
+  if (value instanceof Uint8Array) {
+    return createHash("sha256").update(value).digest("hex");
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => describeCredential(entry)).join(",");
+  }
+
+  return "opaque";
 }
 
 export function getAgent(

@@ -8,4 +8,8 @@ export {
   MiddlewareError,
   MiddlewareTimeoutError,
   MiddlewareNextCalledMultipleTimesError,
+  MiddlewareLimitExceededError,
+  MiddlewareDepthExceededError,
+  MiddlewareRateLimitError,
+  MiddlewareAbortedError,
 } from "./middlewareError.base.js";

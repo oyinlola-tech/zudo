@@ -8,10 +8,10 @@ import type {
   TenantResolver,
   TenantResolution,
 } from "../../tenancyTypes/resolverTypes.js";
-import { createTenantId } from "../../tenancyTypes/tenantIdentity.js";
+import { tryCreateTenantId } from "../../tenancyTypes/tenantIdentity.js";
 
 /** Context with getPath method. */
-interface PathContext {
+export interface PathContext {
   getPath(): string | undefined;
 }
 
@@ -55,13 +55,10 @@ export function createPathResolver(
 
       if (segments.length === 0) return undefined;
 
-      const candidate = segments[0]!;
+      const tenantId = tryCreateTenantId(segments[0]);
+      if (!tenantId) return undefined;
 
-      return {
-        tenantId: createTenantId(candidate),
-        source: "path",
-        trust: "untrusted",
-      };
+      return { tenantId, source: "path", trust: "untrusted" };
     },
   };
 }

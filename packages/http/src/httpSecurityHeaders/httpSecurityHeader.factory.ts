@@ -27,6 +27,12 @@ import {
   xPermittedCrossDomainPoliciesHeader,
 } from "./httpSecurityHeader.individual.js";
 
+import {
+  createDefaultCSPOptions,
+  createDefaultHSTSOptions,
+  createDefaultPermissionsPolicy,
+} from "./httpSecurityHeader.recommended.js";
+
 /**
  * Creates a complete set of security headers.
  */
@@ -35,11 +41,18 @@ export function createSecurityHeaders(
 ): SecurityHeaders {
   const headers: Record<string, string> = {};
 
+  /*
+   * `contentSecurityPolicy: true` used to format `{}` into the empty string,
+   * emitting `content-security-policy:` with no directives — a policy that
+   * restricts nothing while looking present to a scanner or reviewer. The
+   * boolean form now means "the recommended default policy", which is what
+   * `createDefaultCSPOptions` was written for and never called for.
+   */
   if (options.contentSecurityPolicy) {
     headers[SECURITY_HEADER_NAMES.CSP] = contentSecurityPolicyHeader(
       typeof options.contentSecurityPolicy === "string"
         ? options.contentSecurityPolicy
-        : {},
+        : createDefaultCSPOptions(),
     );
   }
 
@@ -47,7 +60,7 @@ export function createSecurityHeaders(
     headers[SECURITY_HEADER_NAMES.HSTS] = strictTransportSecurityHeader(
       typeof options.strictTransportSecurity === "object"
         ? options.strictTransportSecurity
-        : {},
+        : createDefaultHSTSOptions(),
     );
   }
 
@@ -75,7 +88,7 @@ export function createSecurityHeaders(
     headers[SECURITY_HEADER_NAMES.PP] = permissionsPolicyHeader(
       typeof options.permissionsPolicy === "object"
         ? options.permissionsPolicy
-        : {},
+        : createDefaultPermissionsPolicy(),
     );
   }
 

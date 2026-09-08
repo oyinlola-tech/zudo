@@ -29,14 +29,24 @@ export interface Lock {
   readonly resource: string;
   readonly acquiredAt: Date;
   readonly expiresAt: Date;
+  /**
+   * Monotonically increasing token for this acquisition.
+   *
+   * A lock can expire while its holder is still working. Pass this fence to
+   * the protected resource and reject writes carrying a stale one, so a
+   * superseded holder cannot complete a write behind the new holder's back.
+   */
+  readonly fence: number;
+  /** Whether this handle still holds the lock and has not expired. */
+  isHeld(): boolean;
   release(): Promise<void>;
   extend(durationMs: number): Promise<void>;
 }
 
 /** Options for acquiring a lock. */
 export interface LockOptions {
-  readonly timeout: number;
-  readonly ttl: number;
+  readonly timeout?: number;
+  readonly ttl?: number;
   readonly retryInterval?: number;
 }
 

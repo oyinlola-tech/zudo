@@ -1,92 +1,162 @@
 /**
  * Transaction propagation strategies.
  *
+ * Both branches matter: what a mode does when a transaction is already in
+ * progress, and what it does when none is. Handling only the first branch is
+ * how `mandatory` silently starts a transaction instead of demanding one.
+ *
  * @module manager/manager.propagation
  */
 
-import type { Transaction } from "../transactionTypes/transaction.interface.js";
-import type { TransactionOptions } from "../transactionTypes/transaction.interface.js";
+import type {
+  Transaction,
+  TransactionOptions,
+} from "../transactionTypes/transaction.interface.js";
 import type { TransactionAdapter } from "../transactionTypes/transactionAdapter.js";
-import type { TransactionContext } from "../transactionTypes/transactionAdapter.js";
 import type { TransactionHooks } from "../transactionTypes/transactionHooks.js";
+import type { TransactionPropagation } from "../transactionTypes/transactionState.js";
 import { createTransaction } from "../transaction/transaction.core.js";
+import {
+  createNonTransactional,
+  createParticipant,
+} from "../transaction/transaction.participant.js";
+import { internals } from "../transaction/transaction.internal.js";
 import { TransactionPropagationError } from "../transactionErrors/transactionError.types.js";
+import { assertAdapterSupports } from "./manager.capabilities.js";
 
-/**
- * Handle transaction propagation when a transaction already exists.
- */
-export async function handlePropagation(
-  current: Transaction,
-  propagation: string,
-  opts: TransactionOptions | undefined,
-  adapter: TransactionAdapter,
-  context: TransactionContext,
-  hooks?: TransactionHooks,
-): Promise<Transaction> {
-  switch (propagation) {
-    case "required":
-      return current;
-
-    case "requires_new": {
-      const newTxn = createTransaction(opts);
-      if (hooks?.beforeBegin) await hooks.beforeBegin({ transaction: newTxn });
-      const handle = await adapter.begin(opts);
-      (newTxn as unknown as { _setHandle: (h: unknown) => void })._setHandle(
-        handle,
-      );
-      if (hooks?.afterBegin) await hooks.afterBegin({ transaction: newTxn });
-      return newTxn;
-    }
-
-    case "supports":
-      return current;
-
-    case "not_supported":
-      return current;
-
-    case "mandatory":
-      return current;
-
-    case "never":
-      throw new TransactionPropagationError(
-        "Transaction exists but propagation is 'never'",
-      );
-
-    case "nested":
-      return createNestedTransaction(current, opts, adapter);
-
-    default:
-      throw new TransactionPropagationError(
-        `Unknown propagation: ${propagation}`,
-      );
-  }
+/** Everything a propagation branch may need. */
+export interface PropagationContext {
+  readonly current: Transaction | undefined;
+  readonly opts: TransactionOptions | undefined;
+  readonly adapter: TransactionAdapter;
+  readonly hooks: TransactionHooks | undefined;
 }
 
 /**
- * Create a nested transaction using savepoints.
+ * Open a root transaction against the adapter and make it active.
+ *
+ * @param context - The propagation context.
+ * @param parentId - Enclosing transaction id, when nested.
+ * @returns An active transaction owning an adapter handle.
  */
-async function createNestedTransaction(
-  parent: Transaction,
-  opts: TransactionOptions | undefined,
-  adapter: TransactionAdapter,
+export async function beginRoot(
+  context: PropagationContext,
+  parentId?: string,
 ): Promise<Transaction> {
+  const { adapter, hooks, opts } = context;
+  assertAdapterSupports(adapter, opts);
+
+  const transaction = createTransaction(opts, parentId, "root");
+  if (hooks?.beforeBegin) await hooks.beforeBegin({ transaction });
+
+  try {
+    internals(transaction)._setHandle(await adapter.begin(opts));
+    internals(transaction)._transition("active");
+  } catch (error) {
+    internals(transaction)._transition("failed");
+    throw error;
+  }
+
+  if (hooks?.afterBegin) await hooks.afterBegin({ transaction });
+  return transaction;
+}
+
+/**
+ * Create a nested transaction backed by a savepoint on the enclosing one.
+ *
+ * @param parent - The enclosing transaction.
+ * @param context - The propagation context.
+ * @returns An active transaction whose handle names its savepoint.
+ */
+async function beginSavepoint(
+  parent: Transaction,
+  context: PropagationContext,
+): Promise<Transaction> {
+  const { adapter, hooks, opts } = context;
+
   if (!adapter.capabilities.savepoints || !adapter.createSavepoint) {
     throw new TransactionPropagationError(
       "Nested transactions require savepoint support",
     );
   }
 
-  const child = createTransaction(opts, parent.id);
-  const savepointName = `sp_${child.id}`;
+  const child = createTransaction(opts, parent.id, "savepoint");
+  if (hooks?.beforeBegin) await hooks.beforeBegin({ transaction: child });
 
-  const handle = (
-    parent as unknown as { _getHandle: () => unknown }
-  )._getHandle();
-  await adapter.createSavepoint(handle, savepointName);
-  (child as unknown as { _setHandle: (h: unknown) => void })._setHandle({
-    parent: handle,
-    savepoint: savepointName,
-  });
+  const savepoint = `sp_${child.id}`;
+  const parentHandle = internals(parent)._getHandle();
 
+  try {
+    await adapter.createSavepoint(parentHandle, savepoint);
+    internals(child)._setHandle({ parent: parentHandle, savepoint });
+    internals(child)._transition("active");
+  } catch (error) {
+    internals(child)._transition("failed");
+    throw error;
+  }
+
+  if (hooks?.afterBegin) await hooks.afterBegin({ transaction: child });
   return child;
+}
+
+/**
+ * Resolve a propagation mode to a transaction handle.
+ *
+ * @param propagation - The requested mode.
+ * @param context - The propagation context.
+ * @returns The handle the caller should use.
+ * @throws {TransactionPropagationError} when the mode's precondition fails.
+ */
+export async function resolvePropagation(
+  propagation: TransactionPropagation,
+  context: PropagationContext,
+): Promise<Transaction> {
+  const { current, opts } = context;
+
+  switch (propagation) {
+    case "required":
+      return current ? createParticipant(current) : beginRoot(context);
+
+    case "requires_new":
+      return beginRoot(context);
+
+    case "supports":
+      return current
+        ? createParticipant(current)
+        : createNonTransactional(opts);
+
+    case "not_supported":
+      return createNonTransactional(opts);
+
+    case "mandatory":
+      if (!current) {
+        throw new TransactionPropagationError(
+          "Propagation is 'mandatory' but no transaction is in progress",
+        );
+      }
+      return createParticipant(current);
+
+    case "never":
+      if (current) {
+        throw new TransactionPropagationError(
+          "Transaction exists but propagation is 'never'",
+        );
+      }
+      return createNonTransactional(opts);
+
+    case "nested":
+      return current ? beginSavepoint(current, context) : beginRoot(context);
+
+    default:
+      throw new TransactionPropagationError(
+        `Unknown propagation: ${String(propagation)}`,
+      );
+  }
+}
+
+/** Whether a propagation mode runs its body outside any transaction. */
+export function suspendsTransaction(
+  propagation: TransactionPropagation,
+): boolean {
+  return propagation === "not_supported" || propagation === "requires_new";
 }

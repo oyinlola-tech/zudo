@@ -19,18 +19,19 @@ export function normalizeClientError(
     return error;
   }
 
-  if (request?.signal.aborted) {
-    const reason = request.signal.reason;
+  /*
+   * Classify by the error itself first. Checking `signal.aborted` up front
+   * meant a genuine DNS or TLS failure that happened to race a concurrent
+   * timeout was reported as an abort, hiding the real cause.
+   */
+  if (error instanceof DOMException && error.name === "AbortError") {
+    const reason = request?.signal.reason;
 
     if (reason instanceof HttpClientTimeoutError) {
       return reason;
     }
 
-    return new HttpClientAbortError(request, reason);
-  }
-
-  if (error instanceof DOMException && error.name === "AbortError") {
-    return new HttpClientAbortError(request, error);
+    return new HttpClientAbortError(request, reason ?? error);
   }
 
   if (error instanceof TypeError) {

@@ -1,20 +1,31 @@
 /**
  * HTTP header validation.
  *
- * Validates header names (token format) and values (no CR/LF),
- * and provides combined header validation.
+ * These are thin, result-returning wrappers over the single hardened
+ * definition of "valid header name/value" in `httpHeaders/security`. They
+ * deliberately do not carry their own character classes: this module used to
+ * check only CR/LF, which let every other C0 control and DEL through into
+ * header values built by `httpProtocol` and `httpProxy`.
  */
 
 import type {
   HTTPHeaderValidationResult,
   HTTPValidationResult,
 } from "./httpValidationTypes.type.js";
-import { isHTTPToken } from "./httpValidationToken.js";
+
+import {
+  containsForbiddenHeaderChars,
+  isValidHeaderFieldName,
+} from "../httpHeaders/security/index.js";
 
 export function isValidHeaderName(
   name: string | undefined | null,
 ): name is string {
-  return isHTTPToken(name);
+  if (name === undefined || name === null) {
+    return false;
+  }
+
+  return isValidHeaderFieldName(name);
 }
 
 export function validateHeaderName(name: string): HTTPValidationResult {
@@ -39,17 +50,18 @@ export function isValidHeaderValue(
   }
 
   /*
-   * Reject CR/LF to prevent header injection.
-   * Horizontal tab is permitted by HTTP field-value rules.
+   * Rejects CR, LF, NUL, every other C0 control and DEL. Horizontal tab is
+   * permitted by HTTP field-value rules.
    */
-  return !/[\r\n]/.test(value);
+  return !containsForbiddenHeaderChars(value);
 }
 
 export function validateHeaderValue(value: string): HTTPValidationResult {
   if (!isValidHeaderValue(value)) {
     return {
       valid: false,
-      reason: "Header value contains an invalid CR or LF character.",
+      reason:
+        "Header value contains a control character that is invalid in an HTTP field value.",
     };
   }
 

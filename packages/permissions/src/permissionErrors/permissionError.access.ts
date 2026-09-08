@@ -7,24 +7,39 @@ import { PermissionError } from "./permissionError.base.js";
 
 /**
  * Access denied — the actor is not authorized.
+ *
+ * `AuthorizationError` exposes its body to the client, so the identifying
+ * details go in `internal` rather than `metadata`: `actorId` is an internal
+ * identifier and a policy name describes the shape of the authorization
+ * model, neither of which belongs in a 403 body.
  */
 export class PermissionDeniedError extends PermissionError {
+  /** Detail for logs and audit trails. Never serialized to a client. */
+  readonly details: {
+    readonly actorId?: string;
+    readonly permission?: string;
+    readonly resourceType?: string;
+    readonly reason?: string;
+    readonly policy?: string;
+  };
+
   constructor(
     message = "Access denied",
     options?: {
       readonly actorId?: string;
       readonly permission?: string;
       readonly resourceType?: string;
+      readonly reason?: string;
+      readonly policy?: string;
     },
   ) {
     super(message, {
       code: ErrorCode.ACCESS_DENIED,
-      metadata: {
-        actorId: options?.actorId,
-        permission: options?.permission,
-        resourceType: options?.resourceType,
-      },
+      // Only the permission name, which the caller already knows because
+      // they attempted it.
+      metadata: { permission: options?.permission },
     });
+    this.details = Object.freeze({ ...options });
   }
 }
 

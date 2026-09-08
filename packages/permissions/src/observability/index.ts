@@ -9,4 +9,6 @@ export {
   withObservability,
   type PermissionCheckEvent,
   type PermissionEventHandler,
+  type PermissionEventEmitter,
+  type PermissionEventEmitterOptions,
 } from "./observability.core.js";

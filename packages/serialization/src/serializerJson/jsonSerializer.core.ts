@@ -22,12 +22,15 @@ import {
   BufferTransformer,
   ErrorTransformer,
 } from "../serializerTransformsExt/index.js";
-import { SerializationLimits, SerializationTags } from "@zudojs/constants";
+import {
+  SerializationLimits,
+  SerializationTags,
+  SCHEMA_FORBIDDEN_KEYS,
+} from "@zudojs/constants";
 import { isPlainObject } from "@zudojs/types";
 import {
   assertNoCircularReference,
   assertDepthWithinLimit,
-  assertSizeWithinLimit,
 } from "@zudojs/validation";
 
 /** Default transformer registry with all built-in transformers. */
@@ -47,9 +50,15 @@ export class JSONSerializer implements Serializer<unknown, string> {
   public readonly contentType = "application/json";
 
   private readonly transformers: TransformerRegistry;
+  private readonly defaults: SerializeOptions & DeserializeOptions;
 
-  constructor(options?: { readonly transformers?: TransformerRegistry }) {
+  constructor(options?: {
+    readonly transformers?: TransformerRegistry;
+    /** Default options merged into every call. */
+    readonly defaults?: SerializeOptions & DeserializeOptions;
+  }) {
     this.transformers = options?.transformers ?? createDefaultTransformers();
+    this.defaults = options?.defaults ?? {};
   }
 
   /** Register a custom type transformer. */
@@ -60,36 +69,46 @@ export class JSONSerializer implements Serializer<unknown, string> {
   }
 
   serialize(value: unknown, options?: SerializeOptions): string {
-    const maxDepth = options?.maxDepth ?? SerializationLimits.MAX_DEPTH;
-    const maxSize = options?.maxSize ?? SerializationLimits.MAX_SIZE;
+    const opts = { ...this.defaults, ...options };
+    const maxDepth = opts.maxDepth ?? SerializationLimits.MAX_DEPTH;
+    const maxSize = opts.maxSize ?? SerializationLimits.MAX_SIZE;
 
-    if (options?.preserveTypes === true) {
+    if (opts.preserveTypes === true) {
       assertNoCircularReference(value);
       assertDepthWithinLimit(value, maxDepth);
-      const transformed = this.transformValue(value, 0, maxDepth);
-      const json = options?.pretty
-        ? JSON.stringify(transformed, null, options?.indent ?? 2)
+      const transformed = this.transformValue(value, 0, maxDepth, opts);
+      const json = opts.pretty
+        ? JSON.stringify(transformed, null, opts.indent ?? 2)
         : JSON.stringify(transformed);
       this.assertOutputSize(json, maxSize);
       return json;
     }
 
-    const json = options?.pretty
-      ? JSON.stringify(value, null, options?.indent ?? 2)
+    const json = opts.pretty
+      ? JSON.stringify(value, null, opts.indent ?? 2)
       : JSON.stringify(value);
     this.assertOutputSize(json, maxSize);
     return json;
   }
 
   deserialize<T = unknown>(value: string, options?: DeserializeOptions): T {
-    if (options?.strict === true) this.assertValidJson(value);
+    const opts = { ...this.defaults, ...options };
+
+    // Bound the input before parsing. `maxSize` used to apply on the way out
+    // only, which is the wrong direction: serialized output is ours, whereas
+    // the string handed to `deserialize` arrives from a queue, an RPC peer, or
+    // a request body.
+    const maxSize = opts.maxSize ?? SerializationLimits.MAX_SIZE;
+    this.assertInputSize(value, maxSize);
+
+    if (opts.strict === true) this.assertValidJson(value);
 
     const parsed: unknown = JSON.parse(value);
 
-    if (options?.preserveTypes === true) {
-      const maxDepth = options?.maxDepth ?? SerializationLimits.MAX_DEPTH;
+    if (opts.preserveTypes === true) {
+      const maxDepth = opts.maxDepth ?? SerializationLimits.MAX_DEPTH;
       assertDepthWithinLimit(parsed, maxDepth);
-      return this.restoreValue(parsed, 0, maxDepth) as T;
+      return this.restoreValue(parsed, 0, maxDepth, opts) as T;
     }
 
     return parsed as T;
@@ -99,57 +118,48 @@ export class JSONSerializer implements Serializer<unknown, string> {
     value: unknown,
     depth: number,
     maxDepth: number,
+    options: SerializeOptions,
   ): unknown {
     if (value === null || value === undefined) return value;
     if (typeof value === "bigint") {
       const transformer = this.transformers.findForValue(value);
-      return transformer ? transformer.serialize(value) : value.toString();
+      return transformer
+        ? transformer.serialize(value, options)
+        : value.toString();
     }
     if (typeof value !== "object") return value;
-    if (depth >= maxDepth) return value;
+    if (depth >= maxDepth) {
+      // Depth is pre-checked by assertDepthWithinLimit, so this is a belt-and
+      // braces guard. Returning the raw value would silently emit an untagged
+      // Map or Date, which cannot round-trip — fail loudly instead.
+      throw new Error(`Serialization exceeded maximum depth of ${maxDepth}`);
+    }
 
     if (Array.isArray(value)) {
       return value.map((item) =>
-        this.transformValue(item, depth + 1, maxDepth),
+        this.transformValue(item, depth + 1, maxDepth, options),
       );
     }
 
     const transformer = this.transformers.findForValue(value);
     if (transformer) {
-      const raw = transformer.serialize(value);
-      return this.transformValue(raw, depth + 1, maxDepth);
-    }
-
-    if (value instanceof Map) {
-      const entries: Array<[unknown, unknown]> = [];
-      for (const [k, v] of value) {
-        entries.push([
-          this.transformValue(k, depth + 1, maxDepth),
-          this.transformValue(v, depth + 1, maxDepth),
-        ]);
-      }
-      return {
-        [SerializationTags.TYPE]: "Map",
-        [SerializationTags.VALUE]: entries,
-      };
-    }
-
-    if (value instanceof Set) {
-      return {
-        [SerializationTags.TYPE]: "Set",
-        [SerializationTags.VALUE]: [...value].map((v) =>
-          this.transformValue(v, depth + 1, maxDepth),
-        ),
-      };
+      const raw = transformer.serialize(value, options);
+      return this.transformValue(raw, depth + 1, maxDepth, options);
     }
 
     if (isPlainObject(value)) {
       const result: Record<string, unknown> = {};
       for (const key of Object.keys(value)) {
-        result[key] = this.transformValue(
-          (value as Record<string, unknown>)[key],
-          depth + 1,
-          maxDepth,
+        defineKey(
+          result,
+          key,
+          this.transformValue(
+            (value as Record<string, unknown>)[key],
+            depth + 1,
+            maxDepth,
+            options,
+          ),
+          options.allowUnsafeKeys === true,
         );
       }
       return result;
@@ -162,30 +172,65 @@ export class JSONSerializer implements Serializer<unknown, string> {
     value: unknown,
     depth: number,
     maxDepth: number,
+    options: DeserializeOptions,
   ): unknown {
     if (value === null || value === undefined) return value;
     if (typeof value !== "object") return value;
-    if (depth >= maxDepth) return value;
+    if (depth >= maxDepth) {
+      throw new Error(`Deserialization exceeded maximum depth of ${maxDepth}`);
+    }
 
     if (Array.isArray(value)) {
-      return value.map((item) => this.restoreValue(item, depth + 1, maxDepth));
+      return value.map((item) =>
+        this.restoreValue(item, depth + 1, maxDepth, options),
+      );
     }
 
     const obj = value as Record<string, unknown>;
     const typeTag = obj[SerializationTags.TYPE];
 
-    if (typeof typeTag === "string") {
-      const transformer = this.transformers.get(typeTag);
-      return transformer.deserialize(value);
+    if (typeof typeTag === "string" && this.transformers.has(typeTag)) {
+      // Restore the children first. A transformer receives a plain structure
+      // and has no way to recurse back into this serializer, so handing it the
+      // still-tagged payload is what used to leave a Map full of raw
+      // `{$type, $value}` objects.
+      const restoredShell: Record<string, unknown> = {};
+      for (const key of Object.keys(obj)) {
+        defineKey(
+          restoredShell,
+          key,
+          key === SerializationTags.TYPE
+            ? obj[key]
+            : this.restoreValue(obj[key], depth + 1, maxDepth, options),
+          options.allowUnsafeKeys === true,
+        );
+      }
+      return this.transformers.get(typeTag).deserialize(restoredShell, options);
+    }
+
+    // An unknown tag is ordinary data. Throwing here let any peer crash the
+    // consumer with `{"$type":"anything"}`, and made legitimate payloads that
+    // happen to carry a `$type` field unparseable.
+    if (typeof typeTag === "string" && options.strict === true) {
+      throw new Error(
+        `Unknown serialization type tag: "${typeTag}". ` +
+          "Register a transformer for it, or deserialize without strict mode.",
+      );
     }
 
     if (isPlainObject(value)) {
       const result: Record<string, unknown> = {};
       for (const key of Object.keys(value)) {
-        result[key] = this.restoreValue(
-          (value as Record<string, unknown>)[key],
-          depth + 1,
-          maxDepth,
+        defineKey(
+          result,
+          key,
+          this.restoreValue(
+            (value as Record<string, unknown>)[key],
+            depth + 1,
+            maxDepth,
+            options,
+          ),
+          options.allowUnsafeKeys === true,
         );
       }
       return result;
@@ -203,14 +248,53 @@ export class JSONSerializer implements Serializer<unknown, string> {
   }
 
   private assertOutputSize(json: string, maxSize: number): void {
-    const size =
-      typeof Buffer !== "undefined"
-        ? Buffer.byteLength(json, "utf-8")
-        : new TextEncoder().encode(json).byteLength;
+    const size = byteLength(json);
     if (size > maxSize) {
       throw new Error(
         `Serialized payload too large: ${size} bytes (max: ${maxSize})`,
       );
     }
   }
+
+  private assertInputSize(json: string, maxSize: number): void {
+    const size = byteLength(json);
+    if (size > maxSize) {
+      throw new Error(
+        `Serialized payload too large: ${size} bytes (max: ${maxSize})`,
+      );
+    }
+  }
+}
+
+/** Byte length of a string, in whichever runtime we are on. */
+function byteLength(value: string): number {
+  return typeof Buffer !== "undefined"
+    ? Buffer.byteLength(value, "utf-8")
+    : new TextEncoder().encode(value).byteLength;
+}
+
+/**
+ * Assigns a key onto a freshly built object without invoking a setter.
+ *
+ * Plain assignment of `__proto__` does not create an own property — it calls
+ * the inherited setter and replaces the object's prototype, so an attacker's
+ * keys resolve on the result while `Object.keys` shows nothing. `defineProperty`
+ * always creates a real own property, and forbidden keys are dropped outright
+ * unless the caller has explicitly opted in with `allowUnsafeKeys`.
+ */
+function defineKey(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+  allowUnsafeKeys: boolean,
+): void {
+  if (!allowUnsafeKeys && SCHEMA_FORBIDDEN_KEYS.has(key)) {
+    return;
+  }
+  Object.defineProperty(target, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
 }

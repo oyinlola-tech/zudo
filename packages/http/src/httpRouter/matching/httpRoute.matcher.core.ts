@@ -1,4 +1,20 @@
-function matchCompiledRoute(
+/**
+ * Compiled-route matching.
+ *
+ * Matches a request path against a route's compiled segments, honouring
+ * case sensitivity, optional parameters, per-parameter regular expression
+ * constraints, and trailing wildcards.
+ */
+
+import type { CompiledRoute } from "../core/types/httpRouter.type.js";
+
+import {
+  decodeRouteSegment,
+  normalizePath,
+  splitPath,
+} from "../core/util/httpRoute.util.js";
+
+export function matchCompiledRoute(
   route: CompiledRoute,
   path: string,
   caseSensitive: boolean,
@@ -13,13 +29,27 @@ function matchCompiledRoute(
 
   let inputIndex = 0;
 
-  for (let routeIndex = 0; routeIndex < routeSegments.length; routeIndex += 1) {
-    const segment = routeSegments[routeIndex];
-
+  for (const segment of routeSegments) {
     if (segment.type === "wildcard") {
-      const remaining = inputSegments.slice(inputIndex).join("/");
+      /*
+       * Decode each segment separately and re-join. Decoding the joined tail
+       * in one go would turn an encoded `%2f` into a real separator and let a
+       * `%2e%2e` segment become `..`, so the tail a handler receives could
+       * escape the prefix the wildcard was anchored to.
+       */
+      const decodedTail: string[] = [];
 
-      output[segment.name] = decodeRouteValue(remaining);
+      for (const raw of inputSegments.slice(inputIndex)) {
+        const decoded = decodeRouteSegment(raw);
+
+        if (decoded === undefined) {
+          return undefined;
+        }
+
+        decodedTail.push(decoded);
+      }
+
+      output[segment.name] = decodedTail.join("/");
 
       inputIndex = inputSegments.length;
 
@@ -40,7 +70,7 @@ function matchCompiledRoute(
       return undefined;
     }
 
-    if (segment.type === "static") {
+    if (segment.type === "literal") {
       const expected = caseSensitive
         ? segment.value
         : segment.value.toLowerCase();
@@ -57,7 +87,11 @@ function matchCompiledRoute(
     }
 
     if (segment.type === "parameter") {
-      const decoded = decodeRouteValue(input);
+      const decoded = decodeRouteSegment(input);
+
+      if (decoded === undefined) {
+        return undefined;
+      }
 
       if (segment.pattern && !segment.pattern.test(decoded)) {
         return undefined;

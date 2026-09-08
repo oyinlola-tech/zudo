@@ -10,12 +10,22 @@ import { parseCacheControl } from "./core/httpCacheControl.parse.js";
 
 /**
  * Checks if a specific cache directive is present.
+ *
+ * Valued directives (`maxAge`, `sMaxAge`, `staleWhileRevalidate`,
+ * `noCacheHeaders`, …) are stored as numbers or arrays, not `true`, so a
+ * strict equality against `true` answered "no" for every one of them.
+ *
+ * @param directives - The parsed directives.
+ * @param directive - The directive to look for.
+ * @returns `true` if the directive was present in the header.
  */
 export function hasCacheDirective(
   directives: CacheControlDirectives,
   directive: keyof CacheControlDirectives,
 ): boolean {
-  return directives[directive] === true;
+  const value = directives[directive];
+
+  return value !== undefined && value !== false;
 }
 
 /**

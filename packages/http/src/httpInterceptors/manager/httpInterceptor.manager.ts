@@ -32,7 +32,7 @@ export class HttpInterceptorManager<T> {
       allowDuplicateNames: false,
       ...options,
     };
-    this.registry = new InterceptorRegistry<T>();
+    this.registry = new InterceptorRegistry<T>(this.options);
   }
 
   register(handler: T, options: HttpInterceptorOptions = {}): string {

@@ -2,17 +2,15 @@
  * Configuration types for the observability package.
  */
 
-import type { LogLevel } from "./logging.types.js";
-import type { MetricsRegistry } from "./metrics.types.js";
-import type { Logger } from "./logging.types.js";
+import type { LogLevel, Logger, LogExporter } from "./logging.types.js";
+import type { MetricsRegistry, MetricExporter } from "./metrics.types.js";
 import type {
   Tracer,
   SpanExporter,
   SpanProcessor,
+  SpanLimits,
   Sampler,
 } from "./tracing.types.js";
-import type { LogExporter } from "./logging.types.js";
-import type { MetricExporter } from "./metrics.types.js";
 
 /** Distributed tracing context carried through execution. */
 export interface PropagationContext {
@@ -23,6 +21,8 @@ export interface PropagationContext {
   readonly correlationId?: string;
   readonly userId?: string;
   readonly service?: string;
+  /** @see import("./tracing.types.js").TraceFlags */
+  readonly traceFlags?: number;
   readonly baggage?: Record<string, string>;
 }
 
@@ -35,27 +35,53 @@ export interface PropagationContextOptions {
   readonly correlationId?: string;
   readonly userId?: string;
   readonly service?: string;
+  readonly traceFlags?: number;
   readonly baggage?: Record<string, string>;
 }
 
 /** Manages propagation contexts. */
 export interface PropagationManager {
-  /** Gets the current context (from AsyncLocalStorage). */
-  current(): PropagationContext;
+  /**
+   * The active context, or `undefined` outside a {@link PropagationManager.run}
+   * scope. Callers that want a context regardless should create one
+   * explicitly, so that "no context" stays distinguishable from a real one.
+   */
+  current(): PropagationContext | undefined;
   /** Runs a function with a new propagation context. */
   run<T>(context: PropagationContext, fn: () => T | Promise<T>): Promise<T>;
+  /** Runs a function synchronously with a new propagation context. */
+  runSync<T>(context: PropagationContext, fn: () => T): T;
   /** Creates a new context derived from the current one. */
-  derive(overrides?: Partial<PropagationContext>): PropagationContext;
+  derive(overrides?: PropagationContextOptions): PropagationContext;
 }
+
+/** How a field name is matched against the sensitive-field list. */
+export type RedactionMatchMode = "exact" | "contains";
 
 /** Configuration for redacting sensitive fields from logs and traces. */
 export interface RedactionConfig {
-  /** Field names to redact (case-insensitive). */
-  readonly fields: readonly string[];
-  /** Custom redaction function. */
+  /**
+   * Field names to redact (case-insensitive). Defaults to a built-in list
+   * covering passwords, tokens, cookies, keys and card numbers.
+   */
+  readonly fields?: readonly string[];
+  /**
+   * Additional patterns tested against the field name. Useful for
+   * conventions a name list cannot express, such as `/^x-.*-token$/i`.
+   */
+  readonly patterns?: readonly RegExp[];
+  /**
+   * `"contains"` (the default) matches a field whose name *contains* a
+   * listed term, so `userPassword` and `x-api-key` are caught. `"exact"`
+   * matches only whole names.
+   */
+  readonly matchMode?: RedactionMatchMode;
+  /** Custom redaction function, consulted before the field list. */
   readonly customRedactor?: (key: string, value: unknown) => unknown;
-  /** Replacement text. */
+  /** Replacement text. Defaults to `"[REDACTED]"`. */
   readonly replacement?: string;
+  /** How deep to walk nested structures. Default: 8. */
+  readonly maxDepth?: number;
 }
 
 /** Central observability facade. */
@@ -68,7 +94,10 @@ export interface Observability {
   /** Creates a scoped observability instance with resource attributes. */
   resource(attributes: Record<string, unknown>): Observability;
 
-  /** Shuts down all exporters and processors. */
+  /** Drains every buffer without shutting anything down. */
+  flush(): Promise<void>;
+
+  /** Shuts down all exporters and processors. Safe to call more than once. */
   shutdown(): Promise<void>;
 }
 
@@ -85,4 +114,26 @@ export interface ObservabilityConfig {
   readonly processors?: readonly SpanProcessor[];
   readonly redaction?: RedactionConfig;
   readonly resource?: Record<string, unknown>;
+  /** Caps on what a single span may accumulate. */
+  readonly spanLimits?: SpanLimits;
+  /**
+   * Fall back to the console exporters when no exporter is supplied.
+   * Defaults to `true`, which prints logs and spans to stdout — convenient in
+   * development and rarely wanted in production, so set it to `false` (or
+   * pass real exporters) when deploying.
+   */
+  readonly useConsoleExporters?: boolean;
+  /** How often metrics are exported, in ms. Default: 60,000. `0` disables it. */
+  readonly metricExportIntervalMs?: number;
+  /** How often buffered log records are flushed, in ms. Default: 1,000. */
+  readonly logFlushIntervalMs?: number;
+  /** How many log records are buffered before an eager flush. Default: 256. */
+  readonly logBatchSize?: number;
+  /**
+   * Record `exception.stacktrace` on spans. Stack traces reach the telemetry
+   * backend unredacted, so this is opt-out. Default: `true`.
+   */
+  readonly captureStackTraces?: boolean;
+  /** Reports a telemetry failure that would otherwise be swallowed. */
+  readonly onError?: (error: unknown, source: string) => void;
 }

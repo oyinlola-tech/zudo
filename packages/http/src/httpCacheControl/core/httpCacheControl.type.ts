@@ -26,6 +26,10 @@ export interface CacheControlDirectives {
 
 export interface CacheControlOptions {
   readonly maxAge?: number;
+  readonly maxStale?: number;
+  readonly minFresh?: number;
+  readonly mustUnderstand?: boolean;
+  readonly noCacheHeaders?: readonly string[];
   readonly sMaxAge?: number;
   readonly noCache?: boolean;
   readonly noStore?: boolean;

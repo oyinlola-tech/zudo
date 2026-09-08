@@ -34,8 +34,20 @@ export interface TenantResolver<Context = unknown> {
 
 /** Options for resolver chain. */
 export interface ResolverChainOptions {
-  /** Whether to detect conflicts between resolver results. */
+  /** Name reported when the chain is used as a resolver. Defaults to "chain". */
+  readonly name?: string;
+  /** Priority when nested in another chain. Defaults to the highest member's. */
+  readonly priority?: number;
+  /**
+   * Run every resolver and collect all candidates, rather than stopping at the
+   * first match. Required for conflict detection.
+   */
   readonly detectConflicts?: boolean;
-  /** Throw on conflict instead of using highest priority. */
+  /**
+   * Throw when candidates name different tenants. Defaults to true.
+   *
+   * Disagreement between a verified credential and a client-supplied header is
+   * the signature of an attempted cross-tenant request.
+   */
   readonly throwOnConflict?: boolean;
 }

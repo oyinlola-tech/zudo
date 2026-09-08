@@ -6,4 +6,3 @@
 
 export * from "./httpRoute.factory.js";
 export * from "./httpRoute.factory.base.js";
-export * from "./httpRoute.factory.helper.js";

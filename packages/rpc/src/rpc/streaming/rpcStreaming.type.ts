@@ -2,6 +2,15 @@
  * @zudojs/rpc/streaming
  *
  * Streaming types for RPC operations.
+ *
+ * @remarks
+ * These types describe a streaming contract but are **not yet
+ * dispatchable**: `RPCProcedureRegistry` and `RPCServer` accept only
+ * `RPCProcedure`, and `RPCTransport.send` resolves with a single
+ * `RPCResponse` rather than a stream. A procedure built with
+ * {@link createRPCStreamingProcedure} therefore cannot be registered or
+ * called over a transport today. Use it to shape a handler ahead of
+ * transport support; do not rely on it to serve traffic.
  */
 
 /**

@@ -5,17 +5,29 @@
  */
 
 import type { PermissionRule, Permission } from "../permissionTypes/index.js";
+import { ruleMatches } from "./rule.core.js";
 
-/** Compiled rule index for O(1) lookup by resource:action. */
-interface RuleIndex {
+/** Compiled rule index for fast lookup by resource:action. */
+export interface RuleIndex {
   /** Exact matches: "post:update" → rules. */
   readonly exact: ReadonlyMap<string, readonly PermissionRule[]>;
-  /** Resource wildcards: "post:*" → rules. */
+  /** Resource wildcards: "post:*" → rules, keyed by resource. */
   readonly resourceWildcard: ReadonlyMap<string, readonly PermissionRule[]>;
-  /** Action wildcards: "*:read" → rules. */
+  /** Action wildcards: "*:read" → rules, keyed by action. */
   readonly actionWildcard: ReadonlyMap<string, readonly PermissionRule[]>;
   /** Global wildcards: "*:*" → rules. */
   readonly globalWildcard: readonly PermissionRule[];
+  /**
+   * Rules using a namespace wildcard (`billing.*`), which no exact key can
+   * index. Scanned linearly — small in practice, and leaving them out of the
+   * index entirely is what made them silently unmatchable.
+   */
+  readonly patterned: readonly PermissionRule[];
+}
+
+/** True when a pattern needs a linear scan rather than a map lookup. */
+function isPatterned(pattern: string): boolean {
+  return pattern !== "*" && pattern.endsWith(".*");
 }
 
 /**
@@ -26,65 +38,81 @@ export function compileRules(rules: readonly PermissionRule[]): RuleIndex {
   const resourceWildcard = new Map<string, PermissionRule[]>();
   const actionWildcard = new Map<string, PermissionRule[]>();
   const globalWildcard: PermissionRule[] = [];
+  const patterned: PermissionRule[] = [];
+
+  const push = (
+    map: Map<string, PermissionRule[]>,
+    key: string,
+    rule: PermissionRule,
+  ): void => {
+    const bucket = map.get(key);
+    if (bucket) bucket.push(rule);
+    else map.set(key, [rule]);
+  };
 
   for (const rule of rules) {
     const resources = normalizeToArray(rule.resource);
     const actions = normalizeToArray(rule.action);
+    let indexed = false;
 
     for (const resource of resources) {
       for (const action of actions) {
+        if (isPatterned(resource) || isPatterned(action)) {
+          if (!indexed) {
+            patterned.push(rule);
+            indexed = true;
+          }
+          continue;
+        }
         if (resource === "*" && action === "*") {
           globalWildcard.push(rule);
         } else if (resource === "*") {
-          const key = action;
-          if (!actionWildcard.has(key)) actionWildcard.set(key, []);
-          actionWildcard.get(key)!.push(rule);
+          push(actionWildcard, action, rule);
         } else if (action === "*") {
-          const key = resource;
-          if (!resourceWildcard.has(key)) resourceWildcard.set(key, []);
-          resourceWildcard.get(key)!.push(rule);
+          push(resourceWildcard, resource, rule);
         } else {
-          const key = `${resource}:${action}`;
-          if (!exact.has(key)) exact.set(key, []);
-          exact.get(key)!.push(rule);
+          push(exact, `${resource}:${action}`, rule);
         }
       }
     }
   }
 
-  const index: RuleIndex = {
-    exact,
-    resourceWildcard,
-    actionWildcard,
-    globalWildcard,
-  };
-  return index;
+  return { exact, resourceWildcard, actionWildcard, globalWildcard, patterned };
 }
 
 /**
  * Find all rules from the compiled index that match a target permission.
+ *
+ * The result is de-duplicated: a rule listing several resources or actions is
+ * indexed under each, and returning it more than once would let one rule
+ * count twice when the decision is combined.
  */
 export function findMatchingRules(
   index: RuleIndex,
   target: Permission,
 ): readonly PermissionRule[] {
   const results: PermissionRule[] = [];
-  const key = `${target.resource}:${target.action}`;
+  const seen = new Set<PermissionRule>();
+
+  const add = (rules: readonly PermissionRule[] | undefined): void => {
+    if (!rules) return;
+    for (const rule of rules) {
+      if (seen.has(rule)) continue;
+      seen.add(rule);
+      results.push(rule);
+    }
+  };
 
   // 1. Exact matches
-  const exactRules = index.exact.get(key);
-  if (exactRules) results.push(...exactRules);
-
+  add(index.exact.get(`${target.resource}:${target.action}`));
   // 2. Resource wildcard: "post:*" matches "post:update"
-  const resWildcard = index.resourceWildcard.get(target.resource);
-  if (resWildcard) results.push(...resWildcard);
-
+  add(index.resourceWildcard.get(target.resource));
   // 3. Action wildcard: "*:read" matches "post:read"
-  const actWildcard = index.actionWildcard.get(target.action);
-  if (actWildcard) results.push(...actWildcard);
-
+  add(index.actionWildcard.get(target.action));
   // 4. Global wildcard: "*:*"
-  results.push(...index.globalWildcard);
+  add(index.globalWildcard);
+  // 5. Namespace wildcards, which need a real match test
+  add(index.patterned.filter((rule) => ruleMatches(rule, target)));
 
   return results;
 }

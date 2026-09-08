@@ -63,9 +63,24 @@ export type {
 export { ConnectionPool } from "./database/index.js";
 
 export { BaseRepository } from "./repository/index.js";
-export type { BaseRepositoryOptions } from "./repository/index.js";
+export type {
+  BaseRepositoryOptions,
+  FindAllOptions,
+  SortDirection,
+} from "./repository/index.js";
+export {
+  assertIdentifier,
+  assertIdentifiers,
+  assertRowBound,
+  assertSortDirection,
+} from "./repository/index.js";
 
 export { LocalObjectStorage } from "./objectStorage/index.js";
+export type {
+  ListOptions,
+  LocalObjectStorageOptions,
+} from "./objectStorage/index.js";
+export { DEFAULT_MAX_KEYS, DEFAULT_MAX_OBJECT_BYTES } from "./objectStorage/index.js";
 
 export { JsonSerializer } from "./serialization/index.js";
 

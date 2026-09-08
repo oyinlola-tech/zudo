@@ -4,6 +4,11 @@ import type { CacheClearResult } from "./types-results.js";
 export type CacheTag = string;
 
 export interface CacheTagOptions {
+  /**
+   * Scopes the tag. Tags registered under one namespace are invisible to
+   * lookups and invalidations made under another, so one tenant's
+   * `invalidateByTag` can never reach another tenant's entries.
+   */
   readonly namespace?: CacheNamespace;
 }
 
@@ -26,6 +31,8 @@ export interface CacheTagStore {
     tag: CacheTag,
     options?: CacheTagOptions,
   ): Promise<CacheClearResult>;
+  /** Removes all tag mappings for a key, across every namespace. */
+  removeKey?(key: CacheKey): void;
   /** Removes all tag mappings. */
   clear?(): void;
 }

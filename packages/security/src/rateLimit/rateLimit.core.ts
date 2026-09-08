@@ -19,13 +19,19 @@ const DEFAULT_WINDOW_MS = 60_000;
 /** Default rate limit message. */
 const DEFAULT_MESSAGE = "Too many requests";
 
+/** Default cap on tracked keys before least-recently-seen eviction. */
+const DEFAULT_MAX_KEYS = 100_000;
+
 /**
  * In-memory rate limit store.
- * Maps keys to arrays of timestamps.
+ *
+ * `timestamps` holds only *allowed* requests inside the current window, so the
+ * memory a single key can occupy is bounded by `max` no matter how hard it is
+ * hammered. `lastSeen` drives eviction when the store hits its key cap.
  */
 interface RateLimitEntry {
-  readonly timestamps: number[];
-  readonly windowStart: number;
+  timestamps: number[];
+  lastSeen: number;
 }
 
 /**
@@ -63,31 +69,76 @@ export function defaultHandler(
   });
 }
 
+/** Extra options accepted by {@link createRateLimiter}. */
+export interface RateLimiterOptions extends RateLimitConfig {
+  /** Maximum number of distinct keys to track (default: 100,000). */
+  readonly maxKeys?: number;
+}
+
 /**
  * Creates an in-memory rate limiter.
+ *
+ * The window genuinely slides: each check prunes timestamps older than
+ * `windowMs` and decides against what remains, so a client cannot spend a full
+ * allowance either side of a fixed boundary and get `2 × max` back to back.
  *
  * @param config - Rate limit configuration.
  * @returns A function that checks rate limits.
  */
-export function createRateLimiter(config: RateLimitConfig) {
+export function createRateLimiter(config: RateLimiterOptions) {
+  if (!Number.isFinite(config.max) || config.max < 1) {
+    throw new RangeError(
+      `Rate limit max must be a positive number, got: ${config.max}`,
+    );
+  }
+  if (!Number.isFinite(config.windowMs) || config.windowMs < 1) {
+    throw new RangeError(
+      `Rate limit windowMs must be a positive number, got: ${config.windowMs}`,
+    );
+  }
+
   const store = new Map<string, RateLimitEntry>();
   const keyGenerator = config.keyGenerator ?? defaultKeyGenerator;
-  const handler = config.handler;
+  const handler = config.handler ?? defaultHandler;
   const skip = config.skip;
+  const maxKeys = config.maxKeys ?? DEFAULT_MAX_KEYS;
 
-  // Cleanup old entries periodically
-  const cleanupInterval = setInterval(() => {
-    const now = Date.now();
-    for (const [key, entry] of store) {
-      if (now - entry.windowStart > config.windowMs * 2) {
-        store.delete(key);
+  // Cleanup old entries periodically. Bounded so a very short window does not
+  // schedule a near-continuous timer.
+  const cleanupInterval = setInterval(
+    () => {
+      const cutoff = Date.now() - config.windowMs;
+      for (const [key, entry] of store) {
+        if (entry.lastSeen <= cutoff) {
+          store.delete(key);
+        }
       }
-    }
-  }, config.windowMs);
+    },
+    Math.max(config.windowMs, 1_000),
+  );
 
   // Allow cleanup to not keep process alive
   if (cleanupInterval.unref) {
     cleanupInterval.unref();
+  }
+
+  /**
+   * Evicts the least-recently-seen keys once the store exceeds its cap.
+   *
+   * Without this, a caller rotating the key (a spoofed forwarding header, a
+   * per-request identifier) grows the map without limit between sweeps.
+   */
+  function evictIfNeeded(): void {
+    if (store.size <= maxKeys) return;
+
+    const entries = [...store.entries()].sort(
+      (a, b) => a[1].lastSeen - b[1].lastSeen,
+    );
+    const excess = store.size - maxKeys;
+    for (let i = 0; i < excess; i++) {
+      const entry = entries[i];
+      if (entry) store.delete(entry[0]);
+    }
   }
 
   /**
@@ -109,26 +160,36 @@ export function createRateLimiter(config: RateLimitConfig) {
     const windowStart = now - config.windowMs;
 
     let entry = store.get(key);
-
-    if (!entry || now - entry.windowStart >= config.windowMs) {
-      // New window
-      entry = { timestamps: [now], windowStart: now };
+    if (!entry) {
+      entry = { timestamps: [], lastSeen: now };
       store.set(key, entry);
-    } else {
-      // Existing window — remove expired timestamps
-      const validTimestamps = entry.timestamps.filter((t) => t > windowStart);
-      validTimestamps.push(now);
-      entry = { timestamps: validTimestamps, windowStart: entry.windowStart };
-      store.set(key, entry);
+      evictIfNeeded();
     }
 
-    const remaining = Math.max(0, config.max - entry.timestamps.length);
-    const allowed = entry.timestamps.length <= config.max;
+    // Prune everything that has slid out of the window.
+    const timestamps = entry.timestamps.filter((t) => t > windowStart);
+    entry.lastSeen = now;
+
+    const allowed = timestamps.length < config.max;
+
+    // Only an allowed request consumes an allowance slot. Recording denied
+    // requests too would let a client already over the limit keep growing its
+    // own bucket, so the cost of an attack would scale with the attack.
+    if (allowed) {
+      timestamps.push(now);
+    }
+    entry.timestamps = timestamps;
+
+    const remaining = Math.max(0, config.max - timestamps.length);
+
+    // The window frees up when its oldest surviving request ages out.
+    const oldest = timestamps[0];
+    const resetAt = new Date((oldest ?? now) + config.windowMs);
 
     return {
       allowed,
       remaining,
-      resetAt: new Date(entry.windowStart + config.windowMs),
+      resetAt,
       total: config.max,
     };
   }
@@ -146,7 +207,7 @@ export function createRateLimiter(config: RateLimitConfig) {
   ): RateLimitResult {
     const result = check(request);
 
-    if (!result.allowed && response && handler) {
+    if (!result.allowed && response) {
       handler(request, response);
     }
 
@@ -174,8 +235,7 @@ export function createRateLimiter(config: RateLimitConfig) {
     const entry = store.get(key);
     if (!entry) return 0;
 
-    const now = Date.now();
-    const windowStart = now - config.windowMs;
+    const windowStart = Date.now() - config.windowMs;
     return entry.timestamps.filter((t) => t > windowStart).length;
   }
 
@@ -194,33 +254,111 @@ export function createRateLimiter(config: RateLimitConfig) {
     clear,
     getCount,
     destroy,
+    /** Number of keys currently tracked. */
+    get size(): number {
+      return store.size;
+    },
   };
+}
+
+/** Options controlling how far forwarding headers are trusted. */
+export interface ClientIpOptions {
+  /**
+   * Number of reverse proxies you operate in front of this service.
+   *
+   * `X-Forwarded-For` is appended to by every hop, so the entries closest to
+   * the right are the ones your own infrastructure added. With `trustProxy: 1`
+   * the last entry is used, with `2` the second-to-last, and so on. Entries to
+   * the left of your proxies were supplied by the client and are ignored.
+   *
+   * Defaults to `0`: no forwarding header is trusted at all.
+   */
+  readonly trustProxy?: number;
+  /** The connection's remote address, used when no header is trusted. */
+  readonly remoteAddress?: string;
 }
 
 /**
  * Extracts the client IP from request headers.
- * Used as a default key generator.
+ *
+ * **Forwarding headers are not trusted by default.** Any client can send
+ * `X-Forwarded-For`, so taking its leftmost entry — the historical behaviour —
+ * hands the caller control of their own rate-limit bucket, and rotating it
+ * defeats the limiter entirely. Pass `trustProxy` set to the number of proxies
+ * you actually run, together with the socket's `remoteAddress`.
  *
  * @param headers - Request headers.
- * @returns The client IP address.
+ * @param options - Proxy trust configuration.
+ * @returns The client IP address, or "unknown".
  */
 export function extractClientIp(
   headers: Record<string, string | string[] | undefined>,
+  options?: ClientIpOptions,
 ): string {
-  // X-Forwarded-For (first entry)
-  const forwarded = headers["x-forwarded-for"];
-  if (typeof forwarded === "string") {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first) return first;
-  }
-  if (Array.isArray(forwarded) && forwarded.length > 0) {
-    const first = forwarded[0]?.split(",")[0]?.trim();
-    if (first) return first;
+  const trustProxy = options?.trustProxy ?? 0;
+  const fallback = options?.remoteAddress ?? "unknown";
+
+  if (trustProxy <= 0) {
+    return fallback;
   }
 
-  // X-Real-IP
-  const realIp = headers["x-real-ip"];
-  if (typeof realIp === "string") return realIp;
+  const raw = lookupHeader(headers, "x-forwarded-for");
+  if (raw !== undefined) {
+    const chain = raw
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
 
-  return "unknown";
+    // Walk in from the right: index 0 from the end is the address our own
+    // outermost proxy observed, and each additional trusted hop steps left.
+    const index = chain.length - trustProxy;
+    const candidate = chain[Math.max(0, index)];
+    if (candidate && isPlausibleIp(candidate)) {
+      return candidate;
+    }
+  }
+
+  const realIp = lookupHeader(headers, "x-real-ip");
+  if (realIp !== undefined && isPlausibleIp(realIp.trim())) {
+    return realIp.trim();
+  }
+
+  return fallback;
 }
+
+/** Case-insensitive header lookup that flattens repeated fields. */
+function lookupHeader(
+  headers: Record<string, string | string[] | undefined>,
+  name: string,
+): string | undefined {
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() !== name) continue;
+    const value = headers[key];
+    if (typeof value === "string") return value;
+    if (Array.isArray(value) && value.length > 0) return value.join(",");
+  }
+  return undefined;
+}
+
+/**
+ * Rejects values that are not addresses at all.
+ *
+ * A forwarding header is text, and a hostname or arbitrary string in it would
+ * otherwise become a rate-limit key of the attacker's choosing.
+ */
+function isPlausibleIp(value: string): boolean {
+  const host = value.startsWith("[")
+    ? value.slice(1, value.indexOf("]") === -1 ? undefined : value.indexOf("]"))
+    : value.split(":").length > 2
+      ? value
+      : (value.split(":")[0] ?? value);
+
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    return host.split(".").every((octet) => Number(octet) <= 255);
+  }
+
+  // Any hex-and-colon string is accepted as an IPv6 candidate.
+  return /^[0-9a-fA-F:]+$/.test(host) && host.includes(":");
+}
+
+export { DEFAULT_MAX, DEFAULT_WINDOW_MS };

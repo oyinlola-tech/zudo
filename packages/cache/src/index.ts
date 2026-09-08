@@ -2,7 +2,7 @@
  * @zudojs/cache
  *
  * Cache abstraction layer with memory adapter, tag-based
- * invalidation, distributed locking, and metrics.
+ * invalidation, in-process locking, events, middleware, and metrics.
  *
  * @example
  * ```ts
@@ -13,8 +13,9 @@
  *   config: { defaultTtl: 60_000 },
  * });
  *
- * await cache.set("user:123", { name: "Alice" }, { tags: ["users"] });
- * const result = await cache.get("user:123");
+ * // Key parts must not contain the separator, so use "." inside a key.
+ * await cache.set("user.123", { name: "Alice" }, { tags: ["users"] });
+ * const { hit, value } = await cache.get<{ name: string }>("user.123");
  * ```
  */
 
@@ -22,19 +23,14 @@
 export type {
   CacheKey,
   CacheNamespace,
-  CacheKeyParts,
   CacheKeyOptions,
-  CacheValue,
-  SerializableCacheValue,
   CacheTTL,
   CacheExpiration,
-  CacheExpirationInfo,
   CacheSetOptions,
   CacheClearOptions,
   CacheKeysOptions,
   CacheSetManyOptions,
   CacheEntry,
-  CacheEntryMetadata,
   CacheGetResult,
   CacheSetResult,
   CacheDeleteResult,
@@ -43,7 +39,6 @@ export type {
   CacheStats,
   CacheAdapter,
   CacheStore,
-  CacheAdapterFactory,
   CacheConfig,
   CacheEventType,
   CacheTag,
@@ -65,7 +60,6 @@ export type {
   CacheBatchOperation,
   CacheBatchResult,
   MaybePromise,
-  CacheResult,
 } from "./types.js";
 
 export type {
@@ -100,6 +94,9 @@ export {
   LATENCY_BUCKETS,
   DEFAULT_MAX_ENTRIES,
   DEFAULT_MAX_MEMORY_BYTES,
+  EXPIRED_PURGE_INTERVAL_MS,
+  CACHE_PATTERN_PART_PATTERN,
+  MAX_TAG_LENGTH,
 } from "./constants.js";
 
 // Errors (re-exported from @zudojs/errors)
@@ -123,7 +120,7 @@ export {
   RawCacheSerializer,
   defaultSerializer,
   rawSerializer,
-  getSerializer,
+  stripUnsafeKeys,
 } from "./serializer.js";
 
 // Key Builder
@@ -137,10 +134,14 @@ export {
 export { DefaultCacheStore, createCacheStore } from "./store.js";
 
 // Memory Adapter
-export { MemoryCacheAdapter, createMemoryCacheAdapter } from "./memory.js";
+export {
+  MemoryCacheAdapter,
+  createMemoryCacheAdapter,
+  estimateValueBytes,
+} from "./memory.js";
 
 // Tags
-export { InMemoryTagStore, createTagStore } from "./tags.js";
+export { InMemoryTagStore, createTagStore, assertValidTag } from "./tags.js";
 
 // Invalidation
 export {

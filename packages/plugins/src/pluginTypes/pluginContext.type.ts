@@ -37,6 +37,13 @@ export interface PluginEvents {
 }
 
 /**
+ * Something a plugin registers so the manager releases it on shutdown.
+ */
+export interface PluginDisposable {
+  dispose(): void | Promise<void>;
+}
+
+/**
  * Controlled context provided to plugins during lifecycle operations.
  */
 export interface PluginContext {
@@ -50,9 +57,13 @@ export interface PluginContext {
 
   readonly events?: PluginEvents;
 
+  /**
+   * Aborted when the plugin system shuts down, so long-lived work
+   * started by the plugin can stop.
+   */
   readonly signal: AbortSignal;
 
   onDispose(handler: () => void | Promise<void>): void;
 
-  registerDisposable(disposable: { dispose(): void | Promise<void> }): void;
+  registerDisposable(disposable: PluginDisposable): void;
 }

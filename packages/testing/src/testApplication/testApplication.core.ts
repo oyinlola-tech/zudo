@@ -69,13 +69,16 @@ export function createTestApplication(
   const clock = options.clock ?? createTestClock();
   const cleanup = options.cleanup ?? createCleanupManager();
 
-  cleanup.register(async () => {
-    container.dispose();
-  }, "container-dispose");
-
+  // Cleanups run in reverse registration order, so the logger is registered
+  // first and therefore closed last: anything that logs while the container
+  // disposes still has somewhere to write.
   cleanup.register(async () => {
     await logger.close();
   }, "logger-close");
+
+  cleanup.register(async () => {
+    await container.dispose();
+  }, "container-dispose");
 
   const dispose = async (): Promise<void> => {
     await cleanup.dispose();

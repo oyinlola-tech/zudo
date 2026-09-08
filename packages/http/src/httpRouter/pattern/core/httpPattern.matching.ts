@@ -4,7 +4,52 @@
  * @module httpRoute/pattern/matching
  */
 
-import type { CompiledRoutePattern, RouteMatch } from "./httpPattern.type.js";
+import type {
+  CompiledRoutePattern,
+  RouteMatch,
+  RouteSegment,
+} from "./httpPattern.type.js";
+
+const TRAVERSAL_CHARS = /[\\\u0000]/;
+
+/**
+ * Decodes a captured pattern group.
+ *
+ * Matching happens against the still-encoded path, so `%2e%2e%2f` satisfies a
+ * `[^/]+` parameter and only becomes `../` afterwards. Anything that decodes
+ * into a traversal payload, or that is not valid percent-encoding at all,
+ * fails the match rather than reaching a handler.
+ */
+function decodeCapture(
+  value: string,
+  kind: RouteSegment["type"],
+): string | undefined {
+  let decoded: string;
+
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    return undefined;
+  }
+
+  if (TRAVERSAL_CHARS.test(decoded)) {
+    return undefined;
+  }
+
+  const parts = kind === "wildcard" ? decoded.split("/") : [decoded];
+
+  for (const part of parts) {
+    if (part === "." || part === "..") {
+      return undefined;
+    }
+
+    if (kind !== "wildcard" && part.includes("/")) {
+      return undefined;
+    }
+  }
+
+  return decoded;
+}
 
 /**
  * Tests if a path matches a compiled route pattern.
@@ -31,11 +76,28 @@ export function matchRoutePattern(
 
   const params: Record<string, string> = {};
 
+  const kinds = new Map<string, RouteSegment["type"]>();
+
+  for (const segment of pattern.segments) {
+    if (segment.type !== "static") {
+      kinds.set(segment.name, segment.type);
+    }
+  }
+
   for (const name of pattern.paramNames) {
     const value = match.groups?.[name];
-    if (value !== undefined) {
-      params[name] = decodeURIComponent(value);
+
+    if (value === undefined) {
+      continue;
     }
+
+    const decoded = decodeCapture(value, kinds.get(name) ?? "parameter");
+
+    if (decoded === undefined) {
+      return undefined;
+    }
+
+    params[name] = decoded;
   }
 
   return {

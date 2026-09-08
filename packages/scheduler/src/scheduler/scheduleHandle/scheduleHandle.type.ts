@@ -18,18 +18,54 @@ export interface ScheduleHandle {
 }
 
 /**
+ * The scheduler operations a handle needs to act on its schedule.
+ *
+ * Without these the handle is a detached object: `cancel()` sets a local field
+ * and the job still runs.
+ */
+export interface ScheduleHandleBinding {
+  /** Applies a state transition to the live schedule. */
+  setState(state: ScheduleState): void;
+  /** Reads the live schedule's state, or undefined once it is gone. */
+  getState(): ScheduleState | undefined;
+  /** Reads the live schedule's next fire time. */
+  getNextRun(): Date | undefined;
+  /** Aborts any execution of this schedule that is currently in flight. */
+  abortRunning(): void;
+}
+
+/**
  * Implementation of ScheduleHandle.
+ *
+ * Bound to its scheduler, so pause, resume and cancel reach the queue. An
+ * unbound handle (the two-argument form) still tracks state locally, which
+ * keeps it usable in tests that do not involve a scheduler.
  */
 export class ScheduleHandleImpl implements ScheduleHandle {
   readonly id: string;
 
-  state: ScheduleState;
+  private _state: ScheduleState;
 
-  private cancelled = false;
+  private readonly binding: ScheduleHandleBinding | undefined;
 
-  constructor(id: string, state: ScheduleState) {
+  constructor(
+    id: string,
+    state: ScheduleState,
+    binding?: ScheduleHandleBinding,
+  ) {
     this.id = id;
-    this.state = state;
+    this._state = state;
+    this.binding = binding;
+  }
+
+  /** The schedule's current state, read from the scheduler when bound. */
+  get state(): ScheduleState {
+    return this.binding?.getState() ?? this._state;
+  }
+
+  set state(next: ScheduleState) {
+    this._state = next;
+    this.binding?.setState(next);
   }
 
   pause(): Promise<void> {
@@ -43,12 +79,15 @@ export class ScheduleHandleImpl implements ScheduleHandle {
   }
 
   cancel(): Promise<void> {
-    this.cancelled = true;
-    this.state = "cancelled";
+    // Abort first: a job already running should stop, not just be removed from
+    // future scheduling.
+    this.binding?.abortRunning();
+    this._state = "cancelled";
+    this.binding?.setState("cancelled");
     return Promise.resolve();
   }
 
   nextRun(): Date | undefined {
-    return undefined;
+    return this.binding?.getNextRun();
   }
 }

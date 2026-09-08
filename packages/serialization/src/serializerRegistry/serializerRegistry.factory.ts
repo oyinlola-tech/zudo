@@ -34,7 +34,18 @@ export function createSerializer(
 ): Serializer {
   switch (format) {
     case Format.JSON:
-      return new JSONSerializer({ transformers: options?.transformers });
+      // `pretty` and `preserveTypes` used to be accepted and thrown away.
+      // They are now carried as per-instance defaults that each call can
+      // still override.
+      return new JSONSerializer({
+        transformers: options?.transformers,
+        defaults: {
+          ...(options?.pretty !== undefined ? { pretty: options.pretty } : {}),
+          ...(options?.preserveTypes !== undefined
+            ? { preserveTypes: options.preserveTypes }
+            : {}),
+        },
+      });
     default:
       throw new UnsupportedSerializationFormatError(format);
   }

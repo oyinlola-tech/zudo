@@ -53,8 +53,6 @@ export async function executePipeline(
     }),
   };
 
-  const errors: HttpMiddlewareError[] = [];
-
   const dispatch = async (index: number): Promise<ResponseContext> => {
     if (index >= middlewares.length) {
       return response;
@@ -66,41 +64,92 @@ export async function executePipeline(
       return response;
     }
 
+    let nextCalls = 0;
+
+    const next = (): Promise<ResponseContext> => {
+      nextCalls += 1;
+
+      if (nextCalls > 1) {
+        /*
+         * Calling `next()` twice runs the rest of the chain twice against one
+         * request: duplicated side effects, and a second attempt to write a
+         * response whose headers are already sent.
+         */
+        return Promise.reject(
+          new HttpMiddlewareError(
+            `Middleware "${entry.name}" called next() more than once.`,
+            {
+              middlewareId: entry.id,
+              middlewareName: entry.name,
+            },
+          ),
+        );
+      }
+
+      return dispatch(index + 1);
+    };
+
     try {
-      const result = await entry.middleware(context, () => dispatch(index + 1));
+      const result = await entry.middleware(context, next);
 
       return normalizeResult(result, response);
     } catch (error) {
-      const middlewareError = new HttpMiddlewareError(
-        `Middleware "${entry.name}" threw an error.`,
-        {
-          middlewareId: entry.id,
-          middlewareName: entry.name,
-          cause: error,
-        },
-      );
-
-      errors.push(middlewareError);
-
-      if (pipelineOptions.onError) {
-        try {
-          const errorResult = await pipelineOptions.onError(error, context);
-
-          return normalizeResult(errorResult, response);
-        } catch {
-          // Fall through to safe response
-        }
-      }
-
-      return response;
+      /*
+       * Rethrow rather than returning the untouched response. Swallowing here
+       * let an inner failure resume the *outer* frames, so middleware that
+       * runs after `await next()` — access logging, CORS and security header
+       * emission, audit commits — executed against a response that was about
+       * to be discarded, and recorded the request as a success.
+       */
+      throw error instanceof HttpMiddlewareError
+        ? error
+        : new HttpMiddlewareError(
+            `Middleware "${entry.name}" threw an error.`,
+            {
+              middlewareId: entry.id,
+              middlewareName: entry.name,
+              cause: error,
+            },
+          );
     }
   };
 
-  const result = await dispatch(0);
+  try {
+    return await dispatch(0);
+  } catch (error) {
+    const middlewareError =
+      error instanceof HttpMiddlewareError
+        ? error
+        : new HttpMiddlewareError("HTTP middleware pipeline failed.", {
+            cause: error,
+          });
 
-  if (errors.length > 0) {
-    throw new HttpMiddlewarePipelineError(errors);
+    if (pipelineOptions.onError) {
+      try {
+        /*
+         * A successful `onError` is a genuine recovery and must be returned.
+         * Previously every caught error was recorded before `onError` ran and
+         * the recorded list was rethrown afterwards, so the handler's result
+         * was always discarded and the option could never take effect.
+         */
+        const errorResult = await pipelineOptions.onError(
+          middlewareError.cause ?? error,
+          context,
+        );
+
+        return normalizeResult(errorResult, response);
+      } catch (handlerError) {
+        /* The handler's own failure is reported, not swallowed. */
+        throw new HttpMiddlewarePipelineError([
+          middlewareError,
+          new HttpMiddlewareError(
+            "HTTP middleware error handler threw an error.",
+            { cause: handlerError },
+          ),
+        ]);
+      }
+    }
+
+    throw new HttpMiddlewarePipelineError([middlewareError]);
   }
-
-  return result;
 }

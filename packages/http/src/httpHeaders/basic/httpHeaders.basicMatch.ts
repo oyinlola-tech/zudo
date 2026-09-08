@@ -8,7 +8,7 @@ import type {
   HTTPHeadersLike,
   HeaderMatchOptions,
 } from "../types/httpHeaders.type.js";
-import { toHTTPHeaders } from "../conversion/httpHeaders.conversion.js";
+import { asHTTPHeaders } from "../conversion/httpHeaders.conversion.js";
 
 /**
  * Checks if a header equals an expected value.
@@ -25,7 +25,7 @@ export function headerEquals(
   expected: string,
   options: HeaderMatchOptions = {},
 ): boolean {
-  const actual = toHTTPHeaders(headers).get(name);
+  const actual = asHTTPHeaders(headers).get(name);
 
   if (actual === undefined) {
     return false;
@@ -55,7 +55,7 @@ export function headerContains(
   name: string,
   value: string,
 ): boolean {
-  const actual = toHTTPHeaders(headers).get(name);
+  const actual = asHTTPHeaders(headers).get(name);
 
   if (actual === undefined) {
     return false;

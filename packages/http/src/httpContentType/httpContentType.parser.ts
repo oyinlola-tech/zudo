@@ -47,7 +47,7 @@ export function parseContentType(
     return undefined;
   }
 
-  const parameters: Record<string, string> = {};
+  const parameters = Object.create(null) as Record<string, string>;
 
   for (const parameter of parts) {
     const parsed = parseParameter(parameter);

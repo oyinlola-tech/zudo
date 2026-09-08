@@ -6,7 +6,7 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
-import { addIssue } from "../schemaBase/index.js";
+import { addIssue, failValidation } from "../schemaBase/index.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
 /**
@@ -30,7 +30,7 @@ export class LiteralSchema<
         expected: JSON.stringify(this._expected),
         received: JSON.stringify(input),
       });
-      throw new Error("Validation failed");
+      failValidation();
     }
     return this._expected;
   }

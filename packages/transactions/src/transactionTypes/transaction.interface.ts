@@ -6,6 +6,7 @@
 
 import type {
   TransactionState,
+  TransactionKind,
   TransactionPropagation,
   TransactionIsolationLevel,
 } from "./transactionState.js";
@@ -28,6 +29,12 @@ export interface TransactionOptions {
   readonly retry?: TransactionRetryOptions;
 }
 
+/** Decides whether a failed attempt is worth retrying. */
+export type TransactionRetryPredicate = (
+  error: unknown,
+  attempt: number,
+) => boolean;
+
 /** Retry configuration for transaction failures. */
 export interface TransactionRetryOptions {
   /** Maximum number of retry attempts. Defaults to 0 (no retry). */
@@ -36,6 +43,14 @@ export interface TransactionRetryOptions {
   readonly delay?: number;
   /** Backoff strategy. */
   readonly backoff?: "fixed" | "exponential";
+  /**
+   * Whether a given failure should be retried.
+   *
+   * Defaults to retrying everything. Supply a predicate to limit retries to
+   * the failures that are actually transient, such as serialization failures
+   * and deadlocks.
+   */
+  readonly shouldRetry?: TransactionRetryPredicate;
 }
 
 /** The core transaction interface. */
@@ -44,6 +59,14 @@ export interface Transaction {
   readonly id: string;
   /** Parent transaction ID (for nested transactions). */
   readonly parentId?: string;
+  /**
+   * How this handle relates to the underlying adapter transaction.
+   *
+   * A `participant` joined an enclosing transaction and must not commit it;
+   * `none` marks a non-transactional scope opened by the `supports`,
+   * `not_supported` or `never` propagation modes.
+   */
+  readonly kind: TransactionKind;
   /** Current lifecycle state. */
   readonly state: TransactionState;
   /** Options used to start this transaction. */

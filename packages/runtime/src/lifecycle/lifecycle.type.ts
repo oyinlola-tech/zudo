@@ -77,5 +77,11 @@ export interface ModuleContextServices {
 export interface LifecycleManagerOptions {
   readonly shutdownTimeout?: number;
   readonly continueOnFailure?: boolean;
+  /**
+   * Whether modules at the same dependency depth are initialized
+   * concurrently. Defaults to `false`. Modules within a depth group do
+   * not depend on one another, but enabling this surfaces any ordering
+   * a module assumed without declaring.
+   */
   readonly parallelInitialization?: boolean;
 }

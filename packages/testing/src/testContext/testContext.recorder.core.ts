@@ -21,7 +21,7 @@ export function createLogRecorder(): LogRecorder {
 
   return {
     get entries(): readonly CapturedLogEntry[] {
-      return entries;
+      return [...entries];
     },
     record: (
       level: string,
@@ -53,7 +53,7 @@ export function createEventRecorder(): EventRecorder {
 
   return {
     get entries(): readonly CapturedEvent[] {
-      return entries;
+      return [...entries];
     },
     record: (type: string, payload: unknown): void => {
       entries.push({
@@ -78,7 +78,7 @@ export function createMessageRecorder(): MessageRecorder {
 
   return {
     get entries(): readonly CapturedMessage[] {
-      return entries;
+      return [...entries];
     },
     record: (type: string, payload: unknown): void => {
       entries.push({

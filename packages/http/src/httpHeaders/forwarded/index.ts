@@ -5,4 +5,3 @@
  */
 
 export * from "./httpHeaders.forwarded.js";
-export * from "./index.js";

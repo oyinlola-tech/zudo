@@ -4,5 +4,14 @@
  * Plugin context factory and integration helpers.
  */
 
-export { createPluginContext } from "./pluginContext.core.js";
+export type {
+  CreatePluginContextOptions,
+  OwnedPluginContext,
+} from "./pluginContext.core.js";
+
+export {
+  createPluginContext,
+  createOwnedPluginContext,
+} from "./pluginContext.core.js";
+
 export type { PluginContext } from "../pluginTypes/pluginContext.type.js";

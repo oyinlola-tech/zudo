@@ -14,20 +14,18 @@ import type {
 
 import {
   insertSegment,
-  collectCandidates,
   removeRouteFromTree,
-  isEmptyNode,
   matchesMethod,
   splitPath,
 } from "./core/httpTree.helper.js";
 
+import { collectCandidates } from "./core/httpTree.traversal.js";
+
 export class RouteTree {
   private readonly root: MutableRouteTreeNode;
-  private readonly options: RouteTreeOptions;
   private nodeCount = 0;
 
-  constructor(options: RouteTreeOptions = {}) {
-    this.options = options;
+  constructor(_options: RouteTreeOptions = {}) {
     this.root = {
       name: "",
       type: "static",

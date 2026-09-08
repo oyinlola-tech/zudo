@@ -50,6 +50,10 @@ export class HealthChecker {
 
   /**
    * Check health of all registered components.
+   *
+   * Reports unhealthy when nothing is registered: an empty checker cannot
+   * attest to anything, and reporting green there is the most misleading
+   * answer it could give.
    */
   async checkAll(): Promise<StorageHealthReport> {
     const start = Date.now();
@@ -78,7 +82,8 @@ export class HealthChecker {
 
     await Promise.allSettled(checks);
 
-    const healthy = results.every((r) => r.health.healthy);
+    const healthy =
+      results.length > 0 && results.every((r) => r.health.healthy);
 
     return {
       healthy,

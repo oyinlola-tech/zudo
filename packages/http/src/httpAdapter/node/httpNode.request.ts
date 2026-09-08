@@ -11,18 +11,47 @@ import {
   createRequestContext,
 } from "../../httpRequest/httpRequest.context.js";
 
-import type { RequestContextInit } from "../../httpRequest/httpRequest.context.js";
-
 import {
+  getClientIp,
   isTrustedProxy,
-  parseForwardedFor,
 } from "../../httpTrustProxy/httpTrustProxy.core.js";
+
+import type { ProxyRequest } from "../../httpTrustProxy/httpTrustProxy.core.js";
 
 import type { NodeRequestOptions } from "./httpNode.type.js";
 
-import { DEFAULT_MAX_BODY_SIZE, validateMaxBodySize } from "./httpNode.type.js";
+import { removePort, extractPort } from "./httpNode.server.js";
 
-import { getHeader } from "./httpNode.server.js";
+/* -------------------------------------------------------------------------- */
+/* Proxy Trust                                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Decides whether the *immediate peer* of this connection is a configured
+ * trusted proxy.
+ *
+ * Every `X-Forwarded-*` header is written by whoever opened the socket. Unless
+ * that peer is a proxy the operator has declared trustworthy, the headers are
+ * attacker-controlled and must be ignored entirely — checking only "is a
+ * trustProxy value configured?" lets any direct client spoof its own address,
+ * protocol and host.
+ */
+function isPeerTrusted(
+  request: IncomingMessage,
+  trustProxy: NodeRequestOptions["trustProxy"],
+): boolean {
+  if (trustProxy === undefined || trustProxy === false) {
+    return false;
+  }
+
+  const peer = request.socket?.remoteAddress;
+
+  if (!peer) {
+    return false;
+  }
+
+  return isTrustedProxy(peer, trustProxy);
+}
 
 /* -------------------------------------------------------------------------- */
 /* Node Request Helpers                                                       */
@@ -50,7 +79,7 @@ export function getNodeRequestProtocol(
 ): string {
   const trustProxy = options.trustProxy ?? false;
 
-  if (trustProxy !== false) {
+  if (isPeerTrusted(request, trustProxy)) {
     const forwardedProto = request.headers["x-forwarded-proto"];
 
     if (typeof forwardedProto === "string") {
@@ -73,14 +102,14 @@ export function getNodeRequestHostname(
 ): string {
   const trustProxy = options.trustProxy ?? false;
 
-  if (trustProxy !== false) {
+  if (isPeerTrusted(request, trustProxy)) {
     const forwardedHost = request.headers["x-forwarded-host"];
 
     if (typeof forwardedHost === "string") {
       const host = forwardedHost.split(",")[0]?.trim();
 
       if (host) {
-        return host.split(":")[0] ?? host;
+        return removePort(host);
       }
     }
   }
@@ -88,7 +117,7 @@ export function getNodeRequestHostname(
   const hostHeader = request.headers.host;
 
   if (typeof hostHeader === "string") {
-    return hostHeader.split(":")[0] ?? hostHeader;
+    return removePort(hostHeader);
   }
 
   return request.socket?.localAddress ?? "127.0.0.1";
@@ -100,21 +129,17 @@ export function getNodeRequestPort(
 ): number {
   const trustProxy = options.trustProxy ?? false;
 
-  if (trustProxy !== false) {
+  if (isPeerTrusted(request, trustProxy)) {
     const forwardedHost = request.headers["x-forwarded-host"];
 
     if (typeof forwardedHost === "string") {
       const host = forwardedHost.split(",")[0]?.trim();
 
       if (host) {
-        const portPart = host.split(":")[1];
+        const port = extractPort(host);
 
-        if (portPart) {
-          const port = Number(portPart);
-
-          if (Number.isInteger(port) && port > 0 && port < 65536) {
-            return port;
-          }
+        if (port !== undefined) {
+          return port;
         }
       }
     }
@@ -123,38 +148,41 @@ export function getNodeRequestPort(
   const hostHeader = request.headers.host;
 
   if (typeof hostHeader === "string") {
-    const portPart = hostHeader.split(":")[1];
+    const port = extractPort(hostHeader);
 
-    if (portPart) {
-      const port = Number(portPart);
-
-      if (Number.isInteger(port) && port > 0 && port < 65536) {
-        return port;
-      }
+    if (port !== undefined) {
+      return port;
     }
   }
 
   return request.socket?.localPort ?? 80;
 }
 
+/**
+ * Resolves the client address for a Node request.
+ *
+ * The socket peer is authoritative. Forwarded headers are consulted only when
+ * that peer is itself a trusted proxy, and the chain walk is delegated to
+ * `getClientIp` so there is a single implementation of the hop logic.
+ */
 export function getNodeRemoteAddress(
   request: IncomingMessage,
   options: NodeRequestOptions = {},
 ): string | undefined {
   const trustProxy = options.trustProxy ?? false;
 
-  if (trustProxy !== false && typeof trustProxy === "object") {
-    const forwardedFor = request.headers["x-forwarded-for"];
-    if (typeof forwardedFor === "string") {
-      const addresses = forwardedFor.split(",");
-      const first = addresses[0]?.trim();
-      if (first) {
-        return first;
-      }
-    }
+  const peer = request.socket?.remoteAddress ?? undefined;
+
+  if (!isPeerTrusted(request, trustProxy)) {
+    return peer;
   }
 
-  return request.socket?.remoteAddress ?? undefined;
+  const proxyRequest: ProxyRequest = {
+    headers: request.headers,
+    socket: { remoteAddress: peer },
+  };
+
+  return getClientIp(proxyRequest, trustProxy) ?? peer;
 }
 
 export function parseNodeQuery(

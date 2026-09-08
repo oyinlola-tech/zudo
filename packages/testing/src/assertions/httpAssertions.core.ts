@@ -6,6 +6,8 @@
 
 import type { HTTPStatusCode } from "../httpTesting/httpStatusCode.type.js";
 import type { TestHTTPResponse } from "../httpTesting/httpResponse.type.js";
+import { findDifference } from "./deepEqual.core.js";
+import { describeValue } from "./deepEqual.describe.js";
 
 /**
  * Asserts that a response has a specific status code.
@@ -43,7 +45,11 @@ export function assertResponseHeader(
 }
 
 /**
- * Asserts that a response body matches expected JSON.
+ * Asserts that a response body matches the expected value.
+ *
+ * Compares structurally rather than by serializing both sides: `Map`, `Set`,
+ * `undefined` values and functions all disappear under `JSON.stringify`, so a
+ * serialized comparison passes on values that are not equal at all.
  *
  * @param response - The test response.
  * @param expected - Expected body.
@@ -52,12 +58,40 @@ export function assertResponseBody(
   response: TestHTTPResponse,
   expected: unknown,
 ): void {
-  const actual = response.body;
-  const actualJson = JSON.stringify(actual);
-  const expectedJson = JSON.stringify(expected);
+  const difference = findDifference(response.body, expected, "body");
+  if (difference) {
+    throw new Error(
+      `Response body mismatch at ${difference.path}: ${difference.reason}.`,
+    );
+  }
+}
 
-  if (actualJson !== expectedJson) {
-    throw new Error(`Expected body ${expectedJson}, got ${actualJson}.`);
+/**
+ * Asserts that a response body contains at least the expected properties.
+ *
+ * @param response - The test response.
+ * @param expected - Properties the body must contain.
+ */
+export function assertResponseBodyContains(
+  response: TestHTTPResponse,
+  expected: Readonly<Record<string, unknown>>,
+): void {
+  const body = response.body;
+  if (typeof body !== "object" || body === null) {
+    throw new Error(`Expected an object body, got ${describeValue(body)}.`);
+  }
+
+  for (const [key, value] of Object.entries(expected)) {
+    const difference = findDifference(
+      (body as Record<string, unknown>)[key],
+      value,
+      `body.${key}`,
+    );
+    if (difference) {
+      throw new Error(
+        `Response body mismatch at ${difference.path}: ${difference.reason}.`,
+      );
+    }
   }
 }
 

@@ -6,6 +6,9 @@
 
 import type { BaseError } from "@zudojs/errors";
 
+import { findDifference } from "./deepEqual.core.js";
+import { describeValue } from "./deepEqual.describe.js";
+
 /**
  * Asserts that a function throws an error.
  *
@@ -103,9 +106,26 @@ export function assertErrorMetadata(
   const baseError = error as BaseError;
   const actual = baseError.metadata?.[key];
 
-  if (actual !== value) {
+  const difference = findDifference(actual, value, `metadata.${key}`);
+  if (difference) {
     throw new Error(
-      `Expected error metadata "${key}" to be "${value}", got "${actual}".`,
+      `Expected error metadata "${key}" to be ${describeValue(value)}, got ${describeValue(actual)}.`,
+    );
+  }
+}
+
+/**
+ * Asserts that an error is an instance of a specific class.
+ */
+export function assertErrorType<T extends Error>(
+  error: unknown,
+  type: new (...args: never[]) => T,
+): asserts error is T {
+  if (!(error instanceof type)) {
+    throw new Error(
+      `Expected error to be a ${type.name}, got ${
+        error instanceof Error ? error.constructor.name : typeof error
+      }.`,
     );
   }
 }

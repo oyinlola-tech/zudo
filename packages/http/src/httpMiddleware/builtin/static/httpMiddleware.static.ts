@@ -7,14 +7,13 @@
 import type {
   HttpMiddleware,
   HttpMiddlewareContext,
-  HttpMiddlewareResult,
 } from "../../httpMiddleware.type.js";
 
 import type { HttpResponseContext as ResponseContext } from "../../../httpResponse/httpResponse.context.js";
 
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { extname, join } from "node:path";
+import { extname, join, resolve, sep } from "node:path";
 
 export interface StaticMiddlewareOptions {
   readonly root: string;
@@ -24,10 +23,17 @@ export interface StaticMiddlewareOptions {
   readonly hidden?: boolean;
   readonly extensions?: string[];
   readonly fallback?: string;
+
+  /**
+   * Maximum file size, in bytes, that will be read into memory and served.
+   * Defaults to 10 MiB.
+   */
+  readonly maxFileSize?: number;
 }
 
 const DEFAULT_INDEX = "index.html";
 const DEFAULT_MAX_AGE = 3600;
+const DEFAULT_MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
   ".css": "text/css",
@@ -62,10 +68,110 @@ function generateETag(data: Buffer): string {
   return `"${createHash("md5").update(data).digest("hex")}"`;
 }
 
+/**
+ * Decodes a request pathname without letting a traversal payload through.
+ *
+ * `new URL()` does not decode `%2e`, so `/%2e%2e/%2e%2e/etc/passwd` reaches
+ * this function intact and only becomes `../../etc/passwd` once decoded —
+ * after which `path.join` happily resolves it outside the root. Decoding per
+ * segment and rejecting `.`/`..` closes that before any path is built.
+ *
+ * @returns The decoded pathname, or `undefined` if it must not be served.
+ */
+function decodePathname(pathname: string): string | undefined {
+  const parts = pathname.split("/");
+
+  const decoded: string[] = [];
+
+  for (const part of parts) {
+    let value: string;
+
+    try {
+      value = decodeURIComponent(part);
+    } catch {
+      /* Malformed percent-encoding. */
+      return undefined;
+    }
+
+    if (value === "." || value === "..") {
+      return undefined;
+    }
+
+    if (
+      value.includes("/") ||
+      value.includes("\\") ||
+      value.includes("\u0000")
+    ) {
+      return undefined;
+    }
+
+    decoded.push(value);
+  }
+
+  return decoded.join("/");
+}
+
+/**
+ * Resolves a candidate path and confirms it stays inside the served root.
+ *
+ * This is the containment check, and it is deliberately independent of the
+ * dotfile filter: relying on `pathname.includes("/.")` to stop `/..` is
+ * accidental, and it is switched off entirely by `hidden: true`.
+ *
+ * @returns The resolved absolute path, or `undefined` if it escapes the root.
+ */
+function containedPath(
+  resolvedRoot: string,
+  candidate: string,
+): string | undefined {
+  const resolved = resolve(candidate);
+
+  if (
+    resolved !== resolvedRoot &&
+    !resolved.startsWith(`${resolvedRoot}${sep}`)
+  ) {
+    return undefined;
+  }
+
+  return resolved;
+}
+
 export function createStaticMiddleware(
   options: StaticMiddlewareOptions,
 ): HttpMiddleware {
   const root = options.root;
+  const resolvedRoot = resolve(root);
+  const maxFileSize = options.maxFileSize ?? DEFAULT_MAX_FILE_SIZE;
+
+  /**
+   * Reads a candidate path, but only if it is inside the root and within the
+   * size cap.
+   */
+  const readContained = async (
+    candidate: string,
+  ): Promise<{ path: string; data: Buffer; mtime: Date } | undefined> => {
+    const resolved = containedPath(resolvedRoot, candidate);
+
+    if (resolved === undefined) {
+      return undefined;
+    }
+
+    try {
+      const stats = await stat(resolved);
+
+      if (!stats.isFile() || stats.size > maxFileSize) {
+        return undefined;
+      }
+
+      return {
+        path: resolved,
+        data: await readFile(resolved),
+        mtime: stats.mtime,
+      };
+    } catch {
+      return undefined;
+    }
+  };
   const indexFiles = Array.isArray(options.index)
     ? options.index
     : [options.index ?? DEFAULT_INDEX];
@@ -79,8 +185,23 @@ export function createStaticMiddleware(
     context: HttpMiddlewareContext,
     next: () => Promise<ResponseContext>,
   ) => {
+    const method = (
+      context.request as unknown as { method?: string }
+    ).method?.toUpperCase();
+
+    if (method !== undefined && method !== "GET" && method !== "HEAD") {
+      return next();
+    }
+
     const url = new URL(context.request.url);
-    let pathname = decodeURIComponent(url.pathname);
+
+    const decodedPathname = decodePathname(url.pathname);
+
+    if (decodedPathname === undefined) {
+      return next();
+    }
+
+    let pathname = decodedPathname;
 
     if (pathname.endsWith("/")) {
       pathname = pathname.slice(0, -1);
@@ -95,48 +216,40 @@ export function createStaticMiddleware(
       ...extensions.map((ext) => join(root, `${pathname}.${ext}`)),
     ];
 
-    let filePath: string | undefined;
-    let fileData: Buffer | undefined;
+    let found: { path: string; data: Buffer; mtime: Date } | undefined;
 
     for (const candidate of filePaths) {
-      try {
-        fileData = await readFile(candidate);
-        filePath = candidate;
+      found = await readContained(candidate);
+
+      if (found) {
         break;
-      } catch {
-        // continue
       }
     }
 
-    if (!fileData) {
+    if (!found) {
       for (const indexFile of indexFiles) {
-        const indexPath = join(root, `${pathname}/${indexFile}`);
-        try {
-          fileData = await readFile(indexPath);
-          filePath = indexPath;
+        found = await readContained(join(root, `${pathname}/${indexFile}`));
+
+        if (found) {
           break;
-        } catch {
-          // continue
         }
       }
     }
 
-    if (!fileData) {
-      if (fallback) {
-        try {
-          fileData = await readFile(join(root, fallback));
-          filePath = join(root, fallback);
-        } catch {
-          return next();
-        }
-      } else {
-        return next();
-      }
+    if (!found && fallback) {
+      found = await readContained(join(root, fallback));
     }
+
+    if (!found) {
+      return next();
+    }
+
+    const filePath = found.path;
+    const fileData = found.data;
 
     const etag = generateETag(fileData);
-    const lastModified = new Date().toUTCString();
-    const contentType = getContentType(filePath ?? "");
+    const lastModified = found.mtime.toUTCString();
+    const contentType = getContentType(filePath);
     const cacheControl = immutable
       ? `public, max-age=${maxAge}, immutable`
       : `public, max-age=${maxAge}`;
@@ -148,7 +261,11 @@ export function createStaticMiddleware(
     responseHeaders.set("etag", etag);
     responseHeaders.set("last-modified", lastModified);
     responseHeaders.set("cache-control", cacheControl);
-    responseHeaders.set("accept-ranges", "bytes");
+    /*
+     * `Accept-Ranges: bytes` is deliberately NOT set: this middleware always
+     * returns the whole body and has no 206 path, so advertising range
+     * support makes range-aware clients misbehave.
+     */
 
     const ifNoneMatch = context.request.headers["if-none-match"];
     if (ifNoneMatch === etag) {

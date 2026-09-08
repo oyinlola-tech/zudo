@@ -8,10 +8,11 @@ import type {
   TenantResolver,
   TenantResolution,
 } from "../../tenancyTypes/resolverTypes.js";
-import { createTenantId } from "../../tenancyTypes/tenantIdentity.js";
+import type { TenantTrustLevel } from "../../tenancyTypes/tenantInterface.js";
+import { tryCreateTenantId } from "../../tenancyTypes/tenantIdentity.js";
 
 /** Context type with a getHeader method. */
-interface HeaderContext {
+export interface HeaderContext {
   getHeader(name: string): string | undefined;
 }
 
@@ -19,6 +20,14 @@ interface HeaderContext {
 export interface HeaderResolverOptions {
   readonly headerName?: string;
   readonly priority?: number;
+  /**
+   * Trust to assign to a tenant resolved from this header.
+   *
+   * Defaults to `untrusted`, because the header is client-supplied on the
+   * wire. Raise it to `verified` only when a trusted proxy strips and re-sets
+   * the header at the edge, so a client cannot forge it.
+   */
+  readonly trust?: TenantTrustLevel;
 }
 
 /**
@@ -29,6 +38,7 @@ export function createHeaderResolver(
 ): TenantResolver<HeaderContext> {
   const headerName = options?.headerName ?? "x-tenant-id";
   const priority = options?.priority ?? 80;
+  const trust = options?.trust ?? "untrusted";
 
   return {
     name: "header",
@@ -37,14 +47,10 @@ export function createHeaderResolver(
     async resolve(
       context: HeaderContext,
     ): Promise<TenantResolution | undefined> {
-      const value = context.getHeader(headerName);
-      if (!value) return undefined;
+      const tenantId = tryCreateTenantId(context.getHeader(headerName));
+      if (!tenantId) return undefined;
 
-      return {
-        tenantId: createTenantId(value),
-        source: "header",
-        trust: "verified",
-      };
+      return { tenantId, source: "header", trust };
     },
   };
 }

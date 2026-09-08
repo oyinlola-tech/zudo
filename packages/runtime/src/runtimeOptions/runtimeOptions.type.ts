@@ -64,7 +64,12 @@ export interface RuntimeOptions {
   readonly trackReadiness?: boolean;
 
   /**
-   * Whether to enable health tracking.
+   * Whether health is derived from readiness checks.
+   *
+   * When `false`, `runtime.health` reports `unknown` and no
+   * `runtime.health.changed` events are emitted; readiness checks still
+   * run and `runtime.ready` is unaffected.
+   *
    * @default true
    */
   readonly trackHealth?: boolean;
@@ -105,4 +110,8 @@ export const DEFAULT_RUNTIME_OPTIONS = Object.freeze({
   trackReadiness: true,
   trackHealth: true,
   applicationVersion: "0.1.0",
+  // `metadata` is required on ResolvedRuntimeOptions, so it needs a
+  // default; without one the resolved options claimed a value the
+  // runtime never had.
+  metadata: Object.freeze({}),
 } as const);

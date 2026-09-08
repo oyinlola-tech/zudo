@@ -118,8 +118,6 @@ export class NodeHTTPRequest implements HTTPRequest {
 
   public readonly secure: boolean;
 
-  public readonly aborted: boolean;
-
   public readonly rawBody?: Uint8Array;
 
   public readonly body: unknown;
@@ -194,7 +192,7 @@ export class NodeHTTPRequest implements HTTPRequest {
     const accept = this.getHeader(HTTP_HEADERS.ACCEPT);
 
     if (!accept || accept.trim() === "*/*") {
-      return types[0];
+      return types[0] ?? false;
     }
 
     const accepted = parseAcceptHeader(accept);
@@ -222,10 +220,12 @@ export class NodeHTTPRequest implements HTTPRequest {
       return false;
     }
 
-    const normalized = contentType.split(";", 1)[0].trim().toLowerCase();
+    const normalized = (contentType.split(";", 1)[0] ?? "")
+      .trim()
+      .toLowerCase();
 
     for (const type of types) {
-      const normalizedType = type.split(";", 1)[0].trim().toLowerCase();
+      const normalizedType = (type.split(";", 1)[0] ?? "").trim().toLowerCase();
 
       if (
         normalized === normalizedType ||
@@ -295,6 +295,16 @@ export class NodeHTTPRequest implements HTTPRequest {
   public get abortedBySignal(): boolean {
     return this.signalAborted;
   }
+
+  /**
+   * Whether the request has been aborted.
+   *
+   * This was previously a declared-but-never-assigned field, so it read as
+   * `undefined` on every instance and no abort check against it ever fired.
+   */
+  public get aborted(): boolean {
+    return this.signalAborted;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -358,7 +368,7 @@ export function getRequestProtocol(request: IncomingMessage): string {
   const forwarded = request.headers[HTTP_HEADERS.X_FORWARDED_PROTO];
 
   if (typeof forwarded === "string") {
-    return forwarded.split(",", 1)[0].trim().toLowerCase();
+    return (forwarded.split(",", 1)[0] ?? "").trim().toLowerCase();
   }
 
   if (
@@ -448,7 +458,7 @@ export function normalizeHTTPMethod(method: string | undefined): HTTPMethod {
 export function parseAcceptHeader(value: string): string[] {
   return value
     .split(",")
-    .map((part) => part.split(";", 1)[0].trim().toLowerCase())
+    .map((part) => (part.split(";", 1)[0] ?? "").trim().toLowerCase())
     .filter(Boolean);
 }
 

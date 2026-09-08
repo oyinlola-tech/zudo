@@ -5,35 +5,51 @@
  */
 
 import { splitHeaderValues } from "../list/httpHeaders.list.js";
-import { normalizeETag, stripWeakETag } from "./httpHeaders.etag.js";
+import {
+  isWeakETag,
+  normalizeETag,
+  stripWeakETag,
+} from "./httpHeaders.etag.js";
 
 /**
- * Compares two ETags for equality.
+ * Compares two entity tags.
  *
- * @param actual - The actual ETag.
- * @param expected - The expected ETag.
- * @param weak - If `true` (default), compares strong forms only (strips `W/` prefix).
- * @returns `true` if the ETags match.
+ * @param requested - The validator the client sent (the only side on which
+ *   `*` is meaningful).
+ * @param current - The current representation's validator.
+ * @param allowWeak - `true` (default) performs the weak comparison used by
+ *   `If-None-Match`. `false` performs the strong comparison required by
+ *   `If-Match` and `If-Range`: both validators must be strong *and*
+ *   byte-identical, so two weak tags never match.
+ * @returns `true` if the tags match under the selected comparison.
  */
 export function etagMatches(
-  actual: string | undefined,
-  expected: string | undefined,
-  weak: boolean = true,
+  requested: string | undefined,
+  current: string | undefined,
+  allowWeak: boolean = true,
 ): boolean {
-  const left = normalizeETag(actual);
+  const left = normalizeETag(requested);
 
-  const right = normalizeETag(expected);
+  const right = normalizeETag(current);
 
   if (!left || !right) {
     return false;
   }
 
-  if (left === "*" || right === "*") {
+  /*
+   * The wildcard is only meaningful on the request side; accepting it from
+   * the current representation would make every comparison succeed.
+   */
+  if (left === "*") {
     return true;
   }
 
-  if (weak) {
+  if (allowWeak) {
     return stripWeakETag(left) === stripWeakETag(right);
+  }
+
+  if (isWeakETag(left) || isWeakETag(right)) {
+    return false;
   }
 
   return left === right;

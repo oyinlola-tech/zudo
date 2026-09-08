@@ -1,9 +1,28 @@
-import type { APIOperation } from "../operation/operation.type.js";
+import type {
+  AnyAPIOperation,
+  APIOperation,
+} from "../operation/operation.type.js";
+
+import {
+  assertValidOperationShape,
+  freezeOperationMetadata,
+} from "../operation/operation.type.js";
+
+import {
+  APIDuplicateOperationError,
+  APIOperationNotFoundError,
+  createAPIError,
+} from "../errors/index.js";
+
+import type { APIError } from "../errors/index.js";
 
 /**
  * Registry for API operations.
  *
  * Enforces uniqueness and provides O(1) lookup by operation name.
+ *
+ * Every failure leaving this class is an `APIError`, so a transport can
+ * map it by `statusCode` / `code` without special-casing the registry.
  */
 export class APIOperationRegistry {
   private readonly operations = new Map<string, APIOperation>();
@@ -13,19 +32,31 @@ export class APIOperationRegistry {
   /**
    * Registers an operation.
    *
+   * The operation and its metadata are frozen on registration, so a
+   * registered operation cannot be rewritten through `metadata.tags` or
+   * `metadata.timeout` after the fact.
+   *
    * @throws {APIDuplicateOperationError} if an operation with the same name is already registered.
+   * @throws {APIError} if the registry is frozen.
+   * @throws {TypeError | RangeError} if the operation's name or handler is invalid.
    */
-  register(operation: APIOperation): void {
+  register(operation: AnyAPIOperation): void {
     if (this.frozen) {
-      throw new Error("Cannot register operations on a frozen registry.");
+      throw frozenRegistryError("register");
     }
+
+    assertValidOperationShape(operation);
 
     const existing = this.operations.get(operation.name);
     if (existing !== undefined) {
-      throw new Error(`Operation "${operation.name}" is already registered.`);
+      throw new APIDuplicateOperationError(operation.name);
     }
 
-    this.operations.set(operation.name, Object.freeze(operation));
+    freezeOperationMetadata(operation.metadata);
+    this.operations.set(
+      operation.name,
+      Object.freeze(operation) as APIOperation,
+    );
   }
 
   /**
@@ -44,11 +75,13 @@ export class APIOperationRegistry {
 
   /**
    * Retrieves an operation by name or throws.
+   *
+   * @throws {APIOperationNotFoundError} (404) if no operation is registered under `name`.
    */
   require(name: string): APIOperation {
     const operation = this.get(name);
     if (operation === undefined) {
-      throw new Error(`Operation "${name}" is not registered.`);
+      throw new APIOperationNotFoundError(name);
     }
     return operation;
   }
@@ -71,10 +104,12 @@ export class APIOperationRegistry {
 
   /**
    * Unregisters an operation.
+   *
+   * @throws {APIError} if the registry is frozen.
    */
   unregister(name: string): boolean {
     if (this.frozen) {
-      throw new Error("Cannot unregister operations on a frozen registry.");
+      throw frozenRegistryError("unregister");
     }
     return this.operations.delete(name);
   }
@@ -92,4 +127,19 @@ export class APIOperationRegistry {
   isFrozen(): boolean {
     return this.frozen;
   }
+}
+
+/**
+ * Mutating a frozen registry is a server-side programming error, never a
+ * client mistake — hence 500 and `expose: false`.
+ */
+function frozenRegistryError(action: "register" | "unregister"): APIError {
+  return createAPIError(
+    `Cannot ${action} operations on a frozen registry.`,
+    {
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
+    },
+  );
 }

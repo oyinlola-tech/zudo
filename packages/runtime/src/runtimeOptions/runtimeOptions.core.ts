@@ -8,10 +8,17 @@ import { DEFAULT_RUNTIME_OPTIONS } from "./runtimeOptions.type.js";
 export function resolveRuntimeOptions(
   options: ResolvedRuntimeOptions,
 ): ResolvedRuntimeOptions {
+  // Spreading `options` wholesale lets an explicitly-undefined key erase
+  // its default — a common footgun when callers build options with
+  // optional fields. Only defined values override.
+  const provided = Object.fromEntries(
+    Object.entries(options ?? {}).filter(([, value]) => value !== undefined),
+  );
+
   return Object.freeze({
     ...DEFAULT_RUNTIME_OPTIONS,
-    ...options,
-  });
+    ...provided,
+  }) as ResolvedRuntimeOptions;
 }
 
 /**

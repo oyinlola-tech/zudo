@@ -32,10 +32,36 @@ export class InMemoryCacheMetrics implements CacheMetrics {
       this.keyHits.set(key, current + 1);
       return;
     }
-    // Cap the number of distinct tracked keys so hot-key tracking cannot
-    // grow without bound; new keys are ignored once the cap is reached.
-    if (this.keyHits.size >= MAX_TRACKED_KEYS) return;
+    // The tracked-key cap is an eviction policy, not a wall. A hard stop
+    // would freeze `getHotKeys()` on the first MAX_TRACKED_KEYS keys the
+    // process ever saw, so it would answer "what was hot at start-up" while
+    // looking live. Instead the coldest tracked key is evicted, and the new
+    // key inherits its count so it is not immediately evicted in turn and
+    // can climb the ranking if it really is hot.
+    if (this.keyHits.size >= MAX_TRACKED_KEYS) {
+      const coldest = this.evictColdestKey();
+      this.keyHits.set(key, coldest + 1);
+      return;
+    }
     this.keyHits.set(key, 1);
+  }
+
+  /**
+   * Removes the least-hit tracked key and returns its count. Ties are
+   * broken by insertion order, so the oldest of the coldest goes first.
+   */
+  private evictColdestKey(): number {
+    let coldestKey: CacheKey | undefined;
+    let coldestHits = Number.POSITIVE_INFINITY;
+    for (const [key, hits] of this.keyHits) {
+      if (hits < coldestHits) {
+        coldestHits = hits;
+        coldestKey = key;
+      }
+    }
+    if (coldestKey === undefined) return 0;
+    this.keyHits.delete(coldestKey);
+    return coldestHits;
   }
   incrementMiss(_key?: CacheKey): void {
     this.misses++;
@@ -96,6 +122,11 @@ export class InMemoryCacheMetrics implements CacheMetrics {
     };
   }
 
+  /**
+   * The most-read keys currently tracked, hottest first. The tracked set is
+   * bounded by MAX_TRACKED_KEYS and evicts its coldest member, so the
+   * ranking follows the live workload rather than freezing at start-up.
+   */
   getHotKeys(
     topN = 10,
   ): readonly { readonly key: CacheKey; readonly hits: number }[] {

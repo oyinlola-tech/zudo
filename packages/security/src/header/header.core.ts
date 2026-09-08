@@ -33,9 +33,14 @@ const DEFAULT_BLOCKED_HEADERS = [
 const CRLF_PATTERN = /[\r\n]/;
 
 /**
- * Null byte pattern.
+ * Null byte patterns.
+ *
+ * The plain form is for {@link RegExp.test}; the `g` form is for
+ * {@link String.replace}, which without the flag would strip only the first
+ * occurrence.
  */
 const NULL_BYTE_PATTERN = /\x00/;
+const NULL_BYTE_PATTERN_GLOBAL = /\x00/g;
 
 /**
  * Validates a single header name.
@@ -180,7 +185,7 @@ export function validateHeaders(
  */
 export function sanitizeHeaderValue(value: string): string | undefined {
   // Strip null bytes
-  let sanitized = value.replace(NULL_BYTE_PATTERN, "");
+  let sanitized = value.replace(NULL_BYTE_PATTERN_GLOBAL, "");
 
   // Strip CRLF (strip both \r and \n)
   sanitized = sanitized.replace(/[\r\n]/g, "");
@@ -200,6 +205,7 @@ export function isHopByHopHeader(name: string): boolean {
     "keep-alive",
     "proxy-authenticate",
     "proxy-authorization",
+    "proxy-connection",
     "te",
     "trailer",
     "transfer-encoding",

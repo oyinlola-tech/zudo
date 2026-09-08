@@ -57,6 +57,15 @@ export const COMPRESSION_ENCODINGS: readonly CompressionEncoding[] = [
   "identity",
 ];
 
+/**
+ * Upper bound on the number of `Accept-Encoding` entries considered.
+ *
+ * The header is attacker-controlled and free to send; without a cap a single
+ * request can carry a thousand entries whose parsing and sorting cost is paid
+ * on the request-serving thread.
+ */
+export const MAX_ACCEPT_ENCODING_ENTRIES = 64;
+
 /* -------------------------------------------------------------------------- */
 /* Encoding Validation                                                        */
 /* -------------------------------------------------------------------------- */
@@ -86,39 +95,111 @@ export function normalizeCompressionEncoding(
 /* Accept-Encoding                                                            */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The parsed form of one `Accept-Encoding` header.
+ *
+ * The header is parsed exactly once per response and this value is threaded
+ * through negotiation, replacing the up-to-twelve re-parses of the same
+ * attacker-controlled string that the previous shape required.
+ */
+interface ParsedCompressionHeader {
+  readonly entries: readonly CompressionPreference[];
+  readonly wildcard: number | undefined;
+
+  /**
+   * The header was present but empty.
+   *
+   * RFC 9110 §12.5.3: "An Accept-Encoding header field with a field value
+   * that is empty implies that the client does not want any content coding in
+   * response." That is the opposite of an absent header, which means anything
+   * is acceptable — and the two must not be conflated, or an embedded client
+   * that cannot decompress is handed brotli.
+   */
+  readonly empty: boolean;
+}
+
+function parseCompressionHeader(
+  header: string | undefined | null,
+): ParsedCompressionHeader {
+  if (typeof header === "string" && header.trim().length === 0) {
+    return { entries: [], wildcard: undefined, empty: true };
+  }
+
+  const parsed = parseAcceptEncoding(header).slice(
+    0,
+    MAX_ACCEPT_ENCODING_ENTRIES,
+  );
+
+  const entries: CompressionPreference[] = [];
+
+  let wildcard: number | undefined;
+
+  for (const preference of parsed) {
+    const value = preference.value.trim().toLowerCase();
+
+    if (value === "*") {
+      if (wildcard === undefined || preference.quality > wildcard) {
+        wildcard = preference.quality;
+      }
+
+      continue;
+    }
+
+    const encoding = normalizeCompressionEncoding(value);
+
+    /*
+     * An unknown coding is dropped, not relabelled. Aliasing `zstd;q=0.9` to
+     * `identity` made a client that merely prefers zstd look like a client
+     * that strongly prefers no compression at all, and beat its own explicit
+     * `gzip` fallback.
+     */
+    if (encoding === undefined) {
+      continue;
+    }
+
+    entries.push({
+      encoding,
+      quality: preference.quality,
+      specificity: preference.specificity,
+      order: preference.order,
+    });
+  }
+
+  return { entries, wildcard, empty: false };
+}
+
+/**
+ * Parses `Accept-Encoding` into the codings this package can emit.
+ *
+ * Codings outside `br | gzip | deflate | identity` — and the `*` wildcard —
+ * are omitted rather than being relabelled as `identity`.
+ */
 export function parseCompressionPreferences(
   header: string | undefined | null,
 ): CompressionPreference[] {
-  return parseAcceptEncoding(header).map((preference) => ({
-    encoding: normalizeCompressionEncoding(preference.value) ?? "identity",
-    quality: preference.quality,
-    specificity: preference.specificity,
-    order: preference.order,
-  }));
+  return [...parseCompressionHeader(header).entries];
 }
 
 /* -------------------------------------------------------------------------- */
 /* Quality                                                                    */
 /* -------------------------------------------------------------------------- */
 
-export function getCompressionQuality(
-  acceptEncoding: string | undefined | null,
+function qualityFor(
+  parsed: ParsedCompressionHeader,
   encoding: CompressionEncoding,
 ): number {
-  const preferences = parseCompressionPreferences(acceptEncoding);
+  if (parsed.empty) {
+    return encoding === "identity" ? 1 : 0;
+  }
 
-  if (preferences.length === 0) {
+  if (parsed.entries.length === 0 && parsed.wildcard === undefined) {
     return 1;
   }
 
   let best: CompressionPreference | undefined;
 
-  for (const preference of preferences) {
-    const matches =
-      preference.encoding === encoding ||
-      (preference.encoding === "identity" && encoding === "identity");
-
-    if (!matches) {
+  for (const preference of parsed.entries) {
+    if (preference.encoding !== encoding) {
       continue;
     }
 
@@ -132,32 +213,29 @@ export function getCompressionQuality(
     }
   }
 
-  /*
-   * A wildcard can match any encoding that was not explicitly mentioned.
-   */
-  if (!best) {
-    const wildcard = parseAcceptEncoding(acceptEncoding).find(
-      (preference) => preference.value.trim().toLowerCase() === "*",
-    );
-
-    if (wildcard) {
-      return wildcard.quality;
-    }
+  if (best) {
+    return best.quality;
   }
 
   /*
-   * RFC semantics treat identity as acceptable unless explicitly rejected,
-   * unless a wildcard explicitly covers it.
+   * A wildcard covers any coding that was not named explicitly — including
+   * identity, whose implicit acceptability a wildcard overrides.
    */
-  if (!best && encoding === "identity") {
-    const wildcard = parseAcceptEncoding(acceptEncoding).find(
-      (preference) => preference.value.trim().toLowerCase() === "*",
-    );
-
-    return wildcard ? wildcard.quality : 1;
+  if (parsed.wildcard !== undefined) {
+    return parsed.wildcard;
   }
 
-  return best?.quality ?? 0;
+  /*
+   * RFC 9110 §12.5.3: identity is acceptable unless explicitly rejected.
+   */
+  return encoding === "identity" ? 1 : 0;
+}
+
+export function getCompressionQuality(
+  acceptEncoding: string | undefined | null,
+  encoding: CompressionEncoding,
+): number {
+  return qualityFor(parseCompressionHeader(acceptEncoding), encoding);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -166,6 +244,14 @@ export function getCompressionQuality(
 
 export function negotiateCompression(
   acceptEncoding: string | undefined | null,
+  available:
+    readonly CompressionEncoding[] | undefined = DEFAULT_PREFERRED_ENCODINGS,
+): CompressionEncoding {
+  return negotiateParsed(parseCompressionHeader(acceptEncoding), available);
+}
+
+function negotiateParsed(
+  parsed: ParsedCompressionHeader,
   available:
     readonly CompressionEncoding[] | undefined = DEFAULT_PREFERRED_ENCODINGS,
 ): CompressionEncoding {
@@ -186,7 +272,11 @@ export function negotiateCompression(
   for (let index = 0; index < candidates.length; index += 1) {
     const encoding = candidates[index];
 
-    const quality = getCompressionQuality(acceptEncoding, encoding);
+    if (encoding === undefined) {
+      continue;
+    }
+
+    const quality = qualityFor(parsed, encoding);
 
     if (quality <= 0) {
       continue;
@@ -230,11 +320,13 @@ export function shouldCompress(
     return false;
   }
 
-  if (contentType && isAlreadyCompressedType(contentType)) {
-    return false;
-  }
-
-  return true;
+  /*
+   * An allowlist, not a denylist. Compressing an already-compressed or opaque
+   * binary payload burns CPU for no gain, and compressing a response that
+   * mixes attacker-controlled and secret content is the precondition for a
+   * BREACH-class compression oracle.
+   */
+  return isCompressibleType(contentType);
 }
 
 export function chooseCompression(
@@ -243,19 +335,21 @@ export function chooseCompression(
   contentType: string | undefined,
   options: CompressionOptions | undefined = {},
 ): CompressionDecision {
+  const parsed = parseCompressionHeader(acceptEncoding);
+
   if (!shouldCompress(contentLength, contentType, options)) {
     return {
       encoding: "identity",
       compress: false,
-      quality: getCompressionQuality(acceptEncoding, "identity"),
+      quality: qualityFor(parsed, "identity"),
     };
   }
 
   const available = options.preferredEncodings ?? DEFAULT_PREFERRED_ENCODINGS;
 
-  const encoding = negotiateCompression(acceptEncoding, available);
+  const encoding = negotiateParsed(parsed, available);
 
-  const quality = getCompressionQuality(acceptEncoding, encoding);
+  const quality = qualityFor(parsed, encoding);
 
   const minimumQuality =
     options.minimumQuality ?? DEFAULT_MIN_COMPRESSION_QUALITY;
@@ -264,7 +358,7 @@ export function chooseCompression(
     return {
       encoding: "identity",
       compress: false,
-      quality: getCompressionQuality(acceptEncoding, "identity"),
+      quality: qualityFor(parsed, "identity"),
     };
   }
 
@@ -279,29 +373,30 @@ export function chooseCompression(
 /* Header Handling                                                            */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Applies the response headers implied by a chosen content coding.
+ *
+ * `Vary: Accept-Encoding` is set on **every** branch, identity included: the
+ * coding was chosen per-request from the client's `Accept-Encoding`, so the
+ * identity representation varies on it exactly as the compressed ones do.
+ * Storing one representation with `Vary` and another without is a documented
+ * cache-poisoning enabler. RFC 9110 §8.4.1 also says a sender should not emit
+ * `Content-Encoding: identity`, so that branch now sets no coding at all.
+ */
 export function applyCompressionHeaders(
   headers: readonly HTTPHeader[],
   encoding: CompressionEncoding,
 ): HTTPHeader[] {
-  if (encoding === "identity") {
-    return setHeader(headers, "content-encoding", "identity");
-  }
-
-  let result = setHeader(headers, "content-encoding", encoding);
-
-  const existingVary = getHeader(result, "vary");
-
-  if (!existingVary) {
-    result = setHeader(result, "vary", "Accept-Encoding");
-  } else if (!hasVaryValue(existingVary, "accept-encoding")) {
-    result = setHeader(result, "vary", `${existingVary}, Accept-Encoding`);
-  }
+  const result =
+    encoding === "identity"
+      ? [...headers]
+      : setHeader(headers, "content-encoding", encoding);
 
   /*
    * Content-Length refers to the encoded body. Compression adapters should
    * recalculate it after transforming the payload.
    */
-  return result;
+  return addVaryValue(result, "Accept-Encoding");
 }
 
 export function removeCompressionHeaders(
@@ -319,7 +414,7 @@ export function removeCompressionHeaders(
 /* -------------------------------------------------------------------------- */
 
 export function isAlreadyCompressedType(contentType: string): boolean {
-  const normalized = contentType.split(";", 1)[0].trim().toLowerCase();
+  const normalized = (contentType.split(";", 1)[0] ?? "").trim().toLowerCase();
 
   if (
     normalized === "application/zip" ||
@@ -352,7 +447,7 @@ export function isCompressibleType(contentType: string | undefined): boolean {
     return false;
   }
 
-  const normalized = contentType.split(";", 1)[0].trim().toLowerCase();
+  const normalized = (contentType.split(";", 1)[0] ?? "").trim().toLowerCase();
 
   return (
     normalized.startsWith("text/") ||

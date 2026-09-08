@@ -6,6 +6,8 @@
 
 export {
   AuthError,
+  type AuthErrorOptions,
+  AuthConfigurationError,
   InvalidCredentialsError,
   TokenExpiredError,
   TokenInvalidError,

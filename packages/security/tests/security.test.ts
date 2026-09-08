@@ -306,7 +306,9 @@ describe("Body Validation", () => {
     });
 
     it("rejects negative values", () => {
-      expect(validateContentLength("-100")).toContain("cannot be negative");
+      // Content-Length is 1*DIGIT: a leading "-" makes it malformed, not
+      // merely out of range.
+      expect(validateContentLength("-100")).toContain("not a valid number");
     });
   });
 
@@ -388,8 +390,8 @@ describe("Cookie Security", () => {
     it("parses simple cookies", () => {
       const result = parseCookieHeader("name=value; other=test");
       expect(result.cookies).toHaveLength(2);
-      expect(result.cookies[0].name).toBe("name");
-      expect(result.cookies[0].value).toBe("value");
+      expect(result.cookies[0]?.name).toBe("name");
+      expect(result.cookies[0]?.value).toBe("value");
     });
 
     it("rejects cookies with semicolons in value", () => {
@@ -694,15 +696,67 @@ describe("Rate Limiting", () => {
   });
 
   describe("extractClientIp", () => {
-    it("extracts from X-Forwarded-For", () => {
+    it("ignores X-Forwarded-For when no proxy is trusted", () => {
+      // The header is client-controlled: trusting it by default hands the
+      // caller their own rate-limit bucket.
       const ip = extractClientIp({
         "x-forwarded-for": "1.2.3.4, 5.6.7.8",
       });
+      expect(ip).toBe("unknown");
+    });
+
+    it("falls back to the socket address when no proxy is trusted", () => {
+      const ip = extractClientIp(
+        { "x-forwarded-for": "1.2.3.4" },
+        { remoteAddress: "9.9.9.9" },
+      );
+      expect(ip).toBe("9.9.9.9");
+    });
+
+    it("takes the hop our own proxy appended", () => {
+      // One proxy in front of us: the rightmost entry is the address it saw,
+      // everything left of it was supplied by the client.
+      const ip = extractClientIp(
+        { "x-forwarded-for": "1.2.3.4, 5.6.7.8" },
+        { trustProxy: 1 },
+      );
+      expect(ip).toBe("5.6.7.8");
+    });
+
+    it("steps left one entry per additional trusted proxy", () => {
+      const ip = extractClientIp(
+        { "x-forwarded-for": "1.2.3.4, 5.6.7.8, 9.9.9.9" },
+        { trustProxy: 2 },
+      );
+      expect(ip).toBe("5.6.7.8");
+    });
+
+    it("does not let a spoofed chain reach past the trusted hops", () => {
+      const ip = extractClientIp(
+        { "x-forwarded-for": "evil, evil, evil, 5.6.7.8" },
+        { trustProxy: 1 },
+      );
+      expect(ip).toBe("5.6.7.8");
+    });
+
+    it("rejects a forwarded value that is not an address", () => {
+      const ip = extractClientIp(
+        { "x-forwarded-for": "not-an-ip" },
+        { trustProxy: 1, remoteAddress: "9.9.9.9" },
+      );
+      expect(ip).toBe("9.9.9.9");
+    });
+
+    it("extracts from X-Real-IP when a proxy is trusted", () => {
+      const ip = extractClientIp({ "x-real-ip": "1.2.3.4" }, { trustProxy: 1 });
       expect(ip).toBe("1.2.3.4");
     });
 
-    it("extracts from X-Real-IP", () => {
-      const ip = extractClientIp({ "x-real-ip": "1.2.3.4" });
+    it("is case-insensitive about header names", () => {
+      const ip = extractClientIp(
+        { "X-Forwarded-For": "1.2.3.4" },
+        { trustProxy: 1 },
+      );
       expect(ip).toBe("1.2.3.4");
     });
 
@@ -817,7 +871,10 @@ describe("Security Headers", () => {
       const headers = generateSecurityHeaders();
       expect(headers["X-Content-Type-Options"]).toBe("nosniff");
       expect(headers["X-Frame-Options"]).toBe("DENY");
-      expect(headers["X-XSS-Protection"]).toBe("1; mode=block");
+      // The legacy XSS auditor is disabled rather than enabled: it is a
+      // no-op in current browsers and introduced its own injection vector in
+      // the ones that still honour it.
+      expect(headers["X-XSS-Protection"]).toBe("0");
     });
 
     it("allows custom configuration", () => {

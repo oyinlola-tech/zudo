@@ -1,6 +1,9 @@
-import type { ValidationConstraint } from "./validationConstraints.base.js";
+import type { ValidationConstraint } from "../validationConstraints.base.js";
 
-import { createConstraint } from "./validationConstraints.base.js";
+import { createConstraint } from "../validationConstraints.base.js";
+
+/** Narrows an unknown value to a number. */
+const isNumber = (value: unknown): value is number => typeof value === "number";
 
 /**
  * Requires a numeric value to be greater than or equal to a minimum.
@@ -14,6 +17,7 @@ export function min(minimum: number): ValidationConstraint<number> {
     name: `min_${minimum}`,
     code: "min_value",
     message: `Value must be greater than or equal to ${minimum}.`,
+    guard: isNumber,
   });
 }
 
@@ -29,6 +33,7 @@ export function max(maximum: number): ValidationConstraint<number> {
     name: `max_${maximum}`,
     code: "max_value",
     message: `Value must be less than or equal to ${maximum}.`,
+    guard: isNumber,
   });
 }
 
@@ -51,6 +56,7 @@ export function between(
     name: `between_${minimum}_${maximum}`,
     code: "value_out_of_range",
     message: `Value must be between ${minimum} and ${maximum}.`,
+    guard: isNumber,
   });
 }
 
@@ -63,6 +69,7 @@ export const finiteNumber = createConstraint<number>(
     name: "finite_number",
     code: "invalid_number",
     message: "Value must be a finite number.",
+    guard: isNumber,
   },
 );
 
@@ -75,6 +82,7 @@ export const integer = createConstraint<number>(
     name: "integer",
     code: "invalid_integer",
     message: "Value must be an integer.",
+    guard: isNumber,
   },
 );
 
@@ -85,6 +93,7 @@ export const positive = createConstraint<number>((value) => value > 0, {
   name: "positive",
   code: "invalid_positive",
   message: "Value must be greater than zero.",
+  guard: isNumber,
 });
 
 /**
@@ -94,6 +103,7 @@ export const nonNegative = createConstraint<number>((value) => value >= 0, {
   name: "non_negative",
   code: "invalid_non_negative",
   message: "Value must be zero or greater.",
+  guard: isNumber,
 });
 
 /**
@@ -105,6 +115,7 @@ export const even = createConstraint<number>(
     name: "even",
     code: "invalid_even",
     message: "Value must be an even integer.",
+    guard: isNumber,
   },
 );
 
@@ -117,5 +128,6 @@ export const odd = createConstraint<number>(
     name: "odd",
     code: "invalid_odd",
     message: "Value must be an odd integer.",
+    guard: isNumber,
   },
 );

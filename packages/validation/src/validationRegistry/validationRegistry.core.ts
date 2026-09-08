@@ -42,7 +42,16 @@ export class ValidationRegistry {
         `Validation rule "${name}" must define a schema or at least one constraint.`,
       );
     }
-    this.rules.set(name, Object.freeze({ ...rule, name }) as ValidationRule);
+    this.rules.set(
+      name,
+      Object.freeze({
+        ...rule,
+        name,
+        ...(rule.constraints
+          ? { constraints: Object.freeze([...rule.constraints]) }
+          : {}),
+      }) as ValidationRule,
+    );
     return this;
   }
 
@@ -109,6 +118,14 @@ export class ValidationRegistry {
     this.rules.clear();
   }
 
+  /**
+   * Validate a value against a registered rule.
+   *
+   * Constraints receive whatever the caller passed, which at a trust boundary
+   * is arbitrary JSON. `checkConstraints` guards and catches internally, so a
+   * wrong-typed value reports as a validation failure rather than escaping as
+   * a `TypeError` and turning a 400 into a 500.
+   */
   public validate<T>(name: string, value: unknown): ValidationResult<T> {
     const rule = this.require<T>(name);
     if (rule.schema) return validate(rule.schema, value);

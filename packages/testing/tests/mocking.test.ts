@@ -79,12 +79,12 @@ describe("createSpyFn", () => {
     expect(spy.original).toBe(original);
   });
 
-  it("should restore spy", () => {
+  it("should reset recorded calls", () => {
     const original = (x: number) => x;
     const spy = createSpyFn(original);
 
     spy(1);
-    spy.restore();
+    spy.reset();
 
     expect(spy.calls).toHaveLength(0);
   });
@@ -98,10 +98,10 @@ describe("createStub", () => {
     }
 
     const stub = createStub<UserService>({
-      find: (id) => ({ id, name: "Test" }),
+      find: (id) => `user:${id}`,
     });
 
-    expect(stub.find("123")).toEqual({ id: "123", name: "Test" });
+    expect(stub.find("123")).toBe("user:123");
   });
 
   it("should return undefined for unimplemented methods", () => {

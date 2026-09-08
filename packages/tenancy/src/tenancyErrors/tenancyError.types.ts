@@ -7,6 +7,10 @@
 import { ErrorCode } from "@zudojs/errors";
 import { TenantError } from "./tenancyError.base.js";
 import type { TenantId, TenantStatus } from "../tenancyTypes/tenantIdentity.js";
+import type {
+  TenantResolutionSource,
+  TenantTrustLevel,
+} from "../tenancyTypes/tenantInterface.js";
 
 /**
  * The provided tenant ID is invalid.
@@ -88,6 +92,29 @@ export class TenantAccessDeniedError extends TenantError {
       code: ErrorCode.ACCESS_DENIED,
       metadata: { tenantId },
     });
+  }
+}
+
+/**
+ * The tenant was resolved from a source that is not trusted enough.
+ *
+ * Distinct from {@link TenantAccessDeniedError} so the resolution source and
+ * the two trust levels stay in structured metadata instead of being formatted
+ * into a field that is supposed to hold a tenant id.
+ */
+export class TenantTrustLevelError extends TenantError {
+  constructor(
+    source: TenantResolutionSource,
+    required: TenantTrustLevel,
+    actual: TenantTrustLevel,
+  ) {
+    super(
+      `Insufficient trust level from "${source}": need ${required}, got ${actual}`,
+      {
+        code: ErrorCode.ACCESS_DENIED,
+        metadata: { source, required, actual },
+      },
+    );
   }
 }
 

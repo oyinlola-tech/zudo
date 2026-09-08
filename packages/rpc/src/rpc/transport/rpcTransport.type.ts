@@ -15,7 +15,18 @@ export interface RPCTransportRequestOptions {
  * Transport interface for sending and receiving RPC messages.
  */
 export interface RPCTransport {
-  send(request: RPCRequest): Promise<RPCResponse>;
+  /**
+   * Sends a request and resolves with the peer's response.
+   *
+   * `options.signal` aborts the in-flight send. A transport that ignores
+   * it still works — the client races the signal itself — but the
+   * underlying connection is only released by a transport that honours
+   * it.
+   */
+  send(
+    request: RPCRequest,
+    options?: RPCTransportRequestOptions,
+  ): Promise<RPCResponse>;
 
   close?(): Promise<void>;
 }

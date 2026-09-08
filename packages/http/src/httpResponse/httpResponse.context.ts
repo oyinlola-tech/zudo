@@ -12,10 +12,7 @@ import type {
   ResponseContextSnapshot,
 } from "./core/httpResponse.type.js";
 
-import {
-  DEFAULT_RESPONSE_STATUS,
-  DEFAULT_RESPONSE_STATUS_TEXT,
-} from "./core/httpResponse.type.js";
+import { DEFAULT_RESPONSE_STATUS } from "./core/httpResponse.type.js";
 
 import { getStatusText } from "./core/httpResponse.statusText.js";
 

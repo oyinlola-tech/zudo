@@ -10,6 +10,8 @@ import type { RecordedEvent } from "../testEventBus/testEventBus.core.js";
 
 import type { RecordedMessage } from "../testMessageBus/testMessageBus.core.js";
 
+import { findDifference } from "./deepEqual.core.js";
+
 /**
  * Asserts that an event has a specific type.
  *
@@ -35,11 +37,11 @@ export function assertEventPayload<TPayload>(
   event: Event<TPayload>,
   expected: TPayload,
 ): void {
-  const actual = JSON.stringify(event.payload);
-  const expectedJson = JSON.stringify(expected);
-
-  if (actual !== expectedJson) {
-    throw new Error(`Expected event payload ${expectedJson}, got ${actual}.`);
+  const difference = findDifference(event.payload, expected, "payload");
+  if (difference) {
+    throw new Error(
+      `Event payload mismatch at ${difference.path}: ${difference.reason}.`,
+    );
   }
 }
 
@@ -88,6 +90,40 @@ export function assertMessageDispatched<TPayload>(
   if (!found) {
     throw new Error(
       `Expected message "${type}" to be dispatched, but it was not found.`,
+    );
+  }
+}
+
+/**
+ * Asserts that no event of a given type was published.
+ *
+ * The negative counterpart matters as much as the positive one: "this request
+ * must not emit a refund event" is a real assertion, and without this helper
+ * it gets written as a hand-rolled `.some()` that is easy to invert.
+ */
+export function assertEventNotPublished<TPayload>(
+  events: readonly RecordedEvent<TPayload>[],
+  type: string,
+): void {
+  const found = events.filter((e) => e.event.type === type);
+  if (found.length > 0) {
+    throw new Error(
+      `Expected event "${type}" not to be published, but it was published ${found.length} time(s).`,
+    );
+  }
+}
+
+/**
+ * Asserts that no message of a given type was dispatched.
+ */
+export function assertMessageNotDispatched<TPayload>(
+  messages: readonly RecordedMessage<TPayload>[],
+  type: string,
+): void {
+  const found = messages.filter((m) => m.message.type === type);
+  if (found.length > 0) {
+    throw new Error(
+      `Expected message "${type}" not to be dispatched, but it was dispatched ${found.length} time(s).`,
     );
   }
 }

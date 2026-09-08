@@ -25,6 +25,18 @@ export interface SerializeOptions {
   readonly maxSize?: number;
   /** Indentation for pretty-print (default: 2). */
   readonly indent?: number;
+  /**
+   * Include `Error.stack` when serializing errors (default: false).
+   *
+   * A stack names absolute file paths and internal call structure. Serialized
+   * errors travel to queues, RPC peers and log sinks, so stacks are opt-in.
+   */
+  readonly includeStack?: boolean;
+  /**
+   * Permit `__proto__`, `constructor` and `prototype` as data keys
+   * (default: false). See {@link DeserializeOptions.allowUnsafeKeys}.
+   */
+  readonly allowUnsafeKeys?: boolean;
 }
 
 /** Options for deserialization operations. */
@@ -33,10 +45,24 @@ export interface DeserializeOptions {
   readonly preserveTypes?: boolean;
   /** Maximum object depth before throwing. */
   readonly maxDepth?: number;
-  /** Throw on malformed or unexpected data. */
+  /**
+   * Throw on malformed or unexpected data.
+   *
+   * Also makes an unrecognised `$type` tag an error rather than treating the
+   * object as ordinary data.
+   */
   readonly strict?: boolean;
-  /** Allow prototype-polluting keys during reconstruction. */
+  /**
+   * Allow prototype-polluting keys during reconstruction (default: false).
+   *
+   * With this off — the default — `__proto__`, `constructor` and `prototype`
+   * are dropped from reconstructed objects. Turning it on reinstates them as
+   * real own properties (never as a prototype assignment), which is only safe
+   * when the payload is trusted.
+   */
   readonly allowUnsafeKeys?: boolean;
+  /** Maximum accepted input size in bytes. */
+  readonly maxSize?: number;
 }
 
 /** Metadata attached to serialized output. */
@@ -90,9 +116,9 @@ export interface TypeTransformer<TValue = unknown> {
   /** Returns true when this transformer handles the given value. */
   canSerialize(value: unknown): value is TValue;
   /** Convert the value into a JSON-safe representation. */
-  serialize(value: TValue): unknown;
+  serialize(value: TValue, options?: SerializeOptions): unknown;
   /** Reconstruct the original value from the serialized form. */
-  deserialize(value: unknown): TValue;
+  deserialize(value: unknown, options?: DeserializeOptions): TValue;
 }
 
 /** Strategy for handling `undefined` values. */

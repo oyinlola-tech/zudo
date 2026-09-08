@@ -6,6 +6,8 @@
 
 import { EventBus } from "@zudojs/events";
 
+import { randomUUID } from "node:crypto";
+
 import type {
   Event,
   EventInput,
@@ -88,7 +90,7 @@ export function createTestEventBus(
     input: EventInput<TPayload>,
   ): Promise<EventPublishResult<Event<TPayload>>> => {
     const event: Event<TPayload> = {
-      id: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` as EventId,
+      id: `evt_${randomUUID()}` as EventId,
       type: input.type,
       payload: input.payload,
       timestamp: new Date(),
@@ -119,7 +121,9 @@ export function createTestEventBus(
 
   return {
     bus,
-    published,
+    get published() {
+      return [...published];
+    },
     publish,
     findByType,
     clear,

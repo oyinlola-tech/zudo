@@ -6,69 +6,59 @@
  */
 
 import { SerializationDepthError } from "@zudojs/errors";
+import {
+  TraversalLimitError,
+  traverse,
+} from "./validationConstraints.traverse.js";
+
+/**
+ * Hard ceiling on how deep {@link getSerializationDepth} will descend.
+ *
+ * The measurement itself is recursive, so it needs a bound of its own: a guard
+ * that overflows the stack on the input it was checking protects nothing.
+ */
+export const MAX_MEASURABLE_DEPTH = 512;
 
 /**
  * Compute the maximum nesting depth of a value.
  *
  * Primitives return 0. Arrays and objects return 1 + the maximum
- * depth of their children.
+ * depth of their children. Cycles are not followed.
+ *
+ * @param value - The value to measure.
+ * @param limit - Stop measuring beyond this depth. Defaults to
+ *   {@link MAX_MEASURABLE_DEPTH}; the limit itself is returned when reached.
+ * @returns The observed depth, capped at `limit`.
  */
 export function getSerializationDepth(
   value: unknown,
-  currentDepth = 0,
+  limit: number = MAX_MEASURABLE_DEPTH,
 ): number {
-  if (value === null || value === undefined) return currentDepth;
-
-  if (typeof value !== "object") return currentDepth;
-
-  if (ArrayBuffer.isView(value)) return currentDepth;
-
-  if (Array.isArray(value)) {
-    let maxChild = currentDepth;
-    for (const item of value) {
-      const childDepth = getSerializationDepth(item, currentDepth + 1);
-      if (childDepth > maxChild) maxChild = childDepth;
-    }
-    return maxChild;
+  try {
+    return traverse(value, { maxDepth: limit }).depth;
+  } catch (error) {
+    if (error instanceof TraversalLimitError) return limit;
+    throw error;
   }
-
-  if (value instanceof Map) {
-    let maxChild = currentDepth;
-    for (const [k, v] of value) {
-      const keyDepth = getSerializationDepth(k, currentDepth + 1);
-      const valDepth = getSerializationDepth(v, currentDepth + 1);
-      const localMax = keyDepth > valDepth ? keyDepth : valDepth;
-      if (localMax > maxChild) maxChild = localMax;
-    }
-    return maxChild;
-  }
-
-  if (value instanceof Set) {
-    let maxChild = currentDepth;
-    for (const v of value) {
-      const childDepth = getSerializationDepth(v, currentDepth + 1);
-      if (childDepth > maxChild) maxChild = childDepth;
-    }
-    return maxChild;
-  }
-
-  let maxChild = currentDepth;
-  const obj = value as Record<string, unknown>;
-  for (const key of Object.keys(obj)) {
-    const childDepth = getSerializationDepth(obj[key], currentDepth + 1);
-    if (childDepth > maxChild) maxChild = childDepth;
-  }
-  return maxChild;
 }
 
 /**
  * Assert that a value does not exceed the maximum allowed depth.
  *
+ * Stops descending the moment the limit is passed, so the cost of the check is
+ * bounded by `maxDepth` rather than by the size of the input.
+ *
+ * @param value - The value to check.
+ * @param maxDepth - Maximum permitted nesting depth.
  * @throws {SerializationDepthError} when depth exceeds the limit.
  */
 export function assertDepthWithinLimit(value: unknown, maxDepth: number): void {
-  const depth = getSerializationDepth(value);
-  if (depth > maxDepth) {
-    throw new SerializationDepthError(depth, maxDepth);
+  try {
+    traverse(value, { maxDepth });
+  } catch (error) {
+    if (error instanceof TraversalLimitError && error.halt === "depth") {
+      throw new SerializationDepthError(error.observed, maxDepth);
+    }
+    throw error;
   }
 }

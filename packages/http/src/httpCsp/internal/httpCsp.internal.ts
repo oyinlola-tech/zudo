@@ -30,13 +30,41 @@ export function splitPolicy(value: string): string[] {
   return result;
 }
 
+/**
+ * Characters that must never appear inside a directive value.
+ *
+ * `;` starts a new directive and `,` starts a new policy, so a value carrying
+ * either injects structure into the header — `img-src` set to
+ * `"https://cdn.example; script-src 'unsafe-inline'"` grants inline script.
+ * CR/LF and the other C0 controls are a header-injection primitive.
+ */
+const FORBIDDEN_DIRECTIVE_VALUE = /[;,\u0000-\u001f\u007f]/;
+
+/**
+ * Splits and trims a directive value, rejecting anything that could change the
+ * shape of the resulting header.
+ *
+ * The check lives here, at the single point every directive value passes
+ * through, so no code path can construct an injected directive object in the
+ * first place — rather than relying on a validator that a caller might skip.
+ */
 export function normalizeDirectiveValues(values: CSPDirectiveValue): string[] {
   const result =
     typeof values === "string"
       ? values.trim().split(/\s+/)
-      : values.map((value) => value.trim()).filter(Boolean);
+      : values.map((value) => value.trim());
 
-  return result.filter(Boolean);
+  const filtered = result.filter(Boolean);
+
+  for (const value of filtered) {
+    if (FORBIDDEN_DIRECTIVE_VALUE.test(value)) {
+      throw new TypeError(
+        `Invalid CSP directive value: ${JSON.stringify(value)}. Values cannot contain ";", "," or control characters.`,
+      );
+    }
+  }
+
+  return filtered;
 }
 
 export function freezeDirectives(

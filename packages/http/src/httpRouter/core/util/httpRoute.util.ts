@@ -1,4 +1,15 @@
-function getRequestMethod(request: RequestContext): string {
+/**
+ * HTTP router utility helpers.
+ *
+ * Request accessors, URL/query parsing, and path normalization shared by the
+ * router core.
+ */
+
+import type { HttpRequestContext as RequestContext } from "../../../httpRequest/httpRequest.context.js";
+
+import { InvalidRoutePatternError } from "../error/httpRouter.error.js";
+
+export function getRequestMethod(request: RequestContext): string {
   const value = (
     request as unknown as {
       method?: string;
@@ -8,7 +19,7 @@ function getRequestMethod(request: RequestContext): string {
   return (value ?? "GET").toUpperCase();
 }
 
-function getRequestUrl(request: RequestContext): string {
+export function getRequestUrl(request: RequestContext): string {
   const value = (
     request as unknown as {
       url?: string | URL;
@@ -22,7 +33,9 @@ function getRequestUrl(request: RequestContext): string {
   return value ?? "/";
 }
 
-function getRequestSignal(request: RequestContext): AbortSignal | undefined {
+export function getRequestSignal(
+  request: RequestContext,
+): AbortSignal | undefined {
   return (
     request as unknown as {
       signal?: AbortSignal;
@@ -30,7 +43,7 @@ function getRequestSignal(request: RequestContext): AbortSignal | undefined {
   ).signal;
 }
 
-function parseUrl(value: string): URL {
+export function parseUrl(value: string): URL {
   try {
     return new URL(value, "http://zudojs.local");
   } catch {
@@ -38,7 +51,7 @@ function parseUrl(value: string): URL {
   }
 }
 
-function parseQuery(
+export function parseQuery(
   params: URLSearchParams,
 ): Readonly<Record<string, string | string[]>> {
   const result: Record<string, string | string[]> = {};
@@ -58,7 +71,7 @@ function parseQuery(
 /* Path Helpers                                                               */
 /* -------------------------------------------------------------------------- */
 
-function normalizePath(path: string): string {
+export function normalizePath(path: string): string {
   if (!path || path === "") {
     return "/";
   }
@@ -78,7 +91,7 @@ function normalizePath(path: string): string {
   return normalized;
 }
 
-function splitPath(path: string): string[] {
+export function splitPath(path: string): string[] {
   const normalized = normalizePath(path);
 
   if (normalized === "/") {
@@ -88,7 +101,7 @@ function splitPath(path: string): string[] {
   return normalized.split("/").filter(Boolean);
 }
 
-function validateParameterName(name: string, path: string): void {
+export function validateParameterName(name: string, path: string): void {
   if (!/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(name)) {
     throw new InvalidRoutePatternError(
       path,
@@ -97,7 +110,7 @@ function validateParameterName(name: string, path: string): void {
   }
 }
 
-function decodeRouteValue(value: string): string {
+export function decodeRouteValue(value: string): string {
   try {
     return decodeURIComponent(value);
   } catch {
@@ -105,23 +118,43 @@ function decodeRouteValue(value: string): string {
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/* Method Helpers                                                             */
-/* -------------------------------------------------------------------------- */
+/**
+ * Characters and segment values that must never survive percent-decoding into
+ * a route parameter.
+ *
+ * A single path segment is matched *before* it is decoded, so `%2e%2e%2f`
+ * satisfies a `[^/]+`-shaped segment and then decodes to `../`. Any handler
+ * that uses the parameter as a path component — the overwhelmingly common
+ * case — receives a traversal payload the router has certified as one
+ * segment.
+ */
+const TRAVERSAL_CHARS = /[/\\\u0000]/;
 
-function normalizeMethod(method: string): HttpMethod | "*" {
-  const normalized = method.toUpperCase();
+/**
+ * Decodes one matched path segment, rejecting anything that would smuggle a
+ * path separator, a NUL, or a `.`/`..` segment past the matcher.
+ *
+ * @param value - The raw (still percent-encoded) segment.
+ * @returns The decoded segment, or `undefined` if the segment is malformed or
+ *   carries a traversal payload. `undefined` must fail the match.
+ */
+export function decodeRouteSegment(value: string): string | undefined {
+  let decoded: string;
 
-  if (normalized === "*") {
-    return "*";
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    /* Malformed percent-encoding: `%zz`, a lone `%`, a truncated surrogate. */
+    return undefined;
   }
 
-  if (isHttpMethod(normalized)) {
-    return normalized;
+  if (TRAVERSAL_CHARS.test(decoded)) {
+    return undefined;
   }
 
-  throw new InvalidRoutePatternError(
-    method,
-    `Invalid HTTP method "${method}".`,
-  );
+  if (decoded === "." || decoded === "..") {
+    return undefined;
+  }
+
+  return decoded;
 }

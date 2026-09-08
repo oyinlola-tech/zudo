@@ -5,10 +5,14 @@
  */
 
 import type { Counter } from "../../types.js";
+import { MetricValueError } from "../../errors/index.js";
 
 /**
  * In-memory counter. Increments monotonically.
- * Designed to be safe and cheap — no async, no locks.
+ *
+ * Invalid increments throw rather than being dropped: a counter that quietly
+ * ignored a negative delta would report a total nobody can reconcile with the
+ * code that produced it.
  */
 export class DefaultCounter implements Counter {
   readonly name: string;
@@ -21,7 +25,16 @@ export class DefaultCounter implements Counter {
   }
 
   increment(value = 1): void {
-    if (value < 0) return;
+    if (!Number.isFinite(value)) {
+      throw new MetricValueError(this.name, value, "must be finite");
+    }
+    if (value < 0) {
+      throw new MetricValueError(
+        this.name,
+        value,
+        "a counter cannot decrease; use a gauge",
+      );
+    }
     this.value += value;
   }
 

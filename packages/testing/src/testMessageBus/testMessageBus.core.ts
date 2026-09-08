@@ -6,6 +6,8 @@
 
 import { createMessageBus } from "@zudojs/messaging";
 
+import { randomUUID } from "node:crypto";
+
 import type {
   Message,
   MessageInput,
@@ -90,7 +92,7 @@ export function createTestMessageBus(
     dispatchOptions?: DispatchOptions,
   ): Promise<DispatchResult> => {
     const message: Message<TPayload> = {
-      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}` as MessageId,
+      id: `msg_${randomUUID()}` as MessageId,
       type: input.type,
       payload: input.payload,
       timestamp: new Date(),
@@ -121,7 +123,9 @@ export function createTestMessageBus(
 
   return {
     bus,
-    dispatched,
+    get dispatched() {
+      return [...dispatched];
+    },
     send,
     findByType,
     clear,

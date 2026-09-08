@@ -19,10 +19,17 @@ export interface RouteTreeNode {
 export type RouteTreeNodeType =
   "static" | "parameter" | "wildcard" | "optional";
 
-export interface RouteTreeOptions {
-  readonly caseSensitive?: boolean;
-  readonly strict?: boolean;
-}
+/**
+ * Options for {@link RouteTree}.
+ *
+ * Deliberately empty. `caseSensitive` and `strict` were declared here and never
+ * read — case sensitivity and trailing-slash handling are owned by
+ * `RouterOptions` and applied by `RouteMatcher`, which is the path requests
+ * actually take. Declaring them here again promised behaviour this structure
+ * never implemented.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface RouteTreeOptions {}
 
 export interface RouteTreeMatch {
   readonly params: Record<string, string>;

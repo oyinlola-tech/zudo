@@ -11,8 +11,6 @@ import type {
   InternalInterceptor,
 } from "../httpInterceptor.type.js";
 
-import { extractSequence } from "../httpInterceptor.helper.js";
-
 function comparePriority(
   a: InterceptorPriority,
   b: InterceptorPriority,
@@ -77,15 +75,15 @@ export function disable<T>(
 export function getAll<T>(
   interceptors: Map<string, InternalInterceptor<T>>,
 ): readonly RegisteredHttpInterceptor<T>[] {
+  /*
+   * Sort on the stored registration sequence. Parsing the trailing digits out
+   * of the id collided across name prefixes ("auth-1" vs "audit-1").
+   */
   return Array.from(interceptors.values())
+    .sort((a, b) => a.sequence - b.sequence)
     .map((i) => ({
       metadata: i.metadata,
       handler: i.handler,
       options: i.options,
-    }))
-    .sort((a, b) => {
-      const seqA = extractSequence(a.metadata.id);
-      const seqB = extractSequence(b.metadata.id);
-      return seqA - seqB;
-    });
+    }));
 }

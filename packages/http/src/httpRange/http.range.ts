@@ -70,19 +70,32 @@ export function parseRangeHeader(value: string | undefined | null):
     return undefined;
   }
 
-  const ranges = rangeValue.split(",").map((part) => parseByteRange(part));
+  const parts = rangeValue.split(",");
 
-  if (ranges.length === 0 || ranges.some((range) => range === undefined)) {
+  /*
+   * The count is checked before anything is parsed: a header with 100 000
+   * comma-separated ranges must not be fully parsed and allocated only to be
+   * rejected afterwards.
+   */
+  if (parts.length > MAX_RANGE_COUNT) {
     return undefined;
   }
 
-  if (ranges.length > MAX_RANGE_COUNT) {
-    return undefined;
+  const ranges: ByteRange[] = [];
+
+  for (const part of parts) {
+    const range = parseByteRange(part);
+
+    if (range === undefined) {
+      return undefined;
+    }
+
+    ranges.push(range);
   }
 
   return {
     unit,
-    ranges: ranges as ByteRange[],
+    ranges,
   };
 }
 
@@ -212,7 +225,13 @@ export function resolveRangeHeader(
     return undefined;
   }
 
-  const ranges = resolveRanges(parsed.ranges, size);
+  /*
+   * Overlapping and duplicate ranges are coalesced here as well as in
+   * `createRangeResponse`. Without it `bytes=0-0,0-0,...` yields one
+   * multipart part per repetition — roughly 80 bytes of boundary and headers
+   * for each byte of payload.
+   */
+  const ranges = normalizeRanges(resolveRanges(parsed.ranges, size));
 
   return {
     unit: parsed.unit,
@@ -392,17 +411,21 @@ export function createRangeResponse(
    * A single satisfiable range is represented by a normal 206 response with
    * a Content-Range header. Multipart range formatting belongs elsewhere.
    */
-  if (ranges.length === 1) {
+  const merged = normalizeRanges(ranges);
+
+  const single = merged.length === 1 ? merged[0] : undefined;
+
+  if (single !== undefined) {
     return {
       status: 206,
-      ranges,
-      contentRange: formatContentRange(ranges[0], size),
+      ranges: merged,
+      contentRange: formatContentRange(single, size),
     };
   }
 
   return {
     status: 206,
-    ranges: normalizeRanges(ranges),
+    ranges: merged,
   };
 }
 
@@ -434,7 +457,11 @@ export function sliceRange<T>(
   const start = Math.max(0, range.start);
 
   for (let index = start; index <= end; index += 1) {
-    result.push(value[index]);
+    /* `index` is clamped to `[0, value.length - 1]` above, so this read is
+     * in bounds. The cast only restores what `ArrayLike<T>` promises: a
+     * runtime `undefined` here would be a hole in a sparse input, and
+     * skipping it would silently shift every later element. */
+    result.push(value[index] as T);
   }
 
   return result;

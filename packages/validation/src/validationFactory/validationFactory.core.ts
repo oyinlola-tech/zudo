@@ -1,5 +1,11 @@
-import type { ValidationConstraint } from "../validationConstraints/index.js";
-import { checkConstraints } from "../validationConstraints/index.js";
+import type {
+  ConstraintOptions,
+  ValidationConstraint,
+} from "../validationConstraints/index.js";
+import {
+  checkConstraints,
+  createConstraint,
+} from "../validationConstraints/index.js";
 import type { ValidationResult } from "../validationResult/validationResult.type.js";
 import type { ValidationSchema } from "../validationSchema/validationSchema.core.js";
 import {
@@ -88,18 +94,9 @@ export class ValidationFactory {
 
   public constraint<T>(
     validateValue: (value: T) => boolean,
-    options: {
-      readonly name?: string;
-      readonly code?: string;
-      readonly message?: string;
-    } = {},
+    options: ConstraintOptions<T> = {},
   ): ValidationConstraint<T> {
-    return {
-      name: options.name ?? "custom",
-      code: options.code ?? "constraint_failed",
-      message: options.message ?? "Validation constraint failed.",
-      validate: validateValue,
-    };
+    return createConstraint(validateValue, options);
   }
 
   public validate<T>(
@@ -156,5 +153,14 @@ export function createValidationFactory(
   return new ValidationFactory(options);
 }
 
-/** Default validation factory instance. */
-export const validationFactory = createValidationFactory();
+/**
+ * Create a factory that shares a registry with an existing one.
+ *
+ * Prefer this to a process-wide singleton: a shared factory means one module
+ * calling `registry.clear()` silently removes rules another module registered.
+ */
+export function createScopedValidationFactory(
+  parent: ValidationFactory,
+): ValidationFactory {
+  return new ValidationFactory({ registry: parent.registry });
+}

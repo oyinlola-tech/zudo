@@ -8,9 +8,25 @@
  */
 
 import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+import { ErrorCode } from "@zudojs/errors";
+import { AuthError } from "../authErrors/authError.base.js";
 
 /** Default salt length in bytes. */
 const SALT_LENGTH = 32;
+
+/** Accepted range for a caller-supplied salt length, in bytes. */
+export const MIN_SALT_LENGTH = 16;
+export const MAX_SALT_LENGTH = 64;
+
+/**
+ * Maximum accepted password length in bytes.
+ *
+ * scrypt's cost is set by N/r, not by the input length, so a long password
+ * is not a work-factor amplifier — but it is still an unbounded allocation
+ * driven by an unauthenticated request body. 1024 bytes is far past any
+ * real passphrase.
+ */
+export const MAX_PASSWORD_BYTES = 1024;
 
 /** Default key length for scrypt. */
 const KEY_LENGTH = 64;
@@ -37,14 +53,41 @@ interface ParsedHash {
 /**
  * Hash a plain-text password.
  *
- * @param password - Plain-text password
- * @param saltLength - Salt length in bytes (default: 32)
+ * @param password - Plain-text password. Must be at most
+ *   {@link MAX_PASSWORD_BYTES} bytes of UTF-8.
+ * @param saltLength - Salt length in bytes (default: 32). Must be an integer
+ *   between {@link MIN_SALT_LENGTH} and {@link MAX_SALT_LENGTH}; `0` would
+ *   otherwise silently produce unsalted, rainbow-table-able hashes.
  * @returns Hashed password string in format "scrypt$N$r$p$salt$hash"
+ * @throws {AuthError} with `ErrorCode.INVALID_INPUT` when the password is
+ *   not a string, is too long, or the salt length is out of range.
  */
 export async function hashPassword(
   password: string,
   saltLength: number = SALT_LENGTH,
 ): Promise<string> {
+  if (typeof password !== "string") {
+    throw new AuthError("Password must be a string.", {
+      code: ErrorCode.INVALID_INPUT,
+      statusCode: 400,
+    });
+  }
+  if (Buffer.byteLength(password, "utf-8") > MAX_PASSWORD_BYTES) {
+    throw new AuthError(
+      `Password exceeds the maximum of ${MAX_PASSWORD_BYTES} bytes.`,
+      { code: ErrorCode.INVALID_INPUT, statusCode: 400 },
+    );
+  }
+  if (
+    !Number.isInteger(saltLength) ||
+    saltLength < MIN_SALT_LENGTH ||
+    saltLength > MAX_SALT_LENGTH
+  ) {
+    throw new AuthError(
+      `saltLength must be an integer between ${MIN_SALT_LENGTH} and ${MAX_SALT_LENGTH} bytes.`,
+      { code: ErrorCode.INVALID_INPUT, statusCode: 400 },
+    );
+  }
   const salt = randomBytes(saltLength).toString("hex");
   const derivedKey = await deriveKey(password, salt, {
     N: SCRYPT_N,
@@ -60,6 +103,12 @@ export async function hashPassword(
  * Accepts the current "scrypt$N$r$p$salt$hash" format as well as the
  * legacy "scrypt<salt>$<hash>" format produced by versions ≤ 0.1.1.
  *
+ * Never throws: any input this function cannot make sense of — a
+ * non-string, an over-length password (see {@link MAX_PASSWORD_BYTES}), an
+ * unparseable hash — is a non-match. Callers are on the request path and
+ * treat a `false` as "wrong password", which is the correct outcome for all
+ * of those.
+ *
  * @param password - Plain-text password to verify
  * @param hashedPassword - Previously hashed password
  * @returns Whether the password matches
@@ -68,6 +117,12 @@ export async function verifyPassword(
   password: string,
   hashedPassword: string,
 ): Promise<boolean> {
+  if (typeof password !== "string" || typeof hashedPassword !== "string") {
+    return false;
+  }
+  if (Buffer.byteLength(password, "utf-8") > MAX_PASSWORD_BYTES) {
+    return false;
+  }
   const parsed = parseHash(hashedPassword);
   if (!parsed) return false;
 
@@ -113,6 +168,12 @@ export function needsRehash(hashedPassword: string): boolean {
  * @returns Hex-encoded random string
  */
 export function generateRandomToken(length: number = 32): string {
+  if (!Number.isInteger(length) || length < 16 || length > 1024) {
+    throw new AuthError(
+      "generateRandomToken length must be an integer between 16 and 1024 bytes.",
+      { code: ErrorCode.INVALID_INPUT, statusCode: 400 },
+    );
+  }
   return randomBytes(length).toString("hex");
 }
 

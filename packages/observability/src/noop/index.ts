@@ -15,4 +15,5 @@ export {
   noopSpan,
   noopTracer,
   noopPropagationManager,
+  INVALID_PROPAGATION_CONTEXT,
 } from "./noopObservability.core.js";

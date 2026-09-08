@@ -1,8 +1,13 @@
 /**
- * @zudojs/testing — Spy logger for testing.
- *
- * Records all log calls for assertion.
+ * @zudojs/testing — Spy Logger Barrel
  */
 
 export { createSpyLogger } from "./spyLogger.core.js";
-export type { LogCall, SpyLogger } from "./spyLogger.type.js";
+export { LEVELS, createRecordingLogger } from "./spyLogger.recording.js";
+export type { DerivedOptions, Recorder } from "./spyLogger.recording.js";
+export {
+  deepMatches,
+  mergeContext,
+  mergeLoggerContext,
+} from "./spyLogger.context.js";
+export type * from "./spyLogger.type.js";

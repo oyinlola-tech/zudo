@@ -7,6 +7,8 @@ import {
   RPCProcedureNotFoundError,
 } from "../errors/rpc.errors.js";
 
+import { assertValidProcedureName } from "../validation/rpcValidation.core.js";
+
 /**
  * Router for grouping RPC procedures by namespace.
  */
@@ -17,6 +19,8 @@ export class RPCProcedureRouter {
    * Registers a procedure in this router.
    */
   register(procedure: RPCProcedure): this {
+    assertValidProcedureName(procedure.name);
+
     const existing = this.routes.get(procedure.name);
     if (existing !== undefined) {
       throw new RPCDuplicateProcedureError(procedure.name);

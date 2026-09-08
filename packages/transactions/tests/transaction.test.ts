@@ -1,14 +1,27 @@
 import { describe, it, expect } from "vitest";
 import {
   createTransaction,
-  TransactionStateError,
-  TransactionCommitError,
-  TransactionRollbackError,
-  runInTransaction,
   createTransactionManager,
-  type TransactionAdapter,
-  type Transaction,
+  createTransactionContext,
+  createInMemoryAdapter,
+  TransactionStateError,
+  TransactionRollbackError,
 } from "../src/index.js";
+import type { Transaction } from "../src/index.js";
+
+/**
+ * Obtain an active transaction the supported way.
+ *
+ * The manager owns state transitions; the transaction's own transition hook is
+ * not reachable from outside the package, which is deliberate.
+ */
+async function activeTransaction(): Promise<Transaction> {
+  const manager = createTransactionManager({
+    adapter: createInMemoryAdapter(),
+    context: createTransactionContext(),
+  });
+  return manager.begin();
+}
 
 describe("createTransaction", () => {
   it("creates a transaction in the pending state with a unique id", () => {
@@ -24,20 +37,21 @@ describe("createTransaction", () => {
     expect(child.parentId).toBe(parent.id);
   });
 
-  it("transitions pending -> active when started", () => {
-    const txn = createTransaction();
-    // simulate adapter activating it
-    (txn as unknown as { _transition: (s: string) => void })._transition(
-      "active",
-    );
+  it("transitions pending -> active when the manager starts it", async () => {
+    const txn = await activeTransaction();
     expect(txn.state).toBe("active");
   });
 
-  it("commits successfully and fires afterCommit callbacks", async () => {
+  it("keeps its internals unreachable from the public API", () => {
     const txn = createTransaction();
-    (txn as unknown as { _transition: (s: string) => void })._transition(
-      "active",
-    );
+    expect(
+      (txn as unknown as { _transition?: unknown })._transition,
+    ).toBeUndefined();
+    expect(Object.keys(txn)).not.toContain("_transition");
+  });
+
+  it("commits successfully and fires afterCommit callbacks", async () => {
+    const txn = await activeTransaction();
     const calls: string[] = [];
     txn.afterCommit(async () => {
       calls.push("commit-1");
@@ -56,22 +70,20 @@ describe("createTransaction", () => {
     await expect(txn.commit()).rejects.toBeInstanceOf(TransactionStateError);
   });
 
-  it("rolls back when marked rollback-only and commit is called", async () => {
-    const txn = createTransaction();
-    (txn as unknown as { _transition: (s: string) => void })._transition(
-      "active",
-    );
+  it("refuses to commit when marked rollback-only", async () => {
+    const txn = await activeTransaction();
     txn.markRollbackOnly("explicit reason");
     expect(txn.isRollbackOnly()).toBe(true);
-    await txn.commit();
+
+    await expect(txn.commit()).rejects.toBeInstanceOf(TransactionRollbackError);
+    expect(txn.state).toBe("active");
+
+    await txn.rollback("explicit reason");
     expect(txn.state).toBe("rolled_back");
   });
 
   it("rolls back and fires afterRollback callbacks", async () => {
-    const txn = createTransaction();
-    (txn as unknown as { _transition: (s: string) => void })._transition(
-      "active",
-    );
+    const txn = await activeTransaction();
     const calls: string[] = [];
     txn.afterRollback(async () => {
       calls.push("rb-1");
@@ -82,10 +94,7 @@ describe("createTransaction", () => {
   });
 
   it("rollback is idempotent after success", async () => {
-    const txn = createTransaction();
-    (txn as unknown as { _transition: (s: string) => void })._transition(
-      "active",
-    );
+    const txn = await activeTransaction();
     await txn.rollback();
     expect(txn.state).toBe("rolled_back");
     // second rollback is a no-op
@@ -93,15 +102,11 @@ describe("createTransaction", () => {
     expect(txn.state).toBe("rolled_back");
   });
 
-  it("fails commit with TransactionCommitError when commit throws", async () => {
-    const txn = createTransaction();
-    (txn as unknown as { _transition: (s: string) => void })._transition(
-      "active",
-    );
+  it("commits even when an afterCommit callback throws", async () => {
+    const txn = await activeTransaction();
     txn.afterCommit(async () => {
       throw new Error("hook failed");
     });
-    // the hook error is swallowed; commit succeeds
     await txn.commit();
     expect(txn.state).toBe("committed");
   });

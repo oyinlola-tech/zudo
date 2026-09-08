@@ -16,6 +16,11 @@ import {
 
 import type { ResponseBody, ResponseCookie } from "./httpResponse.context.js";
 
+import {
+  isValidHeaderFieldName,
+  isValidHeaderFieldValue,
+} from "../httpHeaders/security/index.js";
+
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -52,6 +57,15 @@ export interface HttpResponseWriter {
   flushHeaders?(): void;
 
   flush?(): void;
+
+  /**
+   * Resolves once the underlying sink has drained.
+   *
+   * Implemented by runtime writers that can report backpressure. Without it a
+   * streaming body is pulled as fast as the source produces, so a slow client
+   * buffers the whole stream in process memory.
+   */
+  waitForDrain?(): Promise<void>;
 }
 
 export interface ResponseWriter {
@@ -98,21 +112,34 @@ export class DefaultResponseWriter implements ResponseWriter {
 
     const statusText = context.statusText;
 
-    const headers = context.headers;
-
     const cookies = context.cookies;
 
+    /*
+     * `prepareAutomaticHeaders` mutates the context's header map (inferring
+     * Content-Type / Content-Length, stripping Content-Length from
+     * body-forbidden statuses). `context.headers` is a getter that returns a
+     * fresh copy on every access, so the header map must be read *after* this
+     * call — passing a snapshot taken beforehand silently discards every
+     * automatic header.
+     */
     prepareAutomaticHeaders(context);
 
-    writeHeaders(context, writer, headers);
+    writeHeaders(context, writer);
 
     writeCookies(writer, cookies);
+
+    /*
+     * `writeHead` is what commits the header block. Flushing beforehand
+     * commits it with the socket's default status (200) and makes the
+     * subsequent `writeHead` throw ERR_HTTP_HEADERS_SENT, so every response
+     * would reach the client as a 200. Flush only after the status line has
+     * been written.
+     */
+    writer.writeHead(status, statusText);
 
     if (options.flushHeaders !== false && writer.flushHeaders) {
       writer.flushHeaders();
     }
-
-    writer.writeHead(status, statusText);
 
     if (isBodyForbidden(status)) {
       writer.end();
@@ -187,8 +214,24 @@ export function writeHeaders(
 ): void {
   for (const [name, value] of Object.entries(headers)) {
     if (value === undefined) continue;
-    const strValue = Array.isArray(value) ? value.join(", ") : value;
-    writer.setHeader(name, strValue);
+
+    if (!isValidHeaderFieldName(name)) {
+      throw new ResponseWriterError(
+        `Refusing to write response header with invalid field name: ${JSON.stringify(name)}`,
+      );
+    }
+
+    const values = Array.isArray(value) ? value : [value];
+
+    for (const entry of values) {
+      if (!isValidHeaderFieldValue(entry)) {
+        throw new ResponseWriterError(
+          `Refusing to write response header "${name}": value contains a control character or surrounding whitespace.`,
+        );
+      }
+    }
+
+    writer.setHeader(name, values.join(", "));
   }
 }
 
@@ -303,7 +346,11 @@ export async function writeReadableStream(
       }
 
       if (result.value) {
-        writer.write(result.value);
+        const accepted = writer.write(result.value);
+
+        if (!accepted && writer.waitForDrain) {
+          await writer.waitForDrain();
+        }
       }
     }
   } finally {

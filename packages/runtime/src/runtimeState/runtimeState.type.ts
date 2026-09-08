@@ -45,6 +45,24 @@ export interface RuntimeStatus {
   readonly stoppedAt?: Date;
   readonly failedAt?: Date;
   readonly error?: RuntimeError;
+  /**
+   * Modules that failed to stop or destroy during the last shutdown.
+   *
+   * A non-empty list means the runtime reached `stopped` without fully
+   * releasing its resources — a state that would otherwise be
+   * indistinguishable from a clean shutdown.
+   */
+  readonly shutdownFailures?: readonly RuntimeShutdownFailure[];
+}
+
+/**
+ * A module that failed during shutdown.
+ */
+export interface RuntimeShutdownFailure {
+  readonly moduleId: string;
+  readonly phase: string;
+  readonly error: Error;
+  readonly durationMs: number;
 }
 
 /**

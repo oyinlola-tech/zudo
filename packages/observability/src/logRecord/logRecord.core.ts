@@ -4,8 +4,52 @@
  * Factory functions for creating structured log records.
  */
 
-import type { LogRecord } from "../types.js";
-import { LogLevel, type LogLevelName } from "../types.js";
+import type { LogRecord, LogRecordError } from "../types.js";
+import { LogLevel } from "../types.js";
+import { logLevelToName } from "../logLevel/index.js";
+
+/**
+ * Serializes a thrown value into something a JSON transport can carry.
+ *
+ * `Error`'s own fields are non-enumerable, so an error placed in a log
+ * context stringifies to `{}` — this is what turns it back into data.
+ * `cause` chains are followed, with a depth cap so a self-referential cause
+ * cannot recurse forever.
+ */
+export function serializeError(error: unknown, depth = 0): LogRecordError {
+  if (error instanceof Error) {
+    const cause =
+      error.cause !== undefined && depth < 4
+        ? serializeError(error.cause, depth + 1)
+        : undefined;
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      cause,
+    };
+  }
+
+  if (typeof error === "object" && error !== null) {
+    const record = error as Record<string, unknown>;
+    const name = typeof record["name"] === "string" ? record["name"] : "Error";
+    const message =
+      typeof record["message"] === "string"
+        ? record["message"]
+        : safeStringify(error);
+    return { name, message };
+  }
+
+  return { name: "Error", message: String(error) };
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
 
 /** Creates a structured log record. */
 export function createLogRecord(options: {
@@ -13,52 +57,38 @@ export function createLogRecord(options: {
   readonly message: string;
   readonly loggerName: string;
   readonly context?: Record<string, unknown>;
-  readonly error?: Error;
+  readonly error?: unknown;
+  readonly traceId?: string;
+  readonly spanId?: string;
+  readonly timestamp?: Date;
 }): LogRecord {
-  const error = options.error
-    ? {
-        name: options.error.name,
-        message: options.error.message,
-        stack: options.error.stack,
-        cause: options.error.cause,
-      }
-    : undefined;
-
   return {
     level: options.level,
-    levelName: logLevelToNameInternal(options.level),
+    levelName: logLevelToName(options.level),
     message: options.message,
-    timestamp: new Date(),
+    timestamp: options.timestamp ?? new Date(),
     loggerName: options.loggerName,
     context: options.context,
-    error,
+    error:
+      options.error === undefined ? undefined : serializeError(options.error),
+    traceId: options.traceId,
+    spanId: options.spanId,
   };
 }
 
 /** Creates a log record for an error. */
 export function createErrorLogRecord(
-  error: Error,
+  error: unknown,
   level: LogLevel,
   loggerName: string,
+  context?: Record<string, unknown>,
 ): LogRecord {
+  const serialized = serializeError(error);
   return createLogRecord({
     level,
-    message: error.message,
+    message: serialized.message,
     loggerName,
-    context: { stack: error.stack },
+    context,
     error,
   });
-}
-
-function logLevelToNameInternal(level: LogLevel): LogLevelName {
-  const names: Record<number, LogLevelName> = {
-    [LogLevel.TRACE]: "trace",
-    [LogLevel.DEBUG]: "debug",
-    [LogLevel.INFO]: "info",
-    [LogLevel.WARN]: "warn",
-    [LogLevel.ERROR]: "error",
-    [LogLevel.FATAL]: "fatal",
-    [LogLevel.OFF]: "off",
-  };
-  return names[level] ?? "off";
 }

@@ -5,11 +5,14 @@
  * Middleware ordering is explicit and deterministic.
  */
 
-import type { MatchedRoute, RouterHandler } from "../core/httpRouter.type.js";
+import type {
+  MatchedRoute,
+  RouterHandler,
+} from "../core/types/httpRouter.type.js";
 
-import type { HttpRequestContext as RequestContext } from "../httpRequest/httpRequest.context.js";
+import type { HttpRequestContext as RequestContext } from "../../httpRequest/httpRequest.context.js";
 
-import type { HttpResponseContext as ResponseContext } from "../httpResponse/httpResponse.context.js";
+import type { HttpResponseContext as ResponseContext } from "../../httpResponse/httpResponse.context.js";
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -237,6 +240,11 @@ export class RouteStack {
 
     const [layer] = this.layers.splice(sourceIndex, 1);
 
+    if (layer === undefined) {
+      /* `indexOf` already proved the index is in range, so this cannot fire. */
+      return false;
+    }
+
     this.layers.splice(boundedIndex, 0, layer);
 
     this.reindex();
@@ -266,7 +274,7 @@ export class RouteStack {
     const original = this.layers.length;
 
     for (let index = this.layers.length - 1; index >= 0; index -= 1) {
-      if (this.layers[index].name === name) {
+      if (this.layers[index]?.name === name) {
         this.layers.splice(index, 1);
       }
     }
@@ -316,8 +324,10 @@ export class RouteStack {
 
   getHandler(): RouteStackLayer | undefined {
     for (let index = this.layers.length - 1; index >= 0; index -= 1) {
-      if (this.layers[index].type === "handler") {
-        return this.layers[index];
+      const layer = this.layers[index];
+
+      if (layer?.type === "handler") {
+        return layer;
       }
     }
 
@@ -472,9 +482,7 @@ export class RouteStack {
   }
 
   private reindex(): void {
-    for (let index = 0; index < this.layers.length; index += 1) {
-      const layer = this.layers[index];
-
+    for (const [index, layer] of this.layers.entries()) {
       this.layers[index] = Object.freeze({
         ...layer,
 

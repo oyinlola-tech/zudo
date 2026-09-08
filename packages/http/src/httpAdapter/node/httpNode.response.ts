@@ -87,6 +87,37 @@ export class NodeResponseWriter implements HttpResponseWriter {
     this.response.end(chunk);
   }
 
+  /**
+   * Resolves once the socket has drained, or immediately if it already has.
+   */
+  waitForDrain(): Promise<void> {
+    if (this.response.writableEnded || this.response.destroyed) {
+      return Promise.resolve();
+    }
+
+    if (this.response.writableNeedDrain !== true) {
+      return Promise.resolve();
+    }
+
+    return new Promise<void>((resolve) => {
+      const done = (): void => {
+        this.response.off("drain", done);
+
+        this.response.off("close", done);
+
+        this.response.off("error", done);
+
+        resolve();
+      };
+
+      this.response.once("drain", done);
+
+      this.response.once("close", done);
+
+      this.response.once("error", done);
+    });
+  }
+
   flushHeaders(): void {
     this.response.flushHeaders();
   }

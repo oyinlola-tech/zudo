@@ -5,4 +5,3 @@
  */
 
 export * from "./httpHeaders.security.js";
-export * from "./index.js";

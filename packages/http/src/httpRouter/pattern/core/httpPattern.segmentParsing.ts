@@ -4,10 +4,7 @@
  * @module httpRoute/pattern/segmentParsing
  */
 
-import type {
-  RouteSegment,
-  ParameterRouteSegment,
-} from "./httpPattern.type.js";
+import type { RouteSegment } from "./httpPattern.type.js";
 
 import { RoutePatternError } from "./httpPattern.type.js";
 
@@ -17,6 +14,7 @@ import { RoutePatternError } from "./httpPattern.type.js";
 export function parseSegments(pattern: string): readonly RouteSegment[] {
   const segments: RouteSegment[] = [];
   let i = 0;
+  let wildcardIndex = 0;
 
   while (i < pattern.length) {
     if (pattern[i] === ":") {
@@ -28,11 +26,18 @@ export function parseSegments(pattern: string): readonly RouteSegment[] {
       segments.push(result.segment);
       i = result.endIndex;
     } else if (pattern[i] === "*") {
+      /*
+       * `*` is not a legal JavaScript regex group name, so a wildcard that
+       * kept it could never be captured — the compiled pattern used a plain
+       * `(.*)` and `match.groups["*"]` was always undefined. Give each
+       * wildcard a real, unique name instead.
+       */
       segments.push({
         type: "wildcard",
-        name: "*",
+        name: `wildcard${wildcardIndex}`,
         optional: false,
       });
+      wildcardIndex += 1;
       i++;
     } else {
       let value = "";
@@ -72,17 +77,22 @@ function compileColonParameter(
     i++;
   }
 
-  while (i < pattern.length && isValidParamChar(pattern[i])) {
-    name += pattern[i];
+  while (i < pattern.length) {
+    const char = pattern[i];
+
+    if (char === undefined || !isValidParamChar(char)) {
+      break;
+    }
+
+    name += char;
     i++;
   }
 
   if (!name) {
-    throw new RoutePatternError(
-      "Parameter name cannot be empty",
+    throw new RoutePatternError("Parameter name cannot be empty", {
       pattern,
-      startIndex,
-    );
+      position: startIndex,
+    });
   }
 
   return {
@@ -109,21 +119,19 @@ function compileBraceParameter(
   }
 
   if (i >= pattern.length) {
-    throw new RoutePatternError(
-      "Unclosed brace parameter",
+    throw new RoutePatternError("Unclosed brace parameter", {
       pattern,
-      startIndex,
-    );
+      position: startIndex,
+    });
   }
 
   i++; // Skip closing brace
 
   if (!name) {
-    throw new RoutePatternError(
-      "Parameter name cannot be empty",
+    throw new RoutePatternError("Parameter name cannot be empty", {
       pattern,
-      startIndex,
-    );
+      position: startIndex,
+    });
   }
 
   return {

@@ -7,6 +7,7 @@
 import type {
   RouteSegment,
   ParameterRouteSegment,
+  WildcardRouteSegment,
   RoutePatternOptions,
   CompiledRoutePattern,
 } from "./httpPattern.type.js";
@@ -27,7 +28,7 @@ export function compileRoutePattern(
   options: RoutePatternOptions = {},
 ): CompiledRoutePattern {
   if (!pattern) {
-    throw new RoutePatternError("Pattern cannot be empty", pattern);
+    throw new RoutePatternError("Pattern cannot be empty", { pattern });
   }
 
   const segments = parseSegments(pattern);

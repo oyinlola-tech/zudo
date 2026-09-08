@@ -11,11 +11,15 @@ export { BooleanSchema, booleanSchema } from "./schemaBoolean.core.js";
 export { LiteralSchema, literalSchema } from "./schemaLiteral.core.js";
 export {
   NullSchema,
+  BigIntSchema,
+  SymbolSchema,
   UndefinedSchema,
   AnySchema,
   UnknownSchema,
   NeverSchema,
   nullSchema,
+  bigintSchema,
+  symbolSchema,
   undefinedSchema,
   anySchema,
   unknownSchema,

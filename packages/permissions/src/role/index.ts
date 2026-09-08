@@ -6,7 +6,13 @@
 
 export {
   createRoleRegistry,
+  type RoleRegistry,
   type RoleRegistryOptions,
 } from "./roleRegistry.js";
 
-export { resolveRolePermissions } from "./roleHierarchy.js";
+export {
+  resolveRolePermissions,
+  memoizeRoleLookup,
+  type RoleResolution,
+  type RoleResolutionOptions,
+} from "./roleHierarchy.js";

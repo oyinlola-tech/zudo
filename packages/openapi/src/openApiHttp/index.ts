@@ -1,7 +1,12 @@
 /**
  * @zudojs/openapi/openApiHttp
  *
- * HTTP integration for OpenAPI document serving.
+ * Document coordination and HTTP serving.
  */
 
-export { OpenAPIManager } from "./openApiHttpAdapter.core.js";
+export {
+  OpenAPIManager,
+  createOpenAPIManager,
+  type OpenAPIManagerOptions,
+  type OpenAPIDocumentResponse,
+} from "./openApiHttpAdapter.core.js";

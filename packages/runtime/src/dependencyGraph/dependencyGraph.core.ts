@@ -6,7 +6,10 @@ import type {
   CircularDependencyInfo,
 } from "./dependencyGraph.type.js";
 
-import { RuntimeCircularDependencyError } from "../runtimeError/runtimeError.base.js";
+import {
+  RuntimeCircularDependencyError,
+  RuntimeDependencyError,
+} from "../runtimeError/runtimeError.base.js";
 
 /**
  * Builds a dependency graph from module IDs and their dependencies.
@@ -104,10 +107,17 @@ export function buildDependencyGraph(
 
 /**
  * Resolves module dependencies into an initialization order.
+ *
+ * Missing dependencies are rejected before ordering. Previously an
+ * unregistered dependency contributed depth `0` and was silently
+ * dropped, so a typo in a module's `dependencies` degraded into an
+ * unordered start that failed later inside `onInitialize`.
  */
 export function resolveDependencies(
   modules: ReadonlyMap<string, readonly string[]>,
 ): DependencyResolutionResult {
+  validateDependencies(modules);
+
   const graph = buildDependencyGraph(modules);
 
   if (graph.hasCircularDependency) {
@@ -155,6 +165,11 @@ export function getParallelGroups(
 
 /**
  * Validates that all module dependencies exist.
+ *
+ * @throws {RuntimeDependencyError} naming both the module and the
+ * dependency it declared. Reporting a missing dependency as a circular
+ * one, as this previously did, sends the reader looking for a cycle that
+ * does not exist.
  */
 export function validateDependencies(
   modules: ReadonlyMap<string, readonly string[]>,
@@ -162,7 +177,7 @@ export function validateDependencies(
   for (const [moduleId, deps] of modules) {
     for (const depId of deps) {
       if (!modules.has(depId)) {
-        throw new RuntimeCircularDependencyError([moduleId, depId]);
+        throw new RuntimeDependencyError(moduleId, depId);
       }
     }
   }

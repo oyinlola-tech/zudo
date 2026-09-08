@@ -19,6 +19,8 @@ import type {
  * Runtime context providing access to the running application state.
  */
 export interface RuntimeContext {
+  /** Additional runtime metadata supplied through runtime options. */
+  readonly metadata: Readonly<Record<string, unknown>>;
   readonly runtimeId: RuntimeId;
   readonly environment: Environment;
   readonly applicationName: string;
@@ -50,6 +52,8 @@ export interface RuntimeIdentity {
  * Dependencies required to create the runtime context.
  */
 export interface RuntimeContextDependencies {
+  /** Additional runtime metadata, surfaced on the context. */
+  readonly metadata?: Readonly<Record<string, unknown>>;
   readonly runtimeId: RuntimeId;
   readonly environment: Environment;
   readonly applicationName: string;

@@ -3,7 +3,11 @@ import type { PluginContext } from "../pluginTypes/pluginContext.type.js";
 import type { PluginState } from "../pluginTypes/pluginState.type.js";
 import type { RegisteredPlugin } from "../pluginRegistry/pluginRegistry.core.js";
 import { VALID_STATE_TRANSITIONS } from "../pluginTypes/pluginState.type.js";
-import { PluginStateError } from "@zudojs/errors";
+import {
+  PluginDisposeError,
+  PluginStateError,
+  PluginTimeoutError,
+} from "@zudojs/errors";
 import {
   PLUGIN_EVENTS,
   createPluginLifecycleEvent,
@@ -11,11 +15,14 @@ import {
 
 /**
  * Emits a plugin lifecycle event if the context supports events.
+ *
+ * A throwing subscriber must not abort the lifecycle phase that emitted
+ * the event, so delivery failures are contained here.
  */
 function emitLifecycleEvent(
   context: PluginContext,
   eventName: string,
-  pluginName: string,
+  plugin: Plugin["metadata"],
   state: PluginState,
   previousState?: PluginState,
   error?: unknown,
@@ -24,204 +31,250 @@ function emitLifecycleEvent(
     return;
   }
 
-  const event = createPluginLifecycleEvent(
-    { name: pluginName },
-    state,
-    previousState,
-    error,
-  );
-  context.events.emit(eventName, event);
+  const event = createPluginLifecycleEvent(plugin, state, previousState, error);
+
+  try {
+    context.events.emit(eventName, event);
+  } catch (emitError) {
+    queueMicrotask(() => {
+      console.error(
+        `[@zudojs/plugins] Listener for "${eventName}" threw.`,
+        emitError,
+      );
+    });
+  }
+}
+
+/** Largest delay a timer can represent. */
+const MAX_TIMER_DELAY = 2_147_483_647;
+
+/**
+ * Options controlling lifecycle execution.
+ */
+export interface LifecycleControllerOptions {
+  /**
+   * Maximum time a single lifecycle hook may run, in milliseconds.
+   *
+   * Defaults to `0` (unbounded), preserving existing behaviour. Set a
+   * value to bound boot and shutdown: without one, a plugin whose
+   * `start()` never settles hangs the whole application with no
+   * diagnostic.
+   */
+  readonly hookTimeout?: number;
 }
 
 /**
  * Executes plugin lifecycle phases with state management and event emission.
  */
 export class LifecycleController {
+  private readonly options: LifecycleControllerOptions;
+
+  public constructor(options: LifecycleControllerOptions = {}) {
+    this.options = options;
+  }
+
+  /**
+   * Runs a hook under the configured timeout, clearing the timer either
+   * way so a completed hook never leaves one armed.
+   */
+  private async runHook(
+    pluginName: string,
+    phase: string,
+    run: () => void | Promise<void>,
+  ): Promise<void> {
+    const timeout = this.options.hookTimeout ?? 0;
+
+    if (timeout <= 0) {
+      await run();
+      return;
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const hook = Promise.resolve().then(run);
+
+    // The hook keeps running if the timeout wins; handle its eventual
+    // rejection so it is never unhandled.
+    hook.catch(() => {});
+
+    try {
+      await Promise.race([
+        hook,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new PluginTimeoutError(pluginName, timeout, {
+                  metadata: { phase },
+                }),
+              ),
+            Math.min(timeout, MAX_TIMER_DELAY),
+          );
+
+          timer.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+    }
+  }
   public async install<TPlugin extends Plugin>(
     registered: RegisteredPlugin<TPlugin>,
     context: PluginContext,
   ): Promise<void> {
-    const name = registered.plugin.metadata.name;
-    const from = registered.state;
-
-    this.ensureTransition(registered, "installing");
-    registered.setState("installing");
-    emitLifecycleEvent(
+    await this.runPhase(
+      registered,
       context,
-      PLUGIN_EVENTS.INSTALLING,
-      name,
       "installing",
-      from,
+      "installed",
+      PLUGIN_EVENTS.INSTALLING,
+      PLUGIN_EVENTS.INSTALLED,
+      () => registered.plugin.install?.(context, registered.options),
     );
-
-    try {
-      await registered.plugin.install?.(context, registered.options);
-      this.ensureTransition(registered, "installed");
-      registered.setState("installed");
-      emitLifecycleEvent(
-        context,
-        PLUGIN_EVENTS.INSTALLED,
-        name,
-        "installed",
-        "installing",
-      );
-    } catch (error) {
-      registered.setState("failed");
-      emitLifecycleEvent(
-        context,
-        PLUGIN_EVENTS.FAILED,
-        name,
-        "failed",
-        from,
-        error,
-      );
-      throw error;
-    }
   }
 
   public async initialize<TPlugin extends Plugin>(
     registered: RegisteredPlugin<TPlugin>,
     context: PluginContext,
   ): Promise<void> {
-    const name = registered.plugin.metadata.name;
-    const from = registered.state;
-
-    this.ensureTransition(registered, "initializing");
-    registered.setState("initializing");
-    emitLifecycleEvent(
+    await this.runPhase(
+      registered,
       context,
-      PLUGIN_EVENTS.INITIALIZING,
-      name,
       "initializing",
-      from,
+      "initialized",
+      PLUGIN_EVENTS.INITIALIZING,
+      PLUGIN_EVENTS.INITIALIZED,
+      () => registered.plugin.initialize?.(context),
     );
-
-    try {
-      await registered.plugin.initialize?.(context);
-      this.ensureTransition(registered, "initialized");
-      registered.setState("initialized");
-      emitLifecycleEvent(
-        context,
-        PLUGIN_EVENTS.INITIALIZED,
-        name,
-        "initialized",
-        "initializing",
-      );
-    } catch (error) {
-      registered.setState("failed");
-      emitLifecycleEvent(
-        context,
-        PLUGIN_EVENTS.FAILED,
-        name,
-        "failed",
-        from,
-        error,
-      );
-      throw error;
-    }
   }
 
   public async start<TPlugin extends Plugin>(
     registered: RegisteredPlugin<TPlugin>,
     context: PluginContext,
   ): Promise<void> {
-    const name = registered.plugin.metadata.name;
-    const from = registered.state;
-
-    this.ensureTransition(registered, "starting");
-    registered.setState("starting");
-    emitLifecycleEvent(context, PLUGIN_EVENTS.STARTING, name, "starting", from);
-
-    try {
-      await registered.plugin.start?.(context);
-      this.ensureTransition(registered, "started");
-      registered.setState("started");
-      emitLifecycleEvent(
-        context,
-        PLUGIN_EVENTS.STARTED,
-        name,
-        "started",
-        "starting",
-      );
-    } catch (error) {
-      registered.setState("failed");
-      emitLifecycleEvent(
-        context,
-        PLUGIN_EVENTS.FAILED,
-        name,
-        "failed",
-        from,
-        error,
-      );
-      throw error;
-    }
+    await this.runPhase(
+      registered,
+      context,
+      "starting",
+      "started",
+      PLUGIN_EVENTS.STARTING,
+      PLUGIN_EVENTS.STARTED,
+      () => registered.plugin.start?.(context),
+    );
   }
 
   public async stop<TPlugin extends Plugin>(
     registered: RegisteredPlugin<TPlugin>,
     context: PluginContext,
   ): Promise<void> {
-    const name = registered.plugin.metadata.name;
+    await this.runPhase(
+      registered,
+      context,
+      "stopping",
+      "stopped",
+      PLUGIN_EVENTS.STOPPING,
+      PLUGIN_EVENTS.STOPPED,
+      () => registered.plugin.stop?.(context),
+    );
+  }
+
+  /**
+   * Runs one lifecycle phase, moving through its transient state.
+   *
+   * On failure the plugin moves to `failed` through the state machine
+   * rather than around it, so the recorded state is always one the
+   * machine actually permits.
+   */
+  private async runPhase<TPlugin extends Plugin>(
+    registered: RegisteredPlugin<TPlugin>,
+    context: PluginContext,
+    transient: PluginState,
+    settled: PluginState,
+    startEvent: string,
+    endEvent: string,
+    run: () => void | Promise<void>,
+  ): Promise<void> {
+    const metadata = registered.plugin.metadata;
     const from = registered.state;
 
-    this.ensureTransition(registered, "stopping");
-    registered.setState("stopping");
-    emitLifecycleEvent(context, PLUGIN_EVENTS.STOPPING, name, "stopping", from);
+    this.ensureTransition(registered, transient);
+    registered.setState(transient);
+    emitLifecycleEvent(context, startEvent, metadata, transient, from);
 
     try {
-      await registered.plugin.stop?.(context);
-      this.ensureTransition(registered, "stopped");
-      registered.setState("stopped");
-      emitLifecycleEvent(
-        context,
-        PLUGIN_EVENTS.STOPPED,
-        name,
-        "stopped",
-        "stopping",
-      );
+      await this.runHook(metadata.name, transient, run);
+      this.ensureTransition(registered, settled);
+      registered.setState(settled);
+      emitLifecycleEvent(context, endEvent, metadata, settled, transient);
     } catch (error) {
-      registered.setState("failed");
+      registered.setError(error);
+      this.transitionToFailed(registered);
       emitLifecycleEvent(
         context,
         PLUGIN_EVENTS.FAILED,
-        name,
+        metadata,
         "failed",
-        from,
+        transient,
         error,
       );
       throw error;
     }
   }
 
+  /**
+   * Disposes a plugin and everything it registered for cleanup.
+   *
+   * Disposables run in reverse registration order — the mirror of how
+   * they were acquired — and the list is emptied so a second dispose
+   * cannot run them again. Every failure is collected; the plugin still
+   * reaches a terminal state so it cannot be disposed twice.
+   */
   public async dispose<TPlugin extends Plugin>(
     registered: RegisteredPlugin<TPlugin>,
     context: PluginContext,
   ): Promise<void> {
-    const name = registered.plugin.metadata.name;
+    const metadata = registered.plugin.metadata;
     const from = registered.state;
+
+    if (from === "disposed" || from === "disposing") {
+      return;
+    }
 
     this.ensureTransition(registered, "disposing");
     registered.setState("disposing");
     emitLifecycleEvent(
       context,
       PLUGIN_EVENTS.DISPOSING,
-      name,
+      metadata,
       "disposing",
       from,
     );
 
     const errors: unknown[] = [];
 
-    for (const disposable of registered.disposables) {
+    // Take the list before running it: a disposable that registers
+    // another during teardown must not extend the loop indefinitely.
+    const disposables = registered.disposables.splice(
+      0,
+      registered.disposables.length,
+    );
+
+    for (const disposable of disposables.reverse()) {
       try {
-        await disposable.dispose();
+        await this.runHook(metadata.name, "disposing", () =>
+          disposable.dispose(),
+        );
       } catch (error) {
         errors.push(error);
       }
     }
 
     try {
-      await registered.plugin.dispose?.(context);
+      await this.runHook(metadata.name, "disposing", () =>
+        registered.plugin.dispose?.(context),
+      );
     } catch (error) {
       errors.push(error);
     }
@@ -230,14 +283,57 @@ export class LifecycleController {
     emitLifecycleEvent(
       context,
       PLUGIN_EVENTS.DISPOSED,
-      name,
+      metadata,
       "disposed",
       "disposing",
     );
 
     if (errors.length > 0) {
-      throw errors[0];
+      const error = new PluginDisposeError(
+        errors.length === 1
+          ? `Plugin "${metadata.name}" failed to dispose.`
+          : `Plugin "${metadata.name}" reported ${errors.length} disposal failures.`,
+        metadata.name,
+        { cause: errors[0] },
+      );
+
+      // Every failure is retained; reporting only the first would hide
+      // the rest of a partially failed teardown.
+      Object.defineProperty(error, "errors", {
+        value: Object.freeze([...errors]),
+        enumerable: true,
+        configurable: true,
+      });
+
+      throw error;
     }
+  }
+
+  /**
+   * Moves a plugin to `failed`, via `stopping` when required.
+   */
+  private transitionToFailed(registered: RegisteredPlugin): void {
+    if (registered.state === "failed") {
+      return;
+    }
+
+    if (this.canTransition(registered.state, "failed")) {
+      registered.setState("failed");
+      return;
+    }
+
+    // A phase can fail from a settled state (a hook that threw after
+    // the state had already advanced). Route through `stopping`, which
+    // every settled state permits, so the machine stays consistent.
+    if (this.canTransition(registered.state, "stopping")) {
+      registered.setState("stopping");
+    }
+
+    registered.setState("failed");
+  }
+
+  private canTransition(from: PluginState, to: PluginState): boolean {
+    return VALID_STATE_TRANSITIONS[from]?.includes(to) ?? false;
   }
 
   private ensureTransition(
@@ -249,8 +345,7 @@ export class LifecycleController {
       return;
     }
 
-    const valid = VALID_STATE_TRANSITIONS[from]?.includes(to) ?? false;
-    if (!valid) {
+    if (!this.canTransition(from, to)) {
       throw new PluginStateError(registered.plugin.metadata.name, from, to);
     }
   }

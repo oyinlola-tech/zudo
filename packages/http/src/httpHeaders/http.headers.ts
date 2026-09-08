@@ -1,5 +1,11 @@
 import type { IncomingHttpHeaders } from "node:http";
 
+import {
+  assertSafeHeaderName,
+  assertSafeHeaderValue,
+} from "./security/httpHeaders.security.js";
+import { isIterableHeaders } from "./internal/httpHeaders.internal.typeGuards.js";
+
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -56,8 +62,16 @@ export const HEADER_X_FORWARDED_PROTO = "x-forwarded-proto";
 /* HTTPHeaders                                                                */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Header names that must never be folded into a single comma-joined value.
+ *
+ * RFC 6265 §3 forbids folding `Set-Cookie`: cookie `Expires` attributes
+ * contain commas, so a comma-joined list cannot be split back apart.
+ */
+const NON_FOLDABLE_HEADERS = new Set(["set-cookie"]);
+
 export class HTTPHeaders implements Iterable<[string, string]> {
-  private readonly values = new Map<string, string>();
+  private readonly values = new Map<string, string[]>();
 
   public constructor(init?: HTTPHeadersInit) {
     if (init !== undefined) {
@@ -67,8 +81,10 @@ export class HTTPHeaders implements Iterable<[string, string]> {
 
   public init(init: HTTPHeadersInit): this {
     if (init instanceof HTTPHeaders) {
-      for (const [name, value] of init) {
-        this.set(name, value);
+      for (const name of init.keys()) {
+        for (const value of init.getAll(name)) {
+          this.append(name, value);
+        }
       }
 
       return this;
@@ -100,11 +116,11 @@ export class HTTPHeaders implements Iterable<[string, string]> {
   public set(name: string, value: HTTPHeaderValue): this {
     const normalized = normalizeHeaderName(name);
 
-    validateHeaderNameInternal(normalized);
+    assertSafeHeaderName(normalized);
 
-    validateHeaderValueInternal(String(value));
+    assertSafeHeaderValue(String(value));
 
-    this.values.set(normalized, String(value));
+    this.values.set(normalized, [String(value)]);
 
     return this;
   }
@@ -112,25 +128,64 @@ export class HTTPHeaders implements Iterable<[string, string]> {
   public append(name: string, value: HTTPHeaderValue): this {
     const normalized = normalizeHeaderName(name);
 
-    validateHeaderNameInternal(normalized);
+    assertSafeHeaderName(normalized);
 
     const stringValue = String(value);
 
-    validateHeaderValueInternal(stringValue);
+    assertSafeHeaderValue(stringValue);
 
     const existing = this.values.get(normalized);
 
     if (existing === undefined) {
-      this.values.set(normalized, stringValue);
+      this.values.set(normalized, [stringValue]);
     } else {
-      this.values.set(normalized, `${existing}, ${stringValue}`);
+      existing.push(stringValue);
     }
 
     return this;
   }
 
   public get(name: string): string | undefined {
-    return this.values.get(normalizeHeaderName(name));
+    const normalized = normalizeHeaderName(name);
+
+    const stored = this.values.get(normalized);
+
+    if (stored === undefined || stored.length === 0) {
+      return undefined;
+    }
+
+    if (stored.length === 1) {
+      return stored[0];
+    }
+
+    if (NON_FOLDABLE_HEADERS.has(normalized)) {
+      return stored[0];
+    }
+
+    return stored.join(", ");
+  }
+
+  /**
+   * Returns every value stored for a header name.
+   *
+   * Unlike {@link HTTPHeaders.get} this never folds multiple values into a
+   * single comma-joined string, so it is the correct accessor for
+   * `Set-Cookie`.
+   *
+   * @param name - The header name.
+   * @returns All stored values, in insertion order.
+   */
+  public getAll(name: string): string[] {
+    return [...(this.values.get(normalizeHeaderName(name)) ?? [])];
+  }
+
+  /**
+   * Returns every `Set-Cookie` value, never folded.
+   *
+   * @returns The stored `Set-Cookie` values in insertion order.
+   */
+  public getSetCookie(): string[] {
+    return this.getAll(HEADER_SET_COOKIE);
   }
 
   public has(name: string): boolean {
@@ -150,15 +205,32 @@ export class HTTPHeaders implements Iterable<[string, string]> {
   }
 
   public valuesIterator(): IterableIterator<string> {
-    return this.values.values();
+    return this.foldedEntries()
+      .map(([, value]) => value)
+      [Symbol.iterator]();
   }
 
   public entries(): IterableIterator<[string, string]> {
-    return this.values.entries();
+    return this.foldedEntries()[Symbol.iterator]();
+  }
+
+  /**
+   * Materialises the header map as folded `[name, value]` pairs.
+   *
+   * @returns One entry per header name, with the folded value.
+   */
+  private foldedEntries(): [string, string][] {
+    const entries: [string, string][] = [];
+
+    for (const name of this.values.keys()) {
+      entries.push([name, this.get(name) ?? ""]);
+    }
+
+    return entries;
   }
 
   public forEach(callback: (value: string, name: string) => void): void {
-    for (const [name, value] of this.values) {
+    for (const [name, value] of this.entries()) {
       callback(value, name);
     }
   }
@@ -172,15 +244,41 @@ export class HTTPHeaders implements Iterable<[string, string]> {
   }
 
   public clone(): HTTPHeaders {
-    return new HTTPHeaders(this);
+    const copy = new HTTPHeaders();
+
+    for (const [name, stored] of this.values) {
+      copy.values.set(name, [...stored]);
+    }
+
+    return copy;
   }
 
   public toObject(): Record<string, string> {
-    return Object.fromEntries(this.values);
+    return Object.fromEntries(this.entries());
   }
 
-  public toNodeHeaders(): Record<string, string> {
-    return this.toObject();
+  /**
+   * Converts to a Node-style outgoing header record.
+   *
+   * Non-foldable headers (`Set-Cookie`) are emitted as arrays so that
+   * multiple values survive the round trip.
+   *
+   * @returns A record suitable for `ServerResponse.writeHead`.
+   */
+  public toNodeHeaders(): Record<string, string | string[]> {
+    const result: Record<string, string | string[]> = {};
+
+    for (const [name, stored] of this.values) {
+      if (NON_FOLDABLE_HEADERS.has(name)) {
+        result[name] = [...stored];
+
+        continue;
+      }
+
+      result[name] = stored.join(", ");
+    }
+
+    return result;
   }
 
   public toJSON(): Record<string, string> {
@@ -188,7 +286,7 @@ export class HTTPHeaders implements Iterable<[string, string]> {
   }
 
   public [Symbol.iterator](): IterableIterator<[string, string]> {
-    return this.values.entries() as IterableIterator<[string, string]>;
+    return this.entries();
   }
 }
 
@@ -238,42 +336,6 @@ export function normalizeHeaders(
 
 export function normalizeHeaderName(name: string): string {
   return name.trim().toLowerCase();
-}
-
-function isValidHeaderName(name: string): boolean {
-  if (typeof name !== "string" || name.length === 0) {
-    return false;
-  }
-
-  return /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name);
-}
-
-/* -------------------------------------------------------------------------- */
-/* Header Value Helpers                                                       */
-/* -------------------------------------------------------------------------- */
-
-function validateHeaderNameInternal(name: string): void {
-  if (!isValidHeaderName(name)) {
-    throw new TypeError(`Invalid HTTP header name: ${name}`);
-  }
-}
-
-function validateHeaderValueInternal(value: string): void {
-  if (!isValidHeaderValue(value)) {
-    throw new TypeError("Invalid HTTP header value.");
-  }
-}
-
-function isValidHeaderValue(value: string): boolean {
-  if (typeof value !== "string") {
-    return false;
-  }
-
-  /*
-   * RFC-style HTTP field values must not contain CR/LF.
-   * Horizontal tab is permitted.
-   */
-  return !/[\r\n]/.test(value);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -422,17 +484,5 @@ export function hasSecurityHeaders(headers: HTTPHeadersInit): boolean {
     normalized.has("content-security-policy") ||
     normalized.has("x-content-type-options") ||
     normalized.has("x-frame-options")
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Internal Helpers                                                           */
-/* -------------------------------------------------------------------------- */
-
-function isIterableHeaders(
-  value: unknown,
-): value is Iterable<readonly [string, string | number | boolean]> {
-  return (
-    typeof value === "object" && value !== null && Symbol.iterator in value
   );
 }

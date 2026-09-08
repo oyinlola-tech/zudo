@@ -77,7 +77,7 @@ describe("JSONSerializer — type preservation", () => {
     const date = new Date("2026-08-30T10:00:00.000Z");
     const data = { createdAt: date };
     const json = serializer.serialize(data, { preserveTypes: true });
-    const result = serializer.deserialize(json, { preserveTypes: true });
+    const result = serializer.deserialize<any>(json, { preserveTypes: true });
     expect(result.createdAt).toBeInstanceOf(Date);
     expect(result.createdAt.toISOString()).toBe(date.toISOString());
   });
@@ -85,7 +85,7 @@ describe("JSONSerializer — type preservation", () => {
   it("preserves BigInt values", () => {
     const data = { amount: 100n };
     const json = serializer.serialize(data, { preserveTypes: true });
-    const result = serializer.deserialize(json, { preserveTypes: true });
+    const result = serializer.deserialize<any>(json, { preserveTypes: true });
     expect(result.amount).toBe(100n);
   });
 
@@ -96,7 +96,7 @@ describe("JSONSerializer — type preservation", () => {
     ]);
     const data = { metadata: map };
     const json = serializer.serialize(data, { preserveTypes: true });
-    const result = serializer.deserialize(json, { preserveTypes: true });
+    const result = serializer.deserialize<any>(json, { preserveTypes: true });
     expect(result.metadata).toBeInstanceOf(Map);
     expect(result.metadata.get("name")).toBe("Alice");
     expect(result.metadata.get("age")).toBe("30");
@@ -106,7 +106,7 @@ describe("JSONSerializer — type preservation", () => {
     const set = new Set(["a", "b", "c"]);
     const data = { tags: set };
     const json = serializer.serialize(data, { preserveTypes: true });
-    const result = serializer.deserialize(json, { preserveTypes: true });
+    const result = serializer.deserialize<any>(json, { preserveTypes: true });
     expect(result.tags).toBeInstanceOf(Set);
     expect(result.tags.has("a")).toBe(true);
     expect(result.tags.has("b")).toBe(true);
@@ -118,7 +118,7 @@ describe("JSONSerializer — type preservation", () => {
     const bytes = new Uint8Array([1, 2, 3, 4]);
     const data = { buffer: bytes };
     const json = serializer.serialize(data, { preserveTypes: true });
-    const result = serializer.deserialize(json, { preserveTypes: true });
+    const result = serializer.deserialize<any>(json, { preserveTypes: true });
     expect(result.buffer).toBeInstanceOf(Uint8Array);
     expect([...result.buffer]).toEqual([1, 2, 3, 4]);
   });
@@ -128,7 +128,7 @@ describe("JSONSerializer — type preservation", () => {
     (error as unknown as Record<string, unknown>).code = "TEST_ERROR";
     const data = { error };
     const json = serializer.serialize(data, { preserveTypes: true });
-    const result = serializer.deserialize(json, { preserveTypes: true });
+    const result = serializer.deserialize<any>(json, { preserveTypes: true });
     expect(result.error).toBeInstanceOf(Error);
     expect(result.error.message).toBe("test error");
     expect(result.error.name).toBe("Error");
@@ -142,7 +142,7 @@ describe("JSONSerializer — type preservation", () => {
       metadata: new Map([["key", "val"]]),
     };
     const json = serializer.serialize(data, { preserveTypes: true });
-    const result = serializer.deserialize(json, { preserveTypes: true });
+    const result = serializer.deserialize<any>(json, { preserveTypes: true });
     expect(result.date).toBeInstanceOf(Date);
     expect(result.amount).toBe(999n);
     expect(result.tags).toBeInstanceOf(Set);

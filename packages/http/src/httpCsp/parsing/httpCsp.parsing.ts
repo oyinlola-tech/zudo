@@ -45,12 +45,13 @@ export function hasCSPDirective(
   policy: string | CSPDirectives,
   directive: string,
 ): boolean {
-  return (
-    getCSPDirective(policy, directive).length >= 0 &&
-    Object.prototype.hasOwnProperty.call(
-      typeof policy === "string" ? parseCSP(policy) : policy,
-      directive.trim().toLowerCase(),
-    )
+  /*
+   * The `length >= 0` conjunct this replaced was always true, so the function
+   * was really just the hasOwnProperty check with a misleading first half.
+   */
+  return Object.prototype.hasOwnProperty.call(
+    typeof policy === "string" ? parseCSP(policy) : policy,
+    directive.trim().toLowerCase(),
   );
 }
 

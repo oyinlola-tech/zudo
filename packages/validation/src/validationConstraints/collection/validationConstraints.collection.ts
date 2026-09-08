@@ -1,6 +1,6 @@
-import type { ValidationConstraint } from "./validationConstraints.base.js";
+import type { ValidationConstraint } from "../validationConstraints.base.js";
 
-import { createConstraint, not } from "./validationConstraints.base.js";
+import { createConstraint, not } from "../validationConstraints.base.js";
 
 /**
  * Requires a value to belong to a provided collection.

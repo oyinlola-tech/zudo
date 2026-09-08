@@ -11,8 +11,19 @@ import type {
   Middleware,
   NamedMiddleware,
 } from "../middlewareTypes/middlewareDefinition.type.js";
+import {
+  MiddlewareDepthExceededError,
+  MiddlewareNextCalledMultipleTimesError,
+} from "../middlewareErrors/middlewareError.base.js";
 
-const MAX_DEPTH = 100;
+/** Default ceiling on how deeply a composed chain may nest. */
+export const MAX_DEPTH = 100;
+
+/** Options for {@link compose}. */
+export interface ComposeOptions {
+  /** Maximum chain depth. Default: {@link MAX_DEPTH}. */
+  readonly maxDepth?: number;
+}
 
 /**
  * Compose an array of middleware into a single function.
@@ -22,12 +33,21 @@ const MAX_DEPTH = 100;
  *
  * @param middlewareList - Array of middleware functions
  * @param handler - The final handler to execute after all middleware
+ * @param options - Composition limits
  * @returns Composed function
+ * @throws MiddlewareDepthExceededError if the chain is longer than `maxDepth`
  */
 export function compose<TContext, TResult>(
   middlewareList: readonly Middleware<TContext, TResult>[],
   handler: (context: TContext) => Promise<TResult>,
+  options?: ComposeOptions,
 ): (context: TContext) => Promise<TResult> {
+  const maxDepth = options?.maxDepth ?? MAX_DEPTH;
+
+  if (middlewareList.length > maxDepth) {
+    throw new MiddlewareDepthExceededError(maxDepth);
+  }
+
   if (middlewareList.length === 0) {
     return handler;
   }
@@ -37,7 +57,14 @@ export function compose<TContext, TResult>(
 
     async function dispatch(i: number): Promise<TResult> {
       if (i <= index) {
-        throw new Error("next() called multiple times");
+        // dispatch(i) is invoked by the middleware at i - 1, so that is the
+        // one that called next() again.
+        throw new MiddlewareNextCalledMultipleTimesError(
+          `middleware[${i - 1}]`,
+        );
+      }
+      if (i > maxDepth) {
+        throw new MiddlewareDepthExceededError(maxDepth);
       }
       index = i;
 
@@ -53,7 +80,26 @@ export function compose<TContext, TResult>(
 }
 
 /**
- * Sort and filter named middleware by priority.
+ * Filter disabled middleware and sort the rest by priority.
+ *
+ * Ordering is stable, so middleware sharing a priority keeps its input order.
+ *
+ * @param middlewareList - Array of named middleware
+ * @returns Enabled middleware, in execution order, with names intact
+ */
+export function resolveNamedMiddleware<TContext, TResult>(
+  middlewareList: readonly NamedMiddleware<TContext, TResult>[],
+): NamedMiddleware<TContext, TResult>[] {
+  return middlewareList
+    .filter((mw) => mw.enabled !== false)
+    .sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100));
+}
+
+/**
+ * Sort and filter named middleware by priority, returning bare handlers.
+ *
+ * Prefer {@link resolveNamedMiddleware} when the names are needed — this is a
+ * thin projection of it.
  *
  * @param middlewareList - Array of named middleware
  * @returns Sorted and filtered array of middleware handler functions
@@ -61,27 +107,47 @@ export function compose<TContext, TResult>(
 export function resolveMiddleware<TContext, TResult>(
   middlewareList: readonly NamedMiddleware<TContext, TResult>[],
 ): Middleware<TContext, TResult>[] {
-  return middlewareList
-    .filter((mw) => mw.enabled !== false)
-    .sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100))
-    .map((mw) => mw.handler);
+  return resolveNamedMiddleware(middlewareList).map((mw) => mw.handler);
+}
+
+/** Options for {@link withTiming}. */
+export interface TimingOptions {
+  /** Log only when the middleware takes at least this long. Default: 100ms. */
+  readonly thresholdMs?: number;
+  /** Where to report slow middleware. Default: `console.warn`. */
+  readonly logger?: (message: string) => void;
 }
 
 /**
- * Create a middleware that wraps another with timing.
+ * Wrap a middleware so that slow executions are reported.
+ *
+ * The wrapper is transparent: the inner middleware's return value and any
+ * error it throws pass through unchanged, and the timing is reported either
+ * way.
  */
-export function withTiming<TContext>(
+export function withTiming<TContext, TResult = void>(
   name: string,
-  middleware: Middleware<TContext, void>,
-): NamedMiddleware<TContext, void> {
+  middleware: Middleware<TContext, TResult>,
+  options?: TimingOptions,
+): NamedMiddleware<TContext, TResult> {
+  const thresholdMs = options?.thresholdMs ?? 100;
+  const log =
+    options?.logger ??
+    ((message: string) => {
+      console.warn(message);
+    });
+
   return {
     name,
     handler: async (ctx, next) => {
       const start = performance.now();
-      await middleware(ctx, next);
-      const duration = performance.now() - start;
-      if (duration > 100) {
-        console.warn(`[middleware] ${name} took ${duration.toFixed(1)}ms`);
+      try {
+        return await middleware(ctx, next);
+      } finally {
+        const duration = performance.now() - start;
+        if (duration >= thresholdMs) {
+          log(`[middleware] ${name} took ${duration.toFixed(1)}ms`);
+        }
       }
     },
   };

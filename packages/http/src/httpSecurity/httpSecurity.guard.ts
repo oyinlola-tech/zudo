@@ -15,7 +15,6 @@ import {
   validateContentLength,
   validateRequestId,
   validateTransferEncoding,
-  type SecurityValidationResult,
 } from "./httpSecurity.validator.js";
 
 /** A request-like object for validation (keeps the guard decoupled from HTTP types). */
@@ -88,4 +87,56 @@ export function guardRequest(
   }
 
   return { allowed: true, errors: [], statusCode: 200 };
+}
+
+/**
+ * Binds a configuration to {@link guardRequest} so a server or adapter can
+ * hold a single ready-to-call guard.
+ *
+ * `guardRequest` describes itself as "the first security boundary" and had no
+ * call site anywhere in `src/`, which left the header-count limit, URL-length
+ * limit, Host validation, request-ID validation and the
+ * `Transfer-Encoding`/`Content-Length` smuggling check all inert. This is the
+ * shape the request path should call; see `assertRequestAllowed` for the
+ * throwing variant.
+ */
+export function createRequestGuard(
+  config?: Partial<HTTPSecurityConfig>,
+): (request: GuardableRequest) => GuardResult {
+  return (request) => guardRequest(request, config);
+}
+
+/**
+ * Error thrown by {@link assertRequestAllowed}.
+ *
+ * Carries the status the response should use and the individual validation
+ * failures, so a caller can log the detail without returning it to the client.
+ */
+export class HttpRequestGuardError extends Error {
+  readonly statusCode: number;
+
+  readonly errors: readonly string[];
+
+  constructor(result: GuardResult) {
+    super(`Request rejected by security guard: ${result.errors.join("; ")}`);
+
+    this.name = "HttpRequestGuardError";
+    this.statusCode = result.statusCode;
+    this.errors = result.errors;
+  }
+}
+
+/**
+ * Runs the guard and throws {@link HttpRequestGuardError} when the request is
+ * rejected.
+ */
+export function assertRequestAllowed(
+  request: GuardableRequest,
+  config?: Partial<HTTPSecurityConfig>,
+): void {
+  const result = guardRequest(request, config);
+
+  if (!result.allowed) {
+    throw new HttpRequestGuardError(result);
+  }
 }

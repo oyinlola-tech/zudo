@@ -5,12 +5,9 @@
  */
 
 import type {
-  ResponseBody,
   ResponseHeaders,
   ResponseCookie,
 } from "./core/httpResponse.type.js";
-
-import { getStatusText } from "./core/httpResponse.statusText.js";
 
 /**
  * Creates a JSON response.

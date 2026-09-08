@@ -13,6 +13,7 @@ import type {
 } from "./schemaBase.type.js";
 import { createParseContext } from "./schemaBase.context.js";
 import { schemaSuccess, schemaFailure } from "./schemaBase.result.js";
+import { SchemaValidationSignal } from "./schemaBase.context.js";
 import { SchemaError } from "@zudojs/errors";
 
 /**
@@ -83,7 +84,15 @@ export abstract class Schema<TOutput, TInput = TOutput> {
         return schemaFailure([...ctx.issues]);
       }
       return schemaSuccess(data);
-    } catch {
+    } catch (error) {
+      // Only the internal failure signal means "the input is invalid". Any
+      // other throw is a defect — a bug in a refine or transform callback, a
+      // RangeError from stack exhaustion — and reporting it as a validation
+      // issue would hide it, or, in the recursive case, let a partially
+      // validated value be reported as a success.
+      if (!(error instanceof SchemaValidationSignal)) {
+        throw error;
+      }
       if (ctx.issues.length > 0) {
         return schemaFailure([...ctx.issues]);
       }
@@ -91,7 +100,7 @@ export abstract class Schema<TOutput, TInput = TOutput> {
         {
           code: "custom",
           path: [],
-          message: "Unknown validation error",
+          message: "Validation failed without a recorded issue",
         },
       ]);
     }

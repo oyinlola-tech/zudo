@@ -6,6 +6,8 @@ import { HttpRouteResult } from "./httpRoute.result.class.js";
 
 import type { RouteResultBody } from "./httpRoute.result.type.js";
 
+import { formatAllowHeader } from "../../httpMethods/http.methods.js";
+
 /* -------------------------------------------------------------------------- */
 /* 4xx Error Results                                                          */
 /* -------------------------------------------------------------------------- */
@@ -53,7 +55,7 @@ export function methodNotAllowed(
   return new HttpRouteResult({
     status: 405,
     headers: {
-      Allow: methods.join(", "),
+      Allow: formatAllowHeader(methods),
     },
     body: body ?? {
       error: "Method Not Allowed",

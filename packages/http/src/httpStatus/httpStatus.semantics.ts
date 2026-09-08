@@ -7,8 +7,18 @@
 
 import { STATUS } from "./httpStatus.statusConstant.js";
 
+/**
+ * Reports whether a response with this status may carry content.
+ *
+ * A 1xx response terminates before the content section (RFC 9110
+ * section 6.4.1): writing a body after one corrupts connection framing,
+ * because the client reads those bytes as the start of the next response.
+ *
+ * @param status - The status code.
+ * @returns `true` if content is allowed.
+ */
 export function hasResponseBody(status: number): boolean {
-  return !(status === 204 || status === 304 || status === 205);
+  return !(status < 200 || status === 204 || status === 205 || status === 304);
 }
 
 export function isCacheableByDefault(status: number): boolean {

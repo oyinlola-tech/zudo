@@ -8,6 +8,7 @@ export {
   UnionSchema,
   DiscriminatedUnionSchema,
   unionSchema,
+  discriminatedUnionSchema,
 } from "./schemaUnion.core.js";
 export {
   IntersectionSchema,

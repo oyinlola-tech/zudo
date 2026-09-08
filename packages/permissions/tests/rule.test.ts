@@ -76,66 +76,83 @@ describe("ruleMatches", () => {
 });
 
 describe("evaluateRules", () => {
-  it("returns deny when no rules match", () => {
+  it("returns deny when no rules match", async () => {
     const rules = [
       { effect: "allow" as const, action: "read", resource: "post" },
     ];
-    const result = evaluateRules(rules, { resource: "post", action: "update" });
+    const result = await evaluateRules(rules, {
+      resource: "post",
+      action: "update",
+    });
     expect(result.allowed).toBe(false);
   });
 
-  it("returns allow when a rule matches", () => {
+  it("returns allow when a rule matches", async () => {
     const rules = [
       { effect: "allow" as const, action: "read", resource: "post" },
     ];
-    const result = evaluateRules(rules, { resource: "post", action: "read" });
+    const result = await evaluateRules(rules, {
+      resource: "post",
+      action: "read",
+    });
     expect(result.allowed).toBe(true);
   });
 
-  it("deny overrides allow at same priority", () => {
+  it("deny overrides allow at same priority", async () => {
     const rules = [
       { effect: "allow" as const, action: "read", resource: "post" },
       { effect: "deny" as const, action: "read", resource: "post" },
     ];
-    const result = evaluateRules(rules, { resource: "post", action: "read" });
+    const result = await evaluateRules(rules, {
+      resource: "post",
+      action: "read",
+    });
     expect(result.allowed).toBe(false);
   });
 
-  it("higher priority wins", () => {
+  it("denies regardless of priority under deny-overrides (PERM-21)", async () => {
     const rules = [
-      {
-        effect: "allow" as const,
-        action: "read",
-        resource: "post",
-        priority: 1,
-      },
-      {
-        effect: "deny" as const,
-        action: "read",
-        resource: "post",
-        priority: 10,
-      },
-    ];
-    const result = evaluateRules(rules, { resource: "post", action: "read" });
-    expect(result.allowed).toBe(false);
-  });
-
-  it("higher priority allow wins over lower deny", () => {
-    const rules = [
-      {
-        effect: "deny" as const,
-        action: "read",
-        resource: "post",
-        priority: 1,
-      },
       {
         effect: "allow" as const,
         action: "read",
         resource: "post",
         priority: 10,
       },
+      {
+        effect: "deny" as const,
+        action: "read",
+        resource: "post",
+        priority: 1,
+      },
     ];
-    const result = evaluateRules(rules, { resource: "post", action: "read" });
+    const result = await evaluateRules(rules, {
+      resource: "post",
+      action: "read",
+    });
+    expect(result.allowed).toBe(false);
+  });
+
+  it("lets priority decide under the priority algorithm (PERM-21)", async () => {
+    const rules = [
+      {
+        effect: "deny" as const,
+        action: "read",
+        resource: "post",
+        priority: 1,
+      },
+      {
+        effect: "allow" as const,
+        action: "read",
+        resource: "post",
+        priority: 10,
+      },
+    ];
+    const result = await evaluateRules(
+      rules,
+      { resource: "post", action: "read" },
+      undefined,
+      { algorithm: "priority" },
+    );
     expect(result.allowed).toBe(true);
   });
 });

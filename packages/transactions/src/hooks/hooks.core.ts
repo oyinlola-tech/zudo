@@ -4,11 +4,7 @@
  * @module hooks/hooks
  */
 
-import type {
-  TransactionHooks,
-  TransactionHookContext,
-  TransactionErrorContext,
-} from "../transactionTypes/transactionHooks.js";
+import type { TransactionHooks } from "../transactionTypes/transactionHooks.js";
 
 /**
  * Merge multiple hook sets into one. Later hooks run after earlier ones.

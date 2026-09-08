@@ -119,24 +119,54 @@ describe("createMemoryPermissionCache", () => {
 
   it("invalidates by actor", async () => {
     const cache = createMemoryPermissionCache();
-    await cache.set("actor:user_1:post:read", { allowed: true });
-    await cache.set("actor:user_2:post:read", { allowed: true });
+    const first = permissionCacheKey("user_1", "post:read");
+    const second = permissionCacheKey("user_2", "post:read");
+    await cache.set(first, { allowed: true });
+    await cache.set(second, { allowed: true });
     await cache.invalidateActor("user_1");
-    expect(await cache.get("actor:user_1:post:read")).toBeUndefined();
-    expect(await cache.get("actor:user_2:post:read")).toBeDefined();
+    expect(await cache.get(first)).toBeUndefined();
+    expect(await cache.get(second)).toBeDefined();
+  });
+
+  it("does not invalidate an actor whose id shares a prefix (PERM-09)", async () => {
+    const cache = createMemoryPermissionCache();
+    const one = permissionCacheKey("1", "post:read");
+    const ten = permissionCacheKey("10", "post:read");
+    await cache.set(one, { allowed: true });
+    await cache.set(ten, { allowed: true });
+    await cache.invalidateActor("1");
+    expect(await cache.get(one)).toBeUndefined();
+    expect(await cache.get(ten)).toBeDefined();
+  });
+
+  it("treats a zero TTL as do-not-cache (PERM-09)", async () => {
+    const cache = createMemoryPermissionCache();
+    const key = permissionCacheKey("user_1", "post:read");
+    await cache.set(key, { allowed: true }, { ttl: 0 });
+    expect(await cache.get(key)).toBeUndefined();
+  });
+
+  it("evicts once past its maximum size (PERM-09)", async () => {
+    const cache = createMemoryPermissionCache({ maxEntries: 5 });
+    for (let i = 0; i < 50; i++) {
+      await cache.set(permissionCacheKey(`u${i}`, "post:read"), {
+        allowed: true,
+      });
+    }
+    expect(cache.size()).toBeLessThanOrEqual(5);
   });
 });
 
 describe("permissionCacheKey", () => {
   it("generates a cache key", () => {
     expect(permissionCacheKey("user_1", "post:read")).toBe(
-      "actor:user_1:post:read",
+      "actor:user_1|post:read",
     );
   });
 
   it("includes resource ID", () => {
     expect(permissionCacheKey("user_1", "post:read", "post_123")).toBe(
-      "actor:user_1:post:read:post_123",
+      "actor:user_1|post:read|post_123",
     );
   });
 });
@@ -156,10 +186,12 @@ describe("utils", () => {
     expect(buildPermission("post", "update")).toBe("post:update");
   });
 
-  it("createCacheKey", () => {
-    expect(createCacheKey("user_1", "post:read")).toBe("user_1:post:read");
+  it("createCacheKey delegates to the canonical builder (PERM-29)", () => {
+    expect(createCacheKey("user_1", "post:read")).toBe(
+      permissionCacheKey("user_1", "post:read"),
+    );
     expect(createCacheKey("user_1", "post:read", "post_1")).toBe(
-      "user_1:post:read:post_1",
+      permissionCacheKey("user_1", "post:read", "post_1"),
     );
   });
 
@@ -168,5 +200,7 @@ describe("utils", () => {
     expect(actor.id).toBe("user_1");
     expect(actor.type).toBe("user");
     expect(actor.roles).toEqual(["admin"]);
+    // Both factories freeze, so the two are no longer subtly different.
+    expect(Object.isFrozen(actor.roles)).toBe(true);
   });
 });

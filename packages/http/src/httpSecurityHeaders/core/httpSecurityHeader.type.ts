@@ -15,7 +15,6 @@ export interface SecurityHeadersOptions {
       };
   readonly xContentTypeOptions?: boolean;
   readonly xFrameOptions?: boolean | XFrameOptions;
-  readonly xXssProtection?: boolean | string;
   readonly referrerPolicy?: boolean | ReferrerPolicyValue;
   readonly permissionsPolicy?: boolean | PermissionsPolicy;
   readonly crossOriginEmbedderPolicy?: boolean | CrossOriginEmbedderPolicy;
@@ -23,28 +22,29 @@ export interface SecurityHeadersOptions {
   readonly crossOriginResourcePolicy?: boolean | CrossOriginResourcePolicy;
   readonly xPermittedCrossDomainPolicies?:
     boolean | XPermittedCrossDomainPolicy;
-  readonly expectCt?:
-    | boolean
-    | {
-        readonly maxAge?: number;
-        readonly enforce?: boolean;
-        readonly reportUri?: string;
-      };
 }
+
+/*
+ * `xXssProtection` and `expectCt` were declared here and in `SecurityHeaders`,
+ * and `createSecurityHeaders` had no branch for either — the types promised
+ * headers the code never emitted. They are removed rather than implemented:
+ * `X-XSS-Protection` with any value other than `0` enables a legacy auditor
+ * that is itself an XSS vector and is ignored by every current browser, and
+ * `Expect-CT` was deprecated and is no longer honoured. Emitting them would be
+ * worse than omitting them.
+ */
 
 export type SecurityHeaders = {
   readonly "content-security-policy"?: string;
   readonly "strict-transport-security"?: string;
   readonly "x-content-type-options"?: string;
   readonly "x-frame-options"?: string;
-  readonly "x-xss-protection"?: string;
   readonly "referrer-policy"?: string;
   readonly "permissions-policy"?: string;
   readonly "cross-origin-embedder-policy"?: string;
   readonly "cross-origin-opener-policy"?: string;
   readonly "cross-origin-resource-policy"?: string;
   readonly "x-permitted-cross-domain-policies"?: string;
-  readonly "expect-ct"?: string;
 };
 
 export type XFrameOptions = "DENY" | "SAMEORIGIN" | `ALLOW-FROM ${string}`;
@@ -87,14 +87,12 @@ export const SECURITY_HEADER_NAMES = {
   HSTS: "strict-transport-security",
   XCTO: "x-content-type-options",
   XFO: "x-frame-options",
-  XSS: "x-xss-protection",
   RP: "referrer-policy",
   PP: "permissions-policy",
   COEP: "cross-origin-embedder-policy",
   COOP: "cross-origin-opener-policy",
   CORP: "cross-origin-resource-policy",
   XPCDP: "x-permitted-cross-domain-policies",
-  EC: "expect-ct",
 } as const;
 
 export const DEFAULT_REFERRER_POLICY: ReferrerPolicyValue =

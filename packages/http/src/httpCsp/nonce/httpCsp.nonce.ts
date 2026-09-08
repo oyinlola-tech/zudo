@@ -12,11 +12,18 @@ function getCrypto(): Crypto | undefined {
   return undefined;
 }
 
-function fillRandomBytes(bytes: Uint8Array): void {
+/**
+ * Fills the buffer from the platform CSPRNG.
+ *
+ * There is deliberately no `Math.random()` fallback: a predictable nonce is
+ * worse than no nonce, because the policy claims protection it does not have.
+ * If no CSPRNG is reachable this throws rather than degrading.
+ */
+function fillRandomBytes(bytes: Uint8Array<ArrayBuffer>): void {
   const cryptoObject = getCrypto();
 
   if (cryptoObject?.getRandomValues) {
-    cryptoObject.getRandomValues(bytes as any);
+    cryptoObject.getRandomValues(bytes);
     return;
   }
 
@@ -56,6 +63,15 @@ function validateNonce(nonce: string): void {
   }
 }
 
+/**
+ * Generates a fresh CSP nonce from the platform CSPRNG.
+ *
+ * **Call this once per response.** A nonce reused across responses is
+ * equivalent to `'unsafe-inline'` for any attacker who has seen one response:
+ * they simply reuse the value in their injected `<script nonce=…>`. There is
+ * no caching in this function and there must not be any in callers — do not
+ * hoist the result into a module-level constant or a per-process cache.
+ */
 export function generateCSPNonce(
   options: CSPNonceOptions | undefined = {},
 ): string {

@@ -4,7 +4,7 @@
  * @module tenancyTypes/tenantInterface
  */
 
-import type { TenantId, TenantStatus, TenancyMode } from "./tenantIdentity.js";
+import type { TenantId, TenantStatus } from "./tenantIdentity.js";
 
 /** A tenant entity. */
 export interface Tenant {

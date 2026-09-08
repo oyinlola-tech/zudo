@@ -6,7 +6,6 @@
 
 import type { TenantId, TenantIsolationStrategy } from "./tenantIdentity.js";
 import type { Tenant } from "./tenantInterface.js";
-import type { TenantResolver, ResolverChainOptions } from "./resolverTypes.js";
 
 /** Repository for loading tenants. */
 export interface TenantRepository {

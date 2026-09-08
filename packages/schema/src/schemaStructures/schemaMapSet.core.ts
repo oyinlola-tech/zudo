@@ -6,7 +6,14 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
-import { addIssue } from "../schemaBase/index.js";
+import {
+  addIssue,
+  childContext,
+  failValidation,
+  enterComposite,
+  leaveComposite,
+  rethrowUnexpected,
+} from "../schemaBase/index.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
 /**
@@ -31,17 +38,41 @@ export class MapSchema<TKey, TValue> extends Schema<Map<TKey, TValue>> {
         expected: "Map",
         received: typeof input,
       });
-      throw new Error("Validation failed");
+      failValidation();
     }
 
-    const result = new Map<TKey, TValue>();
-    for (const [key, value] of input) {
-      const k = this._keySchema._parse(ctx, key);
-      const v = this._valueSchema._parse(ctx, value);
-      result.set(k, v);
+    if (!enterComposite(ctx, input)) {
+      failValidation();
     }
 
-    return result;
+    try {
+      const result = new Map<TKey, TValue>();
+      let failed = false;
+      let index = 0;
+
+      for (const [key, value] of input) {
+        // A child context per entry, so an issue path names the entry rather
+        // than pointing at the Map as a whole.
+        const entryCtx = childContext(ctx, index++);
+        try {
+          const k = this._keySchema._parse(entryCtx, key);
+          const v = this._valueSchema._parse(entryCtx, value);
+          result.set(k, v);
+        } catch (error) {
+          rethrowUnexpected(error);
+          failed = true;
+          if (ctx.options.abortEarly) break;
+        }
+      }
+
+      if (failed) {
+        failValidation();
+      }
+
+      return result;
+    } finally {
+      leaveComposite(ctx, input);
+    }
   }
 }
 
@@ -64,15 +95,37 @@ export class SetSchema<TValue> extends Schema<Set<TValue>> {
         expected: "Set",
         received: typeof input,
       });
-      throw new Error("Validation failed");
+      failValidation();
     }
 
-    const result = new Set<TValue>();
-    for (const value of input) {
-      result.add(this._valueSchema._parse(ctx, value));
+    if (!enterComposite(ctx, input)) {
+      failValidation();
     }
 
-    return result;
+    try {
+      const result = new Set<TValue>();
+      let failed = false;
+      let index = 0;
+
+      for (const value of input) {
+        const entryCtx = childContext(ctx, index++);
+        try {
+          result.add(this._valueSchema._parse(entryCtx, value));
+        } catch (error) {
+          rethrowUnexpected(error);
+          failed = true;
+          if (ctx.options.abortEarly) break;
+        }
+      }
+
+      if (failed) {
+        failValidation();
+      }
+
+      return result;
+    } finally {
+      leaveComposite(ctx, input);
+    }
   }
 }
 

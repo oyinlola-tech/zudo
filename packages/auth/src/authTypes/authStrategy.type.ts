@@ -2,6 +2,14 @@
  * Authentication strategy types (OAuth2, social login, etc.).
  *
  * @module authStrategy/authStrategy
+ *
+ * **Contract only — this package ships no implementation of any of these.**
+ * There is no authorize-URL builder, no authorization-code exchange, no
+ * state/PKCE handling and no user-info fetch anywhere in `@zudojs/auth`, and
+ * `createAuthService()` has no strategy registry. The types exist so that
+ * consumers who implement `AuthStrategy` themselves, or a future strategy
+ * package, share one shape. Do not install this package expecting working
+ * OAuth2.
  */
 
 import type { UserId } from "../authTypes/authUser.type.js";
@@ -67,6 +75,8 @@ export interface OAuthResult {
 /**
  * Authentication strategy interface.
  * Each strategy (password, OAuth2, API key, etc.) implements this.
+ *
+ * Nothing in this package implements or consumes it — see the module note.
  */
 export interface AuthStrategy {
   /** Strategy identifier */

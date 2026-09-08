@@ -40,9 +40,11 @@ function isValidByteRange(range: string): boolean {
     return false;
   }
 
-  const start = match[1];
+  const [, start, end] = match;
 
-  const end = match[2];
+  if (start === undefined || end === undefined) {
+    return false;
+  }
 
   return start.length > 0 || end.length > 0;
 }

@@ -27,6 +27,10 @@ export interface ProxyRequest {
 export interface ForwardedAddress {
   readonly address: string;
   readonly port: number | undefined;
+  /** RFC 7239 `proto=` parameter, when present. */
+  readonly protocol?: string;
+  /** RFC 7239 `host=` parameter, when present. */
+  readonly host?: string;
   readonly source: string;
 }
 

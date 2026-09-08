@@ -23,6 +23,7 @@ export type {
   RuntimeStateFull,
   RuntimeId,
   RuntimeStatus,
+  RuntimeShutdownFailure,
   RuntimeStateTransition,
   RuntimeStateTransitions,
   RuntimeHealthState,

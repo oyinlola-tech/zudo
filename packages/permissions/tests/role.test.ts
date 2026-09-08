@@ -16,11 +16,19 @@ describe("createRoleRegistry", () => {
     ).toThrow("Role name cannot be empty");
   });
 
-  it("throws on empty permissions", () => {
+  it("accepts a role that only inherits (PERM-30)", () => {
     const registry = createRoleRegistry();
-    expect(() => registry.define({ name: "admin", permissions: [] })).toThrow(
-      "must have at least one permission",
-    );
+    expect(() =>
+      registry.define({ name: "staff", permissions: [], inherits: ["reader"] }),
+    ).not.toThrow();
+    expect(registry.get("staff")?.permissions).toEqual([]);
+  });
+
+  it("rejects a malformed permission string (PERM-22)", () => {
+    const registry = createRoleRegistry();
+    expect(() =>
+      registry.define({ name: "broken", permissions: ["post"] }),
+    ).toThrow("not a valid");
   });
 
   it("throws on duplicate", () => {
@@ -84,33 +92,42 @@ describe("resolveRolePermissions", () => {
   const getRole = (name: string) => roles.get(name);
 
   it("resolves direct permissions", () => {
-    const perms = resolveRolePermissions(["reader"], getRole);
+    const perms = resolveRolePermissions(["reader"], getRole).permissions;
     expect(perms).toEqual(["post:read"]);
   });
 
   it("resolves inherited permissions", () => {
-    const perms = resolveRolePermissions(["editor"], getRole);
+    const perms = resolveRolePermissions(["editor"], getRole).permissions;
     expect(perms).toContain("post:read");
     expect(perms).toContain("post:update");
   });
 
   it("resolves deep inheritance", () => {
-    const perms = resolveRolePermissions(["admin"], getRole);
+    const perms = resolveRolePermissions(["admin"], getRole).permissions;
     expect(perms).toContain("*:*");
     expect(perms).toContain("post:read");
     expect(perms).toContain("post:update");
   });
 
   it("deduplicates permissions", () => {
-    const perms = resolveRolePermissions(["editor", "reader"], getRole);
+    const perms = resolveRolePermissions(
+      ["editor", "reader"],
+      getRole,
+    ).permissions;
     const unique = new Set(perms);
     expect(perms.length).toBe(unique.size);
   });
 
-  it("throws on missing role", () => {
-    expect(() => resolveRolePermissions(["nonexistent"], getRole)).toThrow(
-      "Role not found",
-    );
+  it("reports an unknown role instead of throwing (PERM-11)", () => {
+    const resolution = resolveRolePermissions(["nonexistent"], getRole);
+    expect(resolution.permissions).toEqual([]);
+    expect(resolution.unknownRoles).toEqual(["nonexistent"]);
+  });
+
+  it("still resolves the roles it does know", () => {
+    const resolution = resolveRolePermissions(["reader", "nope"], getRole);
+    expect(resolution.permissions.length).toBeGreaterThan(0);
+    expect(resolution.unknownRoles).toEqual(["nope"]);
   });
 
   it("throws on circular inheritance", () => {
@@ -124,7 +141,7 @@ describe("resolveRolePermissions", () => {
   });
 
   it("returns empty for empty input", () => {
-    const perms = resolveRolePermissions([], getRole);
+    const perms = resolveRolePermissions([], getRole).permissions;
     expect(perms).toEqual([]);
   });
 });

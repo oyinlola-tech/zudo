@@ -2,6 +2,11 @@
  * @zudojs/observability — Console Exporter
  *
  * Exports telemetry to the console for development and debugging.
+ *
+ * Serialization is defensive, because everything here is fed values the API
+ * declares as `unknown`: circular structures, BigInts and throwing getters all
+ * reach `JSON.stringify` eventually, and an exporter that throws inside the
+ * logging path takes the process with it.
  */
 
 import type {
@@ -12,15 +17,79 @@ import type {
   ReadableSpan,
   SpanExporter,
 } from "../types.js";
+import { LogLevel } from "../types.js";
+
+/** Shape of the console methods the exporters use. */
+export interface ConsoleLike {
+  log(message: string): void;
+  warn(message: string): void;
+  error(message: string): void;
+}
+
+/** Options shared by the console exporters. */
+export interface ConsoleExporterOptions {
+  /**
+   * Indent the JSON. Default: `false` — one line per record is what log
+   * shippers parse, and pretty-printing a span is expensive under load.
+   */
+  readonly pretty?: boolean;
+  /** Where to write. Defaults to the global console. */
+  readonly console?: ConsoleLike;
+}
+
+/**
+ * JSON.stringify that cannot throw.
+ *
+ * Cycles become `"[Circular]"`, BigInts become their decimal string, and a
+ * value that defeats serialization entirely falls back to `String(value)`.
+ */
+export function safeStringify(value: unknown, pretty = false): string {
+  const seen = new WeakSet<object>();
+  try {
+    return (
+      JSON.stringify(
+        value,
+        (_key, entry: unknown) => {
+          if (typeof entry === "bigint") return entry.toString();
+          if (typeof entry === "function") return "[Function]";
+          if (typeof entry === "symbol") return entry.toString();
+          if (entry instanceof Error) {
+            return {
+              name: entry.name,
+              message: entry.message,
+              stack: entry.stack,
+            };
+          }
+          if (typeof entry === "object" && entry !== null) {
+            if (seen.has(entry)) return "[Circular]";
+            seen.add(entry);
+          }
+          return entry;
+        },
+        pretty ? 2 : undefined,
+      ) ?? String(value)
+    );
+  } catch {
+    return String(value);
+  }
+}
 
 /**
  * Exports completed spans to the console.
  */
 export class ConsoleSpanExporter implements SpanExporter {
+  private readonly pretty: boolean;
+  private readonly out: ConsoleLike;
+
+  constructor(options?: ConsoleExporterOptions) {
+    this.pretty = options?.pretty ?? false;
+    this.out = options?.console ?? console;
+  }
+
   async export(spans: readonly ReadableSpan[]): Promise<void> {
     for (const span of spans) {
-      console.log(
-        JSON.stringify(
+      this.out.log(
+        safeStringify(
           {
             type: "span",
             name: span.name,
@@ -29,15 +98,21 @@ export class ConsoleSpanExporter implements SpanExporter {
             parentSpanId: span.context.parentSpanId,
             kind: span.kind,
             status: span.status,
-            duration: `${span.duration}ms`,
+            statusMessage: span.statusMessage,
+            durationMs: span.duration,
             startTime: span.startTime.toISOString(),
             endTime: span.endTime.toISOString(),
             attributes: span.attributes,
             events: span.events,
             resource: span.resource,
+            ...(span.droppedAttributes > 0
+              ? { droppedAttributes: span.droppedAttributes }
+              : {}),
+            ...(span.droppedEvents > 0
+              ? { droppedEvents: span.droppedEvents }
+              : {}),
           },
-          null,
-          2,
+          this.pretty,
         ),
       );
     }
@@ -52,24 +127,33 @@ export class ConsoleSpanExporter implements SpanExporter {
  * Exports log records to the console.
  */
 export class ConsoleLogExporter implements LogExporter {
+  private readonly pretty: boolean;
+  private readonly out: ConsoleLike;
+
+  constructor(options?: ConsoleExporterOptions) {
+    this.pretty = options?.pretty ?? false;
+    this.out = options?.console ?? console;
+  }
+
   async export(records: readonly LogRecord[]): Promise<void> {
     for (const record of records) {
-      const output = {
-        timestamp: record.timestamp.toISOString(),
-        level: record.levelName,
-        logger: record.loggerName,
-        message: record.message,
-        ...(record.context ? { context: record.context } : {}),
-        ...(record.error ? { error: record.error } : {}),
-      };
+      const line = safeStringify(
+        {
+          timestamp: record.timestamp.toISOString(),
+          level: record.levelName,
+          logger: record.loggerName,
+          message: record.message,
+          ...(record.traceId ? { traceId: record.traceId } : {}),
+          ...(record.spanId ? { spanId: record.spanId } : {}),
+          ...(record.context ? { context: record.context } : {}),
+          ...(record.error ? { error: record.error } : {}),
+        },
+        this.pretty,
+      );
 
-      if (record.level >= 4) {
-        console.error(JSON.stringify(output, null, 2));
-      } else if (record.level >= 3) {
-        console.warn(JSON.stringify(output, null, 2));
-      } else {
-        console.log(JSON.stringify(output, null, 2));
-      }
+      if (record.level >= LogLevel.ERROR) this.out.error(line);
+      else if (record.level >= LogLevel.WARN) this.out.warn(line);
+      else this.out.log(line);
     }
   }
 
@@ -82,20 +166,27 @@ export class ConsoleLogExporter implements LogExporter {
  * Exports metric snapshots to the console.
  */
 export class ConsoleMetricExporter implements MetricExporter {
+  private readonly pretty: boolean;
+  private readonly out: ConsoleLike;
+
+  constructor(options?: ConsoleExporterOptions) {
+    this.pretty = options?.pretty ?? false;
+    this.out = options?.console ?? console;
+  }
+
   async export(snapshots: readonly MetricSnapshot[]): Promise<void> {
     for (const snapshot of snapshots) {
-      console.log(
-        JSON.stringify(
+      this.out.log(
+        safeStringify(
           {
             type: "metric",
             metricType: snapshot.type,
             name: snapshot.name,
             value: snapshot.value,
             labels: snapshot.labels,
-            timestamp: new Date().toISOString(),
+            timestamp: snapshot.timestamp.toISOString(),
           },
-          null,
-          2,
+          this.pretty,
         ),
       );
     }
@@ -106,17 +197,35 @@ export class ConsoleMetricExporter implements MetricExporter {
   }
 }
 
+/** A log exporter that discards everything. */
+export const noopLogExporter: LogExporter = {
+  export: async () => {},
+  shutdown: async () => {},
+};
+
+/** A metric exporter that discards everything. */
+export const noopMetricExporter: MetricExporter = {
+  export: async () => {},
+  shutdown: async () => {},
+};
+
 /** Creates a console span exporter. */
-export function createConsoleSpanExporter(): ConsoleSpanExporter {
-  return new ConsoleSpanExporter();
+export function createConsoleSpanExporter(
+  options?: ConsoleExporterOptions,
+): ConsoleSpanExporter {
+  return new ConsoleSpanExporter(options);
 }
 
 /** Creates a console log exporter. */
-export function createConsoleLogExporter(): ConsoleLogExporter {
-  return new ConsoleLogExporter();
+export function createConsoleLogExporter(
+  options?: ConsoleExporterOptions,
+): ConsoleLogExporter {
+  return new ConsoleLogExporter(options);
 }
 
 /** Creates a console metric exporter. */
-export function createConsoleMetricExporter(): ConsoleMetricExporter {
-  return new ConsoleMetricExporter();
+export function createConsoleMetricExporter(
+  options?: ConsoleExporterOptions,
+): ConsoleMetricExporter {
+  return new ConsoleMetricExporter(options);
 }

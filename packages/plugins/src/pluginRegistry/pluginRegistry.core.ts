@@ -2,11 +2,8 @@ import type { Plugin } from "../pluginTypes/plugin.type.js";
 import type { PluginMetadata } from "../pluginTypes/pluginMetadata.type.js";
 import type { PluginDependency } from "../pluginTypes/pluginDependency.type.js";
 import type { PluginState } from "../pluginTypes/pluginState.type.js";
-import {
-  PluginAlreadyRegisteredError,
-  PluginNotFoundError,
-  PluginStateError,
-} from "@zudojs/errors";
+import type { PluginDisposable } from "../pluginTypes/pluginContext.type.js";
+import { PluginAlreadyRegisteredError, PluginStateError } from "@zudojs/errors";
 
 /**
  * Internal representation of a registered plugin.
@@ -18,11 +15,26 @@ export interface RegisteredPlugin<TPlugin extends Plugin = Plugin> {
 
   readonly options?: unknown;
 
-  readonly disposables: Array<{ dispose(): void | Promise<void> }>;
+  readonly disposables: PluginDisposable[];
 
-  registerDisposable(disposable: { dispose(): void | Promise<void> }): void;
+  /**
+   * Whether this plugin failed at any point in its lifecycle.
+   *
+   * Tracked separately from `state` because a failed plugin is disposed
+   * during rollback, which would otherwise erase every trace of the
+   * failure from diagnostics.
+   */
+  failed: boolean;
+
+  /** The error that caused the failure, if any. */
+  error?: unknown;
+
+  registerDisposable(disposable: PluginDisposable): void;
 
   setState(state: PluginState): void;
+
+  /** Records a lifecycle failure. */
+  setError(error: unknown): void;
 }
 
 /**
@@ -63,18 +75,23 @@ export class PluginRegistryImpl implements PluginRegistry {
       throw new PluginAlreadyRegisteredError(name);
     }
 
-    const disposables: Array<{ dispose(): void | Promise<void> }> = [];
+    const disposables: PluginDisposable[] = [];
 
     const registered: RegisteredPlugin<TPlugin> = {
       plugin,
       state: "registered",
       options,
       disposables,
+      failed: false,
       registerDisposable(disposable) {
         disposables.push(disposable);
       },
       setState(state) {
         registered.state = state;
+      },
+      setError(error) {
+        registered.failed = true;
+        registered.error = error;
       },
     };
 

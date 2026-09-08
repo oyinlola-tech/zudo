@@ -51,13 +51,12 @@ export function createNormalizer<T>(
     safeNormalize(value: T): ValidationResult<T> {
       try {
         return success(normalizer(value));
-      } catch (error) {
+      } catch {
         return failure([
           {
             path: [],
             code: "normalization_failed",
             message: options.errorMessage ?? "Value normalization failed.",
-            received: error instanceof Error ? error.message : error,
           },
         ]);
       }
@@ -88,13 +87,12 @@ export function createAsyncNormalizer<T>(
     async safeNormalize(value: T): Promise<ValidationResult<T>> {
       try {
         return success(await normalizer(value));
-      } catch (error) {
+      } catch {
         return failure([
           {
             path: [],
             code: "normalization_failed",
             message: options.errorMessage ?? "Value normalization failed.",
-            received: error instanceof Error ? error.message : error,
           },
         ]);
       }

@@ -13,7 +13,6 @@ import {
 
 import type {
   HttpAdapter,
-  HttpAdapterOptions,
   HttpHandler,
   HttpErrorHandler,
 } from "../../httpAdapter/http.adapter.js";
@@ -31,14 +30,31 @@ export interface HttpServerAddress {
   readonly path?: string;
 }
 
-export interface HttpServerOptions extends HttpAdapterOptions {
+/**
+ * Options accepted by `HttpServer`.
+ *
+ * This deliberately does NOT extend `HttpAdapterOptions`. Doing so advertised
+ * `port`, `host`, `trustProxy` and `capabilities` on the server while the
+ * constructor read none of them, so `createHttpServer({ trustProxy: [...] })`
+ * compiled and silently ran with no proxy trust. Adapter-level settings
+ * belong on the adapter that is passed in.
+ */
+export interface HttpServerOptions {
   readonly adapter: HttpAdapter;
+
+  readonly name?: string;
 
   readonly handler?: HttpHandler;
 
   readonly errorHandler?: HttpErrorHandler;
 
   readonly gracefulShutdownTimeout?: number;
+
+  /**
+   * Lifecycle listeners registered before the server starts. Further
+   * listeners can be added at any time with `on()`.
+   */
+  readonly events?: HttpServerEvents;
 
   readonly metadata?: Readonly<Record<string, unknown>>;
 }

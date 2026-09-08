@@ -1,3 +1,8 @@
+import {
+  createHmac,
+  timingSafeEqual as cryptoTimingSafeEqual,
+} from "node:crypto";
+
 import type { HTTPRequest, HTTPResponse } from "../httpTypes/http.types.js";
 
 /* -------------------------------------------------------------------------- */
@@ -81,8 +86,23 @@ export class CookieCollection {
     return this.values.values();
   }
 
+  /**
+   * Materialises the jar as a plain record.
+   *
+   * The record has a `null` prototype so that a cookie named `__proto__`,
+   * `constructor` or `toString` can neither reach `Object.prototype` nor be
+   * confused with an inherited member on lookup.
+   *
+   * @returns A null-prototype record of cookie name to value.
+   */
   public toObject(): Record<string, string> {
-    return Object.fromEntries(this.values);
+    const result = Object.create(null) as Record<string, string>;
+
+    for (const [name, value] of this.values) {
+      result[name] = value;
+    }
+
+    return result;
   }
 
   public get size(): number {
@@ -94,14 +114,47 @@ export class CookieCollection {
 /* Parse Cookie Header                                                        */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Maximum number of cookies parsed from one `Cookie` header.
+ */
+export const MAX_COOKIE_COUNT = 128;
+
+/**
+ * Maximum `Cookie` header length accepted, in characters.
+ */
+export const MAX_COOKIE_HEADER_LENGTH = 32 * 1024;
+
+/**
+ * RFC 6265 `cookie-name`, which is an RFC 9110 `token`.
+ */
+const COOKIE_NAME_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+/**
+ * Parses a `Cookie` request header.
+ *
+ * This function never throws: the header is fully attacker-controlled, so a
+ * malformed entry is skipped rather than allowed to abort the request. When
+ * a name occurs more than once the **first** occurrence wins, matching
+ * RFC 6265 section 5.4 ordering (most specific path first) and every browser
+ * and mainstream server library.
+ *
+ * @param header - The raw `Cookie` header value.
+ * @returns The parsed cookie jar.
+ */
 export function parseCookies(header: string | undefined): CookieCollection {
-  const cookies = new CookieCollection();
+  const values = new Map<string, string>();
 
   if (!header) {
-    return cookies;
+    return new CookieCollection(values);
   }
 
-  for (const part of splitCookieHeader(header)) {
+  const bounded = header.slice(0, MAX_COOKIE_HEADER_LENGTH);
+
+  for (const part of splitCookieHeader(bounded)) {
+    if (values.size >= MAX_COOKIE_COUNT) {
+      break;
+    }
+
     const separator = part.indexOf("=");
 
     if (separator <= 0) {
@@ -112,14 +165,24 @@ export function parseCookies(header: string | undefined): CookieCollection {
 
     const rawValue = part.slice(separator + 1).trim();
 
-    if (!name) {
+    if (!COOKIE_NAME_TOKEN.test(name)) {
       continue;
     }
 
-    cookies.set(name, decodeCookieValue(rawValue));
+    /*
+     * First occurrence wins. Taking the last would let an attacker who can
+     * set a cookie on a parent domain or a less specific path override the
+     * legitimate one, while the browser still considers the first
+     * authoritative.
+     */
+    if (values.has(name)) {
+      continue;
+    }
+
+    values.set(name, decodeCookieValue(rawValue));
   }
 
-  return cookies;
+  return new CookieCollection(values);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -132,6 +195,8 @@ export function serializeCookie(
   options: CookieOptions = {},
 ): string {
   validateCookieName(name);
+
+  validateCookiePrefix(name, options);
 
   const encodedName = name;
 
@@ -360,34 +425,53 @@ export function parseSignedCookie(
   return originalValue;
 }
 
+/**
+ * Signs a cookie value with HMAC-SHA256.
+ *
+ * @param value - The value to authenticate.
+ * @param secret - The signing key.
+ * @returns The base64url signature.
+ * @throws {TypeError} If the secret is empty.
+ */
 export function signCookieValue(value: string, secret: string): string {
   if (!secret) {
     throw new TypeError("Cookie signing secret cannot be empty.");
   }
 
-  const data = `${secret}:${value}`;
-
-  return simpleHash(data);
+  return createHmac("sha256", secret).update(value, "utf8").digest("base64url");
 }
 
 /* -------------------------------------------------------------------------- */
 /* Cookie Encoding                                                            */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Percent-encodes a cookie value.
+ *
+ * SP is deliberately left encoded: RFC 6265 `cookie-octet` excludes it, and
+ * emitting a raw space breaks strict parsers and some proxies.
+ *
+ * @param value - The raw cookie value.
+ * @returns The encoded value.
+ */
 function encodeCookieValue(value: string): string {
-  return encodeURIComponent(value).replace(/%20/g, " ");
+  return encodeURIComponent(value);
 }
 
+/**
+ * Percent-decodes a cookie value.
+ *
+ * DQUOTE is not stripped: it is an ordinary `cookie-octet`, and unwrapping it
+ * makes the parse disagree with the browser about the value.
+ *
+ * @param value - The raw cookie value.
+ * @returns The decoded value, or the raw value when decoding fails.
+ */
 function decodeCookieValue(value: string): string {
-  const unquoted =
-    value.length >= 2 && value.startsWith('"') && value.endsWith('"')
-      ? value.slice(1, -1)
-      : value;
-
   try {
-    return decodeURIComponent(unquoted);
+    return decodeURIComponent(value);
   } catch {
-    return unquoted;
+    return value;
   }
 }
 
@@ -395,50 +479,86 @@ function decodeCookieValue(value: string): string {
 /* Header Parsing                                                             */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Splits a `Cookie` header into its `name=value` pairs.
+ *
+ * The split is unconditional on `;` per RFC 6265 section 5.4. DQUOTE is an
+ * ordinary `cookie-octet` there with no delimiting meaning, so tracking
+ * quotes would let a single unbalanced `"` in one attacker-set cookie swallow
+ * every cookie after it — a cookie-shadowing primitive.
+ *
+ * @param header - The raw header value.
+ * @returns The unparsed pairs.
+ */
 function splitCookieHeader(header: string): string[] {
-  const result: string[] = [];
-
-  let start = 0;
-
-  let quoted = false;
-
-  for (let index = 0; index < header.length; index += 1) {
-    const character = header[index];
-
-    if (character === '"') {
-      quoted = !quoted;
-
-      continue;
-    }
-
-    if (character === ";" && !quoted) {
-      result.push(header.slice(start, index));
-
-      start = index + 1;
-    }
-  }
-
-  result.push(header.slice(start));
-
-  return result;
+  return header.split(";");
 }
 
 /* -------------------------------------------------------------------------- */
 /* Validation                                                                 */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Validates a cookie name against the RFC 6265 `cookie-name` production.
+ *
+ * @param name - The cookie name.
+ * @throws {TypeError} If the name is empty or contains a non-token character
+ *   — which includes NUL and DEL, whose acceptance would let an intermediary
+ *   truncate the name and set a different cookie than the one requested.
+ */
 function validateCookieName(name: string): void {
   if (!name) {
     throw new TypeError("Cookie name cannot be empty.");
   }
 
-  if (/[\s;,=]/.test(name)) {
-    throw new TypeError(`Invalid cookie name: ${name}`);
+  if (!COOKIE_NAME_TOKEN.test(name)) {
+    throw new TypeError(`Invalid cookie name: ${JSON.stringify(name)}`);
   }
 }
 
+/**
+ * Enforces the RFC 6265bis section 4.1.3 cookie name prefixes.
+ *
+ * A browser silently drops a `__Host-` or `__Secure-` cookie whose
+ * attributes violate the prefix, and the failure is invisible server-side —
+ * a login that quietly does nothing. Failing loudly here is the only way the
+ * caller learns.
+ *
+ * @param name - The cookie name.
+ * @param options - The cookie attributes.
+ * @throws {TypeError} If a prefix constraint is violated.
+ */
+function validateCookiePrefix(name: string, options: CookieOptions): void {
+  if (name.startsWith("__Host-")) {
+    if (!options.secure) {
+      throw new TypeError("A __Host- cookie requires the Secure attribute.");
+    }
+
+    if (options.domain) {
+      throw new TypeError("A __Host- cookie must not set a Domain attribute.");
+    }
+
+    if ((options.path ?? "/") !== "/") {
+      throw new TypeError("A __Host- cookie requires Path=/.");
+    }
+
+    return;
+  }
+
+  if (name.startsWith("__Secure-") && !options.secure) {
+    throw new TypeError("A __Secure- cookie requires the Secure attribute.");
+  }
+}
+
+/**
+ * Validates a cookie attribute value.
+ *
+ * @param attribute - The attribute name, for the error message.
+ * @param value - The attribute value.
+ * @throws {TypeError} If the value contains `;` or any control character.
+ */
 function validateCookieAttribute(attribute: string, value: string): void {
-  if (/[\r\n;]/.test(value)) {
+  if (/[;\u0000-\u001f\u007f]/.test(value)) {
     throw new TypeError(`Invalid cookie ${attribute}.`);
   }
 }
@@ -479,28 +599,21 @@ function normalizePriority(value: CookiePriority): string {
 /* Hash Helpers                                                               */
 /* -------------------------------------------------------------------------- */
 
-function simpleHash(input: string): string {
-  let hash = 2166136261;
-
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-
-    hash = Math.imul(hash, 16777619);
-  }
-
-  return (hash >>> 0).toString(16);
-}
-
+/**
+ * Compares two signatures in constant time.
+ *
+ * @param left - The candidate signature.
+ * @param right - The expected signature.
+ * @returns `true` if the two are byte-identical.
+ */
 function timingSafeEqual(left: string, right: string): boolean {
-  if (left.length !== right.length) {
+  const leftBuffer = Buffer.from(left, "utf8");
+
+  const rightBuffer = Buffer.from(right, "utf8");
+
+  if (leftBuffer.length !== rightBuffer.length) {
     return false;
   }
 
-  let difference = 0;
-
-  for (let index = 0; index < left.length; index += 1) {
-    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
-  }
-
-  return difference === 0;
+  return cryptoTimingSafeEqual(leftBuffer, rightBuffer);
 }

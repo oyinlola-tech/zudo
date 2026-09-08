@@ -115,6 +115,20 @@ export interface HttpAdapter {
     context: HttpResponseContext,
   ): void | Promise<void>;
 
+  /**
+   * Installs the application request handler.
+   *
+   * Optional, but an adapter that stores its handler anywhere other than a
+   * public `handler` property MUST implement this — otherwise `HttpServer`
+   * has no way to hand the handler over and will refuse to start.
+   */
+  setHandler?(handler: HttpHandler): void;
+
+  /**
+   * Installs the error handler. Same contract as {@link setHandler}.
+   */
+  setErrorHandler?(handler: HttpErrorHandler): void;
+
   start?(): void | Promise<void>;
 
   stop?(): void | Promise<void>;
@@ -172,6 +186,20 @@ export abstract class BaseHttpAdapter implements HttpAdapter {
     this.handler = options.handler;
 
     this.errorHandler = options.errorHandler;
+  }
+
+  /**
+   * Installs the application request handler.
+   */
+  setHandler(handler: HttpHandler): void {
+    this.handler = handler;
+  }
+
+  /**
+   * Installs the error handler.
+   */
+  setErrorHandler(handler: HttpErrorHandler): void {
+    this.errorHandler = handler;
   }
 
   abstract createRequest(input: unknown): HttpRequestContext;
@@ -540,6 +568,12 @@ export function mergeResponseContext(
   target.setStatus(source.status, source.statusText);
 
   for (const [name, value] of Object.entries(source.headers)) {
+    /* `ResponseHeaders` allows an explicit `undefined` value, which means the
+     * header is absent. Merging one used to call `.join` on it and throw. */
+    if (value === undefined) {
+      continue;
+    }
+
     target.setHeader(
       name,
       typeof value === "string" ? value : value.join(", "),

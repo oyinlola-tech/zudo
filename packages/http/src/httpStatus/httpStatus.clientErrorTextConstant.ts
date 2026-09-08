@@ -29,7 +29,7 @@ export const CLIENT_ERROR_STATUS_TEXT = Object.freeze({
 
   412: "Precondition Failed",
 
-  413: "Payload Too Large",
+  413: "Content Too Large",
 
   414: "URI Too Long",
 
@@ -43,7 +43,7 @@ export const CLIENT_ERROR_STATUS_TEXT = Object.freeze({
 
   421: "Misdirected Request",
 
-  422: "Unprocessable Entity",
+  422: "Unprocessable Content",
 
   423: "Locked",
 

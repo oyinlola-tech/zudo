@@ -8,11 +8,9 @@ import { createInMemoryQueue, InMemoryQueue } from "@zudojs/queue";
 
 import type {
   Job,
-  JobId,
   QueueName,
   QueueOptions,
   QueueStats,
-  Processor,
   JobOptions,
 } from "@zudojs/queue";
 
@@ -101,7 +99,9 @@ export function createTestQueue<TData = unknown>(
 
   return {
     queue,
-    jobs: recordedJobs,
+    get jobs() {
+      return [...recordedJobs];
+    },
     add,
     findByName,
     getStats,

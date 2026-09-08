@@ -204,28 +204,53 @@ function createContextAbortSignal(request: HTTPRequest): AbortSignal {
     controller.abort();
   }
 
-  // Listen for future abort events from the underlying request
-  if ("on" in request && typeof request.on === "function") {
-    const onRequestAbort = (): void => {
-      controller.abort();
-    };
+  const emitter = request as HTTPRequest & {
+    on?: (event: string, listener: () => void) => unknown;
+    removeListener?: (event: string, listener: () => void) => unknown;
+    destroyed?: boolean;
+    complete?: boolean;
+  };
 
-    request.on("aborted", onRequestAbort);
-
-    // Clean up listener when signal fires
-    controller.signal.addEventListener(
-      "abort",
-      () => {
-        // Use any cast since HTTPRequest may not have removeListener
-        (
-          request as {
-            removeListener?: (event: string, listener: () => void) => void;
-          }
-        )?.removeListener?.("aborted", onRequestAbort);
-      },
-      { once: true },
-    );
+  if (typeof emitter.on !== "function") {
+    return controller.signal;
   }
+
+  /*
+   * `IncomingMessage`'s `'aborted'` event was deprecated in Node 16 and is no
+   * longer emitted, so listening only for it meant `ctx.signal` never fired
+   * when a client disconnected. `'close'` with `destroyed`/`!complete` is the
+   * supported signal; `'aborted'` is kept purely as a legacy fallback.
+   */
+  const onAbort = (): void => {
+    controller.abort();
+
+    detach();
+  };
+
+  const onClose = (): void => {
+    if (emitter.destroyed === true || emitter.complete === false) {
+      controller.abort();
+    }
+
+    /*
+     * Detach on the normal path too. Previously the listener was removed only
+     * when the signal aborted, so every completed request left one attached
+     * for the lifetime of the message.
+     */
+    detach();
+  };
+
+  const detach = (): void => {
+    emitter.removeListener?.("aborted", onAbort);
+
+    emitter.removeListener?.("close", onClose);
+  };
+
+  emitter.on("aborted", onAbort);
+
+  emitter.on("close", onClose);
+
+  controller.signal.addEventListener("abort", detach, { once: true });
 
   return controller.signal;
 }

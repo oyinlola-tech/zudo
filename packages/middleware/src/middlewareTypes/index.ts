@@ -11,5 +11,9 @@ export {
 } from "./middlewareDefinition.type.js";
 export {
   type PipelineResult,
+  type PipelineSuccess,
+  type PipelineFailure,
+  type PipelineMiddlewareFailure,
+  type PipelineErrorMode,
   type PipelineOptions,
 } from "./middlewareContext.type.js";

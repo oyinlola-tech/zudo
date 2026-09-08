@@ -3,6 +3,10 @@ import type { CacheTTL } from "./types-values.js";
 
 export interface CacheLockOptions {
   readonly ttl?: CacheTTL;
+  /**
+   * Scopes the lock. Two callers using the same key under different
+   * namespaces do not contend with each other.
+   */
   readonly namespace?: CacheNamespace;
   readonly retry?: {
     readonly attempts: number;
@@ -21,4 +25,8 @@ export interface CacheLock {
 
 export interface CacheLockStore {
   acquire(key: string, options?: CacheLockOptions): Promise<CacheLock | null>;
+  /** Drops expired leases. Called opportunistically by in-process stores. */
+  sweepExpired?(now?: number): void;
+  /** Releases every held lease. Intended for tests and shutdown. */
+  clear?(): void;
 }

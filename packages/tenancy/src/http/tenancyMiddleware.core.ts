@@ -8,11 +8,11 @@
  * Requires @zudojs/http as a peer dependency.
  */
 
-import type { TenantId } from "../tenancyTypes/tenantIdentity.js";
 import type {
   Tenant,
   TenantContext,
   TenantRequirement,
+  TenantTrustLevel,
 } from "../tenancyTypes/tenantInterface.js";
 import type {
   TenantResolver,
@@ -20,8 +20,14 @@ import type {
 } from "../tenancyTypes/resolverTypes.js";
 import type { TenantRepository } from "../tenancyTypes/repositoryTypes.js";
 import type { TenantContextStorage } from "../context/contextStorage.core.js";
-import type { HttpMiddleware } from "./httpTypes.js";
-import { createForbidden } from "./httpHelpers.js";
+import type { HttpMiddleware, HttpMiddlewareContext } from "./httpTypes.js";
+import type {
+  HttpResolverContext,
+  TenantClaims,
+} from "./httpResolverContext.js";
+import { createHttpResolverContext } from "./httpResolverContext.js";
+import { createForbidden, createNotFound } from "./httpHelpers.js";
+import { meetsTrustLevel } from "../security/guard.core.js";
 
 // ─── State Keys ───────────────────────────────────────────────────────────
 
@@ -36,11 +42,29 @@ export const TENANT_CONTEXT_STATE_KEY = "tenancy:context";
 /** Options for the resolve tenant middleware. */
 export interface ResolveTenantMiddlewareOptions {
   /** Resolver chain or single resolver to determine tenant. */
-  readonly resolver: TenantResolver;
+  readonly resolver: TenantResolver<HttpResolverContext>;
   /** Repository to load the full tenant after resolution. */
   readonly repository: TenantRepository;
   /** Tenant context storage for propagation. */
   readonly storage: TenantContextStorage;
+  /**
+   * Minimum trust the resolution must carry. Defaults to `untrusted`.
+   *
+   * Set this on any route where a tenant resolved from a URL path or an
+   * unverified header must not be honoured.
+   */
+  readonly minimumTrust?: TenantTrustLevel;
+  /**
+   * Whether a non-active tenant may proceed. Defaults to false.
+   *
+   * Enable only for routes that exist to serve suspended tenants, such as
+   * billing or reactivation.
+   */
+  readonly allowInactive?: boolean;
+  /** Reads verified token claims for the JWT resolver. */
+  readonly getClaims?: (
+    context: HttpMiddlewareContext,
+  ) => TenantClaims | undefined;
   /** Custom error response for missing tenant. */
   readonly notFoundResponse?: (
     resolution: TenantResolution | undefined,
@@ -60,34 +84,48 @@ export interface RequireTenantMiddlewareOptions {
 /**
  * Create middleware that resolves the tenant from the request
  * and creates a tenant context.
+ *
+ * Enforces trust and tenant status itself rather than relying on a second
+ * middleware being installed: the safe behaviour has to be the default.
  */
 export function createResolveTenantMiddleware(
   options: ResolveTenantMiddlewareOptions,
 ): HttpMiddleware {
+  const minimumTrust = options.minimumTrust ?? "untrusted";
+
   return async (context, next) => {
-    const resolution = await options.resolver.resolve(context);
+    const resolution = await options.resolver.resolve(
+      createHttpResolverContext(context, options.getClaims),
+    );
 
     if (!resolution) {
-      const body = options.notFoundResponse?.(resolution) ?? {
-        error: "Tenant not found",
-      };
-      return {
-        status: 404,
-        body,
-        headers: { "content-type": "application/json" },
-      };
+      return options.notFoundResponse
+        ? {
+            status: 404,
+            body: options.notFoundResponse(resolution),
+            headers: { "content-type": "application/json" },
+          }
+        : createNotFound("Tenant not found");
+    }
+
+    if (!meetsTrustLevel(resolution.trust, minimumTrust)) {
+      return createForbidden("Tenant could not be established for this route");
     }
 
     const tenant = await options.repository.findById(resolution.tenantId);
+
     if (!tenant) {
-      const body = options.notFoundResponse?.(resolution) ?? {
-        error: `Tenant "${resolution.tenantId}" not found`,
-      };
-      return {
-        status: 404,
-        body,
-        headers: { "content-type": "application/json" },
-      };
+      return options.notFoundResponse
+        ? {
+            status: 404,
+            body: options.notFoundResponse(resolution),
+            headers: { "content-type": "application/json" },
+          }
+        : createNotFound("Tenant not found");
+    }
+
+    if (!options.allowInactive && tenant.status !== "active") {
+      return createForbidden("Tenant is not available");
     }
 
     const tenantContext: TenantContext = {
@@ -102,11 +140,7 @@ export function createResolveTenantMiddleware(
     context.state.set(TENANT_CONTEXT_STATE_KEY, tenantContext);
 
     return options.storage.run(
-      {
-        mode: "tenant",
-        tenant,
-        context: tenantContext,
-      },
+      { mode: "tenant", tenant, context: tenantContext },
       () => next(),
     );
   };
@@ -123,28 +157,29 @@ export function createRequireTenantMiddleware(
   const requirement = options?.requirement ?? "required";
 
   return async (context, next) => {
+    const tenant = context.state.get<Tenant>(TENANT_STATE_KEY);
+
     if (requirement === "forbidden") {
-      const tenant = context.state.get<Tenant>(TENANT_STATE_KEY);
       if (tenant) {
         return createForbidden("Tenant context is not allowed for this route");
       }
       return next();
     }
 
-    if (requirement === "optional") {
-      return next();
-    }
+    if (requirement === "optional") return next();
 
-    const tenant = context.state.get<Tenant>(TENANT_STATE_KEY);
     if (!tenant) {
-      const body = options?.deniedResponse?.(undefined) ?? {
-        error: "Tenant context is required",
-      };
-      return {
-        status: 401,
-        body,
-        headers: { "content-type": "application/json" },
-      };
+      return options?.deniedResponse
+        ? {
+            status: 401,
+            body: options.deniedResponse(undefined),
+            headers: { "content-type": "application/json" },
+          }
+        : {
+            status: 401,
+            body: { error: "Tenant context is required" },
+            headers: { "content-type": "application/json" },
+          };
     }
 
     return next();

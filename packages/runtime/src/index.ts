@@ -28,4 +28,6 @@ export * from "./shutdown/index.js";
 export * from "./signalHandler/index.js";
 export * from "./runtimeError/index.js";
 export * from "./registry/index.js";
-export * from "./testRuntime/index.js";
+// `testRuntime` is intentionally NOT exported from the package root: it
+// is a testing helper, and re-exporting it here put a test-only module
+// on the main entry point. Import it from "@zudojs/runtime/testing".

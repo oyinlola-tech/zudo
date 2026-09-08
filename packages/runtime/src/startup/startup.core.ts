@@ -7,12 +7,76 @@ import { publishRuntimeEvent } from "../runtimeEvents/index.js";
 
 import { LifecycleManager } from "../lifecycle/index.js";
 
-import { RuntimeStartError } from "../runtimeError/index.js";
+import type { LifecycleFailure } from "../lifecycle/lifecycle.type.js";
+
+import {
+  RuntimeStartError,
+  RuntimeTimeoutError,
+} from "../runtimeError/index.js";
+
+/** Largest delay a timer can represent. */
+const MAX_TIMER_DELAY = 2_147_483_647;
+
+/**
+ * Runs the startup sequence under a bound.
+ *
+ * `startupTimeout` was validated as positive and then never enforced, so
+ * a module whose `onInitialize` never settles hung the boot forever with
+ * no diagnostic. The timer is cleared whichever side wins.
+ */
+async function withStartupTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  if (timeoutMs <= 0) {
+    return operation;
+  }
+
+  // The startup promise keeps running if the timeout wins; attach a
+  // handler now so its eventual rejection is never unhandled.
+  operation.catch(() => {});
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new RuntimeTimeoutError("startup", timeoutMs)),
+      Math.min(timeoutMs, MAX_TIMER_DELAY),
+    );
+
+    timer.unref?.();
+  });
+
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
 
 /**
  * Executes the startup sequence.
  */
 export async function executeStartup(
+  lifecycle: LifecycleManager,
+  runtimeId: string,
+  eventBus: EventBus | undefined,
+  logger: Logger,
+  emitEvents: boolean,
+  startupTimeout = 0,
+): Promise<void> {
+  return withStartupTimeout(
+    runStartup(lifecycle, runtimeId, eventBus, logger, emitEvents),
+    startupTimeout,
+  );
+}
+
+/**
+ * Runs the startup sequence.
+ */
+async function runStartup(
   lifecycle: LifecycleManager,
   runtimeId: string,
   eventBus: EventBus | undefined,
@@ -134,10 +198,14 @@ export async function executeStartup(
 export async function rollbackStartup(
   lifecycle: LifecycleManager,
   logger: Logger,
-): Promise<void> {
+): Promise<readonly LifecycleFailure[]> {
   logger.info("Rolling back module startup.");
 
-  await lifecycle.rollback();
+  const failures = await lifecycle.rollback();
 
-  logger.info("Module rollback complete.");
+  logger.info("Module rollback complete.", {
+    failedModules: failures.map((failure) => failure.moduleId),
+  });
+
+  return failures;
 }

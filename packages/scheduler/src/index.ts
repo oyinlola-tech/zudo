@@ -99,6 +99,7 @@ export { createSchedule } from "./scheduler/schedule/index.js";
 
 // Schedule Handle
 export { ScheduleHandleImpl } from "./scheduler/scheduleHandle/index.js";
+export type { ScheduleHandleBinding } from "./scheduler/scheduleHandle/index.js";
 
 // Trigger
 export {
@@ -107,6 +108,8 @@ export {
   IntervalTrigger,
   CronTrigger,
 } from "./scheduler/trigger/index.js";
+export { parseCron, nextCronDate } from "./scheduler/trigger/index.js";
+export type { ParsedCron } from "./scheduler/trigger/index.js";
 
 // Clock
 export { SystemClock, createSystemClock } from "./scheduler/clock/index.js";
@@ -115,7 +118,7 @@ export { SystemClock, createSystemClock } from "./scheduler/clock/index.js";
 export { JobRegistry } from "./scheduler/registry/index.js";
 
 // Executor
-export { JobExecutor } from "./scheduler/executor/index.js";
+export { JobExecutor, retryDelay } from "./scheduler/executor/index.js";
 
 // Priority Queue
 export { PriorityQueue } from "./scheduler/priorityQueue/index.js";
@@ -125,3 +128,7 @@ export { parseDuration } from "./scheduler/duration/index.js";
 
 // Scheduler
 export { Scheduler } from "./scheduler/scheduler.core.js";
+export type {
+  SchedulerOptions,
+  SchedulerErrorEvent,
+} from "./scheduler/scheduler.core.js";

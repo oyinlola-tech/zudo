@@ -4,7 +4,8 @@
  * Authorization engine for the Zudojs framework.
  *
  * Supports RBAC, ABAC, resource policies, wildcards, role hierarchy,
- * condition combinators, ability compilation, and explain mode.
+ * condition combinators, ability compilation, decision caching, audit events
+ * and explain mode.
  *
  * @module @zudojs/permissions
  */
@@ -25,8 +26,7 @@ export * from "./observability/index.js";
 export * from "./utils/index.js";
 export * from "./http/index.js";
 
-export {
-  createPermissionEngine,
-  type PermissionEngine,
-  type PermissionEngineOptions,
+export type {
+  RoleSource,
+  PolicySource,
 } from "./evaluator/authorizationEngine.js";

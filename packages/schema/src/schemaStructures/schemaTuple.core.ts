@@ -6,7 +6,14 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
-import { addIssue, childContext } from "../schemaBase/index.js";
+import {
+  addIssue,
+  childContext,
+  failValidation,
+  enterComposite,
+  leaveComposite,
+  rethrowUnexpected,
+} from "../schemaBase/index.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
 /** Helper type to infer tuple output type. */
@@ -35,7 +42,7 @@ export class TupleSchema<
         expected: "tuple",
         received: typeof input,
       });
-      throw new Error("Validation failed");
+      failValidation();
     }
 
     if (input.length !== this._schemas.length) {
@@ -46,22 +53,41 @@ export class TupleSchema<
         expected: String(this._schemas.length),
         received: String(input.length),
       });
-      throw new Error("Validation failed");
+      failValidation();
     }
 
-    const result: unknown[] = [];
-    for (let i = 0; i < this._schemas.length; i++) {
-      const childCtx = childContext(ctx, i);
-      const itemSchema = this._schemas[i];
-      if (!itemSchema) continue;
-      try {
-        result.push(itemSchema._parse(childCtx, input[i]));
-      } catch {
-        // Issues already added
+    if (!enterComposite(ctx, input)) {
+      failValidation();
+    }
+
+    try {
+      const result: unknown[] = [];
+      let failed = false;
+
+      for (let i = 0; i < this._schemas.length; i++) {
+        const childCtx = childContext(ctx, i);
+        const itemSchema = this._schemas[i];
+        if (!itemSchema) continue;
+        try {
+          result.push(itemSchema._parse(childCtx, input[i]));
+        } catch (error) {
+          rethrowUnexpected(error);
+          // Hold the slot. Skipping the push shifted every later element down
+          // a position, so a tuple that failed at index 0 came back with its
+          // remaining values misaligned.
+          result.push(undefined);
+          failed = true;
+        }
       }
-    }
 
-    return result as InferTuple<TSchemas>;
+      if (failed) {
+        failValidation();
+      }
+
+      return result as InferTuple<TSchemas>;
+    } finally {
+      leaveComposite(ctx, input);
+    }
   }
 }
 

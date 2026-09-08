@@ -1,11 +1,24 @@
 /**
  * @zudojs/plugins/pluginDependencies
  *
- * Plugin dependency resolution, topological sorting, and cycle detection.
+ * Plugin dependency resolution, topological sorting, cycle detection,
+ * and version constraint checking.
  */
 
-export type { DependencyResolution } from "./dependencyResolver.core.js";
+export type {
+  DependencyResolution,
+  MissingDependency,
+  ResolvablePlugin,
+} from "./dependencyResolver.core.js";
+
 export {
   DependencyResolver,
   assertResolutionValid,
 } from "./dependencyResolver.core.js";
+
+export {
+  parseVersion,
+  compareVersions,
+  satisfiesVersion,
+  assertDependencyVersions,
+} from "./versionCheck.core.js";

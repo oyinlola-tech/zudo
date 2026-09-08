@@ -1,11 +1,6 @@
 export type CacheKey = string;
 export type CacheNamespace = string;
 
-export interface CacheKeyParts {
-  readonly namespace?: CacheNamespace;
-  readonly key: CacheKey;
-}
-
 export interface CacheKeyOptions {
   readonly namespace?: CacheNamespace;
   readonly prefix?: string;
@@ -15,8 +10,11 @@ export interface CacheKeyOptions {
 export interface CacheKeyBuilder {
   build(key: string, options?: CacheKeyOptions): CacheKey;
   /**
-   * Builds a fully-qualified glob pattern (prefix/namespace prepended,
-   * no per-part validation) for pattern-based operations.
+   * Builds a fully-qualified glob pattern for pattern-based operations.
+   *
+   * Prefix and namespace are identity parts, never glob parts, so they are
+   * validated exactly as `build()` validates them. Only the trailing
+   * pattern segment may contain the glob metacharacters `*` and `?`.
    */
   buildPattern?(pattern: string, options?: CacheKeyOptions): string;
 }

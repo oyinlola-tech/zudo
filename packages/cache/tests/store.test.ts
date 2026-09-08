@@ -125,7 +125,7 @@ describe("DefaultCacheStore — events", () => {
     store.subscribe("cache.hit", handler);
     await store.get("key");
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler.mock.calls[0][0].type).toBe("cache.hit");
+    expect(handler.mock.calls[0]![0].type).toBe("cache.hit");
   });
 
   it("emits cache.miss on cache miss", async () => {
@@ -133,7 +133,7 @@ describe("DefaultCacheStore — events", () => {
     store.subscribe("cache.miss", handler);
     await store.get("missing");
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler.mock.calls[0][0].type).toBe("cache.miss");
+    expect(handler.mock.calls[0]![0].type).toBe("cache.miss");
   });
 
   it("emits cache.set on set", async () => {
@@ -141,7 +141,7 @@ describe("DefaultCacheStore — events", () => {
     store.subscribe("cache.set", handler);
     await store.set("key", "value");
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler.mock.calls[0][0].type).toBe("cache.set");
+    expect(handler.mock.calls[0]![0].type).toBe("cache.set");
   });
 
   it("emits cache.delete on delete", async () => {
@@ -150,7 +150,7 @@ describe("DefaultCacheStore — events", () => {
     store.subscribe("cache.delete", handler);
     await store.delete("key");
     expect(handler).toHaveBeenCalledTimes(1);
-    expect(handler.mock.calls[0][0].type).toBe("cache.delete");
+    expect(handler.mock.calls[0]![0].type).toBe("cache.delete");
   });
 
   it("supports wildcard subscription", async () => {
@@ -248,10 +248,10 @@ describe("DefaultCacheStore — event payloads", () => {
     const handler = vi.fn();
     store.subscribe("cache.delete", handler);
     await store.delete("missing");
-    expect(handler.mock.calls[0][0].deleted).toBe(false);
+    expect(handler.mock.calls[0]![0].deleted).toBe(false);
     await store.set("k", "v");
     await store.delete("k");
-    expect(handler.mock.calls[1][0].deleted).toBe(true);
+    expect(handler.mock.calls[1]![0].deleted).toBe(true);
   });
 
   it("cache.clear carries the real cleared count", async () => {
@@ -260,7 +260,7 @@ describe("DefaultCacheStore — event payloads", () => {
     const handler = vi.fn();
     store.subscribe("cache.clear", handler);
     await store.clear();
-    expect(handler.mock.calls[0][0].cleared).toBe(2);
+    expect(handler.mock.calls[0]![0].cleared).toBe(2);
   });
 });
 
@@ -369,5 +369,164 @@ describe("DefaultCacheStore — ttl/expire", () => {
     expect(remaining).toBeGreaterThan(0);
     expect(await store.expire("k", 60_000)).toBe(true);
     expect(await store.ttl("missing")).toBeUndefined();
+  });
+});
+
+// ─── Regression: middleware chain re-entrancy and result checking ──────────
+
+describe("DefaultCacheStore — middleware chain", () => {
+  // Regression (CACHE-24): the chain index was shared mutable state, so a
+  // middleware calling next() twice (every retry middleware does) advanced
+  // past the remaining middlewares on the second call.
+  it("does not skip middlewares when one calls next() twice", async () => {
+    const seen: string[] = [];
+    const retry: CacheMiddleware = async (_ctx, next) => {
+      await next();
+      return next();
+    };
+    const inner: CacheMiddleware = async (_ctx, next) => {
+      seen.push("inner");
+      return next();
+    };
+    const withMw = createCacheStore({
+      adapter: createMemoryCacheAdapter(),
+      middlewares: [retry, inner],
+    });
+    await withMw.set("k", "v");
+    expect(seen).toEqual(["inner", "inner"]);
+  });
+
+  it("runs middlewares outermost-first and returns the real result", async () => {
+    const order: string[] = [];
+    const first: CacheMiddleware = async (_ctx, next) => {
+      order.push("first");
+      return next();
+    };
+    const second: CacheMiddleware = async (_ctx, next) => {
+      order.push("second");
+      return next();
+    };
+    const withMw = createCacheStore({
+      adapter: createMemoryCacheAdapter(),
+      middlewares: [first, second],
+    });
+    await withMw.set("k", "v");
+    const result = await withMw.get<string>("k");
+    expect(order.slice(0, 2)).toEqual(["first", "second"]);
+    expect(result.value).toBe("v");
+  });
+
+  // Regression (CACHE-24): a middleware that forgets to return next()'s
+  // result resolved undefined, which was cast to T and blew up far away as
+  // "cannot read property hit of undefined".
+  it("throws a CacheError when a middleware returns nothing", async () => {
+    const forgetful: CacheMiddleware = async (_ctx, next) => {
+      await next();
+      return undefined;
+    };
+    const withMw = createCacheStore({
+      adapter: createMemoryCacheAdapter(),
+      middlewares: [forgetful],
+    });
+    await expect(withMw.get("k")).rejects.toThrow(
+      /middleware resolved undefined/,
+    );
+    await expect(withMw.get("k")).rejects.toMatchObject({
+      code: "CACHE_MIDDLEWARE_RESULT_MISSING",
+    });
+  });
+
+  it("still allows ttl() to resolve undefined through a middleware", async () => {
+    const passthrough: CacheMiddleware = async (_ctx, next) => next();
+    const withMw = createCacheStore({
+      adapter: createMemoryCacheAdapter(),
+      middlewares: [passthrough],
+    });
+    await expect(withMw.ttl("missing")).resolves.toBeUndefined();
+  });
+});
+
+// ─── Regression: cache.set events carry the TTL ────────────────────────────
+
+describe("DefaultCacheStore — set event ttl", () => {
+  // Regression (CACHE-19): CacheSetEvent.ttl was declared and never
+  // populated, so a subscriber logging TTLs saw undefined on every event.
+  it("includes the ttl on cache.set", async () => {
+    const events: CacheEvent[] = [];
+    const handler: CacheEventHandler = (event) => {
+      events.push(event);
+    };
+    store.subscribe("cache.set", handler);
+    await store.set("k", "v", { ttl: 1_234 });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "cache.set", ttl: 1_234 });
+  });
+
+  it("includes the ttl on setMany", async () => {
+    const events: CacheEvent[] = [];
+    store.subscribe("cache.set", (event) => {
+      events.push(event);
+    });
+    await store.setMany(
+      new Map([
+        ["a", 1],
+        ["b", 2],
+      ]),
+      { ttl: 5_000 },
+    );
+    expect(events).toHaveLength(2);
+    expect(events.every((e) => (e as { ttl?: number }).ttl === 5_000)).toBe(
+      true,
+    );
+  });
+
+  it("omits ttl when none was supplied", async () => {
+    const events: CacheEvent[] = [];
+    store.subscribe("cache.set", (event) => {
+      events.push(event);
+    });
+    await store.set("k", "v");
+    expect((events[0] as { ttl?: number }).ttl).toBeUndefined();
+  });
+});
+
+// ─── Regression: wrapped adapter errors carry a code ───────────────────────
+
+describe("DefaultCacheStore — error codes", () => {
+  // Regression (CACHE-14): no error this package constructed set `code`, so
+  // the exported CacheErrorCode union described values nothing produced.
+  it("sets CACHE_OPERATION_FAILED on wrapped adapter failures", async () => {
+    const broken = createMemoryCacheAdapter();
+    broken.get = async () => {
+      throw new Error("adapter down");
+    };
+    const brokenStore = createCacheStore({ adapter: broken });
+    await expect(brokenStore.get("k")).rejects.toMatchObject({
+      code: "CACHE_OPERATION_FAILED",
+    });
+  });
+});
+
+// ─── size() passthrough ────────────────────────────────────────────────────
+
+describe("DefaultCacheStore — size", () => {
+  it("forwards to the adapter", async () => {
+    await store.set("a", 1);
+    expect(await store.size()).toBe(1);
+  });
+
+  it("returns undefined when the adapter cannot report a size", async () => {
+    const inner = createMemoryCacheAdapter();
+    // A minimal adapter that implements only the required surface.
+    const limited = {
+      name: "limited",
+      get: inner.get.bind(inner),
+      set: inner.set.bind(inner),
+      delete: inner.delete.bind(inner),
+      has: inner.has.bind(inner),
+      clear: inner.clear.bind(inner),
+    };
+    const limitedStore = createCacheStore({ adapter: limited });
+    expect(await limitedStore.size()).toBeUndefined();
   });
 });

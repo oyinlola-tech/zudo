@@ -69,12 +69,17 @@ describe("createTenantContextStorage", () => {
       },
     };
 
+    const currentTenantId = (): string | undefined => {
+      const ctx = storage.get();
+      return ctx?.mode === "tenant" ? ctx.tenant.id : undefined;
+    };
+
     storage.run(ctxA, () => {
-      expect(storage.get()?.tenant.id).toBe("acme");
+      expect(currentTenantId()).toBe("acme");
       storage.run(ctxB, () => {
-        expect(storage.get()?.tenant.id).toBe("google");
+        expect(currentTenantId()).toBe("google");
       });
-      expect(storage.get()?.tenant.id).toBe("acme");
+      expect(currentTenantId()).toBe("acme");
     });
   });
 

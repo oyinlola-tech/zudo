@@ -15,12 +15,22 @@ export type ValidationStep<T> = (value: T) => ValidationResult<T>;
 /** Options for composing validation operations. */
 export interface ValidationComposerOptions {
   readonly name?: string;
+  /**
+   * Stop after the first failing step. Defaults to true.
+   *
+   * Steps in a pipeline normally build on each other: a later step validating
+   * the shape an earlier coercion was supposed to produce will see the raw
+   * value instead if the pipeline runs on. Set to false only for pipelines of
+   * independent checks, where collecting every issue is the point.
+   */
   readonly stopOnFirstError?: boolean;
 }
 
 /** Reusable composed validator. */
 export interface ValidationComposer<T> {
   readonly name: string;
+  /** Whether the pipeline halts at the first failing step. */
+  readonly stopOnFirstError: boolean;
   validate(value: T): ValidationResult<T>;
   assert(value: T): T;
 }
@@ -31,10 +41,11 @@ export function createValidationComposer<T>(
   options: ValidationComposerOptions = {},
 ): ValidationComposer<T> {
   const name = options.name ?? "ValidationComposer";
-  const stopOnFirstError = options.stopOnFirstError ?? false;
+  const stopOnFirstError = options.stopOnFirstError ?? true;
 
   return Object.freeze({
     name,
+    stopOnFirstError,
     validate(value: T): ValidationResult<T> {
       let current = value;
       const issues: ValidationIssue[] = [];
@@ -98,175 +109,4 @@ export function constraintsStep<T>(
 ): ValidationStep<T> {
   return (value: T): ValidationResult<T> =>
     checkConstraints(constraints, value);
-}
-
-/** Combines validators using logical AND semantics. Every validator must succeed. */
-export function all<T>(
-  ...validators: readonly ValidationStep<T>[]
-): ValidationStep<T> {
-  return (value: T): ValidationResult<T> => {
-    const issues: ValidationIssue[] = [];
-    for (const validator of validators) {
-      const result = validator(value);
-      if (!result.success) issues.push(...result.issues);
-    }
-    return issues.length > 0 ? failure(issues) : success(value);
-  };
-}
-
-/** Combines validators using logical OR semantics. Succeeds when at least one validator succeeds. */
-export function any<T>(
-  ...validators: readonly ValidationStep<T>[]
-): ValidationStep<T> {
-  return (value: T): ValidationResult<T> => {
-    const issues: ValidationIssue[] = [];
-    for (const validator of validators) {
-      const result = validator(value);
-      if (result.success) return result;
-      issues.push(...result.issues);
-    }
-    return failure(
-      issues.length > 0
-        ? issues
-        : [
-            {
-              path: [],
-              code: "no_validator_succeeded",
-              message: "No validation rule accepted the value.",
-              received: value,
-            },
-          ],
-    );
-  };
-}
-
-/** Runs validators sequentially and returns the first successful result. */
-export function first<T>(
-  ...validators: readonly ValidationStep<T>[]
-): ValidationStep<T> {
-  return (value: T): ValidationResult<T> => {
-    let issues: ValidationIssue[] = [];
-    for (const validator of validators) {
-      const result = validator(value);
-      if (result.success) return result;
-      issues = [...issues, ...result.issues];
-    }
-    return failure(
-      issues.length > 0
-        ? issues
-        : [
-            {
-              path: [],
-              code: "no_validator_succeeded",
-              message: "No validation rule accepted the value.",
-              received: value,
-            },
-          ],
-    );
-  };
-}
-
-/** Negates a validation step. */
-export function negate<T>(validator: ValidationStep<T>): ValidationStep<T> {
-  return (value: T): ValidationResult<T> => {
-    const result = validator(value);
-    if (result.success)
-      return failure([
-        {
-          path: [],
-          code: "negated_validation_failed",
-          message: "Value must not satisfy the supplied validation rule.",
-          received: value,
-        },
-      ]);
-    return success(value);
-  };
-}
-
-/** Makes a validation step optional. Undefined values bypass the validator. */
-export function optional<T>(
-  validator: ValidationStep<T>,
-): ValidationStep<T | undefined> {
-  return (value: T | undefined): ValidationResult<T | undefined> => {
-    if (value === undefined) return success(undefined);
-    return validator(value);
-  };
-}
-
-/** Makes a validation step nullable. Null values bypass the validator. */
-export function nullable<T>(
-  validator: ValidationStep<T>,
-): ValidationStep<T | null> {
-  return (value: T | null): ValidationResult<T | null> => {
-    if (value === null) return success(null);
-    return validator(value);
-  };
-}
-
-/** Makes a validation step optional and nullable. */
-export function optionalNullable<T>(
-  validator: ValidationStep<T>,
-): ValidationStep<T | null | undefined> {
-  return (
-    value: T | null | undefined,
-  ): ValidationResult<T | null | undefined> => {
-    if (value === null || value === undefined) return success(value);
-    return validator(value);
-  };
-}
-
-/** Adds a custom validation step to an existing pipeline. */
-export function append<T>(
-  composer: ValidationComposer<T>,
-  step: ValidationStep<T>,
-  options: ValidationComposerOptions = {},
-): ValidationComposer<T> {
-  return createValidationComposer([composer.validate, step], {
-    ...options,
-    name: options.name ?? composer.name,
-  });
-}
-
-/** Creates a pipeline that validates a value and returns the original value. */
-export function tap<T>(validator: ValidationStep<T>): ValidationStep<T> {
-  return (value: T): ValidationResult<T> => {
-    const result = validator(value);
-    if (!result.success) return result;
-    return success(value);
-  };
-}
-
-/** Creates a validation step that only runs when a predicate matches. */
-export function when<T>(
-  predicate: (value: T) => boolean,
-  validator: ValidationStep<T>,
-): ValidationStep<T> {
-  return (value: T): ValidationResult<T> => {
-    if (!predicate(value)) return success(value);
-    return validator(value);
-  };
-}
-
-/** Creates a validation step that runs only when a predicate does not match. */
-export function unless<T>(
-  predicate: (value: T) => boolean,
-  validator: ValidationStep<T>,
-): ValidationStep<T> {
-  return (value: T): ValidationResult<T> => {
-    if (predicate(value)) return success(value);
-    return validator(value);
-  };
-}
-
-/** Applies a mapping operation after successful validation. */
-export function mapValidated<T, U>(
-  validator: ValidationStep<T>,
-  mapper: (value: T) => U,
-): ValidationStep<T> {
-  return (value: T): ValidationResult<T> => {
-    const result = validator(value);
-    if (!result.success) return result;
-    mapper(result.data);
-    return success(result.data);
-  };
 }

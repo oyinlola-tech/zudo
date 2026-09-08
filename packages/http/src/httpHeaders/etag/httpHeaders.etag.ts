@@ -4,8 +4,6 @@
  * @module httpHeaders/etag
  */
 
-import { splitHeaderValues } from "../list/httpHeaders.list.js";
-
 /**
  * Normalizes an ETag value by trimming whitespace.
  *

@@ -232,6 +232,8 @@ export interface InputSanitizationConfig {
   readonly maxStringLength?: number;
   /** Whether to prevent prototype pollution. */
   readonly preventPrototypePollution?: boolean;
+  /** Maximum nesting depth to recurse into (default: 32). */
+  readonly maxDepth?: number;
   /** Custom sanitizer function. */
   readonly customSanitizer?: (value: string) => string;
 }
@@ -243,7 +245,15 @@ export const PROTOTYPE_POLLUTION_KEYS = [
   "prototype",
 ] as const;
 
-/** Common SQL injection patterns. */
+/**
+ * Common SQL injection patterns.
+ *
+ * Heuristics, not a parser: they carry a high false-positive rate on ordinary
+ * prose (the word "update", a `#` in a hashtag) and must never be the only
+ * defence. Parameterise queries; use these for logging and alerting.
+ *
+ * Like {@link XSS_PATTERNS}, none carries the `g` flag — see the note there.
+ */
 export const SQL_INJECTION_PATTERNS = [
   /(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|EXECUTE|UNION|FETCH|DECLARE|TRUNCATE|COMMENT|ALTER)\b)/i,
   /(--|#|\/\*|\*\/)/,
@@ -251,15 +261,22 @@ export const SQL_INJECTION_PATTERNS = [
   /(;\s*(DROP|DELETE|INSERT|UPDATE))/i,
 ] as const;
 
-/** Common XSS patterns. */
+/**
+ * Common XSS patterns.
+ *
+ * These are matched with {@link RegExp.test}, so none of them carries the `g`
+ * flag: a global regex advances `lastIndex` on every `test` call and resumes
+ * from there on the next one, which makes a shared pattern report `false` for
+ * a payload it matched a moment earlier.
+ */
 export const XSS_PATTERNS = [
-  /<script\b[^>]*>[\s\S]*?<\/script[^>]*>/gi,
-  /<script\b[^>]*>/gi,
-  /<\/script[^>]*>/gi,
-  /javascript:/gi,
-  /on\w+\s*=/gi,
-  /data:text\/html/gi,
-  /<iframe\b[^>]*>/gi,
-  /<object\b[^>]*>/gi,
-  /<embed\b[^>]*>/gi,
+  /<script\b[^>]*>[\s\S]*?<\/script[^>]*>/i,
+  /<script\b[^>]*>/i,
+  /<\/script[^>]*>/i,
+  /javascript:/i,
+  /on\w+\s*=/i,
+  /data:text\/html/i,
+  /<iframe\b[^>]*>/i,
+  /<object\b[^>]*>/i,
+  /<embed\b[^>]*>/i,
 ] as const;

@@ -45,10 +45,25 @@ export async function createFetchRequestContext(
   return { method, url, headers, body };
 }
 
+function stripUndefined<T extends object>(value: T): T {
+  const result: Record<string, unknown> = {};
+
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== undefined) {
+      result[key] = entry;
+    }
+  }
+
+  return result as T;
+}
+
 /**
  * Creates a FetchRequest from a FetchRequestInput.
  */
-export function createFetchRequest(input: FetchRequestInput): Request {
+export function createFetchRequest(
+  input: FetchRequestInput,
+  init: Omit<RequestInit, "method" | "headers" | "body"> = {},
+): Request {
   const method = (input.method ?? "GET").toUpperCase();
   const headers = new Headers();
 
@@ -60,15 +75,21 @@ export function createFetchRequest(input: FetchRequestInput): Request {
     }
   }
 
-  const init: RequestInit = {
+  const requestInit: RequestInit = {
+    /*
+     * Caller-supplied init first so `method`/`headers`/`body` below always
+     * win, but so security-relevant options — `redirect`, `credentials`,
+     * `integrity`, `mode`, `cache`, `keepalive` — actually reach the Request.
+     */
+    ...stripUndefined(init),
     method,
     headers,
   };
 
   if (input.body !== undefined && method !== "GET" && method !== "HEAD") {
-    init.body =
+    requestInit.body =
       typeof input.body === "string" ? input.body : JSON.stringify(input.body);
   }
 
-  return new Request(input.url, init);
+  return new Request(input.url, requestInit);
 }

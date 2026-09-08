@@ -48,6 +48,9 @@ export interface HttpInterceptorSnapshot {
 
 export interface InternalInterceptor<T> {
   readonly id: string;
+
+  /** Monotonic registration order, used to keep the chain stable. */
+  readonly sequence: number;
   readonly metadata: HttpInterceptorMetadata;
   readonly handler: T;
   readonly options: HttpInterceptorOptions;

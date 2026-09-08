@@ -8,7 +8,11 @@ import type {
   StreamResult,
   HTTPStreamOptions,
 } from "./httpStream.types.js";
-import { createAbortError } from "./httpStream.error.js";
+import {
+  createAbortError,
+  createStreamLimitError,
+  normalizeStreamError,
+} from "./httpStream.error.js";
 import { isReadableEnded, isWritableFinished } from "./httpStream.state.js";
 import { destroyStream } from "./httpStream.destroy.js";
 import { getChunkSize } from "./httpStream.helper.js";
@@ -30,12 +34,16 @@ export async function pipeStream(
     throw createAbortError();
   }
 
+  const maxBytes = options.maxBytes ?? Number.POSITIVE_INFINITY;
+
   let bytes = 0;
   let chunks = 0;
 
   return new Promise<StreamResult>((resolve, reject) => {
     const guard = createSettleGuard();
-    let cleanupFn: () => void;
+
+    /* Defined before any listener is attached; see consumeStream. */
+    let cleanupFn: () => void = () => {};
 
     const finish = (error?: unknown) => {
       if (guard.settled()) return;
@@ -43,7 +51,7 @@ export async function pipeStream(
       cleanupFn();
 
       if (error) {
-        reject(error instanceof Error ? error : new Error(String(error)));
+        reject(normalizeStreamError(error));
       } else {
         resolve({ bytes });
       }
@@ -52,8 +60,18 @@ export async function pipeStream(
     const onData = (chunk: unknown) => {
       chunks += 1;
       bytes += getChunkSize(chunk);
+
+      if (bytes > maxBytes) {
+        destroyStream(source);
+        destroyStream(destination);
+        finish(createStreamLimitError(maxBytes, bytes));
+      }
     };
 
+    /*
+     * `end` is driven from here alone — the pipe below is created with
+     * `{ end: false }` — so the destination is never ended twice.
+     */
     const onEnd = () => {
       if (options.end === false) {
         finish();
@@ -126,7 +144,7 @@ export async function pipeStream(
     };
 
     try {
-      source.pipe(destination, { end: options.end !== false });
+      source.pipe(destination, { end: false });
     } catch (error) {
       finish(error);
     }

@@ -20,15 +20,30 @@ interface StoreEntry {
 export class InMemoryTestStorage {
   private readonly store = new Map<string, StoreEntry>();
 
-  /** Get a value by key. */
-  get<T = unknown>(key: string): T | null {
+  /** Drops the entry when its TTL has passed. Returns the live entry. */
+  private live(key: string): StoreEntry | undefined {
     const entry = this.store.get(key);
-    if (!entry) return null;
-    if (entry.expiresAt && entry.expiresAt < new Date()) {
+    if (!entry) return undefined;
+
+    if (entry.expiresAt && entry.expiresAt.getTime() <= Date.now()) {
       this.store.delete(key);
-      return null;
+      return undefined;
     }
-    return entry.value as T;
+
+    return entry;
+  }
+
+  /**
+   * Get a value by key.
+   *
+   * Returns null for a miss. Use {@link has} to tell a miss apart from a
+   * stored `null` — caching a negative result is exactly the case a cache
+   * test needs to distinguish.
+   */
+  get<T = unknown>(key: string): T | null {
+    const entry = this.live(key);
+    if (!entry) return null;
+    return (entry.value ?? null) as T | null;
   }
 
   /** Set a value with optional TTL in milliseconds. */
@@ -42,9 +57,9 @@ export class InMemoryTestStorage {
     return this.store.delete(key);
   }
 
-  /** Check if a key exists and is not expired. */
+  /** Check if a key exists and is not expired, whatever its value. */
   has(key: string): boolean {
-    return this.get(key) !== null;
+    return this.live(key) !== undefined;
   }
 
   /** Clear all entries. */
@@ -52,13 +67,13 @@ export class InMemoryTestStorage {
     this.store.clear();
   }
 
-  /** Get all keys. */
+  /** Get all live keys, excluding expired entries. */
   keys(): string[] {
-    return [...this.store.keys()];
+    return [...this.store.keys()].filter((key) => this.live(key) !== undefined);
   }
 
-  /** Get the number of entries. */
+  /** Get the number of live entries. */
   get size(): number {
-    return this.store.size;
+    return this.keys().length;
   }
 }

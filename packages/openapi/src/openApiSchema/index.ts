@@ -7,13 +7,23 @@
 export type {
   SchemaConverter,
   SchemaConversionResult,
+  SchemaConversionOptions,
 } from "./schemaConverter.core.js";
 export {
   convertSchema,
   createSchemaConverter,
+  isVersion31,
 } from "./schemaConverter.core.js";
 
-export type { SchemaRegistry } from "./schemaRegistry.core.js";
+export type {
+  SchemaRegistry,
+  SchemaRegistryOptions,
+} from "./schemaRegistry.core.js";
 export { SchemaRegistryImpl } from "./schemaRegistry.core.js";
 
-export { createComponentReference } from "./references.core.js";
+export {
+  createComponentReference,
+  escapeJsonPointerSegment,
+  unescapeJsonPointerSegment,
+  type ComponentSection,
+} from "./references.core.js";

@@ -33,6 +33,7 @@ export function createRuntimeContext(
       timestamp: new Date(),
     },
     ready: false,
+    metadata: dependencies.metadata ?? Object.freeze({}),
   });
 }
 

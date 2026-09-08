@@ -24,6 +24,9 @@ export interface PluginDiagnostic {
 
   readonly state: PluginState;
 
+  /** Whether the plugin failed at any point in its lifecycle. */
+  readonly failed: boolean;
+
   readonly health: PluginHealth;
 
   readonly dependencies: readonly string[];
@@ -76,22 +79,35 @@ export function buildDiagnosticReport(
   plugins: Array<{
     readonly plugin: Plugin;
     readonly state: PluginState;
+    /**
+     * Whether the plugin failed at any point. A plugin that failed and
+     * was then disposed during rollback is still a failure worth
+     * reporting, which its current state alone would not show.
+     */
+    readonly failed?: boolean;
+    readonly error?: unknown;
   }>,
 ): PluginDiagnosticReport {
   const pluginDiagnostics: PluginDiagnostic[] = plugins.map(
-    ({ plugin, state }) => ({
-      plugin: plugin.metadata,
-      state,
-      health:
-        state === "started"
-          ? createHealthyHealth()
-          : state === "failed"
-            ? createUnhealthyHealth()
+    ({ plugin, state, failed, error }) => {
+      const hasFailed = failed === true || state === "failed";
+
+      return {
+        plugin: plugin.metadata,
+        state,
+        failed: hasFailed,
+        health: hasFailed
+          ? createUnhealthyHealth(
+              error instanceof Error ? error.message : error,
+            )
+          : state === "started"
+            ? createHealthyHealth()
             : createDegradedHealth(),
-      dependencies: plugin.dependencies?.map((d) => d.name) ?? [],
-      optionalDependencies:
-        plugin.optionalDependencies?.map((d) => d.name) ?? [],
-    }),
+        dependencies: plugin.dependencies?.map((d) => d.name) ?? [],
+        optionalDependencies:
+          plugin.optionalDependencies?.map((d) => d.name) ?? [],
+      };
+    },
   );
 
   const healthy = pluginDiagnostics.filter(
@@ -103,7 +119,7 @@ export function buildDiagnosticReport(
   const unhealthy = pluginDiagnostics.filter(
     (d) => d.health.status === "unhealthy",
   ).length;
-  const failed = pluginDiagnostics.filter((d) => d.state === "failed").length;
+  const failed = pluginDiagnostics.filter((d) => d.failed).length;
 
   return {
     plugins: Object.freeze(pluginDiagnostics),

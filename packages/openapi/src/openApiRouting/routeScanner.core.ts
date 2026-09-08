@@ -1,144 +1,66 @@
 import type { OpenAPIRoute } from "../openApiRegistry/openApiRegistry.type.js";
-import type { OpenAPIOperation } from "../openApiTypes/openApiTypes.core.js";
-import { toOpenAPIPath } from "./routeConverter.core.js";
+import type { RouteInfo } from "./routeMetadata.type.js";
+import { convertRouteToOpenAPI } from "./routeConverter.core.js";
+import { OpenAPIRouteError } from "../openApiErrors/openApiError.types.js";
 
 /**
- * Metadata attached to a route for OpenAPI generation.
- */
-export interface RouteOpenAPIMetadata {
-  readonly operationId?: string;
-
-  readonly summary?: string;
-
-  readonly description?: string;
-
-  readonly tags?: readonly string[];
-
-  readonly deprecated?: boolean;
-
-  readonly parameters?: readonly RouteParameterMetadata[];
-
-  readonly requestBody?: unknown;
-
-  readonly responses?: Record<string, unknown>;
-
-  readonly security?: readonly Record<string, readonly string[]>[];
-
-  readonly servers?: readonly {
-    readonly url: string;
-    readonly description?: string;
-  }[];
-}
-
-/**
- * Parameter metadata for OpenAPI generation.
- */
-export interface RouteParameterMetadata {
-  readonly name: string;
-
-  readonly in: "query" | "header" | "path" | "cookie";
-
-  readonly description?: string;
-
-  readonly required?: boolean;
-
-  readonly deprecated?: boolean;
-
-  readonly schema?: unknown;
-
-  readonly example?: unknown;
-}
-
-/**
- * Route metadata container.
- */
-export interface RouteMetadata {
-  readonly openapi?: RouteOpenAPIMetadata;
-}
-
-/**
- * Route information for scanning.
- */
-export interface RouteInfo {
-  readonly method:
-    "get" | "put" | "post" | "delete" | "options" | "head" | "patch" | "trace";
-
-  readonly path: string;
-
-  readonly metadata?: {
-    readonly openapi?: RouteOpenAPIMetadata;
-  };
-}
-
-/**
- * Default OpenAPI route scanner implementation.
+ * Collects routes and converts them into OpenAPI operations.
+ *
+ * Duplicates are rejected on the way in. Accepting them and letting the
+ * registry throw during generation reported the problem far from the
+ * `addRoute` call that caused it, and only after some routes had already been
+ * registered.
  */
 export class OpenAPIRouteScannerImpl {
-  private readonly routes: RouteInfo[] = [];
+  private readonly routes = new Map<string, RouteInfo>();
 
+  /** Registers a route. */
   public addRoute(route: RouteInfo): void {
-    this.routes.push(route);
+    const key = `${route.method.toLowerCase()}:${route.path}`;
+    if (this.routes.has(key)) {
+      throw new OpenAPIRouteError(
+        `Route ${route.method.toUpperCase()} ${route.path} is already registered.`,
+        { metadata: { method: route.method, path: route.path } },
+      );
+    }
+    this.routes.set(key, route);
   }
 
+  /** Registers a route, replacing any existing one for the same method+path. */
+  public setRoute(route: RouteInfo): void {
+    this.routes.set(`${route.method.toLowerCase()}:${route.path}`, route);
+  }
+
+  /** True when a route is registered for this method and path. */
+  public hasRoute(method: string, path: string): boolean {
+    return this.routes.has(`${method.toLowerCase()}:${path}`);
+  }
+
+  /** Removes a route. Returns whether one was removed. */
+  public removeRoute(method: string, path: string): boolean {
+    return this.routes.delete(`${method.toLowerCase()}:${path}`);
+  }
+
+  /** Number of registered routes. */
+  public get size(): number {
+    return this.routes.size;
+  }
+
+  /** Converts every registered route into an OpenAPI operation. */
   public scan(): readonly OpenAPIRoute[] {
     const result: OpenAPIRoute[] = [];
 
-    for (const route of this.routes) {
-      const openApiPath = toOpenAPIPath(route.path);
-
-      const response200: OpenAPIOperation["responses"] = {
-        "200": {
-          description: "OK",
-          ...(route.metadata?.openapi?.responses?.["200"]
-            ? (route.metadata.openapi.responses["200"] as {
-                description?: string;
-              })
-            : {}),
-        },
-      };
-
-      const operation: OpenAPIOperation = {
-        ...(route.metadata?.openapi?.operationId
-          ? { operationId: route.metadata.openapi.operationId }
-          : {}),
-        ...(route.metadata?.openapi?.summary
-          ? { summary: route.metadata.openapi.summary }
-          : {}),
-        ...(route.metadata?.openapi?.description
-          ? { description: route.metadata.openapi.description }
-          : {}),
-        ...(route.metadata?.openapi?.tags?.length
-          ? { tags: [...route.metadata.openapi.tags] }
-          : {}),
-        ...(route.metadata?.openapi?.deprecated !== undefined
-          ? { deprecated: route.metadata.openapi.deprecated }
-          : {}),
-        ...(route.metadata?.openapi?.parameters?.length
-          ? {
-              parameters: [
-                ...route.metadata.openapi.parameters,
-              ] as OpenAPIOperation["parameters"],
-            }
-          : {}),
-        ...(route.metadata?.openapi?.requestBody
-          ? {
-              requestBody: route.metadata.openapi
-                .requestBody as OpenAPIOperation["requestBody"],
-            }
-          : {}),
-        ...(route.metadata?.openapi?.security?.length
-          ? { security: [...route.metadata.openapi.security] }
-          : {}),
-        ...(route.metadata?.openapi?.servers?.length
-          ? { servers: [...route.metadata.openapi.servers] }
-          : {}),
-        responses: response200,
-      };
-
+    for (const route of this.routes.values()) {
+      if (route.metadata?.openapi?.hidden === true) continue;
+      const converted = convertRouteToOpenAPI(
+        route.method,
+        route.path,
+        route.metadata,
+      );
       result.push({
-        method: route.method,
-        path: openApiPath,
-        operation: operation as OpenAPIRoute["operation"],
+        method: converted.method,
+        path: converted.path,
+        operation: converted.operation,
       });
     }
 
@@ -146,6 +68,6 @@ export class OpenAPIRouteScannerImpl {
   }
 
   public clear(): void {
-    this.routes.length = 0;
+    this.routes.clear();
   }
 }

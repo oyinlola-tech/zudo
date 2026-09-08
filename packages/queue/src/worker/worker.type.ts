@@ -14,12 +14,26 @@ export interface WorkerOptions {
   readonly concurrency?: number;
   /** Poll interval in milliseconds. */
   readonly pollInterval?: number;
-  /** Maximum number of stalled jobs before marking as failed. */
-  readonly maxStalledCount?: number;
-  /** Job timeout in milliseconds. */
+  /**
+   * Default job timeout in milliseconds, applied to jobs that do not
+   * carry their own. Stall detection is a queue-level concern; configure
+   * it with `QueueOptions.stalledAfter` and `maxStalledCount`.
+   */
   readonly timeoutMs?: number;
   /** Middleware for job processing. */
   readonly middleware?: QueueMiddleware[];
+  /**
+   * How long `stop()` waits for in-flight jobs before forcing a stop, in
+   * milliseconds. Defaults to 30000. Without a bound, one stuck job
+   * hangs shutdown forever.
+   */
+  readonly drainTimeout?: number;
+  /**
+   * Invoked for errors raised outside a job — a failing poll, a job that
+   * threw, or a drain that timed out. Defaults to reporting on the
+   * console. Poll errors are never left as unhandled rejections.
+   */
+  readonly onError?: (error: unknown) => void;
 }
 
 /**

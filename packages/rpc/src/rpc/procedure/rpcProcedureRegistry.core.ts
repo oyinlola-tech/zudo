@@ -7,6 +7,8 @@ import {
 
 import { MAX_PROCEDURES } from "../constants/rpcConstants.core.js";
 
+import { assertValidProcedureName } from "../validation/rpcValidation.core.js";
+
 /**
  * Registry for RPC procedures.
  *
@@ -22,10 +24,12 @@ export class RPCProcedureRegistry {
    */
   register(procedure: RPCProcedure): void {
     if (this.procedures.size >= MAX_PROCEDURES) {
-      throw new Error(
+      throw new RangeError(
         `Maximum number of procedures (${MAX_PROCEDURES}) exceeded.`,
       );
     }
+
+    assertValidProcedureName(procedure.name);
 
     const existing = this.procedures.get(procedure.name);
     if (existing !== undefined) {
@@ -65,6 +69,32 @@ export class RPCProcedureRegistry {
    */
   list(): readonly string[] {
     return Array.from(this.procedures.keys());
+  }
+
+  /**
+   * Describes every registered procedure.
+   *
+   * Surfaces the `description` and `idempotent` options, which are
+   * otherwise carried on the procedure and never readable — a caller's
+   * retry policy needs `idempotent` to decide whether replaying a failed
+   * call is safe.
+   */
+  describe(): readonly {
+    name: string;
+    description?: string;
+    idempotent: boolean;
+    timeout?: number;
+  }[] {
+    return Array.from(this.procedures.values()).map((procedure) => ({
+      name: procedure.name,
+      ...(procedure.options?.description !== undefined
+        ? { description: procedure.options.description }
+        : {}),
+      idempotent: procedure.options?.idempotent ?? false,
+      ...(procedure.options?.timeout !== undefined
+        ? { timeout: procedure.options.timeout }
+        : {}),
+    }));
   }
 
   /**

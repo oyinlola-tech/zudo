@@ -4,6 +4,11 @@ export interface CacheHealth {
   readonly latencyMs?: number;
   readonly checkedAt: Date;
   readonly error?: string;
+  /**
+   * True when the cache is configured `enabled: false`. The check is
+   * reported healthy without touching the adapter.
+   */
+  readonly disabled?: boolean;
 }
 
 export interface CacheHealthChecker {

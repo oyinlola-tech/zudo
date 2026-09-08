@@ -12,7 +12,6 @@ import {
 
 import type {
   HttpAdapter,
-  HttpAdapterOptions,
   HttpHandler,
   HttpErrorHandler,
 } from "../../httpAdapter/http.adapter.js";
@@ -56,11 +55,17 @@ export class HttpServer {
 
   private requestCount = 0;
 
-  private readonly events: HttpServerEvents;
-
-  private readonly configuredHandler: HttpHandler | undefined;
-
-  private readonly configuredErrorHandler: HttpErrorHandler | undefined;
+  /**
+   * Listeners per event.
+   *
+   * A single-slot registry (the previous shape) meant two independent
+   * subsystems could not both subscribe to `onError`: the second `on()` call
+   * threw.
+   */
+  private readonly listeners = new Map<
+    keyof HttpServerEvents,
+    Set<(...args: never[]) => void>
+  >();
 
   private startPromise: Promise<void> | undefined;
 
@@ -83,11 +88,14 @@ export class HttpServer {
       options.gracefulShutdownTimeout ?? 30_000,
     );
 
-    this.events = {};
-
-    this.configuredHandler = options.handler;
-
-    this.configuredErrorHandler = options.errorHandler;
+    for (const [event, listener] of Object.entries(options.events ?? {})) {
+      if (typeof listener === "function") {
+        this.on(
+          event as keyof HttpServerEvents,
+          listener as NonNullable<HttpServerEvents[keyof HttpServerEvents]>,
+        );
+      }
+    }
 
     if (options.handler) {
       this.adapterHandler(options.handler);
@@ -161,7 +169,7 @@ export class HttpServer {
 
     this.stateValue = "starting";
 
-    this.events.onStarting?.(this);
+    this.emit("onStarting", this);
 
     this.startPromise = this.performStart();
 
@@ -176,7 +184,7 @@ export class HttpServer {
 
       this.refreshAddress();
 
-      this.events.onStarted?.(this);
+      this.emit("onStarted", this);
 
       return this;
     } catch (error) {
@@ -187,7 +195,7 @@ export class HttpServer {
           ? error
           : new HttpServerStartError("Failed to start the HTTP server.", error);
 
-      this.events.onError?.(wrapped, this);
+      this.emit("onError", wrapped, this);
 
       throw wrapped;
     } finally {
@@ -217,7 +225,7 @@ export class HttpServer {
 
     this.stateValue = "stopping";
 
-    this.events.onStopping?.(this);
+    this.emit("onStopping", this);
 
     const timeout = validateShutdownTimeout(
       options.timeout ?? this.gracefulShutdownTimeout,
@@ -232,7 +240,7 @@ export class HttpServer {
 
       this.stoppedAtValue = new Date();
 
-      this.events.onStopped?.(this);
+      this.emit("onStopped", this);
 
       return this;
     } catch (error) {
@@ -243,7 +251,7 @@ export class HttpServer {
           ? error
           : new HttpServerStopError("Failed to stop the HTTP server.", error);
 
-      this.events.onError?.(wrapped, this);
+      this.emit("onError", wrapped, this);
 
       throw wrapped;
     } finally {
@@ -280,33 +288,64 @@ export class HttpServer {
   private adapterHandler(handler: HttpHandler): void {
     const adapter = this.adapter as HttpAdapter & {
       handler?: HttpHandler;
+      setHandler?: (value: HttpHandler) => void;
     };
+
+    if (typeof adapter.setHandler === "function") {
+      adapter.setHandler(handler);
+
+      return;
+    }
 
     if ("handler" in adapter) {
       adapter.handler = handler;
 
       return;
     }
+
+    /*
+     * Returning silently here left a listening server answering every request
+     * with HTTP_HANDLER_NOT_CONFIGURED, with nothing to say the application
+     * handler had been discarded.
+     */
+    throw new HttpServerLifecycleError(
+      "The configured HTTP adapter cannot accept a request handler: it exposes neither setHandler() nor a handler property.",
+      { code: "HTTP_SERVER_ADAPTER_HANDLER_UNSUPPORTED" },
+    );
   }
 
   private adapterErrorHandler(handler: HttpErrorHandler): void {
     const adapter = this.adapter as HttpAdapter & {
       errorHandler?: HttpErrorHandler;
+      setErrorHandler?: (value: HttpErrorHandler) => void;
     };
+
+    if (typeof adapter.setErrorHandler === "function") {
+      adapter.setErrorHandler(handler);
+
+      return;
+    }
 
     if ("errorHandler" in adapter) {
       adapter.errorHandler = handler;
+
+      return;
     }
+
+    throw new HttpServerLifecycleError(
+      "The configured HTTP adapter cannot accept an error handler: it exposes neither setErrorHandler() nor an errorHandler property.",
+      { code: "HTTP_SERVER_ADAPTER_ERROR_HANDLER_UNSUPPORTED" },
+    );
   }
 
   recordRequest(): void {
     this.requestCount += 1;
 
-    this.events.onRequest?.(this);
+    this.emit("onRequest", this);
   }
 
   recordResponse(): void {
-    this.events.onResponse?.(this);
+    this.emit("onResponse", this);
   }
 
   resetRequestCount(): void {
@@ -317,26 +356,41 @@ export class HttpServer {
     event: keyof HttpServerEvents,
     listener: NonNullable<HttpServerEvents[keyof HttpServerEvents]>,
   ): () => void {
-    const events = this.events as Record<string, unknown>;
+    let set = this.listeners.get(event);
 
-    const previous = events[event as string];
+    if (!set) {
+      set = new Set();
 
-    if (previous) {
-      throw new HttpServerLifecycleError(
-        `A listener for "${String(event)}" is already registered.`,
-        {
-          code: "HTTP_SERVER_EVENT_LISTENER_EXISTS",
-        },
-      );
+      this.listeners.set(event, set);
     }
 
-    events[event as string] = listener;
+    set.add(listener as (...args: never[]) => void);
 
     return () => {
-      if (events[event as string] === listener) {
-        events[event as string] = undefined;
-      }
+      this.listeners.get(event)?.delete(listener as (...args: never[]) => void);
     };
+  }
+
+  /**
+   * Invokes every listener for an event.
+   *
+   * A listener that throws is isolated: it must not abort a start/stop
+   * transition or prevent the remaining listeners from running.
+   */
+  private emit(event: keyof HttpServerEvents, ...args: unknown[]): void {
+    const set = this.listeners.get(event);
+
+    if (!set) {
+      return;
+    }
+
+    for (const listener of [...set]) {
+      try {
+        (listener as (...values: unknown[]) => void)(...args);
+      } catch {
+        /* Listener failures are contained. */
+      }
+    }
   }
 
   snapshot(): HttpServerSnapshot {
@@ -382,11 +436,26 @@ export class HttpServer {
       return;
     }
 
-    await withTimeout(
-      stopAdapter(this.adapter),
-      timeout,
-      "HTTP server shutdown timed out.",
-    );
+    try {
+      await withTimeout(
+        stopAdapter(this.adapter),
+        timeout,
+        "HTTP server shutdown timed out.",
+      );
+    } catch (error) {
+      /*
+       * A graceful stop that times out used to leave the server listening and
+       * the sockets open while reporting failure, so a redeploy could not
+       * rebind the port. Escalate to a forced stop before rethrowing.
+       */
+      try {
+        await stopAdapter(this.adapter);
+      } catch {
+        /* The original timeout is the more useful error. */
+      }
+
+      throw error;
+    }
   }
 
   private refreshAddress(): void {

@@ -4,6 +4,15 @@
  * @module rule
  */
 
-export { ruleMatches, evaluateRules } from "./rule.core.js";
+export {
+  ruleMatches,
+  patternStrMatches,
+  evaluateRules,
+  evaluateRulesSync,
+} from "./rule.core.js";
 
-export { compileRules, findMatchingRules } from "./ruleCompiler.js";
+export {
+  compileRules,
+  findMatchingRules,
+  type RuleIndex,
+} from "./ruleCompiler.js";

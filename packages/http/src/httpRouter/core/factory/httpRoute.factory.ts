@@ -2,18 +2,21 @@
  * HTTP router factory functions and type guards.
  */
 
-import type { RouteDefinition, RouterOptions } from "./httpRouter.type.js";
+import type {
+  RouteDefinition,
+  RouterOptions,
+} from "../types/httpRouter.type.js";
 
-import { HttpRouter } from "./httpRouter.register.js";
+import { HttpRouter } from "../register/httpRouter.register.js";
 
-import { HttpRouterGroup } from "./httpRouterGroup.core.js";
+import { HttpRouterGroup } from "../group/httpRouterGroup.core.js";
 
 import {
   RouteConflictError,
   InvalidRoutePatternError,
-} from "./httpRouter.error.js";
+} from "../error/httpRouter.error.js";
 
-import { normalizePath } from "./httpRoute.util.js";
+import { normalizePath } from "../util/httpRoute.util.js";
 
 /**
  * Creates a new HTTP router instance.
@@ -46,7 +49,7 @@ export function buildRoutePath(
   return normalized
     .replace(
       /:([a-zA-Z_][a-zA-Z0-9_-]*)(\?)?/g,
-      (_match, name: string, optional: string) => {
+      (_match: string, name: string, optional: string | undefined) => {
         const value = params[name];
 
         if (value === undefined || value === null) {

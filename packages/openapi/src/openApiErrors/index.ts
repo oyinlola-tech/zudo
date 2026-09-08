@@ -6,6 +6,12 @@
 
 export {
   OpenAPIError,
+  createOpenAPIError,
+  isOpenAPIError,
+  type OpenAPIErrorOptions,
+} from "./openApiError.base.js";
+
+export {
   OpenAPIValidationError,
   OpenAPIDocumentError,
   OpenAPIComponentError,
@@ -16,11 +22,6 @@ export {
   OpenAPISerializationError,
   OpenAPIVersionError,
   OpenAPIOperationError,
-  createOpenAPIError,
-  isOpenAPIError,
-} from "./openApiError.core.js";
-
-export type {
-  OpenAPIErrorOptions,
-  OpenAPIValidationIssue,
-} from "./openApiError.core.js";
+  formatIssuePath,
+  type OpenAPIValidationIssue,
+} from "./openApiError.types.js";

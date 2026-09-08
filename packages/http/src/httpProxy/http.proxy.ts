@@ -13,10 +13,16 @@ import {
   appendHeader,
   deleteHeader,
   getHeader,
-  hasHeader,
   setHeader,
 } from "../httpProtocol/http.protocol.js";
 import { isValidHTTPURL, isValidHeaderValue } from "../httpValidation/index.js";
+import {
+  isLinkLocalAddress,
+  isLoopbackAddress,
+  isUniqueLocalAddress,
+  parseIpAddress,
+} from "../httpTrustProxy/httpTrustProxy.ip.js";
+import { assertSafeHeaderValue } from "../httpHeaders/security/index.js";
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -31,7 +37,34 @@ export interface ProxyTarget {
   readonly search: string;
 }
 
-export interface ProxyOptions {
+/**
+ * Controls which outbound targets this proxy may be pointed at.
+ *
+ * The default posture blocks the internal network. A proxy whose target is
+ * derived from a request is a server-side request forgery primitive: the
+ * classic payload is `http://169.254.169.254/latest/meta-data/iam/`, which
+ * returns cloud credentials to whoever can steer the target.
+ */
+export interface ProxySecurityOptions {
+  /**
+   * Allow loopback, link-local, private/unique-local, multicast and reserved
+   * destinations. Off by default. Turn it on only for a proxy whose target is
+   * fixed configuration, never one influenced by a request.
+   */
+  readonly allowPrivateTargets?: boolean;
+  /**
+   * When present, the target host must appear here (compared case-insensitively
+   * against the hostname). This is the only reliable control for a
+   * request-derived target.
+   */
+  readonly allowedHosts?: readonly string[];
+  /** Extra hostnames to refuse, on top of the built-in blocklist. */
+  readonly blockedHosts?: readonly string[];
+  /** Permit schemes other than http/https. Off by default. */
+  readonly allowInsecureProtocols?: boolean;
+}
+
+export interface ProxyOptions extends ProxySecurityOptions {
   readonly target: string | URL;
   readonly changeOrigin?: boolean;
   readonly preserveHost?: boolean;
@@ -40,6 +73,24 @@ export interface ProxyOptions {
   readonly timeout?: number;
   readonly rewritePath?: (path: string, requestURL: URL) => string;
   readonly headers?: Readonly<Record<string, string>>;
+}
+
+/**
+ * The front-end request a proxied request is being made on behalf of.
+ *
+ * `X-Forwarded-Proto` / `-Host` / `-For` describe the hop the **client** made,
+ * not the hop the proxy is about to make, so these values have to come from
+ * the incoming request.
+ */
+export interface ProxyClientContext {
+  /** Scheme the client used: `http` or `https`. */
+  readonly protocol?: string;
+  /** Host (with optional port) the client addressed. */
+  readonly host?: string;
+  /** Resolved client IP — see `httpTrustProxy.getClientIp`. */
+  readonly clientIp?: string;
+  /** Port the client connected to. */
+  readonly port?: number;
 }
 
 export interface ProxyRequest {
@@ -65,9 +116,231 @@ export interface ProxyRewriteOptions {
 /* Target                                                                     */
 /* -------------------------------------------------------------------------- */
 
-export function resolveProxyTarget(target: string | URL): ProxyTarget {
+/* -------------------------------------------------------------------------- */
+/* SSRF Guard                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Host names that name the local machine or a cloud instance-metadata service.
+ * Compared after lower-casing and stripping a trailing dot.
+ */
+export const BLOCKED_PROXY_HOSTS: readonly string[] = Object.freeze([
+  "localhost",
+  "metadata",
+  "metadata.google.internal",
+  "metadata.goog",
+  "instance-data",
+  "169.254.169.254",
+  "fd00:ec2::254",
+]);
+
+/**
+ * Host suffixes that only ever resolve inside a private network.
+ */
+export const BLOCKED_PROXY_HOST_SUFFIXES: readonly string[] = Object.freeze([
+  ".localhost",
+  ".local",
+  ".internal",
+  ".localdomain",
+]);
+
+function normalizeHostname(hostname: string): string {
+  let value = hostname.trim().toLowerCase();
+
+  if (value.startsWith("[") && value.endsWith("]")) {
+    value = value.slice(1, -1);
+  }
+
+  while (value.endsWith(".")) {
+    value = value.slice(0, -1);
+  }
+
+  return value;
+}
+
+function isBlockedLiteralAddress(hostname: string): boolean {
+  const address = parseIpAddress(hostname);
+
+  if (!address) {
+    return false;
+  }
+
+  if (
+    isLoopbackAddress(hostname) ||
+    isLinkLocalAddress(hostname) ||
+    isUniqueLocalAddress(hostname)
+  ) {
+    return true;
+  }
+
+  if (address.family === 4) {
+    const first = address.bytes[0] ?? 0;
+
+    /* 0.0.0.0/8 "this network", 100.64/10 CGNAT, 224/4 multicast,
+     * 240/4 reserved (which includes 255.255.255.255). */
+    if (first === 0 || first >= 224) {
+      return true;
+    }
+
+    if (
+      first === 100 &&
+      (address.bytes[1] ?? 0) >= 64 &&
+      (address.bytes[1] ?? 0) <= 127
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  const first = address.bytes[0] ?? 0;
+
+  /* :: unspecified, and ff00::/8 multicast. */
+  if (first === 0xff) {
+    return true;
+  }
+
+  return address.bytes.every((byte) => byte === 0);
+}
+
+/**
+ * Explains why a proxy target is refused, or returns `undefined` when it is
+ * acceptable.
+ *
+ * **Limitation, by design:** this module performs no I/O, so a hostname is
+ * checked as a literal only. A name that *resolves* to `169.254.169.254`
+ * passes here. The transport layer must re-apply this check against the
+ * resolved address immediately before connecting (and again on every
+ * redirect), or the DNS-rebinding variant of the same attack still works.
+ * `isBlockedProxyAddress` is exported for exactly that call.
+ */
+export function getProxyTargetRejection(
+  target: string | URL,
+  options: ProxySecurityOptions = {},
+): string | undefined {
+  let url: URL;
+
+  try {
+    url = target instanceof URL ? new URL(target.href) : new URL(target);
+  } catch {
+    return "Proxy target is not a valid absolute URL.";
+  }
+
+  if (
+    !options.allowInsecureProtocols &&
+    url.protocol !== "http:" &&
+    url.protocol !== "https:"
+  ) {
+    return `Proxy target protocol ${url.protocol} is not permitted. Only http and https are allowed.`;
+  }
+
+  const hostname = normalizeHostname(url.hostname);
+
+  if (hostname.length === 0) {
+    return "Proxy target has no host.";
+  }
+
+  if (options.allowedHosts && options.allowedHosts.length > 0) {
+    const permitted = options.allowedHosts.some(
+      (host) => normalizeHostname(host) === hostname,
+    );
+
+    if (!permitted) {
+      return `Proxy target host ${hostname} is not in the configured allowedHosts.`;
+    }
+
+    return undefined;
+  }
+
+  const blocked = [
+    ...BLOCKED_PROXY_HOSTS,
+    ...(options.blockedHosts ?? []),
+  ].some((host) => normalizeHostname(host) === hostname);
+
+  if (blocked) {
+    return `Proxy target host ${hostname} is blocked.`;
+  }
+
+  if (BLOCKED_PROXY_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix))) {
+    return `Proxy target host ${hostname} resolves inside a private network.`;
+  }
+
+  if (!options.allowPrivateTargets && isBlockedLiteralAddress(hostname)) {
+    return `Proxy target address ${hostname} is loopback, link-local, private, multicast or reserved. Set allowPrivateTargets to override.`;
+  }
+
+  return undefined;
+}
+
+/**
+ * True when a resolved IP address must not be connected to.
+ *
+ * Call this from the transport layer with the address DNS actually returned.
+ */
+export function isBlockedProxyAddress(address: string): boolean {
+  return isBlockedLiteralAddress(normalizeHostname(address));
+}
+
+export function isSafeProxyTarget(
+  target: string | URL,
+  options: ProxySecurityOptions = {},
+): boolean {
+  return getProxyTargetRejection(target, options) === undefined;
+}
+
+/**
+ * Throws unless the target passes {@link getProxyTargetRejection}.
+ */
+export function assertSafeProxyTarget(
+  target: string | URL,
+  options: ProxySecurityOptions = {},
+): void {
+  const rejection = getProxyTargetRejection(target, options);
+
+  if (rejection) {
+    throw new TypeError(rejection);
+  }
+}
+
+/**
+ * Validates a redirect the upstream returned before it is followed.
+ *
+ * A redirect re-crosses the trust boundary: the first request may be to an
+ * allowlisted host, and its `302` to `http://169.254.169.254/`. The location is
+ * resolved against the current URL and then subjected to the same guard as the
+ * original target.
+ */
+export function assertSafeProxyRedirect(
+  location: string | URL,
+  currentURL: string | URL,
+  options: ProxySecurityOptions = {},
+): URL {
+  const base = currentURL instanceof URL ? currentURL : new URL(currentURL);
+
+  let resolved: URL;
+
+  try {
+    resolved = new URL(
+      location instanceof URL ? location.href : location,
+      base,
+    );
+  } catch {
+    throw new TypeError("Proxy redirect Location is not resolvable.");
+  }
+
+  assertSafeProxyTarget(resolved, options);
+
+  return resolved;
+}
+
+export function resolveProxyTarget(
+  target: string | URL,
+  options: ProxySecurityOptions = {},
+): ProxyTarget {
   const url =
     target instanceof URL ? new URL(target.href) : parseProxyURL(target);
+
+  assertSafeProxyTarget(url, options);
 
   return {
     url,
@@ -185,22 +458,29 @@ export function buildProxyRequestPath(
 /* Proxy Headers                                                              */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Builds the header list for the upstream request.
+ *
+ * Hop-by-hop headers are removed **first**. Forwarding `Transfer-Encoding`
+ * alongside the front end's `Content-Length` is the canonical CL.TE
+ * request-smuggling setup; forwarding `Proxy-Authorization` leaks the proxy's
+ * own credentials upstream; forwarding `Connection: close` destroys upstream
+ * keep-alive pooling.
+ */
 export function prepareProxyHeaders(
   headers: readonly HTTPHeader[],
   target: ProxyTarget,
   options: Pick<ProxyOptions, "changeOrigin" | "preserveHost" | "xfwd"> = {},
+  client: ProxyClientContext = {},
 ): HTTPHeader[] {
-  let result = headers.map((header) => ({
-    name: header.name,
-    value: header.value,
-  }));
+  let result = removeHopByHopHeaders(headers);
 
   if (options.changeOrigin && !options.preserveHost) {
     result = setHeader(result, "host", formatHost(target.url));
   }
 
   if (options.xfwd) {
-    result = setForwardedHeaders(result, target);
+    result = setForwardedHeaders(result, target, client);
   }
 
   return result;
@@ -231,32 +511,77 @@ export function applyProxyHeaders(
 /* Forwarded Headers                                                          */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Sets the `X-Forwarded-*` headers on an outbound proxy request.
+ *
+ * `X-Forwarded-Proto` and `X-Forwarded-Host` describe **the scheme and host
+ * the client originally used**, not the upstream this proxy is about to call,
+ * and they are *overwritten* rather than appended to. Appending lets a client
+ * that sends `X-Forwarded-Proto: https` to a plain-HTTP proxy produce
+ * `https, http`, and every consumer in this package reads `[0]` — so the
+ * upstream concludes the request arrived over TLS and issues `Secure` cookies
+ * over cleartext.
+ *
+ * `X-Forwarded-For` is the one header that is appended, because it is a chain:
+ * the client address is added to whatever trusted hops already recorded. It is
+ * only added when `client.clientIp` is supplied — the caller must resolve it
+ * with `httpTrustProxy.getClientIp` rather than copying the raw header.
+ */
 export function setForwardedHeaders(
   headers: readonly HTTPHeader[],
   target: ProxyTarget,
-  forwardedFor?: string,
+  client: ProxyClientContext = {},
 ): HTTPHeader[] {
   let result = [...headers];
 
-  const protocol = target.url.protocol.replace(":", "");
+  const protocol =
+    client.protocol === "http" || client.protocol === "https"
+      ? client.protocol
+      : undefined;
 
-  result = appendForwardedValue(result, "x-forwarded-proto", protocol);
-
-  result = appendForwardedValue(
-    result,
-    "x-forwarded-host",
-    formatHost(target.url),
-  );
-
-  if (target.url.port) {
-    result = appendForwardedValue(result, "x-forwarded-port", target.url.port);
+  if (protocol) {
+    result = overwriteForwardedValue(result, "x-forwarded-proto", protocol);
+  } else {
+    result = deleteHeader(result, "x-forwarded-proto");
   }
 
-  if (forwardedFor) {
-    result = appendForwardedValue(result, "x-forwarded-for", forwardedFor);
+  if (client.host) {
+    result = overwriteForwardedValue(result, "x-forwarded-host", client.host);
+  } else {
+    result = deleteHeader(result, "x-forwarded-host");
+  }
+
+  if (client.port !== undefined) {
+    result = overwriteForwardedValue(
+      result,
+      "x-forwarded-port",
+      String(client.port),
+    );
+  } else {
+    result = deleteHeader(result, "x-forwarded-port");
+  }
+
+  if (client.clientIp) {
+    result = appendForwardedValue(result, "x-forwarded-for", client.clientIp);
+  } else {
+    /*
+     * No resolved client address means the existing chain came from an
+     * unverified peer. Dropping it is safer than relaying a forged chain.
+     */
+    result = deleteHeader(result, "x-forwarded-for");
   }
 
   return result;
+}
+
+function overwriteForwardedValue(
+  headers: readonly HTTPHeader[],
+  name: string,
+  value: string,
+): HTTPHeader[] {
+  assertSafeHeaderValue(value);
+
+  return setHeader(headers, name, value);
 }
 
 function appendForwardedValue(
@@ -264,6 +589,8 @@ function appendForwardedValue(
   name: string,
   value: string,
 ): HTTPHeader[] {
+  assertSafeHeaderValue(value);
+
   const existing = getHeader(headers, name);
 
   if (existing) {
@@ -364,17 +691,25 @@ function parseForwardedEntry(value: string): ForwardedAddress {
 /* Proxy Request                                                              */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Builds an upstream request description.
+ *
+ * The target passes the SSRF guard, hop-by-hop headers are stripped, and the
+ * `X-Forwarded-*` values come from `client` (the incoming request), not from
+ * the upstream target.
+ */
 export function createProxyRequest(
   method: string,
   requestPath: string,
   headers: readonly HTTPHeader[],
   options: ProxyOptions,
+  client: ProxyClientContext = {},
 ): ProxyRequest {
-  const target = resolveProxyTarget(options.target);
+  const target = resolveProxyTarget(options.target, options);
 
-  let path = buildProxyRequestPath(target, requestPath, options.rewritePath);
+  const path = buildProxyRequestPath(target, requestPath, options.rewritePath);
 
-  const proxyHeaders = prepareProxyHeaders(headers, target, options);
+  const proxyHeaders = prepareProxyHeaders(headers, target, options, client);
 
   const finalHeaders = applyProxyHeaders(proxyHeaders, options.headers);
 
@@ -487,7 +822,7 @@ function effectivePort(url: URL): string {
 /* -------------------------------------------------------------------------- */
 
 export function normalizeProxyOptions(options: ProxyOptions): ProxyOptions {
-  const target = resolveProxyTarget(options.target);
+  const target = resolveProxyTarget(options.target, options);
 
   if (
     options.timeout !== undefined &&

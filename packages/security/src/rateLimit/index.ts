@@ -8,3 +8,4 @@ export {
   createRateLimiter,
   extractClientIp,
 } from "./rateLimit.core.js";
+export type { RateLimiterOptions, ClientIpOptions } from "./rateLimit.core.js";

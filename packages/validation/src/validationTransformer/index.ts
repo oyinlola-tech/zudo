@@ -1,7 +1,8 @@
 /**
  * @zudojs/validation/validationTransformer
  *
- * Data transformation after validation.
+ * Transformation of validated values.
  */
 
 export * from "./validationTransformer.core.js";
+export * from "./validationTransformer.helpers.js";

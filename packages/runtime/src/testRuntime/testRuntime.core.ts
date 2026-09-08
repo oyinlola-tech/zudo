@@ -56,25 +56,59 @@ export function createTestRuntime(
 }
 
 /**
+ * A module whose lifecycle hooks record their calls.
+ */
+export interface MockModule extends Module {
+  /** How many times each hook ran, in call order. */
+  readonly calls: {
+    readonly onInitialize: number;
+    readonly onReady: number;
+    readonly onShutdown: number;
+    readonly onDestroy: number;
+  };
+  /** Hook names in the order they were invoked. */
+  readonly callOrder: readonly string[];
+}
+
+/**
  * Creates a mock module for testing.
+ *
+ * The hooks are plain counting functions rather than `vi.fn()`: this
+ * module ships in the package, so it must not import a test runner —
+ * `vitest` is a dev dependency consumers do not install, and `require`
+ * is not available in an ESM package at all.
  *
  * @param id - Module identifier.
  * @param dependencies - Module dependencies.
- * @returns A mock module with vi.fn() hooks.
+ * @returns A mock module that records its lifecycle calls.
  */
 export function createMockModule(
   id: string,
   dependencies: string[] = [],
-): Module {
-  const { vi } = require("vitest");
+): MockModule {
+  const calls = {
+    onInitialize: 0,
+    onReady: 0,
+    onShutdown: 0,
+    onDestroy: 0,
+  };
+  const callOrder: string[] = [];
+
+  const record = (hook: keyof typeof calls) => async (): Promise<void> => {
+    calls[hook] += 1;
+    callOrder.push(hook);
+  };
+
   return {
     id,
     name: `Module ${id}`,
     dependencies,
-    onInitialize: vi.fn().mockResolvedValue(undefined),
-    onReady: vi.fn().mockResolvedValue(undefined),
-    onShutdown: vi.fn().mockResolvedValue(undefined),
-    onDestroy: vi.fn().mockResolvedValue(undefined),
+    calls,
+    callOrder,
+    onInitialize: record("onInitialize"),
+    onReady: record("onReady"),
+    onShutdown: record("onShutdown"),
+    onDestroy: record("onDestroy"),
   };
 }
 

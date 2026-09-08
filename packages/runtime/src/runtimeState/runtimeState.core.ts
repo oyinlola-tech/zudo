@@ -6,14 +6,18 @@ import type { RuntimeState, RuntimeStatus } from "./runtimeState.type.js";
 export const RUNTIME_STATE_TRANSITIONS: Readonly<
   Record<RuntimeState, readonly RuntimeState[]>
 > = Object.freeze({
-  created: ["initializing", "failed"],
+  created: ["initializing", "stopped", "failed"],
   initializing: ["initialized", "running", "failed"],
   initialized: ["starting", "running", "failed"],
   starting: ["running", "failed"],
   running: ["stopping", "failed"],
   stopping: ["stopped", "failed"],
   stopped: [],
-  failed: [],
+  // A failed runtime must still be stoppable: startup rollback only
+  // reaches modules that were started, so the operator needs a way to
+  // release everything else. Without this the failure path — the one
+  // most in need of cleanup — is the one with none available.
+  failed: ["stopping", "stopped"],
 });
 
 /**
@@ -36,6 +40,7 @@ export const STARTABLE_STATES: readonly RuntimeState[] = Object.freeze([
  */
 export const STOPPABLE_STATES: readonly RuntimeState[] = Object.freeze([
   "running",
+  "failed",
 ]);
 
 /**
@@ -43,7 +48,7 @@ export const STOPPABLE_STATES: readonly RuntimeState[] = Object.freeze([
  */
 export function canTransition(from: RuntimeState, to: RuntimeState): boolean {
   const allowed = RUNTIME_STATE_TRANSITIONS[from];
-  return allowed.includes(to);
+  return allowed?.includes(to) ?? false;
 }
 
 /**

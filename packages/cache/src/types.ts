@@ -1,18 +1,9 @@
 export type {
   CacheKey,
   CacheKeyOptions,
-  CacheKeyParts,
   CacheNamespace,
 } from "./types-keys.js";
-export type {
-  CacheExpiration,
-  CacheExpirationInfo,
-  CacheEntry,
-  CacheEntryMetadata,
-  CacheTTL,
-  CacheValue,
-  SerializableCacheValue,
-} from "./types-values.js";
+export type { CacheExpiration, CacheEntry, CacheTTL } from "./types-values.js";
 export type {
   CacheClearOptions,
   CacheKeysOptions,
@@ -27,11 +18,7 @@ export type {
   CacheSetResult,
   CacheStats,
 } from "./types-results.js";
-export type {
-  CacheAdapter,
-  CacheAdapterFactory,
-  CacheStore,
-} from "./types-adapter.js";
+export type { CacheAdapter, CacheStore } from "./types-adapter.js";
 export type {
   CacheClearEvent,
   CacheDeleteEvent,
@@ -62,16 +49,11 @@ export type {
   CacheMetrics,
   CacheOperation,
 } from "./types-metrics.js";
-export type {
-  CacheConfig,
-  CacheErrorCode,
-  CacheErrorOptions,
-} from "./types-config.js";
+export type { CacheConfig, CacheErrorCode } from "./types-config.js";
 export type {
   CacheBatchOperation,
   CacheBatchResult,
   CacheOrComputeOptions,
   CacheOrComputeResult,
-  CacheResult,
   MaybePromise,
 } from "./types-utility.js";

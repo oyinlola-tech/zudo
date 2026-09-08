@@ -2,6 +2,11 @@
  * Authentication and authorization error classes.
  *
  * @module authErrors
+ *
+ * Every error in this module carries an accurate HTTP `statusCode` and is
+ * marked `expose: true`. The messages are deliberately generic (they never
+ * name a user, a password, or an account state that the caller did not
+ * already supply), so they are safe to return to a client verbatim.
  */
 
 import {
@@ -13,21 +18,40 @@ import {
 } from "@zudojs/errors";
 
 /**
+ * Options accepted by {@link AuthError} and every subclass.
+ *
+ * Subclasses supply sensible defaults for `code`, `category`, `statusCode`
+ * and `expose`; anything passed here overrides them. Accepting the full set
+ * also keeps `BaseError.withMetadata()` — which reconstructs the error from
+ * its own fields — lossless for these classes.
+ */
+export interface AuthErrorOptions {
+  readonly code?: ErrorCode;
+  readonly category?: ErrorCategory;
+  readonly severity?: ErrorSeverity;
+  readonly statusCode?: number;
+  readonly expose?: boolean;
+  readonly isOperational?: boolean;
+  readonly metadata?: ErrorMetadata;
+  readonly cause?: unknown;
+}
+
+/**
  * Base error for all auth-related failures.
+ *
+ * Defaults to `401 Unauthorized`, category `authentication`, `expose: true`.
  */
 export class AuthError extends BaseError {
-  constructor(
-    message: string,
-    options?: {
-      readonly code?: ErrorCode;
-      readonly metadata?: ErrorMetadata;
-      readonly cause?: unknown;
-    },
-  ) {
+  constructor(message: string, options?: AuthErrorOptions) {
     super(message, {
       code: options?.code ?? ErrorCode.AUTHENTICATION,
-      category: ErrorCategory.AUTHENTICATION,
-      severity: ErrorSeverity.ERROR,
+      category: options?.category ?? ErrorCategory.AUTHENTICATION,
+      severity: options?.severity ?? ErrorSeverity.ERROR,
+      statusCode: options?.statusCode ?? 401,
+      expose: options?.expose ?? true,
+      ...(options?.isOperational !== undefined
+        ? { isOperational: options.isOperational }
+        : {}),
       metadata: options?.metadata,
       cause: options?.cause,
     });
@@ -35,11 +59,36 @@ export class AuthError extends BaseError {
 }
 
 /**
+ * The package is misconfigured (missing/weak signing secret, missing
+ * permission engine, …). Not caused by the request, so `500` and not exposed.
+ */
+export class AuthConfigurationError extends AuthError {
+  constructor(message: string, options?: AuthErrorOptions) {
+    super(message, {
+      code: ErrorCode.CONFIGURATION_INVALID,
+      category: ErrorCategory.CONFIGURATION,
+      severity: ErrorSeverity.CRITICAL,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
+      ...options,
+    });
+  }
+}
+
+/**
  * Invalid credentials (wrong password, unknown user).
+ *
+ * Deliberately identical for "no such user" and "wrong password" so the
+ * login endpoint is not an account-existence oracle.
  */
 export class InvalidCredentialsError extends AuthError {
-  constructor(message = "Invalid credentials") {
-    super(message, { code: ErrorCode.INVALID_CREDENTIALS });
+  constructor(message = "Invalid credentials", options?: AuthErrorOptions) {
+    super(message, {
+      code: ErrorCode.INVALID_CREDENTIALS,
+      statusCode: 401,
+      ...options,
+    });
   }
 }
 
@@ -47,8 +96,12 @@ export class InvalidCredentialsError extends AuthError {
  * Token has expired.
  */
 export class TokenExpiredError extends AuthError {
-  constructor(message = "Token has expired") {
-    super(message, { code: ErrorCode.TOKEN_EXPIRED });
+  constructor(message = "Token has expired", options?: AuthErrorOptions) {
+    super(message, {
+      code: ErrorCode.TOKEN_EXPIRED,
+      statusCode: 401,
+      ...options,
+    });
   }
 }
 
@@ -56,8 +109,12 @@ export class TokenExpiredError extends AuthError {
  * Token is invalid or malformed.
  */
 export class TokenInvalidError extends AuthError {
-  constructor(message = "Token is invalid") {
-    super(message, { code: ErrorCode.TOKEN_INVALID });
+  constructor(message = "Token is invalid", options?: AuthErrorOptions) {
+    super(message, {
+      code: ErrorCode.TOKEN_INVALID,
+      statusCode: 401,
+      ...options,
+    });
   }
 }
 
@@ -65,24 +122,37 @@ export class TokenInvalidError extends AuthError {
  * Token has been revoked.
  */
 export class TokenRevokedError extends AuthError {
-  constructor(message = "Token has been revoked") {
-    super(message, { code: ErrorCode.FORBIDDEN });
+  constructor(message = "Token has been revoked", options?: AuthErrorOptions) {
+    super(message, {
+      code: ErrorCode.FORBIDDEN,
+      category: ErrorCategory.AUTHORIZATION,
+      statusCode: 403,
+      ...options,
+    });
   }
 }
 
 /**
  * User account is locked (too many failed attempts).
+ *
+ * `423 Locked`; `metadata.retryAfterSeconds` is intended for a `Retry-After`
+ * response header.
  */
 export class AccountLockedError extends AuthError {
   constructor(
     message = "Account is locked due to too many failed attempts",
-    options?: { readonly retryAfterSeconds?: number },
+    options?: AuthErrorOptions & { readonly retryAfterSeconds?: number },
   ) {
+    const { retryAfterSeconds, metadata, ...rest } = options ?? {};
     super(message, {
       code: ErrorCode.FORBIDDEN,
+      category: ErrorCategory.RATE_LIMIT,
+      statusCode: 423,
+      ...rest,
       metadata: {
-        retryAfterSeconds: options?.retryAfterSeconds ?? 900,
-      } as ErrorMetadata,
+        retryAfterSeconds: retryAfterSeconds ?? 900,
+        ...metadata,
+      },
     });
   }
 }
@@ -91,8 +161,16 @@ export class AccountLockedError extends AuthError {
  * User account is deactivated.
  */
 export class AccountDeactivatedError extends AuthError {
-  constructor(message = "User account is deactivated") {
-    super(message, { code: ErrorCode.FORBIDDEN });
+  constructor(
+    message = "User account is deactivated",
+    options?: AuthErrorOptions,
+  ) {
+    super(message, {
+      code: ErrorCode.FORBIDDEN,
+      category: ErrorCategory.AUTHORIZATION,
+      statusCode: 403,
+      ...options,
+    });
   }
 }
 
@@ -102,13 +180,18 @@ export class AccountDeactivatedError extends AuthError {
 export class AccessDeniedError extends AuthError {
   constructor(
     message = "Access denied",
-    options?: { readonly requiredPermission?: string },
+    options?: AuthErrorOptions & { readonly requiredPermission?: string },
   ) {
+    const { requiredPermission, metadata, ...rest } = options ?? {};
     super(message, {
       code: ErrorCode.ACCESS_DENIED,
+      category: ErrorCategory.AUTHORIZATION,
+      statusCode: 403,
+      ...rest,
       metadata: {
-        requiredPermission: options?.requiredPermission,
-      } as ErrorMetadata,
+        ...(requiredPermission !== undefined ? { requiredPermission } : {}),
+        ...metadata,
+      },
     });
   }
 }
@@ -117,24 +200,33 @@ export class AccessDeniedError extends AuthError {
  * Session has expired or is invalid.
  */
 export class SessionExpiredError extends AuthError {
-  constructor(message = "Session has expired") {
-    super(message, { code: ErrorCode.SESSION_EXPIRED });
+  constructor(message = "Session has expired", options?: AuthErrorOptions) {
+    super(message, {
+      code: ErrorCode.SESSION_EXPIRED,
+      statusCode: 401,
+      ...options,
+    });
   }
 }
 
 /**
- * Rate limit exceeded for auth endpoint.
+ * Rate limit exceeded for an auth endpoint.
  */
 export class AuthRateLimitError extends AuthError {
   constructor(
     message = "Too many authentication attempts",
-    options?: { readonly retryAfterSeconds?: number },
+    options?: AuthErrorOptions & { readonly retryAfterSeconds?: number },
   ) {
+    const { retryAfterSeconds, metadata, ...rest } = options ?? {};
     super(message, {
       code: ErrorCode.RATE_LIMITED,
+      category: ErrorCategory.RATE_LIMIT,
+      statusCode: 429,
+      ...rest,
       metadata: {
-        retryAfterSeconds: options?.retryAfterSeconds ?? 60,
-      } as ErrorMetadata,
+        retryAfterSeconds: retryAfterSeconds ?? 60,
+        ...metadata,
+      },
     });
   }
 }

@@ -15,7 +15,15 @@ export function getParameter(
     return undefined;
   }
 
-  return parsed.parameters[name.trim().toLowerCase()];
+  const key = name.trim().toLowerCase();
+
+  if (!Object.prototype.hasOwnProperty.call(parsed.parameters, key)) {
+    return undefined;
+  }
+
+  const found: unknown = parsed.parameters[key];
+
+  return typeof found === "string" ? found : undefined;
 }
 
 export function hasParameter(

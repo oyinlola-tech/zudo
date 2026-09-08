@@ -8,6 +8,8 @@ import {
   parseBearerToken,
   parseCookies,
   generateCsrfToken,
+  isTokenExpired,
+  extractUserId,
 } from "../src/index.js";
 
 describe("Password utilities", () => {
@@ -64,7 +66,7 @@ describe("Session store", () => {
 
     expect(session.id).toBeDefined();
     expect(session.userId).toBe("user-123");
-    expect(session.active).toBe(true);
+    expect(session.expiresAt.getTime()).toBeGreaterThan(Date.now());
 
     const retrieved = await store.get(session.id);
     expect(retrieved).toBeDefined();
@@ -123,13 +125,11 @@ describe("Auth utilities", () => {
     });
 
     it("should handle empty cookie string", () => {
-      const cookies = parseCookies("");
-      expect(cookies).toEqual({});
+      expect(Object.keys(parseCookies(""))).toEqual([]);
     });
 
     it("should handle undefined cookie string", () => {
-      const cookies = parseCookies(undefined);
-      expect(cookies).toEqual({});
+      expect(Object.keys(parseCookies(undefined))).toEqual([]);
     });
   });
 
@@ -145,5 +145,146 @@ describe("Auth utilities", () => {
       const token2 = generateCsrfToken();
       expect(token1).not.toBe(token2);
     });
+  });
+});
+
+// ─── Round-7 hardening ─────────────────────────────────────────────────────
+
+/** AUTH-12: RFC 7235 §2.1 makes the auth-scheme token case-insensitive. */
+describe("parseBearerToken scheme handling", () => {
+  it.each(["Bearer", "bearer", "BEARER", "BeArEr"])(
+    "accepts the %s scheme",
+    (scheme) => {
+      expect(parseBearerToken(`${scheme} abc123`)).toBe("abc123");
+    },
+  );
+
+  it("tolerates extra and surrounding whitespace", () => {
+    expect(parseBearerToken("Bearer   abc123")).toBe("abc123");
+    expect(parseBearerToken("  Bearer abc123  ")).toBe("abc123");
+    expect(parseBearerToken("Bearer\tabc123")).toBe("abc123");
+  });
+
+  it("rejects a scheme-only header", () => {
+    expect(parseBearerToken("Bearer")).toBeNull();
+    expect(parseBearerToken("Bearer ")).toBeNull();
+  });
+
+  it("rejects other schemes and multi-token values", () => {
+    expect(parseBearerToken("Basic abc123")).toBeNull();
+    expect(parseBearerToken("Bearer abc 123")).toBeNull();
+    expect(parseBearerToken("NotBearer abc123")).toBeNull();
+  });
+});
+
+/** AUTH-15: these sit on the HTTP trust boundary and used to throw. */
+describe("header parsers tolerate untyped input", () => {
+  const junk: readonly unknown[] = [
+    ["Bearer a", "Bearer b"],
+    123,
+    null,
+    undefined,
+    {},
+    Symbol("x"),
+    true,
+  ];
+
+  it("never throws out of parseBearerToken", () => {
+    for (const value of junk) {
+      expect(() => parseBearerToken(value)).not.toThrow();
+      expect(parseBearerToken(value)).toBeNull();
+    }
+  });
+
+  it("never throws out of parseCookies", () => {
+    for (const value of junk) {
+      expect(() => parseCookies(value)).not.toThrow();
+      expect(Object.keys(parseCookies(value))).toEqual([]);
+    }
+  });
+});
+
+/** AUTH-16: attacker-controlled cookie names, and unbounded headers. */
+describe("parseCookies safety", () => {
+  it("returns an object with no prototype", () => {
+    const cookies = parseCookies("a=1");
+    expect(Object.getPrototypeOf(cookies)).toBeNull();
+    expect((cookies as Record<string, unknown>)["toString"]).toBeUndefined();
+    expect(
+      (cookies as Record<string, unknown>)["hasOwnProperty"],
+    ).toBeUndefined();
+  });
+
+  it("keeps a __proto__ cookie as an ordinary own property", () => {
+    const cookies = parseCookies("__proto__=polluted; a=1");
+    expect(Object.getOwnPropertyDescriptor(cookies, "__proto__")?.value).toBe(
+      "polluted",
+    );
+    expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
+    expect(cookies["a"]).toBe("1");
+  });
+
+  it("does not let a cookie shadow an inherited member for the caller", () => {
+    const cookies = parseCookies("constructor=x; hasOwnProperty=y");
+    expect(cookies["constructor"]).toBe("x");
+    expect(cookies["hasOwnProperty"]).toBe("y");
+    // The caller can still interrogate it safely.
+    expect(Object.prototype.hasOwnProperty.call(cookies, "constructor")).toBe(
+      true,
+    );
+  });
+
+  it("caps the number of parsed pairs", () => {
+    const header = Array.from({ length: 500 }, (_, i) => `k${i}=v`).join("; ");
+    expect(Object.keys(parseCookies(header)).length).toBeLessThanOrEqual(100);
+  });
+
+  it("ignores an oversized Cookie header entirely", () => {
+    const header = `a=1; ${"b".repeat(9000)}=2`;
+    expect(Object.keys(parseCookies(header))).toEqual([]);
+  });
+
+  it("keeps values containing = intact", () => {
+    expect(parseCookies("token=a=b=c")["token"]).toBe("a=b=c");
+  });
+});
+
+/** AUTH-25: `sub` is attacker-controlled and was returned unchecked. */
+describe("unverified claim helpers", () => {
+  function unsigned(payload: unknown): string {
+    const header = Buffer.from(JSON.stringify({ alg: "none" })).toString(
+      "base64url",
+    );
+    const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+    return `${header}.${body}.sig`;
+  }
+
+  it("returns null for a non-string sub", () => {
+    expect(extractUserId(unsigned({ sub: { $ne: null } }))).toBeNull();
+    expect(extractUserId(unsigned({ sub: [1, 2, 3] }))).toBeNull();
+    expect(extractUserId(unsigned({ sub: 42 }))).toBeNull();
+    expect(extractUserId(unsigned({ sub: "" }))).toBeNull();
+    expect(extractUserId(unsigned({}))).toBeNull();
+  });
+
+  it("returns a string sub", () => {
+    expect(extractUserId(unsigned({ sub: "user-9" }))).toBe("user-9");
+  });
+
+  it("returns null for malformed tokens", () => {
+    expect(extractUserId("not-a-jwt")).toBeNull();
+    expect(extractUserId("a.b.c")).toBeNull();
+    expect(extractUserId(undefined)).toBeNull();
+  });
+
+  it("reports expiry from the unverified payload", () => {
+    const now = Math.floor(Date.now() / 1000);
+    expect(isTokenExpired(unsigned({ exp: now + 600 }))).toBe(false);
+    expect(isTokenExpired(unsigned({ exp: now - 1 }))).toBe(true);
+    expect(isTokenExpired(unsigned({ exp: "soon" }))).toBe(true);
+    expect(isTokenExpired(unsigned({}))).toBe(true);
+    expect(isTokenExpired(unsigned(null))).toBe(true);
+    expect(isTokenExpired("not-a-jwt")).toBe(true);
+    expect(isTokenExpired(undefined)).toBe(true);
   });
 });

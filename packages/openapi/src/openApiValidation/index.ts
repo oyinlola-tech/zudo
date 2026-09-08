@@ -4,5 +4,11 @@
  * OpenAPI document validation.
  */
 
-export type { OpenAPIValidator } from "./openApiValidator.core.js";
-export { OpenAPIValidatorImpl } from "./openApiValidator.core.js";
+export type {
+  OpenAPIValidator,
+  OpenAPIValidationResult,
+} from "./openApiValidator.core.js";
+export {
+  OpenAPIValidatorImpl,
+  createOpenAPIValidator,
+} from "./openApiValidator.core.js";

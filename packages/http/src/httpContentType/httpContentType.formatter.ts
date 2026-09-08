@@ -17,12 +17,19 @@ export function formatContentType(contentType: ContentType): string {
     return mediaType;
   }
 
-  return [
-    mediaType,
-    ...parameters.map(
-      ([name, value]) => `${name}=${quoteParameterValue(value)}`,
-    ),
-  ].join("; ");
+  const formatted: string[] = [mediaType];
+
+  for (const [name, value] of parameters) {
+    const normalizedName = name.trim().toLowerCase();
+
+    if (!isValidToken(normalizedName)) {
+      throw new TypeError(`Invalid content type parameter name: ${name}`);
+    }
+
+    formatted.push(`${normalizedName}=${quoteParameterValue(value)}`);
+  }
+
+  return formatted.join("; ");
 }
 
 export function createContentType(
@@ -42,7 +49,7 @@ export function createContentType(
     throw new TypeError(`Invalid media subtype: ${subtype}`);
   }
 
-  const normalizedParameters: Record<string, string> = {};
+  const normalizedParameters = Object.create(null) as Record<string, string>;
 
   for (const [name, value] of Object.entries(parameters)) {
     const normalizedName = name.trim().toLowerCase();

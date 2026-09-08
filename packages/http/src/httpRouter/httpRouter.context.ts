@@ -1,11 +1,16 @@
 import type { HttpRequestContext as RequestContext } from "../httpRequest/httpRequest.context.js";
 
-import type { HttpResponseContext as ResponseContext } from "../httpResponse/httpResponse.context.js";
+import {
+  HttpResponseContext,
+  type HttpResponseContext as ResponseContext,
+} from "../httpResponse/httpResponse.context.js";
+
+import { RouterMiddlewareState } from "./httpRouter.state.js";
 
 import type {
   MatchedRoute,
   HttpRouterContext,
-} from "./core/httpRouter.type.js";
+} from "./core/types/httpRouter.type.js";
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -79,7 +84,12 @@ export class RouterContext implements HttpRouterContext {
       getRequestSignal(init.request) ??
       new AbortController().signal;
 
-    this.middleware = createMiddlewareContext(this.request, this.signal);
+    this.middleware = createRouterMiddlewareContext(
+      this.request,
+      this.signal,
+      this.state,
+      this.route.metadata,
+    );
   }
 
   /* ------------------------------------------------------------------------ */
@@ -294,14 +304,25 @@ export function cloneRouterContext(
 /* Middleware Context                                                         */
 /* -------------------------------------------------------------------------- */
 
-function createMiddlewareContext(
+/**
+ * Builds the middleware context handed to route middleware.
+ *
+ * The middleware state is backed by the router context's own state map so
+ * middleware and handlers observe the same values.
+ */
+export function createRouterMiddlewareContext(
   request: RequestContext,
   signal: AbortSignal,
+  state: RouterContextState = new Map<string, unknown>(),
+  metadata: Readonly<Record<string, unknown>> = {},
 ): HttpRouterContext["middleware"] {
   return {
     request,
+    response: new HttpResponseContext(),
+    state: new RouterMiddlewareState(state),
     signal,
-  } as HttpRouterContext["middleware"];
+    metadata,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -370,9 +391,5 @@ function createAbortError(reason: unknown): Error {
 /* -------------------------------------------------------------------------- */
 
 export function isResponseContext(value: unknown): value is ResponseContext {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    ("response" in value || "status" in value || "headers" in value)
-  );
+  return value instanceof HttpResponseContext;
 }

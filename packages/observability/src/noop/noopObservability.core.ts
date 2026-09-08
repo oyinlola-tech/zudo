@@ -9,18 +9,17 @@ import type {
   Counter,
   Gauge,
   Histogram,
+  HistogramValue,
   Logger,
   MetricsRegistry,
-  MetricSnapshot,
   Observability,
   PropagationContext,
   PropagationManager,
   Span,
-  SpanContext,
-  SpanOptions,
   Tracer,
 } from "../types.js";
-import { LogLevel } from "../types.js";
+import { LogLevel, TraceFlags } from "../types.js";
+import { createPropagationContext } from "../propagation/index.js";
 
 /* ─── Noop Logger ─────────────────────────────────────────────────────── */
 
@@ -35,6 +34,7 @@ const noopLogger: Logger = {
   fatal: () => {},
   child: () => noopLogger,
   isLevelEnabled: () => false,
+  setLevel: () => {},
   flush: async () => {},
 };
 
@@ -60,10 +60,24 @@ const noopGauge: Gauge = {
 
 /* ─── Noop Histogram ──────────────────────────────────────────────────── */
 
+const EMPTY_HISTOGRAM: HistogramValue = {
+  count: 0,
+  sum: 0,
+  min: 0,
+  max: 0,
+  mean: 0,
+  buckets: [],
+  p50: 0,
+  p90: 0,
+  p95: 0,
+  p99: 0,
+};
+
 const noopHistogram: Histogram = {
   name: "noop",
   record: () => {},
-  getValue: () => ({ count: 0, sum: 0, min: 0, max: 0 }),
+  getValue: () => EMPTY_HISTOGRAM,
+  percentile: () => 0,
   reset: () => {},
 };
 
@@ -76,16 +90,34 @@ const noopMetricsRegistry: MetricsRegistry = {
   getCounter: () => undefined,
   getGauge: () => undefined,
   getHistogram: () => undefined,
+  getSeries: () => [],
   getAll: () => [],
+  size: () => 0,
   reset: () => {},
+  clear: () => {},
 };
 
 /* ─── Noop Span ───────────────────────────────────────────────────────── */
 
+/**
+ * A span that records nothing.
+ *
+ * `startTime` is a getter rather than a captured value: as a module-level
+ * constant it would report the moment the process loaded, for every span,
+ * forever. The context carries the all-zero IDs the W3C spec reserves for
+ * "invalid", so a noop span that reaches an exporter is recognisable rather
+ * than looking like a real trace.
+ */
 const noopSpan: Span = {
   name: "noop",
-  context: { traceId: "", spanId: "" },
-  startTime: new Date(),
+  context: {
+    traceId: "0".repeat(32),
+    spanId: "0".repeat(16),
+    traceFlags: TraceFlags.NONE,
+  },
+  get startTime(): Date {
+    return new Date();
+  },
   setAttribute: () => {},
   addEvent: () => {},
   setStatus: () => {},
@@ -103,15 +135,11 @@ const noopTracer: Tracer = {
 
 /* ─── Noop Propagation Manager ────────────────────────────────────────── */
 
-const noopContext: PropagationContext = {
-  traceId: "",
-  spanId: "",
-};
-
 const noopPropagationManager: PropagationManager = {
-  current: () => noopContext,
+  current: () => undefined,
   run: async (_ctx, fn) => fn(),
-  derive: () => noopContext,
+  runSync: (_ctx, fn) => fn(),
+  derive: (overrides) => createPropagationContext(overrides),
 };
 
 /* ─── Noop Observability ──────────────────────────────────────────────── */
@@ -126,9 +154,11 @@ export class NoopObservability implements Observability {
   readonly tracer: Tracer = noopTracer;
   readonly propagation: PropagationManager = noopPropagationManager;
 
-  resource(): Observability {
+  resource(_attributes: Record<string, unknown>): Observability {
     return this;
   }
+
+  async flush(): Promise<void> {}
 
   async shutdown(): Promise<void> {}
 }
@@ -137,6 +167,13 @@ export class NoopObservability implements Observability {
 export function createNoopObservability(): NoopObservability {
   return new NoopObservability();
 }
+
+/** A propagation context with the reserved invalid IDs. */
+export const INVALID_PROPAGATION_CONTEXT: PropagationContext = Object.freeze({
+  traceId: "0".repeat(32),
+  spanId: "0".repeat(16),
+  traceFlags: TraceFlags.NONE,
+});
 
 export {
   noopLogger,

@@ -31,6 +31,10 @@ export interface CleanupManagerOptions {
  * timers, database connections, and other resources leaking
  * after tests complete.
  *
+ * Every cleanup runs even if an earlier one fails, and `dispose()` then
+ * throws an `AggregateError` describing what failed. A leaked connection
+ * matters whether or not the other cleanups succeeded.
+ *
  * @example
  * ```ts
  * const cleanup = createCleanupManager();
@@ -101,10 +105,16 @@ export function createCleanupManager(
       }
     }
 
+    const attempted = reversed.length;
     entries.length = 0;
 
-    if (errors.length > 0 && errors.length === entries.length) {
-      throw new Error(`All ${errors.length} cleanup functions failed.`);
+    if (errors.length > 0) {
+      throw new AggregateError(
+        errors.map((entry) => entry.error),
+        `${errors.length} of ${attempted} cleanup functions failed: ${errors
+          .map((entry) => entry.entry.label)
+          .join(", ")}`,
+      );
     }
   };
 

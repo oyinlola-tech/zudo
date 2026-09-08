@@ -6,7 +6,7 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
-import { addIssue } from "../schemaBase/index.js";
+import { addIssue, failValidation } from "../schemaBase/index.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
 /**
@@ -26,13 +26,27 @@ export class RefineSchema<T> extends Schema<T> {
   public _parse(ctx: SchemaParseContext, input: unknown): T {
     const value = this._inner._parse(ctx, input);
 
-    if (!this._check(value)) {
+    let passed: boolean;
+    try {
+      passed = this._check(value);
+    } catch (error) {
+      // A throwing predicate is a defect in the caller's code, not invalid
+      // input — surface it with context rather than as a bare failure.
+      addIssue(ctx, {
+        code: SchemaIssueCode.REFINE_FAILED,
+        path: [...ctx.path],
+        message: `Refinement threw: ${error instanceof Error ? error.message : String(error)}`,
+      });
+      failValidation();
+    }
+
+    if (!passed) {
       addIssue(ctx, {
         code: SchemaIssueCode.CUSTOM,
         path: [...ctx.path],
         message: this._message,
       });
-      throw new Error("Validation failed");
+      failValidation();
     }
 
     return value;

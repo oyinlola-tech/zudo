@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
   createTransactionManager,
   createInMemoryAdapter,
@@ -10,11 +10,7 @@ import {
   summarizeTransaction,
   TRANSACTION_EVENTS,
 } from "../src/index.js";
-import type {
-  TransactionAdapter,
-  TransactionHooks,
-  TransactionOptions,
-} from "../src/index.js";
+import type { TransactionHooks } from "../src/index.js";
 
 function createManager() {
   const adapter = createInMemoryAdapter();
@@ -129,10 +125,18 @@ describe("TransactionManager", () => {
       const calls: string[] = [];
 
       const hooks: TransactionHooks = {
-        beforeBegin: async () => calls.push("beforeBegin"),
-        afterBegin: async () => calls.push("afterBegin"),
-        beforeCommit: async () => calls.push("beforeCommit"),
-        afterCommit: async () => calls.push("afterCommit"),
+        beforeBegin: async () => {
+          calls.push("beforeBegin");
+        },
+        afterBegin: async () => {
+          calls.push("afterBegin");
+        },
+        beforeCommit: async () => {
+          calls.push("beforeCommit");
+        },
+        afterCommit: async () => {
+          calls.push("afterCommit");
+        },
       };
 
       const adapter = createInMemoryAdapter();
@@ -153,8 +157,12 @@ describe("TransactionManager", () => {
       const calls: string[] = [];
 
       const hooks: TransactionHooks = {
-        beforeRollback: async () => calls.push("beforeRollback"),
-        afterRollback: async () => calls.push("afterRollback"),
+        beforeRollback: async () => {
+          calls.push("beforeRollback");
+        },
+        afterRollback: async () => {
+          calls.push("afterRollback");
+        },
       };
 
       const adapter = createInMemoryAdapter();
@@ -205,13 +213,15 @@ describe("TransactionManager", () => {
       expect(txn.isRollbackOnly()).toBe(true);
     });
 
-    it("should rollback on commit when marked rollback-only", async () => {
+    it("should roll back and refuse the commit when marked rollback-only", async () => {
       const manager = createManager();
 
       const txn = await manager.begin();
       txn.markRollbackOnly("reason");
-      await manager.commit(txn);
 
+      await expect(manager.commit(txn)).rejects.toThrow(
+        /rollback|marked rollback-only/i,
+      );
       expect(txn.state).toBe("rolled_back");
     });
   });
@@ -249,11 +259,11 @@ describe("createInMemoryAdapter", () => {
   it("should create an adapter with correct capabilities", () => {
     const adapter = createInMemoryAdapter();
 
-    expect(adapter.capabilities.savepoints).toBe(false);
-    expect(adapter.capabilities.nestedTransactions).toBe(false);
-    expect(Array.isArray(adapter.capabilities.isolationLevels)).toBe(true);
-    expect(adapter.capabilities.readOnlyTransactions).toBe(false);
-    expect(adapter.capabilities.timeouts).toBe(false);
+    expect(adapter.capabilities.savepoints).toBe(true);
+    expect(adapter.capabilities.nestedTransactions).toBe(true);
+    expect(adapter.capabilities.isolationLevels).toContain("serializable");
+    expect(adapter.capabilities.readOnlyTransactions).toBe(true);
+    expect(adapter.capabilities.timeouts).toBe(true);
   });
 
   it("should handle begin/commit/rollback cycle", async () => {
@@ -295,11 +305,15 @@ describe("mergeHooks", () => {
     const calls: string[] = [];
 
     const hooks1: TransactionHooks = {
-      beforeBegin: async () => calls.push("hooks1.beforeBegin"),
+      beforeBegin: async () => {
+        calls.push("hooks1.beforeBegin");
+      },
     };
 
     const hooks2: TransactionHooks = {
-      beforeBegin: async () => calls.push("hooks2.beforeBegin"),
+      beforeBegin: async () => {
+        calls.push("hooks2.beforeBegin");
+      },
     };
 
     const merged = mergeHooks(hooks1, hooks2);

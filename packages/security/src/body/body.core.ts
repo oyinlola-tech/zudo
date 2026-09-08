@@ -32,23 +32,86 @@ const DEFAULT_MAX_BODY_SIZE = 1_048_576;
  */
 export function validateContentLength(
   contentLength: string | undefined,
+  maxSize?: number,
 ): string | undefined {
   if (contentLength === undefined) {
     return undefined; // No Content-Length is fine (chunked transfer)
   }
 
-  const parsed = parseInt(contentLength, 10);
-
-  if (isNaN(parsed)) {
+  // RFC 9110: Content-Length is 1*DIGIT and nothing else. `parseInt` would
+  // accept "100abc" as 100 and "1e10" as 1 — a length the origin and any
+  // intermediary could disagree about, which is how requests get smuggled.
+  if (!/^\d+$/.test(contentLength)) {
     return `Content-Length is not a valid number: ${contentLength}`;
   }
 
-  if (parsed < 0) {
-    return `Content-Length cannot be negative: ${parsed}`;
-  }
+  const parsed = Number(contentLength);
 
   if (!Number.isSafeInteger(parsed)) {
     return `Content-Length is not a safe integer: ${contentLength}`;
+  }
+
+  if (maxSize !== undefined && parsed > maxSize) {
+    return `Content-Length ${parsed} exceeds maximum ${maxSize} bytes`;
+  }
+
+  return undefined;
+}
+
+/**
+ * Validates the framing headers of a request.
+ *
+ * A message carrying both `Content-Length` and `Transfer-Encoding`, or more
+ * than one distinct `Content-Length`, is ambiguous: two servers in a chain can
+ * disagree about where the body ends. RFC 9112 requires rejecting it.
+ *
+ * @param headers - Request headers.
+ * @param maxSize - Optional maximum allowed Content-Length in bytes.
+ * @returns An error message if the framing is unsafe, or undefined.
+ */
+export function validateBodyFraming(
+  headers: Record<string, string | string[] | undefined>,
+  maxSize?: number,
+): string | undefined {
+  const lookup = new Map(
+    Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]),
+  );
+
+  const contentLength = lookup.get("content-length");
+  const transferEncoding = lookup.get("transfer-encoding");
+
+  if (contentLength !== undefined && transferEncoding !== undefined) {
+    return "Request specifies both Content-Length and Transfer-Encoding (request smuggling risk)";
+  }
+
+  if (Array.isArray(contentLength)) {
+    const distinct = new Set(contentLength.map((v) => v.trim()));
+    if (distinct.size > 1) {
+      return `Request specifies conflicting Content-Length values: ${[...distinct].join(", ")}`;
+    }
+    return validateContentLength(contentLength[0], maxSize);
+  }
+
+  if (typeof contentLength === "string") {
+    // A single header field may still carry a comma-separated list.
+    if (contentLength.includes(",")) {
+      const distinct = new Set(contentLength.split(",").map((v) => v.trim()));
+      if (distinct.size > 1) {
+        return `Request specifies conflicting Content-Length values: ${[...distinct].join(", ")}`;
+      }
+      return validateContentLength([...distinct][0], maxSize);
+    }
+    return validateContentLength(contentLength, maxSize);
+  }
+
+  if (typeof transferEncoding === "string") {
+    const encodings = transferEncoding
+      .toLowerCase()
+      .split(",")
+      .map((e) => e.trim());
+    if (encodings.length > 0 && encodings[encodings.length - 1] !== "chunked") {
+      return `Transfer-Encoding must end with "chunked", got: ${transferEncoding}`;
+    }
   }
 
   return undefined;
@@ -78,42 +141,87 @@ export function validateBodySize(
 }
 
 /**
+ * Parses a Content-Type header into its bare media type.
+ *
+ * Strips parameters (`; charset=utf-8`, `; boundary=…`) and lowercases, so
+ * routing decisions see `application/json` rather than the raw header.
+ *
+ * @param contentType - The Content-Type header value.
+ * @returns The lowercased media type, or undefined when absent or malformed.
+ */
+export function parseMediaType(
+  contentType: string | undefined,
+): string | undefined {
+  if (!contentType) return undefined;
+  const bare = contentType.split(";")[0]?.trim().toLowerCase();
+  return bare && bare.includes("/") ? bare : undefined;
+}
+
+/**
  * Gets the appropriate body limit for a given content type.
+ *
+ * Routing is on the parsed media type, not on substrings of the raw header:
+ * a client that sends `application/x-notjson` does not get the JSON limit.
+ *
+ * Note that a form post cannot be recognised as an authentication request from
+ * its Content-Type — auth endpoints send exactly the same media type as any
+ * other form. Pass `purpose: "auth"` on those routes to select the tighter
+ * limit; otherwise a login form is bounded only by the upload limit.
  *
  * @param contentType - The Content-Type header value.
  * @param presetLimits - Optional custom preset limits.
+ * @param purpose - Optional explicit route purpose, overriding type-based routing.
  * @returns The maximum body size in bytes.
  */
 export function getBodyLimitForContentType(
   contentType: string | undefined,
   presetLimits?: Partial<BodyLimitPresets>,
+  purpose?: keyof BodyLimitPresets,
 ): number {
   const limits = { ...DEFAULT_BODY_LIMITS, ...presetLimits };
 
-  if (!contentType) {
+  if (purpose !== undefined) {
+    return limits[purpose];
+  }
+
+  const type = parseMediaType(contentType);
+
+  if (!type) {
     return limits.json;
   }
 
-  const type = contentType.toLowerCase();
+  const [group = "", subtype = ""] = type.split("/");
 
-  if (type.includes("json")) {
+  // Structured-syntax suffixes: application/vnd.api+json, image/svg+xml, …
+  const suffix = subtype.includes("+")
+    ? subtype.slice(subtype.lastIndexOf("+") + 1)
+    : undefined;
+
+  if (subtype === "json" || suffix === "json") {
     return limits.json;
   }
 
-  if (type.includes("x-www-form-urlencoded") || type.includes("multipart")) {
-    // Check if it's likely an auth form
-    if (type.includes("login") || type.includes("auth")) {
-      return limits.auth;
-    }
-    return limits.upload;
-  }
-
-  if (type.includes("octet-stream")) {
-    return limits.upload;
-  }
-
-  if (type.includes("xml")) {
+  if (subtype === "xml" || suffix === "xml") {
     return limits.webhook;
+  }
+
+  if (type === "application/x-www-form-urlencoded") {
+    // Urlencoded forms carry field data, not files — the JSON limit fits far
+    // better than the 100 MB upload limit a login form used to receive.
+    return limits.json;
+  }
+
+  if (group === "multipart") {
+    return limits.upload;
+  }
+
+  if (
+    type === "application/octet-stream" ||
+    group === "image" ||
+    group === "video" ||
+    group === "audio"
+  ) {
+    return limits.upload;
   }
 
   return limits.json;

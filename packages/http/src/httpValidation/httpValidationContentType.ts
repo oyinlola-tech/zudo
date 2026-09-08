@@ -12,7 +12,7 @@ export function isValidContentType(value: string | undefined | null): boolean {
     return false;
   }
 
-  const mediaType = value.split(";", 1)[0].trim();
+  const mediaType = (value.split(";", 1)[0] ?? "").trim();
 
   const separator = mediaType.indexOf("/");
 

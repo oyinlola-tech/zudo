@@ -7,4 +7,7 @@ export {
   normalizePath,
   validateRequestTarget,
   isSafeUrl,
+  isPrivateHostname,
+  containsTraversal,
+  fullyDecodeUri,
 } from "./url.core.js";

@@ -6,6 +6,7 @@
 
 export {
   type UserId,
+  toUserId,
   type AuthUser,
   type UserCredentials,
   type UserRegistration,
@@ -21,6 +22,7 @@ export {
 } from "./authToken.type.js";
 export {
   type SessionId,
+  toSessionId,
   type AuthSession,
   type CreateSessionOptions,
   type SessionStore,
@@ -34,6 +36,11 @@ export {
   type PasswordCredentials,
   type ApiKeyCredentials,
 } from "./authStrategy.type.js";
+export {
+  type LoginAttemptRecord,
+  type LoginAttemptStore,
+  type LoginThrottleConfig,
+} from "./authAttempt.type.js";
 export {
   type Permission,
   type Role,

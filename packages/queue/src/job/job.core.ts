@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { Timestamp } from "@zudojs/constants";
 
 import type { JobId, JobState } from "../jobTypes/jobTypes.type.js";
@@ -20,7 +20,7 @@ export function createJob<TData>(
   const now = new Date().toISOString() as Timestamp;
   const options = input.options;
   const jobId =
-    id ?? createJobId(`job_${Date.now()}_${randomBytes(6).toString("hex")}`);
+    id ?? createJobId(`job_${Date.now()}_${randomUUID().replace(/-/g, "")}`);
 
   return {
     id: jobId,
@@ -50,6 +50,7 @@ export function createJob<TData>(
           delay: options.backoff.delay,
           maxDelay: options.backoff.maxDelay,
           multiplier: options.backoff.multiplier,
+          jitter: options.backoff.jitter,
         }
       : undefined,
   };

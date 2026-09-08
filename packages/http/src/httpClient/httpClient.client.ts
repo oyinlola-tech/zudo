@@ -8,7 +8,6 @@ import type {
   HttpClientRequestConfig,
   HttpRetryOptions,
   HttpClientOptions,
-  HttpClientRequestContext,
   HttpClientResponse,
   HttpRequestInterceptor,
   HttpResponseInterceptor,
@@ -97,7 +96,13 @@ export class HttpClient {
     url: string | URL,
     config: HttpClientRequestConfig,
   ): Promise<HttpClientResponse<T>> {
-    let context = createContext(url, config, this.baseUrl, this.defaultHeaders);
+    let context = createContext(
+      url,
+      config,
+      this.baseUrl,
+      this.defaultHeaders,
+      this.defaults,
+    );
 
     try {
       for (const interceptor of this.requestInterceptors) {

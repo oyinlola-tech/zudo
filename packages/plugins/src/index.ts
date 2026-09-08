@@ -28,6 +28,7 @@
  */
 
 export { PluginManager } from "./pluginManager/pluginManager.core.js";
+export type { PluginManagerOptions } from "./pluginManager/pluginManager.core.js";
 
 export { PluginRegistryImpl } from "./pluginRegistry/pluginRegistry.core.js";
 export type {
@@ -39,7 +40,18 @@ export {
   DependencyResolver,
   assertResolutionValid,
 } from "./pluginDependencies/dependencyResolver.core.js";
-export type { DependencyResolution } from "./pluginDependencies/dependencyResolver.core.js";
+export type {
+  DependencyResolution,
+  MissingDependency,
+  ResolvablePlugin,
+} from "./pluginDependencies/dependencyResolver.core.js";
+
+export {
+  parseVersion,
+  compareVersions,
+  satisfiesVersion,
+  assertDependencyVersions,
+} from "./pluginDependencies/versionCheck.core.js";
 
 export { LifecycleController } from "./pluginLifecycle/pluginLifecycle.core.js";
 
@@ -67,8 +79,14 @@ export {
   VALID_STATE_TRANSITIONS,
 } from "./pluginTypes/pluginState.type.js";
 
-export { createPluginContext } from "./pluginIntegration/pluginContext.core.js";
-export type { CreatePluginContextOptions } from "./pluginIntegration/pluginContext.core.js";
+export {
+  createPluginContext,
+  createOwnedPluginContext,
+} from "./pluginIntegration/pluginContext.core.js";
+export type {
+  CreatePluginContextOptions,
+  OwnedPluginContext,
+} from "./pluginIntegration/pluginContext.core.js";
 
 export {
   PluginError,
@@ -92,6 +110,11 @@ export type {
   PluginMetadata,
   PluginDependency,
   PluginContext,
+  PluginContainer,
+  PluginConfig,
+  PluginLogger,
+  PluginEvents,
+  PluginDisposable,
   Plugin,
   PluginErrorOptions,
 } from "./pluginTypes/index.js";

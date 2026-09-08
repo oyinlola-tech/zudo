@@ -12,10 +12,18 @@ import type {
   ExecutionTenantContext,
 } from "../tenancyTypes/tenantInterface.js";
 import { TenantContextMissingError } from "../tenancyErrors/tenancyError.types.js";
+import { assertTenantUsable } from "../security/guard.core.js";
 
 /** Options for the context manager. */
 export interface ContextManagerOptions {
   readonly storage: TenantContextStorage;
+  /**
+   * Allow entering a context for a non-active tenant. Defaults to false.
+   *
+   * This is the entry point for background jobs and scripts, where no HTTP
+   * guard runs, so a suspended tenant is refused unless explicitly permitted.
+   */
+  readonly allowInactive?: boolean;
 }
 
 /**
@@ -23,6 +31,7 @@ export interface ContextManagerOptions {
  */
 export function createContextManager(options: ContextManagerOptions) {
   const { storage } = options;
+  const allowInactive = options.allowInactive ?? false;
 
   return {
     /**
@@ -60,8 +69,13 @@ export function createContextManager(options: ContextManagerOptions) {
 
     /**
      * Run a callback within a tenant context.
+     *
+     * @throws {TenantUnavailableError} when the tenant is not active and
+     *   `allowInactive` was not set.
      */
     run<T>(tenant: Tenant, callback: () => T): T {
+      if (!allowInactive) assertTenantUsable(tenant);
+
       const context: TenantExecutionContext = {
         mode: "tenant",
         tenant,

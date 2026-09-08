@@ -1,7 +1,64 @@
+/**
+ * HTTP router registration, matching, and dispatch.
+ */
+
+import type {
+  HttpMethod,
+  HttpRouterContext,
+  MatchedRoute,
+  CompiledRoute,
+  RouteDefinition,
+  RouteOptions,
+  RouterHandler,
+  RouterMatch,
+  RouterMethodNotAllowedHandler,
+  RouterNotFoundHandler,
+  RouterOptions,
+  RouterResult,
+} from "../types/httpRouter.type.js";
+
+import type { HttpRequestContext as RequestContext } from "../../../httpRequest/httpRequest.context.js";
+
+import {
+  HttpRouterError,
+  RouteConflictError,
+} from "../error/httpRouter.error.js";
+
+import { HttpRouterGroup } from "../group/httpRouterGroup.core.js";
+
+import {
+  collectAllowedMethods,
+  createFallbackRoute,
+  createOptionsResponse,
+  defaultMethodNotAllowedHandler,
+  defaultNotFoundHandler,
+  executeRoute,
+  extractRouteSequence,
+  isHttpMethod,
+  normalizeMethod,
+  normalizeMethods,
+  normalizeResponse,
+} from "../factory/httpRoute.factory.base.js";
+
+import {
+  getRequestMethod,
+  getRequestSignal,
+  getRequestUrl,
+  normalizePath,
+  parseQuery,
+  parseUrl,
+} from "../util/httpRoute.util.js";
+
+import { matchCompiledRoute } from "../../matching/httpRoute.matcher.core.js";
+
+import { compileRoute } from "../../pattern/httpRoute.pattern.parse.js";
+
+import { createRouterMiddlewareContext } from "../../httpRouter.context.js";
+
 export class HttpRouter {
   private readonly routes: CompiledRoute[] = [];
 
-  private readonly options: Required<
+  private readonly routerOptions: Required<
     Pick<
       RouterOptions,
       | "caseSensitive"
@@ -18,7 +75,7 @@ export class HttpRouter {
   private sequence = 0;
 
   constructor(options: RouterOptions = {}) {
-    this.options = {
+    this.routerOptions = {
       caseSensitive: options.caseSensitive ?? false,
 
       strictTrailingSlash: options.strictTrailingSlash ?? false,
@@ -194,6 +251,14 @@ export class HttpRouter {
     return Object.freeze(this.sortedRoutes().map((route) => route.definition));
   }
 
+  /**
+   * Returns the registered routes with their compiled segments, most
+   * specific first.
+   */
+  compiled(): readonly CompiledRoute[] {
+    return Object.freeze(this.sortedRoutes());
+  }
+
   find(id: string): MatchedRoute | undefined {
     return this.routes.find((route) => route.definition.id === id)?.definition;
   }
@@ -217,7 +282,7 @@ export class HttpRouter {
       const params = matchCompiledRoute(
         route,
         normalizedPath,
-        this.options.caseSensitive,
+        this.routerOptions.caseSensitive,
       );
 
       if (!params) {
@@ -246,7 +311,7 @@ export class HttpRouter {
       }
     }
 
-    if (normalizedMethod === "HEAD" && this.options.automaticHead) {
+    if (normalizedMethod === "HEAD" && this.routerOptions.automaticHead) {
       for (const route of candidates) {
         if (route.definition.method !== "GET") {
           continue;
@@ -255,7 +320,7 @@ export class HttpRouter {
         const params = matchCompiledRoute(
           route,
           normalizedPath,
-          this.options.caseSensitive,
+          this.routerOptions.caseSensitive,
         );
 
         if (params) {
@@ -275,7 +340,7 @@ export class HttpRouter {
     }
 
     if (
-      this.options.automaticOptions &&
+      this.routerOptions.automaticOptions &&
       normalizedMethod === "OPTIONS" &&
       pathMatched
     ) {
@@ -331,21 +396,28 @@ export class HttpRouter {
 
     const state = options.state ?? new Map<string, unknown>();
 
-    const routerContext = {
+    const route = match.route ?? createFallbackRoute(path, method);
+
+    const routerContext: HttpRouterContext = {
       request,
-      path: match.params,
+      params: match.params,
       query: parseQuery(parsed.searchParams),
-      route: match.route ?? createFallbackRoute(path, method),
+      route,
       state,
-      middleware: createMiddlewareContext(request, signal),
+      middleware: createRouterMiddlewareContext(
+        request,
+        signal,
+        state,
+        route.metadata,
+      ),
       signal,
-    } as HttpRouterContext;
+    };
 
     if (match.matched && match.route) {
       const response = await executeRoute(match.route, routerContext);
 
       return {
-        response: normalizeResponse(response),
+        response: await normalizeResponse(response),
         route: match.route,
       };
     }
@@ -353,7 +425,7 @@ export class HttpRouter {
     if (
       method.toUpperCase() === "OPTIONS" &&
       match.allowedMethods.length > 0 &&
-      this.options.automaticOptions
+      this.routerOptions.automaticOptions
     ) {
       return {
         response: createOptionsResponse(match.allowedMethods),
@@ -374,7 +446,7 @@ export class HttpRouter {
       );
 
       return {
-        response: normalizeResponse(response),
+        response: await normalizeResponse(response),
         route: undefined,
       };
     }
@@ -388,7 +460,7 @@ export class HttpRouter {
     });
 
     return {
-      response: normalizeResponse(response),
+      response: await normalizeResponse(response),
       route: undefined,
     };
   }
@@ -413,8 +485,8 @@ export class HttpRouter {
 
     const compiled = compileRoute(
       normalizedPath,
-      this.options.strictTrailingSlash || options.strictTrailingSlash === true,
-      this.options.caseSensitive,
+      this.routerOptions.strictTrailingSlash ||
+        options.strictTrailingSlash === true,
     );
 
     const existing = this.routes.find(

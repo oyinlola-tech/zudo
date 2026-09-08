@@ -1,13 +1,13 @@
 /**
  * Condition combinators for composing authorization policies.
  *
+ * Conditions are evaluated by the rule engine: attach one to a
+ * `PermissionRule` and the rule applies only when it returns `true`.
+ *
  * @module conditions/conditions
  */
 
-import type {
-  PermissionConditionFn,
-  PermissionContext,
-} from "../permissionTypes/index.js";
+import type { PermissionConditionFn } from "../permissionTypes/index.js";
 
 /**
  * All conditions must return true.
@@ -58,6 +58,22 @@ export function never(): PermissionConditionFn {
   return () => false;
 }
 
+/** Compares two identifiers that may differ in type across a boundary. */
+function sameId(left: unknown, right: unknown): boolean {
+  if (left === undefined || left === null) return false;
+  if (right === undefined || right === null) return false;
+  if (typeof left === typeof right) return left === right;
+  // A numeric id from a database row against a string id from a token is the
+  // common case, and a strict comparison silently denies.
+  if (
+    (typeof left === "string" || typeof left === "number") &&
+    (typeof right === "string" || typeof right === "number")
+  ) {
+    return String(left) === String(right);
+  }
+  return false;
+}
+
 /**
  * Check that the actor owns the resource.
  *
@@ -67,16 +83,24 @@ export function isOwner(ownerField: string = "ownerId"): PermissionConditionFn {
   return (context) => {
     if (!context.resource || typeof context.resource !== "object") return false;
     const resource = context.resource as Record<string, unknown>;
-    const ownerId = resource[ownerField];
-    return ownerId === context.actor.id;
+    return sameId(resource[ownerField], context.actor.id);
   };
 }
 
 /**
  * Enforce tenant isolation — actor and resource must share the same tenant.
  *
- * @param actorTenantField - Field on actor metadata holding tenant ID. Defaults to "tenantId".
- * @param resourceTenantField - Field on resource holding tenant ID. Defaults to "tenantId".
+ * The actor's tenant is read from `context.metadata`, which is supplied per
+ * check through `AuthorizationOptions.metadata`:
+ *
+ * ```ts
+ * engine.check(actor, "invoice:read", invoice, {
+ *   metadata: { tenantId: request.tenantId },
+ * });
+ * ```
+ *
+ * @param actorTenantField - Key in the context metadata holding the actor's tenant. Defaults to "tenantId".
+ * @param resourceTenantField - Field on the resource holding the tenant ID. Defaults to "tenantId".
  */
 export function tenantIsolation(
   actorTenantField: string = "tenantId",
@@ -84,9 +108,28 @@ export function tenantIsolation(
 ): PermissionConditionFn {
   return (context) => {
     const actorTenant = context.metadata?.get(actorTenantField);
+    if (actorTenant === undefined || actorTenant === null) return false;
     if (!context.resource || typeof context.resource !== "object") return false;
     const resource = context.resource as Record<string, unknown>;
-    const resourceTenant = resource[resourceTenantField];
-    return actorTenant !== undefined && actorTenant === resourceTenant;
+    return sameId(actorTenant, resource[resourceTenantField]);
+  };
+}
+
+/** Check that a value in the context metadata equals an expected value. */
+export function metadataEquals(
+  key: string,
+  expected: unknown,
+): PermissionConditionFn {
+  return (context) => context.metadata?.get(key) === expected;
+}
+
+/** Check that the resource field matches the expected value. */
+export function resourceEquals(
+  field: string,
+  expected: unknown,
+): PermissionConditionFn {
+  return (context) => {
+    if (!context.resource || typeof context.resource !== "object") return false;
+    return (context.resource as Record<string, unknown>)[field] === expected;
   };
 }

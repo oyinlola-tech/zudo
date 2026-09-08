@@ -1,5 +1,12 @@
 /**
  * Base OpenAPI error and factory functions.
+ *
+ * Everything in this package runs while a service builds or validates its own
+ * specification — none of it is triggered by a client request. So the
+ * defaults are the server-side ones: status 500, not exposed. A document that
+ * fails to build is an operator's problem, and leaking component names or
+ * version mismatches into a client-visible body tells an attacker about the
+ * shape of the API rather than telling the operator anything.
  */
 
 import {
@@ -7,12 +14,15 @@ import {
   ErrorCode,
   ErrorCategory,
   ErrorSeverity,
+  type ErrorMetadata,
 } from "@zudojs/errors";
 
 /** Options for creating an OpenAPI error. */
 export interface OpenAPIErrorOptions {
   readonly code?: string;
+  /** Overrides the subclass's default status. */
   readonly statusCode?: number;
+  /** Overrides the subclass's default exposure. */
   readonly expose?: boolean;
   readonly cause?: unknown;
   readonly metadata?: Readonly<Record<string, unknown>>;
@@ -28,8 +38,7 @@ export class OpenAPIError extends BaseError {
       statusCode: options.statusCode ?? 500,
       expose: options.expose ?? false,
       cause: options.cause,
-      metadata: options.metadata as
-        import("@zudojs/errors").ErrorMetadata | undefined,
+      metadata: options.metadata as ErrorMetadata | undefined,
     });
     this.name = "OpenAPIError";
   }

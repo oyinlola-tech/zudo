@@ -6,8 +6,6 @@
 
 import type { HttpMiddleware } from "../../httpMiddleware.type.js";
 
-import type { HttpResponseContext as ResponseContext } from "../../../httpResponse/httpResponse.context.js";
-
 import {
   getRequestMethod,
   getRequestUrl,

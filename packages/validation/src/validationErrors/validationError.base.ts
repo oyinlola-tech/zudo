@@ -15,6 +15,34 @@ import {
   type ErrorMetadata,
 } from "@zudojs/errors";
 
+/**
+ * Maps a package-specific validation code to the shared error registry code.
+ *
+ * `ValidationErrorCode` and `ErrorCode` are different enums. Casting one into
+ * the other put a value on `BaseError.code` that the errors package does not
+ * recognise, so any status mapping or registry lookup keyed on it missed.
+ */
+function toErrorCode(code: ValidationErrorCode | undefined): ErrorCode {
+  switch (code) {
+    case ValidationErrorCode.REQUIRED:
+      return ErrorCode.MISSING_FIELD;
+    case ValidationErrorCode.INVALID_TYPE:
+      return ErrorCode.INVALID_FIELD;
+    case ValidationErrorCode.INVALID_FORMAT:
+      return ErrorCode.INVALID_FORMAT;
+    case ValidationErrorCode.INVALID_VALUE:
+      return ErrorCode.INVALID_VALUE;
+    case ValidationErrorCode.INVALID_INPUT:
+      return ErrorCode.INVALID_INPUT;
+    case ValidationErrorCode.SCHEMA_FAILED:
+      return ErrorCode.SCHEMA_VALIDATION;
+    case ValidationErrorCode.CONSTRAINT_FAILED:
+    case ValidationErrorCode.UNKNOWN:
+    default:
+      return ErrorCode.VALIDATION_FAILED;
+  }
+}
+
 /** Error codes used by the validation package. */
 export enum ValidationErrorCode {
   INVALID_INPUT = "VALIDATION_INVALID_INPUT",
@@ -47,8 +75,7 @@ export class ValidationError extends BaseError {
     options: ValidationErrorOptions = {},
   ) {
     super(message, {
-      code:
-        (options.code as unknown as ErrorCode) ?? ErrorCode.VALIDATION_FAILED,
+      code: toErrorCode(options.code),
       category: ErrorCategory.VALIDATION,
       severity: ErrorSeverity.WARNING,
       statusCode: 400,

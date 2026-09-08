@@ -45,8 +45,23 @@ export {
   MAX_PENDING_REQUESTS,
   MAX_MIDDLEWARE,
   MAX_PROCEDURES,
+  MAX_PROCEDURE_NAME_LENGTH,
+  MAX_TIMER_DELAY,
   PROCEDURE_NAME_PATTERN,
+  INTERNAL_ERROR_MESSAGE,
 } from "./rpc/constants/index.js";
+
+// Validation
+export type { RPCRequestLimits, RPCSchema } from "./rpc/validation/index.js";
+
+export {
+  assertValidProcedureName,
+  assertValidRequest,
+  measurePayloadBytes,
+  toValidationIssues,
+  parseInput,
+  parseOutput,
+} from "./rpc/validation/index.js";
 
 // Errors
 export type { RPCErrorOptions } from "./rpc/errors/index.js";
@@ -97,9 +112,13 @@ export type { RPCMiddleware } from "./rpc/middleware/index.js";
 export { RPCMiddlewareStack } from "./rpc/middleware/index.js";
 
 // Dispatcher
+export type { RPCDispatcherOptions } from "./rpc/dispatcher/index.js";
+
 export { RPCDispatcher } from "./rpc/dispatcher/index.js";
 
 // Server
+export type { RPCServerOptions } from "./rpc/server/index.js";
+
 export { RPCServer } from "./rpc/server/index.js";
 
 // Transport
@@ -109,7 +128,7 @@ export type {
 } from "./rpc/transport/index.js";
 
 // Client
-export type { RPCCallOptions } from "./rpc/client/index.js";
+export type { RPCCallOptions, RPCClientOptions } from "./rpc/client/index.js";
 
 export { RPCClient } from "./rpc/client/index.js";
 
@@ -117,17 +136,26 @@ export { RPCClient } from "./rpc/client/index.js";
 export {
   createTimeout,
   withTimeout,
+  runWithTimeout,
   getRemainingTime,
   isDeadlineExceeded,
   throwIfDeadlineExceeded,
+  readDeadline,
   createCancellableSignal,
   cancelSignal,
+  throwIfCancelled,
+  combineSignals,
   DEFAULT_RETRY_OPTIONS,
   calculateRetryDelay,
   retry,
 } from "./rpc/reliability/index.js";
 
-export type { RPCBackoff, RPCRetryOptions } from "./rpc/reliability/index.js";
+export type {
+  RPCBackoff,
+  RPCJitter,
+  RPCRetryOptions,
+  CancellableSignal,
+} from "./rpc/reliability/index.js";
 
 // Interceptors
 export type { RPCInterceptor } from "./rpc/interceptor/index.js";

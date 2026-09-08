@@ -1,1 +1,1 @@
-export { JobExecutor } from "./jobExecutor.core.js";
+export { JobExecutor, retryDelay } from "./jobExecutor.core.js";

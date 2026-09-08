@@ -10,7 +10,11 @@
  * ```ts
  * import { OpenAPIManager } from "@zudojs/openapi";
  *
- * const manager = new OpenAPIManager("3.1.0");
+ * const manager = new OpenAPIManager({
+ *   version: "3.1.0",
+ *   info: { title: "Orders API", version: "1.2.0" },
+ *   servers: [{ url: "https://api.example.com" }],
+ * });
  *
  * manager.addRoute({
  *   method: "get",
@@ -19,25 +23,39 @@
  *     openapi: {
  *       operationId: "users.get",
  *       summary: "Get a user",
- *       responses: { "200": { description: "User found" } },
+ *       parameters: [{ name: "id", in: "path", required: true }],
+ *       responses: {
+ *         "200": { description: "User found" },
+ *         "404": { description: "No such user" },
+ *       },
  *     },
  *   },
  * });
  *
- * const document = manager.generate();
+ * const document = manager.generate(true); // validate while generating
  * const json = manager.toJSON();
+ * const yaml = manager.toYAML();
  * ```
  */
 
-export { OpenAPIDocumentBuilder } from "./openApiDocument/openApiDocument.builder.js";
-export type { OpenAPIDocumentOptions } from "./openApiDocument/openApiDocument.builder.js";
+/* ─── Document builder ──────────────────────────────────────────────────── */
 
-export { OpenAPIRegistryImpl } from "./openApiRegistry/openApiRegistry.core.js";
+export {
+  OpenAPIDocumentBuilder,
+  createOpenAPIDocumentBuilder,
+  type OpenAPIDocumentOptions,
+} from "./openApiDocument/index.js";
+
+/* ─── Registry ──────────────────────────────────────────────────────────── */
+
+export { OpenAPIRegistryImpl } from "./openApiRegistry/index.js";
 export type {
   OpenAPIRegistry,
   OpenAPIRoute,
   OpenAPIComponentRegistration,
-} from "./openApiRegistry/openApiRegistry.type.js";
+} from "./openApiRegistry/index.js";
+
+/* ─── Errors ────────────────────────────────────────────────────────────── */
 
 export {
   OpenAPIError,
@@ -53,26 +71,34 @@ export {
   OpenAPIOperationError,
   createOpenAPIError,
   isOpenAPIError,
-} from "./openApiErrors/openApiError.core.js";
+  formatIssuePath,
+  type OpenAPIErrorOptions,
+  type OpenAPIValidationIssue,
+} from "./openApiErrors/index.js";
 
-export type {
-  OpenAPIErrorOptions,
-  OpenAPIValidationIssue,
-} from "./openApiErrors/openApiError.core.js";
+/* ─── Constants ─────────────────────────────────────────────────────────── */
 
 export {
   DEFAULT_OPENAPI_VERSION,
+  SUPPORTED_OPENAPI_VERSIONS,
   MAX_OPERATION_ID_LENGTH,
   COMPONENT_REF_PREFIX,
   DEFAULT_MEDIA_TYPE,
   STATUS_CODE_CATEGORIES,
+  RESPONSE_KEY_PATTERN,
+  PATH_TEMPLATE_PARAMETER,
   DEFAULT_SERVER_URL,
   DOCUMENT_CACHE_TTL_MS,
-} from "./openApiConstants/openApiConstants.core.js";
+} from "./openApiConstants/index.js";
+
+/* ─── Routing ───────────────────────────────────────────────────────────── */
 
 export {
   toOpenAPIPath,
+  extractPathParameters,
   convertRouteToOpenAPI,
+  buildResponses,
+  isOpenAPIMethod,
   ZUDOLIB_TO_OPENAPI_METHODS,
   OpenAPIRouteScannerImpl,
 } from "./openApiRouting/index.js";
@@ -81,31 +107,57 @@ export type {
   RouteOpenAPIMetadata,
   RouteParameterMetadata,
   RouteInfo,
+  OpenAPIHttpMethod,
 } from "./openApiRouting/index.js";
+
+/* ─── Schema conversion ─────────────────────────────────────────────────── */
 
 export {
   convertSchema,
   createSchemaConverter,
-} from "./openApiSchema/schemaConverter.core.js";
+  isVersion31,
+  SchemaRegistryImpl,
+  createComponentReference,
+  escapeJsonPointerSegment,
+  unescapeJsonPointerSegment,
+} from "./openApiSchema/index.js";
 export type {
   SchemaConverter,
   SchemaConversionResult,
-} from "./openApiSchema/schemaConverter.core.js";
+  SchemaConversionOptions,
+  SchemaRegistry,
+  SchemaRegistryOptions,
+  ComponentSection,
+} from "./openApiSchema/index.js";
 
-export { SchemaRegistryImpl } from "./openApiSchema/schemaRegistry.core.js";
-export type { SchemaRegistry } from "./openApiSchema/schemaRegistry.core.js";
+/* ─── Validation ────────────────────────────────────────────────────────── */
 
-export { createComponentReference } from "./openApiSchema/references.core.js";
+export {
+  OpenAPIValidatorImpl,
+  createOpenAPIValidator,
+} from "./openApiValidation/index.js";
+export type {
+  OpenAPIValidator,
+  OpenAPIValidationResult,
+} from "./openApiValidation/index.js";
 
-export { OpenAPIValidatorImpl } from "./openApiValidation/openApiValidator.core.js";
-export type { OpenAPIValidator } from "./openApiValidation/openApiValidator.core.js";
+/* ─── Serialization ─────────────────────────────────────────────────────── */
 
 export {
   toOpenAPIJSON,
   toOpenAPIYAML,
 } from "./openApiSerialization/openApiSerializer.core.js";
 
-export { OpenAPIManager } from "./openApiHttp/openApiHttpAdapter.core.js";
+/* ─── Manager ───────────────────────────────────────────────────────────── */
+
+export {
+  OpenAPIManager,
+  createOpenAPIManager,
+  type OpenAPIManagerOptions,
+  type OpenAPIDocumentResponse,
+} from "./openApiHttp/index.js";
+
+/* ─── Specification types ───────────────────────────────────────────────── */
 
 export type {
   OpenAPIVersion,

@@ -6,7 +6,7 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
-import { addIssue } from "../schemaBase/index.js";
+import { addIssue, failValidation } from "../schemaBase/index.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 import { TransformSchema } from "./schemaTransform.core.js";
 import { OptionalModifierSchema } from "../schemaModifiers/schemaOptionalNullable.core.js";
@@ -22,6 +22,7 @@ interface NumberSchemaConfig {
   readonly positive?: boolean;
   readonly negative?: boolean;
   readonly finite?: boolean;
+  readonly safe?: boolean;
   readonly multipleOf?: number;
   readonly gt?: number;
   readonly lt?: number;
@@ -48,7 +49,7 @@ export class NumberSchema extends Schema<number> {
         expected: "number",
         received: typeof input,
       });
-      throw new Error("Validation failed");
+      failValidation();
     }
 
     this._validateConstraints(ctx, input);
@@ -64,6 +65,14 @@ export class NumberSchema extends Schema<number> {
         code: SchemaIssueCode.INVALID_NUMBER,
         path: [...ctx.path],
         message: `Expected integer, received ${value}`,
+      });
+      failed = true;
+    }
+    if (c.safe && !Number.isSafeInteger(value)) {
+      addIssue(ctx, {
+        code: SchemaIssueCode.INVALID_NUMBER,
+        path: [...ctx.path],
+        message: `Expected a safe integer, received ${value}`,
       });
       failed = true;
     }
@@ -135,7 +144,7 @@ export class NumberSchema extends Schema<number> {
       });
       failed = true;
     }
-    if (c.multipleOf !== undefined && value % c.multipleOf !== 0) {
+    if (c.multipleOf !== undefined && !isMultipleOf(value, c.multipleOf)) {
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_NUMBER,
         path: [...ctx.path],
@@ -146,7 +155,7 @@ export class NumberSchema extends Schema<number> {
     }
 
     if (failed) {
-      throw new Error("Validation failed");
+      failValidation();
     }
   }
 
@@ -182,7 +191,19 @@ export class NumberSchema extends Schema<number> {
 
   /** Must be a multiple of the given value. */
   public multipleOf(n: number): NumberSchema {
+    if (n === 0 || !Number.isFinite(n)) {
+      // `value % 0` is NaN, so a zero step made every value fail with a
+      // message that read as though the value were at fault.
+      throw new RangeError(
+        `multipleOf requires a non-zero finite step, got: ${n}`,
+      );
+    }
     return new NumberSchema({ ...this._config, multipleOf: n });
+  }
+
+  /** Must be a safe integer (within Number.MAX_SAFE_INTEGER). */
+  public safe(): NumberSchema {
+    return new NumberSchema({ ...this._config, safe: true });
   }
 
   /** Greater than (exclusive). */
@@ -229,4 +250,19 @@ export class NumberSchema extends Schema<number> {
 /** Creates a number schema. */
 export function numberSchema(): NumberSchema {
   return new NumberSchema();
+}
+
+/**
+ * Floating-point safe multiple check.
+ *
+ * `0.3 % 0.1` is 0.09999999999999998, not 0, so the plain modulo rejected
+ * values that are multiples in every sense the caller cares about. Comparing
+ * the remainder against both 0 and the step absorbs the representation error.
+ */
+function isMultipleOf(value: number, step: number): boolean {
+  const remainder = Math.abs(value % step);
+  const tolerance = Math.abs(step) * 1e-9;
+  return (
+    remainder < tolerance || Math.abs(remainder - Math.abs(step)) < tolerance
+  );
 }

@@ -9,6 +9,7 @@ import type {
   CSPResult,
 } from "../types/httpCsp.type.js";
 import { normalizeDirectiveName } from "../validation/httpCsp.validation.js";
+import { validateCSP } from "../validation/httpCsp.validate.js";
 import {
   normalizeDirectiveValues,
   freezeDirectives,
@@ -78,6 +79,20 @@ export function createCSP(options: CSPOptions | undefined = {}): CSPResult {
   }
 
   const frozen = freezeDirectives(directives);
+
+  /*
+   * Belt and braces. `normalizeDirectiveValues` already rejects `;`, `,` and
+   * control characters at construction time, but `createCSP` can also be
+   * handed a pre-built `directives` record, and this is the last point before
+   * a policy string is produced. `validateCSP` previously existed with no
+   * call site at all.
+   */
+  if (!validateCSP(frozen)) {
+    throw new TypeError(
+      "Invalid Content-Security-Policy: a directive name or value is malformed.",
+    );
+  }
+
   const policy = formatCSP(frozen);
 
   return {

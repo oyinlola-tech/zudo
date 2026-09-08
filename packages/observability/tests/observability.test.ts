@@ -5,9 +5,10 @@
  * sampling, exporters, redaction, and noop implementations.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
 import { LogLevel, SpanStatus, SpanKind } from "../src/types.js";
+import { MetricValueError } from "../src/errors/index.js";
 
 import {
   logLevelToName,
@@ -249,7 +250,7 @@ describe("AsyncPropagationManager", () => {
 
     await manager.run(ctx, () => {
       const current = manager.current();
-      expect(current.requestId).toBe("req1");
+      expect(current?.requestId).toBe("req1");
     });
   });
 
@@ -282,9 +283,18 @@ describe("Counter", () => {
     expect(counter.getValue()).toBe(5);
   });
 
-  it("does not decrement on negative increment", () => {
+  it("rejects a negative increment instead of ignoring it", () => {
     const counter = createCounter("test.counter");
-    counter.increment(-1);
+    expect(() => counter.increment(-1)).toThrow(MetricValueError);
+    expect(counter.getValue()).toBe(0);
+  });
+
+  it("rejects non-finite increments", () => {
+    const counter = createCounter("test.counter");
+    expect(() => counter.increment(Number.NaN)).toThrow(MetricValueError);
+    expect(() => counter.increment(Number.POSITIVE_INFINITY)).toThrow(
+      MetricValueError,
+    );
     expect(counter.getValue()).toBe(0);
   });
 
@@ -450,7 +460,7 @@ describe("Span", () => {
     span.addEvent("cache.miss", { key: "user:1" });
     const readable = span.toReadableSpan();
     expect(readable.events).toHaveLength(1);
-    expect(readable.events[0].name).toBe("cache.miss");
+    expect(readable.events[0]?.name).toBe("cache.miss");
   });
 
   it("records errors", () => {
@@ -576,6 +586,8 @@ describe("Console Exporters", () => {
         attributes: {},
         events: [],
         resource: {},
+        droppedAttributes: 0,
+        droppedEvents: 0,
       },
     ]);
     expect(logSpy).toHaveBeenCalled();
@@ -606,6 +618,7 @@ describe("Console Exporters", () => {
         name: "test",
         type: "counter",
         value: 42,
+        timestamp: new Date(),
       },
     ]);
     expect(logSpy).toHaveBeenCalled();
@@ -778,7 +791,7 @@ describe("Observability", () => {
     const obs = createObservability({ serviceName: "test" });
     const ctx = createPropagationContext({ requestId: "r1" });
     await obs.propagation.run(ctx, () => {
-      expect(obs.propagation.current().requestId).toBe("r1");
+      expect(obs.propagation.current()?.requestId).toBe("r1");
     });
   });
 

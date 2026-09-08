@@ -30,9 +30,26 @@ export class RuntimeRegistry {
 
   /**
    * Unregister a runtime instance.
+   *
+   * Dropping the reference does not stop the runtime; use
+   * {@link removeAndStop} when the runtime should also be shut down.
    */
-  unregister(id: string): void {
+  unregister(id: string): boolean {
+    return this.runtimes.delete(id);
+  }
+
+  /**
+   * Unregister a runtime and stop it.
+   */
+  async removeAndStop(id: string): Promise<boolean> {
+    const runtime = this.runtimes.get(id);
+    if (!runtime) {
+      return false;
+    }
+
     this.runtimes.delete(id);
+    await runtime.stop();
+    return true;
   }
 
   /**
@@ -84,9 +101,30 @@ export class RuntimeRegistry {
   /**
    * Start all registered runtimes.
    */
+  /**
+   * Start all registered runtimes.
+   *
+   * A failure stops whatever already started before rethrowing, so a
+   * partially started process does not linger.
+   */
   async startAll(): Promise<void> {
+    const started: Runtime[] = [];
+
     for (const runtime of this.runtimes.values()) {
-      await runtime.start();
+      try {
+        await runtime.start();
+        started.push(runtime);
+      } catch (error) {
+        for (const running of started.reverse()) {
+          try {
+            await running.stop();
+          } catch {
+            // Continue unwinding; the original error is what matters.
+          }
+        }
+
+        throw error;
+      }
     }
   }
 
@@ -121,13 +159,21 @@ export class RuntimeRegistry {
    * Get status of all runtimes.
    */
   getStatus(): Record<string, { state: string; ready: boolean }> {
-    const result: Record<string, { state: string; ready: boolean }> = {};
+    // Null-prototype: ids come from callers, and assigning a key of
+    // "__proto__" to an object literal reassigns its prototype instead
+    // of adding a property.
+    const result = Object.create(null) as Record<
+      string,
+      { state: string; ready: boolean }
+    >;
+
     for (const [id, runtime] of this.runtimes) {
       result[id] = {
         state: runtime.state,
         ready: runtime.ready,
       };
     }
+
     return result;
   }
 

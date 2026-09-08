@@ -2,87 +2,207 @@
  * @zudojs/observability — Redaction
  *
  * Redacts sensitive fields from log contexts and trace attributes.
- * Never automatically dumps passwords, tokens, cookies, or auth headers.
+ *
+ * The rules that make this safe rather than decorative:
+ *   - arrays are traversed, because secrets usually arrive inside one
+ *     (`headers: [{ authorization: "Bearer …" }]`);
+ *   - traversal is cycle-aware and depth-capped, because a request object in
+ *     a log context is a graph, not a tree;
+ *   - class instances are not walked as plain objects, so an `Error` or a
+ *     `Date` survives instead of collapsing to `{}`;
+ *   - matching is substring-based by default, so `userPassword` and
+ *     `x-api-key` are caught, not just the exact names in the list.
  */
 
 import type { RedactionConfig } from "../types.js";
 
-/** Default sensitive field names. */
-const DEFAULT_SENSITIVE_FIELDS = [
+/** Default sensitive field names, matched case-insensitively. */
+export const DEFAULT_SENSITIVE_FIELDS: readonly string[] = [
   "password",
+  "passwd",
   "secret",
   "token",
   "authorization",
+  "auth",
   "cookie",
+  "session",
+  "credential",
+  "api_key",
+  "apikey",
   "access_token",
   "refresh_token",
-  "api_key",
-  "apiKey",
-  "accessToken",
-  "refreshToken",
+  "private_key",
+  "client_secret",
   "credit_card",
-  "creditCard",
+  "creditcard",
+  "card_number",
+  "cardnumber",
+  "cvv",
   "ssn",
   "social_security",
+  "pin",
+  "otp",
 ];
 
 const DEFAULT_REPLACEMENT = "[REDACTED]";
+const DEFAULT_MAX_DEPTH = 8;
 
-/**
- * Creates a redactor that replaces sensitive values in objects.
- */
-export function createRedactor(
-  config?: RedactionConfig,
-): (key: string, value: unknown) => unknown {
-  const fields = new Set(
-    (config?.fields ?? DEFAULT_SENSITIVE_FIELDS).map((f) => f.toLowerCase()),
+/** Marker used in place of a structure that was too deep or already seen. */
+export const CIRCULAR_MARKER = "[CIRCULAR]";
+export const MAX_DEPTH_MARKER = "[MAX_DEPTH]";
+
+/** A field matcher compiled once from a {@link RedactionConfig}. */
+interface CompiledRedaction {
+  readonly isSensitive: (key: string) => boolean;
+  readonly replacement: string;
+  readonly maxDepth: number;
+  readonly customRedactor?: (key: string, value: unknown) => unknown;
+}
+
+function compile(config?: RedactionConfig): CompiledRedaction {
+  const fields = (config?.fields ?? DEFAULT_SENSITIVE_FIELDS).map((field) =>
+    field.toLowerCase(),
   );
-  const replacement = config?.replacement ?? DEFAULT_REPLACEMENT;
-  const customRedactor = config?.customRedactor;
+  const patterns = config?.patterns ?? [];
+  const matchMode = config?.matchMode ?? "contains";
+  const exact = new Set(fields);
 
-  return (key: string, value: unknown): unknown => {
-    if (customRedactor) {
-      const result = customRedactor(key, value);
-      if (result !== value) return result;
+  const isSensitive = (key: string): boolean => {
+    const lower = key.toLowerCase();
+    if (exact.has(lower)) return true;
+    if (matchMode === "contains") {
+      // Normalize separators so `x-api-key`, `api_key` and `apiKey` all
+      // reduce to the same haystack.
+      const normalized = lower.replace(/[^a-z0-9]/g, "");
+      for (const field of fields) {
+        if (normalized.includes(field.replace(/[^a-z0-9]/g, ""))) return true;
+      }
     }
-
-    if (fields.has(key.toLowerCase())) {
-      return replacement;
+    for (const pattern of patterns) {
+      pattern.lastIndex = 0;
+      if (pattern.test(key)) return true;
     }
+    return false;
+  };
 
-    return value;
+  return {
+    isSensitive,
+    replacement: config?.replacement ?? DEFAULT_REPLACEMENT,
+    maxDepth: config?.maxDepth ?? DEFAULT_MAX_DEPTH,
+    customRedactor: config?.customRedactor,
   };
 }
 
 /**
- * Redacts sensitive fields from a plain object.
- * Returns a new object with sensitive values replaced.
+ * Creates a redactor that replaces sensitive values for a single field.
+ *
+ * This is the leaf-level decision. Use {@link redactObject} to walk a
+ * structure — it applies this to every field it reaches.
+ */
+export function createRedactor(
+  config?: RedactionConfig,
+): (key: string, value: unknown) => unknown {
+  const compiled = compile(config);
+  return (key: string, value: unknown): unknown =>
+    redactField(key, value, compiled);
+}
+
+function redactField(
+  key: string,
+  value: unknown,
+  compiled: CompiledRedaction,
+): unknown {
+  if (compiled.customRedactor) {
+    const result = compiled.customRedactor(key, value);
+    if (result !== value) return result;
+  }
+  if (compiled.isSensitive(key)) return compiled.replacement;
+  return value;
+}
+
+/** True when a value should be walked rather than treated as a leaf. */
+function isPlainContainer(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object") return false;
+  if (Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value) as object | null;
+  // Walk plain objects and null-prototype bags; leave Error, Date, Map, Set,
+  // Buffer and every other class instance intact.
+  return prototype === Object.prototype || prototype === null;
+}
+
+function walk(
+  value: unknown,
+  compiled: CompiledRedaction,
+  depth: number,
+  seen: WeakSet<object>,
+): unknown {
+  if (depth > compiled.maxDepth) return MAX_DEPTH_MARKER;
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return CIRCULAR_MARKER;
+    seen.add(value);
+    const result = value.map((entry) => walk(entry, compiled, depth + 1, seen));
+    seen.delete(value);
+    return result;
+  }
+
+  if (isPlainContainer(value)) {
+    if (seen.has(value)) return CIRCULAR_MARKER;
+    seen.add(value);
+    const result: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      const redacted = redactField(key, entry, compiled);
+      // A field the matcher replaced is done — never walk into it, or a
+      // nested object under a sensitive key would leak through its children.
+      result[key] =
+        redacted === entry ? walk(entry, compiled, depth + 1, seen) : redacted;
+    }
+    seen.delete(value);
+    return result;
+  }
+
+  return value;
+}
+
+/**
+ * Redacts sensitive fields from a structure.
+ *
+ * Returns a new value; the input is never mutated. Arrays are traversed,
+ * cycles become {@link CIRCULAR_MARKER}, and anything deeper than
+ * `maxDepth` becomes {@link MAX_DEPTH_MARKER}.
  */
 export function redactObject<T extends Record<string, unknown>>(
   obj: T,
   config?: RedactionConfig,
 ): T {
-  const redactor = createRedactor(config);
-  const result: Record<string, unknown> = {};
-
-  for (const [key, value] of Object.entries(obj)) {
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      result[key] = redactObject(value as Record<string, unknown>, config);
-    } else {
-      result[key] = redactor(key, value);
-    }
-  }
-
-  return result as T;
+  return walk(obj, compile(config), 0, new WeakSet()) as T;
 }
 
-/** Checks if a field name is sensitive. */
+/**
+ * Redacts any value, not just a plain object — an array of headers, a scalar,
+ * a nested mix.
+ */
+export function redactValue(value: unknown, config?: RedactionConfig): unknown {
+  return walk(value, compile(config), 0, new WeakSet());
+}
+
+/** Checks if a field name is sensitive under the given configuration. */
 export function isSensitiveField(
   fieldName: string,
   config?: RedactionConfig,
 ): boolean {
-  const fields = (config?.fields ?? DEFAULT_SENSITIVE_FIELDS).map((f) =>
-    f.toLowerCase(),
-  );
-  return fields.includes(fieldName.toLowerCase());
+  return compile(config).isSensitive(fieldName);
+}
+
+/**
+ * Compiles a configuration once into a reusable structure redactor.
+ *
+ * Prefer this on a hot path: {@link redactObject} recompiles the field
+ * matcher on every call.
+ */
+export function createStructureRedactor(
+  config?: RedactionConfig,
+): (value: unknown) => unknown {
+  const compiled = compile(config);
+  return (value: unknown) => walk(value, compiled, 0, new WeakSet());
 }

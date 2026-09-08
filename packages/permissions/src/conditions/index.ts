@@ -12,4 +12,6 @@ export {
   never,
   isOwner,
   tenantIsolation,
+  metadataEquals,
+  resourceEquals,
 } from "./conditions.core.js";

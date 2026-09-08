@@ -7,12 +7,22 @@ import type {
   WorkerLifecycleState,
 } from "./worker.type.js";
 
-import { WorkerState } from "../jobTypes/jobTypes.type.js";
+import {
+  JobState as JobStateEnum,
+  WorkerState,
+} from "../jobTypes/jobTypes.type.js";
 
 import { WorkerLifecycleError } from "@zudojs/errors";
 
+/** How long `stop()` waits for in-flight jobs before forcing a stop. */
+const DEFAULT_DRAIN_TIMEOUT_MS = 30_000;
+
 /**
  * Creates a new Worker.
+ *
+ * The worker claims each job before running it, so a job is never picked
+ * up twice — by this worker on its next poll, or by another worker on the
+ * same queue.
  */
 export function createWorker<TData>(
   id: string,
@@ -20,12 +30,42 @@ export function createWorker<TData>(
   options?: WorkerOptions,
 ): Worker<TData> {
   let state: WorkerLifecycleState = WorkerState.CREATED;
-  let stats = { processed: 0, succeeded: 0, failed: 0, concurrency: 0 };
-  const concurrency = options?.concurrency ?? 1;
+  const stats = { processed: 0, succeeded: 0, failed: 0 };
+  const concurrency = Math.max(1, options?.concurrency ?? 1);
   const pollInterval = options?.pollInterval ?? 100;
+  const drainTimeout = options?.drainTimeout ?? DEFAULT_DRAIN_TIMEOUT_MS;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let activeJobs = 0;
   let abortController: AbortController | null = null;
+
+  const onError =
+    options?.onError ??
+    ((error: unknown) => {
+      queueMicrotask(() => {
+        console.error(`[@zudojs/queue] Worker "${id}" poll failed.`, error);
+      });
+    });
+
+  const scheduleNextPoll = (delay: number): void => {
+    if (state !== WorkerState.RUNNING) {
+      return;
+    }
+
+    pollTimer = setTimeout(runPoll, delay);
+    pollTimer.unref?.();
+  };
+
+  /**
+   * Wraps `poll` so a rejection can never escape as an unhandled promise
+   * rejection — which, under a runtime configured to treat those as
+   * fatal, would take down the whole application.
+   */
+  const runPoll = (): void => {
+    void poll().catch((error: unknown) => {
+      onError(error);
+      scheduleNextPoll(pollInterval);
+    });
+  };
 
   const poll = async (): Promise<void> => {
     if (state !== WorkerState.RUNNING || abortController?.signal.aborted) {
@@ -33,19 +73,22 @@ export function createWorker<TData>(
     }
 
     if (activeJobs >= concurrency) {
-      pollTimer = setTimeout(poll, pollInterval);
+      scheduleNextPoll(pollInterval);
       return;
     }
 
-    const job = await queue.getNextJob();
+    const job = await queue.claimNextJob();
     if (!job) {
-      pollTimer = setTimeout(poll, pollInterval);
+      scheduleNextPoll(pollInterval);
       return;
     }
 
     const proc = queue.getProcessor(job.name);
     if (!proc) {
-      pollTimer = setTimeout(poll, pollInterval);
+      // Claimed but unrunnable: release it rather than stranding it in
+      // `active` where nothing would ever pick it up again.
+      await queue.releaseJob(job.id);
+      scheduleNextPoll(pollInterval);
       return;
     }
 
@@ -53,18 +96,40 @@ export function createWorker<TData>(
     stats.processed++;
 
     try {
-      await proc(
-        job as never,
-        {
-          signal: abortController?.signal ?? new AbortController().signal,
-        } as never,
-      );
-      stats.succeeded++;
-    } catch {
+      // Dispatch through the queue rather than invoking the processor
+      // directly. The queue owns job state, retry, dead-lettering and
+      // middleware; calling the processor here left every job the worker
+      // ran stuck in `active` forever.
+      await queue.runJob(job, {
+        ...(options?.middleware ? { middleware: options.middleware } : {}),
+        ...(abortController ? { signal: abortController.signal } : {}),
+        ...(options?.timeoutMs !== undefined
+          ? { timeoutMs: options.timeoutMs }
+          : {}),
+      });
+
+      const settled = await queue.getJob(job.id);
+
+      if (settled?.state === JobStateEnum.COMPLETED) {
+        stats.succeeded++;
+      } else {
+        stats.failed++;
+      }
+    } catch (error) {
       stats.failed++;
+      onError(error);
     } finally {
       activeJobs--;
-      pollTimer = setTimeout(poll, 0);
+      // Poll again immediately while there is capacity, but yield to the
+      // event loop first so a saturated queue cannot starve timers.
+      scheduleNextPoll(0);
+    }
+  };
+
+  const clearPollTimer = (): void => {
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
     }
   };
 
@@ -90,41 +155,52 @@ export function createWorker<TData>(
 
       try {
         state = WorkerState.RUNNING;
-        pollTimer = setTimeout(poll, 0);
+        scheduleNextPoll(0);
       } catch (error) {
         state = WorkerState.FAILED;
         throw error;
       }
     },
 
+    /**
+     * Stops accepting new jobs and waits for in-flight ones to finish.
+     *
+     * The wait is bounded: past `drainTimeout` the worker force-stops
+     * rather than hanging shutdown on a job that never settles.
+     */
     async stop(): Promise<void> {
-      if (state !== WorkerState.RUNNING) {
+      if (state !== WorkerState.RUNNING && state !== WorkerState.STARTING) {
+        // Still clear any timer armed before the state moved on.
+        clearPollTimer();
         return;
       }
 
       state = WorkerState.DRAINING;
+      clearPollTimer();
       abortController?.abort();
 
-      while (activeJobs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
+      const deadline = Date.now() + Math.max(0, drainTimeout);
+
+      while (activeJobs > 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
       }
 
-      if (pollTimer) {
-        clearTimeout(pollTimer);
-        pollTimer = null;
+      if (activeJobs > 0) {
+        onError(
+          new WorkerLifecycleError(
+            `Worker "${id}" still had ${activeJobs} job(s) in flight after ${drainTimeout}ms; forcing stop.`,
+            { workerId: id },
+          ),
+        );
       }
 
+      clearPollTimer();
       state = WorkerState.STOPPED;
     },
 
     async forceStop(): Promise<void> {
       abortController?.abort();
-
-      if (pollTimer) {
-        clearTimeout(pollTimer);
-        pollTimer = null;
-      }
-
+      clearPollTimer();
       state = WorkerState.STOPPED;
     },
 

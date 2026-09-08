@@ -11,6 +11,7 @@ import {
   isEmail,
   isUuid,
   isIsoDateString,
+  isIsoDateTimeString,
   isArrayOfType,
   isDefined,
   isFunction,
@@ -150,8 +151,12 @@ describe("TypeGuards", () => {
       expect(isIsoDateString("2024-01-01T12:30:45.123Z")).toBe(true);
     });
 
+    it("accepts a date-only ISO string", () => {
+      expect(isIsoDateString("2024-01-01")).toBe(true);
+      expect(isIsoDateTimeString("2024-01-01")).toBe(false);
+    });
+
     it("should return false for invalid ISO date strings", () => {
-      expect(isIsoDateString("2024-01-01")).toBe(false);
       expect(isIsoDateString("not-a-date")).toBe(false);
       expect(isIsoDateString(null)).toBe(false);
     });

@@ -17,6 +17,7 @@ import type {
   CacheKey,
   CacheNamespace,
   CacheTag,
+  CacheTagOptions,
   CacheTagStore,
 } from "./types.js";
 import type { CacheKeyBuilder } from "./types-keys.js";
@@ -52,25 +53,32 @@ export class CacheInvalidationManager {
   /* ---- Tag Invalidation ---- */
 
   /**
-   * Invalidates all cache entries associated with the given tags.
-   * Keys are de-duplicated across tags and only actual successful
-   * deletions are counted; keys that already expired or were evicted
-   * (dead tag mappings) are tolerated and simply skipped.
+   * Invalidates all cache entries associated with the given tags, within
+   * the given tag scope (namespace). Keys are de-duplicated across tags and
+   * only actual successful deletions are counted; keys that already expired
+   * or were evicted (dead tag mappings) are tolerated and simply skipped.
    */
-  async invalidateByTag(tags: readonly CacheTag[]): Promise<CacheClearResult> {
+  async invalidateByTag(
+    tags: readonly CacheTag[],
+    options?: CacheTagOptions,
+  ): Promise<CacheClearResult> {
     const keys = new Set<CacheKey>();
     for (const tag of tags) {
-      for (const key of await this.tagStore.getKeys(tag)) keys.add(key);
+      for (const key of await this.tagStore.getKeys(tag, options))
+        keys.add(key);
     }
 
     let cleared = 0;
     for (const key of keys) {
       const result = await this.adapter.delete(key);
       if (result.deleted) cleared++;
+      // The key is gone from the cache, so every tag mapping it still has
+      // (in any scope) is dead too.
+      this.tagStore.removeKey?.(key);
     }
 
     for (const tag of tags) {
-      await this.tagStore.invalidate(tag);
+      await this.tagStore.invalidate(tag, options);
     }
 
     return { cleared };

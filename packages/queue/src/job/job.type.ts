@@ -56,6 +56,7 @@ export interface Job<TData = unknown> {
     readonly delay: number;
     readonly maxDelay?: number;
     readonly multiplier?: number;
+    readonly jitter?: "none" | "full" | "equal";
   };
 }
 

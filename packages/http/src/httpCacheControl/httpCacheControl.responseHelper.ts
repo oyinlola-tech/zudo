@@ -7,21 +7,42 @@
 import { parseCacheControl } from "./core/httpCacheControl.parse.js";
 
 /**
- * Determines if a response is storable in cache.
+ * Determines if a response is storable by a **shared** cache.
+ *
+ * RFC 9111 section 3.5: a response to an `Authorization`-bearing request may
+ * only be stored when it carries `must-revalidate`, `public` or `s-maxage`.
+ * `private` is not sufficient — it is the directive meaning *"do not store
+ * this in a shared cache"*, so accepting it authorised the canonical
+ * shared-cache authentication bypass.
+ *
+ * @param responseHeaders - The response headers.
+ * @param requestHeaders - The originating request's headers.
+ * @returns `true` if the response may be stored.
  */
 export function isResponseStorable(
   responseHeaders: Readonly<Record<string, string>>,
   requestHeaders?: Readonly<Record<string, string>>,
 ): boolean {
-  const cacheControl = responseHeaders["cache-control"];
-  const directives = parseCacheControl(cacheControl);
+  const directives = parseCacheControl(responseHeaders["cache-control"]);
 
   if (directives.noStore) {
     return false;
   }
 
+  if (parseCacheControl(requestHeaders?.["cache-control"]).noStore) {
+    return false;
+  }
+
   const authHeader = requestHeaders?.["authorization"];
-  if (authHeader && !directives.private && !directives.public) {
+
+  if (
+    authHeader &&
+    !(
+      directives.public === true ||
+      directives.mustRevalidate === true ||
+      directives.sMaxAge !== undefined
+    )
+  ) {
     return false;
   }
 

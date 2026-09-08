@@ -23,6 +23,7 @@ export {
   APIIdempotencyError,
   createAPIError,
   isAPIError,
+  ErrorCode,
 } from "@zudojs/errors";
 
 export type { APIErrorOptions } from "@zudojs/errors";

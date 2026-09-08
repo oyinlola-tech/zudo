@@ -13,4 +13,7 @@ export {
   createAlwaysOffSampler,
   createProbabilitySampler,
   createParentBasedSampler,
+  isSampled,
+  isRecording,
+  type ParentBasedSamplerOptions,
 } from "./sampler.type.js";

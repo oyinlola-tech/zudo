@@ -5,17 +5,26 @@
  */
 
 import type { PermissionActor } from "../permissionTypes/index.js";
+import { permissionCacheKey } from "../cache/cache.core.js";
+import { createPermissionActor } from "../actor/actor.core.js";
+import {
+  formatPermission,
+  parsePermissionSafe,
+} from "../permission/permission.core.js";
 
 /**
  * Create a permission check cache key.
+ *
+ * @deprecated Use `permissionCacheKey` from `@zudojs/permissions`. Two key
+ * formats meant entries written with one were invisible to the invalidation
+ * that understood the other; this now delegates to the canonical builder.
  */
 export function createCacheKey(
   actorId: string,
   permission: string,
   resourceId?: string,
 ): string {
-  const base = `${actorId}:${permission}`;
-  return resourceId ? `${base}:${resourceId}` : base;
+  return permissionCacheKey(actorId, permission, resourceId);
 }
 
 /**
@@ -25,8 +34,7 @@ export function createCacheKey(
  * @example extractResource("billing.invoice:refund") → "billing.invoice"
  */
 export function extractResource(permission: string): string {
-  const lastColon = permission.lastIndexOf(":");
-  return lastColon > 0 ? permission.slice(0, lastColon) : permission;
+  return parsePermissionSafe(permission)?.resource ?? permission;
 }
 
 /**
@@ -35,19 +43,22 @@ export function extractResource(permission: string): string {
  * @example extractAction("post:update") → "update"
  */
 export function extractAction(permission: string): string {
-  const lastColon = permission.lastIndexOf(":");
-  return lastColon > 0 ? permission.slice(lastColon + 1) : "";
+  return parsePermissionSafe(permission)?.action ?? "";
 }
 
 /**
  * Build a permission string from resource and action.
  */
 export function buildPermission(resource: string, action: string): string {
-  return `${resource}:${action}`;
+  return formatPermission(resource, action);
 }
 
 /**
  * Create a quick actor object.
+ *
+ * @deprecated Use `createPermissionActor`. This used to build an actor whose
+ * role and permission arrays were not frozen, so two functions with the same
+ * job produced objects with different mutability.
  */
 export function createActor(
   id: string,
@@ -58,11 +69,5 @@ export function createActor(
     readonly deniedPermissions?: readonly string[];
   },
 ): PermissionActor {
-  return Object.freeze({
-    id,
-    type: options?.type,
-    roles: options?.roles,
-    permissions: options?.permissions,
-    deniedPermissions: options?.deniedPermissions,
-  });
+  return createPermissionActor(id, options);
 }

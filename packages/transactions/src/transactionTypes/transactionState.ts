@@ -24,6 +24,16 @@ export type TransactionPropagation =
   | "never"
   | "nested";
 
+/**
+ * How a transaction handle relates to the underlying adapter transaction.
+ *
+ * The manager routes commit and rollback by kind: only a `root` owns an
+ * adapter transaction, a `participant` must never commit the transaction it
+ * joined, a `savepoint` resolves to its savepoint rather than the connection,
+ * and `none` marks a deliberately non-transactional scope.
+ */
+export type TransactionKind = "root" | "participant" | "savepoint" | "none";
+
 /** Database isolation levels. */
 export type TransactionIsolationLevel =
   "read_uncommitted" | "read_committed" | "repeatable_read" | "serializable";

@@ -59,15 +59,36 @@ export interface TestClock {
 export function createTestClock(
   initialTime?: Date | string | number,
 ): TestClock {
-  let currentTime = initialTime ? new Date(initialTime).getTime() : Date.now();
+  /**
+   * Resolve a caller-supplied instant.
+   *
+   * Tested against `undefined`, not truthiness: epoch 0 is the natural choice
+   * for a deterministic test, and treating it as "not supplied" silently
+   * handed back the real clock in the one place determinism was requested.
+   */
+  const toTimestamp = (value: Date | string | number): number => {
+    const timestamp = new Date(value).getTime();
+    if (Number.isNaN(timestamp)) {
+      throw new TypeError(
+        `Invalid test clock time: ${JSON.stringify(value)} is not a valid date.`,
+      );
+    }
+    return timestamp;
+  };
+
+  let currentTime =
+    initialTime === undefined ? Date.now() : toTimestamp(initialTime);
 
   const now = (): Date => new Date(currentTime);
 
   const set = (date: Date | string | number): void => {
-    currentTime = new Date(date).getTime();
+    currentTime = toTimestamp(date);
   };
 
   const advance = (ms: number): void => {
+    if (!Number.isFinite(ms)) {
+      throw new TypeError(`Cannot advance the clock by ${String(ms)}.`);
+    }
     currentTime += ms;
   };
 

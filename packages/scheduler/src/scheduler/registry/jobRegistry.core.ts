@@ -37,6 +37,21 @@ export class JobRegistry {
   }
 
   /**
+   * Retrieves a job definition by ID, throwing when it is not registered.
+   *
+   * @param id - The job identifier.
+   * @returns The job definition.
+   * @throws {SchedulerJobNotFoundError} when no job is registered under `id`.
+   */
+  getOrThrow(id: string): JobDefinition {
+    const job = this.jobs.get(id);
+    if (!job) {
+      throw new SchedulerJobNotFoundError(id);
+    }
+    return job;
+  }
+
+  /**
    * Determines whether a job is registered.
    */
   has(id: string): boolean {

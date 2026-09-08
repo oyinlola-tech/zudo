@@ -12,6 +12,8 @@
  * be used by both the HTTP server and HTTP client layers.
  */
 
+import { escapeHeaderQuotedString } from "../httpHeaders/security/httpHeaders.security.js";
+
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -30,11 +32,6 @@ export interface NegotiationMatch<T = string> {
   readonly score: number;
 }
 
-export interface NegotiationOptions {
-  readonly defaultQuality?: number;
-  readonly caseSensitive?: boolean;
-}
-
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -49,6 +46,24 @@ export const MAX_NEGOTIATION_QUALITY = 1;
 /* Generic Parsing                                                            */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Maximum number of alternatives parsed from one negotiation header.
+ *
+ * An `Accept` header costs the attacker nothing to send and every entry is
+ * parsed character by character and then sorted, so the list length has to be
+ * bounded.
+ */
+export const MAX_NEGOTIATION_ENTRIES = 64;
+
+/**
+ * Parses a negotiation header into its preferences.
+ *
+ * The list split honours `quoted-string`, so a comma inside a quoted
+ * parameter (`profile="a,b"`) no longer tears one preference into three.
+ *
+ * @param header - The raw header value.
+ * @returns The preferences, sorted by quality then specificity.
+ */
 export function parseNegotiationHeader(
   header: string | undefined | null,
 ): NegotiationPreference[] {
@@ -56,11 +71,27 @@ export function parseNegotiationHeader(
     return [];
   }
 
-  return header
-    .split(",")
+  return splitOutsideQuotes(header, ",")
+    .slice(0, MAX_NEGOTIATION_ENTRIES)
     .map((part, index) => parsePreference(part, index))
     .filter((preference) => preference.value.length > 0)
     .sort(comparePreferences);
+}
+
+/**
+ * Reports whether a negotiation header was sent with an empty value.
+ *
+ * RFC 9110 section 12.5.3: an empty `Accept-Encoding` means the client wants
+ * no content coding at all, which is a different statement from omitting the
+ * header.
+ *
+ * @param header - The raw header value.
+ * @returns `true` if the header is present but empty.
+ */
+export function isEmptyNegotiationHeader(
+  header: string | undefined | null,
+): boolean {
+  return header !== undefined && header !== null && header.trim().length === 0;
 }
 
 export function parsePreference(
@@ -71,7 +102,7 @@ export function parsePreference(
 
   const token = parts.shift()?.trim() ?? "";
 
-  const parameters: Record<string, string> = {};
+  const parameters = Object.create(null) as Record<string, string>;
 
   let quality = DEFAULT_NEGOTIATION_QUALITY;
 
@@ -117,20 +148,34 @@ export function parsePreference(
 /* Quality                                                                    */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * RFC 9110 section 12.4.2 `qvalue`.
+ */
+const QVALUE_PATTERN = /^(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/;
+
+/**
+ * Parses a `q` parameter value.
+ *
+ * A weight that does not match the `qvalue` grammar is treated as
+ * unacceptable (`0`) rather than as the default `1`; otherwise a garbage
+ * weight makes an alternative *maximally* preferred, which lets a client
+ * steer negotiation deterministically.
+ *
+ * @param value - The raw weight.
+ * @returns The quality in `[0, 1]`.
+ */
 export function parseQuality(value: string): number {
   const normalized = value.trim();
 
-  if (normalized === "") {
+  if (!QVALUE_PATTERN.test(normalized)) {
     return 0;
   }
 
-  const quality = Number(normalized);
-
-  if (!Number.isFinite(quality)) {
-    return 0;
-  }
-
-  return clamp(quality, MIN_NEGOTIATION_QUALITY, MAX_NEGOTIATION_QUALITY);
+  return clamp(
+    Number(normalized),
+    MIN_NEGOTIATION_QUALITY,
+    MAX_NEGOTIATION_QUALITY,
+  );
 }
 
 export function formatQuality(quality: number): string {
@@ -148,7 +193,7 @@ export function formatQuality(quality: number): string {
     return "0";
   }
 
-  return normalized.toFixed(3).replace(/0+$/, "");
+  return normalized.toFixed(3).replace(/\.?0+$/, "");
 }
 
 export function isAcceptableQuality(quality: number): boolean {
@@ -268,6 +313,14 @@ export function negotiateEncoding(
   header: string | undefined | null,
   available: readonly string[],
 ): string | undefined {
+  if (isEmptyNegotiationHeader(header)) {
+    /*
+     * RFC 9110 section 12.5.3: an empty Accept-Encoding means no content
+     * coding is acceptable, so only identity may be served.
+     */
+    return available.find((value) => isIdentityEncoding(value));
+  }
+
   const preferences = parseAcceptEncoding(header);
 
   if (preferences.length === 0) {
@@ -368,6 +421,18 @@ export function negotiateCharset(
 /* Generic Negotiation                                                        */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Selects the best available alternative for a preference list.
+ *
+ * A `q=0` preference is an **exclusion**, not merely a skipped entry:
+ * RFC 9110 section 12.4.2 requires a more specific `q=0` to override a
+ * broader wildcard, so `*\/*, text/html;q=0` must not yield `text/html`.
+ *
+ * @param preferences - The parsed preferences.
+ * @param available - The alternatives the server can produce.
+ * @param matcher - Matches a preference value against an alternative.
+ * @returns The selected alternative, or `undefined` if none is acceptable.
+ */
 export function negotiate<T>(
   preferences: readonly NegotiationPreference[],
   available: readonly T[],
@@ -379,19 +444,52 @@ export function negotiate<T>(
 
   const sorted = sortPreferences(preferences);
 
+  const rejections = sorted.filter(
+    (preference) => !isAcceptableQuality(preference.quality),
+  );
+
   for (const preference of sorted) {
     if (!isAcceptableQuality(preference.quality)) {
       continue;
     }
 
     for (const candidate of available) {
-      if (matcher(preference.value, candidate)) {
-        return candidate;
+      if (!matcher(preference.value, candidate)) {
+        continue;
       }
+
+      if (isExcluded(candidate, preference, rejections, matcher)) {
+        continue;
+      }
+
+      return candidate;
     }
   }
 
   return undefined;
+}
+
+/**
+ * Reports whether a `q=0` preference at least as specific as the selecting
+ * one rejects this candidate.
+ *
+ * @param candidate - The alternative under consideration.
+ * @param selected - The preference that would select it.
+ * @param rejections - Every `q=0` preference from the same header.
+ * @param matcher - Matches a preference value against an alternative.
+ * @returns `true` if the candidate is excluded.
+ */
+function isExcluded<T>(
+  candidate: T,
+  selected: NegotiationPreference,
+  rejections: readonly NegotiationPreference[],
+  matcher: (accepted: string, available: T) => boolean,
+): boolean {
+  return rejections.some(
+    (rejection) =>
+      rejection.specificity >= selected.specificity &&
+      matcher(rejection.value, candidate),
+  );
 }
 
 export function getPreferenceQuality<T>(
@@ -422,7 +520,7 @@ export function getPreferenceQuality<T>(
 /* -------------------------------------------------------------------------- */
 
 export function normalizeMediaType(value: string): string {
-  return value.trim().split(";", 1)[0].trim().toLowerCase();
+  return (value.trim().split(";", 1)[0] ?? "").trim().toLowerCase();
 }
 
 export function splitMediaType(value: string): [string, string] | undefined {
@@ -545,24 +643,46 @@ export function formatPreference(preference: NegotiationPreference): string {
 /* Internal Helpers                                                           */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Scores how specific a preference value is.
+ *
+ * Only a media type (which contains `/`) gets media-type scoring. A bare
+ * token is scored as a plain token even when it contains a hyphen: sniffing
+ * "is this a language tag?" from a hyphen ranks `x-gzip` above `gzip` and
+ * `iso-8859-1` above `utf-8` at equal weight.
+ *
+ * @param value - The preference value.
+ * @param parameters - The preference's parameters.
+ * @returns The specificity score.
+ */
 function calculateSpecificity(
   value: string,
   parameters: Readonly<Record<string, string>>,
 ): number {
   const normalized = value.trim().toLowerCase();
 
+  const parameterCount = Object.keys(parameters).length;
+
   if (normalized.includes("/")) {
-    return mediaTypeSpecificity(normalized) + Object.keys(parameters).length;
+    return mediaTypeSpecificity(normalized) + parameterCount;
   }
 
-  if (normalized.includes("-")) {
-    return languageSpecificity(normalized) + Object.keys(parameters).length;
-  }
-
-  return (normalized === "*" ? 0 : 1) + Object.keys(parameters).length;
+  return (normalized === "*" ? 0 : 1) + parameterCount;
 }
 
-function splitParameters(value: string): string[] {
+/**
+ * Splits a header value on a delimiter, ignoring delimiters inside a
+ * `quoted-string`.
+ *
+ * A backslash escape is honoured only inside quotes, per RFC 9110
+ * section 5.6.6 — outside a `quoted-string` a backslash is an ordinary
+ * character.
+ *
+ * @param value - The raw header value.
+ * @param delimiter - The single-character delimiter.
+ * @returns The split fragments, with quotes preserved.
+ */
+function splitOutsideQuotes(value: string, delimiter: string): string[] {
   const result: string[] = [];
   let current = "";
   let quoted = false;
@@ -575,7 +695,7 @@ function splitParameters(value: string): string[] {
       continue;
     }
 
-    if (character === "\\") {
+    if (quoted && character === "\\") {
       current += character;
       escaped = true;
       continue;
@@ -587,7 +707,7 @@ function splitParameters(value: string): string[] {
       continue;
     }
 
-    if (character === ";" && !quoted) {
+    if (character === delimiter && !quoted) {
       result.push(current);
       current = "";
       continue;
@@ -601,6 +721,16 @@ function splitParameters(value: string): string[] {
   return result;
 }
 
+/**
+ * Splits a preference into its token and parameters.
+ *
+ * @param value - One preference fragment.
+ * @returns The token followed by each parameter.
+ */
+function splitParameters(value: string): string[] {
+  return splitOutsideQuotes(value, ";");
+}
+
 function unquote(value: string): string {
   const trimmed = value.trim();
 
@@ -611,12 +741,19 @@ function unquote(value: string): string {
   return trimmed;
 }
 
+/**
+ * Emits a parameter value as a token or a `quoted-string`.
+ *
+ * @param value - The raw value.
+ * @returns The token or quoted-string form.
+ * @throws {TypeError} If the value contains a forbidden control character.
+ */
 function quoteIfNeeded(value: string): string {
   if (/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(value)) {
     return value;
   }
 
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  return `"${escapeHeaderQuotedString(value)}"`;
 }
 
 function normalizeToken(value: string): string {

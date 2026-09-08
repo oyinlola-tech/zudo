@@ -5,7 +5,6 @@
  */
 
 import type { HTTPHeaders } from "../http.headers.js";
-import type { HTTPHeadersLike } from "../types/httpHeaders.type.js";
 import { getHeaderValues } from "../list/httpHeaders.list.js";
 import { headerContains } from "../basic/httpHeaders.basicMatch.js";
 

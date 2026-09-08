@@ -28,4 +28,9 @@ export {
   addIssue,
   isMaxDepthExceeded,
   shouldAbortEarly,
+  SchemaValidationSignal,
+  failValidation,
+  rethrowUnexpected,
+  enterComposite,
+  leaveComposite,
 } from "./schemaBase.context.js";

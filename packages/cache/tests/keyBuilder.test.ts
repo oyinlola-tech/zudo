@@ -199,3 +199,53 @@ describe("DefaultKeyBuilder buildPattern", () => {
     expect(builder.buildPattern("*")).toBe("zudojs:auth:*");
   });
 });
+
+// ─── Regression: buildPattern validates its identity parts ─────────────────
+
+describe("DefaultKeyBuilder buildPattern — validation", () => {
+  // Regression (CACHE-01): buildPattern used to validate nothing, so an
+  // untrusted namespace reaching clear({ namespace }) escaped tenant
+  // scoping — `namespace: "*"` produced "zudojs:*:*" and matched every
+  // tenant's keys.
+  it("rejects a wildcard namespace", () => {
+    const builder = new DefaultKeyBuilder();
+    expect(() => builder.buildPattern("*", { namespace: "*" })).toThrow();
+  });
+
+  it("rejects a namespace containing the separator", () => {
+    const builder = new DefaultKeyBuilder();
+    expect(() => builder.buildPattern("*", { namespace: "a:b" })).toThrow();
+    expect(() => builder.buildPattern("*", { namespace: "a?" })).toThrow();
+  });
+
+  it("rejects a prefix outside the key alphabet", () => {
+    const builder = new DefaultKeyBuilder();
+    expect(() => builder.buildPattern("*", { prefix: "*" })).toThrow();
+  });
+
+  it("rejects a pattern containing the separator", () => {
+    const builder = new DefaultKeyBuilder();
+    expect(() => builder.buildPattern("tenant:*")).toThrow();
+  });
+
+  it("rejects a pattern outside the pattern alphabet", () => {
+    const builder = new DefaultKeyBuilder();
+    expect(() => builder.buildPattern("user (1)")).toThrow();
+    expect(() => builder.buildPattern("")).toThrow();
+  });
+
+  it("rejects a composed pattern over the maximum key length", async () => {
+    const { MAX_KEY_LENGTH } = await import("../src/constants.js");
+    const builder = new DefaultKeyBuilder();
+    expect(() => builder.buildPattern("a".repeat(MAX_KEY_LENGTH))).toThrow();
+  });
+
+  it("still accepts well-formed glob patterns", () => {
+    const builder = new DefaultKeyBuilder();
+    expect(builder.buildPattern("user.*")).toBe("zudojs:user.*");
+    expect(builder.buildPattern("user.?", { namespace: "tenant-a" })).toBe(
+      "zudojs:tenant-a:user.?",
+    );
+    expect(builder.buildPattern("**")).toBe("zudojs:**");
+  });
+});

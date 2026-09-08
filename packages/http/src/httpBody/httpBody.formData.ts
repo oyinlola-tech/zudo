@@ -1,6 +1,12 @@
 import type { IncomingMessage } from "node:http";
 import { readBody } from "./http.body.js";
 
+import {
+  parseMultipartParts,
+  sanitizeFilename as sanitizeMultipartFilename,
+  type MultipartOptions,
+} from "../httpMultipart/http.multipart.js";
+
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -197,6 +203,15 @@ export async function parseFormData(
 /* Multipart Parser                                                           */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Parses a multipart body into an {@link HTTPFormData}.
+ *
+ * The parsing itself is delegated to `httpMultipart`, which is the package's
+ * single multipart engine. This function only applies the form-data limits
+ * and shapes the result. Routing both entry points through one parser is what
+ * guarantees two components in the same application cannot see different
+ * field names, different filenames or different bytes for the same request.
+ */
 export function parseMultipartBody(
   body: Buffer,
   boundary: string,
@@ -210,131 +225,59 @@ export function parseMultipartBody(
     strict = true,
   } = options;
 
-  const boundaryBuffer = Buffer.from(`--${boundary}`, "utf8");
+  const multipartOptions: MultipartOptions = {
+    maxFields,
+    maxFieldSize,
+    maxFileSize,
+    maxFiles,
+    maxParts: maxFields + maxFiles,
+    allowUnnamedParts: !strict,
+  };
 
   const result = new HTTPFormDataImpl();
-
-  let position = 0;
 
   let fieldCount = 0;
 
   let fileCount = 0;
 
-  if (!body.subarray(0, boundaryBuffer.length).equals(boundaryBuffer)) {
-    throw new HTTPFormDataParseError("Invalid multipart body.");
-  }
-
-  position = boundaryBuffer.length;
-
-  while (position < body.length) {
-    if (body[position] === 45 && body[position + 1] === 45) {
-      break;
-    }
-
-    if (body[position] === 13 && body[position + 1] === 10) {
-      position += 2;
-    } else if (strict) {
-      throw new HTTPFormDataParseError("Invalid multipart boundary separator.");
-    }
-
-    const nextBoundary = findBoundary(body, boundaryBuffer, position);
-
-    if (nextBoundary === -1) {
-      throw new HTTPFormDataParseError(
-        "Multipart closing boundary was not found.",
-      );
-    }
-
-    const partEnd = nextBoundary;
-
-    const headerEnd = findHeaderEnd(body, position, partEnd);
-
-    if (headerEnd === -1) {
-      throw new HTTPFormDataParseError("Multipart part headers are invalid.");
-    }
-
-    const headerBuffer = body.subarray(position, headerEnd);
-
-    const headers = parsePartHeaders(headerBuffer);
-
-    const disposition = headers.get("content-disposition");
-
-    if (!disposition) {
-      if (strict) {
-        throw new HTTPFormDataParseError(
-          "Multipart part is missing Content-Disposition.",
-        );
-      }
-
-      position = nextBoundary + boundaryBuffer.length;
-
-      continue;
-    }
-
-    const metadata = parseContentDisposition(disposition);
-
-    if (!metadata.name) {
-      if (strict) {
-        throw new HTTPFormDataParseError(
-          "Multipart part is missing a field name.",
-        );
-      }
-
-      position = nextBoundary + boundaryBuffer.length;
-
-      continue;
-    }
-
-    const dataStart = headerEnd + 4;
-
-    const dataEnd = partEnd;
-
-    const data = body.subarray(dataStart, dataEnd);
-
-    if (metadata.filename !== undefined) {
+  for (const part of parseMultipartParts(body, boundary, multipartOptions)) {
+    if (part.filename !== undefined) {
       fileCount += 1;
 
       if (fileCount > maxFiles) {
         throw new HTTPFormDataLimitError("Maximum file count exceeded.");
       }
 
-      if (data.length > maxFileSize) {
+      if (part.data.length > maxFileSize) {
         throw new HTTPFormDataLimitError(
           "Multipart file exceeds the configured size limit.",
         );
       }
 
-      const filename = sanitizeFilename(metadata.filename);
-
-      const contentType =
-        headers.get("content-type") ?? "application/octet-stream";
-
-      result.append(metadata.name, {
-        fieldName: metadata.name,
-        filename,
-        contentType,
-        size: data.length,
-        data: Buffer.from(data),
+      result.append(part.name, {
+        fieldName: part.name,
+        filename: sanitizeFilename(part.filename),
+        contentType: part.contentType ?? "application/octet-stream",
+        size: part.data.length,
+        data: Buffer.from(part.data),
       });
-    } else {
-      fieldCount += 1;
 
-      if (fieldCount > maxFields) {
-        throw new HTTPFormDataLimitError("Maximum field count exceeded.");
-      }
-
-      if (data.length > maxFieldSize) {
-        throw new HTTPFormDataLimitError(
-          "Multipart field exceeds the configured size limit.",
-        );
-      }
-
-      const charset = getCharset(headers.get("content-type"));
-
-      result.append(metadata.name, data.toString(charset));
+      continue;
     }
 
-    position = nextBoundary + boundaryBuffer.length;
+    fieldCount += 1;
+
+    if (fieldCount > maxFields) {
+      throw new HTTPFormDataLimitError("Maximum field count exceeded.");
+    }
+
+    if (part.data.length > maxFieldSize) {
+      throw new HTTPFormDataLimitError(
+        "Multipart field exceeds the configured size limit.",
+      );
+    }
+
+    result.append(part.name, decodePartText(part.data, part.contentType));
   }
 
   return result;
@@ -393,7 +336,9 @@ class HTTPFormDataImpl implements HTTPFormData {
     const result: Record<string, HTTPFormDataValue | HTTPFormDataValue[]> = {};
 
     for (const [name, values] of this.data) {
-      result[name] = values.length === 1 ? values[0] : [...values];
+      const single = values.length === 1 ? values[0] : undefined;
+
+      result[name] = single === undefined ? [...values] : single;
     }
 
     return result;
@@ -436,166 +381,66 @@ class HTTPFormDataImpl implements HTTPFormData {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Headers                                                                    */
-/* -------------------------------------------------------------------------- */
-
-function parsePartHeaders(input: Buffer): Map<string, string> {
-  const text = input.toString("latin1");
-
-  const result = new Map<string, string>();
-
-  for (const line of text.split("\r\n")) {
-    const separator = line.indexOf(":");
-
-    if (separator <= 0) {
-      continue;
-    }
-
-    const name = line.slice(0, separator).trim().toLowerCase();
-
-    const value = line.slice(separator + 1).trim();
-
-    result.set(name, value);
-  }
-
-  return result;
-}
-
-/* -------------------------------------------------------------------------- */
-/* Content-Disposition                                                       */
-/* -------------------------------------------------------------------------- */
-
-interface ParsedContentDisposition {
-  readonly name: string | undefined;
-
-  readonly filename: string | undefined;
-}
-
-function parseContentDisposition(value: string): ParsedContentDisposition {
-  const parts = value.split(";");
-
-  if (parts[0]?.trim().toLowerCase() !== "form-data") {
-    return {
-      name: undefined,
-      filename: undefined,
-    };
-  }
-
-  let name: string | undefined;
-
-  let filename: string | undefined;
-
-  for (const part of parts.slice(1)) {
-    const separator = part.indexOf("=");
-
-    if (separator === -1) {
-      continue;
-    }
-
-    const key = part.slice(0, separator).trim().toLowerCase();
-
-    let parameter = part.slice(separator + 1).trim();
-
-    if (
-      parameter.length >= 2 &&
-      parameter.startsWith('"') &&
-      parameter.endsWith('"')
-    ) {
-      parameter = parameter.slice(1, -1);
-    }
-
-    parameter = parameter.replace(/\\"/g, '"');
-
-    if (key === "name") {
-      name = parameter;
-    }
-
-    if (key === "filename") {
-      filename = parameter;
-    }
-  }
-
-  return {
-    name,
-    filename,
-  };
-}
-
-/* -------------------------------------------------------------------------- */
-/* Multipart Search                                                           */
-/* -------------------------------------------------------------------------- */
-
-function findBoundary(body: Buffer, boundary: Buffer, start: number): number {
-  for (let index = start; index <= body.length - boundary.length; index += 1) {
-    if (body[index] !== 13 || body[index + 1] !== 10) {
-      continue;
-    }
-
-    if (
-      body.subarray(index + 2, index + 2 + boundary.length).equals(boundary)
-    ) {
-      return index;
-    }
-  }
-
-  return -1;
-}
-
-function findHeaderEnd(body: Buffer, start: number, end: number): number {
-  for (let index = start; index + 3 < end; index += 1) {
-    if (
-      body[index] === 13 &&
-      body[index + 1] === 10 &&
-      body[index + 2] === 13 &&
-      body[index + 3] === 10
-    ) {
-      return index;
-    }
-  }
-
-  return -1;
-}
-
-/* -------------------------------------------------------------------------- */
 /* Filename Security                                                          */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Reduces an uploaded filename to a safe basename.
+ *
+ * Delegates to the single implementation in `httpMultipart` so the three
+ * copies that used to exist cannot drift apart.
+ */
 export function sanitizeFilename(filename: string): string {
-  const normalized = filename.replace(/\\/g, "/").split("/").pop() ?? "";
-
-  return normalized.replace(/[\x00-\x1f\x7f]/g, "").trim();
+  return sanitizeMultipartFilename(filename);
 }
 
 /* -------------------------------------------------------------------------- */
 /* Charset                                                                    */
 /* -------------------------------------------------------------------------- */
 
-function getCharset(contentType: string | undefined): BufferEncoding {
+/**
+ * Decodes a field's bytes using the charset the part declared.
+ *
+ * `TextDecoder` covers the whole WHATWG encoding set, so `utf-16le`,
+ * `shift_jis` and the rest decode correctly instead of being silently
+ * mangled into UTF-8 replacement characters. A charset no decoder recognises
+ * is reported rather than swallowed.
+ */
+function decodePartText(data: Buffer, contentType: string | undefined): string {
+  const charset = getCharset(contentType);
+
+  if (charset === undefined) {
+    return data.toString("utf8");
+  }
+
+  try {
+    return new TextDecoder(charset).decode(data);
+  } catch {
+    throw new HTTPFormDataParseError(
+      "Multipart part declares an unsupported charset.",
+    );
+  }
+}
+
+/**
+ * Reads the `charset` parameter of a media type.
+ *
+ * The parameter name is anchored to a parameter boundary so a `charset=`
+ * substring inside another parameter's quoted value cannot be mistaken for
+ * the real one.
+ */
+function getCharset(contentType: string | undefined): string | undefined {
   if (!contentType) {
-    return "utf8";
+    return undefined;
   }
 
-  const match = /charset\s*=\s*"?([^;"\s]+)"?/i.exec(contentType);
+  const match = /(?:^|;)\s*charset\s*=\s*(?:"([^"]*)"|([^;"\s]+))/i.exec(
+    contentType,
+  );
 
-  if (!match?.[1]) {
-    return "utf8";
-  }
+  const charset = (match?.[1] ?? match?.[2])?.trim().toLowerCase();
 
-  const charset = match[1].toLowerCase();
-
-  if (charset === "utf-8" || charset === "utf8") {
-    return "utf8";
-  }
-
-  if (charset === "ascii") {
-    return "ascii";
-  }
-
-  if (charset === "latin1" || charset === "iso-8859-1") {
-    return "latin1";
-  }
-
-  return "utf8";
+  return charset && charset.length > 0 ? charset : undefined;
 }
 
 /* -------------------------------------------------------------------------- */

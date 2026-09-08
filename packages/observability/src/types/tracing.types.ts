@@ -9,6 +9,15 @@ export enum SpanStatus {
   ERROR = "ERROR",
 }
 
+/**
+ * W3C trace flags. Bit 0 carries the sampling decision, which is what a
+ * downstream service reads to keep a trace whole.
+ */
+export const TraceFlags = {
+  NONE: 0,
+  SAMPLED: 1,
+} as const;
+
 /** A span event (timestamped annotation). */
 export interface SpanEvent {
   readonly name: string;
@@ -21,6 +30,7 @@ export interface SpanContext {
   readonly traceId: string;
   readonly spanId: string;
   readonly parentSpanId?: string;
+  /** @see TraceFlags */
   readonly traceFlags?: number;
 }
 
@@ -60,6 +70,18 @@ export enum SpanKind {
   CONSUMER = "CONSUMER",
 }
 
+/** Caps on what a single span may accumulate before export. */
+export interface SpanLimits {
+  /** Maximum attributes retained. Default: 128. */
+  readonly maxAttributes?: number;
+  /** Maximum events retained. Default: 128. */
+  readonly maxEvents?: number;
+  /** Maximum attributes retained per event. Default: 128. */
+  readonly maxAttributesPerEvent?: number;
+  /** Strings longer than this are truncated. Default: 4096. */
+  readonly maxAttributeValueLength?: number;
+}
+
 /** Decision on whether a span should be recorded. */
 export interface SamplingResult {
   readonly decision: "RECORD_AND_SAMPLE" | "RECORD_ONLY" | "DO_NOT_RECORD";
@@ -80,9 +102,15 @@ export interface ReadableSpan {
   readonly endTime: Date;
   readonly duration: number;
   readonly status: SpanStatus;
+  /** The message passed alongside the status, when one was given. */
+  readonly statusMessage?: string;
   readonly attributes: Record<string, unknown>;
   readonly events: readonly SpanEvent[];
   readonly resource: Record<string, unknown>;
+  /** Attributes discarded because the span hit its limit. */
+  readonly droppedAttributes: number;
+  /** Events discarded because the span hit its limit. */
+  readonly droppedEvents: number;
 }
 
 /** Exports completed spans to a backend. */
@@ -95,5 +123,7 @@ export interface SpanExporter {
 export interface SpanProcessor {
   onStart(span: Span): void;
   onEnd(span: ReadableSpan): void;
+  /** Drains anything buffered without shutting the processor down. */
+  forceFlush?(): Promise<void>;
   shutdown(): Promise<void>;
 }

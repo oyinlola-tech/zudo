@@ -8,6 +8,18 @@ import type {
 } from "./httpContentType.type.js";
 import { parseContentType } from "./httpContentType.parser.js";
 
+/**
+ * Matches one media-type token against a pattern token.
+ *
+ * The wildcard is only meaningful in `expected` — the pattern. A wildcard in
+ * `actual` comes from the observed (untrusted) header, and honouring it would
+ * let `Content-Type: * /*` satisfy every content-type guard at once.
+ *
+ * @param actual - The observed token.
+ * @param expected - The pattern token.
+ * @param allowWildcard - Whether `*` in the pattern matches anything.
+ * @returns `true` if the observed token matches the pattern.
+ */
 function matchesToken(
   actual: string,
   expected: string,
@@ -21,7 +33,7 @@ function matchesToken(
     return false;
   }
 
-  return actual === "*" || expected === "*";
+  return expected === "*";
 }
 
 export function matchesContentType(

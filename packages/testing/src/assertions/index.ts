@@ -1,32 +1,35 @@
 /**
- * Assertion helpers.
- *
- * HTTP, error, and event assertion utilities.
+ * @zudojs/testing — Assertions Barrel
  */
 
 export {
-  assertResponseStatus,
-  assertResponseHeader,
-  assertResponseBody,
-  assertOK,
+  assertBadRequest,
   assertCreated,
   assertNoContent,
-  assertBadRequest,
   assertNotFound,
+  assertOK,
+  assertResponseBody,
+  assertResponseBodyContains,
+  assertResponseHeader,
+  assertResponseStatus,
   assertServerError,
 } from "./httpAssertions.core.js";
-
 export {
-  assertThrows,
-  assertRejects,
+  assertEventNotPublished,
+  assertEventPayload,
+  assertEventPublished,
+  assertEventType,
+  assertMessageDispatched,
+  assertMessageNotDispatched,
+  assertRecordedEventType,
+} from "./eventAssertions.core.js";
+export {
   assertErrorCode,
   assertErrorMetadata,
+  assertErrorType,
+  assertRejects,
+  assertThrows,
 } from "./errorAssertions.core.js";
-
-export {
-  assertEventType,
-  assertEventPayload,
-  assertRecordedEventType,
-  assertEventPublished,
-  assertMessageDispatched,
-} from "./eventAssertions.core.js";
+export { deepEqual, findDifference } from "./deepEqual.core.js";
+export { describeValue } from "./deepEqual.describe.js";
+export type { Difference } from "./deepEqual.describe.js";

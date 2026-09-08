@@ -24,17 +24,33 @@ export function formatIssues(issues: readonly ValidationIssue[]): string {
   return issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
 }
 
-/** Groups validation issues by their first path segment. */
+/**
+ * Groups validation issues by their first path segment.
+ *
+ * Built on a null-prototype object and probed with `Object.hasOwn`. Using `in`
+ * against a plain literal reported `constructor`, `toString` and `valueOf` as
+ * already present, so a field with one of those names produced no entry and
+ * the user saw a rejected form with nothing marked.
+ */
 export function toFieldErrors(
   issues: readonly ValidationIssue[],
 ): Readonly<Record<string, string>> {
-  const result: Record<string, string> = {};
+  const result = Object.create(null) as Record<string, string>;
+
   for (const issue of issues) {
     const field = issue.path[0];
-    if (typeof field === "string" && !(field in result))
-      result[field] = issue.message;
+    if (typeof field !== "string") continue;
+    if (Object.hasOwn(result, field)) continue;
+
+    Object.defineProperty(result, field, {
+      value: issue.message,
+      enumerable: true,
+      writable: false,
+      configurable: false,
+    });
   }
-  return result;
+
+  return Object.freeze(result);
 }
 
 /** A successful validation result. */

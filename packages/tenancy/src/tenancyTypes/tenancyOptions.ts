@@ -5,7 +5,7 @@
  */
 
 import type { TenantId } from "./tenantIdentity.js";
-import type { Tenant, TenantRequirement } from "./tenantInterface.js";
+import type { TenantRequirement } from "./tenantInterface.js";
 import type { TenantResolver } from "./resolverTypes.js";
 import type {
   TenantRepository,

@@ -26,6 +26,8 @@ import {
   list as registerList,
 } from "./httpPipeline.registration.js";
 
+import { isRegisteredMiddleware } from "./httpPipeline.helper.js";
+
 import { executePipeline } from "./httpPipeline.execution.js";
 
 export class HttpMiddlewarePipeline {
@@ -47,6 +49,24 @@ export class HttpMiddlewarePipeline {
     for (const middleware of options.middlewares ?? []) {
       if (typeof middleware === "function") {
         this.use(middleware);
+
+        continue;
+      }
+
+      /*
+       * Pre-registered middleware objects were previously dropped on the
+       * floor by a `typeof === "function"` filter, so a pipeline constructed
+       * from `list()` output lost every entry.
+       */
+      if (isRegisteredMiddleware(middleware)) {
+        this.entries.push({
+          id: middleware.id,
+          middleware: middleware.middleware,
+          name: middleware.name,
+          priority: middleware.priority,
+          sequence: this.entries.length,
+          enabled: middleware.enabled,
+        });
       }
     }
   }
@@ -71,6 +91,13 @@ export class HttpMiddlewarePipeline {
       this.entries,
       middleware,
       () => `${options.name ?? "middleware"}-${++this.sequence}`,
+      {
+        name: options.name,
+        priority: options.priority,
+        enabled: options.enabled,
+        metadata: options.metadata,
+        sequence: this.entries.length,
+      },
     );
   }
 

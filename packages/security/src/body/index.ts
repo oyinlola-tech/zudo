@@ -4,6 +4,8 @@
 
 export {
   DEFAULT_BODY_LIMITS,
+  parseMediaType,
+  validateBodyFraming,
   validateContentLength,
   validateBodySize,
   getBodyLimitForContentType,

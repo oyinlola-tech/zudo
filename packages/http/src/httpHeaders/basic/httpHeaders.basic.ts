@@ -5,7 +5,7 @@
  */
 
 import type { HTTPHeadersLike } from "../types/httpHeaders.type.js";
-import { toHTTPHeaders } from "../conversion/httpHeaders.conversion.js";
+import { asHTTPHeaders } from "../conversion/httpHeaders.conversion.js";
 
 /**
  * Checks if at least one of the given header names is present.
@@ -18,7 +18,7 @@ export function hasAnyHeader(
   headers: HTTPHeadersLike,
   names: readonly string[],
 ): boolean {
-  const normalized = toHTTPHeaders(headers);
+  const normalized = asHTTPHeaders(headers);
 
   return names.some((name) => normalized.has(name));
 }
@@ -34,7 +34,7 @@ export function hasAllHeaders(
   headers: HTTPHeadersLike,
   names: readonly string[],
 ): boolean {
-  const normalized = toHTTPHeaders(headers);
+  const normalized = asHTTPHeaders(headers);
 
   return names.every((name) => normalized.has(name));
 }

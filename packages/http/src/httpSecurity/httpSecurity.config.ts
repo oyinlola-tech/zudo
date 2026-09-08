@@ -2,8 +2,15 @@
  * @zudojs/http — Security configuration types.
  *
  * Defines the configuration for HTTP security features:
- * body limits, header validation, host validation, proxy trust,
- * timeouts, and abort propagation.
+ * body limits, header validation, host validation and proxy trust.
+ *
+ * Every field here is read by `guardRequest` or by the trust-proxy layer.
+ * `trustedProxyCount`, `requestTimeout`, `headersTimeout` and
+ * `keepAliveTimeout` were removed: nothing in the package read them, and their
+ * JSDoc made an explicit and false promise ("default: 30000") that an operator
+ * setting `requestTimeout: 5000` was protected against slowloris. The Node
+ * adapter has its own, separately named timeout options, and those are the
+ * ones that take effect.
  */
 
 /** Configuration for HTTP request security guards. */
@@ -20,16 +27,15 @@ export interface HTTPSecurityConfig {
   readonly maxQueryLength?: number;
   /** Allowed Host header values. Empty = allow all. */
   readonly allowedHosts?: readonly string[];
-  /** Whether to trust X-Forwarded-* headers (default: false). */
+  /**
+   * Whether `X-Forwarded-*` headers may be trusted (default: `false`).
+   *
+   * Consumed by `httpTrustProxy` and the adapter, not by `guardRequest`. For a
+   * real proxy set — CIDR ranges, named presets, a predicate — pass a
+   * `TrustProxy` value to the adapter directly; this flag is only the
+   * on/off signal.
+   */
   readonly trustProxy?: boolean;
-  /** Number of trusted proxy hops (default: 0). */
-  readonly trustedProxyCount?: number;
-  /** Request timeout in milliseconds (default: 30000). */
-  readonly requestTimeout?: number;
-  /** Headers timeout in milliseconds (default: 10000). */
-  readonly headersTimeout?: number;
-  /** Keep-alive timeout in milliseconds (default: 5000). */
-  readonly keepAliveTimeout?: number;
   /** Maximum request ID length (default: 128). */
   readonly maxRequestIdLength?: number;
   /** Characters allowed in request IDs (default: alphanumeric + hyphens + underscores). */
@@ -50,10 +56,6 @@ export const DEFAULT_SECURITY_CONFIG: Required<HTTPSecurityConfig> =
     maxQueryLength: 4096,
     allowedHosts: [],
     trustProxy: false,
-    trustedProxyCount: 0,
-    requestTimeout: 30_000, // 30s
-    headersTimeout: 10_000, // 10s
-    keepAliveTimeout: 5_000, // 5s
     maxRequestIdLength: 128,
     requestIdPattern: /^[a-zA-Z0-9_-]+$/,
     enableCrlfProtection: true,

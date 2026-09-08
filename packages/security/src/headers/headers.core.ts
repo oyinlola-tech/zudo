@@ -5,6 +5,7 @@
  */
 
 import type { SecurityHeadersConfig } from "../types/security.type.js";
+import { randomBytes } from "node:crypto";
 
 /** Security header names. */
 export const SECURITY_HEADER_NAMES = {
@@ -20,15 +21,38 @@ export const SECURITY_HEADER_NAMES = {
   RESOURCE_POLICY: "Cross-Origin-Resource-Policy",
 } as const;
 
+/**
+ * Default Content-Security-Policy.
+ *
+ * Deliberately restrictive: no scripts, styles, or frames from anywhere, and
+ * no plugin content. An app that serves a UI must replace this — the point of
+ * the default is that a service which forgets to set one is still locked down.
+ */
+const DEFAULT_CSP =
+  "default-src 'self'; script-src 'self'; style-src 'self'; " +
+  "img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; " +
+  "base-uri 'self'; form-action 'self'";
+
+/** Default HSTS: two years, all subdomains, preload-eligible. */
+const DEFAULT_HSTS = "max-age=63072000; includeSubDomains; preload";
+
+/** Default Permissions-Policy: deny the high-risk capabilities. */
+const DEFAULT_PERMISSIONS_POLICY =
+  "accelerometer=(), camera=(), geolocation=(), gyroscope=(), " +
+  "magnetometer=(), microphone=(), payment=(), usb=()";
+
 /** Default security headers. */
 const DEFAULT_HEADERS: Record<string, string> = {
   [SECURITY_HEADER_NAMES.CONTENT_TYPE_OPTIONS]: "nosniff",
   [SECURITY_HEADER_NAMES.FRAME_OPTIONS]: "DENY",
-  [SECURITY_HEADER_NAMES.XSS_PROTECTION]: "1; mode=block",
+  [SECURITY_HEADER_NAMES.XSS_PROTECTION]: "0",
   [SECURITY_HEADER_NAMES.REFERRER_POLICY]: "strict-origin-when-cross-origin",
   [SECURITY_HEADER_NAMES.DNS_PREFETCH_CONTROL]: "off",
   [SECURITY_HEADER_NAMES.OPENER_POLICY]: "same-origin",
   [SECURITY_HEADER_NAMES.RESOURCE_POLICY]: "same-origin",
+  [SECURITY_HEADER_NAMES.CONTENT_SECURITY_POLICY]: DEFAULT_CSP,
+  [SECURITY_HEADER_NAMES.HSTS]: DEFAULT_HSTS,
+  [SECURITY_HEADER_NAMES.PERMISSIONS_POLICY]: DEFAULT_PERMISSIONS_POLICY,
 };
 
 /**
@@ -41,6 +65,18 @@ export function generateSecurityHeaders(
   config?: SecurityHeadersConfig,
 ): Record<string, string> {
   const headers: Record<string, string> = { ...DEFAULT_HEADERS };
+
+  // Config values end up verbatim in a response header, so a stray CRLF here
+  // would split the response exactly as an attacker-supplied one would.
+  if (config) {
+    for (const [key, value] of Object.entries(config)) {
+      if (typeof value === "string" && /[\r\n\x00]/.test(value)) {
+        throw new Error(
+          `Security header "${key}" contains CRLF or null bytes (injection risk)`,
+        );
+      }
+    }
+  }
 
   if (config?.contentSecurityPolicy) {
     headers[SECURITY_HEADER_NAMES.CONTENT_SECURITY_POLICY] =
@@ -119,9 +155,12 @@ export function getMissingSecurityHeaders(
  * @returns The base64-encoded nonce.
  */
 export function generateCspNonce(nonceLength?: number): string {
-  const { randomBytes } =
-    require("node:crypto") as typeof import("node:crypto");
   const length = nonceLength ?? 16;
+  if (!Number.isInteger(length) || length < 16) {
+    throw new RangeError(
+      `CSP nonce length must be an integer of at least 16 bytes, got: ${length}`,
+    );
+  }
   return randomBytes(length).toString("base64");
 }
 

@@ -5,7 +5,7 @@
  */
 
 import type { UserId } from "../authTypes/authUser.type.js";
-import type { TokenId } from "@zudojs/constants";
+import type { SessionId, TokenId } from "@zudojs/constants";
 
 /** JWT token string. */
 export type JwtToken = string;
@@ -29,6 +29,14 @@ export interface TokenPayload {
   readonly jti: TokenId;
   /** User roles */
   readonly roles?: readonly string[];
+  /**
+   * Session ID this token was issued against.
+   *
+   * Set by `createAuthService().login()`. `verifyToken()` and `refresh()`
+   * require the referenced session to still exist, which is what makes
+   * `logout()` actually invalidate outstanding tokens.
+   */
+  readonly sid?: SessionId;
   /** Custom claims */
   readonly [key: string]: unknown;
 }
@@ -63,6 +71,11 @@ export interface TokenConfig {
   readonly issuer?: string;
   /** JWT audience */
   readonly audience?: string;
+  /**
+   * Clock-skew tolerance in seconds applied to `exp`, `iat` and `nbf`
+   * (default: 0, maximum: 300).
+   */
+  readonly clockToleranceSeconds?: number;
 }
 
 /**
@@ -83,6 +96,21 @@ export interface TokenRevocationStore {
   revoke(tokenId: TokenId, expiresAt: number): Promise<void>;
   /** Check whether a token ID has been revoked. */
   isRevoked(tokenId: TokenId): Promise<boolean>;
+  /**
+   * Atomically revoke a token ID **only if it was not already revoked**,
+   * returning whether this caller was the one that revoked it.
+   *
+   * This is the compare-and-set that makes refresh-token rotation safe: a
+   * separate `isRevoked()` then `revoke()` leaves two `await` points during
+   * which a concurrent replay of the same token also observes "not revoked"
+   * and also mints a valid pair. Implement it with a single synchronous
+   * `Map.has`/`set` in-process, or `SET NX` in Redis.
+   *
+   * Optional for backwards compatibility: `createAuthService().refresh()`
+   * falls back to `isRevoked()` + `revoke()` when it is absent, which is
+   * racy. Implement it in any store used in production.
+   */
+  revokeIfNotRevoked?(tokenId: TokenId, expiresAt: number): Promise<boolean>;
 }
 
 /**

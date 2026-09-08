@@ -48,14 +48,48 @@ invalid causes `parse` to throw, rather than being returned as a partial
 result. `Infer<T>` gives a schema's output type and `SchemaInput<T>` its
 declared input type, which is unaffected by `parse` accepting `unknown`.
 
+## Limits and untrusted input
+
+Parsing is bounded, so a hostile payload cannot exhaust the stack or the CPU:
+
+```typescript
+UserSchema.safeParse(fromTheWire, { maxDepth: 32, maxIssues: 20 });
+```
+
+`maxDepth` (default 100) is enforced by every composite schema, and a circular
+structure is reported as a `circular_reference` issue rather than recursing
+forever. Strings default to a 255-character ceiling and arrays to 1000 items
+before any pattern or item schema runs — raise either with `.max()`.
+
+A `.refine()` or `.transform()` callback that throws is reported as a
+`refine_failed` / `transform_failed` issue carrying the original message.
+Anything else thrown during parsing — a genuine defect — propagates out of
+`safeParse` instead of being flattened into "invalid input".
+
+## Coercion
+
+For query parameters and form data, where everything arrives as a string:
+
+```typescript
+const Query = schema.object({
+  page: schema.coerce.number().int().min(1).default(1),
+  verbose: schema.coerce.boolean().default(false),
+});
+```
+
+Stricter than the JavaScript built-ins it wraps: `""` and `"   "` are rejected
+rather than becoming `0`, `"1e999"` is rejected rather than becoming `Infinity`,
+and `"1"`/`"0"`/`"yes"`/`"on"` are accepted as booleans.
+
 ## Features
 
 - Type-safe schema definitions
 - Runtime validation with detailed errors
-- Schema composition and inheritance
-- Transformations and defaults
-- Circular reference support
-- JSON Schema generation
+- Schema composition: object, union, discriminated union, intersection, lazy
+- Transformations, refinements and defaults
+- Explicit coercion for string-typed input
+- Depth, cycle, length and issue-count limits
+- Prototype-pollution protection on object and record keys
 
 ## Use Cases
 

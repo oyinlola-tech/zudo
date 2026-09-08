@@ -6,63 +6,43 @@
  */
 
 import { CircularReferenceError } from "@zudojs/errors";
+import { MAX_MEASURABLE_DEPTH } from "./validationConstraints.depth.js";
+import {
+  TraversalLimitError,
+  traverse,
+} from "./validationConstraints.traverse.js";
 
 /**
  * Detect circular references in a value graph.
  *
- * Uses a WeakSet to track visited objects without preventing GC.
- * Throws CircularReferenceError on first cycle detected.
+ * Only a value that references *itself* through the current path is a cycle.
+ * The same object appearing twice in sibling positions is an ordinary shared
+ * reference and is allowed: rejecting it turned away every valid payload that
+ * reused a config object or a lookup record.
  *
  * @param value - The value to check for circular references.
  * @param path - Current traversal path for error reporting.
- * @param seen - WeakSet tracking visited objects (internal).
+ * @param maxDepth - Depth ceiling, so a deep graph cannot exhaust the stack
+ *   before a cycle is reported.
+ * @throws {CircularReferenceError} on the first cycle found.
  */
 export function assertNoCircularReference(
   value: unknown,
   path = "root",
-  seen?: WeakSet<object>,
+  maxDepth: number = MAX_MEASURABLE_DEPTH,
 ): void {
-  if (typeof value !== "object" || value === null) return;
-
-  const tracker = seen ?? new WeakSet<object>();
-
-  if (tracker.has(value as object)) {
-    throw new CircularReferenceError(path);
-  }
-
-  tracker.add(value as object);
-
-  if (Array.isArray(value)) {
-    for (let i = 0; i < value.length; i++) {
-      assertNoCircularReference(value[i], `${path}[${i}]`, tracker);
+  try {
+    traverse(value, { maxDepth, failOnCycle: true }, path);
+  } catch (error) {
+    if (error instanceof TraversalLimitError && error.halt === "cycle") {
+      throw new CircularReferenceError(error.path);
     }
-    return;
-  }
-
-  if (value instanceof Map) {
-    let i = 0;
-    for (const [k, v] of value) {
-      assertNoCircularReference(k, `${path}.key(${i})`, tracker);
-      assertNoCircularReference(v, `${path}[${String(k)}]`, tracker);
-      i++;
+    if (error instanceof TraversalLimitError && error.halt === "depth") {
+      throw new CircularReferenceError(
+        `${error.path} (exceeded ${maxDepth} levels)`,
+      );
     }
-    return;
-  }
-
-  if (value instanceof Set) {
-    let i = 0;
-    for (const v of value) {
-      assertNoCircularReference(v, `${path}.item(${i})`, tracker);
-      i++;
-    }
-    return;
-  }
-
-  if (ArrayBuffer.isView(value)) return;
-
-  const obj = value as Record<string, unknown>;
-  for (const key of Object.keys(obj)) {
-    assertNoCircularReference(obj[key], `${path}.${key}`, tracker);
+    throw error;
   }
 }
 

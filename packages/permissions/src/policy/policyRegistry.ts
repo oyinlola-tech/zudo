@@ -5,59 +5,67 @@
  */
 
 import type { PermissionPolicyDefinition } from "../permissionTypes/index.js";
+import { matches } from "../permission/permission.core.js";
+
+/** A policy registry, usable directly as the engine's `policies` source. */
+export interface PolicyRegistry {
+  define(definition: PermissionPolicyDefinition): void;
+  get(name: string): PermissionPolicyDefinition | undefined;
+  has(name: string): boolean;
+  forPermission(permission: string): readonly PermissionPolicyDefinition[];
+  names(): readonly string[];
+  all(): readonly PermissionPolicyDefinition[];
+  remove(name: string): boolean;
+  clear(): void;
+}
 
 /**
  * Create a policy registry.
+ *
+ * Pass it straight to `createPermissionEngine({ policies: registry })`.
  */
-export function createPolicyRegistry() {
+export function createPolicyRegistry(): PolicyRegistry {
   const policies = new Map<string, PermissionPolicyDefinition>();
 
   return {
-    /**
-     * Register a policy.
-     */
     define(definition: PermissionPolicyDefinition): void {
       policies.set(definition.name, Object.freeze({ ...definition }));
     },
 
-    /**
-     * Get a policy by name.
-     */
     get(name: string): PermissionPolicyDefinition | undefined {
       return policies.get(name);
     },
 
+    has(name: string): boolean {
+      return policies.has(name);
+    },
+
     /**
-     * Get all policies that apply to a given permission string.
+     * Policies that apply to a permission, highest priority first.
+     *
+     * Patterns are matched with the same wildcard rules as grants, so a
+     * policy registered for `post:*` covers `post:update`.
      */
     forPermission(permission: string): readonly PermissionPolicyDefinition[] {
-      const results: PermissionPolicyDefinition[] = [];
-      for (const [, policy] of policies) {
-        if (policy.permissions.includes(permission)) {
-          results.push(policy);
-        }
-      }
-      // Sort by priority descending
-      return results.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+      return [...policies.values()]
+        .filter((policy) =>
+          policy.permissions.some((pattern) => matches(pattern, permission)),
+        )
+        .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
     },
 
-    /**
-     * Get all registered policy names.
-     */
     names(): readonly string[] {
-      return Array.from(policies.keys());
+      return [...policies.keys()];
     },
 
-    /**
-     * Remove a policy.
-     */
+    all(): readonly PermissionPolicyDefinition[] {
+      return [...policies.values()];
+    },
+
     remove(name: string): boolean {
       return policies.delete(name);
     },
 
-    /**
-     * Clear all policies.
-     */
     clear(): void {
       policies.clear();
     },

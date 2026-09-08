@@ -32,6 +32,30 @@ export interface NodeAdapterOptions extends HttpAdapterOptions {
   readonly keepAliveTimeout?: number;
 
   readonly connectionTimeout?: number;
+
+  /**
+   * Maximum number of concurrent connections the server will accept.
+   */
+  readonly maxConnections?: number;
+
+  /**
+   * How often, in milliseconds, Node sweeps connections for expired
+   * header/request timeouts. Node's default is 30000, which means a
+   * configured `headersTimeout` can overshoot by up to 30 seconds; the
+   * adapter tightens it to the headers timeout unless overridden.
+   */
+  readonly connectionsCheckingInterval?: number;
+
+  /**
+   * Grace period, in milliseconds, granted to in-flight requests during
+   * `stop()` before their sockets are destroyed. Defaults to 10000.
+   */
+  readonly shutdownGraceMs?: number;
+
+  /**
+   * Lifecycle listeners invoked by the adapter.
+   */
+  readonly events?: NodeAdapterEvents;
 }
 
 /**
@@ -76,6 +100,20 @@ export interface NodeAdapterEvents {
 export const DEFAULT_HOST = "127.0.0.1";
 
 export const DEFAULT_PORT = 3000;
+
+/**
+ * Default slowloris-resistant timeouts.
+ *
+ * Node's own defaults (300s request, 60s headers) are long enough that a
+ * handful of connections dribbling a request line can hold server resources
+ * for minutes, so the adapter tightens them unless the operator opts out by
+ * configuring an explicit value.
+ */
+export const NODE_DEFAULT_HEADERS_TIMEOUT = 10_000;
+
+export const NODE_DEFAULT_REQUEST_TIMEOUT = 30_000;
+
+export const NODE_DEFAULT_KEEP_ALIVE_TIMEOUT = 5_000;
 
 export const DEFAULT_MAX_BODY_SIZE = 10 * 1024 * 1024;
 

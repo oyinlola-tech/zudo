@@ -9,6 +9,7 @@ export {
   sanitizeString,
   sanitizeObject,
   isSafeString,
+  withoutStickyFlags,
   detectThreats,
   escapeHtml,
   stripHtml,

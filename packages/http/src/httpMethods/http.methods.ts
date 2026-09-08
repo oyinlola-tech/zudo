@@ -78,24 +78,57 @@ export function normalizeMethod(method: string): string {
 export function normalizeHTTPMethod(method: string): HTTPMethod {
   const normalized = normalizeMethod(method);
 
-  if (!isHTTPMethod(normalized)) {
+  const resolved = toHTTPMethod(normalized);
+
+  if (resolved === undefined) {
     throw new TypeError(`Unsupported HTTP method: ${method}`);
   }
 
-  return normalized;
+  return resolved;
 }
 
 /* -------------------------------------------------------------------------- */
 /* Validation                                                                 */
 /* -------------------------------------------------------------------------- */
 
-export function isHTTPMethod(method: string): method is HTTPMethod {
+/**
+ * Resolves a method string to its canonical {@link HTTPMethod}.
+ *
+ * @param method - The raw method string, in any case.
+ * @returns The canonical method, or `undefined` if it is not standard.
+ */
+export function toHTTPMethod(method: string): HTTPMethod | undefined {
   const normalized = normalizeMethod(method);
 
-  return Object.values(HTTP_METHODS).includes(normalized as HTTPMethod);
+  return (Object.values(HTTP_METHODS) as readonly string[]).includes(normalized)
+    ? (normalized as HTTPMethod)
+    : undefined;
 }
 
-export function assertHTTPMethod(method: string): asserts method is HTTPMethod {
+/**
+ * Checks whether a string names a standard HTTP method.
+ *
+ * @remarks
+ * This deliberately returns a plain `boolean` rather than narrowing
+ * `method is HTTPMethod`: the check is case-insensitive, so `"get"` passes
+ * while its runtime value is still `"get"` and every downstream
+ * `method === "GET"` comparison fails. Use {@link toHTTPMethod} when the
+ * narrowed value is what you need.
+ *
+ * @param method - The raw method string.
+ * @returns `true` if the method is standard.
+ */
+export function isHTTPMethod(method: string): boolean {
+  return toHTTPMethod(method) !== undefined;
+}
+
+/**
+ * Asserts that a string names a standard HTTP method.
+ *
+ * @param method - The raw method string.
+ * @throws {TypeError} If the method is not standard.
+ */
+export function assertHTTPMethod(method: string): void {
   if (!isHTTPMethod(method)) {
     throw new TypeError(`Unsupported HTTP method: ${method}`);
   }
@@ -105,15 +138,25 @@ export function assertHTTPMethod(method: string): asserts method is HTTPMethod {
 /* Method Classification                                                      */
 /* -------------------------------------------------------------------------- */
 
-export function isSafeMethod(method: string): method is SafeHTTPMethod {
+/**
+ * Checks whether a method is safe per RFC 9110 section 9.2.1.
+ *
+ * @param method - The raw method string.
+ * @returns `true` if the method is safe.
+ */
+export function isSafeMethod(method: string): boolean {
   const normalized = normalizeMethod(method);
 
   return (SAFE_METHODS as readonly string[]).includes(normalized);
 }
 
-export function isIdempotentMethod(
-  method: string,
-): method is IdempotentHTTPMethod {
+/**
+ * Checks whether a method is idempotent per RFC 9110 section 9.2.2.
+ *
+ * @param method - The raw method string.
+ * @returns `true` if the method is idempotent.
+ */
+export function isIdempotentMethod(method: string): boolean {
   const normalized = normalizeMethod(method);
 
   return (IDEMPOTENT_METHODS as readonly string[]).includes(normalized);
@@ -220,6 +263,21 @@ export function getBodyHTTPMethods(): BodyHTTPMethod[] {
 /* Allow Header                                                               */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * RFC 9110 section 5.6.2 `token`, the grammar for a method name.
+ */
+const METHOD_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+/**
+ * Formats an `Allow` header value.
+ *
+ * Entries that are not valid method tokens are dropped rather than joined.
+ * Without that filter an interior CR/LF in a caller-supplied method name
+ * would be emitted verbatim into a response header.
+ *
+ * @param methods - The allowed methods.
+ * @returns The header value, or the empty string when nothing is allowed.
+ */
 export function formatAllowHeader(
   methods: readonly string[] | undefined,
 ): string {
@@ -227,7 +285,9 @@ export function formatAllowHeader(
     return "";
   }
 
-  const normalized = methods.map(normalizeMethod);
+  const normalized = methods
+    .map(normalizeMethod)
+    .filter((method) => METHOD_TOKEN.test(method));
 
   return [...new Set(normalized)].join(", ");
 }
@@ -240,10 +300,10 @@ export function parseAllowHeader(value: string | undefined): HTTPMethod[] {
   const result: HTTPMethod[] = [];
 
   for (const method of value.split(",")) {
-    const normalized = normalizeMethod(method);
+    const resolved = toHTTPMethod(method);
 
-    if (isHTTPMethod(normalized) && !result.includes(normalized)) {
-      result.push(normalized);
+    if (resolved !== undefined && !result.includes(resolved)) {
+      result.push(resolved);
     }
   }
 
@@ -264,6 +324,31 @@ export function isMethodOverrideAllowed(method: string): boolean {
   );
 }
 
+/**
+ * Methods an `X-HTTP-Method-Override` may name.
+ *
+ * The override target is attacker-controlled, so it is whitelisted to the
+ * three methods the mechanism exists for. Allowing an arbitrary target would
+ * let a POST that has already passed CSRF validation, body parsing and
+ * POST-specific authorization be rewritten into GET, TRACE or CONNECT
+ * afterwards.
+ */
+export const METHOD_OVERRIDE_TARGETS = [
+  HTTP_METHODS.PUT,
+  HTTP_METHODS.PATCH,
+  HTTP_METHODS.DELETE,
+] as const;
+
+/**
+ * Resolves an `X-HTTP-Method-Override` against the original method.
+ *
+ * An unrecognised or non-whitelisted override is ignored, not thrown on: the
+ * value comes from the client, so throwing turns any request into a 500.
+ *
+ * @param originalMethod - The method actually used on the wire.
+ * @param override - The requested override, if any.
+ * @returns The effective method.
+ */
 export function resolveMethodOverride(
   originalMethod: string,
   override: string | undefined,
@@ -274,5 +359,14 @@ export function resolveMethodOverride(
     return original;
   }
 
-  return normalizeHTTPMethod(override);
+  const target = toHTTPMethod(override);
+
+  if (
+    target === undefined ||
+    !(METHOD_OVERRIDE_TARGETS as readonly string[]).includes(target)
+  ) {
+    return original;
+  }
+
+  return target;
 }

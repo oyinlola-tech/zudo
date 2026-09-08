@@ -4,4 +4,4 @@
  * @module policy
  */
 
-export { createPolicyRegistry } from "./policyRegistry.js";
+export { createPolicyRegistry, type PolicyRegistry } from "./policyRegistry.js";

@@ -9,5 +9,10 @@ export {
   createSpan,
   createSpanContext,
   createChildSpanContext,
+  isSampledContext,
 } from "./span/index.js";
-export { DefaultTracer, createTracer } from "./tracer/index.js";
+export {
+  DefaultTracer,
+  createTracer,
+  type TracerOptions,
+} from "./tracer/index.js";

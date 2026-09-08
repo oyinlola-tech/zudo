@@ -41,12 +41,30 @@ export function createQueueRegistry(): QueueRegistry {
     },
 
     unregister(name: QueueName): boolean {
+      const queue = queues.get(name);
       const deleted = queues.delete(name);
       infoMap.delete(name);
+
+      // Dropping the reference without closing would leave the queue's
+      // poll timer running with nothing able to stop it.
+      if (queue) {
+        void queue.close().catch(() => {});
+      }
+
       return deleted;
     },
 
+    async closeAll(): Promise<void> {
+      const pending = Array.from(queues.values()).map((queue) => queue.close());
+      queues.clear();
+      infoMap.clear();
+      await Promise.allSettled(pending);
+    },
+
     clear(): void {
+      for (const queue of queues.values()) {
+        void queue.close().catch(() => {});
+      }
       queues.clear();
       infoMap.clear();
     },

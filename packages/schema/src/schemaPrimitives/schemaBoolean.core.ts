@@ -6,7 +6,7 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
-import { addIssue } from "../schemaBase/index.js";
+import { addIssue, failValidation } from "../schemaBase/index.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
 /** Configuration for boolean schema. */
@@ -43,7 +43,7 @@ export class BooleanSchema extends Schema<boolean> {
       expected: "boolean",
       received: typeof input,
     });
-    throw new Error("Validation failed");
+    failValidation();
   }
 
   /** Enables coercion from string/number to boolean. */

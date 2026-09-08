@@ -10,13 +10,26 @@ import type {
   HttpMethod,
   MatchedRoute,
   RouterHandler,
-} from "../core/httpRouter.type.js";
+} from "../core/types/httpRouter.type.js";
 
-import type { RouteMatcher, RouteMatcherResult } from "./httpRoute.matcher.js";
+import type { HttpMiddleware } from "../../httpMiddleware/httpMiddleware.type.js";
 
-import type { HttpRequestContext as RequestContext } from "../httpRequest/httpRequest.context.js";
+import { HttpResponseContext } from "../../httpResponse/httpResponse.context.js";
 
-import type { HttpResponseContext as ResponseContext } from "../httpResponse/httpResponse.context.js";
+import { createRouterContext } from "../httpRouter.context.js";
+
+import { RouterMiddlewareState } from "../httpRouter.state.js";
+
+import { getRequestSignal } from "../core/util/httpRoute.util.js";
+
+import type {
+  RouteMatcher,
+  RouteMatcherResult,
+} from "../matching/httpRoute.matcher.js";
+
+import type { HttpRequestContext as RequestContext } from "../../httpRequest/httpRequest.context.js";
+
+import type { HttpResponseContext as ResponseContext } from "../../httpResponse/httpResponse.context.js";
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -239,9 +252,13 @@ export class RouteDispatcher {
   /* ------------------------------------------------------------------------ */
 
   async execute(context: RouteDispatchContext): Promise<void> {
-    const middleware = normalizeMiddleware(context.route.middleware);
+    const state = new RouterMiddlewareState();
 
-    const handler = normalizeHandler(context.route.handler);
+    const middleware = context.route.middleware.map((layer) =>
+      toRouteMiddleware(layer, context.route, state),
+    );
+
+    const handler = toDispatchHandler(context.route.handler, context);
 
     let index = -1;
 
@@ -252,9 +269,9 @@ export class RouteDispatcher {
 
       index = current;
 
-      if (current < middleware.length) {
-        const layer = middleware[current];
+      const layer = middleware[current];
 
+      if (layer !== undefined) {
         await layer(context.request, context.response, () =>
           dispatchNext(current + 1),
         );
@@ -273,7 +290,7 @@ export class RouteDispatcher {
   /* ------------------------------------------------------------------------ */
 
   async executeHandler(
-    handler: RouteDispatchHandler | RouterHandler,
+    handler: RouteDispatchHandler,
     context: RouteDispatchContext,
   ): Promise<void> {
     const normalized = normalizeHandler(handler);
@@ -296,13 +313,13 @@ export class RouteDispatcher {
 
       index = current;
 
-      if (current >= layers.length) {
+      const layer = layers[current];
+
+      if (layer === undefined) {
         return;
       }
 
-      await layers[current](context.request, context.response, () =>
-        next(current + 1),
-      );
+      await layer(context.request, context.response, () => next(current + 1));
     };
 
     await next(0);
@@ -428,14 +445,70 @@ function getRequestPath(request: RequestContext): string {
 /* Handler Normalization                                                      */
 /* -------------------------------------------------------------------------- */
 
-function normalizeHandler(
-  handler: RouteDispatchHandler | RouterHandler,
-): RouteDispatchHandler {
+function normalizeHandler(handler: RouteDispatchHandler): RouteDispatchHandler {
   if (typeof handler !== "function") {
     throw new TypeError("Route handler must be a function.");
   }
 
-  return handler as RouteDispatchHandler;
+  return handler;
+}
+
+/**
+ * Adapts a router handler, which receives a router context, to the
+ * dispatcher's (request, response) calling convention.
+ *
+ * A response context returned by the handler is merged into the dispatch
+ * response so the dispatcher's response object stays authoritative.
+ */
+function toDispatchHandler(
+  handler: RouterHandler,
+  context: RouteDispatchContext,
+): RouteDispatchHandler {
+  return async (request, response) => {
+    const result = await handler(
+      createRouterContext({
+        request,
+        route: context.route,
+        params: context.params,
+        signal: getRequestSignal(request),
+      }),
+    );
+
+    if (result instanceof HttpResponseContext && result !== response) {
+      response.status_code(result.status);
+
+      response.headers_obj(result.headers);
+
+      response.setBody(result.body);
+    }
+  };
+}
+
+/**
+ * Adapts an `HttpMiddleware`, which receives a middleware context, to the
+ * dispatcher's (request, response, next) calling convention.
+ */
+function toRouteMiddleware(
+  middleware: HttpMiddleware,
+  route: MatchedRoute,
+  state: RouterMiddlewareState,
+): RouteMiddleware {
+  return async (request, response, next) => {
+    await middleware(
+      {
+        request,
+        response,
+        state,
+        signal: getRequestSignal(request) ?? new AbortController().signal,
+        metadata: route.metadata,
+      },
+      async () => {
+        await next();
+
+        return response;
+      },
+    );
+  };
 }
 
 function normalizeMiddleware(
@@ -475,13 +548,15 @@ export function composeRouteMiddleware(
 
       index = current;
 
-      if (current === layers.length) {
+      const layer = layers[current];
+
+      if (layer === undefined) {
         await next();
 
         return;
       }
 
-      await layers[current](request, response, () => dispatch(current + 1));
+      await layer(request, response, () => dispatch(current + 1));
     };
 
     await dispatch(0);
@@ -491,7 +566,13 @@ export function composeRouteMiddleware(
 export function createRouteHandler(
   handler: RouteDispatchHandler,
 ): RouterHandler {
-  return handler as RouterHandler;
+  return async (context) => {
+    const response = new HttpResponseContext();
+
+    await handler(context.request, response);
+
+    return response;
+  };
 }
 
 export function isRouteDispatcher(value: unknown): value is RouteDispatcher {

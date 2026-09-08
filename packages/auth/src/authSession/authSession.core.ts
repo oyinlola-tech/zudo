@@ -17,20 +17,38 @@ import { randomBytes } from "node:crypto";
 
 const DEFAULT_TTL_SECONDS = 86400; // 24 hours
 
+/** Minimum interval between full sweeps of the session map. */
+const DEFAULT_PURGE_INTERVAL_MS = 60_000;
+
 /**
  * Create an in-memory session store.
  *
- * Good for development and testing. For production,
- * implement SessionStore with Redis or a database.
+ * Good for development and testing. For production, implement SessionStore
+ * with Redis or a database.
+ *
+ * Expired sessions are reclaimed on any access — `create`, `get` and `touch`
+ * all run a rate-limited sweep — so a store that stops receiving logins
+ * still releases its memory. The sweep is rate-limited rather than run per
+ * call so that a large store does not turn an O(1) lookup into an O(n) walk.
+ *
+ * @param options.purgeIntervalMs - Minimum gap between full sweeps
+ *   (default: 60000). Set to 0 to sweep on every access.
  */
-export function createMemorySessionStore(): SessionStore {
+export function createMemorySessionStore(storeOptions?: {
+  readonly purgeIntervalMs?: number;
+}): SessionStore {
   const sessions = new Map<SessionId, AuthSession>();
   const ttls = new Map<SessionId, number>();
+  const purgeIntervalMs =
+    storeOptions?.purgeIntervalMs ?? DEFAULT_PURGE_INTERVAL_MS;
+  let lastPurge = 0;
 
-  function purgeExpired(): void {
-    const now = new Date();
+  function maybePurgeExpired(): void {
+    const nowMs = Date.now();
+    if (nowMs - lastPurge < purgeIntervalMs) return;
+    lastPurge = nowMs;
     for (const [id, session] of sessions) {
-      if (now > session.expiresAt) {
+      if (nowMs > session.expiresAt.getTime()) {
         sessions.delete(id);
         ttls.delete(id);
       }
@@ -39,10 +57,18 @@ export function createMemorySessionStore(): SessionStore {
 
   return {
     async create(options: CreateSessionOptions): Promise<AuthSession> {
-      purgeExpired();
+      maybePurgeExpired();
       const id = generateSessionId();
       const now = new Date();
       const ttlMs = (options.ttlSeconds ?? DEFAULT_TTL_SECONDS) * 1000;
+      const absoluteExpiresAt =
+        options.absoluteTtlSeconds !== undefined
+          ? new Date(now.getTime() + options.absoluteTtlSeconds * 1000)
+          : undefined;
+      const expiresAt = clampToAbsolute(
+        new Date(now.getTime() + ttlMs),
+        absoluteExpiresAt,
+      );
 
       const session: AuthSession = {
         id,
@@ -51,8 +77,8 @@ export function createMemorySessionStore(): SessionStore {
         ip: options.ip,
         createdAt: now,
         lastActivityAt: now,
-        expiresAt: new Date(now.getTime() + ttlMs),
-        active: true,
+        expiresAt,
+        absoluteExpiresAt,
         metadata: options.metadata,
       };
 
@@ -62,10 +88,10 @@ export function createMemorySessionStore(): SessionStore {
     },
 
     async get(sessionId: SessionId): Promise<AuthSession | null> {
+      maybePurgeExpired();
       const session = sessions.get(sessionId);
       if (!session) return null;
-      if (!session.active) return null;
-      if (new Date() > session.expiresAt) {
+      if (Date.now() > session.expiresAt.getTime()) {
         sessions.delete(sessionId);
         ttls.delete(sessionId);
         return null;
@@ -74,17 +100,26 @@ export function createMemorySessionStore(): SessionStore {
     },
 
     async touch(sessionId: SessionId): Promise<void> {
+      maybePurgeExpired();
       const session = sessions.get(sessionId);
-      if (session && session.active && new Date() <= session.expiresAt) {
-        const now = new Date();
-        const ttlMs = ttls.get(sessionId) ?? DEFAULT_TTL_SECONDS * 1000;
-        sessions.set(sessionId, {
-          ...session,
-          lastActivityAt: now,
-          // Sliding expiration: activity extends the session by its TTL
-          expiresAt: new Date(now.getTime() + ttlMs),
-        });
+      if (!session) return;
+      const now = new Date();
+      if (now.getTime() > session.expiresAt.getTime()) {
+        sessions.delete(sessionId);
+        ttls.delete(sessionId);
+        return;
       }
+      const ttlMs = ttls.get(sessionId) ?? DEFAULT_TTL_SECONDS * 1000;
+      sessions.set(sessionId, {
+        ...session,
+        lastActivityAt: now,
+        // Sliding expiration: activity extends the session by its TTL, but
+        // never past the absolute deadline.
+        expiresAt: clampToAbsolute(
+          new Date(now.getTime() + ttlMs),
+          session.absoluteExpiresAt,
+        ),
+      });
     },
 
     async destroy(sessionId: SessionId): Promise<void> {
@@ -101,6 +136,11 @@ export function createMemorySessionStore(): SessionStore {
       }
     },
   };
+}
+
+function clampToAbsolute(expiresAt: Date, absolute: Date | undefined): Date {
+  if (!absolute) return expiresAt;
+  return expiresAt.getTime() > absolute.getTime() ? absolute : expiresAt;
 }
 
 function generateSessionId(): SessionId {

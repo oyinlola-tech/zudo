@@ -68,8 +68,8 @@ describe("InMemoryCacheMetrics — hot keys", () => {
     metrics.incrementHit("key:2");
     const hotKeys = metrics.getHotKeys(10);
     expect(hotKeys).toHaveLength(2);
-    expect(hotKeys[0].key).toBe("key:1");
-    expect(hotKeys[0].hits).toBe(2);
+    expect(hotKeys[0]!.key).toBe("key:1");
+    expect(hotKeys[0]!.hits).toBe(2);
   });
 
   it("returns top N keys", () => {
@@ -130,7 +130,7 @@ describe("InMemoryCacheMetrics — histogram", () => {
     metrics.observeLatency("get" as any, 200);
     const histogram = metrics.getLatencyHistogram("get" as any);
     expect(histogram.length).toBeGreaterThan(0);
-    expect(histogram[0].bucket).toBeLessThanOrEqual(histogram[1].bucket);
+    expect(histogram[0]!.bucket).toBeLessThanOrEqual(histogram[1]!.bucket);
   });
 
   it("returns empty histogram for no samples", () => {
@@ -174,17 +174,17 @@ describe("createCacheMetrics", () => {
   });
 });
 
-// ─── Regression: hot-key tracking is bounded ───────────────────────────────
+// ─── Regression: hot-key tracking is bounded but not frozen ────────────────
 
 describe("InMemoryCacheMetrics — tracked key cap", () => {
-  it("stops tracking new keys at MAX_TRACKED_KEYS", async () => {
+  it("keeps the tracked set bounded at MAX_TRACKED_KEYS", async () => {
     const { MAX_TRACKED_KEYS } = await import("../src/constants.js");
     for (let i = 0; i < MAX_TRACKED_KEYS + 500; i++) {
       metrics.incrementHit(`key:${i}`);
     }
     // Total hit counter still counts everything...
     expect(metrics.getStats().hits).toBe(MAX_TRACKED_KEYS + 500);
-    // ...but per-key tracking is capped.
+    // ...and per-key tracking never grows past the cap.
     const all = metrics.getHotKeys(MAX_TRACKED_KEYS + 500);
     expect(all.length).toBe(MAX_TRACKED_KEYS);
   });
@@ -196,6 +196,37 @@ describe("InMemoryCacheMetrics — tracked key cap", () => {
     }
     metrics.incrementHit("key:0");
     expect(metrics.getHotKeys(1)[0]).toEqual({ key: "key:0", hits: 2 });
+  });
+
+  // Regression: the cap used to be a hard wall, so getHotKeys() froze on the
+  // first MAX_TRACKED_KEYS keys the process ever saw and then answered "what
+  // was hot at start-up" forever, with no staleness marker.
+  it("lets a newly hot key displace historically cold ones", async () => {
+    const { MAX_TRACKED_KEYS } = await import("../src/constants.js");
+    for (let i = 0; i < MAX_TRACKED_KEYS; i++) {
+      metrics.incrementHit(`cold:${i}`);
+    }
+    // A key first seen *after* the cap was reached must still be trackable.
+    for (let i = 0; i < 50; i++) metrics.incrementHit("newcomer");
+
+    const hot = metrics.getHotKeys(1);
+    expect(hot[0]!.key).toBe("newcomer");
+    expect(hot[0]!.hits).toBeGreaterThanOrEqual(50);
+    expect(metrics.getHotKeys(MAX_TRACKED_KEYS * 2).length).toBe(
+      MAX_TRACKED_KEYS,
+    );
+  });
+
+  it("evicts the coldest tracked key, not an arbitrary one", async () => {
+    const { MAX_TRACKED_KEYS } = await import("../src/constants.js");
+    // One genuinely hot key, then fill the table with single-hit keys.
+    for (let i = 0; i < 100; i++) metrics.incrementHit("hot");
+    for (let i = 0; i < MAX_TRACKED_KEYS + 200; i++) {
+      metrics.incrementHit(`filler:${i}`);
+    }
+    const tracked = metrics.getHotKeys(MAX_TRACKED_KEYS);
+    expect(tracked.some((entry) => entry.key === "hot")).toBe(true);
+    expect(tracked[0]).toEqual({ key: "hot", hits: 100 });
   });
 });
 

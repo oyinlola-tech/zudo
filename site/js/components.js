@@ -359,10 +359,68 @@
     window.ZudoSearch = { open: open, close: close };
   }
 
+  /* ---------- copy buttons on every code block ---------- */
+
+  var COPY_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true"><rect x="9" y="9" width="11" height="11"/><path d="M15 9V5H4v11h5"/></svg>';
+  var CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>';
+
+  function copyText(block) {
+    var text = block.textContent
+      .replace(/^\s*\d+\s{2,}/gm, '')     // strip rendered line numbers
+      .replace(/^\$\s+/gm, '')             // strip shell prompts so commands paste clean
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    return text;
+  }
+
+  function initCopyButtons() {
+    var blocks = document.querySelectorAll('.code-block, .api-signature, pre, .hero-term-code');
+    blocks.forEach(function (block) {
+      if (block.closest('.pg') || block.closest('.code-wrap') || block.querySelector('.code-block, pre')) return;
+      if (block.textContent.trim().length < 3) return;
+      var wrapper = document.createElement('div');
+      wrapper.className = 'code-wrap';
+      block.parentNode.insertBefore(wrapper, block);
+      wrapper.appendChild(block);
+
+      var isCommand = /^\s*\$\s/m.test(block.textContent);
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'copy-btn';
+      btn.innerHTML = COPY_ICON + '<span>' + (isCommand ? 'Copy command' : 'Copy') + '</span>';
+      btn.setAttribute('aria-label', isCommand ? 'Copy command' : 'Copy code');
+      btn.addEventListener('click', function () {
+        var text = copyText(block);
+        var done = function (ok) {
+          btn.innerHTML = (ok ? CHECK_ICON : COPY_ICON) + '<span>' + (ok ? 'Copied' : 'Press Ctrl+C') + '</span>';
+          btn.classList.toggle('is-done', ok);
+          setTimeout(function () {
+            btn.innerHTML = COPY_ICON + '<span>' + (isCommand ? 'Copy command' : 'Copy') + '</span>';
+            btn.classList.remove('is-done');
+          }, 1800);
+        };
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(text).then(function () { done(true); }, function () { fallback(); });
+        } else fallback();
+        function fallback() {
+          var ta = document.createElement('textarea');
+          ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.top = '-1000px';
+          document.body.appendChild(ta); ta.select();
+          var ok = false;
+          try { ok = document.execCommand('copy'); } catch (e) {}
+          document.body.removeChild(ta);
+          done(ok);
+        }
+      });
+      wrapper.appendChild(btn);
+    });
+  }
+
   function init() {
     renderHeader();
     renderFooter();
     renderSearch();
+    initCopyButtons();
     var main = document.querySelector('main');
     if (main && !main.id) main.id = 'main';
   }

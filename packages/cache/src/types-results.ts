@@ -4,6 +4,11 @@ import type { CacheEntry } from "./types-values.js";
 export interface CacheGetResult<TValue = unknown> {
   readonly hit: boolean;
   readonly value: TValue | null;
+  /**
+   * The full entry (creation time, expiry, tags, metadata) when the adapter
+   * retains it and the read was a hit. The memory adapter always populates
+   * this on a hit.
+   */
   readonly entry?: CacheEntry<TValue>;
 }
 
@@ -35,6 +40,5 @@ export interface CacheStats {
   readonly sets: number;
   readonly deletes: number;
   readonly errors: number;
-  readonly size?: number;
   readonly hitRate: number;
 }

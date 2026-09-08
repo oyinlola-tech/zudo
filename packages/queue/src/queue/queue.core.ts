@@ -1,17 +1,6 @@
-import type { JobId, QueueName } from "../jobTypes/jobTypes.type.js";
-
-import type { Job } from "../job/job.type.js";
-
-import type { JobOptions } from "../jobOptions/jobOptions.type.js";
-
-import type {
-  Processor,
-  ProcessorRegistry,
-} from "../processor/processor.type.js";
+import type { QueueName } from "../jobTypes/jobTypes.type.js";
 
 import type { Queue, QueueOptions, QueueStats } from "./queue.type.js";
-
-import { QueueClosedError, QueueDisposedError } from "@zudojs/errors";
 
 import { createInMemoryQueue } from "../inMemoryQueue/index.js";
 
@@ -38,6 +27,7 @@ export function isQueue(value: unknown): value is Queue {
     "add" in value &&
     "process" in value &&
     "getJob" in value &&
-    "getNextJob" in value
+    "getNextJob" in value &&
+    "claimNextJob" in value
   );
 }

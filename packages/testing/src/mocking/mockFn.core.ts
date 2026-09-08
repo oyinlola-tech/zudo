@@ -4,6 +4,17 @@
  * Creates mock functions that record calls and return configured values.
  */
 
+/** How a mock produces its result. */
+type MockMode =
+  | { readonly kind: "none" }
+  | { readonly kind: "value"; readonly value: unknown }
+  | { readonly kind: "resolve"; readonly value: unknown }
+  | { readonly kind: "reject"; readonly error: unknown }
+  | {
+      readonly kind: "implementation";
+      readonly fn: (...args: never[]) => unknown;
+    };
+
 /**
  * A mock function that records calls and returns configured values.
  */
@@ -13,11 +24,14 @@ export interface MockFn<
 > {
   (...args: TArgs): TResult;
   readonly calls: readonly TArgs[];
+  /** Result of each call, aligned index-for-index with {@link calls}. */
   readonly results: readonly TResult[];
   readonly invoked: boolean;
   readonly callCount: number;
   mockReturnValue: (value: TResult) => void;
-  mockResolvedValue: (value: TResult) => void;
+  /** Configures the mock to return a promise resolving to `value`. */
+  mockResolvedValue: (value: Awaited<TResult>) => void;
+  /** Configures the mock to return a promise rejecting with `error`. */
   mockRejectedValue: (error: unknown) => void;
   mockImplementation: (fn: (...args: TArgs) => TResult) => void;
   mockReset: () => void;
@@ -47,36 +61,41 @@ export function createMockFn<
 >(defaultReturnValue?: TResult): MockFn<TArgs, TResult> {
   const calls: TArgs[] = [];
   const results: TResult[] = [];
-  let implementation: ((...args: TArgs) => TResult) | undefined;
-  let returnValue: TResult | undefined = defaultReturnValue;
-  let resolvedValue: TResult | undefined;
-  let rejectedValue: unknown;
-  let shouldReject = false;
+
+  const initialMode: MockMode =
+    arguments.length > 0
+      ? { kind: "value", value: defaultReturnValue }
+      : { kind: "none" };
+
+  let mode: MockMode = initialMode;
+
+  /**
+   * Produce the configured result.
+   *
+   * `undefined` is a legitimate configured value, so the mode is tracked
+   * explicitly rather than inferred from a `!== undefined` check — which
+   * silently ignored `mockReturnValue(undefined)`.
+   */
+  const produce = (args: TArgs): TResult => {
+    switch (mode.kind) {
+      case "value":
+        return mode.value as TResult;
+      case "resolve":
+        return Promise.resolve(mode.value) as TResult;
+      case "reject":
+        return Promise.reject(mode.error) as TResult;
+      case "implementation":
+        return (mode.fn as (...a: TArgs) => TResult)(...args);
+      case "none":
+        return undefined as TResult;
+    }
+  };
 
   const mock = ((...args: TArgs): TResult => {
     calls.push(args);
-
-    if (shouldReject) {
-      throw rejectedValue;
-    }
-
-    if (resolvedValue !== undefined) {
-      results.push(resolvedValue);
-      return resolvedValue;
-    }
-
-    if (implementation) {
-      const result = implementation(...args);
-      results.push(result);
-      return result;
-    }
-
-    if (returnValue !== undefined) {
-      results.push(returnValue);
-      return returnValue;
-    }
-
-    return undefined as TResult;
+    const result = produce(args);
+    results.push(result);
+    return result;
   }) as MockFn<TArgs, TResult>;
 
   Object.defineProperty(mock, "calls", {
@@ -100,39 +119,25 @@ export function createMockFn<
   });
 
   mock.mockReturnValue = (value: TResult): void => {
-    returnValue = value;
-    resolvedValue = undefined;
-    shouldReject = false;
+    mode = { kind: "value", value };
   };
 
-  mock.mockResolvedValue = (value: TResult): void => {
-    resolvedValue = value;
-    returnValue = undefined;
-    shouldReject = false;
+  mock.mockResolvedValue = (value: Awaited<TResult>): void => {
+    mode = { kind: "resolve", value };
   };
 
   mock.mockRejectedValue = (error: unknown): void => {
-    rejectedValue = error;
-    shouldReject = true;
-    returnValue = undefined;
-    resolvedValue = undefined;
+    mode = { kind: "reject", error };
   };
 
   mock.mockImplementation = (fn: (...args: TArgs) => TResult): void => {
-    implementation = fn;
-    returnValue = undefined;
-    resolvedValue = undefined;
-    shouldReject = false;
+    mode = { kind: "implementation", fn: fn as (...a: never[]) => unknown };
   };
 
   mock.mockReset = (): void => {
     calls.length = 0;
     results.length = 0;
-    implementation = undefined;
-    returnValue = defaultReturnValue;
-    resolvedValue = undefined;
-    rejectedValue = undefined;
-    shouldReject = false;
+    mode = initialMode;
   };
 
   mock.mockClear = (): void => {

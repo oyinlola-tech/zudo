@@ -1,9 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  createPermissionEngine,
-  createAbility,
-  createRoleRegistry,
-} from "../src/index.js";
+import { createPermissionEngine, createAbility } from "../src/index.js";
 import type { PermissionActor } from "../src/index.js";
 
 const admin: PermissionActor = { id: "admin_1", roles: ["admin"] };
@@ -149,7 +145,6 @@ describe("createPermissionEngine", () => {
 });
 
 describe("createAbility", () => {
-  const engine = createPermissionEngine({ roles });
   const ability = createAbility(admin, {
     getRole: (name) => roles.find((r) => r.name === name),
   });

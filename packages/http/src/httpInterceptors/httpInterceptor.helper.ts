@@ -47,8 +47,8 @@ export function compareIds(a: string, b: string): number {
  * Extracts a sequence number from an ID.
  */
 export function extractSequence(id: string): number {
-  const match = id.match(/-(\d+)$/);
-  return match ? parseInt(match[1], 10) : 0;
+  const digits = id.match(/-(\d+)$/)?.[1];
+  return digits === undefined ? 0 : parseInt(digits, 10);
 }
 
 /**

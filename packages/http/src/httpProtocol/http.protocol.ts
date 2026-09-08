@@ -153,6 +153,10 @@ export function parseRequestLine(line: string): HTTPRequestLine {
 
   const [method, target, version] = parts;
 
+  if (method === undefined || target === undefined || version === undefined) {
+    throw new TypeError("Invalid HTTP request line.");
+  }
+
   if (!isHTTPMethod(method)) {
     throw new TypeError(`Invalid HTTP method: ${method}`);
   }
@@ -195,14 +199,20 @@ export function parseStatusLine(line: string): HTTPStatusLine {
     throw new TypeError("Invalid HTTP status line.");
   }
 
-  const statusCode = Number(match[2]);
+  const [, rawVersion, rawStatusCode] = match;
+
+  if (rawVersion === undefined || rawStatusCode === undefined) {
+    throw new TypeError("Invalid HTTP status line.");
+  }
+
+  const statusCode = Number(rawStatusCode);
 
   if (!isValidStatusCode(statusCode)) {
     throw new RangeError(`Invalid HTTP status code: ${statusCode}`);
   }
 
   return {
-    version: parseHTTPVersion(match[1]),
+    version: parseHTTPVersion(rawVersion),
     statusCode,
     reasonPhrase: match[3] ?? "",
   };

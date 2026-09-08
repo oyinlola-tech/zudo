@@ -7,4 +7,5 @@
 export {
   createMemoryPermissionCache,
   permissionCacheKey,
+  type MemoryPermissionCacheOptions,
 } from "./cache.core.js";

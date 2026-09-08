@@ -1,3 +1,18 @@
+/**
+ * HTTP router group.
+ *
+ * Registers routes against a parent router under a shared path prefix and a
+ * shared set of default route options.
+ */
+
+import type {
+  HttpMethod,
+  RouteOptions,
+  RouterHandler,
+} from "../types/httpRouter.type.js";
+
+import type { HttpRouter } from "../register/httpRouter.register.js";
+
 export class HttpRouterGroup {
   constructor(
     private readonly router: HttpRouter,
@@ -90,7 +105,7 @@ export class HttpRouterGroup {
   ): void {
     this.router.group(
       this.resolve(prefix),
-      (group) => {
+      (group: HttpRouterGroup) => {
         configure(group);
       },
       this.mergeOptions(options),

@@ -4,7 +4,7 @@ import type { JobId } from "../jobTypes/jobTypes.type.js";
 
 import type { DeadLetterJob, DeadLetterStore } from "./deadLetter.type.js";
 
-import { QueueError, toQueueError } from "@zudojs/errors";
+import { toQueueError } from "@zudojs/errors";
 
 /**
  * Creates an in-memory dead letter store.

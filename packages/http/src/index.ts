@@ -51,3 +51,127 @@ export * from "./httpKeepAlive/index.js";
 export * from "./httpAgent/index.js";
 export * from "./httpProxy/index.js";
 export * from "./httpSecurity/index.js";
+export * from "./httpRouter/index.js";
+
+/* -------------------------------------------------------------------------- */
+/* Ambiguous re-exports                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Several sub-modules export the same name. A star export alone would make
+ * those names unavailable (TS2308), so ownership is declared explicitly here.
+ *
+ * The rule is declaration order: the sub-module listed first in this file owns
+ * the name. The other definitions remain reachable from their own sub-module.
+ */
+
+export { validatePort, validateTimeout } from "./httpAdapter/index.js";
+
+export {
+  isMultipartContentType,
+  parseMultipartBody,
+  sanitizeFilename,
+} from "./httpBody/index.js";
+
+export { isFresh } from "./httpConditional/index.js";
+
+export { isHTTPMethod } from "./httpConstants/index.js";
+
+export {
+  getParameter,
+  hasParameter,
+  withCharset,
+} from "./httpContentType/index.js";
+
+export { normalizeMethods } from "./httpCors/index.js";
+
+export {
+  badRequest,
+  conflict,
+  forbidden,
+  internalServerError,
+  methodNotAllowed,
+  normalizeHeaders,
+  notFound,
+  notImplemented,
+  serviceUnavailable,
+  tooManyRequests,
+  unauthorized,
+  unprocessableEntity,
+} from "./httpErrors/index.js";
+
+export { extractSequence } from "./httpInterceptors/index.js";
+
+export {
+  hasRequestBody,
+  normalizeHTTPMethod,
+  normalizeMethod,
+} from "./httpMethods/index.js";
+
+export {
+  getRequestMethod,
+  getRequestUrl,
+  isResponseContext,
+  normalizePriority,
+  sanitizeName,
+} from "./httpMiddleware/index.js";
+
+export {
+  getHeader,
+  hasConnectionToken,
+  isErrorStatus,
+  shouldKeepAlive,
+} from "./httpProtocol/index.js";
+
+export { getQuery, parseQuery } from "./httpQuery/index.js";
+
+export type { QueryValue } from "./httpQuery/index.js";
+
+export { isSameOrigin } from "./httpRedirect/index.js";
+
+export {
+  getHostname,
+  getPathname,
+  getRequestProtocol,
+  getSearchParams,
+  isRequestContext,
+  parseAcceptHeader,
+  parseQueryString,
+} from "./httpRequest/index.js";
+
+export type { HttpMethod } from "./httpRequest/index.js";
+
+export { redirect } from "./httpResponse/index.js";
+
+export type { CookieOptions, CookiePriority } from "./httpResponse/index.js";
+
+export {
+  validateHeaderName,
+  validateHeaderValue,
+} from "./httpSecurityHeaders/index.js";
+
+export {
+  REDIRECT_STATUS_CODES,
+  assertValidStatusCode,
+  getStatusText,
+  isClientError,
+  isPermanentRedirect,
+  isServerError,
+  isTemporaryRedirect,
+  isValidStatusCode,
+} from "./httpStatus/index.js";
+
+export type { ForwardedAddress, ProxyRequest } from "./httpTrustProxy/index.js";
+
+export { HTTP_METHODS } from "./httpTypes/index.js";
+
+export type {
+  HTTPHeaders,
+  HTTPHeadersInit,
+  HTTPMethod,
+  HTTPStatusCode,
+} from "./httpTypes/index.js";
+
+export { normalizePath } from "./httpUrl/index.js";
+
+export { validateContentLength } from "./httpValidation/index.js";

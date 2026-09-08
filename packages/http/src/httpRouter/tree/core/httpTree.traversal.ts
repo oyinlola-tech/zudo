@@ -18,6 +18,11 @@ export function collectCandidates(
   }
 
   const [segment, ...rest] = segments;
+
+  if (segment === undefined) {
+    return [node];
+  }
+
   const candidates: MutableRouteTreeNode[] = [];
 
   const staticChild = node.children.get(segment);
@@ -25,7 +30,7 @@ export function collectCandidates(
     candidates.push(...collectCandidates(staticChild, rest));
   }
 
-  for (const [key, child] of node.children) {
+  for (const child of node.children.values()) {
     if (child.type === "parameter") {
       candidates.push(...collectCandidates(child, rest));
     }

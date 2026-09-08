@@ -1,54 +1,123 @@
 import type {
   OpenAPIDocument,
-  OpenAPIPathItem,
+  OpenAPIExample,
+  OpenAPIHeader,
+  OpenAPIInfo,
+  OpenAPILink,
   OpenAPIOperation,
   OpenAPIParameter,
+  OpenAPIPathItem,
   OpenAPIRequestBody,
+  OpenAPIResponse,
   OpenAPISchema,
+  OpenAPISecurityRequirement,
   OpenAPISecurityScheme,
+  OpenAPIServer,
   OpenAPITag,
   OpenAPIReference,
-  OpenAPIVersion,
 } from "../openApiTypes/openApiTypes.core.js";
 import type { OpenAPIRoute, OpenAPIRegistry } from "./openApiRegistry.type.js";
+import type { ComponentSection } from "../openApiSchema/references.core.js";
+import { createComponentReference } from "../openApiSchema/references.core.js";
 import {
-  COMPONENT_REF_PREFIX,
   DEFAULT_OPENAPI_VERSION,
+  SUPPORTED_OPENAPI_VERSIONS,
 } from "../openApiConstants/openApiConstants.core.js";
 import {
   OpenAPIComponentConflictError,
-  OpenAPIDocumentError,
   OpenAPIOperationError,
   OpenAPIVersionError,
-} from "../openApiErrors/openApiError.core.js";
+} from "../openApiErrors/openApiError.types.js";
+
+/** Placeholder used until {@link OpenAPIRegistryImpl.setInfo} is called. */
+const DEFAULT_INFO: OpenAPIInfo = { title: "API", version: "0.0.0" };
 
 /** Default OpenAPI registry implementation. */
 export class OpenAPIRegistryImpl implements OpenAPIRegistry {
   public readonly version: string;
+
+  private info: OpenAPIInfo = DEFAULT_INFO;
+  private readonly servers: OpenAPIServer[] = [];
+  private readonly security: OpenAPISecurityRequirement[] = [];
+
   private readonly routes = new Map<string, OpenAPIRoute>();
   private readonly schemas = new Map<string, OpenAPISchema>();
-  private readonly responses = new Map<string, unknown>();
+  private readonly responses = new Map<string, OpenAPIResponse>();
   private readonly parameters = new Map<string, OpenAPIParameter>();
   private readonly requestBodies = new Map<string, OpenAPIRequestBody>();
-  private readonly headers = new Map<string, unknown>();
-  private readonly examples = new Map<string, unknown>();
+  private readonly headers = new Map<string, OpenAPIHeader>();
+  private readonly examples = new Map<string, OpenAPIExample>();
   private readonly securitySchemes = new Map<string, OpenAPISecurityScheme>();
   private readonly tags = new Map<string, OpenAPITag>();
-  private readonly links = new Map<string, unknown>();
-  private readonly callbacks = new Map<string, unknown>();
+  private readonly links = new Map<string, OpenAPILink>();
+  private readonly callbacks = new Map<
+    string,
+    Readonly<Record<string, OpenAPIPathItem>>
+  >();
 
   constructor(version: string = DEFAULT_OPENAPI_VERSION) {
+    if (!(SUPPORTED_OPENAPI_VERSIONS as readonly string[]).includes(version)) {
+      // Fail where the version is chosen, not later inside generate().
+      throw new OpenAPIVersionError(version, SUPPORTED_OPENAPI_VERSIONS);
+    }
     this.version = version;
   }
 
+  /** Sets the document's `info` object. */
+  public setInfo(info: OpenAPIInfo): void {
+    this.info = { ...info };
+  }
+
+  /** The document's current `info` object. */
+  public getInfo(): OpenAPIInfo {
+    return { ...this.info };
+  }
+
+  public addServer(server: OpenAPIServer): void {
+    this.servers.push({ ...server });
+  }
+
+  public addSecurityRequirement(requirement: OpenAPISecurityRequirement): void {
+    this.security.push({ ...requirement });
+  }
+
+  private static routeKey(route: {
+    readonly method: string;
+    readonly path: string;
+  }): string {
+    return `${route.method.toLowerCase()}:${route.path}`;
+  }
+
   public registerRoute(route: OpenAPIRoute): void {
-    const key = `${route.method}:${route.path}`;
+    const key = OpenAPIRegistryImpl.routeKey(route);
     const existing = this.routes.get(key);
-    if (existing)
+    if (existing) {
       throw new OpenAPIOperationError(
-        `Duplicate operation for ${route.method.toUpperCase()} ${route.path}: ${existing.operation.operationId ?? "unknown"}.`,
+        `Duplicate operation for ${route.method.toUpperCase()} ${route.path}` +
+          (existing.operation.operationId
+            ? ` (already registered as "${existing.operation.operationId}")`
+            : ""),
+        {
+          metadata: {
+            method: route.method,
+            path: route.path,
+            operationId: existing.operation.operationId,
+          },
+        },
       );
-    this.routes.set(key, {
+    }
+    this.setRoute(route);
+  }
+
+  /**
+   * Registers a route, replacing any existing one.
+   *
+   * This is what makes regeneration idempotent: re-registering the same routes
+   * into a registry that already holds them used to throw, so calling
+   * `generate()` twice failed.
+   */
+  public setRoute(route: OpenAPIRoute): void {
+    this.routes.set(OpenAPIRegistryImpl.routeKey(route), {
       ...route,
       operation: Object.freeze({
         ...route.operation,
@@ -57,112 +126,157 @@ export class OpenAPIRegistryImpl implements OpenAPIRegistry {
     });
   }
 
-  public registerSchema(name: string, schema: OpenAPISchema): void {
-    if (this.schemas.has(name))
-      throw new OpenAPIComponentConflictError(`schemas/${name}`);
-    this.schemas.set(name, Object.freeze({ ...schema }));
+  private static register<T>(
+    map: Map<string, T>,
+    section: ComponentSection,
+    name: string,
+    value: T,
+  ): void {
+    if (map.has(name)) {
+      throw new OpenAPIComponentConflictError(section, name);
+    }
+    map.set(name, Object.freeze(value));
   }
 
-  public registerResponse(name: string, response: unknown): void {
-    if (this.responses.has(name))
-      throw new OpenAPIComponentConflictError(`responses/${name}`);
-    this.responses.set(name, Object.freeze({ ...(response as object) }));
+  public registerSchema(name: string, schema: OpenAPISchema): void {
+    OpenAPIRegistryImpl.register(this.schemas, "schemas", name, { ...schema });
+  }
+
+  public registerResponse(name: string, response: OpenAPIResponse): void {
+    OpenAPIRegistryImpl.register(this.responses, "responses", name, {
+      ...response,
+    });
   }
 
   public registerParameter(name: string, parameter: OpenAPIParameter): void {
-    if (this.parameters.has(name))
-      throw new OpenAPIComponentConflictError(`parameters/${name}`);
-    this.parameters.set(name, Object.freeze({ ...parameter }));
+    OpenAPIRegistryImpl.register(this.parameters, "parameters", name, {
+      ...parameter,
+    });
   }
 
   public registerRequestBody(name: string, body: OpenAPIRequestBody): void {
-    if (this.requestBodies.has(name))
-      throw new OpenAPIComponentConflictError(`requestBodies/${name}`);
-    this.requestBodies.set(name, Object.freeze({ ...body }));
+    OpenAPIRegistryImpl.register(this.requestBodies, "requestBodies", name, {
+      ...body,
+    });
   }
 
-  public registerHeader(name: string, header: unknown): void {
-    if (this.headers.has(name))
-      throw new OpenAPIComponentConflictError(`headers/${name}`);
-    this.headers.set(name, Object.freeze({ ...(header as object) }));
+  public registerHeader(name: string, header: OpenAPIHeader): void {
+    OpenAPIRegistryImpl.register(this.headers, "headers", name, { ...header });
   }
 
-  public registerExample(name: string, example: unknown): void {
-    if (this.examples.has(name))
-      throw new OpenAPIComponentConflictError(`examples/${name}`);
-    this.examples.set(name, Object.freeze({ ...(example as object) }));
+  public registerExample(name: string, example: OpenAPIExample): void {
+    OpenAPIRegistryImpl.register(this.examples, "examples", name, {
+      ...example,
+    });
   }
 
   public registerSecurityScheme(
     name: string,
     scheme: OpenAPISecurityScheme,
   ): void {
-    if (this.securitySchemes.has(name))
-      throw new OpenAPIComponentConflictError(`securitySchemes/${name}`);
-    this.securitySchemes.set(name, Object.freeze({ ...scheme }));
+    OpenAPIRegistryImpl.register(
+      this.securitySchemes,
+      "securitySchemes",
+      name,
+      {
+        ...scheme,
+      },
+    );
   }
 
-  public registerTag(tag: OpenAPITag): void {
-    if (!this.tags.has(tag.name))
-      this.tags.set(tag.name, Object.freeze({ ...tag }));
+  public registerLink(name: string, link: OpenAPILink): void {
+    OpenAPIRegistryImpl.register(this.links, "links", name, { ...link });
   }
 
-  public ref(
-    section:
-      | "schemas"
-      | "responses"
-      | "parameters"
-      | "requestBodies"
-      | "headers"
-      | "examples"
-      | "securitySchemes"
-      | "links"
-      | "callbacks",
+  public registerCallback(
     name: string,
-  ): OpenAPIReference {
-    return { $ref: `${COMPONENT_REF_PREFIX}/${section}/${name}` };
+    callback: Readonly<Record<string, OpenAPIPathItem>>,
+  ): void {
+    OpenAPIRegistryImpl.register(this.callbacks, "callbacks", name, {
+      ...callback,
+    });
+  }
+
+  /**
+   * Registers a tag.
+   *
+   * Re-registering a tag name conflicts, like every other component: quietly
+   * keeping the first definition discarded corrected descriptions without a
+   * word.
+   */
+  public registerTag(tag: OpenAPITag): void {
+    if (this.tags.has(tag.name)) {
+      throw new OpenAPIComponentConflictError("tags", tag.name);
+    }
+    this.tags.set(tag.name, Object.freeze({ ...tag }));
+  }
+
+  /** Registers a tag, replacing any existing one with the same name. */
+  public setTag(tag: OpenAPITag): void {
+    this.tags.set(tag.name, Object.freeze({ ...tag }));
+  }
+
+  public ref(section: ComponentSection, name: string): OpenAPIReference {
+    return createComponentReference(section, name);
+  }
+
+  public hasComponent(section: ComponentSection, name: string): boolean {
+    return this.componentMap(section)?.has(name) ?? false;
+  }
+
+  private componentMap(
+    section: ComponentSection,
+  ): ReadonlyMap<string, unknown> | undefined {
+    switch (section) {
+      case "schemas":
+        return this.schemas;
+      case "responses":
+        return this.responses;
+      case "parameters":
+        return this.parameters;
+      case "requestBodies":
+        return this.requestBodies;
+      case "headers":
+        return this.headers;
+      case "examples":
+        return this.examples;
+      case "securitySchemes":
+        return this.securitySchemes;
+      case "links":
+        return this.links;
+      case "callbacks":
+        return this.callbacks;
+      default:
+        return undefined;
+    }
   }
 
   public generate(): OpenAPIDocument {
-    if (
-      !["3.0.0", "3.0.1", "3.0.2", "3.0.3", "3.1.0", "3.1.1"].includes(
-        this.version,
-      )
-    )
-      throw new OpenAPIVersionError(this.version);
-
     const paths: Record<string, OpenAPIPathItem> = {};
-    for (const [, route] of this.routes) {
+
+    for (const route of this.routes.values()) {
       const operation: OpenAPIOperation = Object.freeze({
         ...route.operation,
         responses: Object.freeze({ ...route.operation.responses }),
       });
-      const existing = paths[route.path] ?? {};
+      // Operations keep their own parameters. Hoisting them to the path item
+      // makes them apply to every method on that path, so two methods with
+      // different parameters overwrote one another.
       paths[route.path] = Object.freeze({
-        ...existing,
-        ...(route.method === "get" ? { get: operation } : {}),
-        ...(route.method === "put" ? { put: operation } : {}),
-        ...(route.method === "post" ? { post: operation } : {}),
-        ...(route.method === "delete" ? { delete: operation } : {}),
-        ...(route.method === "options" ? { options: operation } : {}),
-        ...(route.method === "head" ? { head: operation } : {}),
-        ...(route.method === "patch" ? { patch: operation } : {}),
-        ...(route.method === "trace" ? { trace: operation } : {}),
-        ...(route.operation.parameters?.length
-          ? { parameters: Object.freeze([...route.operation.parameters]) }
-          : {}),
+        ...(paths[route.path] ?? {}),
+        [route.method]: operation,
       });
     }
 
     const components: Record<string, unknown> = {};
-    const componentMaps: Array<[string, Map<string, unknown>]> = [
-      ["schemas", this.schemas as Map<string, unknown>],
+    const componentMaps: readonly [string, ReadonlyMap<string, unknown>][] = [
+      ["schemas", this.schemas],
       ["responses", this.responses],
-      ["parameters", this.parameters as Map<string, unknown>],
-      ["requestBodies", this.requestBodies as Map<string, unknown>],
+      ["parameters", this.parameters],
+      ["requestBodies", this.requestBodies],
       ["headers", this.headers],
       ["examples", this.examples],
-      ["securitySchemes", this.securitySchemes as Map<string, unknown>],
+      ["securitySchemes", this.securitySchemes],
       ["links", this.links],
       ["callbacks", this.callbacks],
     ];
@@ -171,26 +285,29 @@ export class OpenAPIRegistryImpl implements OpenAPIRegistry {
         components[key] = Object.freeze(Object.fromEntries(map));
     }
 
-    try {
-      return Object.freeze({
-        openapi: this.version,
-        info: { title: "Zudojs API", version: "1.0.0" },
-        paths: Object.freeze(paths),
-        ...(Object.keys(components).length > 0
-          ? { components: Object.freeze(components) }
-          : {}),
-        ...(this.tags.size > 0
-          ? { tags: Object.freeze(Array.from(this.tags.values())) }
-          : {}),
-      }) as OpenAPIDocument;
-    } catch (error) {
-      throw new OpenAPIDocumentError(
-        `Failed to generate OpenAPI document: ${(error as Error).message}`,
-      );
-    }
+    return Object.freeze({
+      openapi: this.version,
+      info: Object.freeze({ ...this.info }),
+      ...(this.servers.length > 0
+        ? { servers: Object.freeze([...this.servers]) }
+        : {}),
+      paths: Object.freeze(paths),
+      ...(Object.keys(components).length > 0
+        ? { components: Object.freeze(components) }
+        : {}),
+      ...(this.security.length > 0
+        ? { security: Object.freeze([...this.security]) }
+        : {}),
+      ...(this.tags.size > 0
+        ? { tags: Object.freeze([...this.tags.values()]) }
+        : {}),
+    }) as OpenAPIDocument;
   }
 
   public clear(): void {
+    this.info = DEFAULT_INFO;
+    this.servers.length = 0;
+    this.security.length = 0;
     for (const map of [
       this.routes,
       this.schemas,
@@ -203,7 +320,8 @@ export class OpenAPIRegistryImpl implements OpenAPIRegistry {
       this.tags,
       this.links,
       this.callbacks,
-    ])
+    ]) {
       map.clear();
+    }
   }
 }

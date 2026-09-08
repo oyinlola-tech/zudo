@@ -5,6 +5,11 @@
  * including attachment filenames and RFC 5987-style filename* parameters.
  */
 
+import {
+  containsForbiddenHeaderChars,
+  escapeHeaderQuotedString,
+} from "../httpHeaders/security/httpHeaders.security.js";
+
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -146,6 +151,37 @@ export function getFilename(
     return undefined;
   }
 
+  const raw = getRawFilename(parsed);
+
+  if (raw === undefined) {
+    return undefined;
+  }
+
+  return sanitizeFilename(raw);
+}
+
+/**
+ * Reads the filename exactly as it appeared on the wire.
+ *
+ * @remarks
+ * The result is **untrusted**: it may contain path separators, `..` or a
+ * drive prefix, because `filename*` percent-decoding can reconstruct a
+ * traversal path that no textual filter on the raw header would catch. Use
+ * {@link getFilename} unless you specifically need the wire value, and never
+ * join this result to a directory without sanitising it.
+ *
+ * @param disposition - The parsed or raw Content-Disposition.
+ * @returns The undecorated filename, or `undefined`.
+ */
+export function getRawFilename(
+  disposition: ContentDisposition | string | undefined | null,
+): string | undefined {
+  const parsed = normalizeDisposition(disposition);
+
+  if (!parsed) {
+    return undefined;
+  }
+
   /*
    * filename* is preferred because it supports Unicode.
    */
@@ -259,7 +295,7 @@ export function hasParameter(
 export function getParameters(
   disposition: ContentDisposition,
 ): Readonly<Record<string, string>> {
-  const result: Record<string, string> = {};
+  const result = Object.create(null) as Record<string, string>;
 
   for (const parameter of disposition.parameters) {
     result[parameter.name] = parameter.value;
@@ -332,15 +368,68 @@ export function formatFilename(filename: string): string {
   return `"${escapeQuotedString(sanitized)}"`;
 }
 
+/**
+ * Maximum filename length in bytes, matching the common `NAME_MAX`.
+ */
+const MAX_FILENAME_BYTES = 255;
+
+/**
+ * Reduces a filename to a safe, path-free basename.
+ *
+ * Strips control characters, replaces path separators, neutralises the
+ * relative names `.` and `..`, removes a Windows drive-relative prefix, and
+ * truncates to `NAME_MAX` bytes.
+ *
+ * @param filename - The untrusted filename.
+ * @returns A filename that is safe to join to a directory.
+ */
 export function sanitizeFilename(filename: string): string {
-  return filename
+  const stripped = filename
     .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/^[A-Za-z]:/, "")
     .replace(/[/\\]/g, "_")
     .trim();
+
+  if (stripped.length === 0 || stripped === "." || stripped === "..") {
+    return "_";
+  }
+
+  return truncateFilename(stripped);
 }
 
+/**
+ * Truncates a filename to {@link MAX_FILENAME_BYTES} bytes without splitting
+ * a UTF-8 sequence.
+ *
+ * @param value - The filename to truncate.
+ * @returns The possibly-truncated filename.
+ */
+function truncateFilename(value: string): string {
+  const encoded = Buffer.from(value, "utf8");
+
+  if (encoded.length <= MAX_FILENAME_BYTES) {
+    return value;
+  }
+
+  return new TextDecoder("utf-8", { fatal: false })
+    .decode(encoded.subarray(0, MAX_FILENAME_BYTES))
+    .replace(/\ufffd+$/, "");
+}
+
+/**
+ * Escapes a value for emission inside a `quoted-string`.
+ *
+ * Delegates to `httpHeaders/security`, so CR, LF, NUL and every other C0/DEL
+ * control character are rejected rather than passed through — a
+ * `quoted-string` has no escape for them, and letting them through is
+ * response splitting.
+ *
+ * @param value - The raw value.
+ * @returns The escaped value without surrounding quotes.
+ * @throws {TypeError} If the value contains a forbidden control character.
+ */
 export function escapeQuotedString(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return escapeHeaderQuotedString(value);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -409,7 +498,7 @@ export function validateContentDisposition(
     return false;
   }
 
-  if (parsed.type.length === 0) {
+  if (parsed.type.length === 0 || !isToken(parsed.type)) {
     return false;
   }
 
@@ -419,6 +508,10 @@ export function validateContentDisposition(
     const name = parameter.name.trim().toLowerCase();
 
     if (name.length === 0 || seen.has(name)) {
+      return false;
+    }
+
+    if (containsForbiddenHeaderChars(parameter.value)) {
       return false;
     }
 
@@ -534,7 +627,7 @@ function splitParameters(value: string): string[] {
       continue;
     }
 
-    if (character === "\\") {
+    if (quoted && character === "\\") {
       current += character;
       escaped = true;
       continue;
