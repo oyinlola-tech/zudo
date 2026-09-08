@@ -1,7 +1,6 @@
 import {
   RuntimeError,
   RuntimeStateError as BaseRuntimeStateError,
-  ErrorCode,
 } from "@zudojs/errors";
 
 /**

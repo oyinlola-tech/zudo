@@ -21,6 +21,7 @@ export * from "./runtimeEvents/index.js";
 export * from "./runtimeContext/index.js";
 export * from "./dependencyGraph/index.js";
 export * from "./readiness/index.js";
+export * from "./health/index.js";
 export * from "./lifecycle/index.js";
 export * from "./startup/index.js";
 export * from "./shutdown/index.js";

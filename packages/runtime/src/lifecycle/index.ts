@@ -11,4 +11,5 @@ export type {
   LifecycleContext,
   ManagedModule,
   LifecycleManagerOptions,
+  ModuleContextServices,
 } from "./lifecycle.type.js";

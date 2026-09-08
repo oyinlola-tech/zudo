@@ -24,7 +24,6 @@ import { RuntimeRegistry } from "../src/registry/index.js";
 
 import {
   createTestRuntime,
-  createMockModule,
   withTestRuntime,
 } from "../src/testRuntime/index.js";
 
@@ -300,8 +299,8 @@ describe("RuntimeRegistry", () => {
     await runtime.start();
 
     const status = registry.getStatus();
-    expect(status.api.state).toBe("running");
-    expect(status.api.ready).toBe(true);
+    expect(status["api"]?.state).toBe("running");
+    expect(status["api"]?.ready).toBe(true);
 
     await runtime.stop();
   });

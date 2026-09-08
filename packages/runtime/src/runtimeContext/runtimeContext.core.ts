@@ -1,14 +1,11 @@
 import type { Environment } from "@zudojs/constants";
 
-import { createRuntimeId as generateRuntimeId } from "./runtimeContext.factory.js";
-
 import type {
   RuntimeContext,
   RuntimeContextDependencies,
+  RuntimeContextState,
   RuntimeIdentity,
 } from "./runtimeContext.type.js";
-
-import type { RuntimeStatus } from "../runtimeState/runtimeState.type.js";
 
 import { createStatus } from "../runtimeState/runtimeState.core.js";
 
@@ -36,6 +33,28 @@ export function createRuntimeContext(
       timestamp: new Date(),
     },
     ready: false,
+  });
+}
+
+/**
+ * Returns a context reflecting the current runtime state.
+ *
+ * `createRuntimeContext` captures the dependencies that never change for
+ * the life of a runtime; the lifecycle-dependent fields (`state`, `status`,
+ * `health`, `ready`, `startedAt`) are layered on top of that base each time
+ * the context is read, so callers never observe a stale snapshot.
+ */
+export function withRuntimeContextState(
+  base: RuntimeContext,
+  state: RuntimeContextState,
+): RuntimeContext {
+  return Object.freeze({
+    ...base,
+    state: state.status.state,
+    status: state.status,
+    health: state.health,
+    ready: state.ready,
+    ...(state.startedAt !== undefined && { startedAt: state.startedAt }),
   });
 }
 

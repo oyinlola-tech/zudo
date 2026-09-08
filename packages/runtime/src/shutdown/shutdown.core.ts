@@ -3,6 +3,7 @@ import type { Logger } from "@zudojs/logger";
 import type { EventBus } from "@zudojs/events";
 
 import { createEvent } from "@zudojs/events";
+import { publishRuntimeEvent } from "../runtimeEvents/index.js";
 
 import { LifecycleManager } from "../lifecycle/index.js";
 
@@ -23,7 +24,9 @@ export async function executeShutdown(
   emitEvents: boolean,
 ): Promise<void> {
   if (emitEvents && eventBus) {
-    eventBus.publish(
+    publishRuntimeEvent(
+      eventBus,
+      logger,
       createEvent({
         type: "runtime.shutdown.drain",
         payload: {
@@ -49,7 +52,9 @@ export async function executeShutdown(
     await Promise.race([stopPromise, timeoutPromise]);
 
     if (emitEvents && eventBus) {
-      eventBus.publish(
+      publishRuntimeEvent(
+        eventBus,
+        logger,
         createEvent({
           type: "runtime.shutdown.complete",
           payload: {
@@ -68,7 +73,9 @@ export async function executeShutdown(
     }
 
     if (emitEvents && eventBus) {
-      eventBus.publish(
+      publishRuntimeEvent(
+        eventBus,
+        logger,
         createEvent({
           type: "runtime.failed",
           payload: {

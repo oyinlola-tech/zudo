@@ -5,6 +5,7 @@
 export {
   createRuntimeContext,
   createRuntimeIdentity,
+  withRuntimeContextState,
 } from "./runtimeContext.core.js";
 
 export {

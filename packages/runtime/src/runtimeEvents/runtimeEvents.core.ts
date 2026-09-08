@@ -1,10 +1,10 @@
+import type { Event } from "@zudojs/events";
 import type {
   RuntimeEventPayload,
   RuntimeModuleEventPayload,
   RuntimeFailureEventPayload,
   RuntimeHealthEventPayload,
   RuntimeReadinessEventPayload,
-  RuntimeEventType,
 } from "./runtimeEvents.type.js";
 
 /**
@@ -103,5 +103,35 @@ export function createReadinessEventPayload(
     timestamp: new Date(),
     ready,
     ...(reason !== undefined && { reason }),
+  });
+}
+
+/**
+ * Publishes a runtime lifecycle event without letting a failing handler,
+ * middleware, or a disposed bus turn into an unhandled promise rejection.
+ *
+ * Runtime events are informational; a failure to deliver one must never
+ * abort startup or shutdown, so the rejection is logged and swallowed.
+ */
+export function publishRuntimeEvent(
+  eventBus: { publish(event: Event): Promise<unknown> },
+  logger: { warn(message: string, context?: Record<string, unknown>): void },
+  event: Event,
+): void {
+  let result: Promise<unknown>;
+  try {
+    result = eventBus.publish(event);
+  } catch (error) {
+    logger.warn("Failed to publish runtime event.", {
+      eventType: event.type,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+  void Promise.resolve(result).catch((error: unknown) => {
+    logger.warn("Failed to publish runtime event.", {
+      eventType: event.type,
+      error: error instanceof Error ? error.message : String(error),
+    });
   });
 }

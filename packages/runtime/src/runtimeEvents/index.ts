@@ -3,6 +3,7 @@
  */
 
 export {
+  publishRuntimeEvent,
   createRuntimeEventPayload,
   createModuleEventPayload,
   createFailureEventPayload,

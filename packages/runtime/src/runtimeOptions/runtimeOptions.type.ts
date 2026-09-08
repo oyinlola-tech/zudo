@@ -2,8 +2,6 @@ import type { Environment } from "@zudojs/constants";
 
 import type { RuntimeId } from "../runtimeState/runtimeState.type.js";
 
-import type { RuntimeState } from "../runtimeState/runtimeState.type.js";
-
 /**
  * Runtime configuration options.
  */

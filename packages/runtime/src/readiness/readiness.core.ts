@@ -1,11 +1,12 @@
-import type { Logger } from "@zudojs/logger";
-
 import type {
   ReadinessState,
   ReadinessCheck,
+  ReadinessCheckFn,
   ReadinessTrackerState,
   ReadinessOptions,
 } from "./readiness.type.js";
+
+import { RuntimeStateError } from "../runtimeError/index.js";
 
 /**
  * Tracks runtime readiness state.
@@ -13,6 +14,7 @@ import type {
 export class ReadinessTracker {
   private state: ReadinessState = "not_ready";
   private readonly checks: Map<string, ReadinessCheck> = new Map();
+  private readonly checkFns: Map<string, ReadinessCheckFn> = new Map();
   private readonly autoMarkReady: boolean;
   private ready = false;
   private reason?: string;
@@ -29,47 +31,106 @@ export class ReadinessTracker {
 
   /**
    * Registers a readiness check.
+   *
+   * The check function is retained so it can be re-evaluated later by
+   * `updateCheck(name)` or `runChecks()`. Registration does not run the
+   * check: it starts out not-ready until it is first evaluated.
    */
-  public registerCheck(
-    name: string,
-    check: () => boolean | Promise<boolean>,
-  ): void {
+  public registerCheck(name: string, check: ReadinessCheckFn): void {
+    this.checkFns.set(name, check);
     this.checks.set(name, {
       name,
       ready: false,
       lastCheckedAt: new Date(),
+      durationMs: 0,
     });
 
     this.evaluateReadiness();
   }
 
   /**
-   * Updates a readiness check result.
+   * Removes a readiness check.
+   *
+   * Returns whether a check with that name was registered.
+   */
+  public removeCheck(name: string): boolean {
+    const existed = this.checks.delete(name);
+    this.checkFns.delete(name);
+
+    if (existed) {
+      this.evaluateReadiness();
+    }
+
+    return existed;
+  }
+
+  /**
+   * Evaluates a readiness check and records its result.
+   *
+   * Re-runs the function registered under `name` unless a replacement is
+   * supplied, in which case the replacement is stored and used from then on.
    */
   public async updateCheck(
     name: string,
-    check: () => boolean | Promise<boolean>,
+    check?: ReadinessCheckFn,
   ): Promise<void> {
-    const startTime = Date.now();
+    if (check !== undefined) {
+      this.checkFns.set(name, check);
+    }
+
+    const fn = this.checkFns.get(name);
+
+    if (fn === undefined) {
+      throw new RuntimeStateError(
+        `Readiness check "${name}" is not registered.`,
+      );
+    }
+
+    await this.evaluateCheck(name, fn);
+    this.evaluateReadiness();
+  }
+
+  /**
+   * Re-evaluates every registered check.
+   */
+  public async runChecks(): Promise<void> {
+    await Promise.all(
+      [...this.checkFns].map(([name, fn]) => this.evaluateCheck(name, fn)),
+    );
+
+    this.evaluateReadiness();
+  }
+
+  /**
+   * Runs a single check and records its result and duration.
+   */
+  private async evaluateCheck(
+    name: string,
+    fn: ReadinessCheckFn,
+  ): Promise<void> {
+    const startedAt = Date.now();
 
     try {
-      const result = await check();
+      const result = await fn();
 
       this.checks.set(name, {
         name,
         ready: result,
         lastCheckedAt: new Date(),
+        durationMs: Date.now() - startedAt,
       });
-    } catch {
+    } catch (error) {
       this.checks.set(name, {
         name,
         ready: false,
         lastCheckedAt: new Date(),
-        message: "Check threw an error",
+        durationMs: Date.now() - startedAt,
+        message:
+          error instanceof Error
+            ? `Check threw an error: ${error.message}`
+            : "Check threw an error",
       });
     }
-
-    this.evaluateReadiness();
   }
 
   /**

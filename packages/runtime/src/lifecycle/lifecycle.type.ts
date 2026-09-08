@@ -1,4 +1,4 @@
-import type { Module } from "@zudojs/core";
+import type { ConfigurationManager, Module, ModuleContext } from "@zudojs/core";
 
 /**
  * Lifecycle hook phases for modules.
@@ -44,6 +44,31 @@ export interface ManagedModule {
   readonly module: Module;
   readonly depth: number;
   readonly dependencies: readonly string[];
+}
+
+/**
+ * Framework services made available to modules through their
+ * {@link ModuleContext}.
+ *
+ * Both are optional so a runtime can be started without a configuration
+ * layer, but a module that reaches for a service the host did not supply
+ * gets a clear error rather than a silently empty object.
+ */
+export interface ModuleContextServices {
+  /**
+   * Configuration manager backing `getConfiguration`, `getConfig` and
+   * `requireConfig`. Defaults to an empty, uninitialized manager.
+   */
+  readonly configuration?: ConfigurationManager;
+
+  /**
+   * Application context exposed as `context.application`.
+   *
+   * `ApplicationContext` is not part of `@zudojs/core`'s published entry
+   * points, so the runtime cannot construct one itself; a host that has an
+   * application context passes it in here.
+   */
+  readonly application?: ModuleContext["application"];
 }
 
 /**

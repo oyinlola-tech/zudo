@@ -1,10 +1,12 @@
+import type { RuntimeError } from "@zudojs/errors";
+
 import type { Logger } from "@zudojs/logger";
 
 import type { EventBus } from "@zudojs/events";
 
 import type { Container } from "@zudojs/container";
 
-import type { Module } from "@zudojs/core";
+import type { ConfigurationManager, Module, ModuleContext } from "@zudojs/core";
 
 import type {
   RuntimeState,
@@ -13,11 +15,7 @@ import type {
   RuntimeHealthState,
 } from "../runtimeState/index.js";
 
-import {
-  canTransition,
-  isRunning,
-  createStatus,
-} from "../runtimeState/index.js";
+import { canTransition, isRunning } from "../runtimeState/index.js";
 
 import type {
   RuntimeOptions,
@@ -28,9 +26,10 @@ import { createRuntimeOptions } from "../runtimeOptions/index.js";
 
 import type { RuntimeContext } from "../runtimeContext/index.js";
 
-import { createRuntimeContext } from "../runtimeContext/index.js";
-
-import { createRuntimeId } from "../runtimeContext/index.js";
+import {
+  createRuntimeContext,
+  withRuntimeContextState,
+} from "../runtimeContext/index.js";
 
 import { LifecycleManager } from "../lifecycle/index.js";
 
@@ -42,23 +41,24 @@ import { SignalHandler } from "../signalHandler/index.js";
 
 import { ReadinessTracker } from "../readiness/index.js";
 
+import type {
+  ReadinessCheckFn,
+  ReadinessTrackerState,
+} from "../readiness/index.js";
+
+import { computeRuntimeHealth } from "../health/index.js";
+
 import {
   createRuntimeEventPayload,
   createFailureEventPayload,
   createHealthEventPayload,
   createReadinessEventPayload,
+  publishRuntimeEvent,
 } from "../runtimeEvents/index.js";
 
 import { createEvent } from "@zudojs/events";
 
-import {
-  RuntimeStartError,
-  RuntimeStopError,
-  RuntimeStateError,
-  RuntimeTimeoutError,
-  RuntimeRollbackError,
-  toRuntimeError,
-} from "../runtimeError/index.js";
+import { RuntimeStateError, toRuntimeError } from "../runtimeError/index.js";
 
 /**
  * Zudojs runtime interface.
@@ -70,10 +70,35 @@ export interface Runtime {
   readonly state: RuntimeState;
   readonly status: RuntimeStatus;
   readonly context: RuntimeContext;
+  readonly health: RuntimeHealth;
   readonly ready: boolean;
 
   start(): Promise<void>;
   stop(): Promise<void>;
+
+  /**
+   * Registers a readiness check.
+   *
+   * A registered check starts out failing until it is first evaluated by
+   * `runReadinessChecks`, so registering one on a running runtime moves it
+   * to `degraded` until the check passes.
+   */
+  registerReadinessCheck(name: string, check: ReadinessCheckFn): void;
+
+  /**
+   * Removes a readiness check. Returns whether one was registered.
+   */
+  removeReadinessCheck(name: string): boolean;
+
+  /**
+   * Re-evaluates every registered readiness check.
+   */
+  runReadinessChecks(): Promise<void>;
+
+  /**
+   * Current readiness state, including per-check results.
+   */
+  readonly readiness: ReadinessTrackerState;
 }
 
 /**
@@ -84,6 +109,18 @@ export interface RuntimeDependencies {
   readonly logger: Logger;
   readonly container: Container;
   readonly eventBus: EventBus;
+
+  /**
+   * Configuration manager exposed to modules through their context.
+   * Defaults to an empty manager loaded at startup.
+   */
+  readonly configuration?: ConfigurationManager;
+
+  /**
+   * Application context exposed to modules as `context.application`.
+   * Modules that read it without one supplied get a clear error.
+   */
+  readonly application?: ModuleContext["application"];
 }
 
 /**
@@ -91,13 +128,11 @@ export interface RuntimeDependencies {
  */
 export class DefaultRuntime implements Runtime {
   private _state: RuntimeState = "created";
-  private _status: RuntimeStatus;
-  private _context: RuntimeContext;
-  private _ready = false;
+  private readonly _contextBase: RuntimeContext;
   private _startedAt?: Date;
   private _stoppedAt?: Date;
   private _failedAt?: Date;
-  private _error?: Error;
+  private _error?: RuntimeError;
 
   private readonly options: ResolvedRuntimeOptions;
   private readonly modules: ReadonlyMap<string, Module>;
@@ -117,7 +152,7 @@ export class DefaultRuntime implements Runtime {
     this.modules = dependencies.modules;
     this.logger = dependencies.logger;
 
-    this._context = createRuntimeContext({
+    this._contextBase = createRuntimeContext({
       runtimeId: this.options.runtimeId,
       environment: this.options.environment,
       applicationName: this.options.applicationName,
@@ -127,17 +162,20 @@ export class DefaultRuntime implements Runtime {
       eventBus: dependencies.eventBus,
     });
 
-    this._status = createStatus("created");
-
     this.lifecycle = new LifecycleManager(
       this.modules,
       this.logger,
-      dependencies.container,
-      this.options.runtimeId,
-      this.options.environment,
       {
         shutdownTimeout: this.options.shutdownTimeout,
         continueOnFailure: false,
+      },
+      {
+        ...(dependencies.configuration !== undefined && {
+          configuration: dependencies.configuration,
+        }),
+        ...(dependencies.application !== undefined && {
+          application: dependencies.application,
+        }),
       },
     );
 
@@ -162,21 +200,104 @@ export class DefaultRuntime implements Runtime {
    * Current runtime status.
    */
   public get status(): RuntimeStatus {
-    return this._status;
+    return Object.freeze({
+      state: this._state,
+      ready: this.ready,
+      running: isRunning(this._state),
+      startedAt: this._startedAt,
+      stoppedAt: this._stoppedAt,
+      failedAt: this._failedAt,
+      error: this._error,
+    });
   }
 
   /**
    * Runtime context.
    */
   public get context(): RuntimeContext {
-    return this._context;
+    return withRuntimeContextState(this._contextBase, {
+      status: this.status,
+      health: this.health,
+      ready: this.ready,
+      ...(this._startedAt !== undefined && { startedAt: this._startedAt }),
+      ...(this._stoppedAt !== undefined && { stoppedAt: this._stoppedAt }),
+      ...(this._failedAt !== undefined && { failedAt: this._failedAt }),
+      ...(this._error !== undefined && { error: this._error }),
+    });
+  }
+
+  /**
+   * Current runtime health, derived from the lifecycle state and the
+   * registered readiness checks.
+   */
+  public get health(): RuntimeHealth {
+    return computeRuntimeHealth(this._state, this.readinessTracker.getState());
+  }
+
+  /**
+   * Current readiness state, including per-check results.
+   */
+  public get readiness(): ReadinessTrackerState {
+    return this.readinessTracker.getState();
+  }
+
+  /**
+   * Registers a readiness check.
+   */
+  public registerReadinessCheck(name: string, check: ReadinessCheckFn): void {
+    const previousHealth = this.health.state;
+
+    this.readinessTracker.registerCheck(name, check);
+
+    this.emitHealthChange(previousHealth);
+  }
+
+  /**
+   * Removes a readiness check.
+   */
+  public removeReadinessCheck(name: string): boolean {
+    const previousHealth = this.health.state;
+
+    const removed = this.readinessTracker.removeCheck(name);
+
+    if (removed) {
+      this.emitHealthChange(previousHealth);
+    }
+
+    return removed;
+  }
+
+  /**
+   * Re-evaluates every registered readiness check.
+   */
+  public async runReadinessChecks(): Promise<void> {
+    const previousHealth = this.health.state;
+    const previouslyReady = this.ready;
+
+    await this.readinessTracker.runChecks();
+
+    this.emitHealthChange(previousHealth);
+
+    if (this.options.emitEvents && this.ready !== previouslyReady) {
+      const state = this.readinessTracker.getState();
+
+      this.emitEvent(
+        "runtime.readiness.changed",
+        createReadinessEventPayload(
+          this.options.runtimeId,
+          this._state,
+          state.ready,
+          state.reason,
+        ),
+      );
+    }
   }
 
   /**
    * Whether the runtime is ready.
    */
   public get ready(): boolean {
-    return this._ready;
+    return this.readinessTracker.isReady();
   }
 
   /**
@@ -253,13 +374,12 @@ export class DefaultRuntime implements Runtime {
       await executeStartup(
         this.lifecycle,
         this.options.runtimeId,
-        this._context.eventBus,
+        this._contextBase.eventBus,
         this.logger,
         this.options.emitEvents,
       );
 
       this.transitionTo("running");
-      this._ready = true;
       this._startedAt = new Date();
       this.readinessTracker.markReady("Runtime started successfully.");
 
@@ -332,7 +452,6 @@ export class DefaultRuntime implements Runtime {
    */
   private async performStop(): Promise<void> {
     this.transitionTo("stopping");
-    this._ready = false;
     this.readinessTracker.markNotReady("Runtime is shutting down.");
 
     if (this.options.emitEvents) {
@@ -343,7 +462,7 @@ export class DefaultRuntime implements Runtime {
       await executeShutdown(
         this.lifecycle,
         this.options.runtimeId,
-        this._context.eventBus,
+        this._contextBase.eventBus,
         this.logger,
         this.options.shutdownTimeout,
         this.options.emitEvents,
@@ -401,17 +520,51 @@ export class DefaultRuntime implements Runtime {
       );
     }
 
+    const previousHealth = this.health.state;
+
     this._state = newState;
-    this._status = createStatus(newState);
 
     this.logger.debug(`Runtime state: ${oldState} -> ${newState}`);
+
+    this.emitHealthChange(previousHealth);
+  }
+
+  /**
+   * Emits `runtime.health.changed` when the derived health state has moved
+   * away from `previousHealth`. Health is derived rather than stored, so
+   * callers compare against a value captured before the change.
+   */
+  private emitHealthChange(previousHealth: RuntimeHealthState): void {
+    if (!this.options.emitEvents) {
+      return;
+    }
+
+    const health = this.health;
+
+    if (health.state === previousHealth) {
+      return;
+    }
+
+    this.emitEvent(
+      "runtime.health.changed",
+      createHealthEventPayload(
+        this.options.runtimeId,
+        this._state,
+        previousHealth,
+        health.state,
+        health.checks.map((check) => ({
+          name: check.name,
+          healthy: check.healthy,
+        })),
+      ),
+    );
   }
 
   /**
    * Emits a runtime event.
    */
   private emitEvent(eventType: string, payload?: unknown): void {
-    if (this.options.emitEvents && this._context.eventBus) {
+    if (this.options.emitEvents && this._contextBase.eventBus) {
       const eventPayload =
         payload ??
         createRuntimeEventPayload(this.options.runtimeId, this._state);
@@ -419,7 +572,7 @@ export class DefaultRuntime implements Runtime {
         type: eventType,
         payload: eventPayload,
       });
-      this._context.eventBus.publish(event);
+      publishRuntimeEvent(this._contextBase.eventBus, this.logger, event);
     }
   }
 }

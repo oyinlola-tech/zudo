@@ -3,10 +3,9 @@ import type { Logger } from "@zudojs/logger";
 import type { EventBus } from "@zudojs/events";
 
 import { createEvent } from "@zudojs/events";
+import { publishRuntimeEvent } from "../runtimeEvents/index.js";
 
 import { LifecycleManager } from "../lifecycle/index.js";
-
-import type { LifecycleResult } from "../lifecycle/lifecycle.type.js";
 
 import { RuntimeStartError } from "../runtimeError/index.js";
 
@@ -22,7 +21,9 @@ export async function executeStartup(
 ): Promise<void> {
   // Initialize modules
   if (emitEvents && eventBus) {
-    eventBus.publish(
+    publishRuntimeEvent(
+      eventBus,
+      logger,
       createEvent({
         type: "runtime.module.initializing",
         payload: {
@@ -40,7 +41,9 @@ export async function executeStartup(
     const failure = initResult.failed[0]!;
 
     if (emitEvents && eventBus) {
-      eventBus.publish(
+      publishRuntimeEvent(
+        eventBus,
+        logger,
         createEvent({
           type: "runtime.module.failed",
           payload: {
@@ -72,7 +75,9 @@ export async function executeStartup(
 
   // Start modules
   if (emitEvents && eventBus) {
-    eventBus.publish(
+    publishRuntimeEvent(
+      eventBus,
+      logger,
       createEvent({
         type: "runtime.module.starting",
         payload: {
@@ -90,7 +95,9 @@ export async function executeStartup(
     const failure = startResult.failed[0]!;
 
     if (emitEvents && eventBus) {
-      eventBus.publish(
+      publishRuntimeEvent(
+        eventBus,
+        logger,
         createEvent({
           type: "runtime.module.failed",
           payload: {

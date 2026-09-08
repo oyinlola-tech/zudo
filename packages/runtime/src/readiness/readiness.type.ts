@@ -12,7 +12,18 @@ export interface ReadinessCheck {
   readonly ready: boolean;
   readonly message?: string;
   readonly lastCheckedAt: Date;
+
+  /**
+   * How long the last evaluation of this check took, in milliseconds.
+   * `0` for a check that has been registered but not yet run.
+   */
+  readonly durationMs: number;
 }
+
+/**
+ * A readiness check function.
+ */
+export type ReadinessCheckFn = () => boolean | Promise<boolean>;
 
 /**
  * Readiness tracker state.
@@ -33,7 +44,7 @@ export interface ReadinessOptions {
    */
   readonly initialChecks?: ReadonlyArray<{
     readonly name: string;
-    readonly check: () => boolean | Promise<boolean>;
+    readonly check: ReadinessCheckFn;
   }>;
 
   /**

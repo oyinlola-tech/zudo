@@ -1,5 +1,7 @@
 import type { Environment } from "@zudojs/constants";
 
+import type { RuntimeError } from "@zudojs/errors";
+
 import type { Logger } from "@zudojs/logger";
 
 import type { EventBus } from "@zudojs/events";
@@ -11,7 +13,6 @@ import type {
   RuntimeStatus,
   RuntimeState,
   RuntimeHealth,
-  RuntimeHealthState,
 } from "../runtimeState/runtimeState.type.js";
 
 /**
@@ -68,5 +69,5 @@ export interface RuntimeContextState {
   startedAt?: Date;
   stoppedAt?: Date;
   failedAt?: Date;
-  error?: Error;
+  error?: RuntimeError;
 }

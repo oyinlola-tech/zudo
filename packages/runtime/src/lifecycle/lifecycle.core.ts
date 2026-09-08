@@ -1,23 +1,21 @@
 import type { Logger } from "@zudojs/logger";
 
-import type { Container } from "@zudojs/container";
+import type { ConfigurationManager, Module, ModuleContext } from "@zudojs/core";
 
-import type { Module, ModuleContext } from "@zudojs/core";
+import { createConfigurationManager } from "@zudojs/core";
 
 import type {
   LifecycleResult,
   LifecycleFailure,
-  LifecyclePhase,
-  ManagedModule,
   LifecycleManagerOptions,
+  ModuleContextServices,
 } from "./lifecycle.type.js";
 
 import { resolveDependencies } from "../dependencyGraph/index.js";
 
 import {
-  RuntimeStartError,
-  RuntimeStopError,
   RuntimeDependencyError,
+  RuntimeStateError,
 } from "../runtimeError/index.js";
 
 /**
@@ -26,26 +24,23 @@ import {
 export class LifecycleManager {
   private readonly modules: ReadonlyMap<string, Module>;
   private readonly logger: Logger;
-  private readonly container: Container;
-  private readonly runtimeId: string;
-  private readonly environment: string;
   private readonly options: Required<LifecycleManagerOptions>;
   private readonly initializedModules: string[] = [];
   private readonly startedModules: string[] = [];
+  private readonly configuration: ConfigurationManager;
+  private readonly application: ModuleContext["application"] | undefined;
+  private readonly contexts = new Map<string, ModuleContext>();
 
   public constructor(
     modules: ReadonlyMap<string, Module>,
     logger: Logger,
-    container: Container,
-    runtimeId: string,
-    environment: string,
     options: LifecycleManagerOptions = {},
+    services: ModuleContextServices = {},
   ) {
     this.modules = modules;
     this.logger = logger;
-    this.container = container;
-    this.runtimeId = runtimeId;
-    this.environment = environment;
+    this.configuration = services.configuration ?? createConfigurationManager();
+    this.application = services.application;
     this.options = {
       shutdownTimeout: options.shutdownTimeout ?? 30_000,
       continueOnFailure: options.continueOnFailure ?? false,
@@ -54,10 +49,30 @@ export class LifecycleManager {
   }
 
   /**
+   * Loads the configuration manager once, before modules are initialized,
+   * so that `context.getConfiguration()` is usable from the first hook.
+   */
+  private async ensureConfigurationReady(): Promise<void> {
+    if (this.configuration.isReady()) {
+      return;
+    }
+
+    try {
+      await this.configuration.initialize();
+    } catch (error) {
+      this.logger.warn("Configuration failed to load.", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
    * Initializes all modules in dependency order.
    */
   public async initialize(): Promise<LifecycleResult> {
     const startTime = Date.now();
+
+    await this.ensureConfigurationReady();
     const succeeded: string[] = [];
     const failed: LifecycleFailure[] = [];
 
@@ -303,24 +318,55 @@ export class LifecycleManager {
    * Creates a module context for lifecycle hooks.
    */
   private createModuleContext(module: Module): ModuleContext {
-    return {
+    const existing = this.contexts.get(module.id);
+
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    const configuration = this.configuration;
+    const application = this.application;
+    const logger = this.logger;
+    const contexts = this.contexts;
+    const modules = this.modules;
+
+    const context: ModuleContext = {
       id: module.id,
       name: module.name,
       version: module.version,
       options: module.options ?? {},
       scope: module.scope,
-      application: {} as ModuleContext["application"],
-      configuration: {} as unknown as ModuleContext["configuration"],
-      logger: this.logger,
-      getConfiguration: () =>
-        ({}) as unknown as ReturnType<ModuleContext["getConfiguration"]>,
-      getConfig: () => undefined,
-      requireConfig: (path: string) => {
-        throw new Error(`Config "${path}" not found.`);
+
+      // `application` is a getter so that a runtime started without an
+      // application context fails loudly at the point of use, rather than
+      // handing modules an empty object that lies about its type.
+      get application(): ModuleContext["application"] {
+        if (application === undefined) {
+          throw new RuntimeStateError(
+            `Module "${module.id}" accessed "context.application", but no ` +
+              `ApplicationContext was supplied to the runtime.`,
+          );
+        }
+
+        return application;
       },
-      getModuleContext: () => undefined,
-      hasModule: () => false,
+
+      configuration,
+      logger,
+
+      getConfiguration: () => configuration.getConfiguration(),
+      getConfig: <T = unknown>(path: string): T | undefined =>
+        configuration.get<T>(path),
+      requireConfig: <T = unknown>(path: string): T =>
+        configuration.require<T>(path),
+
+      getModuleContext: (moduleId) => contexts.get(moduleId),
+      hasModule: (moduleId) => modules.has(moduleId),
     };
+
+    this.contexts.set(module.id, context);
+
+    return context;
   }
 
   /**

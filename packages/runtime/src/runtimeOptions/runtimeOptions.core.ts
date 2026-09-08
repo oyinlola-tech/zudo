@@ -2,10 +2,6 @@ import type { ResolvedRuntimeOptions } from "./runtimeOptions.type.js";
 
 import { DEFAULT_RUNTIME_OPTIONS } from "./runtimeOptions.type.js";
 
-import type { RuntimeId } from "../runtimeState/runtimeState.type.js";
-
-import { createRuntimeId } from "../runtimeContext/runtimeContext.factory.js";
-
 /**
  * Resolves runtime options with defaults applied.
  */
