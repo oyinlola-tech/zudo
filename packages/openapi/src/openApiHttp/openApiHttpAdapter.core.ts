@@ -1,6 +1,7 @@
 import type {
   OpenAPIDocument,
   OpenAPIInfo,
+  OpenAPILogo,
   OpenAPISchema,
   OpenAPISecurityRequirement,
   OpenAPISecurityScheme,
@@ -27,6 +28,11 @@ import {
   DEFAULT_OPENAPI_VERSION,
   DOCUMENT_CACHE_TTL_MS,
 } from "../openApiConstants/openApiConstants.core.js";
+import {
+  renderOpenAPIUI,
+  zudoLogo,
+  type OpenAPIUIOptions,
+} from "../openApiUi/openApiUi.core.js";
 
 /** Options for {@link OpenAPIManager}. */
 export interface OpenAPIManagerOptions {
@@ -50,6 +56,20 @@ export interface OpenAPIManagerOptions {
   ) => void;
   /** Supplies the clock, for tests. */
   readonly now?: () => number;
+  /**
+   * Logo written to `info["x-logo"]` so viewers such as ReDoc and Scalar
+   * show it, and used by {@link OpenAPIManager.toUIResponse}.
+   * Default: the Zudo mark. Pass `false` to emit no logo, or an
+   * {@link OpenAPILogo} to use your own.
+   */
+  readonly branding?: boolean | OpenAPILogo;
+}
+
+/** An HTTP response carrying a rendered documentation page. */
+export interface OpenAPIUIResponse {
+  readonly status: 200;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: string;
 }
 
 /** An HTTP response carrying the specification document. */
@@ -74,6 +94,7 @@ export class OpenAPIManager {
   private readonly schemas: SchemaRegistryImpl;
   private readonly cacheTtlMs: number;
   private readonly now: () => number;
+  private readonly logo: OpenAPILogo | undefined;
 
   private cachedDocument?: OpenAPIDocument;
   private cachedAt = 0;
@@ -97,6 +118,12 @@ export class OpenAPIManager {
     });
     this.cacheTtlMs = options.cacheTtlMs ?? DOCUMENT_CACHE_TTL_MS;
     this.now = options.now ?? (() => Date.now());
+    this.logo =
+      options.branding === false
+        ? undefined
+        : options.branding === true || options.branding === undefined
+          ? zudoLogo()
+          : options.branding;
 
     if (options.info) this.registry.setInfo(options.info);
     for (const server of options.servers ?? []) this.registry.addServer(server);
@@ -191,6 +218,12 @@ export class OpenAPIManager {
   public generate(validate = false): OpenAPIDocument {
     for (const route of this.scanner.scan()) {
       this.registry.setRoute(route);
+    }
+
+    // Brand the document unless the caller supplied a logo or opted out.
+    const info = this.registry.getInfo();
+    if (this.logo && !info["x-logo"]) {
+      this.registry.setInfo({ ...info, "x-logo": this.logo });
     }
 
     const document = this.registry.generate();
@@ -290,6 +323,41 @@ export class OpenAPIManager {
             ? "application/yaml; charset=utf-8"
             : `${DEFAULT_MEDIA_TYPE}; charset=utf-8`,
         "cache-control": options?.cacheControl ?? "public, max-age=300",
+      }),
+      body,
+    });
+  }
+
+  /**
+   * Builds an HTTP response carrying a branded documentation page (Swagger UI
+   * by default, ReDoc on request) that loads the specification from
+   * `options.specUrl`. Pair it with {@link OpenAPIManager.toResponse}:
+   *
+   * ```ts
+   * app.get("/openapi.json", () => manager.toResponse());
+   * app.get("/docs", () => manager.toUIResponse({ specUrl: "/openapi.json" }));
+   * ```
+   */
+  public toUIResponse(options: OpenAPIUIOptions): OpenAPIUIResponse {
+    const info = this.registry.getInfo();
+    const body = renderOpenAPIUI({
+      title:
+        info.title && info.title !== "API"
+          ? `${info.title} · API reference`
+          : undefined,
+      ...options,
+      logo:
+        options.logo !== undefined
+          ? options.logo
+          : this.logo === undefined
+            ? false
+            : undefined,
+    });
+    return Object.freeze({
+      status: 200 as const,
+      headers: Object.freeze({
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "public, max-age=300",
       }),
       body,
     });

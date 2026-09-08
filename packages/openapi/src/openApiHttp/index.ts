@@ -9,4 +9,5 @@ export {
   createOpenAPIManager,
   type OpenAPIManagerOptions,
   type OpenAPIDocumentResponse,
+  type OpenAPIUIResponse,
 } from "./openApiHttpAdapter.core.js";

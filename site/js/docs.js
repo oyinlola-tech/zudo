@@ -66,26 +66,91 @@
     });
   }
 
-  /* ---------- table of contents (generated when a page has none) ---------- */
+  /* ---------- table of contents: build when missing, always scroll-spy ---------- */
 
   function initToc() {
-    var toc = document.querySelector('.doc-toc, .doc-toc-sidebar');
-    if (!toc) return;
-    var hasLinks = toc.querySelector('.toc-link, .toc-item');
-    if (!hasLinks) {
-      var headings = document.querySelectorAll('main h2[id], main h3[id]');
-      if (!headings.length) return;
-      var frag = document.createDocumentFragment();
+    var main = document.querySelector('main');
+    if (!main || !document.querySelector('.doc-sidebar')) return;
+    var toc = document.querySelector('.doc-toc');
+    // Entries come from <section id> blocks (their first h2/h3 is the label) and from any headings with ids.
+    var entries = [];
+    var seen = {};
+    Array.prototype.slice.call(main.querySelectorAll('section[id], h2[id], h3[id]')).forEach(function (el) {
+      var id = el.id, text, level = 2;
+      if (el.tagName === 'SECTION') {
+        var h = el.querySelector('h2, h3');
+        if (!h) return;
+        text = h.textContent; level = h.tagName === 'H3' ? 3 : 2;
+      } else {
+        if (el.closest('section[id]') && seen[el.closest('section[id]').id]) return;
+        text = el.textContent; level = el.tagName === 'H3' ? 3 : 2;
+      }
+      text = text.replace(/#$/, '').trim();
+      if (!text || seen[id]) return;
+      seen[id] = true;
+      entries.push({ id: id, text: text, level: level });
+    });
+    var headings = entries;
+
+    if (!toc) {
+      if (headings.length < 2) return;
+      toc = document.createElement('aside');
+      toc.className = 'doc-toc';
+      toc.setAttribute('aria-label', 'On this page');
+      main.parentNode.insertBefore(toc, main.nextSibling);
+    }
+
+    if (!toc.querySelector('.toc-link, .toc-item')) {
+      var host = toc.querySelector('div:not([class*="text-xs"])') || toc;
+      if (!toc.querySelector('.text-xs')) {
+        var label = document.createElement('div');
+        label.className = 'text-xs font-bold uppercase tracking-wider mb-4 text-black/40';
+        label.textContent = 'On this page';
+        host.appendChild(label);
+      }
       headings.forEach(function (h) {
         var a = document.createElement('a');
         a.href = '#' + h.id;
-        a.className = 'toc-link';
-        a.dataset.level = h.tagName === 'H3' ? '3' : '2';
-        a.textContent = h.textContent.replace(/#$/, '').trim();
-        frag.appendChild(a);
+        a.className = 'toc-link' + (h.level === 3 ? ' toc-link-nested' : '');
+        a.textContent = h.text;
+        host.appendChild(a);
       });
-      (toc.querySelector('div') || toc).appendChild(frag);
     }
+
+    // Scroll spy over whatever the links point at (sections or headings).
+    var links = Array.prototype.slice.call(toc.querySelectorAll('.toc-link, .toc-item'));
+    var targets = [];
+    links.forEach(function (a) {
+      var id = (a.getAttribute('href') || '').slice(1);
+      var el = id && document.getElementById(id);
+      if (el) targets.push({ el: el, link: a });
+    });
+    if (!targets.length) return;
+
+    function activate(link) {
+      links.forEach(function (l) { l.classList.remove('toc-link-active', 'toc-item-active'); });
+      link.classList.add(link.classList.contains('toc-item') ? 'toc-item-active' : 'toc-link-active');
+      var r = link.getBoundingClientRect(), t = toc.getBoundingClientRect();
+      if (r.top < t.top + 40 || r.bottom > t.bottom - 40) link.scrollIntoView({ block: 'center' });
+    }
+
+    var navH = 64;
+    function update() {
+      var y = window.scrollY + navH + 24;
+      var current = targets[0];
+      for (var i = 0; i < targets.length; i++) {
+        if (targets[i].el.offsetTop <= y) current = targets[i];
+      }
+      if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 2) current = targets[targets.length - 1];
+      activate(current.link);
+    }
+    var ticking = false;
+    window.addEventListener('scroll', function () {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(function () { update(); ticking = false; });
+    }, { passive: true });
+    update();
   }
 
   /* ---------- anchor links ---------- */

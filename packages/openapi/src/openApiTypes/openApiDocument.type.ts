@@ -27,6 +27,23 @@ export interface OpenAPIInfo {
   readonly termsOfService?: string;
   readonly contact?: OpenAPIContact;
   readonly license?: OpenAPILicense;
+  /**
+   * Vendor extension rendered as a logo by ReDoc, Scalar and other viewers.
+   * Set automatically to the Zudo mark by {@link OpenAPIManager} unless
+   * branding is disabled or a logo is supplied.
+   */
+  readonly "x-logo"?: OpenAPILogo;
+}
+
+/** The `x-logo` vendor extension (`info["x-logo"]`). */
+export interface OpenAPILogo {
+  /** Image URL or data URI. */
+  readonly url: string;
+  /** Where clicking the logo navigates. */
+  readonly href?: string;
+  readonly altText?: string;
+  /** Background colour painted behind the logo by viewers that support it. */
+  readonly backgroundColor?: string;
 }
 
 export interface OpenAPIContact {

@@ -25,6 +25,7 @@ export type {
   OpenAPIServer,
   OpenAPIServerVariable,
   OpenAPIInfo,
+  OpenAPILogo,
   OpenAPIContact,
   OpenAPILicense,
   OpenAPIExternalDocumentation,

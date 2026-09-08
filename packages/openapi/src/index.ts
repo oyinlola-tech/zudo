@@ -38,6 +38,27 @@
  * ```
  */
 
+/* ─── Documentation UI & branding ──────────────────────────────────────── */
+
+export {
+  renderOpenAPIUI,
+  zudoLogo,
+  svgToDataUri,
+  ZUDO_MARK_SVG,
+  ZUDO_MARK_DARK_SVG,
+  ZUDO_WORDMARK_SVG,
+  ZUDO_WORDMARK_DARK_SVG,
+  ZUDO_FAVICON_SVG,
+  ZUDO_MARK_DATA_URI,
+  ZUDO_MARK_DARK_DATA_URI,
+  ZUDO_WORDMARK_DATA_URI,
+  ZUDO_WORDMARK_DARK_DATA_URI,
+  ZUDO_FAVICON_DATA_URI,
+  ZUDO_SITE_URL,
+  type OpenAPIUIOptions,
+  type OpenAPIUIRenderer,
+} from "./openApiUi/index.js";
+
 /* ─── Document builder ──────────────────────────────────────────────────── */
 
 export {
@@ -155,6 +176,7 @@ export {
   createOpenAPIManager,
   type OpenAPIManagerOptions,
   type OpenAPIDocumentResponse,
+  type OpenAPIUIResponse,
 } from "./openApiHttp/index.js";
 
 /* ─── Specification types ───────────────────────────────────────────────── */
@@ -180,6 +202,7 @@ export type {
   OpenAPIServer,
   OpenAPIServerVariable,
   OpenAPIInfo,
+  OpenAPILogo,
   OpenAPIContact,
   OpenAPILicense,
   OpenAPIExternalDocumentation,
