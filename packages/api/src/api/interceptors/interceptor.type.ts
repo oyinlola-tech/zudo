@@ -14,6 +14,11 @@ export interface APIExecutionContext<TInput = unknown, TOutput = unknown> {
 
   readonly context: APIContext;
 
+  /**
+   * The operation result. Populated by the executor once the handler has
+   * run, so interceptor code after `await next()` can read it here as
+   * well as from `next()`'s return value.
+   */
   readonly result?: APIResult<TOutput>;
 }
 

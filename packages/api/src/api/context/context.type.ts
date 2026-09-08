@@ -50,8 +50,9 @@ export function createAPIContext<TState = unknown>(
     set<T>(key: APIContextKey<T>, value: T): void {
       metadata.set(key.name, value);
     },
-    get metadata() {
-      return new Map(metadata);
+    // Live read-only view of the internal map (no per-access copy).
+    get metadata(): ReadonlyMap<string, unknown> {
+      return metadata;
     },
   };
 

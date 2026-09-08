@@ -28,6 +28,11 @@ export interface APIOperationMetadata {
 export interface APIOperation<TInput = unknown, TOutput = unknown> {
   readonly name: string;
 
+  /**
+   * Input schema. When this is a Standard Schema
+   * (https://standardschema.dev), the executor validates input against it
+   * before invoking the handler; other values are documentation-only.
+   */
   readonly input?: unknown;
 
   readonly output?: unknown;
