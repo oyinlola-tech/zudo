@@ -736,18 +736,50 @@
 
   var running = false;
 
-  function friendlyError(err) {
-    var msg = err && err.message ? err.message : String(err);
-    msg = msg.replace(/^\/?playground\.ts:\s*/, '').replace(/\s*\(\d+:\d+\)\s*$/, function (m) { return m; });
-    return msg;
+  // User line N lives at wrapped line N+1 (our async wrapper) and at
+  // eval line N+3 once new Function() adds its own two-line prologue.
+  var WRAP_OFFSET = 1;
+  var EVAL_OFFSET = 3;
+
+  function fileName() { return fileEl.textContent || 'playground.ts'; }
+
+  function codeFrame(src, lineNo, col) {
+    var lines = src.split('\n');
+    var out = [];
+    for (var i = Math.max(0, lineNo - 3); i < Math.min(lines.length, lineNo + 2); i++) {
+      var n = i + 1;
+      var mark = n === lineNo ? '>' : ' ';
+      out.push(mark + ' ' + String(n).padStart(3) + ' │ ' + lines[i]);
+      if (n === lineNo && col !== undefined) out.push('      │ ' + new Array(Math.max(0, col)).join(' ') + '^');
+    }
+    return out;
   }
 
-  function cleanStack(err) {
+  function syntaxErrorReport(err, src) {
+    var msg = (err.message || String(err)).split('\n')[0].replace(/\s*\(\d+:\d+\)\s*$/, '').replace(/^\/?playground\.ts:\s*/, '');
+    var loc = err.loc || null;
+    var lineNo = loc ? loc.line - WRAP_OFFSET : null;
+    var col = loc ? loc.column : undefined;
+    line('error', 'SyntaxError: ' + msg + (lineNo ? '  (' + fileName() + ':' + lineNo + ':' + (col + 1) + ')' : ''), '✗');
+    if (lineNo && lineNo >= 1) codeFrame(src, lineNo, col).forEach(function (l) { line('stack', l); });
+  }
+
+  function cleanStack(err, src) {
     if (!err || !err.stack) return [];
+    var name = fileName();
+    var total = src ? src.split('\n').length : Infinity;
     return err.stack.split('\n').slice(1)
-      .filter(function (l) { return /__zudo_main__|eval|<anonymous>/.test(l); })
-      .slice(0, 3)
-      .map(function (l) { return l.trim().replace(/\(?(?:https?:\/\/|file:\/\/)[^)]*\)?/g, '').replace(/\s+/g, ' '); });
+      .filter(function (l) { return /<anonymous>:\d+:\d+/.test(l) && !/playground\.js/.test(l.replace(/\(eval at [^)]*\)/, '')); })
+      .map(function (l) {
+        var fn = (l.match(/^\s*at\s+([^(]+?)\s*\(/) || [])[1];
+        var pos = l.match(/<anonymous>:(\d+):(\d+)/);
+        var ln = pos ? +pos[1] - EVAL_OFFSET : 0;
+        if (ln < 1 || ln > total) return null;
+        var where = name + ':' + ln + ':' + pos[2];
+        return 'at ' + (fn && fn !== '__zudo_main__' && fn !== 'eval' ? fn + ' (' + where + ')' : where);
+      })
+      .filter(Boolean)
+      .slice(0, 4);
   }
 
   function run() {
@@ -790,12 +822,13 @@
       });
     }).catch(function (err) {
       if (sysLine) sysLine.remove();
-      var phase = err && (err.code === 'BABEL_PARSE_ERROR' || /SyntaxError/.test(err.name) || err.__phase === 'compile') ? 'Syntax error' : (err && err.name) || 'Error';
       if (err && err.message === 'Could not load the TypeScript compiler') {
         line('error', 'Could not load the TypeScript compiler. Check your connection and run again.', '✗');
+      } else if (err && (err.code === 'BABEL_PARSE_ERROR' || err.__phase === 'compile' || (err instanceof SyntaxError))) {
+        syntaxErrorReport(err, src);
       } else {
-        line('error', phase + ': ' + friendlyError(err), '✗');
-        cleanStack(err).forEach(function (l) { line('stack', l); });
+        line('error', ((err && err.name) || 'Error') + ': ' + ((err && err.message) || String(err)), '✗');
+        cleanStack(err, src).forEach(function (l) { line('stack', l); });
       }
       line('sys', 'failed after ' + (performance.now() - t0).toFixed(0) + 'ms');
       setState('error', 'Failed');
@@ -807,11 +840,14 @@
 
   /* ---------- panel controls ---------- */
 
+  var openedOnce = false;
   function open() {
     panel.classList.add('is-open');
     document.body.classList.add('pg-open');
     render();
-    ta.focus();
+    if (!openedOnce) { openedOnce = true; ta.setSelectionRange(0, 0); }
+    ta.focus({ preventScroll: true });
+    updateCursor();
   }
 
   function close() {
