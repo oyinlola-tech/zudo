@@ -34,6 +34,7 @@
  */
 
 import type { ScaffoldOptions } from "../../types/index.js";
+import { ZUDOJS_PACKAGES_VERSION } from "../../constants/index.js";
 
 export function generateModularMonolithFiles(
   options: ScaffoldOptions,
@@ -48,6 +49,7 @@ export function generateModularMonolithFiles(
 
   const deps = [
     "@zudojs/core",
+    "@zudojs/runtime",
     "@zudojs/container",
     "@zudojs/config",
     "@zudojs/logger",
@@ -61,7 +63,12 @@ export function generateModularMonolithFiles(
     "@zudojs/http",
   ];
 
-  const devDeps = ["tsx", "typescript", "@types/node", "vitest"];
+  const devDeps: Record<string, string> = {
+    tsx: "^4.7.0",
+    typescript: "^5.7.0",
+    "@types/node": "^24.0.0",
+    vitest: "^3.0.0",
+  };
 
   const files: Record<string, string> = {};
 
@@ -74,15 +81,22 @@ export function generateModularMonolithFiles(
         private: true,
         type: "module",
         license: "MIT",
+        zudojs: {
+          projectType: "backend",
+          architecture: "modular-monolith",
+          features: [],
+        },
         scripts: {
-          dev: "node --import tsx watch src/server.ts",
+          dev: "tsx watch src/server.ts",
           start: "node dist/server.js",
           build: "tsc",
           typecheck: "tsc --noEmit",
           test: "vitest run",
         },
-        dependencies: Object.fromEntries(deps.map((d) => [d, "workspace:*"])),
-        devDependencies: Object.fromEntries(devDeps.map((d) => [d, "^1.0.0"])),
+        dependencies: Object.fromEntries(
+          deps.map((d) => [d, ZUDOJS_PACKAGES_VERSION]),
+        ),
+        devDependencies: devDeps,
       },
       null,
       2,
@@ -93,9 +107,9 @@ export function generateModularMonolithFiles(
     "target": "ES2024",
     "module": "Node16",
     "moduleResolution": "Node16",
-    "allowImportingTsExtensions": true,
+    "outDir": "dist",
+    "rootDir": "src",
     "strict": true,
-    "noEmit": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
@@ -105,35 +119,6 @@ export function generateModularMonolithFiles(
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }
-`;
-
-  files["zudojs.config.ts"] = `import { defineConfig } from "@zudojs/config";
-
-export default defineConfig({
-  application: {
-    name: "${nameSlug}",
-  },
-
-  architecture: "modular-monolith",
-
-  runtime: {
-    port: Number(process.env.PORT ?? 3000),
-    env: process.env.NODE_ENV ?? "development",
-  },
-
-  http: {
-    enabled: true,
-    port: 3000,
-  },
-
-  cqrs: {
-    enabled: true,
-  },
-
-  database: {
-    enabled: true,
-  },
-});
 `;
 
   files[".env.example"] = `NODE_ENV=development
@@ -160,8 +145,7 @@ ${modules.map((m) => `- **${m}**`).join("\n")}
 ## Getting Started
 
 \`\`\`bash
-pnpm install
-pnpm dev
+${options.packageManager === "npm" ? "npm run dev" : options.packageManager === "yarn" ? "yarn dev" : options.packageManager === "bun" ? "bun run dev" : "pnpm run dev"}
 \`\`\`
 
 ## License
@@ -217,12 +201,21 @@ process.on("SIGTERM", async () => {
   const sharedDirs = [
     "configs",
     "constants",
+    "controllers",
     "databases",
+    "dtos",
+    "enums",
     "errors",
     "events",
     "interfaces",
+    "jobs",
     "loaders",
+    "loggers",
     "middlewares",
+    "models",
+    "repositories",
+    "routes",
+    "services",
     "types",
     "utils",
     "validators",
@@ -263,7 +256,6 @@ export class ${modNamePascal}Module {
     // CQRS structure
     files[`src/modules/${modName}/commands/index.ts`] = ``;
     files[`src/modules/${modName}/queries/index.ts`] = ``;
-    files[`src/modules/${modName}/events/index.ts`] = ``;
   }
 
   files["tests/index.ts"] = `import { describe, it, expect } from "vitest";

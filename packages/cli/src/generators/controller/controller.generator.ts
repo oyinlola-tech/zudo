@@ -2,14 +2,18 @@
  * zudojs-cli — Controller Generator
  */
 
-import { writeFileTree } from "../../utils/utils.fileSystem.js";
-import { CLIGenerationError, CLIValidationError } from "../../errors/index.js";
-import { normalizeName } from "../../utils/utils.name.js";
+import {
+  writeFileTree,
+  mergeBarrelExport,
+} from "../../utils/utils.fileSystem.js";
+import { CLIGenerationError } from "../../errors/index.js";
+import { normalizeName, toPascalCase } from "../../utils/utils.name.js";
 
 export interface GenerateControllerOptions {
   readonly name: string;
   readonly service?: string;
   readonly basePath?: string;
+  readonly dryRun?: boolean;
 }
 
 export async function generateController(
@@ -17,13 +21,13 @@ export async function generateController(
   cwd: string,
 ): Promise<string[]> {
   const name = normalizeName(options.name);
-  const nameCamel = name
-    .replace(/-([a-z])/g, (_m: string, c: string) => c.toUpperCase())
-    .replace(/^./, (c: string) => c.toUpperCase());
+  const nameCamel = toPascalCase(options.name);
   const basePath = options.basePath ?? "";
+  const prefix = basePath ? `${basePath}/` : "";
+  const indexPath = `${prefix}controllers/index.ts`;
 
   const files: Record<string, string> = {
-    [`${basePath ? `${basePath}/` : ""}controllers/${name}.controller.ts`]: `import { createLogger } from "@zudojs/logger";
+    [`${prefix}controllers/${name}.controller.ts`]: `import { createLogger } from "@zudojs/logger";
 
 export class ${nameCamel}Controller {
   private readonly logger = createLogger({ name: "${name}-controller" });
@@ -43,9 +47,17 @@ export class ${nameCamel}Controller {
 }
 `,
 
-    [`${basePath ? `${basePath}/` : ""}controllers/index.ts`]: `export { ${nameCamel}Controller } from "./${name}.controller.js";
-`,
+    // Merge with any existing barrel content instead of overwriting it.
+    [indexPath]: mergeBarrelExport(
+      cwd,
+      indexPath,
+      `export { ${nameCamel}Controller } from "./${name}.controller.js";`,
+    ),
   };
+
+  if (options.dryRun) {
+    return Object.keys(files);
+  }
 
   try {
     await writeFileTree(cwd, files);

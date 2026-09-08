@@ -39,6 +39,7 @@
  */
 
 import type { ScaffoldOptions } from "../../types/index.js";
+import { ZUDOJS_PACKAGES_VERSION } from "../../constants/index.js";
 
 export function generateMonolithFiles(
   options: ScaffoldOptions,
@@ -48,6 +49,7 @@ export function generateMonolithFiles(
 
   const deps = [
     "@zudojs/core",
+    "@zudojs/runtime",
     "@zudojs/container",
     "@zudojs/config",
     "@zudojs/logger",
@@ -79,7 +81,12 @@ export function generateMonolithFiles(
     deps.push("@zudojs/openapi");
   }
 
-  const devDeps = ["tsx", "typescript", "@types/node", "vitest"];
+  const devDeps: Record<string, string> = {
+    tsx: "^4.7.0",
+    typescript: "^5.7.0",
+    "@types/node": "^24.0.0",
+    vitest: "^3.0.0",
+  };
 
   const files: Record<string, string> = {};
 
@@ -92,8 +99,13 @@ export function generateMonolithFiles(
         private: true,
         type: "module",
         license: "MIT",
+        zudojs: {
+          projectType: "backend",
+          architecture: "monolith",
+          features: [],
+        },
         scripts: {
-          dev: "node --import tsx watch src/server.ts",
+          dev: "tsx watch src/server.ts",
           start: "node dist/server.js",
           build: "tsc",
           typecheck: "tsc --noEmit",
@@ -101,9 +113,9 @@ export function generateMonolithFiles(
           lint: "tsc --noEmit",
         },
         dependencies: Object.fromEntries(
-          [...new Set(deps)].map((d) => [d, "workspace:*"]),
+          [...new Set(deps)].map((d) => [d, ZUDOJS_PACKAGES_VERSION]),
         ),
-        devDependencies: Object.fromEntries(devDeps.map((d) => [d, "^1.0.0"])),
+        devDependencies: devDeps,
       },
       null,
       2,
@@ -115,9 +127,9 @@ export function generateMonolithFiles(
     "target": "ES2024",
     "module": "Node16",
     "moduleResolution": "Node16",
-    "allowImportingTsExtensions": true,
+    "outDir": "dist",
+    "rootDir": "src",
     "strict": true,
-    "noEmit": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
@@ -127,46 +139,6 @@ export function generateMonolithFiles(
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }
-`;
-
-  // zudojs.config.ts
-  files["zudojs.config.ts"] = `import { defineConfig } from "@zudojs/config";
-
-export default defineConfig({
-  application: {
-    name: "${nameSlug}",
-  },
-
-  architecture: "monolith",
-
-  runtime: {
-    port: Number(process.env.PORT ?? 3000),
-    env: process.env.NODE_ENV ?? "development",
-    shutdownTimeout: 30_000,
-  },
-
-  http: {
-    enabled: true,
-    host: "0.0.0.0",
-    port: Number(process.env.HTTP_PORT ?? 3000),
-  },
-
-  cqrs: {
-    enabled: ${options.enableCQRS},
-  },
-
-  database: {
-    enabled: ${options.enableDatabase},
-  },
-
-  events: {
-    enabled: ${options.enableMessaging},
-  },
-
-  observability: {
-    enabled: ${options.enableObservability},
-  },
-});
 `;
 
   // Environment
@@ -191,8 +163,7 @@ A Zudojs framework application.
 ## Getting Started
 
 \`\`\`bash
-pnpm install
-pnpm dev
+${options.packageManager === "npm" ? "npm run dev" : options.packageManager === "yarn" ? "yarn dev" : options.packageManager === "bun" ? "bun run dev" : "pnpm run dev"}
 \`\`\`
 
 ## Structure
@@ -234,7 +205,6 @@ MIT
 
   files["src/server.ts"] = `import { createApp } from "./app.js";
 import { createRuntime } from "@zudojs/runtime";
-import { logger } from "@zudojs/logger";
 
 const app = await createApp();
 
@@ -245,8 +215,7 @@ const runtime = createRuntime({
 });
 
 await runtime.start();
-
-const server = await app.listen();
+await app.listen();
 
 process.on("SIGTERM", async () => {
   await runtime.stop();
@@ -302,8 +271,26 @@ export async function createApp() {
     files[`src/${dir}/index.ts`] = "";
   }
 
-  // Services with CQRS structure
-  files["src/services/index.ts"] = ``;
+  // Services
+  const serviceName = options.services[0] ?? "app";
+  const serviceNamePascal = serviceName
+    .replace(/-([a-z])/g, (_m: string, c: string) => c.toUpperCase())
+    .replace(/^./, (c: string) => c.toUpperCase());
+
+  files[`src/services/${serviceName}.service.ts`] = `import { createLogger } from "@zudojs/logger";
+
+export class ${serviceNamePascal}Service {
+  private readonly logger = createLogger({ service: "${serviceName}" });
+
+  async initialize(): Promise<void> {
+    this.logger.info("${serviceName} service initialized");
+  }
+}
+`;
+
+  files["src/services/index.ts"] =
+    `export { ${serviceNamePascal}Service } from "./${serviceName}.service.js";
+`;
 
   // Controllers
   files["src/controllers/health.controller.ts"] =

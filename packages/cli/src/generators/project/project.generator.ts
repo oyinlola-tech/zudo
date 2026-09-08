@@ -1,13 +1,11 @@
 import { mkdir } from "node:fs/promises";
 import type { ScaffoldOptions } from "../../types/index.js";
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
-import { execCommand } from "../../utils/utils.exec.js";
 import { CLI_VERSION } from "../../constants/index.js";
 import { generateMonolithFiles } from "../../templates/monolith/index.js";
 import { generateModularMonolithFiles } from "../../templates/modular-monolith/index.js";
 import { generateMicroserviceFiles } from "../../templates/microservice/index.js";
 import { CLIGenerationError } from "../../errors/index.js";
-import { getInstallCommand } from "../../installers/dependency.installer.js";
 
 export interface GenerateProjectResult {
   readonly projectPath: string;
@@ -55,40 +53,8 @@ export async function generateProject(
 
   const filesCreated = Object.keys(templateFiles);
 
-  if (options.initGit) {
-    try {
-      await execCommand("git", ["init"], projectPath);
-      await execCommand(
-        "git",
-        ["config", "user.name", "Zudojs CLI"],
-        projectPath,
-      );
-      await execCommand(
-        "git",
-        ["config", "user.email", "cli@zudojs.dev"],
-        projectPath,
-      );
-      await execCommand("git", ["add", "-A"], projectPath);
-      await execCommand(
-        "git",
-        ["commit", "-m", "chore: initial commit from Zudojs CLI"],
-        projectPath,
-      );
-    } catch {
-      // Git operations are best-effort; non-fatal
-    }
-  }
-
-  if (options.installDeps) {
-    try {
-      const [installFile, ...installArgs] = getInstallCommand(
-        options.packageManager,
-      );
-      await execCommand(installFile, installArgs, projectPath);
-    } catch {
-      // Best-effort: project files are already created.
-    }
-  }
+  // Note: git initialization and dependency installation are orchestrated by
+  // the create command — this generator only writes project files.
 
   return {
     projectPath,

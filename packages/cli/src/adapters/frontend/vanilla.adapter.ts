@@ -32,7 +32,7 @@ export class VanillaAdapter implements FrontendAdapter {
     const files = this.getBaseFiles(context);
     await scaffoldWithFallback({
       command: "npm",
-      args: ["create", "vite@latest", ".", "--template", "vanilla-ts"],
+      args: ["create", "vite@latest", ".", "--", "--template", "vanilla-ts"],
       targetPath: context.projectPath,
       fallbackFiles: files,
     });

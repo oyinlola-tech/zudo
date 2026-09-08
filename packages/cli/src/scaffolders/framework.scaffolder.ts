@@ -19,7 +19,10 @@ export abstract class FrameworkScaffolder {
 
   async scaffold(targetPath: string): Promise<ScaffolderResult> {
     try {
-      await execCommand(this.command, this.args, targetPath);
+      await execCommand(this.command, this.args, targetPath, {
+        // Suppress interactive prompts from create-* tools.
+        env: { ...process.env, CI: "1" },
+      });
       return { success: true, path: targetPath };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -31,13 +34,13 @@ export abstract class FrameworkScaffolder {
 export class ViteReactScaffolder extends FrameworkScaffolder {
   readonly name = "react-vite";
   readonly command = "npm";
-  readonly args = ["create", "vite@latest", ".", "--template", "react-ts"];
+  readonly args = ["create", "vite@latest", ".", "--", "--template", "react-ts"];
 }
 
 export class ViteVueScaffolder extends FrameworkScaffolder {
   readonly name = "vue-vite";
   readonly command = "npm";
-  readonly args = ["create", "vite@latest", ".", "--template", "vue-ts"];
+  readonly args = ["create", "vite@latest", ".", "--", "--template", "vue-ts"];
 }
 
 export class NextScaffolder extends FrameworkScaffolder {
@@ -78,13 +81,13 @@ export class AngularScaffolder extends FrameworkScaffolder {
 export class AstroScaffolder extends FrameworkScaffolder {
   readonly name = "astro";
   readonly command = "npm";
-  readonly args = ["create", "astro@latest", ".", "--template", "minimal"];
+  readonly args = ["create", "astro@latest", ".", "--", "--template", "minimal"];
 }
 
 export class SvelteScaffolder extends FrameworkScaffolder {
   readonly name = "svelte";
   readonly command = "npm";
-  readonly args = ["create", "svite@latest", ".", "--template", "ts"];
+  readonly args = ["create", "vite@latest", ".", "--", "--template", "svelte-ts"];
 }
 
 export class SvelteKitScaffolder extends FrameworkScaffolder {
@@ -96,7 +99,7 @@ export class SvelteKitScaffolder extends FrameworkScaffolder {
 export class VanillaScaffolder extends FrameworkScaffolder {
   readonly name = "vanilla";
   readonly command = "npm";
-  readonly args = ["create", "vite@latest", ".", "--template", "vanilla-ts"];
+  readonly args = ["create", "vite@latest", ".", "--", "--template", "vanilla-ts"];
 }
 
 export class FlutterScaffolder extends FrameworkScaffolder {

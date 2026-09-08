@@ -14,18 +14,26 @@ import {
   CLI_DEFAULTS,
 } from "../cliConstant/cliConstant.value.js";
 
-/** Returns whether the args contain a help request. */
+/**
+ * Returns whether the args are a help request.
+ *
+ * Only the first argument is considered so that command-specific flags
+ * (e.g. `zudojs create -h ...`) are not swallowed by the global handler.
+ */
 export function isHelpRequest(args: CLIArguments): boolean {
-  return args.some(
-    (arg) => arg === CLI_COMMANDS.HELP || arg === "-h" || arg === "--help",
-  );
+  const first = args[0];
+  return first === CLI_COMMANDS.HELP || first === "-h" || first === "--help";
 }
 
-/** Returns whether the args contain a version request. */
+/**
+ * Returns whether the args are a version request.
+ *
+ * Only the first argument is considered.
+ */
 export function isVersionRequest(args: CLIArguments): boolean {
-  return args.some(
-    (arg) =>
-      arg === CLI_COMMANDS.VERSION || arg === "-v" || arg === "--version",
+  const first = args[0];
+  return (
+    first === CLI_COMMANDS.VERSION || first === "-v" || first === "--version"
   );
 }
 

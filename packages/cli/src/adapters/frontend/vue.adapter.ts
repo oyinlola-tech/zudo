@@ -36,6 +36,7 @@ export class VueAdapter implements FrontendAdapter {
         "create",
         "vite@latest",
         ".",
+        "--",
         "--template",
         context.language === "javascript" ? "vue" : "vue-ts",
       ],

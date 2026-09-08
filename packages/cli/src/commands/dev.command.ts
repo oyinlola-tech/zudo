@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { execCommand } from "../utils/utils.exec.js";
+import { runStreaming } from "../utils/utils.exec.js";
 import type { CLIContext } from "../cliType/cliType.type.js";
 import { CLIValidationError, CLIGenerationError } from "../errors/index.js";
 import { ManifestManager } from "../manifest/manifestManager.core.js";
@@ -29,7 +29,9 @@ export async function runDevCommand(context: CLIContext): Promise<void> {
     );
   }
 
-  const config = readProjectConfig(context.cwd);
+  const manifest = await new ManifestManager(context.cwd).read();
+
+  const config = readProjectConfig(context.cwd) ?? configFromManifest(manifest);
 
   if (!config) {
     throw new CLIValidationError(
@@ -48,14 +50,13 @@ export async function runDevCommand(context: CLIContext): Promise<void> {
     context.logger.info(`Frontend: ${config.frontend.framework}`);
   }
 
-  const manifest = await new ManifestManager(context.cwd).read();
-  const services = manifest?.capabilities ?? [];
+  const services = manifest?.services ?? [];
 
   const processes: Promise<void>[] = [];
 
   if (
-    (!frontendOnly && config.type === "backend") ||
-    config.type === "fullstack"
+    !frontendOnly &&
+    (config.type === "backend" || config.type === "fullstack")
   ) {
     if (config.backend?.architecture === "microservice") {
       processes.push(...startMicroserviceDev(context.cwd, services));
@@ -85,6 +86,28 @@ export async function runDevCommand(context: CLIContext): Promise<void> {
   } catch (error) {
     throw new CLIGenerationError("Development server failed to start.", error);
   }
+}
+
+function configFromManifest(
+  manifest: Awaited<ReturnType<ManifestManager["read"]>>,
+): {
+  readonly name: string;
+  readonly type: string;
+  readonly backend?: { readonly architecture: string };
+  readonly frontend?: { readonly framework: string };
+} | null {
+  if (!manifest) return null;
+
+  return {
+    name: "zudojs-project",
+    type: manifest.projectType ?? "backend",
+    backend: manifest.backend
+      ? { architecture: manifest.backend.architecture }
+      : { architecture: manifest.architecture },
+    frontend: manifest.frontend
+      ? { framework: manifest.frontend.framework }
+      : undefined,
+  };
 }
 
 function readProjectConfig(cwd: string): {
@@ -182,9 +205,9 @@ async function startBackendDev(
   const portFlag = port ? [`--port=${port}`] : [];
 
   if (config.backend?.architecture === "microservice") {
-    await execCommand("tsx", ["watch", "apps/gateway/src", ...portFlag], cwd);
+    await runStreaming("tsx", ["watch", "apps/gateway/src", ...portFlag], cwd);
   } else {
-    await execCommand("tsx", ["watch", "src", ...portFlag], cwd);
+    await runStreaming("tsx", ["watch", "src", ...portFlag], cwd);
   }
 }
 
@@ -192,12 +215,22 @@ function startMicroserviceDev(
   cwd: string,
   services: readonly string[],
 ): Promise<void>[] {
-  const serviceDirs = services.map((service) => join(cwd, "apps", service));
+  const serviceDirs = services.map((service) => {
+    const nested = join(cwd, "apps", "services", service);
+    return existsSync(join(nested, "src"))
+      ? nested
+      : join(cwd, "apps", service);
+  });
   const promises: Promise<void>[] = [];
+
+  const gatewayDir = join(cwd, "apps", "gateway");
+  if (existsSync(join(gatewayDir, "src"))) {
+    promises.push(runStreaming("tsx", ["watch", "src"], gatewayDir));
+  }
 
   for (const dir of serviceDirs) {
     if (existsSync(join(dir, "src"))) {
-      promises.push(execCommand("tsx", ["watch", "src"], dir).then(() => {}));
+      promises.push(runStreaming("tsx", ["watch", "src"], dir));
     }
   }
 
@@ -213,50 +246,50 @@ async function startFrontendDev(
 
   switch (framework) {
     case "react":
-      await execCommand("npm", ["run", "dev"], frontendDir);
+      await runStreaming("npm", ["run", "dev"], frontendDir);
       break;
 
     case "next":
-      await execCommand("npm", ["run", "dev"], frontendDir);
+      await runStreaming("npm", ["run", "dev"], frontendDir);
       break;
 
     case "vue":
-      await execCommand("npm", ["run", "dev"], frontendDir);
+      await runStreaming("npm", ["run", "dev"], frontendDir);
       break;
 
     case "nuxt":
-      await execCommand("npm", ["run", "dev"], frontendDir);
+      await runStreaming("npm", ["run", "dev"], frontendDir);
       break;
 
     case "angular":
-      await execCommand("ng", ["serve"], frontendDir);
+      await runStreaming("ng", ["serve"], frontendDir);
       break;
 
     case "svelte":
-      await execCommand("npm", ["run", "dev"], frontendDir);
+      await runStreaming("npm", ["run", "dev"], frontendDir);
       break;
 
     case "sveltekit":
-      await execCommand("npm", ["run", "dev"], frontendDir);
+      await runStreaming("npm", ["run", "dev"], frontendDir);
       break;
 
     case "astro":
-      await execCommand("npm", ["run", "dev"], frontendDir);
+      await runStreaming("npm", ["run", "dev"], frontendDir);
       break;
 
     case "vanilla":
-      await execCommand("npm", ["run", "dev"], frontendDir);
+      await runStreaming("npm", ["run", "dev"], frontendDir);
       break;
 
     case "flutter":
-      await execCommand("flutter", ["run", "--debug"], frontendDir);
+      await runStreaming("flutter", ["run", "--debug"], frontendDir);
       break;
 
     case "react-native":
-      await execCommand("npx", ["react-native", "start"], frontendDir);
+      await runStreaming("npx", ["react-native", "start"], frontendDir);
       break;
 
     default:
-      await execCommand("npm", ["run", "dev"], frontendDir);
+      await runStreaming("npm", ["run", "dev"], frontendDir);
   }
 }

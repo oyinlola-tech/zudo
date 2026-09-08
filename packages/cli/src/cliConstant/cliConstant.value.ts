@@ -14,7 +14,7 @@ export const CLI_NAME = "zudojs";
 /** Default application configuration. */
 export const CLI_DEFAULTS = {
   NAME: "zudojs",
-  VERSION: "0.1.0",
+  VERSION: "0.1.2",
   DESCRIPTION: "Command-line interface for the Zudojs framework.",
   COMMAND_PREFIX: "zudojs",
   DEFAULT_CWD: process.cwd(),

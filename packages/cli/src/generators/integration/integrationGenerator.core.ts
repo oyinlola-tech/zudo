@@ -40,12 +40,12 @@ export class IntegrationGenerator {
     // CORS configuration for backend
     files["config/cors.ts"] = this.generateCorsConfig(context);
 
-    // Development proxy configuration
+    // Development proxy configuration (belongs to the frontend app).
     if (
       context.project.frontend?.framework === "react" ||
       context.project.frontend?.framework === "vue"
     ) {
-      files["vite.config.ts"] = this.generateViteProxy(context);
+      files["apps/web/vite.config.ts"] = this.generateViteProxy(context);
     }
 
     await writeFileTree(context.projectPath, files);
@@ -191,12 +191,17 @@ export const corsConfig = {
 
   private generateViteProxy(context: IntegrationContext): string {
     const backendPort = context.backendPort ?? 3000;
+    const isVue = context.project.frontend?.framework === "vue";
+    const pluginImport = isVue
+      ? `import vue from "@vitejs/plugin-vue";`
+      : `import react from "@vitejs/plugin-react";`;
+    const pluginCall = isVue ? "vue()" : "react()";
 
     return `import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+${pluginImport}
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [${pluginCall}],
   server: {
     proxy: {
       "/api": {

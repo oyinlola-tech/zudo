@@ -30,11 +30,20 @@ export class AngularAdapter implements FrontendAdapter {
 
   async scaffold(context: FrontendGenerationContext): Promise<void> {
     const files = this.getBaseFiles(context);
+    // Angular CLI requires a valid project name; "." is not one. Pass the
+    // real name and scaffold into the current directory via --directory.
+    const projectName =
+      context.project.name
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, "-")
+        .replace(/^-+|-+$/g, "") || "zudojs-app";
     await scaffoldWithFallback({
       command: "npx",
       args: [
         "@angular/cli@latest",
         "new",
+        projectName,
+        "--directory",
         ".",
         "--skip-git",
         "--skip-install",

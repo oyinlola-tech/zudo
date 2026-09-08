@@ -21,7 +21,6 @@ import { generateRoute } from "../generators/route/route.generator.js";
 import { generateModel } from "../generators/model/model.generator.js";
 import { generateDto } from "../generators/dto/dto.generator.js";
 import { generateValidator } from "../generators/validator/validator.generator.js";
-import { ManifestManager } from "../manifest/manifestManager.core.js";
 import { CLIGenerationError, CLIValidationError } from "../errors/index.js";
 
 const VALID_SCHEMATICS = [
@@ -74,17 +73,42 @@ function getBasePath(
 }
 
 function readZudojsArchitecture(cwd: string): string | null {
-  const configPath = join(cwd, "zudojs.config.ts");
-  if (!existsSync(configPath)) {
-    const configPathJs = join(cwd, "zudojs.config.js");
-    if (!existsSync(configPathJs)) return null;
-    const content = readFileSync(configPathJs, "utf-8");
-    const match = content.match(/architecture:\s*["'](\w[\w-]*)["']/);
-    return match?.[1] ?? null;
+  for (const configFile of ["zudojs.config.ts", "zudojs.config.js"]) {
+    const configPath = join(cwd, configFile);
+    if (existsSync(configPath)) {
+      const content = readFileSync(configPath, "utf-8");
+      const match = content.match(/architecture:\s*["'](\w[\w-]*)["']/);
+      if (match?.[1]) return match[1];
+    }
   }
-  const content = readFileSync(configPath, "utf-8");
-  const match = content.match(/architecture:\s*["'](\w[\w-]*)["']/);
-  return match?.[1] ?? null;
+
+  // Fall back to the machine-managed manifest written by `zudojs create`.
+  const manifestPath = join(cwd, ".zudojs", "manifest.json");
+  if (existsSync(manifestPath)) {
+    try {
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
+        architecture?: string;
+      };
+      if (manifest.architecture) return manifest.architecture;
+    } catch {
+      // ignore malformed manifest
+    }
+  }
+
+  // Fall back to the zudojs field in package.json.
+  const pkgPath = join(cwd, "package.json");
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
+        zudojs?: { architecture?: string };
+      };
+      if (pkg.zudojs?.architecture) return pkg.zudojs.architecture;
+    } catch {
+      // ignore malformed package.json
+    }
+  }
+
+  return null;
 }
 
 export async function runGenerateCommand(context: CLIContext): Promise<void> {
@@ -109,7 +133,6 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
 
   const cwd = context.cwd;
   const architecture = readZudojsArchitecture(cwd);
-  const manifest = await new ManifestManager(cwd).read();
 
   if (architecture) {
     context.logger.info(`Detected architecture: ${architecture}`);
@@ -143,7 +166,13 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
     cwd,
   );
 
-  context.logger.info(`Generated ${result.length} files:`);
+  if (dryRun) {
+    context.logger.info(
+      `Dry run: ${result.length} files would be generated (nothing written):`,
+    );
+  } else {
+    context.logger.info(`Generated ${result.length} files:`);
+  }
   for (const file of result) {
     context.logger.info(`  - ${file}`);
   }
@@ -157,53 +186,56 @@ async function runSchematic(
 ): Promise<string[]> {
   try {
     const basePath = getBasePath(options.architecture, schematic);
-    const moduleName = options.module ?? name;
+    const dryRun = options.dryRun;
 
     switch (schematic) {
       case "service":
-        return await generateService({ name, basePath }, cwd);
+        return await generateService({ name, basePath, dryRun }, cwd);
 
       case "module":
-        return await generateModule({ name, feature: true, basePath }, cwd);
+        return await generateModule(
+          { name, feature: true, basePath, dryRun },
+          cwd,
+        );
 
       case "command":
         return await generateCommand(
-          { name, service: options.service ?? "default", basePath },
+          { name, service: options.service ?? "default", basePath, dryRun },
           cwd,
         );
 
       case "query":
         return await generateQuery(
-          { name, service: options.service ?? "default", basePath },
+          { name, service: options.service ?? "default", basePath, dryRun },
           cwd,
         );
 
       case "controller":
-        return await generateController({ name, basePath }, cwd);
+        return await generateController({ name, basePath, dryRun }, cwd);
 
       case "repository":
-        return await generateRepository({ name, basePath }, cwd);
+        return await generateRepository({ name, basePath, dryRun }, cwd);
 
       case "middleware":
-        return await generateMiddleware({ name, basePath }, cwd);
+        return await generateMiddleware({ name, basePath, dryRun }, cwd);
 
       case "event":
-        return await generateEvent({ name, basePath }, cwd);
+        return await generateEvent({ name, basePath, dryRun }, cwd);
 
       case "job":
-        return await generateJob({ name, basePath }, cwd);
+        return await generateJob({ name, basePath, dryRun }, cwd);
 
       case "route":
-        return await generateRoute({ name, basePath }, cwd);
+        return await generateRoute({ name, basePath, dryRun }, cwd);
 
       case "model":
-        return await generateModel({ name, basePath }, cwd);
+        return await generateModel({ name, basePath, dryRun }, cwd);
 
       case "dto":
-        return await generateDto({ name, basePath }, cwd);
+        return await generateDto({ name, basePath, dryRun }, cwd);
 
       case "validator":
-        return await generateValidator({ name, basePath }, cwd);
+        return await generateValidator({ name, basePath, dryRun }, cwd);
 
       default:
         throw new CLIValidationError(

@@ -6,17 +6,12 @@
  * @module generators/fullstack
  */
 
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import type { ProjectConfiguration } from "../../types/projectConfiguration.type.js";
-import type {
-  FrontendAdapter,
-  FrontendGenerationContext,
-} from "../../adapters/frontend/frontendAdapter.type.js";
+import type { FrontendGenerationContext } from "../../adapters/frontend/frontendAdapter.type.js";
 import { FrontendAdapterRegistry } from "../../registries/adapter/frontendAdapterRegistry.core.js";
-import { PackageManagerRegistry } from "../../registries/adapter/packageManagerRegistry.core.js";
-import { DependencyResolver } from "../../resolvers/dependency/dependencyResolver.core.js";
-import { IntegrationGenerator } from "../integration/integrationGenerator.core.js";
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
-import { execCommand } from "../../utils/utils.exec.js";
 
 /**
  * Fullstack generation context.
@@ -40,15 +35,9 @@ export interface FullstackGenerationResult {
  */
 export class FullstackComposer {
   private readonly frontendRegistry: FrontendAdapterRegistry;
-  private readonly packageManagerRegistry: PackageManagerRegistry;
-  private readonly dependencyResolver: DependencyResolver;
-  private readonly integrationGenerator: IntegrationGenerator;
 
   constructor() {
     this.frontendRegistry = new FrontendAdapterRegistry();
-    this.packageManagerRegistry = new PackageManagerRegistry();
-    this.dependencyResolver = new DependencyResolver();
-    this.integrationGenerator = new IntegrationGenerator();
   }
 
   /**
@@ -63,7 +52,10 @@ export class FullstackComposer {
     try {
       // 1. Create workspace structure
       await this.createWorkspace(context);
-      files.push("package.json", "pnpm-workspace.yaml", "zudojs.config.ts");
+      files.push("package.json", "zudojs.config.ts");
+      if (this.getPackageManager(context) === "pnpm") {
+        files.push("pnpm-workspace.yaml");
+      }
 
       // 2. Generate shared packages
       await this.generateSharedPackages(context);
@@ -75,25 +67,8 @@ export class FullstackComposer {
         files.push(...frontendFiles);
       }
 
-      // 4. Generate integration files
-      await this.integrationGenerator.generate({
-        project: context.project,
-        projectPath: context.projectPath,
-        backendPort: 3000,
-        frontendPort:
-          context.project.frontend?.framework === "next" ? 3000 : 5173,
-      });
-      files.push(
-        ".env.example",
-        "config/cors.ts",
-        ...(context.project.frontend?.framework === "react" ||
-        context.project.frontend?.framework === "vue"
-          ? ["vite.config.ts"]
-          : []),
-      );
-
-      // 5. Install dependencies
-      await this.installDependencies(context);
+      // Note: integration files and dependency installation are orchestrated
+      // by the create command to avoid running them twice.
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
     }
@@ -105,57 +80,71 @@ export class FullstackComposer {
     };
   }
 
+  private getPackageManager(context: FullstackGenerationContext): string {
+    return context.project.workspace?.packageManager ?? "pnpm";
+  }
+
   private async createWorkspace(
     context: FullstackGenerationContext,
   ): Promise<void> {
+    const packageManager = this.getPackageManager(context);
+    const workspaceGlobs = ["apps/*", "packages/*"];
+
+    const scriptFor = (script: string): string => {
+      switch (packageManager) {
+        case "npm":
+          return `npm run ${script} --workspaces --if-present`;
+        case "yarn":
+          return `yarn workspaces run ${script}`;
+        case "bun":
+          return `bun run --filter '*' ${script}`;
+        default:
+          return `pnpm -r --parallel run ${script}`;
+      }
+    };
+
     const rootPackageJson = {
       name: context.project.name,
       private: true,
+      ...(packageManager === "pnpm" ? {} : { workspaces: workspaceGlobs }),
       scripts: {
-        dev: "pnpm --parallel dev",
-        build: "pnpm --parallel build",
-        test: "pnpm --parallel test",
-        lint: "pnpm --parallel lint",
-        typecheck: "pnpm --parallel typecheck",
+        dev: scriptFor("dev"),
+        build: scriptFor("build"),
+        test: scriptFor("test"),
+        lint: scriptFor("lint"),
+        typecheck: scriptFor("typecheck"),
       },
       devDependencies: {
         typescript: "^5.0.0",
       },
     };
 
-    const workspaceYaml = `packages:
-  - "apps/*"
-  - "packages/*"
-`;
+    const frontendBlock = context.project.frontend
+      ? `
+  frontend: {
+    framework: "${context.project.frontend.framework}",
+  },`
+      : "";
 
     const zudojsConfig = `export default {
-  version: 1,
-  project: {
-    name: "${context.project.name}",
-    type: "fullstack",
-  },
-  backend: {
-    architecture: "${context.project.backend?.architecture ?? "monolith"}",
-    api: "${context.project.backend?.api ?? "rest"}",
-  },
-  frontend: {
-    framework: "${context.project.frontend?.framework ?? "react"}",
-    architecture: "${context.project.frontend?.architecture ?? "zudojs-standard"}",
-  },
-  database: {
-    provider: "${context.project.backend?.database ?? "postgresql"}",
-  },
-  workspace: {
-    packageManager: "${context.project.workspace?.packageManager ?? "pnpm"}",
-  },
+  name: "${context.project.name}",
+  projectType: "fullstack",
+  architecture: "${context.project.backend?.architecture ?? "monolith"}",${frontendBlock}
 };
 `;
 
-    await writeFileTree(context.projectPath, {
-      "package.json": JSON.stringify(rootPackageJson, null, 2),
-      "pnpm-workspace.yaml": workspaceYaml,
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify(rootPackageJson, null, 2) + "\n",
       "zudojs.config.ts": zudojsConfig,
-    });
+    };
+
+    if (packageManager === "pnpm") {
+      files["pnpm-workspace.yaml"] = `packages:
+${workspaceGlobs.map((g) => `  - "${g}"`).join("\n")}
+`;
+    }
+
+    await writeFileTree(context.projectPath, files);
   }
 
   private async generateSharedPackages(
@@ -207,14 +196,23 @@ export type Timestamp = string;
       );
     }
 
-    const frontendPath = `${context.projectPath}/apps/web`;
+    const frontendPath = join(context.projectPath, "apps", "web");
+
+    // Scaffolders spawn with cwd=frontendPath; the directory must exist
+    // before the child process starts or spawn fails with ENOENT.
+    await mkdir(frontendPath, { recursive: true });
+
     const frontendContext: FrontendGenerationContext = {
       project: context.project,
       projectPath: frontendPath,
       framework: adapter.framework,
       language: context.project.frontend.language ?? "typescript",
       architecture: context.project.frontend.architecture,
-      packageManager: context.project.workspace?.packageManager ?? "pnpm",
+      packageManager: this.getPackageManager(context) as
+        | "pnpm"
+        | "npm"
+        | "yarn"
+        | "bun",
       features: {
         testing: true,
         linting: true,
@@ -228,16 +226,5 @@ export type Timestamp = string;
     await adapter.generateIntegration(frontendContext);
 
     return ["apps/web/"];
-  }
-
-  private async installDependencies(
-    context: FullstackGenerationContext,
-  ): Promise<void> {
-    const pmName = context.project.workspace?.packageManager ?? "pnpm";
-    const packageManager = this.packageManagerRegistry.get(pmName);
-
-    if (packageManager) {
-      await packageManager.install(context.projectPath);
-    }
   }
 }

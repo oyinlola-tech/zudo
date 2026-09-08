@@ -4,12 +4,13 @@
  * The `zudojs add` command for adding feature packages.
  */
 
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { CLIContext } from "../cliType/cliType.type.js";
-import { execCommand } from "../utils/utils.exec.js";
+import { runStreaming } from "../utils/utils.exec.js";
 import { CLIValidationError, CLIGenerationError } from "../errors/index.js";
 import { ManifestManager } from "../manifest/manifestManager.core.js";
+import { ZUDOJS_PACKAGES_VERSION } from "../constants/index.js";
 
 const FEATURE_PACKAGES: Readonly<Record<string, readonly string[]>> = {
   database: ["@zudojs/database"],
@@ -45,9 +46,9 @@ export async function runAddCommand(context: CLIContext): Promise<void> {
   context.logger.info(`Packages: ${packages.join(", ")}`);
 
   try {
-    const { manager, rootPkg, isWorkspace } = detectPackageManager();
+    const { manager, rootPkg, isWorkspace } = detectPackageManager(context.cwd);
     const pkgPath = join(context.cwd, rootPkg);
-    const version = isWorkspace ? "workspace:*" : readZudojsVersion();
+    const version = isWorkspace ? "workspace:*" : ZUDOJS_PACKAGES_VERSION;
 
     if (!existsSync(pkgPath)) {
       throw new CLIGenerationError(`Could not find package.json at ${pkgPath}`);
@@ -94,7 +95,7 @@ export async function runAddCommand(context: CLIContext): Promise<void> {
 
     if (context.values["skip-install"] !== true) {
       context.logger.info(`Installing dependencies with ${manager}...`);
-      await execCommand(manager, ["install"], context.cwd);
+      await runStreaming(manager, ["install"], context.cwd);
     }
 
     context.logger.info(`Feature "${feature}" added successfully.`);
@@ -113,39 +114,42 @@ export async function runAddCommand(context: CLIContext): Promise<void> {
   }
 }
 
-function detectPackageManager(): {
+function detectPackageManager(cwd: string): {
   manager: string;
   rootPkg: string;
   isWorkspace: boolean;
 } {
-  if (existsSync("pnpm-workspace.yaml")) {
-    return { manager: "pnpm", rootPkg: "package.json", isWorkspace: true };
-  }
+  // A project is a workspace only when a workspace definition exists:
+  // pnpm-workspace.yaml or a "workspaces" field in package.json. Lock files
+  // merely indicate the package manager.
+  const hasPnpmWorkspace = existsSync(join(cwd, "pnpm-workspace.yaml"));
+  let hasWorkspacesField = false;
 
-  if (existsSync("yarn.lock")) {
-    return { manager: "yarn", rootPkg: "package.json", isWorkspace: true };
-  }
-
-  if (existsSync("lerna.json")) {
-    return { manager: "npm", rootPkg: "package.json", isWorkspace: true };
-  }
-
-  return { manager: "npm", rootPkg: "package.json", isWorkspace: false };
-}
-
-function readZudojsVersion(): string {
   try {
-    const rootPkg = join(process.cwd(), "package.json");
-    if (existsSync(rootPkg)) {
-      const pkg = JSON.parse(readFileSync(rootPkg, "utf-8")) as {
-        version?: string;
+    const pkgPath = join(cwd, "package.json");
+    if (existsSync(pkgPath)) {
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
+        workspaces?: unknown;
       };
-      return pkg.version ?? "latest";
+      hasWorkspacesField = pkg.workspaces !== undefined;
     }
   } catch {
-    // ignore
+    // ignore malformed package.json
   }
-  return "latest";
+
+  const isWorkspace = hasPnpmWorkspace || hasWorkspacesField;
+
+  const manager =
+    hasPnpmWorkspace || existsSync(join(cwd, "pnpm-lock.yaml"))
+      ? "pnpm"
+      : existsSync(join(cwd, "yarn.lock"))
+        ? "yarn"
+        : existsSync(join(cwd, "bun.lock")) ||
+            existsSync(join(cwd, "bun.lockb"))
+          ? "bun"
+          : "npm";
+
+  return { manager, rootPkg: "package.json", isWorkspace };
 }
 
 function updateZudojsConfig(cwd: string, feature: string): void {

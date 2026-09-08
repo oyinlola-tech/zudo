@@ -101,6 +101,16 @@ export class CLIParser {
       index++;
     }
 
+    // Apply documented option defaults for options not provided on the CLI.
+    for (const definition of definitions) {
+      if (
+        definition.defaultValue !== undefined &&
+        !(definition.name in options)
+      ) {
+        options[definition.name] = definition.defaultValue;
+      }
+    }
+
     const parsedArguments = this.parseArguments(
       positional,
       argumentsDefinitions,

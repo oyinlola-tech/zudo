@@ -4,7 +4,7 @@
  * @module adapters/package-managers/npm
  */
 
-import { execCommand } from "../../utils/utils.exec.js";
+import { execCommand, runStreaming } from "../../utils/utils.exec.js";
 import type { PackageManager } from "./packageManager.type.js";
 
 /**
@@ -23,12 +23,12 @@ export class NpmAdapter implements PackageManager {
   }
 
   async install(projectPath: string): Promise<void> {
-    await execCommand("npm", ["install"], projectPath);
+    await runStreaming("npm", ["install"], projectPath);
   }
 
   async add(projectPath: string, packages: readonly string[]): Promise<void> {
     if (packages.length === 0) return;
-    await execCommand("npm", ["install", ...packages], projectPath);
+    await runStreaming("npm", ["install", ...packages], projectPath);
   }
 
   async addDev(
@@ -36,11 +36,11 @@ export class NpmAdapter implements PackageManager {
     packages: readonly string[],
   ): Promise<void> {
     if (packages.length === 0) return;
-    await execCommand("npm", ["install", "-D", ...packages], projectPath);
+    await runStreaming("npm", ["install", "-D", ...packages], projectPath);
   }
 
   async run(projectPath: string, script: string): Promise<void> {
-    await execCommand("npm", ["run", script], projectPath);
+    await runStreaming("npm", ["run", script], projectPath);
   }
 
   getInstallCommand(): string {

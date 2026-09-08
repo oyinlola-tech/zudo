@@ -36,6 +36,7 @@ export class SvelteAdapter implements FrontendAdapter {
         "create",
         "vite@latest",
         ".",
+        "--",
         "--template",
         context.language === "javascript" ? "svelte" : "svelte-ts",
       ],

@@ -6,7 +6,6 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
 import type { CLIContext } from "../cliType/cliType.type.js";
 
 interface DoctorCheck {
@@ -21,11 +20,11 @@ export async function runDoctorCommand(context: CLIContext): Promise<void> {
   const errors: string[] = [];
 
   checks.push(checkNodeVersion());
-  checks.push(checkPackageManager());
-  checks.push(checkTypeScriptConfig());
-  checks.push(checkZudojsConfig());
+  checks.push(checkPackageManager(context.cwd));
+  checks.push(checkTypeScriptConfig(context.cwd));
+  checks.push(checkZudojsConfig(context.cwd));
   checks.push(checkDependencies(context));
-  checks.push(checkArchitectureViolations());
+  checks.push(checkArchitectureViolations(context.cwd));
 
   context.logger.info("Zudojs Doctor - Project Diagnostics");
   context.logger.info("");
@@ -75,10 +74,10 @@ function checkNodeVersion(): DoctorCheck {
   };
 }
 
-function checkPackageManager(): DoctorCheck {
-  const hasPnpm = existsSync("pnpm-lock.yaml");
-  const hasNpm = existsSync("package-lock.json");
-  const hasYarn = existsSync("yarn.lock");
+function checkPackageManager(cwd: string): DoctorCheck {
+  const hasPnpm = existsSync(join(cwd, "pnpm-lock.yaml"));
+  const hasNpm = existsSync(join(cwd, "package-lock.json"));
+  const hasYarn = existsSync(join(cwd, "yarn.lock"));
 
   const passed = hasPnpm || hasNpm || hasYarn;
   const manager = hasPnpm ? "pnpm" : hasNpm ? "npm" : hasYarn ? "yarn" : "none";
@@ -90,9 +89,10 @@ function checkPackageManager(): DoctorCheck {
   };
 }
 
-function checkTypeScriptConfig(): DoctorCheck {
+function checkTypeScriptConfig(cwd: string): DoctorCheck {
   const passed =
-    existsSync("tsconfig.json") || existsSync("tsconfig.base.json");
+    existsSync(join(cwd, "tsconfig.json")) ||
+    existsSync(join(cwd, "tsconfig.base.json"));
   return {
     name: "TypeScript configuration",
     passed,
@@ -100,10 +100,11 @@ function checkTypeScriptConfig(): DoctorCheck {
   };
 }
 
-function checkZudojsConfig(): DoctorCheck {
-  const hasPkgConfig = checkZudojsInPackageJson();
+function checkZudojsConfig(cwd: string): DoctorCheck {
+  const hasPkgConfig = checkZudojsInPackageJson(cwd);
   const hasConfig =
-    existsSync("zudojs.config.ts") || existsSync("zudojs.config.js");
+    existsSync(join(cwd, "zudojs.config.ts")) ||
+    existsSync(join(cwd, "zudojs.config.js"));
   const passed = hasPkgConfig || hasConfig;
 
   let message = "No Zudojs configuration found.";
@@ -118,9 +119,9 @@ function checkZudojsConfig(): DoctorCheck {
   return { name: "Zudojs configuration", passed, message };
 }
 
-function checkZudojsInPackageJson(): boolean {
+function checkZudojsInPackageJson(cwd: string): boolean {
   try {
-    const pkgPath = join(process.cwd(), "package.json");
+    const pkgPath = join(cwd, "package.json");
     if (!existsSync(pkgPath)) return false;
     const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
       zudojs?: unknown;
@@ -168,8 +169,8 @@ function checkDependencies(context: CLIContext): DoctorCheck {
   }
 }
 
-function checkArchitectureViolations(): DoctorCheck {
-  const srcDir = join(process.cwd(), "src");
+function checkArchitectureViolations(cwd: string): DoctorCheck {
+  const srcDir = join(cwd, "src");
   const violations: string[] = [];
 
   if (!existsSync(srcDir)) {
@@ -180,7 +181,7 @@ function checkArchitectureViolations(): DoctorCheck {
     };
   }
 
-  const configPath = join(process.cwd(), "zudojs.config.ts");
+  const configPath = join(cwd, "zudojs.config.ts");
   let architecture = "monolith";
   if (existsSync(configPath)) {
     const configContent = readFileSync(configPath, "utf-8");
@@ -208,7 +209,7 @@ function checkArchitectureViolations(): DoctorCheck {
     }
   }
 
-  const pkgPath = join(process.cwd(), "package.json");
+  const pkgPath = join(cwd, "package.json");
   if (existsSync(pkgPath)) {
     try {
       const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {

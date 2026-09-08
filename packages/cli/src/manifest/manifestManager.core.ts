@@ -9,7 +9,10 @@ import { join } from "node:path";
 
 export interface ZudojsManifest {
   readonly version: string;
+  readonly projectType?: string;
   readonly architecture: string;
+  /** Service names for microservice projects. */
+  readonly services?: readonly string[];
   readonly backend?: {
     readonly architecture: string;
     readonly api: string;

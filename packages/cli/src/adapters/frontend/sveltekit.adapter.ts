@@ -31,17 +31,16 @@ export class SvelteKitAdapter implements FrontendAdapter {
   async scaffold(context: FrontendGenerationContext): Promise<void> {
     const files = this.getBaseFiles(context);
     await scaffoldWithFallback({
-      command: "npm",
+      command: "npx",
       args: [
+        "sv",
         "create",
-        "svelte@latest",
         ".",
-        "--typescript",
-        "--no-eslint",
-        "--no-prettier",
-        "--no-playwright",
-        "--no-vitest",
-        "--no-git",
+        "--template",
+        "minimal",
+        "--types",
+        "ts",
+        "--no-add-ons",
         "--no-install",
       ],
       targetPath: context.projectPath,

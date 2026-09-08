@@ -6,6 +6,9 @@
  * @module bin/zudojs
  */
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createCLI } from "../cliApplication/index.js";
 import { CLI_DEFAULTS } from "../cliConstant/cliConstant.value.js";
 import { createCommand } from "../cliCommand/index.js";
@@ -18,9 +21,35 @@ import { runBuildCommand } from "../commands/build.command.js";
 import { runDoctorCommand } from "../commands/doctor.command.js";
 import { runInfoCommand } from "../commands/info.command.js";
 
+/**
+ * Reads the CLI's real version from its own package.json at runtime so
+ * `zudojs --version` can never drift from the published version.
+ */
+function readCliVersion(): string {
+  let dir = dirname(fileURLToPath(import.meta.url));
+
+  for (let depth = 0; depth < 6; depth++) {
+    try {
+      const pkg = JSON.parse(
+        readFileSync(join(dir, "package.json"), "utf-8"),
+      ) as { name?: string; version?: string };
+      if (pkg.name === "zudojs-cli" && pkg.version) {
+        return pkg.version;
+      }
+    } catch {
+      // keep walking up
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+
+  return CLI_DEFAULTS.VERSION;
+}
+
 const app = createCLI({
   name: "Zudojs",
-  version: "0.1.0",
+  version: readCliVersion(),
   description: "Command-line interface for the Zudojs framework.",
 });
 
@@ -81,7 +110,7 @@ app.register(
       },
       {
         name: "frontend-architecture",
-        short: "fa",
+        short: "F",
         description:
           "Frontend architecture (zudojs-standard, feature-based, minimal, framework-default)",
         type: "string",
@@ -258,8 +287,14 @@ app.register(
   }),
 );
 
-const exitCode = await app.run(process.argv.slice(2));
+try {
+  const exitCode = await app.run(process.argv.slice(2));
 
-if (exitCode !== 0) {
-  process.exit(exitCode);
+  if (exitCode !== 0) {
+    process.exit(exitCode);
+  }
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`Error: ${message}`);
+  process.exit(1);
 }

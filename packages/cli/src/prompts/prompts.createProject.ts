@@ -180,9 +180,12 @@ export async function promptCreateProject(
 
   let services: string[] = [];
 
-  if (architecture === "microservice") {
+  if (
+    architecture === "microservice" ||
+    architecture === "modular-monolith"
+  ) {
     const serviceAnswer = await ask(
-      `\nEnter service names (comma-separated): `,
+      `\nEnter ${architecture === "microservice" ? "service" : "module"} names (comma-separated): `,
     );
 
     if (serviceAnswer) {
@@ -193,8 +196,16 @@ export async function promptCreateProject(
     }
 
     if (services.length === 0) {
-      services = ["identity", "enrollment", "assessment", "notification"];
+      services = ["identity"];
     }
+  } else if (architecture === "monolith") {
+    const serviceAnswer = await ask(
+      "\nEnter service name (default: app): ",
+    );
+
+    services = serviceAnswer
+      ? [serviceAnswer.trim()]
+      : [projectName.toLowerCase().replace(/[^a-z0-9-]+/gi, "-")];
   }
 
   const enableCQRS =

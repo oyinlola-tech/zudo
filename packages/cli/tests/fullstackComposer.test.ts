@@ -16,6 +16,16 @@ import type {
 
 vi.mock("../src/utils/utils.fileSystem.js", () => ({
   writeFileTree: vi.fn(async () => {}),
+  mergeBarrelExport: vi.fn(() => ""),
+}));
+
+// Never spawn real scaffolder processes in tests: execCommand rejects so
+// adapters fall back to their built-in templates (writeFileTree is mocked).
+vi.mock("../src/utils/utils.exec.js", () => ({
+  execCommand: vi.fn(async () => {
+    throw new Error("process execution disabled in tests");
+  }),
+  runStreaming: vi.fn(async () => {}),
 }));
 
 vi.mock("../src/registries/adapter/packageManagerRegistry.core.js", () => ({

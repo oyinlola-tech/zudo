@@ -4,7 +4,7 @@
  * @module adapters/package-managers/bun
  */
 
-import { execCommand } from "../../utils/utils.exec.js";
+import { execCommand, runStreaming } from "../../utils/utils.exec.js";
 import type { PackageManager } from "./packageManager.type.js";
 
 /**
@@ -23,12 +23,12 @@ export class BunAdapter implements PackageManager {
   }
 
   async install(projectPath: string): Promise<void> {
-    await execCommand("bun", ["install"], projectPath);
+    await runStreaming("bun", ["install"], projectPath);
   }
 
   async add(projectPath: string, packages: readonly string[]): Promise<void> {
     if (packages.length === 0) return;
-    await execCommand("bun", ["add", ...packages], projectPath);
+    await runStreaming("bun", ["add", ...packages], projectPath);
   }
 
   async addDev(
@@ -36,11 +36,11 @@ export class BunAdapter implements PackageManager {
     packages: readonly string[],
   ): Promise<void> {
     if (packages.length === 0) return;
-    await execCommand("bun", ["add", "-d", ...packages], projectPath);
+    await runStreaming("bun", ["add", "-d", ...packages], projectPath);
   }
 
   async run(projectPath: string, script: string): Promise<void> {
-    await execCommand("bun", ["run", script], projectPath);
+    await runStreaming("bun", ["run", script], projectPath);
   }
 
   getInstallCommand(): string {

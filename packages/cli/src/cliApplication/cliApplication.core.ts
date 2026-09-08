@@ -148,13 +148,26 @@ export class ZudojsCLI implements CLIApplication {
     } catch (error) {
       const normalized = normalizeCLIError(error);
 
-      const command = this.findCommand(args);
-      const commandArgs = command
-        ? this.getCommandArguments(args, command)
-        : args;
-      const fallbackContext = this.createContext(commandArgs, command);
-
       if (this.hooks.onError) {
+        // Building the fallback context must never rethrow: if the original
+        // error came from argument parsing, re-parsing would fail again.
+        let fallbackContext: CLIContext;
+        try {
+          const command = this.findCommand(args);
+          const commandArgs = command
+            ? this.getCommandArguments(args, command)
+            : args;
+          fallbackContext = this.createContext(commandArgs, command);
+        } catch {
+          fallbackContext = {
+            args,
+            values: {},
+            command: undefined,
+            cwd: this.cwd,
+            env: this.env,
+            logger: this.logger,
+          };
+        }
         await this.hooks.onError(normalized, fallbackContext);
       }
 

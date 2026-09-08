@@ -4,12 +4,16 @@
  * Generates a new service with CQRS structure.
  */
 
-import { writeFileTree } from "../../utils/utils.fileSystem.js";
+import {
+  writeFileTree,
+  mergeBarrelExport,
+} from "../../utils/utils.fileSystem.js";
 import { CLIGenerationError } from "../../errors/index.js";
 
 export interface GenerateServiceOptions {
   readonly name: string;
   readonly basePath?: string;
+  readonly dryRun?: boolean;
 }
 
 export async function generateService(
@@ -34,13 +38,30 @@ export class ${namePascal}Service {
 }
 `,
 
-    [`${basePath}/${name}/index.ts`]: `export { ${namePascal}Service } from "./${name}.service.js";
-`,
+    // Merge with any existing barrel content instead of overwriting it.
+    [`${basePath}/${name}/index.ts`]: mergeBarrelExport(
+      cwd,
+      `${basePath}/${name}/index.ts`,
+      `export { ${namePascal}Service } from "./${name}.service.js";`,
+    ),
 
-    [`${basePath}/${name}/commands/index.ts`]: ``,
+    // Preserve any existing content in the CQRS barrels.
+    [`${basePath}/${name}/commands/index.ts`]: mergeBarrelExport(
+      cwd,
+      `${basePath}/${name}/commands/index.ts`,
+      "",
+    ),
 
-    [`${basePath}/${name}/queries/index.ts`]: ``,
+    [`${basePath}/${name}/queries/index.ts`]: mergeBarrelExport(
+      cwd,
+      `${basePath}/${name}/queries/index.ts`,
+      "",
+    ),
   };
+
+  if (options.dryRun) {
+    return Object.keys(files);
+  }
 
   try {
     await writeFileTree(cwd, files);

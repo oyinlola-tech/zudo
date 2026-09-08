@@ -7,7 +7,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { CLIContext } from "../cliType/cliType.type.js";
-import { execCommand } from "../utils/utils.exec.js";
+import { runStreaming } from "../utils/utils.exec.js";
 import { findProjectRoot } from "../resolvers/project.resolver.js";
 
 export async function runBuildCommand(context: CLIContext): Promise<void> {
@@ -26,7 +26,7 @@ export async function runBuildCommand(context: CLIContext): Promise<void> {
   const buildArgs = getBuildArgs(packageManager);
 
   try {
-    await execCommand(packageManager, buildArgs, projectRoot);
+    await runStreaming(packageManager, buildArgs, projectRoot);
     context.logger.info("Build completed successfully.");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -38,7 +38,8 @@ function detectPackageManager(cwd: string): string {
   if (existsSync(join(cwd, "pnpm-lock.yaml"))) return "pnpm";
   if (existsSync(join(cwd, "yarn.lock"))) return "yarn";
   if (existsSync(join(cwd, "package-lock.json"))) return "npm";
-  if (existsSync(join(cwd, "bun.lockb"))) return "bun";
+  if (existsSync(join(cwd, "bun.lock")) || existsSync(join(cwd, "bun.lockb")))
+    return "bun";
   return "npm";
 }
 
@@ -47,9 +48,11 @@ function getBuildArgs(packageManager: string): string[] {
     case "pnpm":
       return ["-r", "run", "build"];
     case "yarn":
-      return ["workspaces", "run", "build"];
+      // Plain `yarn run build` works on both Yarn classic and Berry without
+      // requiring the workspace-tools plugin.
+      return ["run", "build"];
     case "bun":
-      return ["-r", "run", "build"];
+      return ["run", "build"];
     default:
       return ["run", "build"];
   }

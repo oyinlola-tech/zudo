@@ -1,5 +1,5 @@
 import type { PackageManager } from "../types/index.js";
-import { execCommand } from "../utils/utils.exec.js";
+import { runStreaming } from "../utils/utils.exec.js";
 
 export function getInstallCommand(
   packageManager: PackageManager,
@@ -11,6 +11,8 @@ export function getInstallCommand(
       return ["npm", "install"];
     case "yarn":
       return ["yarn", "install"];
+    case "bun":
+      return ["bun", "install"];
     default:
       return ["pnpm", "install"];
   }
@@ -27,6 +29,8 @@ export function getAddCommand(
       return ["npm", "install", pkg];
     case "yarn":
       return ["yarn", "add", pkg];
+    case "bun":
+      return ["bun", "add", pkg];
     default:
       return ["pnpm", "add", pkg];
   }
@@ -37,5 +41,5 @@ export async function installDependencies(
   cwd: string,
 ): Promise<void> {
   const [file, ...args] = getInstallCommand(packageManager);
-  await execCommand(file, args, cwd);
+  await runStreaming(file, args, cwd);
 }

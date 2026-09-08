@@ -42,6 +42,7 @@ export class ReactAdapter implements FrontendAdapter {
         "create",
         "vite@latest",
         ".",
+        "--",
         "--template",
         context.language === "javascript" ? "react" : "react-ts",
       ],
@@ -117,6 +118,7 @@ export class ReactAdapter implements FrontendAdapter {
     context: FrontendGenerationContext,
   ): Record<string, string> {
     const useTypeScript = context.language === "typescript";
+    const ext = useTypeScript ? "tsx" : "jsx";
 
     return {
       "package.json": JSON.stringify(
@@ -127,7 +129,8 @@ export class ReactAdapter implements FrontendAdapter {
           type: "module",
           scripts: {
             dev: "vite",
-            build: "tsc && vite build",
+            // Vite performs the build; tsc only typechecks (noEmit).
+            build: useTypeScript ? "tsc --noEmit && vite build" : "vite build",
             preview: "vite preview",
           },
           dependencies: {
@@ -150,22 +153,28 @@ export default defineConfig({
   plugins: [react()],
 });
 `,
-      "tsconfig.json": JSON.stringify(
-        {
-          compilerOptions: {
-            target: "ES2020",
-            useDefineForClassFields: true,
-            lib: ["ES2020", "DOM", "DOM.Iterable"],
-            module: "ESNext",
-            skipLibCheck: true,
-            moduleResolution: "bundler",
-            allowImportingTsExtensions: true,
-            resolveJsonModule: true,
-          },
-        },
-        null,
-        2,
-      ),
+      ...(useTypeScript
+        ? {
+            "tsconfig.json": JSON.stringify(
+              {
+                compilerOptions: {
+                  target: "ES2020",
+                  useDefineForClassFields: true,
+                  lib: ["ES2020", "DOM", "DOM.Iterable"],
+                  module: "ESNext",
+                  skipLibCheck: true,
+                  moduleResolution: "bundler",
+                  allowImportingTsExtensions: true,
+                  resolveJsonModule: true,
+                  jsx: "react-jsx",
+                  noEmit: true,
+                },
+              },
+              null,
+              2,
+            ),
+          }
+        : {}),
       "index.html": `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -175,21 +184,21 @@ export default defineConfig({
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="/src/main.${ext}"></script>
   </body>
 </html>
 `,
-      "src/main.tsx": `import { StrictMode } from "react";
+      [`src/main.${ext}`]: `import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 
-createRoot(document.getElementById("root")!).render(
+createRoot(document.getElementById("root")${useTypeScript ? "!" : ""}).render(
   <StrictMode>
     <App />
   </StrictMode>,
 );
 `,
-      "src/App.tsx": `export default function App() {
+      [`src/App.${ext}`]: `export default function App() {
   return (
     <div>
       <h1>Hello from Zudojs</h1>

@@ -20,7 +20,6 @@ import { FullstackComposer } from "../generators/fullstack/fullstackComposer.cor
 import { IntegrationGenerator } from "../generators/integration/integrationGenerator.core.js";
 import { InfrastructureGenerator } from "../generators/infrastructure/infrastructure.generator.js";
 import { BackendGenerator } from "../generators/backend/backend.generator.js";
-import { ManifestManager } from "../manifest/manifestManager.core.js";
 import { RollbackManager } from "../rollback/rollbackManager.core.js";
 import {
   promptProjectName,
@@ -31,6 +30,7 @@ import {
   promptBackendArchitecture,
   promptDatabase,
   promptApiStyle,
+  promptServices,
 } from "../prompts/backend/index.js";
 import {
   promptFramework,
@@ -39,13 +39,26 @@ import {
 import { promptPackageManager } from "../prompts/workspace/index.js";
 import { promptCapabilities } from "../prompts/capabilities/index.js";
 import { CLIValidationError, CLIGenerationError } from "../errors/index.js";
-import { execCommand } from "../utils/utils.exec.js";
+import { execCommand, runStreaming } from "../utils/utils.exec.js";
 import { writeFileTree } from "../utils/utils.fileSystem.js";
 import { generateMonolithFiles } from "../templates/monolith/index.js";
 import { generateModularMonolithFiles } from "../templates/modular-monolith/index.js";
-import { generateMicroserviceFiles } from "../templates/microservice/index.js";
+import {
+  generateMicroserviceFiles,
+  DEFAULT_MICROSERVICE_SERVICES,
+} from "../templates/microservice/index.js";
+import { ManifestManager } from "../manifest/manifestManager.core.js";
+import { CLI_VERSION } from "../constants/index.js";
 
 const VALID_PROJECT_TYPES = ["backend", "frontend", "fullstack"] as const;
+const VALID_ARCHITECTURES = [
+  "monolith",
+  "modular-monolith",
+  "microservice",
+] as const;
+const VALID_DATABASES = ["postgresql", "mysql", "sqlite", "mongodb"] as const;
+const VALID_PACKAGE_MANAGERS = ["npm", "pnpm", "yarn", "bun"] as const;
+const SERVICE_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const VALID_FRONTENDS = [
   "none",
   "react",
@@ -116,12 +129,17 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
   const noInstall = context.values["no-install"] === true;
   const noGit = context.values["no-git"] === true;
   const servicesRaw = context.values.services as string | undefined;
-  const services = servicesRaw
+  const servicesExplicit = hasExplicitFlag(context.args, "--services");
+  const parsedServices = servicesRaw
     ? servicesRaw
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)
     : [];
+  // The --services option only applies to microservice architecture; ignore
+  // its parser-applied default for other architectures.
+  const services =
+    servicesExplicit || architecture === "microservice" ? parsedServices : [];
 
   if (projectName) {
     validateProjectName(projectName);
@@ -135,6 +153,40 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
     throw new CLIValidationError(
       `Invalid project type: ${projectType}. Valid: ${VALID_PROJECT_TYPES.join(", ")}`,
     );
+  }
+
+  if (
+    !VALID_ARCHITECTURES.includes(
+      architecture as (typeof VALID_ARCHITECTURES)[number],
+    )
+  ) {
+    throw new CLIValidationError(
+      `Invalid architecture: ${architecture}. Valid: ${VALID_ARCHITECTURES.join(", ")}`,
+    );
+  }
+
+  if (!VALID_DATABASES.includes(database as (typeof VALID_DATABASES)[number])) {
+    throw new CLIValidationError(
+      `Invalid database: ${database}. Valid: ${VALID_DATABASES.join(", ")}`,
+    );
+  }
+
+  if (
+    !VALID_PACKAGE_MANAGERS.includes(
+      packageManager as (typeof VALID_PACKAGE_MANAGERS)[number],
+    )
+  ) {
+    throw new CLIValidationError(
+      `Invalid package manager: ${packageManager}. Valid: ${VALID_PACKAGE_MANAGERS.join(", ")}`,
+    );
+  }
+
+  for (const service of services) {
+    if (!SERVICE_NAME_PATTERN.test(service)) {
+      throw new CLIValidationError(
+        `Invalid service name: "${service}". Service names must contain only alphanumeric characters, hyphens, and underscores.`,
+      );
+    }
   }
 
   if (!VALID_FRONTENDS.includes(frontend as (typeof VALID_FRONTENDS)[number])) {
@@ -200,7 +252,7 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
     explicitOverrides.frontend = resolvedFrontend;
   }
 
-  if (hasExplicitFlag(context.args, "--frontend-architecture", "-fa")) {
+  if (hasExplicitFlag(context.args, "--frontend-architecture", "-F")) {
     explicitOverrides.frontendArchitecture = frontendArchitecture;
   }
 
@@ -221,11 +273,16 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
     );
 
     const arch =
-      type === "backend"
+      type === "backend" || type === "fullstack"
         ? await promptBackendArchitecture(
             explicitOverrides.architecture as ScaffoldOptions["architecture"],
           )
         : (explicitOverrides.architecture as ScaffoldOptions["architecture"]);
+
+    const interactiveServices =
+      arch === "microservice"
+        ? await promptServices(servicesExplicit ? services : undefined)
+        : services;
 
     const db =
       type === "backend" || type === "fullstack"
@@ -290,7 +347,7 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
       frontendPath: "apps/web",
       language: (explicitOverrides.language ??
         "typescript") as ScaffoldOptions["language"],
-      services: [],
+      services: interactiveServices,
       enableCQRS,
       enableMessaging,
       enableObservability,
@@ -380,38 +437,7 @@ async function createProject(
       spinner.stop("Backend project generated");
     }
 
-    spinner.start("Creating manifest");
-    const manifest = new ManifestManager(targetPath);
-    await manifest.create({
-      version: "1",
-      architecture: options.architecture,
-      backend: {
-        architecture: options.architecture,
-        api: options.api ?? "rest",
-      },
-      frontend:
-        options.frontend && options.frontend !== "none"
-          ? {
-              framework: options.frontend,
-              architecture: options.frontendArchitecture ?? "zudojs-standard",
-            }
-          : undefined,
-      database: {
-        provider: options.database ?? "postgresql",
-      },
-      workspace: {
-        packageManager: options.packageManager,
-      },
-      capabilities: [
-        options.enableCQRS && "cqrs",
-        options.enableMessaging && "messaging",
-        options.enableObservability && "observability",
-        options.enableOpenAPI && "openapi",
-        options.enableDatabase && "database",
-        options.enableQueue && "queue",
-      ].filter(Boolean) as string[],
-    });
-    spinner.stop("Manifest created");
+    await writeProjectManifest(options, targetPath);
 
     if (options.installDeps) {
       spinner.start("Installing dependencies");
@@ -425,10 +451,13 @@ async function createProject(
               : "npm";
 
       try {
-        await execCommand(installFile, ["install"], targetPath);
-        spinner.stop("Dependencies installed");
+        // Streamed with no timeout: installs can be slow and their output
+        // should reach the user.
+        spinner.stop("Installing dependencies...");
+        await runStreaming(installFile, ["install"], targetPath);
+        p.log.success("Dependencies installed");
       } catch {
-        spinner.stop("Dependencies installation skipped");
+        p.log.warn("Dependency installation skipped");
       }
     }
 
@@ -442,10 +471,16 @@ async function createProject(
       }
     }
 
-    p.note(
-      `cd ${projectName}\n${packageManager === "pnpm" ? "pnpm" : packageManager === "yarn" ? "yarn" : packageManager === "bun" ? "bun" : "npm"} dev`,
-      "Next steps",
-    );
+    const devCmd =
+      packageManager === "npm"
+        ? "npm run dev"
+        : packageManager === "yarn"
+          ? "yarn dev"
+          : packageManager === "bun"
+            ? "bun run dev"
+            : "pnpm run dev";
+
+    p.note(`cd ${projectName}\n${devCmd}`, "Next steps");
 
     p.outro("Project created successfully.");
   } catch (error) {
@@ -457,6 +492,60 @@ async function createProject(
       error,
     );
   }
+}
+
+/**
+ * Writes the machine-managed .zudojs/manifest.json so follow-up commands
+ * (`zudojs dev`, `generate`, `add`) recognize the project immediately.
+ */
+async function writeProjectManifest(
+  options: ScaffoldOptions,
+  targetPath: string,
+): Promise<void> {
+  const capabilities: string[] = [];
+  if (options.enableCQRS) capabilities.push("cqrs");
+  if (options.enableMessaging) capabilities.push("messaging");
+  if (options.enableObservability) capabilities.push("observability");
+  if (options.enableOpenAPI) capabilities.push("openapi");
+  if (options.enableDatabase) capabilities.push("database");
+  if (options.enableQueue) capabilities.push("queue");
+
+  const services =
+    options.architecture === "microservice"
+      ? options.services.length > 0
+        ? options.services
+        : DEFAULT_MICROSERVICE_SERVICES
+      : undefined;
+
+  const hasFrontend =
+    options.frontend !== undefined && options.frontend !== "none";
+  const hasBackend = options.projectType !== "frontend";
+
+  await new ManifestManager(targetPath).create({
+    version: CLI_VERSION,
+    projectType: options.projectType ?? "backend",
+    architecture: options.architecture,
+    ...(hasBackend
+      ? {
+          backend: {
+            architecture: options.architecture,
+            api: options.api ?? "rest",
+          },
+        }
+      : {}),
+    ...(hasFrontend
+      ? {
+          frontend: {
+            framework: options.frontend as string,
+            architecture: options.frontendArchitecture ?? "zudojs-standard",
+          },
+        }
+      : {}),
+    ...(options.database ? { database: { provider: options.database } } : {}),
+    workspace: { packageManager: options.packageManager },
+    capabilities,
+    ...(services ? { services: [...services] } : {}),
+  });
 }
 
 async function generateFullstackProject(
@@ -508,6 +597,10 @@ async function generateFullstackProject(
     default:
       backendFiles = generateMonolithFiles(options);
   }
+
+  // The backend template may carry its own workspace definition; nested in
+  // apps/api it would create a second workspace root, so strip it.
+  delete backendFiles["pnpm-workspace.yaml"];
 
   await writeFileTree(join(projectPath, "apps/api"), backendFiles);
   rollback.trackDirectory(join(projectPath, "apps/api"));

@@ -25,7 +25,7 @@ async function checkLatestVersion(packageName) {
     const timeout = setTimeout(() => controller.abort(), 5000);
 
     const response = await fetch(
-      `https://registry.npmjs.org/latest/${packageName}`,
+      `https://registry.npmjs.org/${packageName}/latest`,
       { signal: controller.signal },
     );
     clearTimeout(timeout);
@@ -43,13 +43,13 @@ async function checkLatestVersion(packageName) {
 
 async function main() {
   const installed = getInstalledVersion();
-  const latest = await checkLatestVersion("@zudojs/cli");
+  const latest = await checkLatestVersion("zudojs-cli");
 
   if (latest && latest !== installed) {
     console.log(
       `\n  zudojs ${installed} is installed, but version ${latest} is available.`,
     );
-    console.log(`   Run: npm install -g @zudojs/cli@latest\n`);
+    console.log(`   Run: npm install -g zudojs-cli@latest\n`);
   }
 }
 

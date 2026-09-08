@@ -22,9 +22,17 @@ export async function scaffoldWithFallback(
       options.command,
       Array.from(options.args),
       options.targetPath,
+      {
+        // Suppress interactive prompts from create-* tools.
+        env: { ...process.env, CI: "1" },
+      },
     );
     return true;
-  } catch {
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `Warning: official scaffolder "${options.command} ${options.args.join(" ")}" failed (${message.split("\n")[0]}). Using built-in fallback template.`,
+    );
     await writeFileTree(options.targetPath, options.fallbackFiles);
     return false;
   }

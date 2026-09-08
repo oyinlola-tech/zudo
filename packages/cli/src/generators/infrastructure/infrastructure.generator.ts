@@ -5,6 +5,7 @@
  */
 
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
+import { CLIValidationError } from "../../errors/index.js";
 
 export interface InfrastructureOptions {
   readonly projectName: string;
@@ -14,11 +15,29 @@ export interface InfrastructureOptions {
   readonly services?: readonly string[];
 }
 
+const SERVICE_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+interface DatabaseCompose {
+  readonly image: string;
+  readonly port: number;
+  readonly environment: readonly string[];
+  readonly url: string;
+  readonly dataPath: string;
+}
+
 export class InfrastructureGenerator {
   async generate(
     options: InfrastructureOptions,
     basePath: string,
   ): Promise<void> {
+    for (const service of options.services ?? []) {
+      if (!SERVICE_NAME_PATTERN.test(service)) {
+        throw new CLIValidationError(
+          `Invalid service name: "${service}". Service names must match ${SERVICE_NAME_PATTERN}.`,
+        );
+      }
+    }
+
     const files = this.getFiles(options);
     await writeFileTree(basePath, files);
   }
@@ -32,7 +51,7 @@ export class InfrastructureGenerator {
 
       const services = options.services ?? ["gateway"];
       for (const service of services) {
-        files[`apps/${service}/Dockerfile`] =
+        files[`apps/services/${service}/Dockerfile`] =
           this.getServiceDockerfile(options);
       }
     } else {
@@ -46,13 +65,95 @@ export class InfrastructureGenerator {
     return files;
   }
 
+  /**
+   * Install and build commands for Dockerfiles.
+   *
+   * Generated projects have no lockfile yet, so never use `npm ci` or
+   * `--frozen-lockfile`. pnpm and yarn need `corepack enable` on the bare
+   * node:24-alpine image; bun is not available there so it falls back to npm.
+   */
+  private getDockerCommands(options: InfrastructureOptions): {
+    install: string;
+    build: string;
+  } {
+    switch (options.packageManager) {
+      case "pnpm":
+        return {
+          install: "corepack enable && pnpm install",
+          build: "pnpm run build",
+        };
+      case "yarn":
+        return {
+          install: "corepack enable && yarn install",
+          build: "yarn run build",
+        };
+      default:
+        return { install: "npm install", build: "npm run build" };
+    }
+  }
+
+  private getDatabaseCompose(
+    options: InfrastructureOptions,
+  ): DatabaseCompose | null {
+    if (options.database === "mysql") {
+      return {
+        image: "mysql:8",
+        port: 3306,
+        environment: [
+          "MYSQL_ROOT_PASSWORD=mysql",
+          `MYSQL_DATABASE=${options.projectName}`,
+        ],
+        url: `mysql://root:mysql@db:3306/${options.projectName}`,
+        dataPath: "/var/lib/mysql",
+      };
+    }
+
+    if (options.database === "sqlite") {
+      // SQLite is file-based: no database service at all.
+      return null;
+    }
+
+    return {
+      image: "postgres:16-alpine",
+      port: 5432,
+      environment: [
+        "POSTGRES_USER=postgres",
+        "POSTGRES_PASSWORD=postgres",
+        `POSTGRES_DB=${options.projectName}`,
+      ],
+      url: `postgresql://postgres:postgres@db:5432/${options.projectName}`,
+      dataPath: "/var/lib/postgresql/data",
+    };
+  }
+
+  private getDatabaseUrl(options: InfrastructureOptions): string {
+    const db = this.getDatabaseCompose(options);
+    return db ? db.url : "sqlite:./.data/app.db";
+  }
+
+  private getDbServiceBlock(db: DatabaseCompose): string {
+    return `  db:
+    image: ${db.image}
+    ports:
+      - "${db.port}:${db.port}"
+    environment:
+${db.environment.map((e) => `      - ${e}`).join("\n")}
+    volumes:
+      - db-data:${db.dataPath}
+
+volumes:
+  db-data:
+`;
+  }
+
   private getAppDockerfile(options: InfrastructureOptions): string {
+    const { install, build } = this.getDockerCommands(options);
+
     return `FROM node:24-alpine AS builder
 WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
-RUN ${options.packageManager === "pnpm" ? "pnpm" : options.packageManager === "yarn" ? "yarn" : "npm"} install --frozen-lockfile
 COPY . .
-RUN ${options.packageManager === "pnpm" ? "pnpm" : options.packageManager === "yarn" ? "yarn" : "npm"} run build
+RUN ${install}
+RUN ${build}
 
 FROM node:24-alpine
 WORKDIR /app
@@ -65,12 +166,13 @@ CMD ["node", "dist/server.js"]
   }
 
   private getServiceDockerfile(options: InfrastructureOptions): string {
+    const { install, build } = this.getDockerCommands(options);
+
     return `FROM node:24-alpine AS builder
 WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
-RUN ${options.packageManager === "pnpm" ? "pnpm" : options.packageManager === "yarn" ? "yarn" : "npm"} install --frozen-lockfile
 COPY . .
-RUN ${options.packageManager === "pnpm" ? "pnpm" : options.packageManager === "yarn" ? "yarn" : "npm"} run build
+RUN ${install}
+RUN ${build}
 
 FROM node:24-alpine
 WORKDIR /app
@@ -83,85 +185,46 @@ CMD ["node", "dist/server.js"]
   }
 
   private getSimpleDockerCompose(options: InfrastructureOptions): string {
-    const dbImage =
-      options.database === "postgresql"
-        ? "postgres:16-alpine"
-        : options.database === "mysql"
-          ? "mysql:8"
-          : "alpine:latest";
+    const db = this.getDatabaseCompose(options);
+    const databaseUrl = this.getDatabaseUrl(options);
 
-    return `version: "3.8"
-services:
+    return `services:
   app:
     build: .
     ports:
       - "3000:3000"
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/${options.projectName}
-    depends_on:
-      - db
-    develop:
+      - DATABASE_URL=${databaseUrl}
+${db ? "    depends_on:\n      - db\n" : ""}    develop:
       watch:
         - path: src/
           action: sync
           target: /app/src
-
-  db:
-    image: ${dbImage}
-    ports:
-      - "5432:5432"
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=${options.projectName}
-    volumes:
-      - db-data:/var/lib/postgresql/data
-
-volumes:
-  db-data:
-`;
+${db ? `\n${this.getDbServiceBlock(db)}` : ""}`;
   }
 
   private getDockerCompose(options: InfrastructureOptions): string {
     const services = options.services ?? ["gateway"];
-    const dbImage =
-      options.database === "postgresql"
-        ? "postgres:16-alpine"
-        : options.database === "mysql"
-          ? "mysql:8"
-          : "alpine:latest";
+    const db = this.getDatabaseCompose(options);
+    const databaseUrl = this.getDatabaseUrl(options);
 
     let serviceDefs = "";
 
-    for (const service of services) {
+    for (let i = 0; i < services.length; i++) {
+      const service = services[i]!;
+      const port = 3001 + i;
       serviceDefs += `
   ${service}:
     build:
-      context: apps/${service}
+      context: apps/services/${service}
     ports:
-      - "3000:3000"
+      - "${port}:${port}"
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/${options.projectName}
-    depends_on:
-      - db
-`;
+      - PORT=${port}
+      - DATABASE_URL=${databaseUrl}
+${db ? "    depends_on:\n      - db\n" : ""}`;
     }
 
-    return `version: "3.8"
-services:${serviceDefs}
-  db:
-    image: ${dbImage}
-    ports:
-      - "5432:5432"
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=${options.projectName}
-    volumes:
-      - db-data:/var/lib/postgresql/data
-
-volumes:
-  db-data:
-`;
+    return `services:${serviceDefs}${db ? `\n${this.getDbServiceBlock(db)}` : ""}`;
   }
 }

@@ -5,13 +5,14 @@
  */
 
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
-import { CLIGenerationError, CLIValidationError } from "../../errors/index.js";
+import { CLIGenerationError } from "../../errors/index.js";
 import { normalizeName } from "../../utils/utils.name.js";
 
 export interface GenerateCommandOptions {
   readonly name: string;
   readonly service?: string;
   readonly basePath?: string;
+  readonly dryRun?: boolean;
 }
 
 export async function generateCommand(
@@ -62,6 +63,10 @@ export class ${nameCamel}CommandHandler implements CommandHandler<${nameCamel}Co
 export { ${nameCamel}CommandHandler } from "./${name}.handler.js";
 `,
   };
+
+  if (options.dryRun) {
+    return Object.keys(files);
+  }
 
   try {
     await writeFileTree(cwd, files);

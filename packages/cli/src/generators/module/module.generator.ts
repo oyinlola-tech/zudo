@@ -4,18 +4,14 @@
  * Generates a new feature module within a Zudojs project.
  */
 
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
-import {
-  CLIGenerationError,
-  CLINotInProjectError,
-} from "../../errors/index.js";
+import { CLIGenerationError } from "../../errors/index.js";
 
 export interface GenerateModuleOptions {
   readonly name: string;
   readonly feature?: boolean;
   readonly basePath?: string;
+  readonly dryRun?: boolean;
 }
 
 export async function generateModule(
@@ -79,6 +75,10 @@ export class ${
       name.replace(/-([a-z])/g, (_, c) => c.toUpperCase()).slice(1)
     }Feature } from "./${featureName}.js";
 `;
+  }
+
+  if (options.dryRun) {
+    return Object.keys(files);
   }
 
   try {
