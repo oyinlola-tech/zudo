@@ -4,7 +4,7 @@ import type { ResolvedRuntimeOptions } from "./runtimeOptions.type.js";
  * Default runtime configuration.
  */
 export const DEFAULT_RUNTIME_OPTIONS: Readonly<
-  Omit<ResolvedRuntimeOptions, "infrastructure" | "metadata">
+  Omit<ResolvedRuntimeOptions, "environment" | "metadata">
 > = Object.freeze({
   name: "application",
   mode: "development",
@@ -33,6 +33,8 @@ export const DEFAULT_RUNTIME_OPTIONS: Readonly<
     handleSighup: false,
     handleUncaughtException: true,
     handleUnhandledRejection: true,
+    forceExitOnSecondSignal: false,
+    forceExitCode: 1,
   },
 
   diagnostics: {

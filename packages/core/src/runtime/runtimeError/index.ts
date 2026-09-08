@@ -1,6 +1,9 @@
 import { RuntimeError } from "./runtimeError.base.js";
 
-import type { RuntimeErrorOptions } from "./runtimeError.type.js";
+import type {
+  RuntimeErrorOptions,
+  RuntimeErrorCode,
+} from "./runtimeError.type.js";
 
 import type { RuntimeError as RuntimeErrorType } from "./runtimeError.base.js";
 
@@ -13,7 +16,8 @@ import type { RuntimeError as RuntimeErrorType } from "./runtimeError.base.js";
 export { RuntimeError } from "./runtimeError.base.js";
 
 export {
-  RuntimeStateError,
+  InvalidRuntimeStateError,
+  InvalidRuntimeTransitionError,
   RuntimeStartError,
   RuntimeStopError,
   RuntimeInitializationError,
@@ -74,7 +78,7 @@ export function isRuntimeError(error: unknown): error is RuntimeErrorType {
  */
 export function hasRuntimeErrorCode(
   error: unknown,
-  code: import("./runtimeError.type.js").RuntimeErrorCode,
+  code: RuntimeErrorCode,
 ): boolean {
   return isRuntimeError(error) && error.code === code;
 }

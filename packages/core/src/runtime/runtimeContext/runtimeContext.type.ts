@@ -1,18 +1,4 @@
-import type { ApplicationContext } from "../../application/applicationContext.context.js";
-
-import type { ConfigurationManager } from "../../configuration/configurationManager.manager.js";
-
-import type { Logger } from "../../logging/core/logger.js";
-
-import type { ModuleLoader } from "../../modules/moduleLoader/index.js";
-
-import type { ModuleLifecycleManager } from "../../modules/moduleLifecycle/index.js";
-
-import type { ModuleRegistry } from "../../modules/moduleRegistry/index.js";
-
-import type { RuntimeState } from "../runtimeState.state.js";
-
-import type { RuntimeStateSnapshot } from "../runtimeState.state.js";
+import type { ExecutionContext } from "../../context/core/executionContext.context.js";
 
 import type { RuntimeMode, RuntimeRole } from "../runtimeOptions/index.js";
 
@@ -29,52 +15,47 @@ export interface RuntimeIdentity {
 }
 
 /**
- * Runtime timing information.
+ * Metadata carried by a runtime's execution context.
+ *
+ * The identity fields are always present; `RuntimeOptions.metadata`
+ * is merged in (identity fields cannot be overridden) so
+ * user-supplied values are reachable as `context.metadata[key]`.
  */
-export interface RuntimeTiming {
-  readonly createdAt: Date;
-  readonly startupStartedAt?: Date;
-  readonly readyAt?: Date;
-  readonly shutdownStartedAt?: Date;
-  readonly stoppedAt?: Date;
+export interface RuntimeExecutionMetadata {
+  readonly runtimeId: string;
+  readonly runtimeName: string;
+  readonly runtimeMode: RuntimeMode;
+  readonly runtimeRole: RuntimeRole;
+  readonly processId?: number;
+  readonly [key: string]: unknown;
 }
 
 /**
- * Runtime context dependencies.
+ * The execution context of a runtime.
+ *
+ * A runtime is single-use, so its whole lifetime is one execution:
+ * `executionId` is the runtime id, `service` is the runtime name,
+ * `startedAt` is the runtime's creation time, and `transport` /
+ * `operation` are `"runtime"`. The runtime establishes this context
+ * (via its ContextStorage) around bootstrap, shutdown, every module
+ * lifecycle hook, and application start/stop, so
+ * `contextStorage.get()` inside those returns it or a context
+ * derived from it.
+ *
+ * It is immutable. Mutable runtime state (state, timing, failure)
+ * lives on the Runtime object.
  */
-export interface RuntimeContextDependencies {
-  readonly application: ApplicationContext;
-  readonly configuration: ConfigurationManager;
-  readonly logger: Logger;
-  readonly moduleRegistry: ModuleRegistry;
-  readonly moduleLoader: ModuleLoader;
-  readonly moduleLifecycle: ModuleLifecycleManager;
+export interface RuntimeExecutionContext extends ExecutionContext {
+  readonly service: string;
+  readonly transport: "runtime";
+  readonly operation: "runtime";
+  readonly metadata: RuntimeExecutionMetadata;
 }
 
 /**
- * Runtime context contract.
+ * @deprecated Use RuntimeExecutionContext. The former mutable
+ * runtime context (state, timing, service references) no longer
+ * exists: state and timing live on the Runtime, and services are
+ * reached through the Runtime accessors.
  */
-export interface RuntimeContext {
-  readonly identity: RuntimeIdentity;
-  readonly state: RuntimeState;
-  readonly timing: RuntimeTiming;
-  readonly metadata: Readonly<Record<string, unknown>>;
-  readonly application: ApplicationContext;
-  readonly configuration: ConfigurationManager;
-  readonly logger: Logger;
-  readonly moduleRegistry: ModuleRegistry;
-  readonly moduleLoader: ModuleLoader;
-  readonly moduleLifecycle: ModuleLifecycleManager;
-  getStateSnapshot(): RuntimeStateSnapshot;
-  get<T = unknown>(key: string): T | undefined;
-  has(key: string): boolean;
-  getUptime(): number;
-}
-
-/**
- * Internal mutable state used by RuntimeContext.
- */
-export interface RuntimeContextState {
-  state: RuntimeState;
-  timing: RuntimeTiming;
-}
+export type RuntimeContext = RuntimeExecutionContext;

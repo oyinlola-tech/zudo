@@ -1,26 +1,22 @@
 import type { Logger } from "../../logging/core/logger.js";
 
-import type { ApplicationContext } from "../../application/applicationContext.context.js";
-
 import type { ModuleLoader } from "../../modules/moduleLoader/index.js";
 
 import type { ModuleLifecycleManager } from "../../modules/moduleLifecycle/index.js";
 
 import type { ModuleRegistry } from "../../modules/moduleRegistry/index.js";
 
-import type { RuntimeContext } from "../runtimeContext/index.js";
+import type { RuntimeIdentity } from "../runtimeContext/index.js";
 
 import type { RuntimeEnvironment } from "../runtimeEnvironment/index.js";
-
-import type { ResolvedRuntimeOptions } from "../runtimeOptions/index.js";
 
 /**
  * Dependencies required by RuntimeBootstrap.
  */
 export interface RuntimeBootstrapDependencies {
-  readonly context: RuntimeContext;
+  /** Identity attached to errors and log entries. */
+  readonly identity: RuntimeIdentity;
   readonly environment: RuntimeEnvironment;
-  readonly application: ApplicationContext;
   readonly moduleLoader: ModuleLoader;
   readonly moduleRegistry: ModuleRegistry;
   readonly moduleLifecycle: ModuleLifecycleManager;
@@ -55,6 +51,9 @@ export type RuntimeBootstrapPhase =
 
 /**
  * Represents an error produced by a bootstrap phase.
+ *
+ * Module-level failures carry the failing module id in `moduleName`;
+ * pipeline-level failures (timeouts, loader errors) do not.
  */
 export interface RuntimeBootstrapErrorInfo {
   readonly phase: RuntimeBootstrapPhase;
@@ -64,6 +63,10 @@ export interface RuntimeBootstrapErrorInfo {
 
 /**
  * Result of a bootstrap operation.
+ *
+ * `success` is true only when no error was recorded. A bootstrap that
+ * continued past module failures (continueOn*Error) resolves with
+ * `success: false` and the failures listed in `errors`.
  */
 export interface RuntimeBootstrapResult {
   readonly success: boolean;

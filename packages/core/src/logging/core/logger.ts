@@ -1,20 +1,9 @@
-export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+import type { LogLevel } from "./logLevel.level.js";
 
 /**
  * Structured metadata attached to a log entry.
  */
 export type LogContext = Record<string, unknown>;
-
-/**
- * A structured log entry.
- */
-export interface LogEntry {
-  readonly level: LogLevel;
-  readonly message: string;
-  readonly context?: LogContext;
-  readonly timestamp: Date;
-  readonly error?: unknown;
-}
 
 /**
  * Logger contract used throughout Zudojs.
@@ -75,28 +64,55 @@ export abstract class BaseLogger implements Logger {
     };
   }
 
+  /**
+   * Merges the persistent (constructor/child) context under the
+   * per-call context. Per-call values win on key conflicts.
+   *
+   * Returns undefined only when there is no context at all, so
+   * implementations can keep omitting empty context objects.
+   */
+  protected mergeCallContext(context?: LogContext): LogContext | undefined {
+    const hasPersistent = Object.keys(this.persistentContext).length > 0;
+
+    if (!hasPersistent) return context;
+    if (context === undefined) return { ...this.persistentContext };
+
+    return {
+      ...this.persistentContext,
+      ...context,
+    };
+  }
+
+  /**
+   * Returns a copy of the persistent context attached to this
+   * logger.
+   */
+  protected getPersistentContext(): LogContext {
+    return { ...this.persistentContext };
+  }
+
   public trace(message: string, context?: LogContext): void {
-    this.write("trace", message, context);
+    this.write("trace", message, this.mergeCallContext(context));
   }
 
   public debug(message: string, context?: LogContext): void {
-    this.write("debug", message, context);
+    this.write("debug", message, this.mergeCallContext(context));
   }
 
   public info(message: string, context?: LogContext): void {
-    this.write("info", message, context);
+    this.write("info", message, this.mergeCallContext(context));
   }
 
   public warn(message: string, context?: LogContext): void {
-    this.write("warn", message, context);
+    this.write("warn", message, this.mergeCallContext(context));
   }
 
   public error(message: string, error?: unknown, context?: LogContext): void {
-    this.write("error", message, context, error);
+    this.write("error", message, this.mergeCallContext(context), error);
   }
 
   public fatal(message: string, error?: unknown, context?: LogContext): void {
-    this.write("fatal", message, context, error);
+    this.write("fatal", message, this.mergeCallContext(context), error);
   }
 
   public child(context: LogContext): Logger {

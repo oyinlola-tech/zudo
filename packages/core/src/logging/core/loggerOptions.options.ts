@@ -1,3 +1,6 @@
+import type { LogRedactionHook } from "./logRedaction.redaction.js";
+import type { ContextStorage } from "../../context/provider/contextStorage.storage.js";
+
 /**
  * Configuration options for the Zudojs logging system.
  *
@@ -61,6 +64,23 @@ export interface LoggerOptions {
    * Additional default context attached to every log entry.
    */
   readonly context?: Record<string, unknown>;
+
+  /**
+   * Redaction hook applied to structured log data (entry context
+   * and error details) before it is written.
+   *
+   * See createLogRedactor for a key-based implementation.
+   */
+  readonly redact?: LogRedactionHook;
+
+  /**
+   * ContextStorage consulted on every write. When an execution
+   * context is active, its `executionId`, `correlationId`,
+   * `traceId`, `spanId`, and `metadata.runtimeId` are merged into
+   * the entry context beneath the logger's persistent and per-call
+   * context (explicit values win). Child loggers inherit it.
+   */
+  readonly contextStorage?: ContextStorage;
 }
 
 /**

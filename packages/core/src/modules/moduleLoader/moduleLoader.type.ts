@@ -59,15 +59,26 @@ export interface ModuleLoadResult {
   readonly order: readonly ModuleId[];
 }
 
-import { ModuleLoadError as BaseModuleLoadError } from "@zudojs/errors";
+import {
+  ModuleError,
+  ModuleErrorCode,
+} from "../moduleError/moduleError.base.js";
 
 /**
  * Error thrown when one or more modules cannot be loaded.
+ *
+ * Part of the core module error taxonomy (code MODULE_LOAD_FAILED).
  */
-export class ModuleLoadError extends BaseModuleLoadError {
+export class ModuleLoadError extends ModuleError {
   public constructor(moduleId: ModuleId, cause: unknown) {
     const message = cause instanceof Error ? cause.message : String(cause);
 
-    super(moduleId, `Failed to load module "${moduleId}": ${message}`, cause);
+    super(`Failed to load module "${moduleId}": ${message}`, {
+      code: ModuleErrorCode.LOAD_FAILED,
+      moduleId,
+      cause,
+    });
+
+    this.name = "ModuleLoadError";
   }
 }

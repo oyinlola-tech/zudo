@@ -4,6 +4,8 @@ import type { Token } from "./token.js";
 import {
   ProviderNotFoundError,
   ProviderAlreadyRegisteredError,
+  InvalidProviderError,
+  DependencyResolutionError,
 } from "../errors/exceptions.js";
 
 /**
@@ -12,17 +14,48 @@ import {
 interface ProviderRegistration {
   readonly provider: Provider<unknown>;
   readonly scope: Scope;
+  /** Whether a singleton instance has been created (even if undefined). */
+  resolved: boolean;
   instance?: unknown;
+}
+
+/**
+ * Options for the container.
+ */
+export interface ContainerOptions {
+  /**
+   * Returns the object identifying the current execution scope, for
+   * example the current ExecutionContext from a ContextStorage:
+   *
+   *   new Container({ currentScope: () => storage.get() })
+   *
+   * "scoped" providers resolve to one instance per returned object.
+   * When it returns undefined and no explicit scope is active, scoped
+   * providers behave as transient.
+   */
+  readonly currentScope?: () => object | undefined;
 }
 
 /**
  * Dependency Injection container for Zudojs applications.
  *
  * The container is responsible for registering and resolving
- * application dependencies.
+ * application dependencies with singleton, scoped, and transient
+ * lifetimes.
  */
 export class Container {
   private readonly providers = new Map<Token<unknown>, ProviderRegistration>();
+  private readonly scopedInstances = new WeakMap<
+    object,
+    Map<Token<unknown>, unknown>
+  >();
+  private readonly currentScope: (() => object | undefined) | undefined;
+  private readonly resolving: Token<unknown>[] = [];
+  private activeScope: object | undefined;
+
+  public constructor(options: ContainerOptions = {}) {
+    this.currentScope = options.currentScope;
+  }
 
   /**
    * Registers a provider in the container.
@@ -36,38 +69,33 @@ export class Container {
       throw new ProviderAlreadyRegisteredError(token);
     }
 
+    if (!isProvider(provider)) {
+      throw new InvalidProviderError(token);
+    }
+
     this.providers.set(token, {
       provider: provider as Provider<unknown>,
       scope,
+      resolved: false,
     });
   }
 
   /**
    * Resolves a dependency from the container.
+   *
+   * Scoped providers use the explicit scope active during resolution
+   * (see {@link createScope}) or the `currentScope` callback.
    */
   public resolve<T>(token: Token<T>): T {
-    const registration = this.providers.get(token);
+    return this.resolveIn(token, this.activeScope ?? this.currentScope?.());
+  }
 
-    if (!registration) {
-      throw new ProviderNotFoundError(token);
-    }
-
-    if (
-      registration.scope === "singleton" &&
-      registration.instance !== undefined
-    ) {
-      return registration.instance as T;
-    }
-
-    const instance = this.createInstance<T>(
-      registration.provider as Provider<T>,
-    );
-
-    if (registration.scope === "singleton") {
-      registration.instance = instance;
-    }
-
-    return instance;
+  /**
+   * Creates an explicit resolution scope. Scoped providers resolved
+   * through the returned scope share one instance per scope.
+   */
+  public createScope(): ContainerScope {
+    return new ContainerScope(this, {});
   }
 
   /**
@@ -94,40 +122,125 @@ export class Container {
   }
 
   /**
-   * Creates an instance from a provider definition.
+   * Resolves a token within a specific scope key.
+   *
+   * @internal Used by ContainerScope.
    */
-  private createInstance<T>(provider: Provider<T>): T {
+  public resolveIn<T>(token: Token<T>, scopeKey: object | undefined): T {
+    const registration = this.providers.get(token);
+
+    if (!registration) {
+      throw new ProviderNotFoundError(token);
+    }
+
+    if (registration.scope === "singleton" && registration.resolved) {
+      return registration.instance as T;
+    }
+
+    if (registration.scope === "scoped" && scopeKey) {
+      const cache = this.scopedInstances.get(scopeKey);
+      if (cache?.has(token)) {
+        return cache.get(token) as T;
+      }
+    }
+
+    const instance = this.createInstance<T>(token, registration, scopeKey);
+
+    if (registration.scope === "singleton") {
+      registration.instance = instance;
+      registration.resolved = true;
+    } else if (registration.scope === "scoped" && scopeKey) {
+      let cache = this.scopedInstances.get(scopeKey);
+      if (!cache) {
+        cache = new Map();
+        this.scopedInstances.set(scopeKey, cache);
+      }
+      cache.set(token, instance);
+    }
+
+    return instance;
+  }
+
+  /**
+   * Creates an instance from a provider definition, tracking the
+   * resolution chain so cycles fail fast with a diagnostic instead of
+   * a stack overflow.
+   */
+  private createInstance<T>(
+    token: Token<T>,
+    registration: ProviderRegistration,
+    scopeKey: object | undefined,
+  ): T {
+    if (this.resolving.includes(token)) {
+      throw new DependencyResolutionError(
+        "Circular dependency detected while resolving.",
+        [...this.resolving, token],
+      );
+    }
+
+    const provider = registration.provider as Provider<T>;
+
     if ("useValue" in provider) {
       return provider.useValue;
     }
 
-    if ("useFactory" in provider) {
-      return provider.useFactory(this);
-    }
+    const previousScope = this.activeScope;
+    this.resolving.push(token);
+    this.activeScope = scopeKey;
 
-    if ("useClass" in provider) {
+    try {
+      if ("useFactory" in provider) {
+        return provider.useFactory(this);
+      }
+
       return new provider.useClass();
-    }
+    } catch (error) {
+      if (error instanceof DependencyResolutionError) throw error;
 
-    throw new Error("Invalid provider definition.");
+      throw new DependencyResolutionError(
+        `Failed to resolve dependency.`,
+        [...this.resolving],
+        error,
+      );
+    } finally {
+      this.resolving.pop();
+      this.activeScope = previousScope;
+    }
+  }
+}
+
+/**
+ * An explicit resolution scope created by {@link Container.createScope}.
+ *
+ * Scoped providers resolved through this object are cached for its
+ * lifetime; singleton and transient providers behave as usual.
+ */
+export class ContainerScope {
+  private readonly container: Container;
+  private readonly key: object;
+
+  public constructor(container: Container, key: object) {
+    this.container = container;
+    this.key = key;
   }
 
-  /**
-   * Produces a readable representation of a dependency token.
-   */
-  private describeToken(token: Token<unknown>): string {
-    if (typeof token === "string") {
-      return token;
-    }
-
-    if (typeof token === "symbol") {
-      return token.description ?? token.toString();
-    }
-
-    if (typeof token === "function") {
-      return token.name || "anonymous class";
-    }
-
-    return "unknown";
+  public resolve<T>(token: Token<T>): T {
+    return this.container.resolveIn(token, this.key);
   }
+
+  public has<T>(token: Token<T>): boolean {
+    return this.container.has(token);
+  }
+}
+
+function isProvider(value: unknown): value is Provider<unknown> {
+  if (typeof value !== "object" || value === null) return false;
+
+  if ("useValue" in value) return true;
+  if ("useFactory" in value)
+    return typeof (value as { useFactory: unknown }).useFactory === "function";
+  if ("useClass" in value)
+    return typeof (value as { useClass: unknown }).useClass === "function";
+
+  return false;
 }

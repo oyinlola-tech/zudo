@@ -3,6 +3,8 @@ import type {
   ConfigurationValue,
 } from "../core/configuration.js";
 
+import { normalizeConfigurationPath } from "../core/configurationPath.path.js";
+
 /**
  * Result returned by a configuration schema validator.
  */
@@ -163,6 +165,17 @@ export function createConfigurationSchema<T = ConfigurationValue>(
 
       if (!exists) {
         if (options.defaultValue !== undefined) {
+          /*
+           * Defaults are validated too, so an invalid default
+           * cannot silently pass validation.
+           */
+          if (options.validator) {
+            return options.validator(options.defaultValue, {
+              configuration,
+              path,
+            });
+          }
+
           return {
             success: true,
             value: options.defaultValue,
@@ -285,46 +298,4 @@ export class ConfigurationSchemaRegistry {
  */
 export function createConfigurationSchemaRegistry(): ConfigurationSchemaRegistry {
   return new ConfigurationSchemaRegistry();
-}
-
-/**
- * Validates every registered schema against a configuration.
- */
-export async function validateConfiguration(
-  configuration: Configuration,
-  registry: ConfigurationSchemaRegistry,
-): Promise<ConfigurationValidationResult<Configuration>> {
-  const errors: ConfigurationValidationIssue[] = [];
-
-  for (const schema of registry.getAll()) {
-    const result = await schema.validate(configuration);
-
-    if (!result.success) {
-      errors.push(...result.errors);
-    }
-  }
-
-  if (errors.length > 0) {
-    return {
-      success: false,
-      errors,
-    };
-  }
-
-  return {
-    success: true,
-    value: configuration,
-    errors: [],
-  };
-}
-
-/**
- * Normalizes a configuration path.
- */
-function normalizeConfigurationPath(path: string): string {
-  if (typeof path !== "string") {
-    throw new TypeError("Configuration schema path must be a string.");
-  }
-
-  return path.trim().replace(/\s+/g, "");
 }

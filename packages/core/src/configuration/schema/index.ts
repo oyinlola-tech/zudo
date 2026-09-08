@@ -20,9 +20,11 @@ export type {
 } from "./configurationSchema.schema.js";
 
 export {
+  ConfigurationValidationError,
   validateConfiguration,
   validateConfigurationOrThrow,
   validateSchema,
+  applyConfigurationSchemaDefaults,
 } from "./configurationValidation.validator.js";
 
 export type {

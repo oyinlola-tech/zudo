@@ -1,24 +1,20 @@
 import type { Logger } from "../../logging/core/logger.js";
 
-import type { ApplicationContext } from "../../application/applicationContext.context.js";
-
 import type { ModuleLifecycleManager } from "../../modules/moduleLifecycle/index.js";
 
 import type { ModuleRegistry } from "../../modules/moduleRegistry/index.js";
 
-import type { RuntimeContext } from "../runtimeContext/index.js";
+import type { RuntimeIdentity } from "../runtimeContext/index.js";
 
 import type { RuntimeEnvironment } from "../runtimeEnvironment/index.js";
-
-import type { ResolvedRuntimeOptions } from "../runtimeOptions/index.js";
 
 /**
  * Dependencies required by RuntimeShutdown.
  */
 export interface RuntimeShutdownDependencies {
-  readonly context: RuntimeContext;
+  /** Identity attached to errors and log entries. */
+  readonly identity: RuntimeIdentity;
   readonly environment: RuntimeEnvironment;
-  readonly application: ApplicationContext;
   readonly moduleRegistry: ModuleRegistry;
   readonly moduleLifecycle: ModuleLifecycleManager;
   readonly logger: Logger;
@@ -49,6 +45,8 @@ export type RuntimeShutdownPhase =
 
 /**
  * Error captured during shutdown.
+ *
+ * Module-level failures carry the failing module id in `moduleName`.
  */
 export interface RuntimeShutdownErrorInfo {
   readonly phase: RuntimeShutdownPhase;
@@ -58,6 +56,10 @@ export interface RuntimeShutdownErrorInfo {
 
 /**
  * Result of a shutdown operation.
+ *
+ * `success` is true only when no error was recorded. A shutdown that
+ * continued past module failures (continueOn*Error) resolves with
+ * `success: false` and the failures listed in `errors`.
  */
 export interface RuntimeShutdownResult {
   readonly success: boolean;
@@ -78,8 +80,6 @@ export interface RuntimeShutdown {
   readonly phase: RuntimeShutdownPhase;
   shutdown(options?: RuntimeShutdownConfig): Promise<RuntimeShutdownResult>;
   getLastResult(): RuntimeShutdownResult | undefined;
-  getShutdownContext():
-    import("../../context/core/context.js").Context | undefined;
   reset(): void;
 }
 

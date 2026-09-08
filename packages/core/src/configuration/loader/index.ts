@@ -8,6 +8,7 @@ export {
   ConfigurationLoader,
   ConfigurationLoadError,
   createConfigurationLoader,
+  applyConfigurationSourceEntries,
 } from "./configurationLoader.loader.js";
 
 export type {

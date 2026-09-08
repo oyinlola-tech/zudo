@@ -5,23 +5,54 @@ import { RuntimeErrorCode } from "./runtimeError.type.js";
 import { RuntimeError } from "./runtimeError.base.js";
 
 /**
- * Error thrown when runtime state transitions are invalid.
+ * Error thrown when an operation is attempted while the runtime is
+ * in a state that does not permit it (for example starting a runtime
+ * that is stopping, or stopping one that is still bootstrapping).
  */
-export class RuntimeStateError extends RuntimeError {
-  public readonly from:
-    import("./runtimeError.type.js").RuntimeErrorPhase | string;
-  public readonly to:
-    import("./runtimeError.type.js").RuntimeErrorPhase | string;
+export class InvalidRuntimeStateError extends RuntimeError {
+  /**
+   * The runtime state in which the operation was rejected.
+   */
+  public readonly state?: string;
 
   public constructor(
-    from: import("./runtimeError.type.js").RuntimeErrorPhase | string,
-    to: import("./runtimeError.type.js").RuntimeErrorPhase | string,
+    message: string,
+    options: Omit<RuntimeErrorOptions, "code"> & {
+      readonly state?: string;
+    } = {},
+  ) {
+    const { state, ...rest } = options;
+
+    super(message, {
+      ...rest,
+      code: RuntimeErrorCode.INVALID_STATE_TRANSITION,
+      metadata: {
+        ...(rest.metadata ?? {}),
+        ...(state !== undefined && { state }),
+      },
+    });
+
+    this.name = "InvalidRuntimeStateError";
+    this.state = state;
+  }
+}
+
+/**
+ * Error thrown when a runtime state transition is not allowed by the
+ * runtime state table.
+ */
+export class InvalidRuntimeTransitionError extends RuntimeError {
+  public readonly from: string;
+  public readonly to: string;
+
+  public constructor(
+    from: string,
+    to: string,
     options: Omit<RuntimeErrorOptions, "code"> = {},
   ) {
     super(`Invalid runtime state transition from "${from}" to "${to}".`, {
       ...options,
       code: RuntimeErrorCode.INVALID_STATE_TRANSITION,
-      operation: options.operation ?? "run",
       metadata: {
         ...(options.metadata ?? {}),
         from,
@@ -29,14 +60,14 @@ export class RuntimeStateError extends RuntimeError {
       },
     });
 
-    this.name = "RuntimeStateError";
+    this.name = "InvalidRuntimeTransitionError";
     this.from = from;
     this.to = to;
   }
 }
 
 /**
- * Error thrown when runtime startup fails.
+ * Error thrown when runtime startup (bootstrap) fails.
  */
 export class RuntimeStartError extends RuntimeError {
   public constructor(
@@ -72,7 +103,7 @@ export class RuntimeStopError extends RuntimeError {
 }
 
 /**
- * Error thrown when runtime initialization fails.
+ * Error thrown when module initialization fails during bootstrap.
  */
 export class RuntimeInitializationError extends RuntimeError {
   public constructor(
@@ -90,7 +121,7 @@ export class RuntimeInitializationError extends RuntimeError {
 }
 
 /**
- * Error thrown when runtime loading fails.
+ * Error thrown when module loading fails during bootstrap.
  */
 export class RuntimeLoadError extends RuntimeError {
   public constructor(

@@ -4,6 +4,7 @@ import type {
   LifecycleRegistration,
 } from "../core/lifecycleRegistry.registry.js";
 import { LifecycleRegistry } from "../core/lifecycleRegistry.registry.js";
+import { InvalidStateError } from "../../errors/exceptions.js";
 
 /** Lifecycle scope state. */
 export const LifecycleScopeState = {
@@ -14,6 +15,7 @@ export const LifecycleScopeState = {
   RUNNING: "running",
   STOPPING: "stopping",
   STOPPED: "stopped",
+  DESTROYED: "destroyed",
   FAILED: "failed",
 } as const;
 
@@ -31,11 +33,15 @@ export interface LifecycleScopeOptions {
 /**
  * Represents an independently managed lifecycle boundary.
  * Can represent an Application, Module, Plugin, Worker, Service, or Feature.
+ *
+ * Children are initialized/started after the parent's own components
+ * and stopped/destroyed before them. A destroyed child detaches from
+ * its parent so it is never re-destroyed.
  */
 export class LifecycleScope {
   private state: LifecycleScopeState = LifecycleScopeState.CREATED;
   private readonly name: string;
-  private readonly parent?: LifecycleScope;
+  private parent?: LifecycleScope;
   private readonly logger?: Logger;
   private readonly continueOnShutdownError: boolean;
   private readonly registry = new LifecycleRegistry();
@@ -73,8 +79,9 @@ export class LifecycleScope {
       this.state !== LifecycleScopeState.CREATED &&
       this.state !== LifecycleScopeState.INITIALIZED
     ) {
-      throw new Error(
+      throw new InvalidStateError(
         `Cannot register component in lifecycle scope "${this.name}" while state is "${this.state}".`,
+        { scope: this.name, state: this.state },
       );
     }
     return this.registry.register(component, name);
@@ -91,9 +98,7 @@ export class LifecycleScope {
     )
       return;
     if (this.state !== LifecycleScopeState.CREATED)
-      throw new Error(
-        `Cannot initialize lifecycle scope "${this.name}" while state is "${this.state}".`,
-      );
+      throw this.invalidState("initialize");
 
     this.state = LifecycleScopeState.INITIALIZING;
     this.logger?.debug("Initializing lifecycle scope", { scope: this.name });
@@ -113,7 +118,7 @@ export class LifecycleScope {
           await component.initialize();
         }
       }
-      for (const child of this.children) await child.initialize();
+      for (const child of [...this.children]) await child.initialize();
       this.state = LifecycleScopeState.INITIALIZED;
       this.logger?.debug("Lifecycle scope initialized", { scope: this.name });
     } catch (error) {
@@ -129,9 +134,7 @@ export class LifecycleScope {
     if (this.state === LifecycleScopeState.RUNNING) return;
     if (this.state === LifecycleScopeState.CREATED) await this.initialize();
     if (this.state !== LifecycleScopeState.INITIALIZED)
-      throw new Error(
-        `Cannot start lifecycle scope "${this.name}" while state is "${this.state}".`,
-      );
+      throw this.invalidState("start");
 
     this.state = LifecycleScopeState.STARTING;
     this.logger?.debug("Starting lifecycle scope", { scope: this.name });
@@ -148,7 +151,7 @@ export class LifecycleScope {
           await component.start();
         }
       }
-      for (const child of this.children) await child.start();
+      for (const child of [...this.children]) await child.start();
       this.state = LifecycleScopeState.RUNNING;
       this.logger?.debug("Lifecycle scope started", { scope: this.name });
     } catch (error) {
@@ -160,19 +163,37 @@ export class LifecycleScope {
     }
   }
 
+  /**
+   * Stops children (reverse order) and then this scope's components
+   * (reverse registration order).
+   *
+   * A scope that never started transitions straight to STOPPED without
+   * running any stop hook. When `continueOnShutdownError` is false the
+   * first failure aborts the phase and leaves the scope FAILED.
+   */
   public async stop(): Promise<void> {
-    if (this.state === LifecycleScopeState.STOPPED) return;
-    if (
-      this.state !== LifecycleScopeState.RUNNING &&
-      this.state !== LifecycleScopeState.FAILED
-    ) {
-      throw new Error(
-        `Cannot stop lifecycle scope "${this.name}" while state is "${this.state}".`,
-      );
+    switch (this.state) {
+      case LifecycleScopeState.STOPPED:
+      case LifecycleScopeState.DESTROYED:
+        return;
+      case LifecycleScopeState.CREATED:
+      case LifecycleScopeState.INITIALIZED:
+        // Nothing started here; cascade the state to children only.
+        for (let i = this.children.length - 1; i >= 0; i--) {
+          await this.children[i]!.stop();
+        }
+        this.state = LifecycleScopeState.STOPPED;
+        return;
+      case LifecycleScopeState.RUNNING:
+      case LifecycleScopeState.FAILED:
+        break;
+      default:
+        throw this.invalidState("stop");
     }
 
     this.state = LifecycleScopeState.STOPPING;
     const errors: unknown[] = [];
+    let aborted = false;
     this.logger?.debug("Stopping lifecycle scope", { scope: this.name });
 
     for (let i = this.children.length - 1; i >= 0; i--) {
@@ -180,11 +201,14 @@ export class LifecycleScope {
         await this.children[i]!.stop();
       } catch (error) {
         errors.push(error);
-        if (!this.continueOnShutdownError) break;
+        if (!this.continueOnShutdownError) {
+          aborted = true;
+          break;
+        }
       }
     }
 
-    if (errors.length === 0 || this.continueOnShutdownError) {
+    if (!aborted) {
       for (const registration of this.registry.getReverse()) {
         const component = registration.component;
         try {
@@ -202,12 +226,18 @@ export class LifecycleScope {
             scope: this.name,
             component: registration.name,
           });
-          if (!this.continueOnShutdownError) break;
+          if (!this.continueOnShutdownError) {
+            aborted = true;
+            break;
+          }
         }
       }
     }
 
-    this.state = LifecycleScopeState.STOPPED;
+    this.state = aborted
+      ? LifecycleScopeState.FAILED
+      : LifecycleScopeState.STOPPED;
+
     if (errors.length > 0)
       throw new AggregateError(
         errors,
@@ -215,8 +245,22 @@ export class LifecycleScope {
       );
   }
 
+  /**
+   * Destroys children (reverse order) and then this scope's
+   * components. Idempotent: a destroyed scope is detached from its
+   * parent and never destroyed again.
+   */
   public async destroy(): Promise<void> {
+    if (this.state === LifecycleScopeState.DESTROYED) return;
+    if (
+      this.state === LifecycleScopeState.INITIALIZING ||
+      this.state === LifecycleScopeState.STARTING ||
+      this.state === LifecycleScopeState.STOPPING
+    )
+      throw this.invalidState("destroy");
+
     const errors: unknown[] = [];
+    let aborted = false;
     this.logger?.debug("Destroying lifecycle scope", { scope: this.name });
 
     for (let i = this.children.length - 1; i >= 0; i--) {
@@ -224,11 +268,14 @@ export class LifecycleScope {
         await this.children[i]!.destroy();
       } catch (error) {
         errors.push(error);
-        if (!this.continueOnShutdownError) break;
+        if (!this.continueOnShutdownError) {
+          aborted = true;
+          break;
+        }
       }
     }
 
-    if (errors.length === 0 || this.continueOnShutdownError) {
+    if (!aborted) {
       for (const registration of this.registry.getReverse()) {
         const component = registration.component;
         try {
@@ -249,9 +296,19 @@ export class LifecycleScope {
             scope: this.name,
             component: registration.name,
           });
-          if (!this.continueOnShutdownError) break;
+          if (!this.continueOnShutdownError) {
+            aborted = true;
+            break;
+          }
         }
       }
+    }
+
+    if (aborted) {
+      this.state = LifecycleScopeState.FAILED;
+    } else {
+      this.state = LifecycleScopeState.DESTROYED;
+      this.detach();
     }
 
     if (errors.length > 0)
@@ -283,5 +340,22 @@ export class LifecycleScope {
   private addChild(child: LifecycleScope): void {
     if (this.children.includes(child)) return;
     this.children.push(child);
+  }
+
+  private removeChild(child: LifecycleScope): void {
+    const index = this.children.indexOf(child);
+    if (index !== -1) this.children.splice(index, 1);
+  }
+
+  private detach(): void {
+    this.parent?.removeChild(this);
+    this.parent = undefined;
+  }
+
+  private invalidState(operation: string): InvalidStateError {
+    return new InvalidStateError(
+      `Cannot ${operation} lifecycle scope "${this.name}" while state is "${this.state}".`,
+      { scope: this.name, operation, state: this.state },
+    );
   }
 }

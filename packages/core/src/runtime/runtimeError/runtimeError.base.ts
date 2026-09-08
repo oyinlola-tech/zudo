@@ -1,23 +1,30 @@
-import { FrameworkError } from "../../errors/frameworkError.error.js";
-import type { SerializedBaseError } from "@zudojs/errors";
+import { RuntimeError as BaseRuntimeError } from "@zudojs/errors";
 
 import type {
   RuntimeErrorOptions,
   RuntimeErrorJSON,
   RuntimeErrorMetadata,
+  RuntimeOperation,
+  RuntimeErrorPhase,
 } from "./runtimeError.type.js";
 
 import { RuntimeErrorCode } from "./runtimeError.type.js";
 
 /**
- * Base error for all runtime failures.
+ * Base error for all runtime failures raised by @zudojs/core.
  *
- * Extends FrameworkError so runtime errors can be caught
- * uniformly with other framework errors.
+ * Extends RuntimeError from @zudojs/errors so runtime failures are
+ * recognised across packages (`instanceof RuntimeError` and
+ * `isRuntimeError()` from either package agree), while carrying the
+ * core-specific runtime context (operation, phase, identity, module).
  */
-export class RuntimeError extends FrameworkError {
-  public readonly operation?: import("./runtimeError.type.js").RuntimeOperation;
-  public readonly phase?: import("./runtimeError.type.js").RuntimeErrorPhase;
+export class RuntimeError extends BaseRuntimeError {
+  /**
+   * The runtime lifecycle phase during which the error occurred.
+   * Narrows the base `phase: string` to the known runtime phases.
+   */
+  declare public readonly phase?: RuntimeErrorPhase;
+  public readonly operation?: RuntimeOperation;
   public readonly runtimeId?: string;
   public readonly runtimeName?: string;
   public readonly moduleName?: string;
@@ -25,45 +32,31 @@ export class RuntimeError extends FrameworkError {
   public readonly recoverable: boolean;
 
   public constructor(message: string, options: RuntimeErrorOptions = {}) {
-    const details: Record<string, unknown> = {};
-
-    if (options.operation !== undefined) {
-      details.operation = options.operation;
-    }
-
-    if (options.phase !== undefined) {
-      details.phase = options.phase;
-    }
-
-    if (options.runtimeId !== undefined) {
-      details.runtimeId = options.runtimeId;
-    }
-
-    if (options.runtimeName !== undefined) {
-      details.runtimeName = options.runtimeName;
-    }
-
-    if (options.moduleName !== undefined) {
-      details.moduleName = options.moduleName;
-    }
-
-    if (options.metadata !== undefined) {
-      details.metadata = options.metadata;
-    }
-
-    if (options.recoverable !== undefined) {
-      details.recoverable = options.recoverable;
-    }
-
     super(message, {
       code: options.code ?? RuntimeErrorCode.RUNTIME_FAILURE,
-      details,
+      phase: options.phase,
+      component: options.moduleName,
       cause: options.cause,
+      isOperational: false,
+      metadata: serializableMetadata({
+        ...(options.operation !== undefined && {
+          operation: options.operation,
+        }),
+        ...(options.runtimeId !== undefined && {
+          runtimeId: options.runtimeId,
+        }),
+        ...(options.runtimeName !== undefined && {
+          runtimeName: options.runtimeName,
+        }),
+        ...(options.moduleName !== undefined && {
+          moduleName: options.moduleName,
+        }),
+        ...(options.metadata ?? {}),
+      }),
     });
 
     this.name = "RuntimeError";
     this.operation = options.operation;
-    this.phase = options.phase;
     this.runtimeId = options.runtimeId;
     this.runtimeName = options.runtimeName;
     this.moduleName = options.moduleName;
@@ -74,18 +67,10 @@ export class RuntimeError extends FrameworkError {
   }
 
   public getCause(): Error | undefined {
-    return normalizeError(this.cause);
+    return this.cause instanceof Error ? this.cause : undefined;
   }
 
-  public override toJSON(): SerializedBaseError & {
-    readonly operation?: string;
-    readonly phase?: string;
-    readonly runtimeId?: string;
-    readonly runtimeName?: string;
-    readonly moduleName?: string;
-    readonly errorMetadata: RuntimeErrorMetadata;
-    readonly recoverable: boolean;
-  } {
+  public override toJSON(): RuntimeErrorJSON {
     return {
       ...super.toJSON(),
       operation: this.operation,
@@ -100,12 +85,24 @@ export class RuntimeError extends FrameworkError {
 }
 
 /**
- * Normalizes an unknown value into an Error.
+ * Keeps only JSON-safe metadata values so BaseError metadata stays
+ * transportable; richer values remain on `errorMetadata`.
  */
-function normalizeError(value: unknown): Error | undefined {
-  if (value instanceof Error) {
-    return value;
+function serializableMetadata(
+  metadata: Record<string, unknown>,
+): Record<string, string | number | boolean | null> {
+  const result: Record<string, string | number | boolean | null> = {};
+
+  for (const [key, value] of Object.entries(metadata)) {
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean" ||
+      value === null
+    ) {
+      result[key] = value;
+    }
   }
 
-  return undefined;
+  return result;
 }

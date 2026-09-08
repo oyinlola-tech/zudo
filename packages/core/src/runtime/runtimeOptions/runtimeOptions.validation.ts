@@ -1,7 +1,5 @@
 import type { RuntimeMode, RuntimeRole } from "./runtimeOptions.type.js";
 
-import { DEFAULT_RUNTIME_OPTIONS } from "./runtimeOptions.defaults.js";
-
 /**
  * Validates a runtime mode.
  */

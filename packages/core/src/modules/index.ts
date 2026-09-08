@@ -11,12 +11,6 @@
 /*
  * Module contract
  */
-export {} from // Export everything publicly exposed by module.ts.
-//
-// Using `export *` here keeps the barrel synchronized
-// with the module contract as it evolves.
-"./module.js";
-
 export {
   type ModuleId,
   type ModuleOptions,

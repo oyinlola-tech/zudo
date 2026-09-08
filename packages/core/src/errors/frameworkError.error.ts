@@ -20,14 +20,13 @@ export interface FrameworkErrorOptions {
 
 /**
  * Serializable representation of a FrameworkError.
+ *
+ * Mirrors exactly what {@link FrameworkError.toJSON} returns: the
+ * serialized BaseError fields plus the optional structured details.
  */
-export interface FrameworkErrorJSON {
-  readonly name: string;
-  readonly message: string;
-  readonly code: string;
-  readonly status?: number;
+export type FrameworkErrorJSON = SerializedBaseError & {
   readonly details?: unknown;
-}
+};
 
 /**
  * Base error class for all Zudojs framework errors.
@@ -47,7 +46,7 @@ export class FrameworkError extends ApplicationError {
    */
   public constructor(message: string, options: FrameworkErrorOptions = {}) {
     super(message, {
-      code: options.code as any,
+      code: options.code,
       statusCode: options.status,
       cause: options.cause,
     });
@@ -59,9 +58,7 @@ export class FrameworkError extends ApplicationError {
   /**
    * Converts the error into a structured representation.
    */
-  public override toJSON(): SerializedBaseError & {
-    readonly details?: unknown;
-  } {
+  public override toJSON(): FrameworkErrorJSON {
     return {
       ...super.toJSON(),
       name: this.name,

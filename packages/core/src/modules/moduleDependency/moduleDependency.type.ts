@@ -43,6 +43,14 @@ export interface ModuleDependencyNode {
    * Dependencies declared by the module.
    */
   readonly dependencies: ModuleDependencies;
+
+  /**
+   * Semantic version of the module, when known.
+   *
+   * Used to check dependency version constraints while
+   * building the graph.
+   */
+  readonly version?: string;
 }
 
 /**
@@ -73,4 +81,29 @@ export interface ModuleDependencyGraph {
 /**
  * A raw dependency declaration accepted by the framework.
  */
-export type ModuleDependencyInput = ModuleId | ModuleDependency;
+export type ModuleDependencyInput =
+  | ModuleId
+  | (Pick<ModuleDependency, "id"> & Partial<Omit<ModuleDependency, "id">>);
+
+/**
+ * A raw dependency graph node accepted by `createModuleDependencyGraph`.
+ *
+ * Dependencies may be declared as plain ids or partial dependency objects;
+ * they are normalized while the graph is built.
+ */
+export interface ModuleDependencyNodeInput {
+  /**
+   * Module identifier.
+   */
+  readonly id: ModuleId;
+
+  /**
+   * Dependencies declared by the module.
+   */
+  readonly dependencies?: readonly ModuleDependencyInput[];
+
+  /**
+   * Semantic version of the module, when known.
+   */
+  readonly version?: string;
+}

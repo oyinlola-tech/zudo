@@ -35,6 +35,7 @@ export {
 export type {
   ConfigurationManagerOptions,
   ConfigurationManagerResult,
+  ConfigurationEventSubscription,
 } from "./configurationManager.manager.js";
 
 /**

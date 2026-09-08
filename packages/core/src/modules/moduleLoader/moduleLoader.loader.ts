@@ -6,11 +6,9 @@ import type { ModuleContext } from "../moduleContext.context.js";
 import { createModuleContext } from "../moduleContext.context.js";
 import type { ModuleDefinition } from "../moduleDefinition.definition.js";
 import type { ModuleRegistry } from "../moduleRegistry/index.js";
-import type { ModuleRegistration } from "../moduleRegistry/moduleRegistry.type.js";
 import {
   createModuleDependencyGraph,
   resolveModuleStartupOrder,
-  validateModuleDependencyGraph,
 } from "../moduleDependency/index.js";
 import type {
   ModuleDependencyGraph,
@@ -21,12 +19,24 @@ import type {
   ModuleLoadResult,
 } from "./moduleLoader.type.js";
 import { ModuleLoadError } from "./moduleLoader.type.js";
+import { ModuleError } from "../moduleError/moduleError.base.js";
+import { MissingModuleDependencyError } from "../moduleError/moduleError.dependency.js";
+import {
+  InvalidModuleInstanceError,
+  ModuleInstantiationError,
+} from "../moduleError/moduleError.lifecycle.js";
+import { ModuleNotFoundError } from "../moduleError/moduleError.registration.js";
 
 /**
  * Default module loader.
  *
  * Reads definitions from registry, builds dependency graph,
  * validates, resolves startup order, instantiates modules.
+ *
+ * Dependencies are always resolved against every registered
+ * definition. autoLoad filtering applies only to load roots:
+ * a module registered with autoLoad disabled is still loaded
+ * when another loading module requires it.
  */
 export class ModuleLoader {
   private readonly application: ApplicationContext;
@@ -35,6 +45,7 @@ export class ModuleLoader {
   private readonly registry: ModuleRegistry;
   private readonly allowExplicitLoad: boolean;
   private readonly contexts = new Map<ModuleId, ModuleContext>();
+  private readonly inFlightLoads = new Map<ModuleId, Promise<Module>>();
 
   public constructor(registry: ModuleRegistry, options: ModuleLoaderOptions) {
     this.registry = registry;
@@ -44,15 +55,26 @@ export class ModuleLoader {
     this.allowExplicitLoad = options.allowExplicitLoad ?? true;
   }
 
-  /** Loads every module whose definition has autoLoad enabled. */
+  /**
+   * Loads every module whose definition has autoLoad enabled,
+   * plus every module those modules require (regardless of the
+   * required module's autoLoad setting).
+   */
   public async loadAll(): Promise<ModuleLoadResult> {
-    const definitions = this.registry
+    const roots = this.registry
       .getDefinitions()
-      .filter((d) => d.autoLoad !== false);
-    return this.loadDefinitions(definitions);
+      .filter((definition) => definition.autoLoad !== false)
+      .map((definition) => definition.id);
+
+    return this.loadClosure(roots, { reportSkipped: true });
   }
 
-  /** Loads a specific module and all of its required dependencies. */
+  /**
+   * Loads a specific module and all of its required dependencies.
+   *
+   * Concurrent load() calls for the same module share a single
+   * in-flight load.
+   */
   public async load(moduleId: ModuleId): Promise<Module> {
     const registration = this.registry.require(moduleId);
     if (registration.state === "loaded" && registration.instance)
@@ -67,36 +89,57 @@ export class ModuleLoader {
       );
     }
 
-    const definitions = this.collectDependencies(moduleId);
-    await this.loadDefinitions(definitions);
+    const pending = this.inFlightLoads.get(moduleId);
+    if (pending) return pending;
 
-    const loaded = this.registry.require(moduleId);
-    if (!loaded.instance)
-      throw new ModuleLoadError(
-        moduleId,
-        new Error("Module was not instantiated."),
-      );
-    return loaded.instance;
+    const loadPromise = (async (): Promise<Module> => {
+      await this.loadClosure([moduleId], { reportSkipped: false });
+
+      const loaded = this.registry.require(moduleId);
+      if (!loaded.instance)
+        throw new ModuleLoadError(
+          moduleId,
+          new Error("Module was not instantiated."),
+        );
+      return loaded.instance;
+    })().finally(() => {
+      this.inFlightLoads.delete(moduleId);
+    });
+
+    this.inFlightLoads.set(moduleId, loadPromise);
+    return loadPromise;
   }
 
-  private async loadDefinitions(
-    definitions: readonly ModuleDefinition[],
+  /**
+   * Loads the dependency closure of the requested module ids.
+   */
+  private async loadClosure(
+    requested: readonly ModuleId[],
+    options: { readonly reportSkipped: boolean },
   ): Promise<ModuleLoadResult> {
-    if (definitions.length === 0)
-      return { loaded: [], alreadyLoaded: [], skipped: [], order: [] };
+    const closure = this.collectClosure(requested);
 
-    const graph = this.createGraph(definitions);
-    const missing = validateModuleDependencyGraph(graph);
-    if (missing.length > 0)
-      throw new ModuleLoadError(
-        "module-dependencies",
-        new Error(`Missing required modules: ${missing.join(", ")}`),
-      );
+    const skipped: ModuleId[] = [];
+    if (options.reportSkipped) {
+      for (const definition of this.registry.getDefinitions()) {
+        if (definition.autoLoad === false && !closure.has(definition.id)) {
+          skipped.push(definition.id);
+        }
+      }
+    }
 
+    if (closure.size === 0)
+      return {
+        loaded: [],
+        alreadyLoaded: [],
+        skipped: Object.freeze([...skipped]),
+        order: [],
+      };
+
+    const graph = this.createGraph([...closure.values()]);
     const order = resolveModuleStartupOrder(graph);
     const loaded: Module[] = [];
     const alreadyLoaded: Module[] = [];
-    const skipped: ModuleId[] = [];
 
     for (const moduleId of order) {
       const registration = this.registry.get(moduleId);
@@ -109,13 +152,6 @@ export class ModuleLoader {
         );
       if (registration.state === "loaded" && registration.instance) {
         alreadyLoaded.push(registration.instance);
-        continue;
-      }
-      if (
-        registration.definition.autoLoad === false &&
-        !this.isExplicitlyRequested(moduleId, definitions)
-      ) {
-        skipped.push(moduleId);
         continue;
       }
 
@@ -131,32 +167,48 @@ export class ModuleLoader {
     };
   }
 
+  /**
+   * Collects the dependency closure of the requested modules
+   * across every registered definition.
+   *
+   * Optional dependencies join the closure only when they are
+   * registered; missing required dependencies are reported with
+   * the module that needs them.
+   */
+  private collectClosure(
+    requested: readonly ModuleId[],
+  ): Map<ModuleId, ModuleDefinition> {
+    const collected = new Map<ModuleId, ModuleDefinition>();
+    const queue: ModuleId[] = [...requested];
+
+    while (queue.length > 0) {
+      const currentId = queue.shift()!;
+      if (collected.has(currentId)) continue;
+
+      const registration = this.registry.require(currentId);
+      collected.set(currentId, registration.definition);
+
+      for (const dependency of this.registry.getDependencies(currentId)) {
+        if (!this.registry.has(dependency.id)) {
+          if (dependency.optional) continue;
+          throw new MissingModuleDependencyError(currentId, dependency.id);
+        }
+        queue.push(dependency.id);
+      }
+    }
+
+    return collected;
+  }
+
   private createGraph(
     definitions: readonly ModuleDefinition[],
   ): ModuleDependencyGraph {
     const nodes: ModuleDependencyNode[] = definitions.map((d) => ({
       id: d.id,
       dependencies: this.registry.getDependencies(d.id),
+      version: d.version,
     }));
     return createModuleDependencyGraph(nodes);
-  }
-
-  private collectDependencies(moduleId: ModuleId): readonly ModuleDefinition[] {
-    const collected = new Map<ModuleId, ModuleDefinition>();
-
-    const visit = (currentId: ModuleId): void => {
-      if (collected.has(currentId)) return;
-      const registration = this.registry.require(currentId);
-      collected.set(currentId, registration.definition);
-
-      for (const dependency of this.registry.getDependencies(currentId)) {
-        if (dependency.optional && !this.registry.has(dependency.id)) continue;
-        if (this.registry.has(dependency.id)) visit(dependency.id);
-      }
-    };
-
-    visit(moduleId);
-    return Object.freeze([...collected.values()]);
   }
 
   private async instantiate(definition: ModuleDefinition): Promise<Module> {
@@ -166,11 +218,13 @@ export class ModuleLoader {
     try {
       const module = await definition.factory(definition.options);
       if (!module || typeof module !== "object")
-        throw new TypeError(
+        throw new InvalidModuleInstanceError(
+          moduleId,
           `Module factory for "${moduleId}" did not return a valid module.`,
         );
       if (module.id !== moduleId)
-        throw new TypeError(
+        throw new InvalidModuleInstanceError(
+          moduleId,
           `Module factory returned module "${module.id}" but expected "${moduleId}".`,
         );
 
@@ -185,7 +239,15 @@ export class ModuleLoader {
           logger: moduleLogger,
         },
         metadata: definition.metadata,
-        moduleContexts: this.contexts,
+        /*
+         * Modules get a resolver, never the shared context map, so
+         * they cannot enumerate or reach undeclared modules.
+         */
+        moduleContexts: (dependencyId: ModuleId) =>
+          this.contexts.get(dependencyId),
+        declaredDependencies: this.registry
+          .getDependencies(moduleId)
+          .map((dependency) => dependency.id),
       });
 
       this.contexts.set(moduleId, context);
@@ -193,7 +255,8 @@ export class ModuleLoader {
       return module;
     } catch (error) {
       this.registry.setState(moduleId, "failed", { error });
-      throw new ModuleLoadError(moduleId, error);
+      if (error instanceof ModuleError) throw error;
+      throw new ModuleInstantiationError(moduleId, error);
     }
   }
 
@@ -206,20 +269,13 @@ export class ModuleLoader {
     return this.logger;
   }
 
-  private isExplicitlyRequested(
-    moduleId: ModuleId,
-    definitions: readonly ModuleDefinition[],
-  ): boolean {
-    return definitions.some((d) => d.id === moduleId);
-  }
-
   public getContext(moduleId: ModuleId): ModuleContext | undefined {
     return this.contexts.get(moduleId);
   }
 
   public requireContext(moduleId: ModuleId): ModuleContext {
     const context = this.getContext(moduleId);
-    if (!context) throw new Error(`Module "${moduleId}" has not been loaded.`);
+    if (!context) throw new ModuleNotFoundError(moduleId);
     return context;
   }
 
@@ -228,6 +284,29 @@ export class ModuleLoader {
   }
   public isLoaded(moduleId: ModuleId): boolean {
     return this.registry.get(moduleId)?.state === "loaded";
+  }
+
+  /**
+   * Forgets a module's runtime instance and context.
+   *
+   * The loader does not run lifecycle hooks; callers that need
+   * the instance shut down first should use
+   * ModuleLifecycleManager.unloadModule(). Returns false when the
+   * module is not registered or holds no instance.
+   */
+  public unload(moduleId: ModuleId): boolean {
+    const registration = this.registry.get(moduleId);
+    if (!registration) return false;
+
+    const hadInstance = this.contexts.delete(moduleId);
+    if (
+      registration.state === "registered" ||
+      registration.state === "unloaded"
+    )
+      return hadInstance;
+
+    this.registry.setState(moduleId, "unloaded");
+    return true;
   }
 }
 

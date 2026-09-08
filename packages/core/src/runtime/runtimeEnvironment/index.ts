@@ -7,7 +7,7 @@
 
 export {
   DefaultRuntimeEnvironment,
-  RuntimeEnvironmentError,
+  MissingEnvironmentVariableError,
   createRuntimeEnvironment,
 } from "./runtimeEnvironment.core.js";
 
@@ -30,6 +30,7 @@ export type {
   RuntimeHostInfo,
   RuntimeEngineInfo,
   RuntimeEnvironmentInfo,
+  RuntimeEnvironmentSummary,
   RuntimeEnvironment,
   RuntimeEnvironmentOptions,
 } from "./runtimeEnvironment.type.js";

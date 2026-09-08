@@ -5,14 +5,18 @@
  * destroying runtime modules.
  */
 
-export {
-  DefaultRuntimeShutdown,
-  RuntimeShutdownError,
-  withShutdownTimeout,
-  createShutdownResult,
-} from "./runtimeShutdown.core.js";
+export { DefaultRuntimeShutdown } from "./runtimeShutdown.core.js";
 
-export { executeShutdownPipeline } from "./pipeline/index.js";
+export {
+  executeShutdownPipeline,
+  createShutdownPipelineState,
+  createShutdownResult,
+} from "./pipeline/index.js";
+
+export type {
+  ShutdownCounters,
+  ShutdownPipelineState,
+} from "./pipeline/index.js";
 
 export type {
   RuntimeShutdownDependencies,

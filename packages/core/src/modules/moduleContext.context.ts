@@ -10,9 +10,11 @@ import type { LifecycleScope } from "../lifecycle/scope/lifecycleScope.scope.js"
 
 import type { Module, ModuleId, ModuleOptions } from "./module.js";
 
-import type { ModuleDefinition } from "./moduleDefinition.definition.js";
+import { deepFreezeModuleOptions } from "./moduleDefinition.definition.js";
 
 import type { ModuleMetadata } from "./moduleMetadata.metadata.js";
+
+import { MissingModuleDependencyError } from "./moduleError/moduleError.dependency.js";
 
 /**
  * Dependencies exposed to a module through its context.
@@ -115,15 +117,34 @@ export interface ModuleContext extends ModuleContextInfo {
   /**
    * Returns another module's context.
    *
-   * This should only be used for declared module dependencies.
+   * Access is restricted to declared module dependencies: when
+   * the requested module is not declared as a dependency of the
+   * current module, MissingModuleDependencyError is thrown.
+   * Declared dependencies that have not been loaded yet resolve
+   * to undefined.
    */
   getModuleContext(moduleId: ModuleId): ModuleContext | undefined;
 
   /**
-   * Returns whether another module is available.
+   * Returns whether another module is available to this module.
+   *
+   * Only declared dependencies can be observed: undeclared modules
+   * always report false, so a module cannot discover modules it
+   * does not depend on.
    */
   hasModule(moduleId: ModuleId): boolean;
 }
+
+/**
+ * Resolves the context of another module by id.
+ *
+ * The loader hands each module a resolver instead of its live
+ * context map, so modules never hold a reference to shared
+ * runtime state.
+ */
+export type ModuleContextResolver = (
+  moduleId: ModuleId,
+) => ModuleContext | undefined;
 
 /**
  * Internal implementation of ModuleContext.
@@ -150,13 +171,23 @@ export class DefaultModuleContext implements ModuleContext {
 
   public readonly logger: Logger;
 
-  private readonly moduleContexts: ReadonlyMap<ModuleId, ModuleContext>;
+  private readonly resolveModuleContext: ModuleContextResolver;
+
+  /**
+   * Ids of the modules this module declares as dependencies.
+   *
+   * When undefined, dependency access is not enforced (legacy
+   * construction path).
+   */
+  private readonly declaredDependencies?: ReadonlySet<ModuleId>;
 
   public constructor(
     module: Module,
     dependencies: ModuleContextDependencies,
     metadata?: ModuleMetadata,
-    moduleContexts: ReadonlyMap<ModuleId, ModuleContext> = new Map(),
+    moduleContexts:
+      ReadonlyMap<ModuleId, ModuleContext> | ModuleContextResolver = new Map(),
+    declaredDependencies?: readonly ModuleId[],
   ) {
     this.id = module.id;
 
@@ -166,7 +197,7 @@ export class DefaultModuleContext implements ModuleContext {
 
     this.metadata = metadata;
 
-    this.options = Object.freeze({
+    this.options = deepFreezeModuleOptions({
       ...(module.options ?? {}),
     });
 
@@ -178,7 +209,14 @@ export class DefaultModuleContext implements ModuleContext {
 
     this.logger = dependencies.logger;
 
-    this.moduleContexts = moduleContexts;
+    this.resolveModuleContext =
+      typeof moduleContexts === "function"
+        ? moduleContexts
+        : (moduleId: ModuleId) => moduleContexts.get(moduleId);
+
+    this.declaredDependencies = declaredDependencies
+      ? new Set(declaredDependencies)
+      : undefined;
   }
 
   /**
@@ -204,16 +242,26 @@ export class DefaultModuleContext implements ModuleContext {
 
   /**
    * Gets the context of another module.
+   *
+   * Only declared dependencies are accessible; requesting an
+   * undeclared module throws MissingModuleDependencyError.
    */
   public getModuleContext(moduleId: ModuleId): ModuleContext | undefined {
-    return this.moduleContexts.get(moduleId);
+    if (this.declaredDependencies && !this.declaredDependencies.has(moduleId)) {
+      throw new MissingModuleDependencyError(this.id, moduleId);
+    }
+
+    return this.resolveModuleContext(moduleId);
   }
 
   /**
-   * Checks whether another module exists.
+   * Checks whether a declared dependency is available.
    */
   public hasModule(moduleId: ModuleId): boolean {
-    return this.moduleContexts.has(moduleId);
+    if (this.declaredDependencies && !this.declaredDependencies.has(moduleId))
+      return false;
+
+    return this.resolveModuleContext(moduleId) !== undefined;
   }
 }
 
@@ -237,9 +285,19 @@ export interface CreateModuleContextOptions {
   readonly metadata?: ModuleMetadata;
 
   /**
-   * Contexts of modules that have already been resolved.
+   * Contexts of modules that have already been resolved, either
+   * as a map or as a resolver function. The loader supplies a
+   * resolver so the module never receives the live context map.
    */
-  readonly moduleContexts?: ReadonlyMap<ModuleId, ModuleContext>;
+  readonly moduleContexts?:
+    ReadonlyMap<ModuleId, ModuleContext> | ModuleContextResolver;
+
+  /**
+   * Ids of the modules the current module declares as
+   * dependencies. When supplied, getModuleContext enforces
+   * declared-dependency access.
+   */
+  readonly declaredDependencies?: readonly ModuleId[];
 }
 
 /**
@@ -253,6 +311,7 @@ export function createModuleContext(
     options.dependencies,
     options.metadata,
     options.moduleContexts,
+    options.declaredDependencies,
   );
 }
 

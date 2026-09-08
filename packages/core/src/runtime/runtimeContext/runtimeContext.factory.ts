@@ -1,19 +1,19 @@
+import { randomUUID } from "node:crypto";
+
+import { createExecutionContext } from "../../context/core/executionContext.context.js";
+
 import type { RuntimeMode, RuntimeRole } from "../runtimeOptions/index.js";
 
 import type {
+  RuntimeExecutionContext,
+  RuntimeExecutionMetadata,
   RuntimeIdentity,
-  RuntimeContextDependencies,
 } from "./runtimeContext.type.js";
-
-import { DefaultRuntimeContext } from "./runtimeContext.core.js";
 
 /**
  * Creates a unique runtime identifier.
  */
 export function createRuntimeId(name: string): string {
-  const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).slice(2, 10);
-
   const normalizedName = name
     .slice(0, 100)
     .trim()
@@ -21,7 +21,7 @@ export function createRuntimeId(name: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 
-  return [normalizedName || "runtime", timestamp, random].join("-");
+  return `${normalizedName || "runtime"}-${randomUUID()}`;
 }
 
 /**
@@ -47,15 +47,41 @@ export function createRuntimeIdentity(options: {
 }
 
 /**
- * Creates a RuntimeContext.
+ * Creates the execution context of a runtime from its identity.
+ *
+ * `metadata` (typically `RuntimeOptions.metadata`) is merged under
+ * the identity fields, which always win.
  */
-export function createRuntimeContext(
+export function createRuntimeExecutionContext(
   identity: RuntimeIdentity,
-  dependencies: RuntimeContextDependencies,
   metadata: Readonly<Record<string, unknown>> = {},
-): DefaultRuntimeContext {
-  return new DefaultRuntimeContext(identity, dependencies, metadata);
+): RuntimeExecutionContext {
+  const runtimeMetadata: RuntimeExecutionMetadata = {
+    ...metadata,
+    runtimeId: identity.id,
+    runtimeName: identity.name,
+    runtimeMode: identity.mode,
+    runtimeRole: identity.role,
+    ...(identity.processId !== undefined
+      ? { processId: identity.processId }
+      : {}),
+  };
+
+  return createExecutionContext({
+    executionId: identity.id,
+    service: identity.name,
+    transport: "runtime",
+    operation: "runtime",
+    startedAt: identity.createdAt,
+    metadata: runtimeMetadata,
+  }) as RuntimeExecutionContext;
 }
+
+/**
+ * @deprecated Use createRuntimeExecutionContext.
+ */
+export const createRuntimeContext: typeof createRuntimeExecutionContext =
+  createRuntimeExecutionContext;
 
 /**
  * Attempts to retrieve the current process ID.

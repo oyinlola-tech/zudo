@@ -1,4 +1,5 @@
 import { ErrorCode } from "../../errors/errorCode.code.js";
+import type { SerializedBaseError } from "@zudojs/errors";
 
 /**
  * Runtime lifecycle operations.
@@ -90,17 +91,12 @@ export interface RuntimeErrorOptions {
 /**
  * Serializable representation of RuntimeError.
  */
-export interface RuntimeErrorJSON {
-  readonly name: string;
-  readonly message: string;
-  readonly code: string;
-  readonly operation?: RuntimeOperation;
-  readonly phase?: RuntimeErrorPhase;
+export type RuntimeErrorJSON = SerializedBaseError & {
+  readonly operation?: string;
+  readonly phase?: string;
   readonly runtimeId?: string;
   readonly runtimeName?: string;
   readonly moduleName?: string;
   readonly errorMetadata: RuntimeErrorMetadata;
   readonly recoverable: boolean;
-  readonly details?: unknown;
-  readonly status?: number;
-}
+};

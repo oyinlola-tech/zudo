@@ -67,6 +67,53 @@ export class ProviderAlreadyRegisteredError extends FrameworkError {
 }
 
 /**
+ * Thrown when a provider definition is not one of the supported
+ * shapes (useValue, useFactory, useClass).
+ */
+export class InvalidProviderError extends FrameworkError {
+  public constructor(token: unknown) {
+    super(`Invalid provider definition for token "${describeToken(token)}".`, {
+      code: ErrorCode.INVALID_PROVIDER,
+      details: {
+        token: describeToken(token),
+      },
+    });
+
+    this.name = "InvalidProviderError";
+  }
+}
+
+/**
+ * Thrown when a dependency cannot be resolved, for example because
+ * the resolution chain contains a cycle or a factory failed.
+ */
+export class DependencyResolutionError extends FrameworkError {
+  /**
+   * Tokens in resolution order, ending with the token that failed.
+   */
+  public readonly chain: readonly string[];
+
+  public constructor(
+    message: string,
+    chain: readonly unknown[],
+    cause?: unknown,
+  ) {
+    const describedChain = chain.map(describeToken);
+
+    super(message, {
+      code: ErrorCode.DEPENDENCY_RESOLUTION_FAILED,
+      details: {
+        chain: describedChain,
+      },
+      cause,
+    });
+
+    this.name = "DependencyResolutionError";
+    this.chain = Object.freeze(describedChain);
+  }
+}
+
+/**
  * Thrown when configuration is required but cannot be found.
  */
 export class ConfigurationNotFoundError extends FrameworkError {
@@ -130,7 +177,7 @@ export class AdapterNotFoundError extends FrameworkError {
 /**
  * Creates a readable representation of a dependency token.
  */
-function describeToken(token: unknown): string {
+export function describeToken(token: unknown): string {
   if (typeof token === "string") {
     return token;
   }

@@ -18,6 +18,7 @@ export {
 } from "./moduleError.registration.js";
 
 export {
+  InvalidModuleDependencyError,
   MissingModuleDependencyError,
   CircularModuleDependencyError,
   ModuleVersionMismatchError,

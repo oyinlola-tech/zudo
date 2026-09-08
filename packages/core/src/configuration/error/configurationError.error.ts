@@ -2,6 +2,23 @@ import { FrameworkError } from "../../errors/frameworkError.error.js";
 
 import { ErrorCode } from "../../errors/errorCode.code.js";
 
+import { ConfigurationRedactor } from "./configurationRedactor.redactor.js";
+
+/**
+ * Default redactor used to scrub raw cause text before it is
+ * embedded in configuration error messages.
+ */
+const defaultErrorRedactor = new ConfigurationRedactor();
+
+/**
+ * Produces a redacted message from an unknown cause.
+ */
+export function describeConfigurationCause(cause: unknown): string {
+  const message = cause instanceof Error ? cause.message : String(cause);
+
+  return defaultErrorRedactor.redactText(message);
+}
+
 /**
  * Base error for all configuration related failures.
  *
@@ -63,7 +80,7 @@ export class ConfigurationSourceError extends ConfigurationError {
   public readonly sourceType: string;
 
   public constructor(sourceName: string, sourceType: string, cause: unknown) {
-    const causeMessage = cause instanceof Error ? cause.message : String(cause);
+    const causeMessage = describeConfigurationCause(cause);
 
     super(
       ErrorCode.CONFIGURATION_LOAD_FAILED,
@@ -99,6 +116,27 @@ export class ConfigurationMissingError extends ConfigurationError {
     );
 
     this.name = "ConfigurationMissingError";
+  }
+}
+
+/**
+ * Thrown when a configuration path is malformed: empty, containing
+ * whitespace, or naming a forbidden segment such as "__proto__".
+ */
+export class ConfigurationPathError extends ConfigurationError {
+  public constructor(path: string, reason: string) {
+    super(
+      ErrorCode.CONFIGURATION_INVALID,
+      `Invalid configuration path "${path}": ${reason}`,
+      {
+        path,
+        details: {
+          reason,
+        },
+      },
+    );
+
+    this.name = "ConfigurationPathError";
   }
 }
 

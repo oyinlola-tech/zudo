@@ -88,6 +88,24 @@ export type ModuleRegistryListener = (
 ) => void | Promise<void>;
 
 /**
+ * Options accepted when registering a module definition.
+ */
+export interface ModuleRegisterOptions {
+  /**
+   * Allows replacing a definition whose module instance is
+   * already loaded (or loading).
+   *
+   * Replacing a loaded module strands the live instance, so it
+   * is rejected with InvalidModuleStateError unless the caller
+   * opts in explicitly. Replacement itself additionally requires
+   * the registry's allowReplacement option.
+   *
+   * Defaults to false.
+   */
+  readonly replaceLoaded?: boolean;
+}
+
+/**
  * Public contract for the module registry.
  */
 export interface ModuleRegistry {
@@ -96,6 +114,7 @@ export interface ModuleRegistry {
    */
   register<TModule extends Module>(
     definition: ModuleDefinition<TModule>,
+    options?: ModuleRegisterOptions,
   ): ModuleRegistration<TModule>;
 
   /**

@@ -32,9 +32,38 @@ export const LogLevelPriority: Record<LogLevel, number> = {
 };
 
 /**
+ * The level used when a configured level is unknown.
+ */
+export const DEFAULT_LOG_LEVEL: LogLevel = LogLevel.INFO;
+
+/**
+ * Checks whether a value is a known log level.
+ */
+export function isLogLevel(value: unknown): value is LogLevel {
+  return typeof value === "string" && Object.hasOwn(LogLevelPriority, value);
+}
+
+/**
+ * Resolves an arbitrary value to a known log level.
+ *
+ * Unknown values fall back to "info" so a configuration typo
+ * can never silently disable all logging.
+ */
+export function resolveLogLevel(value: unknown): LogLevel {
+  return isLogLevel(value) ? value : DEFAULT_LOG_LEVEL;
+}
+
+/**
  * Determines whether a log level should be emitted when
  * the configured minimum level is applied.
+ *
+ * Unknown minimum levels are treated as "info" instead of
+ * silently disabling all logging.
  */
 export function shouldLog(level: LogLevel, minimumLevel: LogLevel): boolean {
-  return LogLevelPriority[level] >= LogLevelPriority[minimumLevel];
+  const levelPriority =
+    LogLevelPriority[level] ?? LogLevelPriority[DEFAULT_LOG_LEVEL];
+  const minimumPriority =
+    LogLevelPriority[minimumLevel] ?? LogLevelPriority[DEFAULT_LOG_LEVEL];
+  return levelPriority >= minimumPriority;
 }

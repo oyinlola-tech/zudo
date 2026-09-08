@@ -10,7 +10,7 @@
 export { DefaultRuntime, createRuntime } from "./runtime.js";
 
 export type {
-  RuntimeState as RuntimeLifecycleState,
+  RuntimeLifecycleState,
   RuntimeDependencies,
   RuntimeStatus,
   Runtime,
@@ -37,7 +37,7 @@ export type {
   RuntimeShutdownOptions,
   RuntimeSignalOptions,
   RuntimeDiagnosticsOptions,
-  RuntimeInfrastructure,
+  RuntimeEnvironmentOverrides,
   ResolvedRuntimeOptions,
 } from "./runtimeOptions/index.js";
 
@@ -65,31 +65,29 @@ export {
   getRuntimeStateLabel,
   getRuntimeStates,
   getNextRuntimeStates,
-  InvalidRuntimeStateError,
-  InvalidRuntimeTransitionError,
 } from "./runtimeState.state.js";
 
 export type {
   RuntimeStateSnapshot,
   RuntimeStateTransition,
+  RuntimeTiming,
 } from "./runtimeState.state.js";
 
 /*
  * Runtime context
  */
 export {
-  DefaultRuntimeContext,
   createRuntimeId,
   createRuntimeIdentity,
+  createRuntimeExecutionContext,
   createRuntimeContext,
 } from "./runtimeContext/index.js";
 
 export type {
   RuntimeIdentity,
-  RuntimeTiming,
-  RuntimeContextDependencies,
+  RuntimeExecutionMetadata,
+  RuntimeExecutionContext,
   RuntimeContext,
-  RuntimeContextState,
 } from "./runtimeContext/index.js";
 
 /*
@@ -104,7 +102,7 @@ export {
   detectHostInfo,
   detectCI,
   detectContainer,
-  RuntimeEnvironmentError,
+  MissingEnvironmentVariableError,
 } from "./runtimeEnvironment/index.js";
 
 export type {
@@ -115,33 +113,18 @@ export type {
   RuntimeHostInfo,
   RuntimeEngineInfo,
   RuntimeEnvironmentInfo,
+  RuntimeEnvironmentSummary,
   RuntimeEnvironment,
   RuntimeEnvironmentOptions,
 } from "./runtimeEnvironment/index.js";
 
 /*
- * Runtime manager
- */
-export {
-  DefaultRuntimeManager,
-  createRuntimeManager,
-  RuntimeManagerError,
-} from "./runtimeManager/index.js";
-
-export type {
-  RuntimeManagerDependencies,
-  RuntimeManager,
-} from "./runtimeManager/index.js";
-
-/*
  * Runtime bootstrap
  */
-export {
-  DefaultRuntimeBootstrap,
-  RuntimeBootstrapError,
-} from "./runtimeBootstrap/index.js";
+export { DefaultRuntimeBootstrap } from "./runtimeBootstrap/index.js";
 
 export type {
+  RuntimeBootstrap,
   RuntimeBootstrapDependencies,
   RuntimeBootstrapOptions,
   RuntimeBootstrapPhase,
@@ -152,12 +135,10 @@ export type {
 /*
  * Runtime shutdown
  */
-export {
-  DefaultRuntimeShutdown,
-  RuntimeShutdownError,
-} from "./runtimeShutdown/index.js";
+export { DefaultRuntimeShutdown } from "./runtimeShutdown/index.js";
 
 export type {
+  RuntimeShutdown,
   RuntimeShutdownDependencies,
   RuntimeShutdownConfig,
   RuntimeShutdownPhase,
@@ -166,12 +147,36 @@ export type {
 } from "./runtimeShutdown/index.js";
 
 /*
+ * Runtime signals
+ */
+export { RuntimeSignalManager } from "./runtimeSignals/index.js";
+
+export type {
+  RuntimeTerminationSignal,
+  RuntimeProcessEvent,
+  RuntimeSignalTarget,
+  RuntimeSignalHandlers,
+  RuntimeSignalManagerOptions,
+} from "./runtimeSignals/index.js";
+
+/*
+ * Runtime timeout
+ */
+export { withRuntimeTimeout } from "./runtimeTimeout.js";
+
+export type {
+  TimeoutAwareOperation,
+  RuntimeTimeoutOptions,
+} from "./runtimeTimeout.js";
+
+/*
  * Runtime errors
  */
 export {
   RuntimeError,
   RuntimeErrorCode,
-  RuntimeStateError,
+  InvalidRuntimeStateError,
+  InvalidRuntimeTransitionError,
   RuntimeStartError,
   RuntimeStopError,
   RuntimeInitializationError,

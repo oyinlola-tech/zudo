@@ -4,6 +4,10 @@ import type { ConfigurationKey } from "../core/configurationKey.key.js";
 
 import type { ConfigurationSource } from "../core/configurationSource.source.js";
 
+import { sortConfigurationSources } from "../core/configurationSource.source.js";
+
+import { applyConfigurationSourceEntries } from "../loader/configurationLoader.loader.js";
+
 /**
  * Provides access to application configuration.
  *
@@ -53,6 +57,16 @@ export interface ConfigurationProvider {
    * registered with the provider.
    */
   getSources(): readonly ConfigurationSource[];
+
+  /**
+   * Replaces the provider's active configuration.
+   *
+   * Optional: providers that build configuration exclusively
+   * from their own sources may omit it. When present, it is used
+   * by ConfigurationManager to push loaded configuration into
+   * the provider.
+   */
+  setConfiguration?(configuration: Configuration): void;
 }
 
 /**
@@ -79,10 +93,22 @@ export interface ConfigurationProviderOptions {
 export class DefaultConfigurationProvider implements ConfigurationProvider {
   private configuration: Configuration;
 
+  /**
+   * Configuration supplied at construction time.
+   *
+   * Reloads layer source values on top of this configuration so
+   * programmatic defaults survive a reload.
+   */
+  private readonly initialConfiguration: Configuration;
+
   private readonly sources: ConfigurationSource[];
 
+  private reloadPromise: Promise<Configuration> | undefined;
+
   public constructor(options: ConfigurationProviderOptions = {}) {
-    this.configuration = options.configuration ?? new Configuration();
+    this.initialConfiguration = options.configuration ?? new Configuration();
+
+    this.configuration = this.initialConfiguration;
 
     this.sources = [...(options.sources ?? [])];
   }
@@ -133,23 +159,42 @@ export class DefaultConfigurationProvider implements ConfigurationProvider {
    * Reloads configuration from all registered sources.
    *
    * Sources are loaded according to priority. Higher priority
-   * sources override values from lower priority sources.
+   * sources override values from lower priority sources. Values
+   * are layered on top of the initial configuration so
+   * programmatic defaults are preserved.
+   *
+   * Concurrent reload calls share a single in-flight reload.
    */
   public async reload(): Promise<Configuration> {
-    const sources = [...this.sources].sort((a, b) => a.priority - b.priority);
+    if (this.reloadPromise) {
+      return this.reloadPromise;
+    }
 
-    let configuration = new Configuration();
+    const reload = this.performReload().finally(() => {
+      this.reloadPromise = undefined;
+    });
+
+    this.reloadPromise = reload;
+
+    return reload;
+  }
+
+  /**
+   * Executes one reload pass.
+   */
+  private async performReload(): Promise<Configuration> {
+    const sources = sortConfigurationSources(this.sources);
+
+    let configuration = this.initialConfiguration;
 
     for (const source of sources) {
       const entries = await source.load();
 
-      for (const entry of entries) {
-        configuration = configuration.with(
-          entry.path,
-          entry.value,
-          source.type,
-        );
-      }
+      configuration = applyConfigurationSourceEntries(
+        configuration,
+        source,
+        entries,
+      );
     }
 
     this.configuration = configuration;

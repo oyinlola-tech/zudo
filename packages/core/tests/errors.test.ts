@@ -284,9 +284,55 @@ describe("ErrorCode", () => {
   });
 
   it("should have all string values", () => {
-    for (const [key, value] of Object.entries(ErrorCode)) {
+    for (const value of Object.values(ErrorCode)) {
       expect(typeof value).toBe("string");
       expect(value.length).toBeGreaterThan(0);
     }
+  });
+});
+
+// ─── Barrel exports ─────────────────────────────────────
+
+import {
+  ModuleNotFoundError as CoreModuleNotFoundError,
+  DependencyResolutionError as BarrelDependencyResolutionError,
+  InvalidProviderError as BarrelInvalidProviderError,
+  describeToken,
+} from "../src/errors/index.js";
+import { ModuleNotFoundError as RootModuleNotFoundError } from "../src/index.js";
+
+describe("errors barrel", () => {
+  it("exports ModuleNotFoundError from @zudojs/core/errors", () => {
+    const error = new CoreModuleNotFoundError("users");
+    expect(error.code).toBe(ErrorCode.MODULE_NOT_FOUND);
+    expect(error.details).toEqual({ module: "users" });
+  });
+
+  it("resolves the root ModuleNotFoundError to the module subsystem's class", () => {
+    const error = new RootModuleNotFoundError("users");
+    expect(error.name).toBe("ModuleNotFoundError");
+    expect(error).not.toBeInstanceOf(CoreModuleNotFoundError);
+  });
+
+  it("exports the container diagnostics errors and describeToken", () => {
+    expect(new BarrelInvalidProviderError("x").code).toBe(
+      ErrorCode.INVALID_PROVIDER,
+    );
+    expect(new BarrelDependencyResolutionError("m", ["a"]).chain).toEqual([
+      "a",
+    ]);
+    expect(describeToken(Symbol("sym"))).toBe("sym");
+    expect(describeToken(class Foo {})).toBe("Foo");
+  });
+
+  it("FrameworkErrorJSON matches toJSON() output", () => {
+    const json = new FrameworkError("x", {
+      code: "C",
+      details: { a: 1 },
+    }).toJSON();
+    expect(json.category).toBeDefined();
+    expect(json.severity).toBeDefined();
+    expect(json.details).toEqual({ a: 1 });
+    expect(json.metadata).toEqual({});
   });
 });

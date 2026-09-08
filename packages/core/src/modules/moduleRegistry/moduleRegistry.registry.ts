@@ -10,7 +10,14 @@ import type {
   ModuleRegistryEvent,
   ModuleRegistryListener,
   ModuleRegistry,
+  ModuleRegisterOptions,
 } from "./moduleRegistry.type.js";
+import {
+  DuplicateModuleError,
+  InvalidModuleDefinitionError,
+  ModuleNotFoundError,
+} from "../moduleError/moduleError.registration.js";
+import { InvalidModuleStateError } from "../moduleError/moduleError.lifecycle.js";
 
 /** Default in-memory module registry. */
 export class DefaultModuleRegistry implements ModuleRegistry {
@@ -24,13 +31,45 @@ export class DefaultModuleRegistry implements ModuleRegistry {
 
   public register<TModule extends Module>(
     definition: ModuleDefinition<TModule>,
+    options: ModuleRegisterOptions = {},
   ): ModuleRegistration<TModule> {
     if (!isModuleDefinition(definition))
-      throw new TypeError("Invalid module definition.");
-    const moduleId = definition.id.trim();
+      throw new InvalidModuleDefinitionError("Invalid module definition.");
+
+    /*
+     * Ids are canonicalized when the definition is created
+     * (defineModule rejects untrimmed ids), so the registry can
+     * use definition.id directly.
+     */
+    const moduleId = definition.id;
+    if (moduleId !== moduleId.trim())
+      throw new InvalidModuleDefinitionError(
+        `Module id "${moduleId}" must not contain leading or trailing whitespace.`,
+        moduleId,
+      );
+
     const existing = this.registrations.get(moduleId);
     if (existing && !this.allowReplacement)
-      throw new Error(`Module "${moduleId}" is already registered.`);
+      throw new DuplicateModuleError(moduleId);
+
+    /*
+     * Replacing a definition whose module instance is already
+     * loaded (or currently loading) would strand the live
+     * instance: the lifecycle system would keep managing an
+     * object whose definition no longer exists. Callers must opt
+     * in explicitly with { replaceLoaded: true }.
+     */
+    if (
+      existing &&
+      (existing.state === "loaded" || existing.state === "loading") &&
+      options.replaceLoaded !== true
+    ) {
+      throw new InvalidModuleStateError(moduleId, existing.state, [
+        "registered",
+        "failed",
+        "unloaded",
+      ]);
+    }
 
     const now = new Date();
     const registration: ModuleRegistration<TModule> = Object.freeze({
@@ -64,8 +103,7 @@ export class DefaultModuleRegistry implements ModuleRegistry {
 
   public require(moduleId: ModuleId): ModuleRegistration {
     const registration = this.get(moduleId);
-    if (!registration)
-      throw new Error(`Module "${moduleId}" is not registered.`);
+    if (!registration) throw new ModuleNotFoundError(moduleId);
     return registration;
   }
 
@@ -111,9 +149,17 @@ export class DefaultModuleRegistry implements ModuleRegistry {
   ): ModuleRegistration {
     const existing = this.require(moduleId);
     const now = new Date();
+    /*
+     * Leaving a state that carries a live instance drops the
+     * instance reference; the registry never keeps a stale module
+     * object around once it has been unloaded.
+     */
     const registration: ModuleRegistration = Object.freeze({
       definition: existing.definition,
-      instance: details.instance ?? existing.instance,
+      instance:
+        state === "unloaded"
+          ? undefined
+          : (details.instance ?? existing.instance),
       state,
       error: details.error,
       registeredAt: existing.registeredAt,

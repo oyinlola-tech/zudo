@@ -1,22 +1,19 @@
 /**
  * Runtime Context
  *
- * Provides read-only access to the runtime environment and
- * runtime-owned infrastructure.
+ * The runtime's identity and its immutable ExecutionContext.
  */
-
-export { DefaultRuntimeContext } from "./runtimeContext.core.js";
 
 export {
   createRuntimeId,
   createRuntimeIdentity,
+  createRuntimeExecutionContext,
   createRuntimeContext,
 } from "./runtimeContext.factory.js";
 
 export type {
   RuntimeIdentity,
-  RuntimeTiming,
-  RuntimeContextDependencies,
+  RuntimeExecutionMetadata,
+  RuntimeExecutionContext,
   RuntimeContext,
-  RuntimeContextState,
 } from "./runtimeContext.type.js";

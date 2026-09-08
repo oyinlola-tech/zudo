@@ -8,6 +8,7 @@ export {
   type ModuleRegistrationState,
   type ModuleRegistration,
   type ModuleRegistryOptions,
+  type ModuleRegisterOptions,
   type ModuleRegistryEventType,
   type ModuleRegistryEvent,
   type ModuleRegistryListener,

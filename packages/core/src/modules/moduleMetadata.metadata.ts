@@ -1,5 +1,6 @@
 import type { ModuleId } from "./module.js";
 import type { Environment } from "@zudojs/constants";
+import { InvalidModuleDefinitionError } from "./moduleError/moduleError.registration.js";
 
 /** Environment in which a module is intended to run. */
 export type ModuleEnvironment = Environment;
@@ -77,14 +78,16 @@ function validateModuleMetadata(metadata: ModuleMetadata): void {
     metadata.deprecationMessage === undefined &&
     metadata.replacement === undefined
   ) {
-    throw new TypeError(
+    throw new InvalidModuleDefinitionError(
       "Deprecated modules should provide either a deprecationMessage or replacement module.",
     );
   }
   if (metadata.homepage && !isValidUrl(metadata.homepage))
-    throw new TypeError(`Invalid module homepage URL: ${metadata.homepage}`);
+    throw new InvalidModuleDefinitionError(
+      `Invalid module homepage URL: ${metadata.homepage}`,
+    );
   if (metadata.repository && !isValidUrl(metadata.repository))
-    throw new TypeError(
+    throw new InvalidModuleDefinitionError(
       `Invalid module repository URL: ${metadata.repository}`,
     );
 }
@@ -111,6 +114,19 @@ export function createModuleMetadata(
   return Object.freeze(metadata);
 }
 
+/**
+ * Removes keys whose value is undefined so spreading a metadata
+ * object cannot clobber defined values with undefined.
+ */
+function withoutUndefinedValues(
+  metadata: ModuleMetadata | undefined,
+): Partial<ModuleMetadata> {
+  if (!metadata) return {};
+  return Object.fromEntries(
+    Object.entries(metadata).filter(([, value]) => value !== undefined),
+  ) as Partial<ModuleMetadata>;
+}
+
 /** Merges two metadata objects. Values from `override` take precedence. */
 export function mergeModuleMetadata(
   base?: ModuleMetadata,
@@ -118,8 +134,8 @@ export function mergeModuleMetadata(
 ): ModuleMetadata {
   if (!base && !override) return createModuleMetadata();
   return createModuleMetadata({
-    ...(base ?? {}),
-    ...(override ?? {}),
+    ...withoutUndefinedValues(base),
+    ...withoutUndefinedValues(override),
     tags: [...(base?.tags ?? []), ...(override?.tags ?? [])],
     environments: override?.environments ?? base?.environments,
     extra: { ...(base?.extra ?? {}), ...(override?.extra ?? {}) },

@@ -11,6 +11,7 @@ export {
   type ModuleDependencyNode,
   type ModuleDependencyGraph,
   type ModuleDependencyInput,
+  type ModuleDependencyNodeInput,
 } from "./moduleDependency.type.js";
 
 export {
@@ -22,6 +23,7 @@ export {
   createModuleDependency,
   isOptionalModuleDependency,
   hasModuleVersionConstraint,
+  satisfiesModuleVersionConstraint,
 } from "./moduleDependency.graph.js";
 
 export {

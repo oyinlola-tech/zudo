@@ -25,7 +25,7 @@ export type {
   RuntimeShutdownOptions,
   RuntimeSignalOptions,
   RuntimeDiagnosticsOptions,
-  RuntimeInfrastructure,
+  RuntimeEnvironmentOverrides,
   RuntimeOptions,
   ResolvedRuntimeOptions,
 } from "./runtimeOptions.type.js";

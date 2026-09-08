@@ -1,7 +1,11 @@
 /**
  * Dependency Injection Container.
  */
-export { Container } from "./container.js";
+export {
+  Container,
+  ContainerScope,
+  type ContainerOptions,
+} from "./container.js";
 
 export { createToken, type Token, type ConstructorToken } from "./token.js";
 

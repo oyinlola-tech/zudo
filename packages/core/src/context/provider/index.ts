@@ -7,7 +7,13 @@
 export {
   ContextStorage,
   createContextStorage,
+  type ExecutionContextOverrides,
 } from "./contextStorage.storage.js";
+
+export {
+  defaultContextStorage,
+  getDefaultContextStorage,
+} from "./defaultContextStorage.storage.js";
 
 export {
   DefaultContextProvider,

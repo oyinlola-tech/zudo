@@ -1,5 +1,7 @@
 import { Configuration } from "../core/configuration.js";
 
+import { normalizeConfigurationPath } from "../core/configurationPath.path.js";
+
 import type { ConfigurationSource } from "../core/configurationSource.source.js";
 
 /**
@@ -135,7 +137,7 @@ export class ConfigurationRegistry {
       throw new Error(`Configuration section "${name}" is already registered.`);
     }
 
-    const path = (options.path ?? name).trim().replace(/\s+/g, "");
+    const path = normalizeConfigurationPath(options.path ?? name);
 
     if (!path) {
       throw new Error(

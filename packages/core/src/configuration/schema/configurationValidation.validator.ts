@@ -8,9 +8,40 @@ import type {
   ConfigurationValidationResult,
 } from "../schema/configurationSchema.schema.js";
 
-import { FrameworkError } from "../../errors/frameworkError.error.js";
-
 import { ErrorCode } from "../../errors/errorCode.code.js";
+
+import { ConfigurationError } from "../error/configurationError.error.js";
+
+import { ConfigurationRedactor } from "../error/configurationRedactor.redactor.js";
+
+import type { ConfigurationValue } from "../core/configuration.js";
+
+/**
+ * Redactor used to scrub validation issues before they are
+ * embedded in error messages and details.
+ */
+const issueRedactor = new ConfigurationRedactor();
+
+/**
+ * Redacts sensitive information from a validation issue.
+ */
+function redactValidationIssue(
+  issue: ConfigurationValidationIssue,
+): ConfigurationValidationIssue {
+  return {
+    path: issue.path,
+    message: issueRedactor.redactText(issue.message),
+    code: issue.code,
+    ...(issue.value !== undefined
+      ? {
+          value: issueRedactor.redactValueAtPath(
+            issue.path,
+            issue.value as ConfigurationValue,
+          ),
+        }
+      : {}),
+  };
+}
 
 /**
  * Result returned after validating configuration.
@@ -66,7 +97,7 @@ export interface ConfigurationValidationOptions {
 /**
  * Error thrown when configuration validation fails.
  */
-export class ConfigurationValidationError extends FrameworkError {
+export class ConfigurationValidationError extends ConfigurationError {
   /**
    * All configuration validation issues.
    */
@@ -87,18 +118,28 @@ export class ConfigurationValidationError extends FrameworkError {
     schemaCount: number,
     invalidSchemaCount: number,
   ) {
-    super(createValidationErrorMessage(issues), {
-      code: ErrorCode.CONFIGURATION_VALIDATION_FAILED,
-      details: {
-        issues,
-        schemaCount,
-        invalidSchemaCount,
+    /*
+     * Issue values and messages are redacted before being
+     * embedded so validation failures on sensitive paths do
+     * not leak secrets into logs.
+     */
+    const redactedIssues = issues.map(redactValidationIssue);
+
+    super(
+      ErrorCode.CONFIGURATION_VALIDATION_FAILED,
+      createValidationErrorMessage(redactedIssues),
+      {
+        details: {
+          issues: redactedIssues,
+          schemaCount,
+          invalidSchemaCount,
+        },
       },
-    });
+    );
 
     this.name = "ConfigurationValidationError";
 
-    this.issues = [...issues];
+    this.issues = redactedIssues;
 
     this.schemaCount = schemaCount;
 
@@ -159,6 +200,11 @@ export async function validateConfiguration(
  *
  * This is the method application bootstrap code should normally
  * use when configuration is mandatory for startup.
+ *
+ * The returned configuration has schema default values applied:
+ * every registered schema whose path is missing from the
+ * configuration and which declares a default contributes that
+ * default (attributed to the "default" source).
  */
 export async function validateConfigurationOrThrow(
   configuration: Configuration,
@@ -175,7 +221,33 @@ export async function validateConfigurationOrThrow(
     );
   }
 
-  return configuration;
+  return applyConfigurationSchemaDefaults(configuration, registry);
+}
+
+/**
+ * Applies schema default values to a configuration.
+ *
+ * Values already present in the configuration are never
+ * overridden.
+ */
+export function applyConfigurationSchemaDefaults(
+  configuration: Configuration,
+  registry: ConfigurationSchemaRegistry,
+): Configuration {
+  let result = configuration;
+
+  for (const schema of registry.getAll()) {
+    if (schema.defaultValue === undefined) continue;
+    if (result.has(schema.path)) continue;
+
+    result = result.with(
+      schema.path,
+      schema.defaultValue as ConfigurationValue,
+      "default",
+    );
+  }
+
+  return result;
 }
 
 /**

@@ -18,7 +18,11 @@ export {
   InvalidStateError,
   ProviderNotFoundError,
   ProviderAlreadyRegisteredError,
+  InvalidProviderError,
+  DependencyResolutionError,
   ConfigurationNotFoundError,
   ExecutionContextNotFoundError,
+  ModuleNotFoundError,
   AdapterNotFoundError,
+  describeToken,
 } from "./exceptions.js";

@@ -4,4 +4,15 @@
  * Module stopping and destruction stages.
  */
 
-export { executeShutdownPipeline } from "./runtimeShutdown.pipeline.js";
+export {
+  executeShutdownPipeline,
+  createShutdownPipelineState,
+  createShutdownResult,
+} from "./runtimeShutdown.pipeline.js";
+
+export type {
+  ShutdownCounters,
+  ShutdownLogFn,
+  ShutdownPipelineServices,
+  ShutdownPipelineState,
+} from "./runtimeShutdown.pipeline.js";

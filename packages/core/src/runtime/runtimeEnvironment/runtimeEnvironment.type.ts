@@ -51,6 +51,9 @@ export interface RuntimeEngineInfo {
 
 /**
  * Complete runtime environment information.
+ *
+ * `variables` holds the full environment snapshot and may contain
+ * secrets. It is deliberately excluded from {@link RuntimeEnvironment.toJSON}.
  */
 export interface RuntimeEnvironmentInfo {
   readonly mode: RuntimeMode;
@@ -65,6 +68,15 @@ export interface RuntimeEnvironmentInfo {
   readonly isDevelopment: boolean;
   readonly isTest: boolean;
 }
+
+/**
+ * Environment information safe for logs and serialization: everything
+ * in RuntimeEnvironmentInfo except the raw variables.
+ */
+export type RuntimeEnvironmentSummary = Omit<
+  RuntimeEnvironmentInfo,
+  "variables"
+>;
 
 /**
  * Runtime environment contract.
@@ -83,7 +95,10 @@ export interface RuntimeEnvironment {
   isTest(): boolean;
   isCI(): boolean;
   isContainer(): boolean;
-  toJSON(): RuntimeEnvironmentInfo;
+  /**
+   * Serializable summary. Never includes environment variables.
+   */
+  toJSON(): RuntimeEnvironmentSummary;
 }
 
 /**

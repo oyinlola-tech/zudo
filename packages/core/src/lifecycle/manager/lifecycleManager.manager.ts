@@ -8,7 +8,7 @@ import {
 } from "../core/lifecycleHook.hook.js";
 import {
   Lifecycle,
-  LifecycleState,
+  type LifecycleState,
   type LifecycleParticipant,
 } from "../core/lifecycle.js";
 
@@ -24,147 +24,123 @@ export interface LifecycleManagerOptions {
 /**
  * Coordinates lifecycle hooks and lifecycle participants.
  * Primary API for application-level lifecycle management.
+ *
+ * Every component, whether it uses the hook interfaces (onInitialize,
+ * onStart, onStop, onDestroy) or the participant API (initialize,
+ * start, stop, dispose), is normalized into a single participant and
+ * driven by one Lifecycle state machine. This guarantees:
+ *
+ * - global registration order across both component kinds
+ *   (initialize/start forward, stop/destroy reverse),
+ * - a component exposing both shapes runs exactly once per phase
+ *   (the `onX` hook takes precedence),
+ * - state guards, retries, and concurrency rules of Lifecycle.
  */
 export class LifecycleManager {
   private readonly lifecycle: Lifecycle;
   private readonly components: ManagedLifecycleComponent[] = [];
   private readonly logger?: Logger;
-  private readonly continueOnShutdownError: boolean;
 
   public constructor(options: LifecycleManagerOptions = {}) {
     this.logger = options.logger;
-    this.continueOnShutdownError = options.continueOnShutdownError ?? true;
     this.lifecycle = new Lifecycle({
       logger: this.logger,
-      continueOnShutdownError: this.continueOnShutdownError,
+      continueOnShutdownError: options.continueOnShutdownError ?? true,
     });
   }
 
   public getState(): LifecycleState {
     return this.lifecycle.getState();
   }
+
   public getComponents(): readonly ManagedLifecycleComponent[] {
     return [...this.components];
   }
 
+  /**
+   * Registers a component. Only allowed before initialization begins.
+   */
   public register(component: ManagedLifecycleComponent): void {
+    this.lifecycle.register(this.toParticipant(component));
     this.components.push(component);
-    if (this.isLifecycleParticipant(component))
-      this.lifecycle.register(component);
   }
 
   public async initialize(): Promise<void> {
-    if (this.getState() !== LifecycleState.CREATED) return;
     this.logger?.debug("Lifecycle manager initialization started");
-    try {
-      for (const component of this.components) {
-        if (hasInitializeHook(component))
-          await this.runHook(component, "onInitialize", "initialize");
-      }
-      await this.lifecycle.initialize();
-      this.logger?.debug("Lifecycle manager initialization completed");
-    } catch (error) {
-      this.logger?.error("Lifecycle manager initialization failed", error);
-      throw error;
-    }
+    await this.lifecycle.initialize();
+    this.logger?.debug("Lifecycle manager initialization completed");
   }
 
   public async start(): Promise<void> {
-    if (this.getState() === LifecycleState.CREATED) await this.initialize();
     this.logger?.debug("Lifecycle manager startup started");
-    try {
-      for (const component of this.components) {
-        if (hasStartHook(component))
-          await this.runHook(component, "onStart", "start");
-      }
-      await this.lifecycle.start();
-      this.logger?.debug("Lifecycle manager startup completed");
-    } catch (error) {
-      this.logger?.error("Lifecycle manager startup failed", error);
-      throw error;
-    }
+    await this.lifecycle.start();
+    this.logger?.debug("Lifecycle manager startup completed");
   }
 
   public async stop(): Promise<void> {
-    const errors: unknown[] = [];
     this.logger?.debug("Lifecycle manager shutdown started");
-    for (let i = this.components.length - 1; i >= 0; i--) {
-      const component = this.components[i];
-      if (!hasStopHook(component)) continue;
-      try {
-        await this.runHook(component, "onStop", "stop");
-      } catch (error) {
-        errors.push(error);
-        if (!this.continueOnShutdownError) break;
-      }
-    }
-    try {
-      await this.lifecycle.stop();
-    } catch (error) {
-      errors.push(error);
-    }
-    if (errors.length > 0)
-      throw new AggregateError(
-        errors,
-        "Lifecycle shutdown completed with errors.",
-      );
+    await this.lifecycle.stop();
     this.logger?.debug("Lifecycle manager shutdown completed");
   }
 
   public async destroy(): Promise<void> {
-    const errors: unknown[] = [];
     this.logger?.debug("Lifecycle manager destruction started");
-    for (let i = this.components.length - 1; i >= 0; i--) {
-      const component = this.components[i];
-      if (!hasDestroyHook(component)) continue;
-      try {
-        await this.runHook(component, "onDestroy", "destroy");
-      } catch (error) {
-        errors.push(error);
-        if (!this.continueOnShutdownError) break;
-      }
-    }
-    try {
-      await this.lifecycle.dispose();
-    } catch (error) {
-      errors.push(error);
-    }
-    if (errors.length > 0)
-      throw new AggregateError(
-        errors,
-        "Lifecycle destruction completed with errors.",
-      );
+    await this.lifecycle.dispose();
     this.logger?.debug("Lifecycle manager destruction completed");
   }
 
   public async shutdown(): Promise<void> {
-    const errors: unknown[] = [];
-    try {
-      await this.stop();
-    } catch (error) {
-      errors.push(error);
-    }
-    try {
-      await this.destroy();
-    } catch (error) {
-      errors.push(error);
-    }
-    if (errors.length > 0)
-      throw new AggregateError(
-        errors,
-        "Application shutdown completed with errors.",
-      );
+    await this.lifecycle.shutdown();
+  }
+
+  /**
+   * Normalizes a component into a LifecycleParticipant. Hook methods
+   * (onInitialize, ...) win over participant methods (initialize, ...)
+   * when a component exposes both, so each phase runs once.
+   */
+  private toParticipant(
+    component: ManagedLifecycleComponent,
+  ): LifecycleParticipant {
+    const name = this.getComponentName(component);
+    const participant = this.isLifecycleParticipant(component)
+      ? component
+      : undefined;
+
+    const initialize = hasInitializeHook(component)
+      ? () => this.runHook(name, "initialize", () => component.onInitialize())
+      : participant?.initialize
+        ? () =>
+            this.runHook(name, "initialize", () => participant.initialize!())
+        : undefined;
+
+    const start = hasStartHook(component)
+      ? () => this.runHook(name, "start", () => component.onStart())
+      : participant?.start
+        ? () => this.runHook(name, "start", () => participant.start!())
+        : undefined;
+
+    const stop = hasStopHook(component)
+      ? () => this.runHook(name, "stop", () => component.onStop())
+      : participant?.stop
+        ? () => this.runHook(name, "stop", () => participant.stop!())
+        : undefined;
+
+    const dispose = hasDestroyHook(component)
+      ? () => this.runHook(name, "destroy", () => component.onDestroy())
+      : participant?.dispose
+        ? () => this.runHook(name, "destroy", () => participant.dispose!())
+        : undefined;
+
+    return { name, initialize, start, stop, dispose };
   }
 
   private async runHook(
-    component: LifecycleHook,
-    hook: "onInitialize" | "onStart" | "onStop" | "onDestroy",
+    component: string,
     label: string,
+    hook: () => Promise<void> | void,
   ): Promise<void> {
-    this.logger?.debug(`Running lifecycle ${label} hook`, {
-      component: this.getComponentName(component),
-    });
-    await component[hook]?.();
+    this.logger?.debug(`Running lifecycle ${label} hook`, { component });
+    await hook();
   }
 
   private isLifecycleParticipant(
@@ -185,7 +161,9 @@ export class LifecycleManager {
       typeof component === "object" &&
       component !== null &&
       "constructor" in component &&
-      typeof component.constructor === "function"
+      typeof component.constructor === "function" &&
+      component.constructor.name &&
+      component.constructor !== Object
     )
       return component.constructor.name;
     return "anonymous";

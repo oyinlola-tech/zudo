@@ -1,3 +1,5 @@
+import { requireConfigurationPath } from "./configurationPath.path.js";
+
 /**
  * A strongly typed key used to access a configuration value.
  *
@@ -28,8 +30,10 @@ export interface ConfigurationKey<T> {
   /**
    * Unique identifier for this configuration key.
    *
-   * Symbols prevent accidental collisions between keys that
-   * happen to use the same path.
+   * Note that configuration lookups are performed by `path`,
+   * not by this symbol. The symbol only helps distinguish key
+   * instances from each other in debugging and diagnostics;
+   * two keys with the same path resolve the same value.
    */
   readonly id: symbol;
 }
@@ -42,25 +46,10 @@ export interface ConfigurationKey<T> {
  * type the caller expects it to have.
  */
 export function createConfigurationKey<T>(path: string): ConfigurationKey<T> {
-  const normalizedPath = normalizeConfigurationPath(path);
-
-  if (!normalizedPath) {
-    throw new Error("Configuration key path cannot be empty.");
-  }
+  const normalizedPath = requireConfigurationPath(path);
 
   return Object.freeze({
     path: normalizedPath,
     id: Symbol(normalizedPath),
   });
-}
-
-/**
- * Normalizes a configuration path.
- */
-function normalizeConfigurationPath(path: string): string {
-  if (typeof path !== "string") {
-    throw new TypeError("Configuration key path must be a string.");
-  }
-
-  return path.trim().replace(/\s+/g, "");
 }

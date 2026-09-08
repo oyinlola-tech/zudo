@@ -2,6 +2,30 @@ import type { Module, ModuleId, ModuleOptions } from "./module.js";
 
 import type { ModuleMetadata } from "./moduleMetadata.metadata.js";
 
+import { InvalidModuleDefinitionError } from "./moduleError/moduleError.registration.js";
+
+/**
+ * Recursively freezes a module options tree.
+ *
+ * Already frozen nodes are skipped. Only plain objects and
+ * arrays are traversed; class instances are frozen shallowly.
+ */
+export function deepFreezeModuleOptions<T>(value: T): T {
+  if (value === null || typeof value !== "object") return value;
+  if (Object.isFrozen(value)) return value;
+
+  if (Array.isArray(value)) {
+    for (const item of value) deepFreezeModuleOptions(item);
+    return Object.freeze(value) as T;
+  }
+
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (prototype === Object.prototype || prototype === null) {
+    for (const child of Object.values(value)) deepFreezeModuleOptions(child);
+  }
+  return Object.freeze(value) as T;
+}
+
 /**
  * Factory used to create a module instance.
  *
@@ -80,15 +104,12 @@ export interface ModuleDefinition<TModule extends Module = Module> {
    * Whether the module should be automatically loaded.
    *
    * Defaults to true.
+   *
+   * A module with autoLoad disabled is still loaded when it is
+   * requested explicitly or when another loading module requires
+   * it as a dependency.
    */
   readonly autoLoad?: boolean;
-
-  /**
-   * Whether multiple instances of this module are allowed.
-   *
-   * Defaults to false.
-   */
-  readonly multiInstance?: boolean;
 }
 
 /**
@@ -110,8 +131,6 @@ export interface DefineModuleOptions<TModule extends Module = Module> {
   readonly options?: ModuleOptions;
 
   readonly autoLoad?: boolean;
-
-  readonly multiInstance?: boolean;
 }
 
 /**
@@ -131,9 +150,10 @@ export function defineModule<TModule extends Module = Module>(
     factory: options.factory,
     dependencies: normalizeDependencies(options.dependencies),
     metadata: options.metadata,
-    options: options.options,
+    options: options.options
+      ? deepFreezeModuleOptions({ ...options.options })
+      : undefined,
     autoLoad: options.autoLoad ?? true,
-    multiInstance: options.multiInstance ?? false,
   });
 }
 
@@ -212,16 +232,34 @@ function validateModuleDefinition<TModule extends Module>(
   definition: DefineModuleOptions<TModule>,
 ): void {
   if (!definition.id || definition.id.trim().length === 0) {
-    throw new TypeError("Module definition requires a non-empty id.");
+    throw new InvalidModuleDefinitionError(
+      "Module definition requires a non-empty id.",
+    );
+  }
+
+  /*
+   * Ids are canonicalized once here: a definition whose id would
+   * change under trim() is rejected so the registry, loader, and
+   * lifecycle can use definition.id directly everywhere.
+   */
+  if (definition.id !== definition.id.trim()) {
+    throw new InvalidModuleDefinitionError(
+      `Module id "${definition.id}" must not contain leading or trailing whitespace.`,
+      definition.id,
+    );
   }
 
   if (!definition.name || definition.name.trim().length === 0) {
-    throw new TypeError(`Module "${definition.id}" requires a non-empty name.`);
+    throw new InvalidModuleDefinitionError(
+      `Module "${definition.id}" requires a non-empty name.`,
+      definition.id,
+    );
   }
 
   if (typeof definition.factory !== "function") {
-    throw new TypeError(
+    throw new InvalidModuleDefinitionError(
       `Module "${definition.id}" requires a factory function.`,
+      definition.id,
     );
   }
 
@@ -233,18 +271,23 @@ function validateModuleDefinition<TModule extends Module>(
     const id = typeof dependency === "string" ? dependency : dependency.id;
 
     if (!id || id.trim().length === 0) {
-      throw new TypeError(
+      throw new InvalidModuleDefinitionError(
         `Module "${definition.id}" contains an invalid dependency.`,
+        definition.id,
       );
     }
 
     if (id === definition.id) {
-      throw new TypeError(`Module "${definition.id}" cannot depend on itself.`);
+      throw new InvalidModuleDefinitionError(
+        `Module "${definition.id}" cannot depend on itself.`,
+        definition.id,
+      );
     }
 
     if (dependencyIds.has(id)) {
-      throw new TypeError(
+      throw new InvalidModuleDefinitionError(
         `Module "${definition.id}" declares dependency "${id}" more than once.`,
+        definition.id,
       );
     }
 

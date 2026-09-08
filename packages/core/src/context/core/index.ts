@@ -5,18 +5,11 @@
  */
 
 export {
-  Context,
-  createContext,
-  type ContextType,
-  type ExecutionMetadata,
-  type CreateContextOptions,
-} from "./context.js";
-
-export {
   createExecutionContext,
   deriveExecutionContext,
   withExecutionMetadata,
   getExecutionDuration,
+  createExecutionId,
   type ExecutionContext,
   type CreateExecutionContextInput,
 } from "./executionContext.context.js";
@@ -31,3 +24,10 @@ export {
   type ContextKey,
   type ContextValueStore,
 } from "./contextKey.key.js";
+
+export {
+  createContext,
+  type Context,
+  type ContextType,
+  type CreateContextOptions,
+} from "./contextAliases.deprecated.js";

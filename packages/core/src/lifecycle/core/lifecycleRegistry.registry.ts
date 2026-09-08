@@ -1,5 +1,6 @@
 import type { LifecycleHook } from "./lifecycleHook.hook.js";
 import type { LifecycleParticipant } from "./lifecycle.js";
+import { InvalidArgumentError } from "../../errors/exceptions.js";
 
 /**
  * Any component that can participate in the application lifecycle.
@@ -59,14 +60,25 @@ export class LifecycleRegistry {
    *
    * Components are executed in reverse registration order
    * during stopping and destruction.
+   *
+   * Names are unique within a registry: an explicit duplicate name is
+   * rejected, while derived names (constructor names) are made unique
+   * with a numeric suffix so getByName() is unambiguous.
    */
   public register(
     component: LifecycleComponent,
     name?: string,
   ): LifecycleRegistration {
+    if (name !== undefined && this.getByName(name)) {
+      throw new InvalidArgumentError(
+        `A lifecycle component named "${name}" is already registered.`,
+        { name },
+      );
+    }
+
     const registration: LifecycleRegistration = {
       id: this.createId(),
-      name: name ?? this.resolveComponentName(component),
+      name: name ?? this.uniqueName(this.resolveComponentName(component)),
       component,
       order: this.sequence,
       isParticipant: this.isLifecycleParticipant(component),
@@ -147,6 +159,17 @@ export class LifecycleRegistry {
    */
   public clear(): void {
     this.registrations.length = 0;
+  }
+
+  /**
+   * Suffixes a derived name until it is unique within the registry.
+   */
+  private uniqueName(base: string): string {
+    if (!this.getByName(base)) return base;
+
+    let index = 2;
+    while (this.getByName(`${base}#${index}`)) index += 1;
+    return `${base}#${index}`;
   }
 
   /**

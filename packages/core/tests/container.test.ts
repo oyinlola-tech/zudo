@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Container } from "../src/container/container.js";
-import { createToken, type Token } from "../src/container/token.js";
+import { createToken } from "../src/container/token.js";
 import {
   ProviderNotFoundError,
   ProviderAlreadyRegisteredError,
@@ -67,7 +67,7 @@ describe("Container", () => {
 
       expect(logger).toBeInstanceOf(ConsoleLogger);
       logger.log("hello");
-      expect(logger.messages).toEqual(["hello"]);
+      expect((logger as ConsoleLogger).messages).toEqual(["hello"]);
     });
 
     it("should register and resolve a factory provider", () => {
@@ -251,7 +251,7 @@ describe("Container", () => {
 
       container.register(DatabaseToken, {
         useFactory: (c) => {
-          const config = c.resolve(ConfigToken);
+          expect(c.resolve(ConfigToken).host).toBe("localhost");
           return new PostgresDatabase();
         },
       });
@@ -259,5 +259,129 @@ describe("Container", () => {
       const db = container.resolve(DatabaseToken);
       expect(db).toBeInstanceOf(PostgresDatabase);
     });
+  });
+});
+
+// ─── Scoping, cycles, edge cases (via package barrel) ───
+
+import {
+  Container as BarrelContainer,
+  ContainerScope,
+  DependencyResolutionError,
+  InvalidProviderError,
+  ErrorCode,
+} from "../src/index.js";
+
+describe("Container scoping and diagnostics", () => {
+  it("caches scoped providers per explicit scope", () => {
+    const container = new BarrelContainer();
+    container.register(LoggerToken, { useClass: ConsoleLogger }, "scoped");
+
+    const scopeA = container.createScope();
+    const scopeB = container.createScope();
+
+    expect(scopeA).toBeInstanceOf(ContainerScope);
+    expect(scopeA.resolve(LoggerToken)).toBe(scopeA.resolve(LoggerToken));
+    expect(scopeA.resolve(LoggerToken)).not.toBe(scopeB.resolve(LoggerToken));
+    expect(scopeA.has(LoggerToken)).toBe(true);
+  });
+
+  it("caches scoped providers per currentScope() object", () => {
+    let current: object | undefined;
+    const container = new BarrelContainer({ currentScope: () => current });
+    container.register(LoggerToken, { useClass: ConsoleLogger }, "scoped");
+
+    // No active scope: behaves as transient.
+    expect(container.resolve(LoggerToken)).not.toBe(
+      container.resolve(LoggerToken),
+    );
+
+    const request = {};
+    current = request;
+    const first = container.resolve(LoggerToken);
+    expect(container.resolve(LoggerToken)).toBe(first);
+
+    current = {};
+    expect(container.resolve(LoggerToken)).not.toBe(first);
+  });
+
+  it("keeps the active scope across nested factory resolutions", () => {
+    const container = new BarrelContainer();
+    container.register(LoggerToken, { useClass: ConsoleLogger }, "scoped");
+    container.register(
+      DatabaseToken,
+      {
+        useFactory: (c) => {
+          c.resolve(LoggerToken);
+          return new PostgresDatabase();
+        },
+      },
+      "transient",
+    );
+
+    const scope = container.createScope();
+    const logger = scope.resolve(LoggerToken);
+    scope.resolve(DatabaseToken);
+
+    expect(scope.resolve(LoggerToken)).toBe(logger);
+  });
+
+  it("caches singleton factories that return undefined", () => {
+    const container = new BarrelContainer();
+    const factory = vi.fn(() => undefined);
+    container.register("maybe", { useFactory: factory });
+
+    expect(container.resolve("maybe")).toBeUndefined();
+    expect(container.resolve("maybe")).toBeUndefined();
+    expect(factory).toHaveBeenCalledOnce();
+  });
+
+  it("throws DependencyResolutionError on circular dependencies", () => {
+    const container = new BarrelContainer();
+    container.register("a", { useFactory: (c) => c.resolve("b") });
+    container.register("b", { useFactory: (c) => c.resolve("a") });
+
+    expect(() => container.resolve("a")).toThrow(DependencyResolutionError);
+    try {
+      container.resolve("a");
+    } catch (error) {
+      const resolution = error as DependencyResolutionError;
+      expect(resolution.code).toBe(ErrorCode.DEPENDENCY_RESOLUTION_FAILED);
+      expect(resolution.chain).toEqual(["a", "b", "a"]);
+    }
+  });
+
+  it("wraps factory failures with the resolution chain and cause", () => {
+    const container = new BarrelContainer();
+    const cause = new Error("db down");
+    container.register("db", {
+      useFactory: () => {
+        throw cause;
+      },
+    });
+    container.register("repo", { useFactory: (c) => c.resolve("db") });
+
+    try {
+      container.resolve("repo");
+      expect.fail("Should have thrown");
+    } catch (error) {
+      expect(error).toBeInstanceOf(DependencyResolutionError);
+      expect((error as DependencyResolutionError).chain).toEqual([
+        "repo",
+        "db",
+      ]);
+      expect((error as Error).cause).toBe(cause);
+    }
+  });
+
+  it("rejects invalid provider definitions at registration", () => {
+    const container = new BarrelContainer();
+
+    expect(() => container.register("bad", {} as never)).toThrow(
+      InvalidProviderError,
+    );
+    expect(() =>
+      container.register("bad", { useFactory: 42 } as never),
+    ).toThrow(InvalidProviderError);
   });
 });

@@ -5,14 +5,14 @@
  */
 
 export {
-  RuntimeBootstrapError,
   executeBootstrapPipeline,
-  withTimeout,
+  createBootstrapPipelineState,
   createBootstrapResult,
 } from "./runtimeBootstrap.pipeline.js";
 
-export {
-  invokeModuleLoader,
-  invokeInitializeModules,
-  invokeStartModules,
-} from "./runtimeBootstrap.invoke.js";
+export type {
+  BootstrapCounters,
+  BootstrapLogFn,
+  BootstrapPipelineServices,
+  BootstrapPipelineState,
+} from "./runtimeBootstrap.pipeline.js";

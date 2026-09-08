@@ -1,6 +1,9 @@
-import type { RuntimeMode } from "../runtimeOptions/index.js";
+import type { RuntimeMode, RuntimeRole } from "../runtimeOptions/index.js";
 import type {
+  RuntimeEngine,
+  RuntimePlatform,
   RuntimeEnvironmentInfo,
+  RuntimeEnvironmentSummary,
   RuntimeEnvironment,
   RuntimeEnvironmentOptions,
 } from "./runtimeEnvironment.type.js";
@@ -13,35 +16,23 @@ import {
   detectCI,
   detectContainer,
 } from "./detection/index.js";
-
-import { RuntimeError, type RuntimeErrorOptions } from "@zudojs/errors";
-
-/**
- * Environment error codes.
- */
-export type RuntimeEnvironmentErrorCode =
-  | "ENVIRONMENT_VARIABLE_NOT_FOUND"
-  | "ENVIRONMENT_INVALID_MODE"
-  | "ENVIRONMENT_INVALID_ROLE";
+import { RuntimeError } from "../runtimeError/runtimeError.base.js";
+import { RuntimeErrorCode } from "../runtimeError/runtimeError.type.js";
 
 /**
- * Error thrown during environment operations.
+ * Error thrown when a required environment variable is missing or
+ * empty.
  */
-export class RuntimeEnvironmentError extends RuntimeError {
-  public readonly envCode: RuntimeEnvironmentErrorCode;
-  public readonly variableName?: string;
+export class MissingEnvironmentVariableError extends RuntimeError {
+  public readonly variableName: string;
 
-  public constructor(
-    message: string,
-    code: RuntimeEnvironmentErrorCode,
-    variableName?: string,
-  ) {
-    super(message, {
-      code: "RUNTIME_ENVIRONMENT",
-      phase: "environment",
-    } as RuntimeErrorOptions);
-    this.name = "RuntimeEnvironmentError";
-    this.envCode = code;
+  public constructor(variableName: string) {
+    super(`Required environment variable "${variableName}" is not defined.`, {
+      code: RuntimeErrorCode.INVALID_ENVIRONMENT,
+      metadata: { variableName },
+    });
+
+    this.name = "MissingEnvironmentVariableError";
     this.variableName = variableName;
   }
 }
@@ -50,8 +41,8 @@ export class RuntimeEnvironmentError extends RuntimeError {
  * Creates a new RuntimeEnvironment.
  */
 export function createRuntimeEnvironment(
-  options: import("./runtimeEnvironment.type.js").RuntimeEnvironmentOptions,
-): import("./runtimeEnvironment.type.js").RuntimeEnvironment {
+  options: RuntimeEnvironmentOptions,
+): RuntimeEnvironment {
   return new DefaultRuntimeEnvironment(options);
 }
 
@@ -93,15 +84,15 @@ export class DefaultRuntimeEnvironment implements RuntimeEnvironment {
     return this._info.mode;
   }
 
-  public get role(): import("../runtimeOptions/index.js").RuntimeRole {
+  public get role(): RuntimeRole {
     return this._info.role;
   }
 
-  public get engine(): import("./runtimeEnvironment.type.js").RuntimeEngine {
+  public get engine(): RuntimeEngine {
     return this._info.engine.name;
   }
 
-  public get platform(): import("./runtimeEnvironment.type.js").RuntimePlatform {
+  public get platform(): RuntimePlatform {
     return this._info.host.platform;
   }
 
@@ -113,11 +104,7 @@ export class DefaultRuntimeEnvironment implements RuntimeEnvironment {
     const value = this.get(name);
 
     if (value === undefined || value.length === 0) {
-      throw new RuntimeEnvironmentError(
-        `Required environment variable "${name}" is not defined.`,
-        "ENVIRONMENT_VARIABLE_NOT_FOUND",
-        name,
-      );
+      throw new MissingEnvironmentVariableError(name);
     }
 
     return value;
@@ -147,13 +134,21 @@ export class DefaultRuntimeEnvironment implements RuntimeEnvironment {
     return this._info.isContainer;
   }
 
-  public toJSON(): RuntimeEnvironmentInfo {
+  /**
+   * Serializable summary of the environment.
+   *
+   * Environment variables are intentionally omitted: the snapshot
+   * routinely contains credentials (DATABASE_URL, cloud keys, ...)
+   * and must never reach structured logs or JSON.stringify output.
+   */
+  public toJSON(): RuntimeEnvironmentSummary {
+    const { variables: _variables, ...summary } = this._info;
+
     return Object.freeze({
-      ...this._info,
+      ...summary,
       host: Object.freeze({ ...this._info.host }),
       process: Object.freeze({ ...this._info.process }),
       engine: Object.freeze({ ...this._info.engine }),
-      variables: Object.freeze({ ...this._info.variables }),
     });
   }
 }

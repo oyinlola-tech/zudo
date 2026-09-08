@@ -9,13 +9,14 @@ export type Scope =
   | "singleton"
 
   /**
-   * One instance for the lifetime of an execution context.
+   * One instance per resolution scope.
    *
-   * Examples:
-   * HTTP request
-   * Background job
-   * Message consumption
-   * RPC request
+   * A scope is either an explicit `container.createScope()` or the
+   * object returned by the container's `currentScope` callback (for
+   * example the current ExecutionContext of an HTTP request,
+   * background job, message consumption, or RPC call).
+   *
+   * When no scope is active, scoped providers behave as transient.
    */
   | "scoped"
 

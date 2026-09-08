@@ -17,7 +17,13 @@ export type ModuleOptions = Readonly<Record<string, unknown>>;
 /**
  * Lifecycle hooks supported by a module.
  *
- * Modules can implement only the hooks they need.
+ * Modules can implement only the hooks they need. These are the
+ * only hook names the lifecycle engine invokes:
+ *
+ * initialize step → onInitialize
+ * start step      → onReady
+ * stop step       → onShutdown
+ * destroy step    → onDestroy
  */
 export interface ModuleLifecycle {
   /**

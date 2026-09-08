@@ -1,3 +1,5 @@
+import type { ExecutionContext } from "../../context/core/executionContext.context.js";
+
 /**
  * Standard context fields that Zudojs can attach to log entries.
  *
@@ -19,6 +21,11 @@ export interface LoggerContext {
    * Unique identifier for the current execution.
    */
   readonly executionId?: string;
+
+  /**
+   * Identifier of the runtime the execution belongs to.
+   */
+  readonly runtimeId?: string;
 
   /**
    * Correlation identifier used to connect related operations.
@@ -64,6 +71,28 @@ export interface LoggerContext {
    * Additional application-specific metadata.
    */
   readonly metadata?: Record<string, unknown>;
+}
+
+/**
+ * Extracts the LoggerContext fields carried by an execution context.
+ *
+ * Only defined values are returned, so merging the result never
+ * overwrites explicit context with `undefined`.
+ */
+export function loggerContextFromExecution(
+  context: ExecutionContext,
+): LoggerContext {
+  const fields: Record<string, unknown> = { executionId: context.executionId };
+
+  if (context.correlationId !== undefined)
+    fields.correlationId = context.correlationId;
+  if (context.traceId !== undefined) fields.traceId = context.traceId;
+  if (context.spanId !== undefined) fields.spanId = context.spanId;
+
+  const runtimeId = context.metadata.runtimeId;
+  if (typeof runtimeId === "string") fields.runtimeId = runtimeId;
+
+  return fields as LoggerContext;
 }
 
 /**

@@ -6,6 +6,7 @@
  * Public API
  * ----------
  *
+ * container
  * contracts
  * errors
  * logging
@@ -14,6 +15,7 @@
  * configuration
  * modules
  * runtime
+ * application
  *
  * Internal implementation details should not be imported directly
  * by consumers when a public export is available here.
@@ -84,9 +86,24 @@ export * from "./configuration/index.js";
 export * from "./modules/index.js";
 
 /*
+ * The module subsystem's ModuleNotFoundError is the one thrown by the
+ * registry, loader, and runtime, so it wins at the root. The generic
+ * core error of the same name remains available via "./errors".
+ */
+export { ModuleNotFoundError } from "./modules/index.js";
+
+/*
  * ============================================================
  * Runtime
  * ============================================================
  */
 
 export * from "./runtime/index.js";
+
+/*
+ * ============================================================
+ * Application
+ * ============================================================
+ */
+
+export * from "./application/index.js";

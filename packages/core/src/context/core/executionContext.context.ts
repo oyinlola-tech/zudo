@@ -122,6 +122,38 @@ export interface CreateExecutionContextInput extends Partial<
 }
 
 /**
+ * Maximum depth to which execution metadata is frozen.
+ *
+ * Execution metadata is expected to be small JSON-ish data;
+ * the bound protects against pathological structures.
+ */
+const MAX_METADATA_FREEZE_DEPTH = 8;
+
+/**
+ * Recursively freezes JSON-ish metadata up to a bounded depth.
+ *
+ * Already frozen nodes are skipped; non-plain objects (class
+ * instances) are frozen shallowly.
+ */
+function deepFreezeMetadata<T>(value: T, depth = 0): T {
+  if (value === null || typeof value !== "object") return value;
+  if (Object.isFrozen(value)) return value;
+  if (depth >= MAX_METADATA_FREEZE_DEPTH) return Object.freeze(value) as T;
+
+  if (Array.isArray(value)) {
+    for (const item of value) deepFreezeMetadata(item, depth + 1);
+    return Object.freeze(value) as T;
+  }
+
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (prototype === Object.prototype || prototype === null) {
+    for (const child of Object.values(value))
+      deepFreezeMetadata(child, depth + 1);
+  }
+  return Object.freeze(value) as T;
+}
+
+/**
  * Creates a new execution context.
  */
 export function createExecutionContext(
@@ -150,7 +182,7 @@ export function createExecutionContext(
 
     startedAt: input.startedAt ?? new Date(),
 
-    metadata: Object.freeze({
+    metadata: deepFreezeMetadata({
       ...(input.metadata ?? {}),
     }),
   });
@@ -229,22 +261,10 @@ export function getExecutionDuration(
 /**
  * Creates a framework execution identifier.
  *
- * Uses crypto.randomUUID when available.
+ * This is the single shared implementation used by the context
+ * subsystem. Node.js >= 24 always provides crypto.randomUUID,
+ * so no weaker fallback exists.
  */
-function createExecutionId(): string {
-  if (
-    typeof globalThis.crypto !== "undefined" &&
-    typeof globalThis.crypto.randomUUID === "function"
-  ) {
-    return globalThis.crypto.randomUUID();
-  }
-
-  /**
-   * Fallback for environments where Web Crypto is unavailable.
-   */
-  return [
-    Date.now().toString(36),
-    Math.random().toString(36).slice(2),
-    Math.random().toString(36).slice(2),
-  ].join("-");
+export function createExecutionId(): string {
+  return globalThis.crypto.randomUUID();
 }

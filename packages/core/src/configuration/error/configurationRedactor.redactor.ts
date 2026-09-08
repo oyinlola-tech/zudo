@@ -12,6 +12,8 @@ import type {
 export const DEFAULT_SENSITIVE_PATTERNS: readonly string[] = [
   "password",
   "passwd",
+  "pwd",
+  "passphrase",
   "secret",
   "token",
   "access_token",
@@ -22,8 +24,12 @@ export const DEFAULT_SENSITIVE_PATTERNS: readonly string[] = [
   "privatekey",
   "client_secret",
   "authorization",
+  "auth",
   "credential",
   "credentials",
+  "dsn",
+  "connectionstring",
+  "connection_string",
 ];
 
 /**
@@ -133,7 +139,11 @@ export class ConfigurationRedactor {
       };
     }
 
-    const pathSegments = normalizedPath.split(".");
+    /*
+     * Pattern matching runs on the original casing so camelCase
+     * word boundaries (apiToken → api token) survive.
+     */
+    const pathSegments = path.trim().split(".");
 
     for (const segment of pathSegments) {
       if (this.matchesSensitivePattern(segment)) {
@@ -144,7 +154,7 @@ export class ConfigurationRedactor {
       }
     }
 
-    if (this.matchesSensitivePattern(normalizedPath)) {
+    if (this.matchesSensitivePattern(path.trim())) {
       return {
         sensitive: true,
         reason: "pattern",
@@ -227,7 +237,14 @@ export class ConfigurationRedactor {
       );
     }
 
-    const result: Record<string, ConfigurationValue> = {};
+    /*
+     * The result is built with a null prototype so keys such as
+     * "__proto__" are stored as ordinary own properties instead
+     * of hitting Object.prototype setters and vanishing.
+     */
+    const result: Record<string, ConfigurationValue> = Object.create(
+      null,
+    ) as Record<string, ConfigurationValue>;
 
     for (const [key, childValue] of Object.entries(value)) {
       const path = parentPath ? `${parentPath}.${key}` : key;
@@ -247,14 +264,92 @@ export class ConfigurationRedactor {
   /**
    * Checks whether a path segment matches one of the
    * configured sensitive patterns.
+   *
+   * Matching is word-boundary aware: the segment is split into
+   * words on separators and camelCase transitions, and a pattern
+   * matches only when a consecutive run of words spells it out.
+   * This means "apiToken" and "access_token" match "token", but
+   * "tokenizer" and "secretary" do not match "token"/"secret".
    */
   private matchesSensitivePattern(value: string): boolean {
-    const normalized = normalizePattern(value);
+    const words = splitWords(value);
+
+    if (words.length === 0) {
+      return false;
+    }
 
     return this.sensitivePatterns.some((pattern) =>
-      normalized.includes(pattern),
+      matchesWordRun(words, pattern),
     );
   }
+
+  /**
+   * Redacts sensitive-looking fragments from free-form text such
+   * as error messages.
+   *
+   * Occurrences of "<sensitive>=value", "<sensitive>: value", and
+   * "<sensitive> value" have their value replaced. This is a
+   * best-effort scrub for diagnostics; it does not guarantee that
+   * arbitrary text contains no secrets.
+   */
+  public redactText(text: string): string {
+    let result = text;
+
+    for (const pattern of this.sensitivePatterns) {
+      const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const expression = new RegExp(
+        `(${escaped}[a-z0-9_-]*\\s*[=:]\\s*)("[^"]*"|'[^']*'|\\S+)`,
+        "gi",
+      );
+      result = result.replace(expression, `$1${this.redactionValue}`);
+    }
+
+    return result;
+  }
+}
+
+/**
+ * Splits an identifier into normalized lowercase words.
+ *
+ * Splitting occurs on non-alphanumeric separators and on
+ * camelCase transitions.
+ */
+function splitWords(value: string): readonly string[] {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[^a-zA-Z0-9]+/)
+    .map((word) => word.toLowerCase())
+    .filter((word) => word.length > 0);
+}
+
+/**
+ * Checks whether a consecutive run of words spells out
+ * the supplied pattern.
+ */
+function matchesWordRun(words: readonly string[], pattern: string): boolean {
+  const target = splitWords(pattern).join("");
+
+  if (!target) {
+    return false;
+  }
+
+  for (let start = 0; start < words.length; start++) {
+    let accumulated = "";
+
+    for (let index = start; index < words.length; index++) {
+      accumulated += words[index];
+
+      if (accumulated === target) {
+        return true;
+      }
+
+      if (accumulated.length >= target.length) {
+        break;
+      }
+    }
+  }
+
+  return false;
 }
 
 /**

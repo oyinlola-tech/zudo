@@ -8,10 +8,15 @@
 export { DefaultRuntimeBootstrap } from "./runtimeBootstrap.core.js";
 
 export {
-  RuntimeBootstrapError,
-  withTimeout,
-  createBootstrapResult,
   executeBootstrapPipeline,
+  createBootstrapPipelineState,
+  createBootstrapResult,
+} from "./pipeline/index.js";
+
+export type {
+  BootstrapCounters,
+  BootstrapPipelineServices,
+  BootstrapPipelineState,
 } from "./pipeline/index.js";
 
 export type {

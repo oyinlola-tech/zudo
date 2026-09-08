@@ -1,7 +1,5 @@
 import type { RuntimeEnvironmentVariables } from "../runtimeEnvironment.type.js";
 
-import { getProcessObject } from "./runtimeEnvironment.detection.js";
-
 export function detectCI(variables: RuntimeEnvironmentVariables): boolean {
   const explicit = variables.CI ?? variables.CONTINUOUS_INTEGRATION;
 
@@ -32,6 +30,11 @@ export function detectCI(variables: RuntimeEnvironmentVariables): boolean {
   return false;
 }
 
+/**
+ * Detects a container environment from the supplied variable
+ * snapshot only, so callers that inject variables get deterministic
+ * results.
+ */
 export function detectContainer(
   variables: RuntimeEnvironmentVariables,
 ): boolean {
@@ -47,10 +50,7 @@ export function detectContainer(
     return true;
   }
 
-  const processObject = getProcessObject();
-  const release = processObject?.env?.container;
-
-  if (release) {
+  if (variables.container) {
     return true;
   }
 

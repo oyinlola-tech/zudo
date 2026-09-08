@@ -13,11 +13,11 @@ export class RuntimeTimeoutError extends RuntimeError {
   public constructor(
     message: string,
     timeoutMs: number,
-    options: Omit<RuntimeErrorOptions, "code"> = {},
+    options: RuntimeErrorOptions = {},
   ) {
     super(message, {
       ...options,
-      code: RuntimeErrorCode.OPERATION_TIMEOUT,
+      code: options.code ?? RuntimeErrorCode.OPERATION_TIMEOUT,
       metadata: {
         ...(options.metadata ?? {}),
         timeoutMs,

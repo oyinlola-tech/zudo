@@ -3,31 +3,23 @@
  *
  * Manages the lifecycle phases of loaded modules:
  * initialize → start → stop → destroy.
+ *
+ * The state-machine plumbing (hook invocation, phase execution,
+ * state maps) is internal to this subsystem and intentionally
+ * not exported from this barrel.
  */
 
 export {
   type ModuleLifecyclePhase,
   type ModuleLifecycleState,
+  type ModuleLifecycleHookName,
+  type ModuleLifecycleStep,
   type ModuleLifecycleHooks,
   type ModuleLifecycleOptions,
   ModuleLifecycleError,
   type ModuleLifecycleResult,
-  type LifecycleStateMap,
+  type ModuleLifecycleSkip,
 } from "./moduleLifecycle.type.js";
-
-export {
-  ensureStateSynchronized,
-  getLifecycleState,
-  requireLifecycleState,
-  getAllLifecycleStates,
-  isModuleInitialized,
-  isModuleStarted,
-  isModuleDestroyed,
-  invokeLifecycleHook,
-  canModuleEnterPhase,
-  setLifecycleState,
-  executeLifecyclePhase,
-} from "./moduleLifecycle.stateMachine.js";
 
 export {
   ModuleLifecycleManager,

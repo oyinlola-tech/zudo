@@ -1,5 +1,6 @@
 import type { ExecutionContext } from "../core/executionContext.context.js";
-import { ContextStorage } from "../provider/contextStorage.storage.js";
+import type { ContextStorage } from "./contextStorage.storage.js";
+import { getDefaultContextStorage } from "./defaultContextStorage.storage.js";
 
 /**
  * Provides access to the current execution context.
@@ -37,12 +38,14 @@ export interface ContextProvider {
  * Default ContextProvider implementation.
  *
  * Uses ContextStorage internally while keeping that
- * implementation detail hidden behind the provider contract.
+ * implementation detail hidden behind the provider contract. When
+ * no storage is supplied the process-wide default storage is used,
+ * so the provider observes the same context the runtime establishes.
  */
 export class DefaultContextProvider implements ContextProvider {
   private readonly storage: ContextStorage;
 
-  public constructor(storage: ContextStorage = new ContextStorage()) {
+  public constructor(storage: ContextStorage = getDefaultContextStorage()) {
     this.storage = storage;
   }
 
@@ -76,8 +79,11 @@ export class DefaultContextProvider implements ContextProvider {
 }
 
 /**
- * Creates the default framework context provider.
+ * Creates the default framework context provider, optionally bound
+ * to a specific ContextStorage.
  */
-export function createContextProvider(): ContextProvider {
-  return new DefaultContextProvider();
+export function createContextProvider(
+  storage?: ContextStorage,
+): ContextProvider {
+  return new DefaultContextProvider(storage);
 }

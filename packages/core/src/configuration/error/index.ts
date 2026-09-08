@@ -8,10 +8,13 @@ export {
   ConfigurationError,
   ConfigurationSourceError,
   ConfigurationMissingError,
+  ConfigurationPathError,
   ConfigurationTypeError,
   ConfigurationSchemaError,
   ConfigurationConflictError,
 } from "./configurationError.error.js";
+
+export { describeConfigurationCause } from "./configurationError.error.js";
 
 export type { ConfigurationErrorIssue } from "./configurationError.error.js";
 

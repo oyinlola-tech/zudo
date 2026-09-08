@@ -1,227 +1,260 @@
 import type { ModuleLoader } from "../../../modules/moduleLoader/index.js";
 import type { ModuleLifecycleManager } from "../../../modules/moduleLifecycle/index.js";
+import type { ModuleLifecycleResult } from "../../../modules/moduleLifecycle/index.js";
 import type {
   RuntimeBootstrapPhase,
   RuntimeBootstrapErrorInfo,
+  RuntimeBootstrapResult,
   ResolvedBootstrapOptions,
 } from "../runtimeBootstrap.type.js";
 import {
-  invokeModuleLoader,
-  invokeInitializeModules,
-  invokeStartModules,
-} from "./runtimeBootstrap.invoke.js";
+  RuntimeLoadError,
+  RuntimeInitializationError,
+  RuntimeStartError,
+} from "../../runtimeError/runtimeError.lifecycle.js";
+import { RuntimeErrorCode } from "../../runtimeError/runtimeError.type.js";
 
-export type RuntimeBootstrapErrorCode =
-  | "BOOTSTRAP_ALREADY_RUNNING"
-  | "BOOTSTRAP_ALREADY_COMPLETED"
-  | "BOOTSTRAP_FAILED"
-  | "BOOTSTRAP_TIMEOUT"
-  | "BOOTSTRAP_MODULE_ERRORS"
-  | "BOOTSTRAP_RESET_WHILE_RUNNING"
-  | "MODULE_LOAD_FAILED"
-  | "MODULE_INITIALIZATION_FAILED"
-  | "MODULE_START_FAILED"
-  | "MODULE_LOADER_METHOD_NOT_FOUND"
-  | "MODULE_INITIALIZE_METHOD_NOT_FOUND"
-  | "MODULE_START_METHOD_NOT_FOUND";
-
-import { RuntimeBootstrapError as BaseRuntimeBootstrapError } from "@zudojs/errors";
-
-export class RuntimeBootstrapError extends BaseRuntimeBootstrapError {
-  public readonly bootstrapCode: RuntimeBootstrapErrorCode;
-  public constructor(
-    message: string,
-    code: RuntimeBootstrapErrorCode,
-    cause?: unknown,
-  ) {
-    super(message, { cause });
-    this.bootstrapCode = code;
-  }
-}
-
-type LogFn = (
+export type BootstrapLogFn = (
   level: "debug" | "info" | "warn" | "error",
   message: string,
   metadata?: Record<string, unknown>,
 ) => void;
 
+/**
+ * Module counts produced by the bootstrap pipeline.
+ */
+export interface BootstrapCounters {
+  loadedModules: number;
+  initializedModules: number;
+  startedModules: number;
+}
+
+/**
+ * Services the bootstrap pipeline drives.
+ */
+export interface BootstrapPipelineServices {
+  readonly moduleLoader: ModuleLoader;
+  readonly moduleLifecycle: ModuleLifecycleManager;
+  /** Identity attached to every error the pipeline raises. */
+  readonly runtimeId?: string;
+  readonly runtimeName?: string;
+}
+
+/**
+ * Mutable pipeline state shared with the caller so that counts and
+ * recorded errors survive a thrown failure.
+ */
+export interface BootstrapPipelineState {
+  readonly counters: BootstrapCounters;
+  readonly errors: RuntimeBootstrapErrorInfo[];
+}
+
+export function createBootstrapPipelineState(): BootstrapPipelineState {
+  return {
+    counters: { loadedModules: 0, initializedModules: 0, startedModules: 0 },
+    errors: [],
+  };
+}
+
+/**
+ * Executes the load → initialize → start pipeline.
+ *
+ * - Module-level failures reported by the ModuleLifecycleManager are
+ *   recorded once per module (with `moduleName`).
+ * - When the phase's continueOn*Error flag is false the pipeline
+ *   throws; the thrown error is NOT pushed to `errors` here — the
+ *   caller records it exactly once.
+ * - Once `signal` is aborted (timeout) the pipeline stops publishing
+ *   phase changes so an abandoned run cannot mutate the owner.
+ */
+export async function executeBootstrapPipeline(
+  options: ResolvedBootstrapOptions,
+  services: BootstrapPipelineServices,
+  state: BootstrapPipelineState,
+  signal: AbortSignal,
+  setPhase: (phase: RuntimeBootstrapPhase) => void,
+  log: BootstrapLogFn,
+): Promise<void> {
+  const publish = (phase: RuntimeBootstrapPhase): void => {
+    if (!signal.aborted) setPhase(phase);
+  };
+
+  const identity = {
+    runtimeId: services.runtimeId,
+    runtimeName: services.runtimeName,
+  };
+
+  if (options.loadModules) {
+    await loadModules(services.moduleLoader, identity, state, publish, log);
+  }
+
+  if (options.initializeModules) {
+    await runLifecyclePhase(
+      "initializing",
+      "initialized",
+      () => services.moduleLifecycle.initialize(),
+      services.moduleLifecycle,
+      options.continueOnInitializeError,
+      (count) => {
+        state.counters.initializedModules = count;
+      },
+      (message, opts) =>
+        new RuntimeInitializationError(message, { ...identity, ...opts }),
+      state,
+      publish,
+      log,
+    );
+  }
+
+  if (options.startModules) {
+    await runLifecyclePhase(
+      "starting",
+      "started",
+      () => services.moduleLifecycle.start(),
+      services.moduleLifecycle,
+      options.continueOnStartError,
+      (count) => {
+        state.counters.startedModules = count;
+      },
+      (message, opts) =>
+        new RuntimeStartError(message, {
+          ...identity,
+          ...opts,
+          code: RuntimeErrorCode.MODULE_START_FAILED,
+        }),
+      state,
+      publish,
+      log,
+    );
+  }
+}
+
 async function loadModules(
-  errors: RuntimeBootstrapErrorInfo[],
-  counters: { incrementLoaded(): void },
   moduleLoader: ModuleLoader,
-  setPhase: (phase: RuntimeBootstrapPhase) => void,
-  log: LogFn,
+  identity: { readonly runtimeId?: string; readonly runtimeName?: string },
+  state: BootstrapPipelineState,
+  publish: (phase: RuntimeBootstrapPhase) => void,
+  log: BootstrapLogFn,
 ): Promise<void> {
-  setPhase("loading");
+  publish("loading");
   log("debug", "Loading runtime modules.");
-  try {
-    await invokeModuleLoader(moduleLoader);
-    setPhase("loaded");
-    counters.incrementLoaded();
-    log("debug", "Runtime modules loaded.");
-  } catch (error) {
-    errors.push({ phase: "loading", error });
-    throw new RuntimeBootstrapError(
-      "Failed to load runtime modules.",
-      "MODULE_LOAD_FAILED",
-      error,
-    );
-  }
-}
 
-async function initializeModules(
-  errors: RuntimeBootstrapErrorInfo[],
-  counters: { incrementInitialized(): void },
-  continueOnError: boolean,
-  moduleLifecycle: ModuleLifecycleManager,
-  setPhase: (phase: RuntimeBootstrapPhase) => void,
-  log: LogFn,
-): Promise<void> {
-  setPhase("initializing");
-  log("debug", "Initializing runtime modules.");
   try {
-    await invokeInitializeModules(moduleLifecycle);
-    setPhase("initialized");
-    counters.incrementInitialized();
-    log("debug", "Runtime modules initialized.");
+    const result = await moduleLoader.loadAll();
+    state.counters.loadedModules =
+      result.loaded.length + result.alreadyLoaded.length;
+    publish("loaded");
+    log("debug", "Runtime modules loaded.", {
+      loaded: result.loaded.length,
+      alreadyLoaded: result.alreadyLoaded.length,
+      skipped: result.skipped.length,
+    });
   } catch (error) {
-    errors.push({ phase: "initializing", error });
-    if (!continueOnError) {
-      throw new RuntimeBootstrapError(
-        "Failed to initialize runtime modules.",
-        "MODULE_INITIALIZATION_FAILED",
-        error,
-      );
-    }
-    log(
-      "warn",
-      "Runtime module initialization reported an error. Continuing.",
-      { error },
-    );
-  }
-}
-
-async function startModules(
-  errors: RuntimeBootstrapErrorInfo[],
-  counters: { incrementStarted(): void },
-  continueOnError: boolean,
-  moduleLifecycle: ModuleLifecycleManager,
-  setPhase: (phase: RuntimeBootstrapPhase) => void,
-  log: LogFn,
-): Promise<void> {
-  setPhase("starting");
-  log("debug", "Starting runtime modules.");
-  try {
-    await invokeStartModules(moduleLifecycle);
-    setPhase("started");
-    counters.incrementStarted();
-    log("debug", "Runtime modules started.");
-  } catch (error) {
-    errors.push({ phase: "starting", error });
-    if (!continueOnError) {
-      throw new RuntimeBootstrapError(
-        "Failed to start runtime modules.",
-        "MODULE_START_FAILED",
-        error,
-      );
-    }
-    log("warn", "Runtime module startup reported an error. Continuing.", {
-      error,
+    throw new RuntimeLoadError("Failed to load runtime modules.", {
+      ...identity,
+      phase: "loading",
+      cause: error,
     });
   }
 }
 
-export async function executeBootstrapPipeline(
-  options: ResolvedBootstrapOptions,
-  errors: RuntimeBootstrapErrorInfo[],
-  counters: {
-    incrementLoaded(): void;
-    incrementInitialized(): void;
-    incrementStarted(): void;
+type PhaseErrorFactory = (
+  message: string,
+  options: {
+    readonly phase: "initializing" | "starting";
+    readonly cause?: unknown;
+    readonly metadata?: Readonly<Record<string, unknown>>;
   },
-  moduleLoader: ModuleLoader,
-  moduleLifecycle: ModuleLifecycleManager,
-  setPhase: (phase: RuntimeBootstrapPhase) => void,
-  log: LogFn,
-): Promise<void> {
-  if (options.loadModules) {
-    await loadModules(errors, counters, moduleLoader, setPhase, log);
-  }
-  if (options.initializeModules) {
-    await initializeModules(
-      errors,
-      counters,
-      options.continueOnInitializeError,
-      moduleLifecycle,
-      setPhase,
-      log,
-    );
-  }
-  if (options.startModules) {
-    await startModules(
-      errors,
-      counters,
-      options.continueOnStartError,
-      moduleLifecycle,
-      setPhase,
-      log,
-    );
-  }
-  if (
-    errors.length > 0 &&
-    !options.continueOnInitializeError &&
-    !options.continueOnStartError
-  ) {
-    throw new RuntimeBootstrapError(
-      "Runtime bootstrap completed with module errors.",
-      "BOOTSTRAP_MODULE_ERRORS",
-      errors,
-    );
-  }
-}
+) => Error;
 
-export async function withTimeout(
-  operation: Promise<void>,
-  timeoutMs: number,
+async function runLifecyclePhase(
+  phase: "initializing" | "starting",
+  donePhase: "initialized" | "started",
+  run: () => Promise<ModuleLifecycleResult>,
+  moduleLifecycle: ModuleLifecycleManager,
+  continueOnError: boolean,
+  setCount: (count: number) => void,
+  createError: PhaseErrorFactory,
+  state: BootstrapPipelineState,
+  publish: (phase: RuntimeBootstrapPhase) => void,
+  log: BootstrapLogFn,
 ): Promise<void> {
-  if (timeoutMs <= 0) {
-    await operation;
+  publish(phase);
+  log("debug", `Runtime modules ${phase}.`);
+
+  let result: ModuleLifecycleResult;
+
+  try {
+    result = await run();
+  } catch (error) {
+    if (!continueOnError) {
+      throw createError(`Runtime module ${phase} failed.`, {
+        phase,
+        cause: error,
+      });
+    }
+
+    state.errors.push({ phase, error });
+    log("warn", `Runtime module ${phase} reported an error. Continuing.`, {
+      error,
+    });
     return;
   }
-  let timer: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
-      reject(
-        new RuntimeBootstrapError(
-          `Runtime bootstrap exceeded the configured timeout of ${timeoutMs}ms.`,
-          "BOOTSTRAP_TIMEOUT",
-        ),
-      );
-    }, timeoutMs);
-  });
-  try {
-    await Promise.race([operation, timeout]);
-  } finally {
-    clearTimeout(timer!);
+
+  setCount(result.completed.length);
+
+  for (const moduleId of result.failed) {
+    state.errors.push({
+      phase,
+      moduleName: moduleId,
+      error:
+        moduleLifecycle.getState(moduleId)?.error ??
+        new Error(`Module "${moduleId}" failed during ${phase}.`),
+    });
   }
+
+  if (result.failed.length > 0) {
+    if (!continueOnError) {
+      throw createError(
+        `${result.failed.length} module(s) failed during ${phase}: ${result.failed.join(", ")}.`,
+        {
+          phase,
+          metadata: { modules: result.failed.join(",") },
+        },
+      );
+    }
+
+    log(
+      "warn",
+      `Runtime module ${phase} completed with failures. Continuing.`,
+      {
+        failed: [...result.failed],
+      },
+    );
+  }
+
+  publish(donePhase);
+  log("debug", `Runtime modules ${donePhase}.`, {
+    completed: result.completed.length,
+    failed: result.failed.length,
+    skipped: result.skipped.length,
+  });
 }
 
 export function createBootstrapResult(
   success: boolean,
   phase: RuntimeBootstrapPhase,
-  loadedModules: number,
-  initializedModules: number,
-  startedModules: number,
+  counters: BootstrapCounters,
   errors: readonly RuntimeBootstrapErrorInfo[],
   startedAt: Date,
   completedAt: Date,
-): import("../runtimeBootstrap.type.js").RuntimeBootstrapResult {
+): RuntimeBootstrapResult {
   return Object.freeze({
     success,
     phase,
-    loadedModules,
-    initializedModules,
-    startedModules,
+    loadedModules: counters.loadedModules,
+    initializedModules: counters.initializedModules,
+    startedModules: counters.startedModules,
     errors: Object.freeze([...errors]),
     startedAt,
     completedAt,

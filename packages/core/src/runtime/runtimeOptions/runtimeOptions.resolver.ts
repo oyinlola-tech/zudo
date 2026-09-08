@@ -81,6 +81,11 @@ export function resolveRuntimeOptions(
       handleUnhandledRejection:
         signals.handleUnhandledRejection ??
         DEFAULT_RUNTIME_OPTIONS.signals.handleUnhandledRejection,
+      forceExitOnSecondSignal:
+        signals.forceExitOnSecondSignal ??
+        DEFAULT_RUNTIME_OPTIONS.signals.forceExitOnSecondSignal,
+      forceExitCode:
+        signals.forceExitCode ?? DEFAULT_RUNTIME_OPTIONS.signals.forceExitCode,
     },
 
     diagnostics: {
@@ -98,8 +103,8 @@ export function resolveRuntimeOptions(
         DEFAULT_RUNTIME_OPTIONS.diagnostics.includeModules,
     },
 
-    infrastructure: Object.freeze({
-      ...options.infrastructure,
+    environment: Object.freeze({
+      ...options.environment,
     }),
 
     metadata: Object.freeze({

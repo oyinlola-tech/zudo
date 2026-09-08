@@ -19,8 +19,13 @@ export interface LoggerFactoryOptions extends LoggerOptions {
    * Logger implementation to use.
    *
    * Defaults to "console".
+   *
+   * The type is deliberately widened to accept arbitrary
+   * strings because this value frequently arrives from
+   * configuration files; unknown implementations fail with a
+   * descriptive error at creation time.
    */
-  readonly implementation?: LoggerImplementation;
+  readonly implementation?: LoggerImplementation | (string & {});
 }
 
 /**
@@ -44,7 +49,9 @@ export class LoggerFactory {
         return new ConsoleLogger(options, context);
 
       default:
-        return this.unsupportedImplementation(implementation);
+        throw new Error(
+          `Unsupported logger implementation: ${String(implementation)}`,
+        );
     }
   }
 
@@ -56,14 +63,5 @@ export class LoggerFactory {
    */
   public child(logger: Logger, context: LoggerContext): Logger {
     return logger.child(context as LogContext);
-  }
-
-  /**
-   * Handles unsupported logger implementations.
-   */
-  private unsupportedImplementation(implementation: never): never {
-    throw new Error(
-      `Unsupported logger implementation: ${String(implementation)}`,
-    );
   }
 }

@@ -35,6 +35,29 @@ export class CircularModuleDependencyError extends ModuleError {
 }
 
 /**
+ * Error thrown when a dependency declaration is malformed:
+ * empty ids, self-dependencies, duplicate declarations, or
+ * unsupported version constraints.
+ */
+export class InvalidModuleDependencyError extends ModuleError {
+  public constructor(
+    message: string,
+    options: {
+      readonly moduleId?: ModuleId;
+      readonly dependencyId?: ModuleId;
+    } = {},
+  ) {
+    super(message, {
+      code: ModuleErrorCode.INVALID_DEPENDENCY,
+      moduleId: options.moduleId,
+      dependencyId: options.dependencyId,
+    });
+
+    this.name = "InvalidModuleDependencyError";
+  }
+}
+
+/**
  * Error thrown when a module dependency version
  * cannot be satisfied.
  */

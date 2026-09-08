@@ -1,12 +1,19 @@
 import {
   LogLevel,
   LogLevelPriority,
+  isLogLevel,
   shouldLog,
   type LogLevel as LogLevelType,
 } from "../core/logLevel.level.js";
+import { InvalidArgumentError } from "../../errors/exceptions.js";
 import type { LogEntry } from "../core/logEntry.entry.js";
-import { serializeLogError } from "../core/logEntry.entry.js";
+import {
+  safeLogStringify,
+  sanitizeLogValue,
+  serializeLogError,
+} from "../core/logEntry.entry.js";
 import type { LoggerContext } from "../core/loggerContext.context.js";
+import { loggerContextFromExecution } from "../core/loggerContext.context.js";
 import {
   DEFAULT_LOGGER_OPTIONS,
   type LoggerOptions,
@@ -44,14 +51,34 @@ export class ConsoleLogger extends BaseLogger {
       ...context,
     });
 
+    const level = options.level ?? DEFAULT_LOGGER_OPTIONS.level;
+
+    /*
+     * An unknown level would make every severity comparison false
+     * and silently disable all logging, so it is rejected at
+     * construction instead. Levels are case-sensitive.
+     */
+    if (!isLogLevel(level)) {
+      throw new InvalidArgumentError(
+        `Unknown log level "${String(level)}". Expected one of: ${Object.keys(LogLevelPriority).join(", ")}.`,
+        { level },
+      );
+    }
+
     this.options = {
       ...DEFAULT_LOGGER_OPTIONS,
       ...options,
+      level,
     };
   }
 
   /**
    * Writes a log entry to the console.
+   *
+   * The context received here has already been merged with the
+   * logger's persistent context by BaseLogger. Fields of the
+   * current execution context (when a ContextStorage is configured
+   * and a context is active) are merged beneath it.
    */
   protected write(
     level: LogLevelType,
@@ -63,14 +90,20 @@ export class ConsoleLogger extends BaseLogger {
       return;
     }
 
+    const redact = this.options.redact;
+    context = this.withExecutionContext(context);
+
     const entry: LogEntry = {
       level,
       message,
       timestamp: new Date(),
-      context,
+      context:
+        context !== undefined && redact !== undefined
+          ? (redact(sanitizeLogValue(context)) as LogContext)
+          : context,
       ...(error !== undefined
         ? {
-            error: serializeLogError(error),
+            error: serializeLogError(error, { redact }),
           }
         : {}),
     };
@@ -85,22 +118,65 @@ export class ConsoleLogger extends BaseLogger {
 
   /**
    * Creates a child logger that inherits the current
-   * logger configuration and adds persistent context.
+   * logger configuration.
+   *
+   * The context received here is the fully merged context
+   * (parent persistent context plus child additions) produced
+   * by BaseLogger.child().
    */
   protected createChild(context: LogContext): ConsoleLogger {
-    return new ConsoleLogger(this.options, {
-      ...this.options.context,
+    return new ConsoleLogger(
+      {
+        ...this.options,
+        context: undefined,
+      },
+      context,
+    );
+  }
+
+  /**
+   * Merges the ambient execution context (if any) beneath the
+   * supplied context. Never throws: a failing storage lookup leaves
+   * the context untouched.
+   */
+  private withExecutionContext(context?: LogContext): LogContext | undefined {
+    const storage = this.options.contextStorage;
+    if (!storage) return context;
+
+    let execution;
+    try {
+      execution = storage.get();
+    } catch {
+      return context;
+    }
+    if (!execution) return context;
+
+    return {
+      ...(loggerContextFromExecution(execution) as LogContext),
       ...context,
-    });
+    };
   }
 
   /**
    * Writes the log entry as JSON.
+   *
+   * Serialization is crash-safe: circular references, BigInt
+   * values, and throwing toJSON implementations degrade to
+   * placeholder strings instead of throwing.
    */
   private writeStructured(entry: LogEntry): void {
     const output = {
       level: entry.level,
       message: entry.message,
+      ...(this.options.service !== undefined
+        ? { service: this.options.service }
+        : {}),
+      ...(this.options.version !== undefined
+        ? { version: this.options.version }
+        : {}),
+      ...(this.options.environment !== undefined
+        ? { environment: this.options.environment }
+        : {}),
       ...(this.options.timestamps
         ? {
             timestamp: entry.timestamp.toISOString(),
@@ -120,7 +196,7 @@ export class ConsoleLogger extends BaseLogger {
         : {}),
     };
 
-    this.writeToConsole(entry.level, JSON.stringify(output));
+    this.writeToConsole(entry.level, safeLogStringify(output));
   }
 
   /**
@@ -153,7 +229,12 @@ export class ConsoleLogger extends BaseLogger {
   private writeToConsole(level: LogLevelType, message: string): void {
     switch (level) {
       case LogLevel.TRACE:
-        console.trace(message);
+        /*
+         * console.trace prints a stack trace for every call,
+         * which makes trace-level logs unreadable. Trace output
+         * goes through console.debug (console.log fallback).
+         */
+        (console.debug ?? console.log)(message);
         break;
 
       case LogLevel.DEBUG:
@@ -184,7 +265,7 @@ export class ConsoleLogger extends BaseLogger {
   /**
    * Formats structured context for human-readable output.
    */
-  private formatContext(context: LoggerContext): string {
+  private formatContext(context: LoggerContext | LogContext): string {
     return Object.entries(context)
       .map(([key, value]) => {
         return `${key}=${this.stringifyValue(value)}`;
@@ -233,7 +314,7 @@ export class ConsoleLogger extends BaseLogger {
     }
 
     try {
-      return JSON.stringify(value);
+      return JSON.stringify(sanitizeLogValue(value));
     } catch {
       return "[unserializable]";
     }
