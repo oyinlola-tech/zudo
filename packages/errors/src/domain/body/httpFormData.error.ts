@@ -26,12 +26,10 @@ export class HttpFormDataError extends BaseError {
       ...options,
       code: options.code ?? ErrorCode.HTTP_FORM_DATA,
       category: options.category ?? ErrorCategory.INPUT,
-      severity: options.severity ?? ErrorSeverity.ERROR,
+      severity: options.severity ?? ErrorSeverity.WARNING,
       statusCode: options.statusCode ?? 400,
       expose: options.expose ?? true,
     });
-
-    this.name = "HttpFormDataError";
   }
 }
 
@@ -42,9 +40,8 @@ export class HttpFormDataLimitError extends HttpFormDataError {
   constructor(message: string) {
     super(message, {
       code: ErrorCode.HTTP_FORM_DATA_LIMIT,
+      statusCode: 413,
     });
-
-    this.name = "HttpFormDataLimitError";
   }
 }
 
@@ -56,8 +53,6 @@ export class HttpFormDataParseError extends HttpFormDataError {
     super(message, {
       code: ErrorCode.HTTP_FORM_DATA_PARSE,
     });
-
-    this.name = "HttpFormDataParseError";
   }
 }
 

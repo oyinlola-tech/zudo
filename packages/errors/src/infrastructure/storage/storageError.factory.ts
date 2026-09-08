@@ -3,11 +3,7 @@
  */
 
 import { ErrorCode } from "../../base/types/errorCode.type.js";
-import {
-  StorageError,
-  StorageOperation,
-  type StorageErrorOptions,
-} from "./storageError.base.js";
+import { StorageError, StorageOperation } from "./storageError.base.js";
 
 /** Creates a storage read error. */
 export function storageReadError(
@@ -90,7 +86,7 @@ export function storageNotFoundError(
   provider?: string,
 ): StorageError {
   return new StorageError(`Resource "${resource}" was not found.`, {
-    code: ErrorCode.NOT_FOUND,
+    code: ErrorCode.STORAGE_NOT_FOUND,
     operation: StorageOperation.READ,
     provider,
     resource,

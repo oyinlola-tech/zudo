@@ -63,7 +63,6 @@ export class RPCProcedureNotFoundError extends RPCError {
       statusCode: 404,
       expose: true,
     });
-    this.name = "RPCProcedureNotFoundError";
   }
 }
 
@@ -76,6 +75,5 @@ export class RPCInvalidRequestError extends RPCError {
       statusCode: 400,
       expose: true,
     });
-    this.name = "RPCInvalidRequestError";
   }
 }

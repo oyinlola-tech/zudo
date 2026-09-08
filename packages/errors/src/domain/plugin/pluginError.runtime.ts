@@ -2,8 +2,8 @@
  * Plugin runtime error classes — timeout, state transitions.
  */
 
-import type { ErrorMetadataValue } from "../../base/core/errorMetadata.type.js";
 import { ErrorCode } from "../../base/types/errorCode.type.js";
+import { assertFiniteNonNegative } from "../shared/domainError.helpers.js";
 import { PluginError, type PluginErrorOptions } from "./pluginError.base.js";
 
 /** Error thrown when a plugin operation times out. */
@@ -13,19 +13,23 @@ export class PluginTimeoutError extends PluginError {
     timeout: number,
     options: PluginErrorOptions = {},
   ) {
+    assertFiniteNonNegative("timeout", timeout);
     super(`Plugin "${pluginName}" timed out after ${timeout}ms.`, {
       ...options,
       code: ErrorCode.PLUGIN_TIMEOUT,
       pluginName,
       statusCode: 504,
       expose: false,
-      metadata: { timeout } as Record<string, ErrorMetadataValue>,
+      metadata: { ...options.metadata, timeout },
     });
-    this.name = "PluginTimeoutError";
   }
 }
 
-/** Error thrown when an invalid plugin state transition is attempted. */
+/**
+ * Error thrown when an invalid plugin state transition is attempted.
+ *
+ * Plugin state is server-side; reported as internal (500, not exposed).
+ */
 export class PluginStateError extends PluginError {
   constructor(
     pluginName: string,
@@ -39,11 +43,11 @@ export class PluginStateError extends PluginError {
         ...options,
         code: ErrorCode.PLUGIN_STATE,
         pluginName,
-        statusCode: 400,
-        expose: true,
-        metadata: { fromState, toState } as Record<string, ErrorMetadataValue>,
+        statusCode: 500,
+        expose: false,
+        isOperational: false,
+        metadata: { ...options.metadata, fromState, toState },
       },
     );
-    this.name = "PluginStateError";
   }
 }

@@ -54,6 +54,8 @@ export function isDomainError(value: unknown): value is DomainError {
 
 /**
  * Creates a domain error for an invalid domain state.
+ *
+ * Uses `PRECONDITION_FAILED` with HTTP 412, the status that matches the code.
  */
 export function invalidDomainState(
   message: string,
@@ -62,7 +64,7 @@ export function invalidDomainState(
   return new DomainError(message, {
     code: ErrorCode.PRECONDITION_FAILED,
     category: ErrorCategory.BUSINESS,
-    statusCode: 409,
+    statusCode: 412,
     metadata,
   });
 }

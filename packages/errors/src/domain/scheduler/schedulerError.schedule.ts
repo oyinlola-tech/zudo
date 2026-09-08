@@ -2,9 +2,15 @@
  * Schedule-related error classes — schedule lifecycle, cron parsing.
  */
 
-import type { ErrorMetadataValue } from "../../base/core/errorMetadata.type.js";
 import { ErrorCode } from "../../base/types/errorCode.type.js";
-import { SchedulerError } from "./schedulerError.base.js";
+import {
+  MAX_METADATA_FRAGMENT_LENGTH,
+  sanitizeFragment,
+} from "../shared/domainError.helpers.js";
+import {
+  SchedulerError,
+  type SchedulerErrorOptions,
+} from "./schedulerError.base.js";
 
 /** Error thrown when a schedule is not found. */
 export class ScheduleNotFoundError extends SchedulerError {
@@ -15,7 +21,6 @@ export class ScheduleNotFoundError extends SchedulerError {
       statusCode: 404,
       expose: true,
     });
-    this.name = "ScheduleNotFoundError";
   }
 }
 
@@ -28,7 +33,6 @@ export class ScheduleAlreadyExistsError extends SchedulerError {
       statusCode: 409,
       expose: true,
     });
-    this.name = "ScheduleAlreadyExistsError";
   }
 }
 
@@ -41,32 +45,55 @@ export class InvalidScheduleError extends SchedulerError {
       statusCode: 400,
       expose: true,
     });
-    this.name = "InvalidScheduleError";
   }
 }
 
-/** Error thrown when a cron expression cannot be parsed. */
+/**
+ * Error thrown when a cron expression cannot be parsed.
+ *
+ * The expression is untrusted input: it is stripped of control characters
+ * and truncated before being embedded in the message or metadata.
+ */
 export class CronParseError extends SchedulerError {
-  constructor(expression: string, reason: string) {
-    super(`Invalid cron expression "${expression}": ${reason}.`, {
+  constructor(
+    expression: string,
+    reason: string,
+    options: SchedulerErrorOptions = {},
+  ) {
+    const safeExpression = sanitizeFragment(expression);
+    const safeReason = sanitizeFragment(reason);
+    super(`Invalid cron expression "${safeExpression}": ${safeReason}.`, {
+      ...options,
       code: ErrorCode.CRON_PARSE_ERROR,
-      metadata: { expression, reason } as Record<string, ErrorMetadataValue>,
+      metadata: {
+        ...options.metadata,
+        expression: sanitizeFragment(expression, MAX_METADATA_FRAGMENT_LENGTH),
+        reason: safeReason,
+      },
       statusCode: 400,
       expose: true,
     });
-    this.name = "CronParseError";
   }
 }
 
-/** Error thrown when a duration string is invalid. */
+/**
+ * Error thrown when a duration string is invalid.
+ *
+ * The duration is untrusted input: it is stripped of control characters
+ * and truncated before being embedded in the message or metadata.
+ */
 export class InvalidDurationError extends SchedulerError {
-  constructor(duration: string) {
-    super(`Invalid duration "${duration}".`, {
+  constructor(duration: string, options: SchedulerErrorOptions = {}) {
+    const safeDuration = sanitizeFragment(duration);
+    super(`Invalid duration "${safeDuration}".`, {
+      ...options,
       code: ErrorCode.INVALID_DURATION,
-      metadata: { duration } as Record<string, ErrorMetadataValue>,
+      metadata: {
+        ...options.metadata,
+        duration: sanitizeFragment(duration, MAX_METADATA_FRAGMENT_LENGTH),
+      },
       statusCode: 400,
       expose: true,
     });
-    this.name = "InvalidDurationError";
   }
 }

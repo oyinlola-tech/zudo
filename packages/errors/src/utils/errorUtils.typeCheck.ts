@@ -2,7 +2,7 @@
  * Error type-checking utilities.
  */
 
-import { BaseError } from "../base/core/baseError.core.js";
+import { isBaseError } from "../base/utils/baseError.utils.js";
 import { ErrorCategory } from "../base/types/errorCategory.type.js";
 import { ErrorSeverity } from "../base/types/errorSeverity.type.js";
 
@@ -22,17 +22,17 @@ export function isErrorLike(value: unknown): value is {
 
 /** Returns whether an error is operational. */
 export function isOperationalError(value: unknown): boolean {
-  return value instanceof BaseError && value.isOperational;
+  return isBaseError(value) && value.isOperational;
 }
 
 /** Returns whether an error is safe to expose to clients. */
 export function isExposableError(value: unknown): boolean {
-  return value instanceof BaseError && value.expose;
+  return isBaseError(value) && value.expose;
 }
 
 /** Returns whether an error represents a server-side failure. */
 export function isServerError(value: unknown): boolean {
-  if (value instanceof BaseError) {
+  if (isBaseError(value)) {
     return value.statusCode >= 500;
   }
   return true;
@@ -41,7 +41,7 @@ export function isServerError(value: unknown): boolean {
 /** Returns whether an error represents a client-side failure. */
 export function isClientError(value: unknown): boolean {
   return (
-    value instanceof BaseError &&
+    isBaseError(value) &&
     value.statusCode >= 400 &&
     value.statusCode < 500
   );
@@ -52,7 +52,7 @@ export function hasErrorCategory(
   value: unknown,
   category: ErrorCategory,
 ): boolean {
-  return value instanceof BaseError && value.category === category;
+  return isBaseError(value) && value.category === category;
 }
 
 /** Returns whether an error has a specific severity. */
@@ -60,5 +60,5 @@ export function hasErrorSeverity(
   value: unknown,
   severity: ErrorSeverity,
 ): boolean {
-  return value instanceof BaseError && value.severity === severity;
+  return isBaseError(value) && value.severity === severity;
 }

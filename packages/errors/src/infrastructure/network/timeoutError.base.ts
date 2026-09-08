@@ -49,7 +49,7 @@ export class TimeoutError extends BaseError {
       category: options.category ?? ErrorCategory.TIMEOUT,
       severity: options.severity ?? ErrorSeverity.WARNING,
       statusCode: options.statusCode ?? 504,
-      expose: options.expose ?? true,
+      expose: options.expose ?? isPublicTimeoutOperation(options.operation),
       isOperational: options.isOperational ?? true,
       metadata: {
         ...options.metadata,
@@ -88,6 +88,22 @@ export function createTimeoutError(
 /** Determines whether an unknown value is a TimeoutError. */
 export function isTimeoutError(value: unknown): value is TimeoutError {
   return value instanceof TimeoutError;
+}
+
+/**
+ * Returns whether a timeout operation may expose its message (and target) to
+ * clients. Only request-level timeouts are public by default; database,
+ * cache, queue, lock, network and external-service timeouts describe internal
+ * resources and stay internal.
+ */
+export function isPublicTimeoutOperation(
+  operation: TimeoutOperation | undefined,
+): boolean {
+  return (
+    operation === undefined ||
+    operation === TimeoutOperation.UNKNOWN ||
+    operation === TimeoutOperation.REQUEST
+  );
 }
 
 /** Validates a timeout duration. */

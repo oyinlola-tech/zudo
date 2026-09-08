@@ -7,6 +7,7 @@ import type { BaseErrorOptions } from "../../base/types/baseError.type.js";
 import { ErrorCategory } from "../../base/types/errorCategory.type.js";
 import { ErrorCode } from "../../base/types/errorCode.type.js";
 import { ErrorSeverity } from "../../base/types/errorSeverity.type.js";
+import { safeErrorMessage } from "../shared/domainError.helpers.js";
 
 /** Options for creating a message error. */
 export interface MessageErrorOptions extends Omit<
@@ -25,6 +26,7 @@ export class MessageError extends BaseError {
   public readonly messageType?: string;
   public readonly messageId?: string;
   public readonly handlerId?: string;
+  public readonly middlewareId?: string;
 
   constructor(message: string, options: MessageErrorOptions = {}) {
     super(message, {
@@ -39,6 +41,7 @@ export class MessageError extends BaseError {
     this.messageType = options.messageType;
     this.messageId = options.messageId;
     this.handlerId = options.handlerId;
+    this.middlewareId = options.middlewareId;
   }
 
   public override toJSON() {
@@ -49,6 +52,9 @@ export class MessageError extends BaseError {
         : {}),
       ...(this.messageId !== undefined ? { messageId: this.messageId } : {}),
       ...(this.handlerId !== undefined ? { handlerId: this.handlerId } : {}),
+      ...(this.middlewareId !== undefined
+        ? { middlewareId: this.middlewareId }
+        : {}),
     };
   }
 }
@@ -73,22 +79,14 @@ export function toMessageError(
     message?: string;
     messageType?: string;
     messageId?: string;
-    code?: string;
+    code?: ErrorCode | string;
   } = {},
 ): MessageError {
   if (error instanceof MessageError) {
     return error;
   }
-  if (error instanceof Error) {
-    return new MessageError(options.message ?? error.message, {
-      code: options.code as ErrorCode | undefined,
-      messageType: options.messageType,
-      messageId: options.messageId,
-      cause: error,
-    });
-  }
-  return new MessageError(options.message ?? String(error), {
-    code: options.code as ErrorCode | undefined,
+  return new MessageError(options.message ?? safeErrorMessage(error), {
+    code: options.code,
     messageType: options.messageType,
     messageId: options.messageId,
     cause: error,

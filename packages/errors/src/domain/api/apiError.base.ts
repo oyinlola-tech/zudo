@@ -63,12 +63,13 @@ export class APIValidationError extends APIError {
   constructor(
     message: string,
     issues: readonly string[] = [],
-    options: { endpoint?: string; method?: string } = {},
+    options: { endpoint?: string; method?: string; cause?: unknown } = {},
   ) {
     super(message, {
       code: ErrorCode.API_VALIDATION,
       endpoint: options.endpoint,
       method: options.method,
+      cause: options.cause,
       metadata: { issues },
       statusCode: 422,
       expose: true,
@@ -81,12 +82,13 @@ export class APIValidationError extends APIError {
 export class APIAuthenticationError extends APIError {
   constructor(
     message = "API authentication is required.",
-    options: { endpoint?: string; method?: string } = {},
+    options: { endpoint?: string; method?: string; cause?: unknown } = {},
   ) {
     super(message, {
-      code: ErrorCode.UNAUTHORIZED,
+      code: ErrorCode.API_AUTHENTICATION,
       endpoint: options.endpoint,
       method: options.method,
+      cause: options.cause,
       statusCode: 401,
       expose: true,
     });
@@ -97,12 +99,13 @@ export class APIAuthenticationError extends APIError {
 export class APIAuthorizationError extends APIError {
   constructor(
     message = "You do not have permission to perform this operation.",
-    options: { endpoint?: string; method?: string } = {},
+    options: { endpoint?: string; method?: string; cause?: unknown } = {},
   ) {
     super(message, {
-      code: ErrorCode.FORBIDDEN,
+      code: ErrorCode.API_AUTHORIZATION,
       endpoint: options.endpoint,
       method: options.method,
+      cause: options.cause,
       statusCode: 403,
       expose: true,
     });

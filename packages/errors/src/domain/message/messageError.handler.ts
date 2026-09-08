@@ -17,7 +17,7 @@ export class MessageHandlerError extends MessageError {
     },
   ) {
     super(message, {
-      code: ErrorCode.MESSAGE_HANDLER_NOT_FOUND,
+      code: ErrorCode.MESSAGE_HANDLER_FAILED,
       handlerId: options.handlerId,
       messageType: options.messageType,
       messageId: options.messageId,
@@ -39,34 +39,44 @@ export function createMessageHandlerError(
   );
 }
 
-/** Error thrown when a message handler cannot be found. */
+/**
+ * Error thrown when a message handler cannot be found.
+ *
+ * Handler registration is a server-side concern, so this is an internal
+ * (non-exposed, non-operational) failure.
+ */
 export class MessageHandlerNotFoundError extends MessageError {
   constructor(handlerId: string) {
     super(`Message handler "${handlerId}" was not found.`, {
-      code: ErrorCode.RESOURCE_NOT_FOUND as ErrorCode | string,
+      code: ErrorCode.MESSAGE_HANDLER_NOT_FOUND,
       handlerId,
-      statusCode: 404,
-      expose: true,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
     });
   }
 }
 
-/** Error thrown when a message handler is already registered. */
+/**
+ * Error thrown when a message handler is already registered.
+ *
+ * Handler registration is a server-side concern, so this is an internal
+ * (non-exposed, non-operational) failure.
+ */
 export class DuplicateMessageHandlerError extends MessageError {
   constructor(handlerId: string) {
     super(`Message handler "${handlerId}" is already registered.`, {
-      code: ErrorCode.CONFLICT,
+      code: ErrorCode.MESSAGE_DUPLICATE_HANDLER,
       handlerId,
-      statusCode: 409,
-      expose: true,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
     });
   }
 }
 
 /** Error thrown when message middleware fails. */
 export class MessageMiddlewareError extends MessageError {
-  public readonly middlewareId?: string;
-
   constructor(
     message: string,
     options: {
@@ -77,12 +87,11 @@ export class MessageMiddlewareError extends MessageError {
     } = {},
   ) {
     super(message, {
-      code: ErrorCode.MIDDLEWARE_EXECUTION as ErrorCode | string,
+      code: ErrorCode.MESSAGE_MIDDLEWARE_FAILED,
       middlewareId: options.middlewareId,
       messageType: options.messageType,
       messageId: options.messageId,
       cause: options.cause,
     });
-    this.middlewareId = options.middlewareId;
   }
 }

@@ -91,19 +91,16 @@ export function isExternalServiceError(
   return value instanceof ExternalServiceError;
 }
 
-/** Maps a remote response status into an appropriate local HTTP status. */
-function mapResponseStatus(responseStatus: number | undefined): number {
-  if (responseStatus === undefined) {
-    return 502;
-  }
-  if (responseStatus >= 500) {
-    return 502;
-  }
+/**
+ * Maps a remote response status into an appropriate local HTTP status.
+ *
+ * An upstream failure is our problem, not our caller's: every upstream status
+ * maps to 502 Bad Gateway except 429, which is passed through so that callers
+ * can back off. Pass an explicit `statusCode` option to override.
+ */
+export function mapResponseStatus(responseStatus: number | undefined): number {
   if (responseStatus === 429) {
     return 429;
-  }
-  if (responseStatus >= 400) {
-    return responseStatus;
   }
   return 502;
 }

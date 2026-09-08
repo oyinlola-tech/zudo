@@ -30,8 +30,6 @@ export class HttpStreamError extends BaseError {
       statusCode: options.statusCode ?? 500,
       expose: options.expose ?? false,
     });
-
-    this.name = "HttpStreamError";
   }
 }
 

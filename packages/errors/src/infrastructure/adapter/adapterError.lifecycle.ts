@@ -16,7 +16,6 @@ export class AdapterInitializationError extends AdapterError {
       expose: false,
       isOperational: false,
     });
-    this.name = "AdapterInitializationError";
   }
 }
 
@@ -31,7 +30,6 @@ export class AdapterConfigurationError extends AdapterError {
       expose: false,
       isOperational: false,
     });
-    this.name = "AdapterConfigurationError";
   }
 }
 
@@ -46,6 +44,5 @@ export class AdapterDisposeError extends AdapterError {
       expose: false,
       isOperational: false,
     });
-    this.name = "AdapterDisposeError";
   }
 }

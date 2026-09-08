@@ -3,6 +3,7 @@
  */
 
 import { ErrorCode } from "../../base/types/errorCode.type.js";
+import { assertFiniteNonNegative } from "../shared/domainError.helpers.js";
 import { MessageError } from "./messageError.base.js";
 
 /** Error raised when message dispatch fails. */
@@ -23,7 +24,7 @@ export class InvalidMessageError extends MessageError {
     options: { messageType?: string; messageId?: string; cause?: unknown } = {},
   ) {
     super(message, {
-      code: ErrorCode.INVALID_INPUT,
+      code: ErrorCode.MESSAGE_INVALID,
       messageType: options.messageType,
       messageId: options.messageId,
       cause: options.cause,
@@ -33,14 +34,19 @@ export class InvalidMessageError extends MessageError {
   }
 }
 
-/** Error thrown when a message type is not registered. */
+/**
+ * Error thrown when a message type is not registered.
+ *
+ * Message registration is a server-side concern; reported as internal.
+ */
 export class MessageTypeNotFoundError extends MessageError {
   constructor(messageType: string) {
     super(`Message type "${messageType}" is not registered.`, {
-      code: ErrorCode.NOT_FOUND,
+      code: ErrorCode.MESSAGE_TYPE_NOT_FOUND,
       messageType,
-      statusCode: 404,
-      expose: true,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
     });
   }
 }
@@ -52,7 +58,7 @@ export class MessageDispatchAbortedError extends MessageError {
     options: { messageType?: string; messageId?: string } = {},
   ) {
     super(message, {
-      code: ErrorCode.OPERATION_CANCELLED,
+      code: ErrorCode.MESSAGE_ABORTED,
       messageType: options.messageType,
       messageId: options.messageId,
       statusCode: 499,
@@ -65,7 +71,7 @@ export class MessageDispatchAbortedError extends MessageError {
 export class MessageBusDisposedError extends MessageError {
   constructor() {
     super("Message bus has already been disposed.", {
-      code: ErrorCode.OPERATION_FAILED,
+      code: ErrorCode.MESSAGE_BUS_DISPOSED,
       statusCode: 500,
       isOperational: false,
     });
@@ -80,8 +86,9 @@ export class MessageTimeoutError extends MessageError {
     timeoutMs: number,
     options: { messageType?: string; messageId?: string } = {},
   ) {
+    assertFiniteNonNegative("timeoutMs", timeoutMs);
     super(`Message processing exceeded the timeout of ${timeoutMs}ms.`, {
-      code: ErrorCode.TIMEOUT,
+      code: ErrorCode.MESSAGE_TIMEOUT,
       messageType: options.messageType,
       messageId: options.messageId,
       metadata: { timeoutMs },

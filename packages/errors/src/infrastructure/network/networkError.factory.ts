@@ -38,8 +38,15 @@ export function networkTimeoutError(
   );
 }
 
-/** Creates an error for an unavailable remote service. */
-export function externalServiceUnavailableError(
+/**
+ * Creates an error for an unavailable remote service.
+ *
+ * @deprecated Use `externalServiceUnavailableError` from the service module
+ * (creates an `ExternalServiceError`, so `isExternalServiceError` matches).
+ * This variant creates a `NetworkError` and is kept for compatibility under
+ * the name `networkServiceUnavailableError`.
+ */
+export function networkServiceUnavailableError(
   service?: string,
   options: Omit<NetworkErrorOptions, "service"> = {},
 ): NetworkError {

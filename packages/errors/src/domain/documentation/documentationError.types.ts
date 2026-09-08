@@ -22,7 +22,6 @@ export class DocumentParseError extends DocumentationError {
       statusCode: 400,
       expose: true,
     });
-    this.name = "DocumentParseError";
   }
 }
 
@@ -40,7 +39,6 @@ export class DocumentValidationError extends DocumentationError {
       statusCode: 422,
       expose: true,
     });
-    this.name = "DocumentValidationError";
   }
 }
 
@@ -54,7 +52,6 @@ export class DuplicateDocumentError extends DocumentationError {
       statusCode: 409,
       expose: true,
     });
-    this.name = "DuplicateDocumentError";
   }
 }
 
@@ -68,7 +65,6 @@ export class DocumentNotFoundError extends DocumentationError {
       statusCode: 404,
       expose: true,
     });
-    this.name = "DocumentNotFoundError";
   }
 }
 
@@ -85,11 +81,10 @@ export class BrokenDocumentationLinkError extends DocumentationError {
       ...options,
       code: ErrorCode.DOCUMENT_LINK_BROKEN,
       documentId: source,
-      metadata: { source, target },
+      metadata: { ...options.metadata, source, target },
       statusCode: 400,
       expose: true,
     });
-    this.name = "BrokenDocumentationLinkError";
     this.target = target;
   }
 }
@@ -108,7 +103,6 @@ export class InvalidFrontmatterError extends DocumentationError {
       statusCode: 400,
       expose: true,
     });
-    this.name = "InvalidFrontmatterError";
   }
 }
 
@@ -121,7 +115,6 @@ export class InvalidNavigationError extends DocumentationError {
       statusCode: 400,
       expose: true,
     });
-    this.name = "InvalidNavigationError";
   }
 }
 
@@ -139,7 +132,6 @@ export class ExampleValidationError extends DocumentationError {
       statusCode: 422,
       expose: true,
     });
-    this.name = "ExampleValidationError";
   }
 }
 
@@ -152,7 +144,6 @@ export class GenerationError extends DocumentationError {
       statusCode: 500,
       expose: false,
     });
-    this.name = "GenerationError";
   }
 }
 
@@ -165,6 +156,5 @@ export class DocumentationVersionError extends DocumentationError {
       statusCode: 400,
       expose: true,
     });
-    this.name = "DocumentationVersionError";
   }
 }

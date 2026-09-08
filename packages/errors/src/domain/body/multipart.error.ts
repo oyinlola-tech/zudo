@@ -26,12 +26,10 @@ export class MultipartError extends BaseError {
       ...options,
       code: options.code ?? ErrorCode.HTTP_MULTIPART,
       category: options.category ?? ErrorCategory.INPUT,
-      severity: options.severity ?? ErrorSeverity.ERROR,
+      severity: options.severity ?? ErrorSeverity.WARNING,
       statusCode: options.statusCode ?? 400,
       expose: options.expose ?? true,
     });
-
-    this.name = "MultipartError";
   }
 }
 
@@ -44,8 +42,6 @@ export class MultipartParseError extends MultipartError {
       code: ErrorCode.HTTP_MULTIPART_PARSE,
       cause,
     });
-
-    this.name = "MultipartParseError";
   }
 }
 
@@ -56,9 +52,8 @@ export class MultipartLimitError extends MultipartError {
   constructor(message: string) {
     super(message, {
       code: ErrorCode.HTTP_MULTIPART_LIMIT,
+      statusCode: 413,
     });
-
-    this.name = "MultipartLimitError";
   }
 }
 

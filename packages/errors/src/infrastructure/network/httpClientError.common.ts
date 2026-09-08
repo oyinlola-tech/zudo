@@ -2,6 +2,7 @@
  * Common HTTP client error classes (400-417).
  */
 
+import { ErrorCode } from "../../base/types/errorCode.type.js";
 import { HttpError } from "./http.error.js";
 import type { HttpClientErrorOptions } from "./httpClientError.options.js";
 
@@ -11,9 +12,8 @@ export class BadRequestError extends HttpError {
     super(message, {
       ...options,
       statusCode: 400,
-      code: options.code ?? "BAD_REQUEST",
+      code: options.code ?? ErrorCode.HTTP_BAD_REQUEST,
     });
-    this.name = "BadRequestError";
   }
 }
 
@@ -23,9 +23,8 @@ export class UnauthorizedError extends HttpError {
     super(message, {
       ...options,
       statusCode: 401,
-      code: options.code ?? "UNAUTHORIZED",
+      code: options.code ?? ErrorCode.HTTP_UNAUTHORIZED,
     });
-    this.name = "UnauthorizedError";
   }
 }
 
@@ -35,9 +34,8 @@ export class ForbiddenError extends HttpError {
     super(message, {
       ...options,
       statusCode: 403,
-      code: options.code ?? "FORBIDDEN",
+      code: options.code ?? ErrorCode.HTTP_FORBIDDEN,
     });
-    this.name = "ForbiddenError";
   }
 }
 
@@ -47,9 +45,8 @@ export class HttpNotFoundError extends HttpError {
     super(message, {
       ...options,
       statusCode: 404,
-      code: options.code ?? "NOT_FOUND",
+      code: options.code ?? ErrorCode.HTTP_NOT_FOUND,
     });
-    this.name = "HttpNotFoundError";
   }
 }
 
@@ -64,10 +61,14 @@ export class MethodNotAllowedError extends HttpError {
     super(message, {
       ...options,
       statusCode: 405,
-      code: options.code ?? "METHOD_NOT_ALLOWED",
+      code: options.code ?? ErrorCode.HTTP_METHOD_NOT_ALLOWED,
+      metadata: { ...options.metadata, allowedMethods: [...methods] },
     });
-    this.name = "MethodNotAllowedError";
-    this.methods = methods;
+    this.methods = Object.freeze([...methods]);
+  }
+
+  public override toJSON() {
+    return { ...super.toJSON(), methods: this.methods };
   }
 }
 
@@ -80,9 +81,8 @@ export class NotAcceptableError extends HttpError {
     super(message, {
       ...options,
       statusCode: 406,
-      code: options.code ?? "NOT_ACCEPTABLE",
+      code: options.code ?? ErrorCode.HTTP_NOT_ACCEPTABLE,
     });
-    this.name = "NotAcceptableError";
   }
 }
 
@@ -95,9 +95,8 @@ export class RequestTimeoutError extends HttpError {
     super(message, {
       ...options,
       statusCode: 408,
-      code: options.code ?? "REQUEST_TIMEOUT",
+      code: options.code ?? ErrorCode.HTTP_REQUEST_TIMEOUT,
     });
-    this.name = "RequestTimeoutError";
   }
 }
 
@@ -107,9 +106,8 @@ export class HttpConflictError extends HttpError {
     super(message, {
       ...options,
       statusCode: 409,
-      code: options.code ?? "CONFLICT",
+      code: options.code ?? ErrorCode.HTTP_CONFLICT,
     });
-    this.name = "HttpConflictError";
   }
 }
 
@@ -119,9 +117,8 @@ export class GoneError extends HttpError {
     super(message, {
       ...options,
       statusCode: 410,
-      code: options.code ?? "GONE",
+      code: options.code ?? ErrorCode.HTTP_GONE,
     });
-    this.name = "GoneError";
   }
 }
 
@@ -134,9 +131,8 @@ export class LengthRequiredError extends HttpError {
     super(message, {
       ...options,
       statusCode: 411,
-      code: options.code ?? "LENGTH_REQUIRED",
+      code: options.code ?? ErrorCode.HTTP_LENGTH_REQUIRED,
     });
-    this.name = "LengthRequiredError";
   }
 }
 
@@ -149,9 +145,8 @@ export class PayloadTooLargeError extends HttpError {
     super(message, {
       ...options,
       statusCode: 413,
-      code: options.code ?? "PAYLOAD_TOO_LARGE",
+      code: options.code ?? ErrorCode.HTTP_PAYLOAD_TOO_LARGE,
     });
-    this.name = "PayloadTooLargeError";
   }
 }
 
@@ -161,9 +156,8 @@ export class URITooLongError extends HttpError {
     super(message, {
       ...options,
       statusCode: 414,
-      code: options.code ?? "URI_TOO_LONG",
+      code: options.code ?? ErrorCode.HTTP_URI_TOO_LONG,
     });
-    this.name = "URITooLongError";
   }
 }
 
@@ -176,9 +170,8 @@ export class UnsupportedMediaTypeError extends HttpError {
     super(message, {
       ...options,
       statusCode: 415,
-      code: options.code ?? "UNSUPPORTED_MEDIA_TYPE",
+      code: options.code ?? ErrorCode.HTTP_UNSUPPORTED_MEDIA_TYPE,
     });
-    this.name = "UnsupportedMediaTypeError";
   }
 }
 
@@ -191,9 +184,8 @@ export class RangeNotSatisfiableError extends HttpError {
     super(message, {
       ...options,
       statusCode: 416,
-      code: options.code ?? "RANGE_NOT_SATISFIABLE",
+      code: options.code ?? ErrorCode.HTTP_RANGE_NOT_SATISFIABLE,
     });
-    this.name = "RangeNotSatisfiableError";
   }
 }
 
@@ -206,8 +198,7 @@ export class ExpectationFailedError extends HttpError {
     super(message, {
       ...options,
       statusCode: 417,
-      code: options.code ?? "EXPECTATION_FAILED",
+      code: options.code ?? ErrorCode.HTTP_EXPECTATION_FAILED,
     });
-    this.name = "ExpectationFailedError";
   }
 }

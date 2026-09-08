@@ -3,6 +3,7 @@
  */
 
 import { ErrorCode } from "../../base/types/errorCode.type.js";
+import { assertFiniteNonNegative } from "../shared/domainError.helpers.js";
 import { LifecycleError } from "./lifecycleError.base.js";
 
 /** Error thrown when a lifecycle state transition is invalid. */
@@ -19,7 +20,6 @@ export class LifecycleStateError extends LifecycleError {
         metadata: { fromState, toState },
       },
     );
-    this.name = "LifecycleStateError";
     this.fromState = fromState;
     this.toState = toState;
   }
@@ -35,6 +35,7 @@ export class LifecycleTimeoutError extends LifecycleError {
     timeout: number,
     cause?: unknown,
   ) {
+    assertFiniteNonNegative("timeout", timeout);
     super(
       `Lifecycle operation timed out for component "${componentId}" during ${phase} after ${timeout}ms.`,
       {
@@ -45,7 +46,6 @@ export class LifecycleTimeoutError extends LifecycleError {
         metadata: { timeout },
       },
     );
-    this.name = "LifecycleTimeoutError";
     this.timeout = timeout;
   }
 }
@@ -59,7 +59,6 @@ export class LifecycleDependencyError extends LifecycleError {
       code: ErrorCode.LIFECYCLE_DEPENDENCY,
       metadata: { cycle },
     });
-    this.name = "LifecycleDependencyError";
     this.cycle = Object.freeze([...cycle]);
   }
 }
@@ -73,7 +72,6 @@ export class LifecycleComponentError extends LifecycleError {
       phase,
       cause,
     });
-    this.name = "LifecycleComponentError";
   }
 }
 
@@ -86,7 +84,6 @@ export class LifecycleStartError extends LifecycleError {
       phase: "start",
       cause,
     });
-    this.name = "LifecycleStartError";
   }
 }
 
@@ -99,7 +96,6 @@ export class LifecycleStopError extends LifecycleError {
       phase: "stop",
       cause,
     });
-    this.name = "LifecycleStopError";
   }
 }
 
@@ -111,7 +107,6 @@ export class LifecycleRollbackError extends LifecycleError {
       componentId,
       cause,
     });
-    this.name = "LifecycleRollbackError";
   }
 }
 
@@ -125,6 +120,5 @@ export class LifecycleDisposedError extends LifecycleError {
         statusCode: 500,
       },
     );
-    this.name = "LifecycleDisposedError";
   }
 }

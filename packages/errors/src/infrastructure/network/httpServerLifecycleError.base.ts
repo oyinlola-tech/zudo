@@ -27,8 +27,6 @@ export class HttpServerLifecycleError extends BaseError {
       statusCode: options.statusCode ?? 500,
       expose: options.expose ?? false,
     });
-
-    this.name = "HttpServerLifecycleError";
   }
 }
 

@@ -1,4 +1,5 @@
 import { ErrorCode } from "../../base/types/errorCode.type.js";
+import { RoutePatternError } from "./routePattern.error.js";
 import { HttpRouterError } from "./httpRouterError.base.js";
 
 /**
@@ -16,8 +17,6 @@ export class RouteConflictError extends HttpRouterError {
       code: ErrorCode.HTTP_ROUTE_CONFLICT,
       metadata: { path, method },
     });
-
-    this.name = "RouteConflictError";
     this.path = path;
     this.method = method;
   }
@@ -25,18 +24,15 @@ export class RouteConflictError extends HttpRouterError {
 
 /**
  * Error thrown when a route pattern is invalid.
+ *
+ * Specialisation of `RoutePatternError` (same hierarchy, code
+ * `ERR_HTTP_INVALID_ROUTE_PATTERN`).
  */
-export class InvalidRoutePatternError extends HttpRouterError {
-  /** The invalid route pattern. */
-  public readonly pattern: string;
-
+export class InvalidRoutePatternError extends RoutePatternError {
   constructor(pattern: string, message: string) {
     super(`Invalid route pattern "${pattern}": ${message}`, {
       code: ErrorCode.HTTP_INVALID_ROUTE_PATTERN,
-      metadata: { pattern },
+      pattern,
     });
-
-    this.name = "InvalidRoutePatternError";
-    this.pattern = pattern;
   }
 }

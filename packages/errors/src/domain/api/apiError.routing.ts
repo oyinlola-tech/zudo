@@ -7,11 +7,16 @@ import { APIError } from "./apiError.base.js";
 
 /** Error thrown when an API endpoint is not found. */
 export class APINotFoundError extends APIError {
-  constructor(endpoint: string, method = "GET") {
+  constructor(
+    endpoint: string,
+    method = "GET",
+    options: { cause?: unknown } = {},
+  ) {
     super(`Endpoint "${method} ${endpoint}" was not found.`, {
-      code: ErrorCode.NOT_FOUND,
+      code: ErrorCode.API_NOT_FOUND,
       endpoint,
       method,
+      cause: options.cause,
       statusCode: 404,
       expose: true,
     });
@@ -22,12 +27,13 @@ export class APINotFoundError extends APIError {
 export class APIConflictError extends APIError {
   constructor(
     message: string,
-    options: { endpoint?: string; method?: string } = {},
+    options: { endpoint?: string; method?: string; cause?: unknown } = {},
   ) {
     super(message, {
-      code: ErrorCode.CONFLICT,
+      code: ErrorCode.API_CONFLICT,
       endpoint: options.endpoint,
       method: options.method,
+      cause: options.cause,
       statusCode: 409,
       expose: true,
     });
@@ -36,10 +42,11 @@ export class APIConflictError extends APIError {
 
 /** Error thrown when an API operation is not found. */
 export class APIOperationNotFoundError extends APIError {
-  constructor(operation: string) {
+  constructor(operation: string, options: { cause?: unknown } = {}) {
     super(`API operation "${operation}" was not found.`, {
-      code: ErrorCode.NOT_FOUND,
+      code: ErrorCode.API_OPERATION_NOT_FOUND,
       endpoint: operation,
+      cause: options.cause,
       statusCode: 404,
       expose: true,
     });
@@ -48,10 +55,11 @@ export class APIOperationNotFoundError extends APIError {
 
 /** Error thrown when a duplicate API operation is registered. */
 export class APIDuplicateOperationError extends APIError {
-  constructor(operation: string) {
+  constructor(operation: string, options: { cause?: unknown } = {}) {
     super(`API operation "${operation}" is already registered.`, {
-      code: ErrorCode.CONFLICT,
+      code: ErrorCode.API_DUPLICATE_OPERATION,
       endpoint: operation,
+      cause: options.cause,
       statusCode: 409,
       expose: true,
     });
@@ -62,12 +70,13 @@ export class APIDuplicateOperationError extends APIError {
 export class APIVersionError extends APIError {
   constructor(
     message: string,
-    options: { endpoint?: string; method?: string } = {},
+    options: { endpoint?: string; method?: string; cause?: unknown } = {},
   ) {
     super(message, {
       code: ErrorCode.API_VERSION,
       endpoint: options.endpoint,
       method: options.method,
+      cause: options.cause,
       statusCode: 400,
       expose: true,
     });

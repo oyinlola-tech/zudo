@@ -3,7 +3,18 @@
  */
 
 import { ErrorCode } from "../../base/types/errorCode.type.js";
+import {
+  describeValue,
+  safeStringify,
+  sanitizeFragment,
+} from "../shared/domainError.helpers.js";
 import { SchemaError } from "./schemaError.base.js";
+
+/*
+ * Messages built here never embed the received (submitted) value; they use a
+ * type/size description instead. Expected values come from the schema
+ * definition and are serialized with a non-throwing stringifier.
+ */
 
 /**
  * Error thrown when a value does not match the expected type.
@@ -14,10 +25,13 @@ export class SchemaTypeError extends SchemaError {
     received: string,
     path: readonly (string | number)[] = [],
   ) {
-    super(`Expected ${expected}, received ${received}`, {
-      code: ErrorCode.SCHEMA_INVALID_TYPE,
-      issues: [{ code: "invalid_type", path, expected, received }],
-    });
+    super(
+      `Expected ${sanitizeFragment(expected)}, received ${sanitizeFragment(received)}`,
+      {
+        code: ErrorCode.SCHEMA_INVALID_TYPE,
+        issues: [{ code: "invalid_type", path, expected, received }],
+      },
+    );
   }
 }
 
@@ -31,7 +45,7 @@ export class SchemaLiteralError extends SchemaError {
     path: readonly (string | number)[] = [],
   ) {
     super(
-      `Expected literal ${JSON.stringify(expected)}, received ${JSON.stringify(received)}`,
+      `Expected literal ${sanitizeFragment(safeStringify(expected))}, received ${describeValue(received)}`,
       {
         code: ErrorCode.SCHEMA_INVALID_LITERAL,
         issues: [{ code: "invalid_literal", path, expected, received }],
@@ -50,7 +64,9 @@ export class SchemaEnumError extends SchemaError {
     path: readonly (string | number)[] = [],
   ) {
     super(
-      `Expected one of ${expected.map((v) => JSON.stringify(v)).join(", ")}`,
+      `Expected one of ${sanitizeFragment(
+        expected.map((v) => safeStringify(v)).join(", "),
+      )}, received ${describeValue(received)}`,
       {
         code: ErrorCode.SCHEMA_INVALID_ENUM,
         issues: [{ code: "invalid_enum", path, expected, received }],
@@ -126,9 +142,10 @@ export class SchemaUnionError extends SchemaError {
  */
 export class SchemaUnknownKeyError extends SchemaError {
   constructor(key: string, path: readonly (string | number)[] = []) {
-    super(`Unknown key: ${key}`, {
+    const safeKey = sanitizeFragment(key);
+    super(`Unknown key: ${safeKey}`, {
       code: ErrorCode.SCHEMA_UNKNOWN_KEY,
-      issues: [{ code: "unknown_keys", path, key }],
+      issues: [{ code: "unknown_keys", path, key: safeKey }],
     });
   }
 }

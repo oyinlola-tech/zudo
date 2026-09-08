@@ -12,5 +12,5 @@ export type { NetworkErrorOptions } from "./networkError.base.js";
 export {
   connectionFailedError,
   networkTimeoutError,
-  externalServiceUnavailableError,
+  networkServiceUnavailableError,
 } from "./networkError.factory.js";

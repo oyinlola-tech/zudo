@@ -6,6 +6,10 @@ import { ErrorCode } from "../../base/types/errorCode.type.js";
 import { ErrorCategory } from "../../base/types/errorCategory.type.js";
 
 import { ErrorSeverity } from "../../base/types/errorSeverity.type.js";
+import {
+  MAX_METADATA_FRAGMENT_LENGTH,
+  sanitizeFragment,
+} from "../shared/domainError.helpers.js";
 
 /**
  * Options for creating a body parser error.
@@ -26,58 +30,68 @@ export class BodyParserError extends BaseError {
       ...options,
       code: options.code ?? ErrorCode.HTTP_BODY_PARSER,
       category: options.category ?? ErrorCategory.INPUT,
-      severity: options.severity ?? ErrorSeverity.ERROR,
+      severity: options.severity ?? ErrorSeverity.WARNING,
       statusCode: options.statusCode ?? 400,
       expose: options.expose ?? true,
     });
-
-    this.name = "BodyParserError";
   }
 }
 
 /**
  * Error thrown when an unsupported body type is encountered.
+ *
+ * Responds with 415 Unsupported Media Type. The header value is untrusted
+ * input: it is stripped of control characters and truncated before being
+ * embedded in the message or metadata.
  */
 export class UnsupportedBodyTypeError extends BodyParserError {
   /**
-   * The unsupported content type.
+   * The unsupported content type (sanitized and truncated).
    */
   public readonly contentType: string;
 
   constructor(contentType: string) {
-    super(`Unsupported request content type: ${contentType}`, {
-      code: ErrorCode.HTTP_UNSUPPORTED_BODY_TYPE,
-      metadata: {
-        contentType,
+    const safeContentType = sanitizeFragment(
+      contentType,
+      MAX_METADATA_FRAGMENT_LENGTH,
+    );
+    super(
+      `Unsupported request content type: ${sanitizeFragment(contentType)}`,
+      {
+        code: ErrorCode.HTTP_UNSUPPORTED_BODY_TYPE,
+        statusCode: 415,
+        metadata: {
+          contentType: safeContentType,
+        },
       },
-    });
+    );
 
-    this.name = "UnsupportedBodyTypeError";
-
-    this.contentType = contentType;
+    this.contentType = safeContentType;
   }
 }
 
 /**
  * Error thrown when the Content-Length header is invalid.
+ *
+ * The header value is untrusted input: it is stripped of control characters
+ * and truncated before being embedded in the message or metadata.
  */
 export class InvalidContentLengthError extends BodyParserError {
   /**
-   * The invalid Content-Length value.
+   * The invalid Content-Length value (sanitized and truncated).
    */
   public readonly value: string;
 
   constructor(value: string) {
-    super(`Invalid Content-Length header: ${value}`, {
+    const safeValue = sanitizeFragment(value, MAX_METADATA_FRAGMENT_LENGTH);
+    super(`Invalid Content-Length header: ${sanitizeFragment(value)}`, {
       code: ErrorCode.HTTP_INVALID_CONTENT_LENGTH,
       metadata: {
-        value,
+        value: safeValue,
       },
     });
 
-    this.name = "InvalidContentLengthError";
-
-    this.value = value;
+    this.value = safeValue;
   }
 }
 

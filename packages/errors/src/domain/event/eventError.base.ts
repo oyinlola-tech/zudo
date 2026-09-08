@@ -7,6 +7,7 @@ import type { BaseErrorOptions } from "../../base/types/baseError.type.js";
 import { ErrorCategory } from "../../base/types/errorCategory.type.js";
 import { ErrorCode } from "../../base/types/errorCode.type.js";
 import { ErrorSeverity } from "../../base/types/errorSeverity.type.js";
+import { safeErrorMessage } from "../shared/domainError.helpers.js";
 
 /** Options for creating an event error. */
 export interface EventErrorOptions extends Omit<BaseErrorOptions, "category"> {
@@ -22,6 +23,7 @@ export class EventError extends BaseError {
   public readonly eventType?: string;
   public readonly eventId?: string;
   public readonly handlerId?: string;
+  public readonly middlewareId?: string;
 
   constructor(message: string, options: EventErrorOptions = {}) {
     super(message, {
@@ -36,6 +38,7 @@ export class EventError extends BaseError {
     this.eventType = options.eventType;
     this.eventId = options.eventId;
     this.handlerId = options.handlerId;
+    this.middlewareId = options.middlewareId;
   }
 
   public override toJSON() {
@@ -44,6 +47,9 @@ export class EventError extends BaseError {
       ...(this.eventType !== undefined ? { eventType: this.eventType } : {}),
       ...(this.eventId !== undefined ? { eventId: this.eventId } : {}),
       ...(this.handlerId !== undefined ? { handlerId: this.handlerId } : {}),
+      ...(this.middlewareId !== undefined
+        ? { middlewareId: this.middlewareId }
+        : {}),
     };
   }
 }
@@ -68,22 +74,14 @@ export function toEventError(
     message?: string;
     eventType?: string;
     eventId?: string;
-    code?: string;
+    code?: ErrorCode | string;
   } = {},
 ): EventError {
   if (error instanceof EventError) {
     return error;
   }
-  if (error instanceof Error) {
-    return new EventError(options.message ?? error.message, {
-      code: options.code as ErrorCode | undefined,
-      eventType: options.eventType,
-      eventId: options.eventId,
-      cause: error,
-    });
-  }
-  return new EventError(options.message ?? String(error), {
-    code: options.code as ErrorCode | undefined,
+  return new EventError(options.message ?? safeErrorMessage(error), {
+    code: options.code,
     eventType: options.eventType,
     eventId: options.eventId,
     cause: error,

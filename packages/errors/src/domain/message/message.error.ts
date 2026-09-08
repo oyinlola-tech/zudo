@@ -28,3 +28,8 @@ export {
 } from "./messageError.lifecycle.js";
 
 export { MessageValidationError } from "./messageError.validation.js";
+
+export {
+  MessageSerializationError,
+  MessageDeserializationError,
+} from "./messageError.serialization.js";

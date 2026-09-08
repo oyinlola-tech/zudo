@@ -3,6 +3,7 @@
  */
 
 import { ErrorCode } from "../../base/types/errorCode.type.js";
+import { assertFiniteNonNegative } from "../shared/domainError.helpers.js";
 import { QueueError } from "./queueError.base.js";
 
 /** Error thrown for general job failures. */
@@ -44,6 +45,7 @@ export class JobTimeoutError extends QueueError {
     timeoutMs: number,
     options: { queueName?: string } = {},
   ) {
+    assertFiniteNonNegative("timeoutMs", timeoutMs);
     super(`Job "${jobId}" exceeded the timeout of ${timeoutMs}ms.`, {
       code: ErrorCode.JOB_TIMEOUT,
       queueName: options.queueName,

@@ -20,4 +20,6 @@ export {
   mapError,
   mapErrorType,
   createErrorMappingRule,
+  applyErrorMapping,
+  type ErrorConstructor,
 } from "./errorMapper.mappers.js";

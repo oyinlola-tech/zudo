@@ -14,4 +14,8 @@ export {
   SchemaRequiredError,
   SchemaUnionError,
   SchemaUnknownKeyError,
+  createSchemaError,
+  isSchemaError,
 } from "./schema.error.js";
+
+export type { SchemaErrorOptions } from "./schema.error.js";

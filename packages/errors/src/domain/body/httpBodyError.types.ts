@@ -14,10 +14,9 @@ export class HttpBodyLimitError extends HttpBodyError {
   constructor(limit: number, received: number) {
     super("Request body exceeds the configured size limit.", {
       code: ErrorCode.HTTP_BODY_LIMIT,
+      statusCode: 413,
       metadata: { limit, received },
     });
-
-    this.name = "HttpBodyLimitError";
     this.limit = limit;
     this.received = received;
   }
@@ -32,8 +31,6 @@ export class HttpBodyAbortedError extends HttpBodyError {
       code: ErrorCode.HTTP_BODY_ABORTED,
       statusCode: 408,
     });
-
-    this.name = "HttpBodyAbortedError";
   }
 }
 
@@ -46,7 +43,5 @@ export class HttpBodyParseError extends HttpBodyError {
       code: ErrorCode.HTTP_BODY_PARSE,
       cause,
     });
-
-    this.name = "HttpBodyParseError";
   }
 }

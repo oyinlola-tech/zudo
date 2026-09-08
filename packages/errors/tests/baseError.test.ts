@@ -12,20 +12,9 @@ class HttpNotFoundError extends BaseError {
   constructor(message: string) {
     super(message, {
       code: ErrorCode.NOT_FOUND,
-      category: ErrorCategory.NOT_FOUND,
+      category: ErrorCategory.RESOURCE,
       severity: ErrorSeverity.WARNING,
       statusCode: 404,
-    });
-  }
-}
-
-class InternalError extends BaseError {
-  constructor(message: string) {
-    super(message, {
-      code: ErrorCode.INTERNAL_ERROR,
-      category: ErrorCategory.INTERNAL,
-      severity: ErrorSeverity.ERROR,
-      statusCode: 500,
     });
   }
 }

@@ -52,7 +52,7 @@ export function databaseMigrationError(
 ): DatabaseError {
   return new DatabaseError(message, {
     ...options,
-    code: ErrorCode.DATABASE,
+    code: ErrorCode.DATABASE_MIGRATION,
     operation: DatabaseOperation.MIGRATION,
   });
 }

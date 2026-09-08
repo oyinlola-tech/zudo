@@ -30,8 +30,6 @@ export class HttpResponseWriterError extends BaseError {
       statusCode: options.statusCode ?? 500,
       expose: options.expose ?? false,
     });
-
-    this.name = "HttpResponseWriterError";
   }
 }
 
@@ -43,8 +41,6 @@ export class ResponseAlreadySentError extends HttpResponseWriterError {
     super(message, {
       code: ErrorCode.HTTP_RESPONSE_ALREADY_SENT,
     });
-
-    this.name = "ResponseAlreadySentError";
   }
 }
 
@@ -58,8 +54,6 @@ export class UnsupportedResponseBodyError extends HttpResponseWriterError {
     super(message, {
       code: ErrorCode.HTTP_UNSUPPORTED_RESPONSE_BODY,
     });
-
-    this.name = "UnsupportedResponseBodyError";
   }
 }
 

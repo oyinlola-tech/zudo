@@ -28,7 +28,7 @@ describe("Error Serialization", () => {
       expect(typeof json.metadata).toBe("object");
     });
 
-    it("should include stack in production", () => {
+    it("toJSON includes the stack for trusted logging", () => {
       const error = new BaseError("test");
       const json = error.toJSON();
 
@@ -39,7 +39,7 @@ describe("Error Serialization", () => {
   describe("ApplicationError.toJSON", () => {
     it("should serialize application error", () => {
       const error = new ApplicationError("app error", {
-        code: ErrorCode.APPLICATION_ERROR,
+        code: ErrorCode.INTERNAL_ERROR,
       });
 
       const json = error.toJSON();
@@ -63,7 +63,7 @@ describe("Error Serialization", () => {
   describe("ValidationError.toJSON", () => {
     it("should serialize validation error with issues", () => {
       const error = new ValidationError("validation failed", {
-        issues: [{ message: "required", path: "name" }],
+        issues: [{ message: "required", path: ["name"] }],
       });
 
       const json = error.toJSON();

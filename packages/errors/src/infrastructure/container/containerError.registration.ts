@@ -18,8 +18,9 @@ export class DuplicateRegistrationError extends ContainerError {
     super(message ?? `Token "${token}" is already registered.`, {
       code: ErrorCode.CONTAINER_DUPLICATE_REGISTRATION,
       token,
-      statusCode: 409,
-      expose: true,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
     });
     this.token = token;
     this.existingScope = options.existingScope;
@@ -44,8 +45,9 @@ export class RegistrationNotFoundError extends ContainerError {
     super(message ?? `No registration found for token "${token}".`, {
       code: ErrorCode.CONTAINER_REGISTRATION_NOT_FOUND,
       token,
-      statusCode: 404,
-      expose: true,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
     });
     this.requestedToken = token;
   }

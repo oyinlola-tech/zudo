@@ -26,7 +26,7 @@ export class RuntimeError extends BaseError {
   constructor(message: string, options: RuntimeErrorOptions = {}) {
     super(message, {
       ...options,
-      code: options.code ?? ErrorCode.SYSTEM_ERROR,
+      code: options.code ?? ErrorCode.RUNTIME,
       category: options.category ?? ErrorCategory.RUNTIME,
       severity: options.severity ?? ErrorSeverity.ERROR,
       statusCode: options.statusCode ?? 500,

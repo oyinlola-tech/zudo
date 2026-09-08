@@ -2,6 +2,7 @@
  * Advanced HTTP client error classes (422+).
  */
 
+import { ErrorCode } from "../../base/types/errorCode.type.js";
 import { HttpError } from "./http.error.js";
 import type { HttpClientErrorOptions } from "./httpClientError.options.js";
 
@@ -14,9 +15,8 @@ export class UnprocessableEntityError extends HttpError {
     super(message, {
       ...options,
       statusCode: 422,
-      code: options.code ?? "UNPROCESSABLE_ENTITY",
+      code: options.code ?? ErrorCode.HTTP_UNPROCESSABLE_ENTITY,
     });
-    this.name = "UnprocessableEntityError";
   }
 }
 
@@ -26,9 +26,8 @@ export class LockedError extends HttpError {
     super(message, {
       ...options,
       statusCode: 423,
-      code: options.code ?? "LOCKED",
+      code: options.code ?? ErrorCode.HTTP_LOCKED,
     });
-    this.name = "LockedError";
   }
 }
 
@@ -41,9 +40,8 @@ export class FailedDependencyError extends HttpError {
     super(message, {
       ...options,
       statusCode: 424,
-      code: options.code ?? "FAILED_DEPENDENCY",
+      code: options.code ?? ErrorCode.HTTP_FAILED_DEPENDENCY,
     });
-    this.name = "FailedDependencyError";
   }
 }
 
@@ -53,9 +51,8 @@ export class TooEarlyError extends HttpError {
     super(message, {
       ...options,
       statusCode: 425,
-      code: options.code ?? "TOO_EARLY",
+      code: options.code ?? ErrorCode.HTTP_TOO_EARLY,
     });
-    this.name = "TooEarlyError";
   }
 }
 
@@ -68,9 +65,8 @@ export class UpgradeRequiredError extends HttpError {
     super(message, {
       ...options,
       statusCode: 426,
-      code: options.code ?? "UPGRADE_REQUIRED",
+      code: options.code ?? ErrorCode.HTTP_UPGRADE_REQUIRED,
     });
-    this.name = "UpgradeRequiredError";
   }
 }
 
@@ -83,9 +79,8 @@ export class PreconditionRequiredError extends HttpError {
     super(message, {
       ...options,
       statusCode: 428,
-      code: options.code ?? "PRECONDITION_REQUIRED",
+      code: options.code ?? ErrorCode.HTTP_PRECONDITION_REQUIRED,
     });
-    this.name = "PreconditionRequiredError";
   }
 }
 
@@ -98,9 +93,8 @@ export class TooManyRequestsError extends HttpError {
     super(message, {
       ...options,
       statusCode: 429,
-      code: options.code ?? "TOO_MANY_REQUESTS",
+      code: options.code ?? ErrorCode.HTTP_TOO_MANY_REQUESTS,
     });
-    this.name = "TooManyRequestsError";
   }
 }
 
@@ -113,9 +107,8 @@ export class RequestHeaderFieldsTooLargeError extends HttpError {
     super(message, {
       ...options,
       statusCode: 431,
-      code: options.code ?? "REQUEST_HEADER_FIELDS_TOO_LARGE",
+      code: options.code ?? ErrorCode.HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE,
     });
-    this.name = "RequestHeaderFieldsTooLargeError";
   }
 }
 
@@ -128,8 +121,7 @@ export class RequestAbortedError extends HttpError {
     super(message, {
       ...options,
       statusCode: 499,
-      code: options.code ?? "REQUEST_ABORTED",
+      code: options.code ?? ErrorCode.HTTP_REQUEST_ABORTED,
     });
-    this.name = "RequestAbortedError";
   }
 }

@@ -13,8 +13,6 @@ export class InvalidHttpServerStateError extends HttpServerLifecycleError {
       code: ErrorCode.HTTP_SERVER_INVALID_STATE,
       metadata: { state, operation },
     });
-
-    this.name = "InvalidHttpServerStateError";
     this.state = state;
   }
 }
@@ -28,8 +26,6 @@ export class HttpServerStartError extends HttpServerLifecycleError {
       code: ErrorCode.HTTP_SERVER_START,
       cause,
     });
-
-    this.name = "HttpServerStartError";
   }
 }
 
@@ -42,7 +38,5 @@ export class HttpServerStopError extends HttpServerLifecycleError {
       code: ErrorCode.HTTP_SERVER_STOP,
       cause,
     });
-
-    this.name = "HttpServerStopError";
   }
 }

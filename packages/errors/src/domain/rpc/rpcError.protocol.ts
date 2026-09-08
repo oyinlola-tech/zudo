@@ -22,7 +22,6 @@ export class RPCValidationError extends RPCError {
       statusCode: 422,
       expose: true,
     });
-    this.name = "RPCValidationError";
     this.issues = Object.freeze([...issues]);
   }
 }
@@ -39,7 +38,6 @@ export class RPCAuthenticationError extends RPCError {
       statusCode: 401,
       expose: true,
     });
-    this.name = "RPCAuthenticationError";
   }
 }
 
@@ -55,7 +53,6 @@ export class RPCForbiddenError extends RPCError {
       statusCode: 403,
       expose: true,
     });
-    this.name = "RPCForbiddenError";
   }
 }
 
@@ -72,7 +69,6 @@ export class RPCInternalError extends RPCError {
       expose: false,
       isOperational: false,
     });
-    this.name = "RPCInternalError";
   }
 }
 
@@ -85,7 +81,6 @@ export class RPCSerializationError extends RPCError {
       statusCode: 500,
       expose: false,
     });
-    this.name = "RPCSerializationError";
   }
 }
 
@@ -98,7 +93,6 @@ export class RPCDeserializationError extends RPCError {
       statusCode: 400,
       expose: true,
     });
-    this.name = "RPCDeserializationError";
   }
 }
 
@@ -111,6 +105,5 @@ export class RPCDuplicateProcedureError extends RPCError {
       statusCode: 409,
       expose: true,
     });
-    this.name = "RPCDuplicateProcedureError";
   }
 }

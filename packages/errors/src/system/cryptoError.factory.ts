@@ -33,13 +33,17 @@ export function cryptoCipherError(
 
 /** Creates a cryptographic signature error. */
 export function cryptoSignatureError(
-  message = "Cryptographic signature verification failed.",
+  message?: string,
   operation:
     | CryptoOperation.SIGN
     | CryptoOperation.VERIFY_SIGNATURE = CryptoOperation.VERIFY_SIGNATURE,
   algorithm?: string,
 ): CryptoError {
-  return new CryptoError(message, {
+  const defaultMessage =
+    operation === CryptoOperation.SIGN
+      ? "Cryptographic signing failed."
+      : "Cryptographic signature verification failed.";
+  return new CryptoError(message ?? defaultMessage, {
     code: ErrorCode.CRYPTO_SIGNATURE,
     operation,
     algorithm,

@@ -2,9 +2,15 @@
  * Plugin lifecycle error classes — registration, dependency, initialization.
  */
 
-import type { ErrorMetadataValue } from "../../base/core/errorMetadata.type.js";
 import { ErrorCode } from "../../base/types/errorCode.type.js";
 import { PluginError, type PluginErrorOptions } from "./pluginError.base.js";
+
+/*
+ * Plugin registration, lookup, dependency and state errors describe server
+ * configuration problems. They are reported as internal (500, not exposed,
+ * non-operational) so that plugin names and dependency graphs never reach
+ * clients and so that a misconfigured server is not blamed on the request.
+ */
 
 /** Error thrown when a plugin registration fails. */
 export class PluginRegistrationError extends PluginError {
@@ -17,10 +23,10 @@ export class PluginRegistrationError extends PluginError {
       ...options,
       code: ErrorCode.PLUGIN_REGISTRATION,
       pluginName,
-      statusCode: 400,
-      expose: true,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
     });
-    this.name = "PluginRegistrationError";
   }
 }
 
@@ -31,10 +37,10 @@ export class PluginAlreadyRegisteredError extends PluginError {
       ...options,
       code: ErrorCode.PLUGIN_ALREADY_REGISTERED,
       pluginName,
-      statusCode: 409,
-      expose: true,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
     });
-    this.name = "PluginAlreadyRegisteredError";
   }
 }
 
@@ -45,10 +51,10 @@ export class PluginNotFoundError extends PluginError {
       ...options,
       code: ErrorCode.PLUGIN_NOT_FOUND,
       pluginName,
-      statusCode: 404,
-      expose: true,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
     });
-    this.name = "PluginNotFoundError";
   }
 }
 
@@ -65,12 +71,12 @@ export class PluginDependencyError extends PluginError {
         ...options,
         code: ErrorCode.PLUGIN_DEPENDENCY,
         pluginName,
-        statusCode: 400,
-        expose: true,
-        metadata: { dependencyName } as Record<string, ErrorMetadataValue>,
+        statusCode: 500,
+        expose: false,
+        isOperational: false,
+        metadata: { ...options.metadata, dependencyName },
       },
     );
-    this.name = "PluginDependencyError";
   }
 }
 
@@ -80,11 +86,11 @@ export class PluginDependencyCycleError extends PluginError {
     super(`Circular plugin dependency detected: ${cycle.join(" -> ")}.`, {
       ...options,
       code: ErrorCode.PLUGIN_DEPENDENCY_CYCLE,
-      statusCode: 400,
-      expose: true,
-      metadata: { cycle: [...cycle] } as Record<string, ErrorMetadataValue>,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
+      metadata: { ...options.metadata, cycle: [...cycle] },
     });
-    this.name = "PluginDependencyCycleError";
   }
 }
 
@@ -102,7 +108,6 @@ export class PluginInitializationError extends PluginError {
       statusCode: 500,
       expose: false,
     });
-    this.name = "PluginInitializationError";
   }
 }
 
@@ -120,7 +125,6 @@ export class PluginStartError extends PluginError {
       statusCode: 500,
       expose: false,
     });
-    this.name = "PluginStartError";
   }
 }
 
@@ -138,7 +142,6 @@ export class PluginStopError extends PluginError {
       statusCode: 500,
       expose: false,
     });
-    this.name = "PluginStopError";
   }
 }
 
@@ -156,6 +159,5 @@ export class PluginDisposeError extends PluginError {
       statusCode: 500,
       expose: false,
     });
-    this.name = "PluginDisposeError";
   }
 }

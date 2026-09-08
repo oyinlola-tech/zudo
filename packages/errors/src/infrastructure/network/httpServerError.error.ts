@@ -6,6 +6,7 @@
  * particular server adapter.
  */
 
+import { ErrorCode } from "../../base/types/errorCode.type.js";
 import { HttpError } from "./http.error.js";
 import type { ErrorMetadata } from "../../base/core/errorMetadata.type.js";
 
@@ -30,10 +31,9 @@ export class InternalServerError extends HttpError {
     super(message, {
       ...options,
       statusCode: 500,
-      code: options.code ?? "INTERNAL_SERVER_ERROR",
+      code: options.code ?? ErrorCode.HTTP_INTERNAL_SERVER_ERROR,
       expose: options.expose ?? false,
     });
-    this.name = "InternalServerError";
   }
 }
 
@@ -48,10 +48,9 @@ export class NotImplementedError extends HttpError {
     super(message, {
       ...options,
       statusCode: 501,
-      code: options.code ?? "NOT_IMPLEMENTED",
+      code: options.code ?? ErrorCode.HTTP_NOT_IMPLEMENTED,
       expose: options.expose ?? false,
     });
-    this.name = "NotImplementedError";
   }
 }
 
@@ -66,10 +65,9 @@ export class BadGatewayError extends HttpError {
     super(message, {
       ...options,
       statusCode: 502,
-      code: options.code ?? "BAD_GATEWAY",
+      code: options.code ?? ErrorCode.HTTP_BAD_GATEWAY,
       expose: options.expose ?? false,
     });
-    this.name = "BadGatewayError";
   }
 }
 
@@ -84,10 +82,9 @@ export class ServiceUnavailableError extends HttpError {
     super(message, {
       ...options,
       statusCode: 503,
-      code: options.code ?? "SERVICE_UNAVAILABLE",
+      code: options.code ?? ErrorCode.HTTP_SERVICE_UNAVAILABLE,
       expose: options.expose ?? false,
     });
-    this.name = "ServiceUnavailableError";
   }
 }
 
@@ -102,9 +99,8 @@ export class GatewayTimeoutError extends HttpError {
     super(message, {
       ...options,
       statusCode: 504,
-      code: options.code ?? "GATEWAY_TIMEOUT",
+      code: options.code ?? ErrorCode.HTTP_GATEWAY_TIMEOUT,
       expose: options.expose ?? false,
     });
-    this.name = "GatewayTimeoutError";
   }
 }

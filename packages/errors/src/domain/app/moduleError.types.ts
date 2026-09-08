@@ -3,13 +3,17 @@ import { ModuleError } from "./moduleError.base.js";
 
 /**
  * Error thrown when a module is not found.
+ *
+ * Module registration is a server-side concern, so this is reported as an
+ * internal (500, non-exposed, non-operational) failure.
  */
 export class ModuleNotFoundError extends ModuleError {
   constructor(moduleId: string, message?: string) {
     super(message ?? `Module "${moduleId}" was not found.`, {
       code: ErrorCode.MODULE_NOT_FOUND,
-      statusCode: 404,
-      expose: true,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
       moduleId,
     });
   }

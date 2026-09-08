@@ -59,39 +59,53 @@ export function isSchedulerError(value: unknown): value is SchedulerError {
   return value instanceof SchedulerError;
 }
 
-/** Error thrown when the scheduler has not been started. */
+/**
+ * Error thrown when the scheduler has not been started.
+ *
+ * Scheduler state is a server-side concern: reported as 503 (temporarily
+ * unavailable), not exposed, non-operational.
+ */
 export class SchedulerNotStartedError extends SchedulerError {
   constructor() {
     super("Scheduler has not been started.", {
       code: ErrorCode.SCHEDULER_NOT_STARTED,
-      statusCode: 400,
-      expose: true,
+      statusCode: 503,
+      expose: false,
+      isOperational: false,
     });
-    this.name = "SchedulerNotStartedError";
   }
 }
 
-/** Error thrown when the scheduler is already started. */
+/**
+ * Error thrown when the scheduler is already started.
+ *
+ * Scheduler state is a server-side concern: reported as internal.
+ */
 export class SchedulerAlreadyStartedError extends SchedulerError {
   constructor() {
     super("Scheduler is already started.", {
       code: ErrorCode.SCHEDULER_ALREADY_STARTED,
-      statusCode: 400,
-      expose: true,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
     });
-    this.name = "SchedulerAlreadyStartedError";
   }
 }
 
-/** Error thrown when the scheduler is stopped. */
+/**
+ * Error thrown when the scheduler is stopped.
+ *
+ * Scheduler state is a server-side concern: reported as 503 (temporarily
+ * unavailable), not exposed, non-operational.
+ */
 export class SchedulerStoppedError extends SchedulerError {
   constructor() {
     super("Scheduler is stopped.", {
       code: ErrorCode.SCHEDULER_STOPPED,
-      statusCode: 400,
-      expose: true,
+      statusCode: 503,
+      expose: false,
+      isOperational: false,
     });
-    this.name = "SchedulerStoppedError";
   }
 }
 
@@ -104,7 +118,6 @@ export class SchedulerJobNotFoundError extends SchedulerError {
       statusCode: 404,
       expose: true,
     });
-    this.name = "SchedulerJobNotFoundError";
   }
 }
 
@@ -117,7 +130,6 @@ export class SchedulerJobAlreadyExistsError extends SchedulerError {
       statusCode: 409,
       expose: true,
     });
-    this.name = "SchedulerJobAlreadyExistsError";
   }
 }
 
@@ -130,6 +142,5 @@ export class InvalidJobError extends SchedulerError {
       statusCode: 400,
       expose: true,
     });
-    this.name = "InvalidJobError";
   }
 }

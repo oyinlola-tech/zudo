@@ -28,6 +28,7 @@ export {
   EventEmitterDisposedError,
   EventRegistryDisposedError,
   EventSubscriptionClosedError,
+  EventBusDisposedError,
   EventTimeoutError,
 } from "./eventError.lifecycle.js";
 

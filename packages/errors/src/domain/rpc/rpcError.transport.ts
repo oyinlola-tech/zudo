@@ -3,6 +3,10 @@
  */
 
 import { ErrorCode } from "../../base/types/errorCode.type.js";
+import {
+  assertFiniteNonNegative,
+  normalizeRetryAfterSeconds,
+} from "../shared/domainError.helpers.js";
 import { RPCError } from "./rpcError.base.js";
 
 /** Error thrown when an RPC operation times out. */
@@ -10,6 +14,7 @@ export class RPCTimeoutError extends RPCError {
   public readonly timeout: number;
 
   constructor(timeout: number, procedureName?: string) {
+    assertFiniteNonNegative("timeout", timeout);
     super(`RPC operation timed out after ${timeout}ms.`, {
       code: ErrorCode.RPC_TIMEOUT,
       procedureName,
@@ -17,7 +22,6 @@ export class RPCTimeoutError extends RPCError {
       statusCode: 504,
       expose: false,
     });
-    this.name = "RPCTimeoutError";
     this.timeout = timeout;
   }
 }
@@ -34,7 +38,6 @@ export class RPCCancelledError extends RPCError {
       statusCode: 499,
       expose: false,
     });
-    this.name = "RPCCancelledError";
   }
 }
 
@@ -47,7 +50,6 @@ export class RPCTransportError extends RPCError {
       statusCode: 502,
       expose: false,
     });
-    this.name = "RPCTransportError";
   }
 }
 
@@ -63,12 +65,20 @@ export class RPCUnavailableError extends RPCError {
       statusCode: 503,
       expose: true,
     });
-    this.name = "RPCUnavailableError";
   }
 }
 
-/** Error thrown when an RPC rate limit is exceeded. */
+/**
+ * Error thrown when an RPC rate limit is exceeded.
+ *
+ * `retryAfter` is expressed in seconds (as the HTTP `Retry-After` header);
+ * fractional values are rounded up and the value is only recorded in
+ * metadata (as `retryAfterSeconds`) when provided.
+ */
 export class RPCRateLimitedError extends RPCError {
+  /** Seconds to wait before retrying, if known. */
+  public readonly retryAfterSeconds?: number;
+  /** @deprecated Use `retryAfterSeconds`. */
   public readonly retryAfter?: number;
 
   constructor(
@@ -76,21 +86,26 @@ export class RPCRateLimitedError extends RPCError {
     retryAfter?: number,
     procedureName?: string,
   ) {
+    const retryAfterSeconds =
+      retryAfter !== undefined
+        ? normalizeRetryAfterSeconds(retryAfter, "retryAfter")
+        : undefined;
     super(message, {
       code: ErrorCode.RPC_RATE_LIMITED,
       procedureName,
-      metadata: { retryAfter },
+      metadata: retryAfterSeconds !== undefined ? { retryAfterSeconds } : {},
       statusCode: 429,
       expose: true,
     });
-    this.name = "RPCRateLimitedError";
-    this.retryAfter = retryAfter;
+    this.retryAfterSeconds = retryAfterSeconds;
+    this.retryAfter = retryAfterSeconds;
   }
 }
 
 /** Error thrown when an RPC deadline is exceeded. */
 export class RPCDeadlineExceededError extends RPCError {
   constructor(deadline: number, procedureName?: string) {
+    assertFiniteNonNegative("deadline", deadline);
     super(`RPC deadline exceeded at ${deadline}.`, {
       code: ErrorCode.RPC_DEADLINE_EXCEEDED,
       procedureName,
@@ -98,6 +113,5 @@ export class RPCDeadlineExceededError extends RPCError {
       statusCode: 504,
       expose: false,
     });
-    this.name = "RPCDeadlineExceededError";
   }
 }

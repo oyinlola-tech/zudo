@@ -27,8 +27,6 @@ export class HttpRouterError extends BaseError {
       statusCode: options.statusCode ?? 500,
       expose: options.expose ?? false,
     });
-
-    this.name = "HttpRouterError";
   }
 }
 

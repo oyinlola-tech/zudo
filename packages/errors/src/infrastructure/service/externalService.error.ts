@@ -12,4 +12,5 @@ export type { ExternalServiceErrorOptions } from "./externalServiceError.base.js
 export {
   externalServiceTimeoutError,
   externalServiceUnavailable,
+  externalServiceUnavailableError,
 } from "./externalServiceError.factory.js";

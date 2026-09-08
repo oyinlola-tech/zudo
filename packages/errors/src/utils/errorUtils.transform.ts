@@ -2,9 +2,8 @@
  * Error transformation utilities — toError, withErrorContext, tryCatch, normalize.
  */
 
-import { BaseError } from "../base/core/baseError.core.js";
-import { ErrorCategory } from "../base/types/errorCategory.type.js";
-import { ErrorSeverity } from "../base/types/errorSeverity.type.js";
+import type { BaseError } from "../base/core/baseError.core.js";
+import { normalizeUnknownToBaseError } from "../base/utils/baseError.utils.js";
 import { getErrorMessage } from "./errorUtils.extraction.js";
 
 /** Safely converts an unknown thrown value into an Error instance. */
@@ -53,29 +52,5 @@ export async function tryCatchAsync<T>(
 
 /** Converts an unknown thrown value into a BaseError. */
 export function normalizeToBaseError(value: unknown): BaseError {
-  if (value instanceof BaseError) {
-    return value;
-  }
-
-  if (value instanceof Error) {
-    return new BaseError(value.message || "An unexpected error occurred.", {
-      code: "INTERNAL_ERROR",
-      category: ErrorCategory.SYSTEM,
-      severity: ErrorSeverity.ERROR,
-      statusCode: 500,
-      expose: false,
-      isOperational: false,
-      cause: value,
-    });
-  }
-
-  return new BaseError(getErrorMessage(value), {
-    code: "INTERNAL_ERROR",
-    category: ErrorCategory.SYSTEM,
-    severity: ErrorSeverity.ERROR,
-    statusCode: 500,
-    expose: false,
-    isOperational: false,
-    metadata: { originalType: typeof value },
-  });
+  return normalizeUnknownToBaseError(value);
 }

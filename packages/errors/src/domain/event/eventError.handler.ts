@@ -17,7 +17,7 @@ export class EventHandlerError extends EventError {
     },
   ) {
     super(message, {
-      code: ErrorCode.EVENT_HANDLER_FAILED as ErrorCode | string,
+      code: ErrorCode.EVENT_HANDLER_FAILED,
       handlerId: options.handlerId,
       eventType: options.eventType,
       eventId: options.eventId,
@@ -39,34 +39,44 @@ export function createEventHandlerError(
   );
 }
 
-/** Error thrown when an event handler cannot be found. */
+/**
+ * Error thrown when an event handler cannot be found.
+ *
+ * Handler registration is a server-side concern, so this is an internal
+ * (non-exposed, non-operational) failure.
+ */
 export class EventHandlerNotFoundError extends EventError {
   constructor(handlerId: string) {
     super(`Event handler "${handlerId}" was not found.`, {
-      code: ErrorCode.RESOURCE_NOT_FOUND as ErrorCode | string,
+      code: ErrorCode.EVENT_HANDLER_NOT_FOUND,
       handlerId,
-      statusCode: 404,
-      expose: true,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
     });
   }
 }
 
-/** Error thrown when an event handler is already registered. */
+/**
+ * Error thrown when an event handler is already registered.
+ *
+ * Handler registration is a server-side concern, so this is an internal
+ * (non-exposed, non-operational) failure.
+ */
 export class DuplicateEventHandlerError extends EventError {
   constructor(handlerId: string) {
     super(`Event handler "${handlerId}" is already registered.`, {
-      code: ErrorCode.CONFLICT,
+      code: ErrorCode.EVENT_DUPLICATE_HANDLER,
       handlerId,
-      statusCode: 409,
-      expose: true,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
     });
   }
 }
 
 /** Error thrown when event middleware fails. */
 export class EventMiddlewareError extends EventError {
-  public readonly middlewareId?: string;
-
   constructor(
     message: string,
     options: {
@@ -77,12 +87,11 @@ export class EventMiddlewareError extends EventError {
     } = {},
   ) {
     super(message, {
-      code: ErrorCode.MIDDLEWARE_EXECUTION as ErrorCode | string,
+      code: ErrorCode.EVENT_MIDDLEWARE_FAILED,
       middlewareId: options.middlewareId,
       eventType: options.eventType,
       eventId: options.eventId,
       cause: options.cause,
     });
-    this.middlewareId = options.middlewareId;
   }
 }

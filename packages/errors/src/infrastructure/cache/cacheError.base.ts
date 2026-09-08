@@ -51,7 +51,7 @@ export class CacheError extends BaseError {
   ) {
     super(message, {
       ...options,
-      code: options.code ?? ErrorCode.UNKNOWN,
+      code: options.code ?? ErrorCode.CACHE,
       category: options.category ?? ErrorCategory.CACHE,
       severity: options.severity ?? ErrorSeverity.ERROR,
       statusCode: options.statusCode ?? 500,

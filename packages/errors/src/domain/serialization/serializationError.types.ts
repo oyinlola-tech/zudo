@@ -19,7 +19,12 @@ export class SerializeError extends SerializationError {
   }
 }
 
-/** Error thrown when deserialization fails. */
+/**
+ * Error thrown when deserialization fails.
+ *
+ * Malformed serialized input is a client/input problem, so this is a 400
+ * that may be exposed.
+ */
 export class DeserializeError extends SerializationError {
   constructor(
     message: string,
@@ -29,6 +34,8 @@ export class DeserializeError extends SerializationError {
       code: ErrorCode.DESERIALIZATION_FAILED,
       format: options.format,
       cause: options.cause,
+      statusCode: 400,
+      expose: true,
     });
   }
 }
@@ -47,7 +54,7 @@ export class UnsupportedSerializationFormatError extends SerializationError {
 
 /** Error thrown when a named serializer is not found in the registry. */
 export class SerializerNotFoundError extends SerializationError {
-  public readonly serializerName: string;
+  public override readonly serializerName: string;
 
   constructor(name: string) {
     super(`No serializer registered with name: "${name}"`, {
@@ -60,23 +67,34 @@ export class SerializerNotFoundError extends SerializationError {
   }
 }
 
-/** Error thrown when a circular reference is detected during serialization. */
+/**
+ * Error thrown when a circular reference is detected during serialization.
+ *
+ * Circular data is a server-side data bug, so this is an internal (500) error.
+ */
 export class CircularReferenceError extends SerializationError {
   public readonly circularPath: string;
 
   constructor(path = "root") {
     super(`Circular reference detected at "${path}"`, {
       code: ErrorCode.CIRCULAR_REFERENCE,
-      statusCode: 400,
+      statusCode: 500,
       expose: false,
+      metadata: { circularPath: path },
     });
     this.circularPath = path;
   }
 }
 
-/** Error thrown when maximum serialization depth is exceeded. */
+/**
+ * Error thrown when maximum serialization depth is exceeded.
+ *
+ * Over-deep data is a server-side data bug, so this is an internal (500) error.
+ */
 export class SerializationDepthError extends SerializationError {
-  public readonly depth: number;
+  public override readonly depth: number;
+  public override readonly maxDepth: number;
+  /** @deprecated Use `maxDepth`. */
   public readonly maxDepthValue: number;
 
   constructor(depth: number, maxDepth: number) {
@@ -84,17 +102,22 @@ export class SerializationDepthError extends SerializationError {
       code: ErrorCode.MAX_DEPTH_EXCEEDED,
       depth,
       maxDepth,
-      statusCode: 400,
+      statusCode: 500,
       expose: false,
     });
     this.depth = depth;
+    this.maxDepth = maxDepth;
     this.maxDepthValue = maxDepth;
   }
 }
 
 /** Error thrown when a serialized payload exceeds the size limit. */
 export class SerializationPayloadTooLargeError extends SerializationError {
+  public override readonly size: number;
+  public override readonly maxSize: number;
+  /** @deprecated Use `size`. */
   public readonly payloadSize: number;
+  /** @deprecated Use `maxSize`. */
   public readonly maxSizeValue: number;
 
   constructor(size: number, maxSize: number) {
@@ -105,6 +128,8 @@ export class SerializationPayloadTooLargeError extends SerializationError {
       statusCode: 413,
       expose: false,
     });
+    this.size = size;
+    this.maxSize = maxSize;
     this.payloadSize = size;
     this.maxSizeValue = maxSize;
   }
@@ -128,7 +153,7 @@ export class InvalidSerializedDataError extends SerializationError {
 
 /** Error thrown when a type transformer fails. */
 export class TransformerError extends SerializationError {
-  public readonly transformerType: string;
+  public override readonly transformerType: string;
 
   constructor(
     type: string,
@@ -146,7 +171,7 @@ export class TransformerError extends SerializationError {
 
 /** Error thrown when a type transformer is not found. */
 export class TransformerNotFoundError extends SerializationError {
-  public readonly transformerType: string;
+  public override readonly transformerType: string;
 
   constructor(type: string) {
     super(`No transformer registered for type: "${type}"`, {

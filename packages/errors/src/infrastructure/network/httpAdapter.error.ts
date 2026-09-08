@@ -37,8 +37,6 @@ export class HttpAdapterError extends BaseError {
       expose: options.expose ?? false,
     });
 
-    this.name = "HttpAdapterError";
-
     this.adapter = options.adapter;
   }
 }
@@ -62,14 +60,16 @@ export class RequestBodyTooLargeError extends HttpAdapterError {
       `HTTP request body exceeds the maximum allowed size of ${maxSize} bytes (actual: ${actualSize}).`,
       {
         code: ErrorCode.HTTP_REQUEST_BODY_TOO_LARGE,
+        statusCode: 413,
+        expose: true,
+        isOperational: true,
+        severity: ErrorSeverity.WARNING,
         metadata: {
           maxSize,
           actualSize,
         },
       },
     );
-
-    this.name = "RequestBodyTooLargeError";
 
     this.maxSize = maxSize;
 

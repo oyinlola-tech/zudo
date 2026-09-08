@@ -3,53 +3,35 @@
  */
 
 import { BaseError } from "../base/core/baseError.core.js";
-import { ErrorCategory } from "../base/types/errorCategory.type.js";
-import { ErrorCode } from "../base/types/errorCode.type.js";
-import { ErrorSeverity } from "../base/types/errorSeverity.type.js";
+import type { ErrorMetadata } from "../base/core/errorMetadata.type.js";
+import {
+  isBaseError,
+  normalizeUnknownToBaseError,
+} from "../base/utils/baseError.utils.js";
 import type {
   ErrorMapperContext,
   ErrorMapper,
   ErrorMapperPredicate,
+  ErrorMapping,
   ErrorMappingRule,
 } from "./errorMapper.types.js";
 import type { ErrorMapperRegistry } from "./errorMapper.registry.js";
 
-/** Maps common native JavaScript errors. */
+/**
+ * Maps common native JavaScript errors.
+ *
+ * Native `TypeError`/`RangeError`/`SyntaxError` are overwhelmingly programmer
+ * bugs rather than client input problems, so they are classified as
+ * non-operational internal errors (500, not exposed). Register an explicit
+ * mapping rule to treat a specific error type as client input.
+ */
 export function mapNativeError(error: unknown): BaseError | undefined {
-  if (error instanceof BaseError) {
+  if (isBaseError(error)) {
     return error;
   }
-  if (error instanceof TypeError) {
-    return new BaseError(error.message, {
-      code: ErrorCode.INVALID_INPUT,
-      category: ErrorCategory.VALIDATION,
-      severity: ErrorSeverity.WARNING,
-      statusCode: 400,
-      expose: true,
-      isOperational: true,
-      cause: error,
-    });
-  }
-  if (error instanceof RangeError) {
-    return new BaseError(error.message, {
-      code: ErrorCode.INVALID_INPUT,
-      category: ErrorCategory.VALIDATION,
-      severity: ErrorSeverity.WARNING,
-      statusCode: 400,
-      expose: true,
-      isOperational: true,
-      cause: error,
-    });
-  }
   if (error instanceof Error) {
-    return new BaseError(error.message || "An unexpected error occurred.", {
-      code: ErrorCode.INTERNAL_ERROR,
-      category: ErrorCategory.SYSTEM,
-      severity: ErrorSeverity.ERROR,
-      statusCode: 500,
-      expose: false,
-      isOperational: false,
-      cause: error,
+    return normalizeUnknownToBaseError(error, {
+      metadata: { nativeErrorName: error.name },
     });
   }
   return undefined;
@@ -61,7 +43,7 @@ export function mapError(
   registry?: ErrorMapperRegistry,
   context?: ErrorMapperContext,
 ): BaseError {
-  if (error instanceof BaseError) {
+  if (isBaseError(error)) {
     return error;
   }
   const mapped = registry?.map(error, context);
@@ -72,38 +54,81 @@ export function mapError(
   if (native) {
     return native;
   }
-  return new BaseError("An unexpected error occurred.", {
-    code: ErrorCode.INTERNAL_ERROR,
-    category: ErrorCategory.SYSTEM,
-    severity: ErrorSeverity.ERROR,
-    statusCode: 500,
-    expose: false,
-    isOperational: false,
-    metadata: { originalType: typeof error },
-  });
+  return normalizeUnknownToBaseError(error);
 }
 
-/** Creates a mapping rule for a specific error constructor. */
+/** Any constructor whose instances are `T` (parameters are not constrained). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type ErrorConstructor<T extends Error> = abstract new (...args: any[]) => T;
+
+/**
+ * Creates a mapping rule for a specific error constructor.
+ *
+ * `mapper` may be a function producing a `BaseError`, or a declarative
+ * `ErrorMapping` describing the resulting error.
+ */
 export function mapErrorType<T extends Error>(
   name: string,
-  errorType: new (...args: unknown[]) => T,
-  mapper: (error: T, context?: ErrorMapperContext) => BaseError,
+  errorType: ErrorConstructor<T>,
+  mapper: ((error: T, context?: ErrorMapperContext) => BaseError) | ErrorMapping,
   priority = 0,
 ): ErrorMappingRule {
+  const mapFn: ErrorMapper =
+    typeof mapper === "function"
+      ? (error, context) => mapper(error as T, context)
+      : (error, context) => applyErrorMapping(error, mapper, context);
   return {
     name,
     priority,
     predicate: (error) => error instanceof errorType,
-    mapper: (error, context) => mapper(error as T, context),
+    mapper: mapFn,
   };
 }
 
-/** Creates a mapping rule based on a predicate. */
+/**
+ * Creates a mapping rule based on a predicate.
+ *
+ * `mapper` may be a function producing a `BaseError`, or a declarative
+ * `ErrorMapping` describing the resulting error.
+ */
 export function createErrorMappingRule(
   name: string,
   predicate: ErrorMapperPredicate,
-  mapper: ErrorMapper,
+  mapper: ErrorMapper | ErrorMapping,
   priority = 0,
 ): ErrorMappingRule {
-  return { name, predicate, mapper, priority };
+  const mapFn: ErrorMapper =
+    typeof mapper === "function"
+      ? mapper
+      : (error, context) => applyErrorMapping(error, mapper, context);
+  return { name, predicate, mapper: mapFn, priority };
+}
+
+/** Builds a BaseError from a declarative `ErrorMapping`. */
+export function applyErrorMapping(
+  error: unknown,
+  mapping: ErrorMapping,
+  context?: ErrorMapperContext,
+): BaseError {
+  const message =
+    mapping.message ??
+    (error instanceof Error && error.message
+      ? error.message
+      : "An unexpected error occurred.");
+  return new BaseError(message, {
+    code: mapping.code,
+    category: mapping.category,
+    severity: mapping.severity,
+    statusCode: mapping.statusCode,
+    expose: mapping.expose,
+    isOperational: mapping.isOperational,
+    cause: error,
+    metadata: {
+      ...(context?.metadata as ErrorMetadata | undefined),
+      ...(mapping.metadata as ErrorMetadata | undefined),
+      ...(context?.requestId !== undefined
+        ? { requestId: context.requestId }
+        : {}),
+    },
+  });
 }

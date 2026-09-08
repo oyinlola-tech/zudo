@@ -23,12 +23,10 @@ export class HttpBodyError extends BaseError {
       ...options,
       code: options.code ?? ErrorCode.HTTP_BODY,
       category: options.category ?? ErrorCategory.INPUT,
-      severity: options.severity ?? ErrorSeverity.ERROR,
+      severity: options.severity ?? ErrorSeverity.WARNING,
       statusCode: options.statusCode ?? 400,
       expose: options.expose ?? true,
     });
-
-    this.name = "HttpBodyError";
   }
 }
 

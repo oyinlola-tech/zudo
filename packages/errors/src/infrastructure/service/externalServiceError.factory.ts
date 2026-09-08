@@ -24,7 +24,7 @@ export function externalServiceTimeoutError(
 }
 
 /** Creates an external service unavailable error. */
-export function externalServiceUnavailable(
+export function externalServiceUnavailableError(
   service: string,
   operation?: string,
 ): ExternalServiceError {
@@ -38,3 +38,6 @@ export function externalServiceUnavailable(
     expose: false,
   });
 }
+
+/** @deprecated Use `externalServiceUnavailableError`. */
+export const externalServiceUnavailable = externalServiceUnavailableError;

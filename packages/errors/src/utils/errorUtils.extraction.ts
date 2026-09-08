@@ -2,6 +2,7 @@
  * Error extraction utilities — message, name, stack, root cause.
  */
 
+import { isBaseError } from "../base/utils/baseError.utils.js";
 import { BaseError } from "../base/core/baseError.core.js";
 import { isErrorLike } from "./errorUtils.typeCheck.js";
 
@@ -70,7 +71,7 @@ export function getRootBaseError(value: unknown): BaseError | undefined {
 
   while (current !== undefined && current !== null && !visited.has(current)) {
     visited.add(current);
-    if (current instanceof BaseError) {
+    if (isBaseError(current)) {
       result = current;
     }
     if (current instanceof Error && "cause" in current) {
@@ -95,7 +96,7 @@ export function getErrorDiagnostics(value: unknown): Record<string, unknown> {
     diagnostics.stack = stack;
   }
 
-  if (value instanceof BaseError) {
+  if (isBaseError(value)) {
     diagnostics.code = value.code;
     diagnostics.category = value.category;
     diagnostics.severity = value.severity;

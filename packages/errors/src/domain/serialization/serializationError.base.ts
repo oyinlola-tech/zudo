@@ -7,6 +7,7 @@ import type { BaseErrorOptions } from "../../base/types/baseError.type.js";
 import { ErrorCategory } from "../../base/types/errorCategory.type.js";
 import { ErrorCode } from "../../base/types/errorCode.type.js";
 import { ErrorSeverity } from "../../base/types/errorSeverity.type.js";
+import { safeErrorMessage } from "../shared/domainError.helpers.js";
 
 /** Options for creating a serialization error. */
 export interface SerializationErrorOptions extends Omit<
@@ -23,11 +24,33 @@ export interface SerializationErrorOptions extends Omit<
   readonly serializerName?: string;
 }
 
+/** Diagnostic fields carried by serialization errors. */
+const DIAGNOSTIC_KEYS = [
+  "format",
+  "depth",
+  "maxDepth",
+  "size",
+  "maxSize",
+  "transformerType",
+  "serializerName",
+] as const;
+
 /** Base error for all serialization subsystem failures. */
 export class SerializationError extends BaseError {
   public readonly format?: string;
+  public readonly depth?: number;
+  public readonly maxDepth?: number;
+  public readonly size?: number;
+  public readonly maxSize?: number;
+  public readonly transformerType?: string;
+  public readonly serializerName?: string;
 
   constructor(message: string, options: SerializationErrorOptions = {}) {
+    const diagnostics: Record<string, string | number> = {};
+    for (const key of DIAGNOSTIC_KEYS) {
+      const value = options[key];
+      if (value !== undefined) diagnostics[key] = value;
+    }
     super(message, {
       ...options,
       code: options.code ?? ErrorCode.SERIALIZATION,
@@ -36,14 +59,26 @@ export class SerializationError extends BaseError {
       statusCode: options.statusCode ?? 500,
       expose: options.expose ?? false,
       isOperational: options.isOperational ?? true,
+      metadata: { ...options.metadata, ...diagnostics },
     });
     this.format = options.format;
+    this.depth = options.depth;
+    this.maxDepth = options.maxDepth;
+    this.size = options.size;
+    this.maxSize = options.maxSize;
+    this.transformerType = options.transformerType;
+    this.serializerName = options.serializerName;
   }
 
   public override toJSON() {
+    const diagnostics: Record<string, string | number> = {};
+    for (const key of DIAGNOSTIC_KEYS) {
+      const value = this[key];
+      if (value !== undefined) diagnostics[key] = value;
+    }
     return {
       ...super.toJSON(),
-      ...(this.format !== undefined ? { format: this.format } : {}),
+      ...diagnostics,
     };
   }
 }
@@ -66,19 +101,13 @@ export function isSerializationError(
 /** Converts an unknown thrown value into a SerializationError. */
 export function toSerializationError(
   error: unknown,
-  options: { message?: string; code?: string } = {},
+  options: { message?: string; code?: ErrorCode | string } = {},
 ): SerializationError {
   if (error instanceof SerializationError) {
     return error;
   }
-  if (error instanceof Error) {
-    return new SerializationError(options.message ?? error.message, {
-      code: options.code as ErrorCode | undefined,
-      cause: error,
-    });
-  }
-  return new SerializationError(options.message ?? String(error), {
-    code: options.code as ErrorCode | undefined,
+  return new SerializationError(options.message ?? safeErrorMessage(error), {
+    code: options.code,
     cause: error,
   });
 }

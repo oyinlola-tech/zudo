@@ -16,6 +16,8 @@ export {
   ExampleValidationError,
   GenerationError,
   DocumentationVersionError,
+  createDocumentationError,
+  isDocumentationError,
 } from "./documentation.error.js";
 
 export type { DocumentationErrorOptions } from "./documentation.error.js";

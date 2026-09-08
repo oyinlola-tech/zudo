@@ -7,7 +7,6 @@ import { QueueError } from "./queueError.base.js";
 
 /** Error thrown for worker failures. */
 export class WorkerError extends QueueError {
-  public readonly workerId?: string;
   constructor(
     message: string,
     options: { workerId?: string; queueName?: string; cause?: unknown } = {},
@@ -15,19 +14,27 @@ export class WorkerError extends QueueError {
     super(message, {
       code: ErrorCode.WORKER_ERROR,
       queueName: options.queueName,
+      workerId: options.workerId,
       cause: options.cause,
     });
-    this.workerId = options.workerId;
   }
 }
 
-/** Error thrown when a worker is not found. */
+/**
+ * Error thrown when a worker is not found.
+ *
+ * Workers are server-side components, so this is reported as an internal
+ * failure and is not exposed to clients.
+ */
 export class WorkerNotFoundError extends QueueError {
-  constructor(workerId: string) {
+  constructor(workerId: string, options: { queueName?: string } = {}) {
     super(`Worker "${workerId}" was not found.`, {
       code: ErrorCode.WORKER_NOT_FOUND,
-      statusCode: 404,
-      expose: true,
+      workerId,
+      queueName: options.queueName,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
     });
   }
 }
@@ -41,6 +48,7 @@ export class WorkerLifecycleError extends QueueError {
     super(message, {
       code: ErrorCode.WORKER_LIFECYCLE,
       queueName: options.queueName,
+      workerId: options.workerId,
       cause: options.cause,
     });
   }

@@ -3,6 +3,10 @@ import type { BaseErrorOptions } from "../../base/types/baseError.type.js";
 import { ErrorCategory } from "../../base/types/errorCategory.type.js";
 import { ErrorCode } from "../../base/types/errorCode.type.js";
 import { ErrorSeverity } from "../../base/types/errorSeverity.type.js";
+import {
+  redactIssueValues,
+  toJsonSafeIssues,
+} from "../shared/domainError.helpers.js";
 
 /**
  * A single validation issue.
@@ -66,11 +70,19 @@ export class ValidationError extends BaseError {
     );
   }
 
-  /** Returns a serialized representation including validation issues. */
+  /**
+   * Returns a serialized representation including validation issues.
+   *
+   * When the error is exposable (the default), submitted values inside
+   * issues (`value`) are replaced by a type/size description so that secrets
+   * such as passwords are never echoed to clients or written to logs. The
+   * output is always JSON-safe (BigInt and cyclic values are stringified).
+   */
   public override toJSON() {
+    const safeIssues = toJsonSafeIssues(this.issues);
     return {
       ...super.toJSON(),
-      issues: this.issues,
+      issues: this.expose ? redactIssueValues(safeIssues) : safeIssues,
     };
   }
 }

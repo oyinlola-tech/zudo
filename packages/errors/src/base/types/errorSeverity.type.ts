@@ -35,11 +35,13 @@ export enum ErrorSeverity {
  * Determines whether a value is a valid error severity.
  */
 export function isErrorSeverity(value: unknown): value is ErrorSeverity {
-  return (
-    typeof value === "string" &&
-    Object.values(ErrorSeverity).includes(value as ErrorSeverity)
-  );
+  return typeof value === "string" && ERROR_SEVERITY_VALUES.has(value);
 }
+
+/** Precomputed set of every error severity value. */
+const ERROR_SEVERITY_VALUES: ReadonlySet<string> = new Set<string>(
+  Object.values(ErrorSeverity),
+);
 
 /**
  * Normalizes an unknown severity into a valid ErrorSeverity.

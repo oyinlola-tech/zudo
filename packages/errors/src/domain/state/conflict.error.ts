@@ -91,7 +91,7 @@ export function duplicateError(
   });
 }
 
-/** Creates an error indicating that a resource is currently locked. */
+/** Creates an error indicating that a resource is currently locked (HTTP 423). */
 export function resourceLockedError(
   resource: string,
   identifier?: string | number,
@@ -104,7 +104,7 @@ export function resourceLockedError(
   return new ConflictError(message, {
     code: ErrorCode.RESOURCE_LOCKED,
     category: ErrorCategory.CONFLICT,
-    statusCode: 409,
+    statusCode: 423,
     expose: true,
     metadata: {
       resource,

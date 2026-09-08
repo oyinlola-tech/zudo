@@ -4,12 +4,14 @@
 
 import { ErrorCategory } from "./errorCategory.enum.js";
 
+/** Precomputed set of every error category value. */
+const ERROR_CATEGORY_VALUES: ReadonlySet<string> = new Set<string>(
+  Object.values(ErrorCategory),
+);
+
 /** Determines whether a value is a valid error category. */
 export function isErrorCategory(value: unknown): value is ErrorCategory {
-  return (
-    typeof value === "string" &&
-    Object.values(ErrorCategory).includes(value as ErrorCategory)
-  );
+  return typeof value === "string" && ERROR_CATEGORY_VALUES.has(value);
 }
 
 /** Converts an unknown value into a valid error category. */

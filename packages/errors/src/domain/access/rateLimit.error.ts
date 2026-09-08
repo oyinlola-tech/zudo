@@ -3,6 +3,7 @@ import type { BaseErrorOptions } from "../../base/types/baseError.type.js";
 import { ErrorCategory } from "../../base/types/errorCategory.type.js";
 import { ErrorCode } from "../../base/types/errorCode.type.js";
 import { ErrorSeverity } from "../../base/types/errorSeverity.type.js";
+import { normalizeRetryAfterSeconds } from "../shared/domainError.helpers.js";
 
 /**
  * Options for creating a rate-limit error.
@@ -12,7 +13,12 @@ export interface RateLimitErrorOptions extends Omit<
   "category"
 > {
   readonly category?: ErrorCategory;
-  /** Number of seconds the client should wait before retrying. */
+  /**
+   * Number of seconds the client should wait before retrying.
+   *
+   * Must be a finite non-negative number; fractional values are rounded up
+   * because the HTTP `Retry-After` header requires an integer.
+   */
   readonly retryAfterSeconds?: number;
 }
 
@@ -26,6 +32,10 @@ export class RateLimitError extends BaseError {
     message = "Too many requests. Please try again later.",
     options: RateLimitErrorOptions = {},
   ) {
+    const retryAfterSeconds =
+      options.retryAfterSeconds !== undefined
+        ? normalizeRetryAfterSeconds(options.retryAfterSeconds)
+        : undefined;
     super(message, {
       ...options,
       code: options.code ?? ErrorCode.RATE_LIMITED,
@@ -36,22 +46,12 @@ export class RateLimitError extends BaseError {
       isOperational: options.isOperational ?? true,
       metadata: {
         ...options.metadata,
-        ...(options.retryAfterSeconds !== undefined
-          ? { retryAfterSeconds: options.retryAfterSeconds }
-          : {}),
+        ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
       },
     });
 
-    if (options.retryAfterSeconds !== undefined) {
-      if (
-        !Number.isFinite(options.retryAfterSeconds) ||
-        options.retryAfterSeconds < 0
-      ) {
-        throw new RangeError(
-          "retryAfterSeconds must be a finite non-negative number.",
-        );
-      }
-      this.retryAfterSeconds = options.retryAfterSeconds;
+    if (retryAfterSeconds !== undefined) {
+      this.retryAfterSeconds = retryAfterSeconds;
     }
   }
 

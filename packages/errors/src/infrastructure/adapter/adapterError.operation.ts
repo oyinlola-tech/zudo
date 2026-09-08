@@ -18,7 +18,6 @@ export class AdapterNotSupportedError extends AdapterError {
         expose: true,
       },
     );
-    this.name = "AdapterNotSupportedError";
   }
 }
 
@@ -35,7 +34,6 @@ export class AdapterCapabilityMissingError extends AdapterError {
         expose: false,
       },
     );
-    this.name = "AdapterCapabilityMissingError";
   }
 }
 
@@ -50,7 +48,6 @@ export class AdapterConnectionError extends AdapterError {
       expose: false,
       isOperational: false,
     });
-    this.name = "AdapterConnectionError";
   }
 }
 
@@ -66,7 +63,6 @@ export class AdapterOperationError extends AdapterError {
       expose: false,
       isOperational: false,
     });
-    this.name = "AdapterOperationError";
   }
 }
 
@@ -92,7 +88,6 @@ export class AdapterTimeoutError extends AdapterError {
         isOperational: false,
       },
     );
-    this.name = "AdapterTimeoutError";
     this.timeout = timeout;
   }
 }

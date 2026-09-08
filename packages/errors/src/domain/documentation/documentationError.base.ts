@@ -22,12 +22,15 @@ export class DocumentationError extends BaseError {
   public readonly documentId?: string;
 
   constructor(message: string, options: DocumentationErrorOptions = {}) {
+    const statusCode = options.statusCode ?? 500;
     super(message, {
       ...options,
       code: options.code ?? ErrorCode.DOCUMENTATION_ERROR,
       category: options.category ?? ErrorCategory.DOCUMENTATION,
-      severity: options.severity ?? ErrorSeverity.ERROR,
-      statusCode: options.statusCode ?? 500,
+      severity:
+        options.severity ??
+        (statusCode < 500 ? ErrorSeverity.WARNING : ErrorSeverity.ERROR),
+      statusCode,
       expose: options.expose ?? false,
       isOperational: options.isOperational ?? true,
     });

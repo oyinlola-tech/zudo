@@ -2,6 +2,7 @@
  * Specialized HTTP client errors with additional properties.
  */
 
+import { ErrorCode } from "../../base/types/errorCode.type.js";
 import { HttpError } from "./http.error.js";
 import type { HttpClientErrorOptions } from "./httpClientError.options.js";
 
@@ -14,9 +15,8 @@ export class RequestBodyTimeoutError extends HttpError {
     super(message, {
       ...options,
       statusCode: 408,
-      code: options.code ?? "REQUEST_BODY_TIMEOUT",
+      code: options.code ?? ErrorCode.HTTP_CLIENT_REQUEST_BODY_TIMEOUT,
     });
-    this.name = "RequestBodyTimeoutError";
   }
 }
 
@@ -31,10 +31,9 @@ export class UnsupportedProtocolError extends HttpError {
       {
         ...options,
         statusCode: 400,
-        code: options.code ?? "UNSUPPORTED_PROTOCOL",
+        code: options.code ?? ErrorCode.HTTP_CLIENT_UNSUPPORTED_PROTOCOL,
       },
     );
-    this.name = "UnsupportedProtocolError";
     this.protocol = protocol;
   }
 }
@@ -50,9 +49,8 @@ export class InvalidHeaderError extends HttpError {
     super(
       message ??
         (header ? `Invalid HTTP header "${header}".` : "Invalid HTTP header."),
-      { ...options, statusCode: 400, code: options.code ?? "INVALID_HEADER" },
+      { ...options, statusCode: 400, code: options.code ?? ErrorCode.HTTP_CLIENT_INVALID_HEADER },
     );
-    this.name = "InvalidHeaderError";
     this.header = header;
   }
 }
@@ -68,10 +66,9 @@ export class InvalidContentTypeError extends HttpError {
       {
         ...options,
         statusCode: 415,
-        code: options.code ?? "INVALID_CONTENT_TYPE",
+        code: options.code ?? ErrorCode.HTTP_CLIENT_INVALID_CONTENT_TYPE,
       },
     );
-    this.name = "InvalidContentTypeError";
     this.contentType = contentType;
   }
 }

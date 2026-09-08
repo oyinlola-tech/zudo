@@ -61,10 +61,10 @@ export class AdapterNotFoundError extends AdapterError {
     super(`Adapter "${adapterName}" is not registered.`, {
       code: ErrorCode.ADAPTER_NOT_FOUND,
       adapter: adapterName,
-      statusCode: 404,
-      expose: true,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
     });
-    this.name = "AdapterNotFoundError";
   }
 }
 
@@ -74,9 +74,9 @@ export class AdapterAlreadyRegisteredError extends AdapterError {
     super(`Adapter "${adapterName}" is already registered.`, {
       code: ErrorCode.ADAPTER_ALREADY_REGISTERED,
       adapter: adapterName,
-      statusCode: 409,
-      expose: true,
+      statusCode: 500,
+      expose: false,
+      isOperational: false,
     });
-    this.name = "AdapterAlreadyRegisteredError";
   }
 }

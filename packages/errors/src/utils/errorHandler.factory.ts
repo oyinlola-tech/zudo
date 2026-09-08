@@ -2,7 +2,8 @@
  * Error handler factory functions.
  */
 
-import { BaseError } from "../base/core/baseError.core.js";
+import type { BaseError } from "../base/core/baseError.core.js";
+import { isBaseError } from "../base/utils/baseError.utils.js";
 import { ErrorHandler } from "./errorHandler.core.js";
 import type { ErrorHandlerOptions } from "./errorHandler.types.js";
 
@@ -20,5 +21,5 @@ export function normalizeError(value: unknown): BaseError {
 
 /** Determines whether an unknown value is a supported BaseError. */
 export function isHandledError(value: unknown): value is BaseError {
-  return value instanceof BaseError;
+  return isBaseError(value);
 }

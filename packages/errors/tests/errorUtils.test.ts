@@ -3,7 +3,6 @@ import {
   BaseError,
   ErrorCode,
   ErrorCategory,
-  ErrorSeverity,
 } from "../src/index.js";
 import {
   isErrorLike,
@@ -20,7 +19,11 @@ import {
 
 class NotFound extends BaseError {
   constructor() {
-    super("missing", { statusCode: 404, code: ErrorCode.NOT_FOUND });
+    super("missing", {
+      statusCode: 404,
+      code: ErrorCode.NOT_FOUND,
+      category: ErrorCategory.RESOURCE,
+    });
   }
 }
 
@@ -73,7 +76,6 @@ describe("Error utilities", () => {
   describe("hasErrorCategory / hasErrorSeverity", () => {
     it("matches by category", () => {
       const err = new NotFound();
-      err.category = ErrorCategory.RESOURCE;
       expect(hasErrorCategory(err, ErrorCategory.RESOURCE)).toBe(true);
       expect(hasErrorCategory(err, ErrorCategory.VALIDATION)).toBe(false);
     });
