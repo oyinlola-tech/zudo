@@ -38,12 +38,12 @@ import {
 import {
   createValidationParser,
   createAsyncValidationParser,
-} from "../src/validationParser/validationParser.core.js";
+} from "../src/validationParser/index.js";
 
 import {
   createValidationTransformer,
   validateAndTransform,
-} from "../src/validationTransformer/validationTransformer.core.js";
+} from "../src/validationTransformer/index.js";
 
 import { createValidationRegistry } from "../src/validationRegistry/validationRegistry.core.js";
 
@@ -52,7 +52,7 @@ import {
   all,
   schemaStep,
   constraintStep,
-} from "../src/validationComposer/validationComposer.core.js";
+} from "../src/validationComposer/index.js";
 
 // ---------------------------------------------------------------------------
 // Result helpers

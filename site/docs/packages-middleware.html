@@ -45,10 +45,14 @@
 
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="/js/tailwind-config.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/site.css">
   <link rel="stylesheet" href="/css/docs.css">
   <link rel="stylesheet" href="/css/playground.css">
 </head>
-<body class="bg-white text-black">
+<body class="bg-zudo-white text-zudo-black">
 
   <!-- NAVBAR -->
   <div id="zudo-nav"></div>
@@ -56,7 +60,7 @@
   <div class="flex max-w-screen-2xl mx-auto">
 
     <!-- SIDEBAR -->
-    <aside class="doc-sidebar w-60 border-r-2 border-black/10 sticky top-14 h-[calc(100vh-56px)] overflow-y-auto flex-shrink-0">
+    <aside class="doc-sidebar" id="docSidebar" aria-label="Documentation">
       <div class="sidebar-section">Getting Started</div>
       <a href="/docs/getting-started" class="sidebar-item">Installation</a>
       <a href="/docs/getting-started-first-app" class="sidebar-item">Your First App</a>
@@ -128,7 +132,7 @@
 
       <!-- Breadcrumbs -->
       <div class="text-sm mb-6">
-        <a href="/" class="hover:text-zudo-blue">Docs</a>
+        <a href="/docs/getting-started" class="hover:text-zudo-blue">Docs</a>
         <span class="mx-2 text-black/30">/</span>
         <a href="/docs/packages" class="hover:text-zudo-blue">Packages</a>
         <span class="mx-2 text-black/30">/</span>
@@ -324,18 +328,33 @@ yarn add @zudojs/middleware</div>
         </p>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Interface: PipelineResult</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">PipelineResult</span>&lt;<span class="tp">TResult</span>&gt; {
-  <span class="kw">readonly</span> success: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> result?: <span class="tp">TResult</span>;
-  <span class="kw">readonly</span> error?: <span class="tp">unknown</span>;
+        <div class="code-block"><span class="cm">// Discriminated on `success`: narrowing gives a non-optional `result`.</span>
+<span class="kw">type</span> <span class="tp">PipelineResult</span>&lt;<span class="tp">TResult</span>&gt; =
+  | <span class="tp">PipelineSuccess</span>&lt;<span class="tp">TResult</span>&gt;
+  | <span class="tp">PipelineFailure</span>;
+
+<span class="kw">interface</span> <span class="tp">PipelineSuccess</span>&lt;<span class="tp">TResult</span>&gt; {
+  <span class="kw">readonly</span> success: <span class="kw">true</span>;
+  <span class="kw">readonly</span> result: <span class="tp">TResult</span>;
   <span class="kw">readonly</span> durationMs: <span class="tp">number</span>;
   <span class="kw">readonly</span> executedMiddleware: <span class="kw">readonly</span> <span class="tp">string</span>[];
+  <span class="kw">readonly</span> errors: <span class="kw">readonly</span> <span class="tp">PipelineMiddlewareFailure</span>[];
+}
+
+<span class="kw">interface</span> <span class="tp">PipelineFailure</span> {
+  <span class="kw">readonly</span> success: <span class="kw">false</span>;
+  <span class="kw">readonly</span> error: <span class="tp">unknown</span>;
+  <span class="kw">readonly</span> durationMs: <span class="tp">number</span>;
+  <span class="kw">readonly</span> executedMiddleware: <span class="kw">readonly</span> <span class="tp">string</span>[];
+  <span class="kw">readonly</span> errors: <span class="kw">readonly</span> <span class="tp">PipelineMiddlewareFailure</span>[];
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Interface: PipelineOptions</h3>
         <div class="code-block"><span class="kw">interface</span> <span class="tp">PipelineOptions</span> {
   <span class="kw">readonly</span> maxMiddleware?: <span class="tp">number</span>;   <span class="cm">// default: 50</span>
-  <span class="kw">readonly</span> stopOnError?: <span class="tp">boolean</span>;    <span class="cm">// default: true</span>
+  <span class="kw">readonly</span> errorMode?: <span class="tp">PipelineErrorMode</span>;  <span class="cm">// "capture" | "throw" | "continue"</span>
+  <span class="kw">readonly</span> signal?: <span class="tp">AbortSignal</span>;         <span class="cm">// aborts between steps</span>
+  <span class="kw">readonly</span> stopOnError?: <span class="tp">boolean</span>;        <span class="cm">// deprecated alias for errorMode</span>
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Function: createPipeline</h3>
@@ -351,7 +370,7 @@ yarn add @zudojs/middleware</div>
 <span class="kw">const</span> pipeline = <span class="fn">createPipeline</span>(
   [authMiddleware, loggingMiddleware],
   <span class="kw">async</span> (ctx) =&gt; ({ status: <span class="str">"ok"</span> }),
-  { maxMiddleware: <span class="num">20</span>, stopOnError: <span class="num">true</span> },
+  { maxMiddleware: <span class="num">20</span>, errorMode: <span class="st">"capture"</span> },
 );
 
 <span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">pipeline</span>({ method: <span class="str">"GET"</span>, path: <span class="str">"/api/users"</span> });
@@ -362,7 +381,7 @@ result.durationMs;       <span class="cm">// 12.5</span>
 result.executedMiddleware; <span class="cm">// ["auth", "logging"]</span></div>
 
         <div class="callout callout-note">
-          <strong class="text-zudo-blue">Default Limits:</strong> The pipeline defaults to a maximum of 50 middleware. If exceeded, <code class="bg-black/10 px-1">createPipeline</code> throws immediately. Set <code class="bg-black/10 px-1">stopOnError: false</code> to propagate errors instead of capturing them.
+          <strong class="text-zudo-blue">Default Limits:</strong> The pipeline defaults to a maximum of 50 middleware; exceeding it throws <code class="bg-black/10 px-1">MiddlewareLimitExceededError</code> at construction, and <code class="bg-black/10 px-1">compose()</code> caps chain depth at <code class="bg-black/10 px-1">MAX_DEPTH</code> (100). <code class="bg-black/10 px-1">errorMode</code> chooses what a failure does: <code class="bg-black/10 px-1">"capture"</code> (default) reports it on the result, <code class="bg-black/10 px-1">"throw"</code> propagates it, <code class="bg-black/10 px-1">"continue"</code> records it and carries on.
         </div>
       </section>
 
@@ -473,7 +492,7 @@ result.executedMiddleware; <span class="cm">// ["auth", "logging"]</span></div>
 <span class="kw">const</span> pipeline = <span class="fn">createPipeline</span>(
   [authMiddleware, loggingMiddleware],
   handler,
-  { stopOnError: <span class="num">true</span> },
+  { errorMode: <span class="st">"capture"</span> },
 );
 
 <span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">pipeline</span>(ctx);
@@ -541,7 +560,7 @@ result.executedMiddleware; <span class="cm">// ["auth", "logging"]</span></div>
 
 <span class="kw">const</span> pipeline = <span class="fn">createPipeline</span>(middleware, handler, {
   maxMiddleware: <span class="num">20</span>,
-  stopOnError: <span class="num">true</span>,
+  errorMode: <span class="st">"capture"</span>,
 });
 
 <span class="cm">// 4. Execute the pipeline</span>
@@ -570,7 +589,7 @@ result.executedMiddleware; <span class="cm">// ["auth", "logging"]</span></div>
     </main>
 
     <!-- TABLE OF CONTENTS -->
-    <aside class="doc-toc w-52 border-l-2 border-black/10 sticky top-14 h-[calc(100vh-56px)] overflow-y-auto flex-shrink-0 py-8 px-4">
+    <aside class="doc-toc" aria-label="On this page">
       <div class="text-xs font-bold uppercase tracking-wider mb-4 text-black/40">On This Page</div>
       <a href="#installation" class="toc-link">INSTALLATION</a>
       <a href="#what-it-does" class="toc-link">WHAT IT DOES</a>

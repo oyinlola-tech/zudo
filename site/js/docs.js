@@ -1,308 +1,144 @@
 /**
- * Zudo Documentation — Package Page Scripts
- * Sidebar, TOC, Search, Code Copy, Keyboard shortcuts
+ * Zudo Documentation — page scripts
+ * Sidebar (active state + mobile drawer), TOC, code copy, anchor links.
+ * Global search lives in components.js.
  */
+(function () {
+  'use strict';
 
-/* ==================== SIDEBAR ==================== */
-
-class Sidebar {
-  constructor() {
-    this.el = document.getElementById('sidebar');
-    this.toggle = document.getElementById('sidebarToggle');
-    this.init();
+  /* Normalise "/docs/packages/auth", "/docs/packages-auth.html", "/docs/packages-auth/"
+     to "/docs/packages-auth" so links and the live URL can be compared. */
+  function normalise(p) {
+    p = p.replace(/\.html$/, '').replace(/\/+$/, '');
+    var m = p.match(/^\/docs\/([^/]+)\/(.+)$/);
+    if (m) p = '/docs/' + m[1] + '-' + m[2];
+    return p || '/';
   }
 
-  init() {
-    if (this.toggle && this.el) {
-      this.toggle.addEventListener('click', () => this.el.classList.toggle('open'));
+  /* ---------- sidebar ---------- */
+
+  function initSidebar() {
+    var sidebar = document.querySelector('.doc-sidebar');
+    if (!sidebar) return;
+    sidebar.id = sidebar.id || 'docSidebar';
+
+    var here = normalise(window.location.pathname);
+    var active = null;
+    sidebar.querySelectorAll('.sidebar-item').forEach(function (a) {
+      var href = a.getAttribute('href') || '';
+      var isActive = normalise(href) === here;
+      a.classList.toggle('sidebar-item-active', isActive);
+      if (isActive) { active = a; a.setAttribute('aria-current', 'page'); }
+    });
+    if (active) {
+      var top = active.offsetTop - sidebar.clientHeight / 2;
+      if (top > 0) sidebar.scrollTop = top;
     }
-    this.highlightActive();
-  }
 
-  highlightActive() {
-    const path = window.location.pathname;
-    document.querySelectorAll('.sidebar-item').forEach(link => {
-      const href = link.getAttribute('href');
-      if (href && path.endsWith(href)) {
-        link.classList.add('sidebar-item-active');
-      }
+    // Mobile toolbar + drawer
+    var main = document.querySelector('main');
+    if (main) main.classList.add('doc-main');
+    var h1 = document.querySelector('main h1');
+    var bar = document.createElement('div');
+    bar.className = 'doc-mobilebar';
+    bar.innerHTML =
+      '<button type="button" id="docMenuToggle" aria-controls="docSidebar" aria-expanded="false">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>Menu</button>' +
+      '<span class="crumb">' + (h1 ? h1.textContent.replace(/#$/, '').trim() : 'Documentation') + '</span>';
+    var backdrop = document.createElement('div');
+    backdrop.className = 'doc-backdrop';
+
+    var layout = sidebar.parentNode;
+    layout.parentNode.insertBefore(bar, layout);
+    document.body.appendChild(backdrop);
+
+    var btn = bar.querySelector('#docMenuToggle');
+    function setOpen(open) {
+      sidebar.classList.toggle('is-open', open);
+      backdrop.classList.toggle('is-open', open);
+      document.body.classList.toggle('doc-drawer-open', open);
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    btn.addEventListener('click', function () { setOpen(!sidebar.classList.contains('is-open')); });
+    backdrop.addEventListener('click', function () { setOpen(false); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && sidebar.classList.contains('is-open')) setOpen(false);
     });
   }
-}
 
-/* ==================== TABLE OF CONTENTS ==================== */
+  /* ---------- table of contents (generated when a page has none) ---------- */
 
-class TableOfContents {
-  constructor() {
-    this.el = document.getElementById('toc');
-    if (!this.el) return;
-    this.build();
-    this.observe();
-  }
-
-  build() {
-    const headings = document.querySelectorAll('main h2[id], main h3[id]');
-    if (!headings.length) return;
-
-    const list = document.createElement('div');
-    list.className = 'space-y-1';
-
-    headings.forEach(h => {
-      const a = document.createElement('a');
-      a.href = '#' + h.id;
-      a.className = 'toc-item';
-      a.textContent = h.textContent.replace(/#$/, '').trim();
-      a.dataset.level = h.tagName === 'H3' ? '3' : '2';
-      list.appendChild(a);
-    });
-
-    this.el.appendChild(list);
-  }
-
-  observe() {
-    const headings = document.querySelectorAll('main h2[id], main h3[id]');
-    const observer = new IntersectionObserver(entries => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          const id = entry.target.id;
-          this.el.querySelectorAll('.toc-item').forEach(i => i.classList.remove('toc-item-active'));
-          const active = this.el.querySelector('a[href="#' + id + '"]');
-          if (active) active.classList.add('toc-item-active');
-        }
+  function initToc() {
+    var toc = document.querySelector('.doc-toc, .doc-toc-sidebar');
+    if (!toc) return;
+    var hasLinks = toc.querySelector('.toc-link, .toc-item');
+    if (!hasLinks) {
+      var headings = document.querySelectorAll('main h2[id], main h3[id]');
+      if (!headings.length) return;
+      var frag = document.createDocumentFragment();
+      headings.forEach(function (h) {
+        var a = document.createElement('a');
+        a.href = '#' + h.id;
+        a.className = 'toc-link';
+        a.dataset.level = h.tagName === 'H3' ? '3' : '2';
+        a.textContent = h.textContent.replace(/#$/, '').trim();
+        frag.appendChild(a);
       });
-    }, { rootMargin: '-80px 0px -80% 0px' });
-
-    headings.forEach(h => observer.observe(h));
-  }
-}
-
-/* ==================== SEARCH ==================== */
-
-class Search {
-  constructor() {
-    this.overlay = document.getElementById('searchOverlay');
-    this.input = document.getElementById('searchInput');
-    this.results = document.getElementById('searchResults');
-    this.trigger = document.getElementById('searchTrigger');
-    this.closeBtn = document.getElementById('searchClose');
-    this.activeIndex = -1;
-    this.filtered = [];
-    this.init();
-  }
-
-  init() {
-    if (this.trigger) this.trigger.addEventListener('click', () => this.open());
-    if (this.closeBtn) this.closeBtn.addEventListener('click', () => this.close());
-
-    document.addEventListener('keydown', e => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        this.toggle();
-      }
-      if (e.key === 'Escape' && this.overlay && !this.overlay.classList.contains('hidden')) {
-        this.close();
-      }
-    });
-
-    if (this.input) {
-      this.input.addEventListener('input', () => this.search());
-      this.input.addEventListener('keydown', e => this.navigate(e));
+      (toc.querySelector('div') || toc).appendChild(frag);
     }
   }
 
-  open() {
-    if (!this.overlay) return;
-    this.overlay.classList.remove('hidden');
-    this.input.focus();
-    this.input.value = '';
-    this.results.innerHTML = '';
-    this.activeIndex = -1;
-    this.filtered = [];
-  }
+  /* ---------- copy buttons ---------- */
 
-  close() {
-    if (!this.overlay) return;
-    this.overlay.classList.add('hidden');
-    this.input.value = '';
-    this.results.innerHTML = '';
-    this.activeIndex = -1;
-    this.filtered = [];
-  }
-
-  toggle() {
-    if (this.overlay.classList.contains('hidden')) this.open();
-    else this.close();
-  }
-
-  search() {
-    const q = this.input.value.toLowerCase().trim();
-    if (q.length < 2) {
-      this.results.innerHTML = '';
-      this.filtered = [];
-      this.activeIndex = -1;
-      return;
-    }
-
-    this.filtered = SEARCH_DATA.filter(i =>
-      i.title.toLowerCase().includes(q) ||
-      i.excerpt.toLowerCase().includes(q) ||
-      i.tags.some(t => t.includes(q))
-    );
-    this.activeIndex = -1;
-    this.render();
-  }
-
-  render() {
-    if (!this.filtered.length) {
-      this.results.innerHTML = '<div style="color:rgba(255,255,255,0.5);padding:16px 0">No results found.</div>';
-      return;
-    }
-    this.results.innerHTML = this.filtered.map((item, i) => `
-      <a href="${item.path}" class="search-result" style="display:block;margin-bottom:8px;${i === this.activeIndex ? 'border-color:#C0392B;background:#1a1a1a' : ''}">
-        <div style="font-weight:700">${this.highlight(item.title, this.input.value)}</div>
-        <div style="font-size:0.85rem;color:rgba(255,255,255,0.5);margin-top:4px">${this.highlight(item.excerpt, this.input.value)}</div>
-        <div style="font-size:0.75rem;color:#2471A3;margin-top:8px;font-family:monospace">${item.path}</div>
-      </a>
-    `).join('');
-  }
-
-  highlight(text, q) {
-    if (!q) return text;
-    const re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
-    return text.replace(re, '<span style="color:#F9E2AF;font-weight:700">$1</span>');
-  }
-
-  navigate(e) {
-    const items = this.results.querySelectorAll('.search-result');
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      this.activeIndex = Math.min(this.activeIndex + 1, items.length - 1);
-      this.updateActive(items);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      this.activeIndex = Math.max(this.activeIndex - 1, -1);
-      this.updateActive(items);
-    } else if (e.key === 'Enter' && this.activeIndex >= 0) {
-      e.preventDefault();
-      const a = items[this.activeIndex];
-      if (a) window.location.href = a.getAttribute('href');
-    }
-  }
-
-  updateActive(items) {
-    items.forEach((item, i) => {
-      if (i === this.activeIndex) {
-        item.style.borderColor = '#C0392B';
-        item.style.background = '#1a1a1a';
-        item.scrollIntoView({ block: 'nearest' });
-      } else {
-        item.style.borderColor = '';
-        item.style.background = '';
-      }
-    });
-  }
-}
-
-const SEARCH_DATA = [
-  { title: 'API Package', path: 'api.html', excerpt: 'Transport-agnostic operation definitions, interceptors, policies, and result types.', tags: ['api', 'operations', 'interceptors', 'executor'] },
-  { title: 'Adapters Package', path: 'adapters.html', excerpt: 'Boundary layer between Zudo and external platforms.', tags: ['adapters', 'platform', 'transport'] },
-  { title: 'Auth Package', path: 'auth.html', excerpt: 'Authentication and authorization primitives.', tags: ['auth', 'jwt', 'session', 'rbac'] },
-  { title: 'Cache Package', path: 'cache.html', excerpt: 'Cache abstraction with memory adapter.', tags: ['cache', 'redis', 'memory'] },
-  { title: 'Config Package', path: 'config.html', excerpt: 'Layered configuration with sources.', tags: ['config', 'env', 'settings'] },
-  { title: 'Container Package', path: 'container.html', excerpt: 'DI container with token-based registration.', tags: ['di', 'container', 'tokens'] },
-  { title: 'Core Package', path: 'core.html', excerpt: 'Lifecycle, context, runtime, modules.', tags: ['core', 'application', 'modules'] },
-  { title: 'Events Package', path: 'events.html', excerpt: 'Event bus, emitter, middleware, registry.', tags: ['events', 'bus', 'emitter'] },
-  { title: 'Errors Package', path: 'errors.html', excerpt: 'Shared error base class and utilities.', tags: ['errors', 'exceptions', 'handling'] },
-  { title: 'HTTP Package', path: 'http.html', excerpt: 'HTTP server and client primitives.', tags: ['http', 'server', 'rest', 'api'] },
-  { title: 'Logger Package', path: 'logger.html', excerpt: 'Structured logging with transports.', tags: ['logging', 'logger', 'transports'] },
-  { title: 'Schema Package', path: 'schema.html', excerpt: 'Schema definition and parsing engine.', tags: ['schema', 'validation', 'types'] },
-  { title: 'Middleware Package', path: 'middleware.html', excerpt: 'Composable middleware pipeline.', tags: ['middleware', 'pipeline', 'composition'] },
-];
-
-/* ==================== CODE COPY ==================== */
-
-class CodeCopy {
-  constructor() {
-    this.init();
-  }
-
-  init() {
-    document.querySelectorAll('.code-block, .api-signature, pre').forEach(block => {
-      const wrapper = document.createElement('div');
+  function initCopy() {
+    document.querySelectorAll('.code-block, .api-signature, pre').forEach(function (block) {
+      if (block.closest('.pg') || block.parentNode.classList.contains('code-wrap')) return;
+      var wrapper = document.createElement('div');
+      wrapper.className = 'code-wrap';
       wrapper.style.position = 'relative';
       block.parentNode.insertBefore(wrapper, block);
       wrapper.appendChild(block);
 
-      const btn = document.createElement('button');
+      var btn = document.createElement('button');
+      btn.type = 'button';
       btn.className = 'copy-btn';
       btn.textContent = 'COPY';
-      btn.addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(block.textContent);
+      btn.setAttribute('aria-label', 'Copy code');
+      btn.addEventListener('click', function () {
+        var text = block.textContent.replace(/^\s*\d+\s{2,}/gm, '');
+        var done = function () {
           btn.textContent = 'COPIED';
-          btn.style.background = '#1E8449';
-          btn.style.color = '#FFFFFF';
-          btn.style.borderColor = '#1E8449';
-          setTimeout(() => {
-            btn.textContent = 'COPY';
-            btn.style.background = '';
-            btn.style.color = '';
-            btn.style.borderColor = '';
-          }, 2000);
-        } catch (err) {
-          console.error('Copy failed:', err);
-        }
+          btn.classList.add('is-done');
+          setTimeout(function () { btn.textContent = 'COPY'; btn.classList.remove('is-done'); }, 1800);
+        };
+        if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, done);
+        else done();
       });
-
       wrapper.appendChild(btn);
     });
   }
-}
 
-/* ==================== ANCHOR LINKS ==================== */
+  /* ---------- anchor links ---------- */
 
-class AnchorLinks {
-  constructor() {
-    this.init();
-  }
-
-  init() {
-    document.querySelectorAll('main h2, main h3').forEach(h => {
-      if (!h.id) return;
-      const link = document.createElement('a');
-      link.href = '#' + h.id;
-      link.className = 'anchor-link';
-      link.textContent = '#';
-      link.setAttribute('aria-label', 'Link to ' + h.textContent);
-      h.appendChild(link);
+  function initAnchors() {
+    document.querySelectorAll('main h2[id], main h3[id]').forEach(function (h) {
+      if (h.querySelector('.anchor-link')) return;
+      var a = document.createElement('a');
+      a.href = '#' + h.id;
+      a.className = 'anchor-link';
+      a.textContent = '#';
+      a.setAttribute('aria-label', 'Link to ' + h.textContent.trim());
+      h.appendChild(a);
     });
   }
-}
 
-/* ==================== SMOOTH SCROLL ==================== */
-
-class SmoothScroll {
-  constructor() {
-    document.querySelectorAll('a[href^="#"]').forEach(a => {
-      a.addEventListener('click', e => {
-        const id = a.getAttribute('href').slice(1);
-        const target = document.getElementById(id);
-        if (target) {
-          e.preventDefault();
-          target.scrollIntoView({ behavior: 'auto', block: 'start' });
-        }
-      });
-    });
+  function init() {
+    initSidebar();
+    initToc();
+    initCopy();
+    initAnchors();
   }
-}
 
-/* ==================== INIT ==================== */
-
-document.addEventListener('DOMContentLoaded', () => {
-  new Sidebar();
-  new TableOfContents();
-  new Search();
-  new CodeCopy();
-  new AnchorLinks();
-  new SmoothScroll();
-});
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
