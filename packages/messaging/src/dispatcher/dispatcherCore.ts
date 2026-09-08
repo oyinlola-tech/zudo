@@ -21,7 +21,7 @@ import { runMessagePipeline } from "../messageMiddleware/messageMiddlewarePipeli
 import {
   MessageDispatchAbortedError,
   MessageHandlerError,
-  MessageDispatchError,
+  MessageBusDisposedError,
 } from "@zudojs/errors";
 
 /**
@@ -88,12 +88,8 @@ export class DefaultDispatcher implements Dispatcher {
     }
   }
 
-  private validateNotDisposed(message: Message): void {
-    if (this.disposed)
-      throw new MessageDispatchError(
-        message.type,
-        "Dispatcher has been disposed.",
-      );
+  private validateNotDisposed(_message: Message): void {
+    if (this.disposed) throw new MessageBusDisposedError();
   }
 
   private resolveSignal(signal?: AbortSignal): AbortSignal {

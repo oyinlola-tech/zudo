@@ -7,11 +7,7 @@
  * @module messageBus/messageBusType
  */
 
-import type {
-  Message,
-  MessageInput,
-  MessagePayload,
-} from "../message/messageType.type.js";
+import type { Message, MessageInput } from "../message/messageType.type.js";
 
 import type {
   MessageHandler,

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createMessageBus } from "../src/messageBus/index.js";
 import { createMessage } from "../src/message/index.js";
+import { MessageBusDisposedError } from "@zudojs/errors";
 
 describe("MessageBus", () => {
   describe("dispatch", () => {
@@ -167,7 +168,7 @@ describe("MessageBus", () => {
 
       await expect(
         bus.dispatch(createMessage({ type: "test.message", payload: {} })),
-      ).rejects.toThrow();
+      ).rejects.toBeInstanceOf(MessageBusDisposedError);
     });
   });
 });

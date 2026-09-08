@@ -18,6 +18,9 @@ export type {
 
 export {
   createMessageId,
+  toMessageId,
+  toCorrelationId,
+  toCausationId,
   createMessage,
   createDerivedMessage,
   isMessage,

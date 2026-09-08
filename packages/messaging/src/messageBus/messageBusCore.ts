@@ -23,7 +23,7 @@ import type {
 import { createMessage } from "../message/messageFactory.js";
 import { HandlerRegistryStore } from "../handlerRegistry/handlerRegistryStore.js";
 import { DefaultDispatcher } from "../dispatcher/dispatcherCore.js";
-import { MessageDispatchError } from "@zudojs/errors";
+import { MessageBusDisposedError } from "@zudojs/errors";
 
 /** Default in-memory message bus. */
 export class InMemoryMessageBus implements MessageBus {
@@ -67,12 +67,9 @@ export class InMemoryMessageBus implements MessageBus {
     >;
   }
 
-  private validateNotDisposed(message: Message): void {
+  private validateNotDisposed(_message: Message): void {
     if (this._disposed) {
-      throw new MessageDispatchError(
-        message.type,
-        "Message bus has been disposed.",
-      );
+      throw new MessageBusDisposedError();
     }
   }
 

@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   createMessage,
   createMessageId,
+  toMessageId,
+  toCorrelationId,
+  toCausationId,
   createDerivedMessage,
   isMessage,
   getMessageType,
@@ -48,7 +51,7 @@ describe("message", () => {
 
     it("uses provided ID", () => {
       const message = createMessage({
-        id: "custom-id",
+        id: toMessageId("custom-id"),
         type: "test.message",
         payload: {},
       });
@@ -61,8 +64,8 @@ describe("message", () => {
         type: "test.message",
         payload: {},
         source: "test-service",
-        correlationId: "corr-123",
-        causationId: "cause-456",
+        correlationId: toCorrelationId("corr-123"),
+        causationId: toCausationId("cause-456"),
         metadata: { key: "value" },
       });
 
@@ -101,7 +104,7 @@ describe("message", () => {
       const source = createMessage({
         type: "source.event",
         payload: {},
-        correlationId: "corr-123",
+        correlationId: toCorrelationId("corr-123"),
       });
 
       const derived = createDerivedMessage(source, {
@@ -117,13 +120,13 @@ describe("message", () => {
       const source = createMessage({
         type: "source.event",
         payload: {},
-        correlationId: "corr-123",
+        correlationId: toCorrelationId("corr-123"),
       });
 
       const derived = createDerivedMessage(source, {
         type: "derived.event",
         payload: {},
-        correlationId: "custom-corr",
+        correlationId: toCorrelationId("custom-corr"),
       });
 
       expect(derived.correlationId).toBe("custom-corr");
@@ -149,10 +152,14 @@ describe("message", () => {
 
     it("returns false for objects missing required fields", () => {
       expect(isMessage({})).toBe(false);
-      expect(isMessage({ id: "1", type: "test" })).toBe(false);
-      expect(isMessage({ id: "1", type: "test", timestamp: new Date() })).toBe(
-        false,
-      );
+      expect(isMessage({ id: toMessageId("1"), type: "test" })).toBe(false);
+      expect(
+        isMessage({
+          id: toMessageId("1"),
+          type: "test",
+          timestamp: new Date(),
+        }),
+      ).toBe(false);
     });
   });
 
@@ -179,12 +186,34 @@ describe("message", () => {
   describe("describeMessage", () => {
     it("returns a human-readable description", () => {
       const message = createMessage({
-        id: "msg-123",
+        id: toMessageId("msg-123"),
         type: "test.message",
         payload: {},
       });
 
       expect(describeMessage(message)).toBe("test.message (msg-123)");
     });
+  });
+});
+
+describe("identifier branding", () => {
+  it("brands existing strings so deserialized ids keep their type", () => {
+    const message = createMessage({
+      id: toMessageId("msg:from-the-wire"),
+      type: "test.message",
+      payload: {},
+      correlationId: toCorrelationId("corr-1"),
+      causationId: toCausationId("cause-1"),
+    });
+
+    expect(message.id).toBe("msg:from-the-wire");
+    expect(message.correlationId).toBe("corr-1");
+    expect(message.causationId).toBe("cause-1");
+  });
+
+  it("rejects blank identifiers", () => {
+    expect(() => toMessageId("")).toThrow(TypeError);
+    expect(() => toCorrelationId("   ")).toThrow(TypeError);
+    expect(() => toCausationId("")).toThrow(TypeError);
   });
 });

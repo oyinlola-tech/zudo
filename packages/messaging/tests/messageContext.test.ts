@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { createMessageContext } from "../src/messageContext/index.js";
-import { createMessage } from "../src/message/index.js";
+import {
+  createMessage,
+  toCorrelationId,
+  toCausationId,
+} from "../src/message/index.js";
 
 describe("messageContext", () => {
   describe("createMessageContext", () => {
@@ -22,8 +26,8 @@ describe("messageContext", () => {
       const message = createMessage({
         type: "test.message",
         payload: {},
-        correlationId: "corr-123",
-        causationId: "cause-456",
+        correlationId: toCorrelationId("corr-123"),
+        causationId: toCausationId("cause-456"),
       });
 
       const context = createMessageContext(message);
@@ -39,8 +43,8 @@ describe("messageContext", () => {
       });
 
       const context = createMessageContext(message, {
-        correlationId: "custom-corr",
-        causationId: "custom-cause",
+        correlationId: toCorrelationId("custom-corr"),
+        causationId: toCausationId("custom-cause"),
       });
 
       expect(context.correlationId).toBe("custom-corr");

@@ -8,10 +8,7 @@
  * @module handlerRegistry/handlerRegistryType
  */
 
-import type {
-  MessageHandler,
-  NamedMessageHandler,
-} from "../messageHandler/messageHandlerType.type.js";
+import type { NamedMessageHandler } from "../messageHandler/messageHandlerType.type.js";
 
 import type { Message } from "../message/messageType.type.js";
 

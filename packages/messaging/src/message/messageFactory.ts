@@ -23,6 +23,43 @@ export function createMessageId(): MessageId {
 }
 
 /**
+ * Rejects an empty or blank identifier.
+ */
+function assertNonEmptyId(value: string, kind: string): void {
+  if (value.trim().length === 0) {
+    throw new TypeError(`A ${kind} must be a non-empty string.`);
+  }
+}
+
+/**
+ * Brands an existing string as a {@link MessageId}.
+ *
+ * Identifiers arriving from outside the process — a transport frame, a
+ * database row, a log record — are plain strings. This is the supported way
+ * to restore the branded type without an unchecked cast.
+ */
+export function toMessageId(value: string): MessageId {
+  assertNonEmptyId(value, "MessageId");
+  return value as MessageId;
+}
+
+/**
+ * Brands an existing string as a {@link MessageCorrelationId}.
+ */
+export function toCorrelationId(value: string): MessageCorrelationId {
+  assertNonEmptyId(value, "CorrelationId");
+  return value as MessageCorrelationId;
+}
+
+/**
+ * Brands an existing string as a {@link MessageCausationId}.
+ */
+export function toCausationId(value: string): MessageCausationId {
+  assertNonEmptyId(value, "CausationId");
+  return value as MessageCausationId;
+}
+
+/**
  * Normalizes a message timestamp.
  */
 function normalizeTimestamp(timestamp: MessageInput["timestamp"]): Date {

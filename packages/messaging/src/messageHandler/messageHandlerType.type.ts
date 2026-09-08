@@ -7,7 +7,7 @@
  * @module messageHandler/messageHandlerType
  */
 
-import type { Message, MessagePayload } from "../message/messageType.type.js";
+import type { Message } from "../message/messageType.type.js";
 
 import type { MessageContext } from "../messageContext/messageContextType.type.js";
 

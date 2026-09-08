@@ -7,14 +7,12 @@
  * @module dispatcher/dispatcherType
  */
 
-import type { Message, MessagePayload } from "../message/messageType.type.js";
+import type { Message } from "../message/messageType.type.js";
 
 import type {
   MessageContext,
   MessageContextOptions,
 } from "../messageContext/messageContextType.type.js";
-
-import type { MessageHandler } from "../messageHandler/messageHandlerType.type.js";
 
 import type {
   MessageMiddlewareLike,
