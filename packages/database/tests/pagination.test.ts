@@ -11,6 +11,11 @@ import {
   getPreviousPage,
   isValidPage,
   getItemRange,
+  validateCursorPayload,
+  buildKeysetWhere,
+  createKeysetPage,
+  createKeysetCursor,
+  decodeKeysetCursor,
   paginateCollection,
   encodeCursor,
   decodeCursor,
@@ -167,6 +172,10 @@ describe("Pagination", () => {
       expect(range.start).toBe(51);
       expect(range.end).toBe(55);
     });
+
+    it("should return an empty range past the end", () => {
+      expect(getItemRange(10, 10, 55)).toEqual({ start: 0, end: 0 });
+    });
   });
 
   describe("paginateCollection", () => {
@@ -196,6 +205,128 @@ describe("Pagination", () => {
       const cursor = encodeCursor("hello-world");
       const decoded = decodeCursor<string>(cursor);
       expect(decoded).toBe("hello-world");
+    });
+
+    it("rejects malformed cursors", () => {
+      expect(() => decodeCursor("")).toThrow(TypeError);
+      expect(() => decodeCursor("not-json!!")).toThrow(/Invalid pagination cursor/);
+    });
+
+    it("signs and verifies cursors with a secret", () => {
+      const cursor = encodeCursor({ id: "x" }, { secret: "k" });
+
+      expect(cursor).toContain(".");
+      expect(decodeCursor(cursor, { secret: "k" })).toEqual({ id: "x" });
+      expect(() => decodeCursor(cursor, { secret: "other" })).toThrow(
+        /signature/,
+      );
+      expect(() => decodeCursor(encodeCursor({ id: "x" }), { secret: "k" })).toThrow(
+        /signature/,
+      );
+
+      const [payload, signature] = cursor.split(".");
+      const forged = `${Buffer.from(JSON.stringify({ id: "y" })).toString("base64url")}.${signature}`;
+      expect(forged).not.toBe(cursor);
+      expect(payload).toBeDefined();
+      expect(() => decodeCursor(forged, { secret: "k" })).toThrow(/signature/);
+
+      expect(() => encodeCursor({}, { secret: "" })).toThrow(TypeError);
+    });
+
+    it("validates payload shape against allowed fields", () => {
+      const forged = encodeCursor({ id: "x", passwordHash: { not: null } });
+
+      expect(() =>
+        decodeCursor(forged, { allowedFields: ["id"] }),
+      ).toThrow(/unexpected field "passwordHash"/);
+
+      expect(() =>
+        decodeCursor(encodeCursor(null), { allowedFields: ["id"] }),
+      ).toThrow(/must be an object/);
+
+      expect(() =>
+        decodeCursor(encodeCursor({ id: { nested: 1 } }), {
+          allowedFields: ["id"],
+        }),
+      ).toThrow(/primitive/);
+
+      expect(() =>
+        validateCursorPayload(JSON.parse('{"__proto__": 1}'), ["__proto__"]),
+      ).toThrow(/unexpected field/);
+
+      expect(decodeCursor(encodeCursor({ id: "x" }), { allowedFields: ["id"] })).toEqual({ id: "x" });
+    });
+  });
+
+  describe("keyset helpers", () => {
+    const sort = [
+      { field: "createdAt", direction: "desc" as const },
+      { field: "id", direction: "asc" as const },
+    ];
+
+    it("buildKeysetWhere produces a multi-column comparison", () => {
+      expect(
+        buildKeysetWhere({ createdAt: "2024-01-01T00:00:00.000Z", id: "b" }, sort),
+      ).toEqual({
+        OR: [
+          { createdAt: { lt: "2024-01-01T00:00:00.000Z" } },
+          {
+            AND: [
+              { createdAt: { equals: "2024-01-01T00:00:00.000Z" } },
+              { id: { gt: "b" } },
+            ],
+          },
+        ],
+      });
+
+      expect(buildKeysetWhere({ id: 1 }, [{ field: "id", direction: "asc" }])).toEqual({
+        id: { gt: 1 },
+      });
+
+      expect(() => buildKeysetWhere({ id: 1 }, [])).toThrow(TypeError);
+      expect(() =>
+        buildKeysetWhere({ id: 1 }, [
+          { field: "id", direction: "asc" },
+          { field: "id", direction: "asc" },
+        ]),
+      ).toThrow(/duplicated/);
+    });
+
+    it("createKeysetPage drops the extra row and derives the cursor", () => {
+      const rows = [
+        { id: "a", createdAt: new Date("2024-01-03T00:00:00Z") },
+        { id: "b", createdAt: new Date("2024-01-02T00:00:00Z") },
+        { id: "c", createdAt: new Date("2024-01-01T00:00:00Z") },
+      ];
+
+      const page = createKeysetPage(rows, { sort, limit: 2, secret: "k" });
+
+      expect(page.data.map((row) => row.id)).toEqual(["a", "b"]);
+      expect(page.meta.hasNextPage).toBe(true);
+      expect(page.meta.hasPreviousPage).toBe(false);
+      expect(decodeKeysetCursor(page.meta.nextCursor!, sort, "k")).toEqual({
+        createdAt: "2024-01-02T00:00:00.000Z",
+        id: "b",
+      });
+
+      const last = createKeysetPage(rows.slice(2), {
+        sort,
+        limit: 2,
+        cursor: page.meta.nextCursor,
+      });
+      expect(last.meta.hasNextPage).toBe(false);
+      expect(last.meta.hasPreviousPage).toBe(true);
+      expect(last.meta.nextCursor).toBeUndefined();
+
+      expect(() =>
+        createKeysetCursor({ id: { nested: true } }, [{ field: "id", direction: "asc" }]),
+      ).toThrow(/unsupported value type/);
+    });
+
+    it("decodeKeysetCursor requires every sort field", () => {
+      expect(() =>
+        decodeKeysetCursor(encodeCursor({ id: "a" }), sort),
+      ).toThrow(/missing sort field "createdAt"/);
     });
   });
 });

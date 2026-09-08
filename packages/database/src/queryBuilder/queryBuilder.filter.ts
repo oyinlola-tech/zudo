@@ -2,7 +2,14 @@ import type {
   QueryCondition,
   QueryFilter,
   QueryOperator,
+  RelationOperator,
 } from "./queryBuilder.type.js";
+
+const EMPTY_FILTER: QueryFilter = Object.freeze({
+  conditions: Object.freeze([]) as readonly QueryCondition[],
+});
+
+const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 /**
  * Creates an equality filter.
@@ -103,7 +110,7 @@ export function isNotNull(field: string): QueryFilter {
  */
 export function and(...filters: readonly QueryFilter[]): QueryFilter {
   return {
-    and: filters.map(cloneFilter),
+    and: filters.map((filter) => cloneFilter(filter)),
   };
 }
 
@@ -112,7 +119,7 @@ export function and(...filters: readonly QueryFilter[]): QueryFilter {
  */
 export function or(...filters: readonly QueryFilter[]): QueryFilter {
   return {
-    or: filters.map(cloneFilter),
+    or: filters.map((filter) => cloneFilter(filter)),
   };
 }
 
@@ -157,12 +164,10 @@ export function condition(
  * Combines multiple filters with AND only when necessary.
  */
 export function allOf(filters: readonly QueryFilter[]): QueryFilter {
-  const normalized = filters.filter(Boolean).map(cloneFilter);
+  const normalized = filters.filter(hasConditions).map((filter) => cloneFilter(filter));
 
   if (normalized.length === 0) {
-    return {
-      conditions: [],
-    };
+    return EMPTY_FILTER;
   }
 
   if (normalized.length === 1) {
@@ -178,12 +183,10 @@ export function allOf(filters: readonly QueryFilter[]): QueryFilter {
  * Combines multiple filters with OR only when necessary.
  */
 export function anyOf(filters: readonly QueryFilter[]): QueryFilter {
-  const normalized = filters.filter(Boolean).map(cloneFilter);
+  const normalized = filters.filter(hasConditions).map((filter) => cloneFilter(filter));
 
   if (normalized.length === 0) {
-    return {
-      conditions: [],
-    };
+    return EMPTY_FILTER;
   }
 
   if (normalized.length === 1) {
@@ -203,14 +206,19 @@ export function anyOf(filters: readonly QueryFilter[]): QueryFilter {
 export function fromObject<T extends Record<string, unknown>>(
   values: T,
 ): QueryFilter {
-  const conditions = Object.entries(values).map(
-    ([field, value]) =>
-      ({
-        field,
-        operator: "equals",
-        value: cloneValue(value),
-      }) satisfies QueryCondition,
-  );
+  if (values === null || typeof values !== "object" || Array.isArray(values)) {
+    throw new TypeError("fromObject requires a plain object.");
+  }
+
+  const conditions: QueryCondition[] = [];
+
+  for (const [field, value] of Object.entries(values)) {
+    if (FORBIDDEN_KEYS.has(field)) {
+      throw new TypeError(`Invalid filter field "${field}".`);
+    }
+
+    conditions.push(...condition(field, "equals", value).conditions!);
+  }
 
   return {
     conditions,
@@ -251,22 +259,189 @@ export function dateRange(
     });
   }
 
-  if (conditions.length === 0) {
-    return {
-      conditions: [],
-    };
-  }
-
-  if (conditions.length === 1) {
-    return {
-      conditions,
-    };
+  if (options.from && options.to && options.from.getTime() > options.to.getTime()) {
+    throw new RangeError("dateRange requires `from` to be on or before `to`.");
   }
 
   return {
-    and: [
+    conditions,
+  };
+}
+
+/**
+ * Creates an inclusive range filter (`field >= from AND field <= to`).
+ */
+export function between(
+  field: string,
+  from: number | string | Date | bigint,
+  to: number | string | Date | bigint,
+): QueryFilter {
+  validateField(field);
+
+  validateRangeBound(from, "from");
+
+  validateRangeBound(to, "to");
+
+  if (compareBounds(from, to) > 0) {
+    throw new RangeError("between requires `from` to be on or before `to`.");
+  }
+
+  return {
+    conditions: [
       {
-        conditions,
+        field,
+        operator: "gte",
+        value: cloneValue(from),
+      },
+      {
+        field,
+        operator: "lte",
+        value: cloneValue(to),
+      },
+    ],
+  };
+}
+
+/**
+ * Creates a SQL-style pattern filter using `%` wildcards.
+ *
+ * Only leading and/or trailing wildcards are supported (`%abc%`, `abc%`,
+ * `%abc`); the pattern is translated to `contains`, `startsWith`,
+ * `endsWith` or `equals` when converted for an ORM.
+ */
+export function matchesPattern(field: string, pattern: string): QueryFilter {
+  if (typeof pattern !== "string" || pattern.length === 0) {
+    throw new TypeError("A pattern is required.");
+  }
+
+  const inner = pattern.replace(/^%+/, "").replace(/%+$/, "");
+
+  if (inner.length === 0 || inner.includes("%") || inner.includes("_")) {
+    throw new TypeError(
+      "matchesPattern only supports leading and/or trailing % wildcards.",
+    );
+  }
+
+  return condition(field, "like", pattern);
+}
+
+/**
+ * Creates a filter matching null or empty-string values.
+ */
+export function isEmpty(field: string): QueryFilter {
+  return or(isNull(field), equals(field, ""));
+}
+
+/**
+ * Creates a filter matching values that are neither null nor empty.
+ */
+export function isNotEmpty(field: string): QueryFilter {
+  return and(isNotNull(field), notEquals(field, ""));
+}
+
+/**
+ * Creates a filter matching any timestamp on the given UTC calendar day.
+ */
+export function dateOnly(field: string, date: Date): QueryFilter {
+  validateField(field);
+
+  validateDate(date, "date");
+
+  const start = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
+
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+
+  return {
+    conditions: [
+      {
+        field,
+        operator: "gte",
+        value: start,
+      },
+      {
+        field,
+        operator: "lt",
+        value: end,
+      },
+    ],
+  };
+}
+
+/**
+ * Creates a filter for timestamps strictly before a date.
+ */
+export function isBefore(field: string, date: Date): QueryFilter {
+  validateDate(date, "date");
+
+  return condition(field, "lt", date);
+}
+
+/**
+ * Creates a filter for timestamps strictly after a date.
+ */
+export function isAfter(field: string, date: Date): QueryFilter {
+  validateDate(date, "date");
+
+  return condition(field, "gt", date);
+}
+
+/**
+ * Creates an inclusive date range filter.
+ */
+export function isBetween(field: string, from: Date, to: Date): QueryFilter {
+  validateDate(from, "from");
+
+  validateDate(to, "to");
+
+  return between(field, from, to);
+}
+
+/**
+ * Creates a negated single condition.
+ */
+export function notCondition(
+  field: string,
+  operator: QueryOperator,
+  value?: unknown,
+): QueryFilter {
+  return not(condition(field, operator, value));
+}
+
+/**
+ * Creates a filter on a related entity.
+ *
+ * `some` / `every` / `none` target collection relations; `is` / `isNot`
+ * target single relations.
+ */
+export function relational(
+  relation: string,
+  filter: QueryFilter,
+  operator: RelationOperator = "some",
+): QueryFilter {
+  if (
+    operator !== "some" &&
+    operator !== "every" &&
+    operator !== "none" &&
+    operator !== "is" &&
+    operator !== "isNot"
+  ) {
+    throw new TypeError(`Invalid relation operator "${String(operator)}".`);
+  }
+
+  if (!filter || typeof filter !== "object") {
+    throw new TypeError("A relation filter is required.");
+  }
+
+  validateField(relation);
+
+  return {
+    conditions: [
+      {
+        field: relation,
+        operator,
+        value: cloneFilter(filter),
       },
     ],
   };
@@ -344,6 +519,12 @@ export function hasConditions(filter?: QueryFilter): boolean {
  * Flattens an AND-only filter into individual conditions.
  */
 export function flattenAnd(filter: QueryFilter): QueryCondition[] {
+  if ((filter.or && filter.or.length > 0) || filter.not) {
+    throw new TypeError(
+      "flattenAnd only accepts AND-only filters; OR/NOT branches cannot be flattened.",
+    );
+  }
+
   const result: QueryCondition[] = [];
 
   if (filter.conditions) {
@@ -358,17 +539,24 @@ export function flattenAnd(filter: QueryFilter): QueryCondition[] {
 }
 
 /**
- * Creates a new filter without mutating the source.
+ * Deeply clones a filter (conditions, nested groups, Date/array/object
+ * values) so the copy shares no mutable state with the source.
  */
-export function cloneFilter(filter: QueryFilter): QueryFilter {
+export function cloneFilter(filter: QueryFilter): QueryFilter;
+export function cloneFilter(filter?: QueryFilter): QueryFilter | undefined;
+export function cloneFilter(filter?: QueryFilter): QueryFilter | undefined {
+  if (!filter) {
+    return undefined;
+  }
+
   return {
     conditions: filter.conditions
       ? filter.conditions.map(cloneCondition)
       : undefined,
 
-    and: filter.and ? filter.and.map(cloneFilter) : undefined,
+    and: filter.and ? filter.and.map((child) => cloneFilter(child)) : undefined,
 
-    or: filter.or ? filter.or.map(cloneFilter) : undefined,
+    or: filter.or ? filter.or.map((child) => cloneFilter(child)) : undefined,
 
     not: filter.not ? cloneFilter(filter.not) : undefined,
   };
@@ -406,6 +594,10 @@ function cloneValue(value: unknown): unknown {
     for (const [key, entry] of Object.entries(
       value as Record<string, unknown>,
     )) {
+      if (FORBIDDEN_KEYS.has(key)) {
+        continue;
+      }
+
       result[key] = cloneValue(entry);
     }
 
@@ -415,12 +607,48 @@ function cloneValue(value: unknown): unknown {
   return value;
 }
 
+function validateRangeBound(value: unknown, name: string): void {
+  if (value instanceof Date) {
+    validateDate(value, name);
+
+    return;
+  }
+
+  if (typeof value === "number" && Number.isNaN(value)) {
+    throw new TypeError(`Invalid ${name} bound.`);
+  }
+
+  if (
+    typeof value !== "number" &&
+    typeof value !== "string" &&
+    typeof value !== "bigint"
+  ) {
+    throw new TypeError(`Invalid ${name} bound.`);
+  }
+}
+
+function compareBounds(from: unknown, to: unknown): number {
+  if (from instanceof Date && to instanceof Date) {
+    return from.getTime() - to.getTime();
+  }
+
+  if (typeof from === typeof to && (from as number) > (to as number)) {
+    return 1;
+  }
+
+  return 0;
+}
+
 /**
  * Validates a filter field.
  */
 function validateField(field: string): void {
   if (typeof field !== "string" || field.trim().length === 0) {
     throw new TypeError("A filter field is required.");
+  }
+
+  if (FORBIDDEN_KEYS.has(field)) {
+    throw new TypeError(`Invalid filter field "${field}".`);
   }
 }
 

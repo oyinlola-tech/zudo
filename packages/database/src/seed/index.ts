@@ -1,7 +1,7 @@
 /**
  * @zudojs/database — Seeds
  *
- * Database seed runner with execution tracking.
+ * Database seed runner with execution tracking (PostgreSQL).
  */
 
 export {
@@ -14,5 +14,6 @@ export {
   type Seed,
   type SeedRecord,
   type SeedResult,
+  type SeedStatus,
   type SeedRunnerOptions,
 } from "./seed.runner.js";

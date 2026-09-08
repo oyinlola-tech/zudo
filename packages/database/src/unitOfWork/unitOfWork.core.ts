@@ -1,9 +1,10 @@
-import { DatabaseError } from "@zudojs/errors";
+import { DatabaseOperation } from "@zudojs/errors";
 
 import type {
   DatabaseTransactionContext,
   DatabaseClient,
 } from "../databaseClient/databaseClient.core.js";
+import { normalizeDatabaseError } from "../databaseClient/databaseClient.errors.js";
 
 import type {
   TransactionCallback,
@@ -15,6 +16,9 @@ import type {
  *
  * A unit of work groups multiple repository operations into a single
  * database transaction so they either all succeed or all roll back.
+ * Repositories must be rebound to the transaction client handed to the
+ * callback (see `BaseRepository.withTransaction`); repositories built from
+ * the root client run outside the transaction.
  */
 export interface UnitOfWork {
   execute<TResult>(
@@ -40,7 +44,6 @@ export class DatabaseUnitOfWork implements UnitOfWork {
     if (!options?.client) {
       throw new TypeError("A database client is required.");
     }
-
     this.client = options.client;
   }
 
@@ -52,28 +55,18 @@ export class DatabaseUnitOfWork implements UnitOfWork {
     options?: TransactionOptions,
   ): Promise<TResult> {
     if (typeof callback !== "function") {
-      throw new DatabaseError("A unit of work callback is required.");
+      throw new TypeError("A unit of work callback is required.");
     }
 
     return this.client.transaction(async (transaction) => {
       try {
         return await callback(transaction);
       } catch (error) {
-        if (error instanceof DatabaseError) {
-          throw error;
-        }
-
-        throw new DatabaseError(
-          error instanceof Error
-            ? error.message
-            : "Unit of work execution failed.",
-          {
-            cause: error,
-            metadata: {
-              operation: "unit-of-work",
-            },
-          },
-        );
+        throw normalizeDatabaseError(error, {
+          operation: DatabaseOperation.TRANSACTION,
+          fallbackMessage: "Unit of work execution failed.",
+          metadata: { unitOfWork: true },
+        });
       }
     }, options);
   }
@@ -90,23 +83,16 @@ export class DatabaseUnitOfWork implements UnitOfWork {
  * Creates a database unit of work.
  */
 export function createUnitOfWork(client: DatabaseClient): DatabaseUnitOfWork {
-  return new DatabaseUnitOfWork({
-    client,
-  });
+  return new DatabaseUnitOfWork({ client });
 }
 
 /**
  * Executes a callback as a single database transaction.
- *
- * This convenience function is useful when a full UnitOfWork instance
- * does not need to be retained.
  */
 export async function executeUnitOfWork<TResult>(
   client: DatabaseClient,
   callback: TransactionCallback<DatabaseTransactionContext, TResult>,
   options?: TransactionOptions,
 ): Promise<TResult> {
-  const unitOfWork = createUnitOfWork(client);
-
-  return unitOfWork.execute(callback, options);
+  return createUnitOfWork(client).execute(callback, options);
 }

@@ -11,6 +11,11 @@ export const DEFAULT_MIGRATION_TABLE = "_migrations";
 export const DEFAULT_MIGRATION_LOCK = "database:migrations";
 
 /**
+ * Strict SQL identifier pattern shared by the runners.
+ */
+export const SQL_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
  * Normalizes and validates migrations.
  */
 export function normalizeMigrations(
@@ -48,6 +53,11 @@ export function validateMigration(migration: Migration): void {
   if (!Number.isInteger(migration.version) || migration.version <= 0) {
     throw new TypeError("Migration version must be a positive integer.");
   }
+  if (migration.version > Number.MAX_SAFE_INTEGER) {
+    throw new TypeError(
+      `Migration version ${migration.version} exceeds Number.MAX_SAFE_INTEGER.`,
+    );
+  }
   if (
     typeof migration.name !== "string" ||
     migration.name.trim().length === 0
@@ -70,25 +80,33 @@ export function validateMigration(migration: Migration): void {
 }
 
 /**
- * Returns the latest registered migration version.
+ * Returns the highest registered migration version.
  */
 export function getLatestVersion(migrations: readonly Migration[]): number {
-  if (migrations.length === 0) return 0;
-  return migrations[migrations.length - 1]!.version;
+  let latest = 0;
+  for (const migration of migrations) {
+    if (migration.version > latest) latest = migration.version;
+  }
+  return latest;
 }
 
 /**
- * Returns the current applied migration version.
+ * Returns the highest applied migration version.
  */
 export function getCurrentVersion(
   migrations: readonly MigrationRecord[],
 ): number {
-  if (migrations.length === 0) return 0;
-  return migrations[migrations.length - 1]!.version;
+  let current = 0;
+  for (const record of migrations) {
+    if (record.version > current) current = record.version;
+  }
+  return current;
 }
 
 /**
- * Quotes a validated SQL identifier.
+ * Quotes a validated SQL identifier using double quotes.
+ *
+ * Prefer `SqlDialect.quoteIdentifier` when a dialect is available.
  */
 export function quoteIdentifier(identifier: string): string {
   validateIdentifier(identifier, "identifier");
@@ -96,26 +114,56 @@ export function quoteIdentifier(identifier: string): string {
 }
 
 /**
- * Validates an SQL identifier.
+ * Validates an SQL identifier against {@link SQL_IDENTIFIER_PATTERN}.
  */
 export function validateIdentifier(identifier: string, name: string): void {
-  if (
-    typeof identifier !== "string" ||
-    !/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)
-  ) {
-    throw new TypeError(`Invalid ${name}: "${identifier}".`);
+  if (typeof identifier !== "string" || !SQL_IDENTIFIER_PATTERN.test(identifier)) {
+    throw new TypeError(`Invalid ${name}: "${String(identifier)}".`);
   }
 }
 
 /**
- * Creates a deterministic signed 64-bit advisory lock key.
+ * Validates an advisory lock key.
  */
-export function hashLockKey(value: string): bigint {
-  let hash = 1469598103934665603n;
+export function validateLockKey(lockKey: string, name = "lock key"): void {
+  if (typeof lockKey !== "string" || lockKey.trim().length === 0) {
+    throw new TypeError(`A database ${name} is required.`);
+  }
+}
+
+/**
+ * FNV-1a 64-bit offset basis (0xcbf29ce484222325).
+ */
+export const FNV1A_64_OFFSET_BASIS = 14695981039346656037n;
+
+/**
+ * FNV-1a 64-bit prime (0x100000001b3).
+ */
+export const FNV1A_64_PRIME = 1099511628211n;
+
+const UINT64_MASK = (1n << 64n) - 1n;
+
+/**
+ * Computes the unsigned FNV-1a 64-bit hash of a string (UTF-8 bytes).
+ *
+ * Matches FNV-1a implementations in other languages, so lock keys can be
+ * shared with services outside this package.
+ */
+export function fnv1a64(value: string): bigint {
+  let hash = FNV1A_64_OFFSET_BASIS;
   const bytes = new TextEncoder().encode(value);
   for (const byte of bytes) {
     hash ^= BigInt(byte);
-    hash = BigInt.asIntN(64, hash * 1099511628211n);
+    hash = (hash * FNV1A_64_PRIME) & UINT64_MASK;
   }
-  return BigInt.asIntN(64, hash);
+  return hash;
+}
+
+/**
+ * Creates a deterministic signed 64-bit advisory lock key (FNV-1a).
+ *
+ * Suitable as the single `bigint` argument of `pg_advisory_xact_lock`.
+ */
+export function hashLockKey(value: string): bigint {
+  return BigInt.asIntN(64, fnv1a64(value));
 }

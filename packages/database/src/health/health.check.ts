@@ -1,8 +1,10 @@
-import { DatabaseError } from "@zudojs/errors";
+import { DatabaseError, DatabaseOperation, ErrorCode } from "@zudojs/errors";
 
 import type { DatabaseClient } from "../databaseClient/databaseClient.core.js";
-
-import { Prisma } from "@prisma/client";
+import {
+  isDatabaseErrorLike,
+  normalizeDatabaseError,
+} from "../databaseClient/databaseClient.errors.js";
 
 /**
  * Health status of the database.
@@ -21,6 +23,8 @@ export interface DatabaseHealth {
   readonly error?: {
     readonly name: string;
     readonly message: string;
+    readonly code?: string;
+    readonly databaseCode?: string;
   };
 }
 
@@ -47,6 +51,34 @@ export interface DatabaseReadiness {
 export const DEFAULT_HEALTH_TIMEOUT_MS = 5_000;
 
 /**
+ * Error raised by {@link assertDatabaseHealth}. The underlying failure is
+ * preserved as `cause`.
+ */
+export class DatabaseUnhealthyError extends DatabaseError {
+  public readonly health: DatabaseHealth;
+
+  constructor(health: DatabaseHealth, cause: unknown) {
+    super("Database health check failed.", {
+      code: ErrorCode.DATABASE_CONNECTION,
+      statusCode: 503,
+      operation: DatabaseOperation.CONNECT,
+      metadata: {
+        status: health.status,
+        latencyMs: health.latencyMs,
+        checkedAt: health.checkedAt.toISOString(),
+        ...(health.error?.code ? { errorCode: health.error.code } : {}),
+        ...(health.error?.databaseCode
+          ? { databaseCode: health.error.databaseCode }
+          : {}),
+      },
+      cause,
+    });
+    this.name = "DatabaseUnhealthyError";
+    this.health = health;
+  }
+}
+
+/**
  * Performs a lightweight database health check.
  */
 export async function checkDatabaseHealth(
@@ -58,16 +90,12 @@ export async function checkDatabaseHealth(
   }
 
   const timeoutMs = normalizeTimeout(options.timeoutMs);
-
   const checkedAt = new Date();
-
   const startedAt = performance.now();
 
   try {
     await withTimeout(executeHealthCheck(client), timeoutMs);
-
-    const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
-
+    const latencyMs = elapsed(startedAt);
     return {
       status: latencyMs > timeoutMs * 0.75 ? "degraded" : "healthy",
       healthy: true,
@@ -76,11 +104,9 @@ export async function checkDatabaseHealth(
       message: "Database connection is healthy.",
     };
   } catch (error) {
-    const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
-
+    const latencyMs = elapsed(startedAt);
     const normalizedError = normalizeHealthError(error);
-
-    return {
+    const health: DatabaseHealth = {
       status: "unhealthy",
       healthy: false,
       latencyMs,
@@ -88,7 +114,23 @@ export async function checkDatabaseHealth(
       message: normalizedError.message,
       error: normalizedError,
     };
+    Object.defineProperty(health, HEALTH_CAUSE, { value: error, enumerable: false });
+    return health;
   }
+}
+
+/**
+ * Symbol under which the original failure is kept on an unhealthy result.
+ * It is a non-enumerable symbol key, so serialised health output never
+ * includes it.
+ */
+const HEALTH_CAUSE: unique symbol = Symbol("zudojs.database.healthCause");
+
+/**
+ * Returns the original error that made a health check fail, if any.
+ */
+export function getHealthCheckCause(health: DatabaseHealth): unknown {
+  return (health as unknown as Record<symbol, unknown>)[HEALTH_CAUSE];
 }
 
 /**
@@ -106,54 +148,39 @@ export async function checkDatabaseReadiness(
   }
 
   const timeoutMs = normalizeTimeout(options.timeoutMs);
-
   const checkedAt = new Date();
-
   const startedAt = performance.now();
 
   try {
     await withTimeout(executeHealthCheck(client), timeoutMs);
-
-    const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
-
     return {
       ready: true,
       checkedAt,
-      latencyMs,
+      latencyMs: elapsed(startedAt),
       message: "Database is ready.",
     };
   } catch (error) {
-    const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
-
     return {
       ready: false,
       checkedAt,
-      latencyMs,
+      latencyMs: elapsed(startedAt),
       message: normalizeHealthError(error).message,
     };
   }
 }
 
 /**
- * Throws when the database is not healthy.
+ * Throws a {@link DatabaseUnhealthyError} (with the real failure as
+ * `cause`) when the database is not healthy.
  */
 export async function assertDatabaseHealth(
   client: DatabaseClient,
   options: DatabaseHealthOptions = {},
 ): Promise<DatabaseHealth> {
   const health = await checkDatabaseHealth(client, options);
-
   if (!health.healthy) {
-    throw new DatabaseError("Database health check failed.", {
-      metadata: {
-        status: health.status,
-        latencyMs: health.latencyMs,
-        checkedAt: health.checkedAt.toISOString(),
-      },
-      cause: health.error ? new Error(health.error.message) : undefined,
-    });
+    throw new DatabaseUnhealthyError(health, getHealthCheckCause(health));
   }
-
   return health;
 }
 
@@ -165,38 +192,22 @@ export async function isDatabaseHealthy(
   options: DatabaseHealthOptions = {},
 ): Promise<boolean> {
   const health = await checkDatabaseHealth(client, options);
-
   return health.healthy;
 }
 
 /**
- * Executes the lightweight health query.
+ * Executes the lightweight health query. Errors are already normalised by
+ * the client, so they are passed through unchanged.
  */
 async function executeHealthCheck(client: DatabaseClient): Promise<void> {
-  try {
-    await client.queryRaw<
-      readonly [
-        {
-          result: number;
-        },
-      ]
-    >(Prisma.sql`SELECT 1 AS result`);
-  } catch (error) {
-    throw new DatabaseError("Database health query failed.", {
-      cause: error,
-    });
-  }
+  await client.queryRawUnsafe("SELECT 1 AS result");
 }
 
-/**
- * Runs a promise with a timeout.
- */
 async function withTimeout<TValue>(
   promise: Promise<TValue>,
   timeoutMs: number,
 ): Promise<TValue> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
-
   try {
     return await Promise.race([
       promise,
@@ -205,51 +216,53 @@ async function withTimeout<TValue>(
           reject(
             new DatabaseError(
               `Database health check timed out after ${timeoutMs}ms.`,
+              {
+                code: ErrorCode.DATABASE_TIMEOUT,
+                statusCode: 503,
+                operation: DatabaseOperation.QUERY,
+                metadata: { timeoutMs },
+              },
             ),
           );
         }, timeoutMs);
       }),
     ]);
   } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
+    if (timeout) clearTimeout(timeout);
   }
 }
 
-/**
- * Normalizes timeout values.
- */
 function normalizeTimeout(timeoutMs?: number): number {
-  if (timeoutMs === undefined) {
-    return DEFAULT_HEALTH_TIMEOUT_MS;
-  }
-
+  if (timeoutMs === undefined) return DEFAULT_HEALTH_TIMEOUT_MS;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     throw new TypeError(
       "Database health timeout must be a positive finite number.",
     );
   }
-
   return Math.floor(timeoutMs);
 }
 
-/**
- * Converts an unknown error into a safe health error.
- */
-function normalizeHealthError(error: unknown): {
-  readonly name: string;
-  readonly message: string;
-} {
-  if (error instanceof Error) {
-    return {
-      name: error.name,
-      message: error.message,
-    };
-  }
+function elapsed(startedAt: number): number {
+  return Math.max(0, Math.round(performance.now() - startedAt));
+}
 
+/**
+ * Converts an unknown error into a safe health error. Prisma errors are
+ * mapped so connection failures never leak host names.
+ */
+function normalizeHealthError(error: unknown): NonNullable<DatabaseHealth["error"]> {
+  const normalized = isDatabaseErrorLike(error)
+    ? error
+    : normalizeDatabaseError(error, {
+        operation: DatabaseOperation.QUERY,
+        fallbackMessage: "Database health check failed.",
+      });
   return {
-    name: "DatabaseHealthError",
-    message: "Database health check failed.",
+    name: normalized.name,
+    message: normalized.message,
+    code: String(normalized.code),
+    ...(normalized.databaseCode !== undefined
+      ? { databaseCode: String(normalized.databaseCode) }
+      : {}),
   };
 }

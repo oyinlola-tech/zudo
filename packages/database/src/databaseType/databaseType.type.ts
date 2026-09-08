@@ -28,28 +28,49 @@ export type DatabaseOperation =
  * Options shared by database operations.
  */
 export interface DatabaseOperationOptions {
+  /**
+   * Aborts the operation from the caller's side. The repository rejects
+   * with an `ERR_OPERATION_CANCELLED` DatabaseError as soon as the signal
+   * fires; the underlying database query is not cancelled server-side.
+   */
   readonly signal?: AbortSignal;
+  /**
+   * Client-side timeout in milliseconds. When exceeded the caller receives
+   * an `ERR_DATABASE_TIMEOUT` DatabaseError; the query itself keeps running
+   * on the server until it completes (use a statement timeout for real
+   * cancellation).
+   */
   readonly timeoutMs?: number;
   readonly metadata?: Readonly<Record<string, unknown>>;
 }
 
 /**
  * Options used when establishing a database connection.
+ *
+ * Prisma 7 configures the connection URL, pool size and SSL on the driver
+ * adapter, so only options this package can actually honour are declared
+ * here.
  */
 export interface DatabaseConnectionOptions {
-  readonly url?: string;
+  /**
+   * Client-side deadline for `$connect()` (default 10 000 ms). Non-finite
+   * or non-positive values disable the timeout.
+   */
   readonly connectionTimeoutMs?: number;
-  readonly queryTimeoutMs?: number;
-  readonly maxConnections?: number;
-  readonly minConnections?: number;
-  readonly ssl?: boolean;
+
+  /**
+   * Emits Prisma query events (duration and target only) to the logger.
+   */
   readonly logging?: boolean;
 }
 
 /**
- * Database health information.
+ * Lifecycle-oriented health snapshot returned by `DatabaseClient.healthCheck()`
+ * and the `Database` facade. For the richer probe result (healthy /
+ * degraded / unhealthy plus an error object) use `checkDatabaseHealth`
+ * from the health module.
  */
-export interface DatabaseHealth {
+export interface DatabaseClientHealth {
   readonly status: DatabaseStatus;
   readonly latencyMs?: number;
   readonly checkedAt: Date;
@@ -57,16 +78,10 @@ export interface DatabaseHealth {
 }
 
 /**
- * Database metrics.
+ * @deprecated Use {@link DatabaseClientHealth}. Kept as an alias so the
+ * name does not clash with the health module's `DatabaseHealth`.
  */
-export interface DatabaseMetrics {
-  readonly activeConnections: number;
-  readonly idleConnections: number;
-  readonly totalConnections: number;
-  readonly totalQueries: number;
-  readonly failedQueries: number;
-  readonly averageQueryTimeMs: number;
-}
+export type DatabaseHealth = DatabaseClientHealth;
 
 /**
  * Transaction configuration.
@@ -85,11 +100,9 @@ export type TransactionCallback<TContext, TResult> = (
 ) => Promise<TResult>;
 
 /**
- * Generic database client contract.
- *
- * Concrete implementations can wrap Prisma, another ORM, or a
- * lower-level database driver without leaking implementation details
- * throughout the application.
+ * Generic database client contract implemented by the concrete
+ * `DatabaseClient` class. Kept out of the root barrel to avoid clashing
+ * with the class name; prefer the {@link DatabaseClientContract} alias.
  */
 export interface DatabaseClient<TTransactionContext = unknown> {
   connect(): Promise<void>;
@@ -100,13 +113,19 @@ export interface DatabaseClient<TTransactionContext = unknown> {
 
   getStatus(): DatabaseStatus;
 
-  healthCheck(): Promise<DatabaseHealth>;
+  healthCheck(): Promise<DatabaseClientHealth>;
 
   transaction<TResult>(
     callback: TransactionCallback<TTransactionContext, TResult>,
     options?: TransactionOptions,
   ): Promise<TResult>;
 }
+
+/**
+ * Alias of the {@link DatabaseClient} contract interface.
+ */
+export type DatabaseClientContract<TTransactionContext = unknown> =
+  DatabaseClient<TTransactionContext>;
 
 /**
  * Generic repository contract.
@@ -133,10 +152,20 @@ export interface Repository<
     options?: DatabaseOperationOptions,
   ): Promise<readonly TEntity[]>;
 
+  findPaginated(
+    filter?: TFilter,
+    options?: QueryOptions,
+  ): Promise<PaginatedResult<TEntity>>;
+
   create(
     input: TCreateInput,
     options?: DatabaseOperationOptions,
   ): Promise<TEntity>;
+
+  createMany(
+    inputs: readonly TCreateInput[],
+    options?: DatabaseOperationOptions,
+  ): Promise<number>;
 
   update(
     id: TId,
@@ -144,11 +173,43 @@ export interface Repository<
     options?: DatabaseOperationOptions,
   ): Promise<TEntity>;
 
+  upsert(
+    where: TFilter,
+    create: TCreateInput,
+    update: TUpdateInput,
+    options?: DatabaseOperationOptions,
+  ): Promise<TEntity>;
+
   delete(id: TId, options?: DatabaseOperationOptions): Promise<void>;
+
+  deleteMany(
+    filter: TFilter,
+    options?: DatabaseOperationOptions,
+  ): Promise<number>;
 
   exists(filter: TFilter, options?: DatabaseOperationOptions): Promise<boolean>;
 
   count(filter?: TFilter, options?: DatabaseOperationOptions): Promise<number>;
+}
+
+/**
+ * Repository contract for entities that support soft deletion.
+ */
+export interface SoftDeletableRepository<
+  TEntity,
+  TId = string,
+  TCreateInput = Partial<TEntity>,
+  TUpdateInput = Partial<TEntity>,
+  TFilter = unknown,
+> extends Repository<TEntity, TId, TCreateInput, TUpdateInput, TFilter> {
+  softDelete(id: TId, options?: DatabaseOperationOptions): Promise<TEntity>;
+
+  restore(id: TId, options?: DatabaseOperationOptions): Promise<TEntity>;
+
+  findDeleted(
+    filter?: TFilter,
+    options?: DatabaseOperationOptions,
+  ): Promise<readonly TEntity[]>;
 }
 
 /**
@@ -169,6 +230,10 @@ export interface PaginationMeta {
   readonly totalPages: number;
   readonly hasNextPage: boolean;
   readonly hasPreviousPage: boolean;
+  /** Alias of `hasNextPage`. */
+  readonly hasNext: boolean;
+  /** Alias of `hasPreviousPage`. */
+  readonly hasPrev: boolean;
 }
 
 /**
@@ -227,12 +292,21 @@ export interface AuditableEntity extends DatabaseEntity {
 }
 
 /**
- * Database error information.
+ * Plain, serialisable description of a database failure. Produced by
+ * `toDatabaseErrorInfo` in the client module.
  */
 export interface DatabaseErrorInfo {
+  /**
+   * Prisma / driver code (for example `P2002`) when known, otherwise the
+   * `DatabaseError.code` (for example `ERR_DATABASE`).
+   */
   readonly code?: string;
   readonly message: string;
-  readonly operation?: DatabaseOperation;
+  /**
+   * Operation that failed (a `DatabaseOperation` value from
+   * `@zudojs/errors`, or one of the local {@link DatabaseOperation} names).
+   */
+  readonly operation?: string;
   readonly model?: string;
   readonly field?: string;
   readonly constraint?: string;
@@ -266,55 +340,3 @@ export const noopDatabaseLogger: DatabaseLogger = Object.freeze({
   warn: () => undefined,
   error: () => undefined,
 });
-
-/**
- * Normalizes pagination input.
- */
-export function normalizePagination(
-  input?: PaginationInput,
-): Required<PaginationInput> {
-  const page = Math.max(1, Math.floor(input?.page ?? 1));
-
-  const limit = Math.min(100, Math.max(1, Math.floor(input?.limit ?? 20)));
-
-  return {
-    page,
-    limit,
-  };
-}
-
-/**
- * Creates pagination metadata.
- */
-export function createPaginationMeta(
-  page: number,
-  limit: number,
-  total: number,
-): PaginationMeta {
-  const normalizedPage = Math.max(1, Math.floor(page));
-
-  const normalizedLimit = Math.max(1, Math.floor(limit));
-
-  const normalizedTotal = Math.max(0, Math.floor(total));
-
-  const totalPages =
-    normalizedTotal === 0 ? 0 : Math.ceil(normalizedTotal / normalizedLimit);
-
-  return {
-    page: normalizedPage,
-    limit: normalizedLimit,
-    total: normalizedTotal,
-    totalPages,
-    hasNextPage: totalPages > 0 && normalizedPage < totalPages,
-    hasPreviousPage: normalizedPage > 1 && totalPages > 0,
-  };
-}
-
-/**
- * Calculates the offset for a paginated query.
- */
-export function getPaginationOffset(input?: PaginationInput): number {
-  const { page, limit } = normalizePagination(input);
-
-  return (page - 1) * limit;
-}

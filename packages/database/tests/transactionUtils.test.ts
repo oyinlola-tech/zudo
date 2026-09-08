@@ -1,12 +1,44 @@
 import { describe, it, expect } from "vitest";
 import {
+  DatabaseClient,
+  TransactionManager,
   createTransactionContext,
   createTransactionId,
+  getTransactionContextFromError,
   isTransactionActive,
   isTransactionCommitted,
   isTransactionFailed,
-  TransactionManager,
+  noopDatabaseLogger,
+  type TransactionContext,
 } from "../src/index.js";
+import { createStubPrisma } from "./helpers/stubPrisma.js";
+
+/**
+ * Drives a managed transaction with a stub Prisma client and returns the
+ * contexts the real API hands out, so the predicates below are tested
+ * against reachable states rather than hand-built objects.
+ */
+async function runManaged(fail: boolean): Promise<{
+  readonly active: TransactionContext;
+  readonly final: TransactionContext;
+}> {
+  const client = new DatabaseClient({
+    prisma: createStubPrisma(),
+    logger: noopDatabaseLogger,
+  });
+  const manager = new TransactionManager(client);
+  let active: TransactionContext | undefined;
+  try {
+    const outcome = await manager.run(async (_tx, context) => {
+      active = context;
+      if (fail) throw new Error("boom");
+      return 1;
+    });
+    return { active: active!, final: outcome.context };
+  } catch (error) {
+    return { active: active!, final: getTransactionContextFromError(error)! };
+  }
+}
 
 describe("Transaction utilities", () => {
   describe("createTransactionId", () => {
@@ -39,12 +71,10 @@ describe("Transaction utilities", () => {
   });
 
   describe("isTransactionActive", () => {
-    it("should return true for active status", () => {
-      const context = {
-        ...createTransactionContext(),
-        status: "active" as const,
-      };
-      expect(isTransactionActive(context)).toBe(true);
+    it("should return true for the context handed to the callback", async () => {
+      const { active } = await runManaged(false);
+      expect(active.status).toBe("active");
+      expect(isTransactionActive(active)).toBe(true);
     });
 
     it("should return false for idle status", () => {
@@ -54,12 +84,12 @@ describe("Transaction utilities", () => {
   });
 
   describe("isTransactionCommitted", () => {
-    it("should return true for committed status", () => {
-      const context = {
-        ...createTransactionContext(),
-        status: "committed" as const,
-      };
-      expect(isTransactionCommitted(context)).toBe(true);
+    it("should return true for the context returned by run()", async () => {
+      const { active, final } = await runManaged(false);
+      expect(final.status).toBe("committed");
+      expect(final.transactionId).toBe(active.transactionId);
+      expect(isTransactionCommitted(final)).toBe(true);
+      expect(isTransactionCommitted(active)).toBe(false);
     });
 
     it("should return false for active transactions", () => {
@@ -69,12 +99,12 @@ describe("Transaction utilities", () => {
   });
 
   describe("isTransactionFailed", () => {
-    it("should return true for failed status", () => {
-      const context = {
-        ...createTransactionContext(),
-        status: "failed" as const,
-      };
-      expect(isTransactionFailed(context)).toBe(true);
+    it("should return true for the context attached to a failed transaction", async () => {
+      const { active, final } = await runManaged(true);
+      expect(final.status).toBe("failed");
+      expect(final.transactionId).toBe(active.transactionId);
+      expect(isTransactionFailed(final)).toBe(true);
+      expect(isTransactionFailed(active)).toBe(false);
     });
 
     it("should return false for active transactions", () => {

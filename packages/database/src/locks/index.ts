@@ -1,7 +1,7 @@
 /**
  * @zudojs/database — Locks
  *
- * Advisory and row-level database locking.
+ * Advisory and row-level database locking (PostgreSQL).
  */
 
 export {
@@ -11,6 +11,8 @@ export {
   lockRow,
   buildLockClause,
   normalizeAdvisoryKey,
+  normalizeAdvisoryKeyPair,
+  resolveLockTransactionOptions,
   type DatabaseLockMode,
   type DatabaseLockOptions,
   type DatabaseLockResult,

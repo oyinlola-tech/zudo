@@ -14,6 +14,9 @@ export {
   RelationRegistry,
   createRelationRegistry,
   validateRelation,
+  validateInclude,
+  toPrismaInclude,
+  DEFAULT_INCLUDE_DEPTH,
   isRelationType,
   isCollectionRelation,
   isSingleRelation,
@@ -21,4 +24,5 @@ export {
   type RelationType,
   type RelationLoadOptions,
   type RelationInclude,
+  type ToPrismaIncludeOptions,
 } from "./relations.definition.js";

@@ -6,12 +6,24 @@
 
 export { QueryBuilder } from "./queryBuilder.core.js";
 
-export { createQueryBuilder, cloneFilter } from "./queryBuilder.factory.js";
+export { createQueryBuilder } from "./queryBuilder.factory.js";
+
+export {
+  toPrismaWhere,
+  toPrismaArgs,
+  toPrismaOrderBy,
+  toPrismaSelect,
+  toPrismaSkipTake,
+  type PrismaWhere,
+  type PrismaQueryArgs,
+  type ToPrismaArgsOptions,
+} from "./queryBuilder.prisma.js";
 
 export type {
   QueryCondition,
   QueryFilter,
   QueryOperator,
+  RelationOperator,
   QueryBuilderState,
 } from "./queryBuilder.type.js";
 
@@ -43,4 +55,15 @@ export {
   optionalContains,
   hasConditions,
   flattenAnd,
+  cloneFilter,
+  between,
+  matchesPattern,
+  isEmpty,
+  isNotEmpty,
+  dateOnly,
+  isBefore,
+  isAfter,
+  isBetween,
+  notCondition,
+  relational,
 } from "./queryBuilder.filter.js";

@@ -1,3 +1,5 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
+
 import type {
   PaginationInput,
   PaginationMeta,
@@ -126,13 +128,19 @@ export function createPaginationMeta(
 
   const totalPages = calculateTotalPages(normalizedTotal, normalizedLimit);
 
+  const hasNextPage = totalPages > 0 && normalizedPage < totalPages;
+
+  const hasPreviousPage = normalizedPage > 1 && totalPages > 0;
+
   return {
     page: normalizedPage,
     limit: normalizedLimit,
     total: normalizedTotal,
     totalPages,
-    hasNextPage: totalPages > 0 && normalizedPage < totalPages,
-    hasPreviousPage: normalizedPage > 1 && totalPages > 0,
+    hasNextPage,
+    hasPreviousPage,
+    hasNext: hasNextPage,
+    hasPrev: hasPreviousPage,
   };
 }
 
@@ -224,9 +232,10 @@ export function getItemRange(
   const end = Math.min(start + normalizedLimit - 1, normalizedTotal);
 
   if (start > normalizedTotal) {
+    // The page lies past the end of the data set: there is no item range.
     return {
-      start: normalizedTotal,
-      end: normalizedTotal,
+      start: 0,
+      end: 0,
     };
   }
 
@@ -312,33 +321,165 @@ export function createCursorPaginatedResult<TEntity>(
 }
 
 /**
- * Encodes a cursor value.
+ * Options for encoding a cursor.
  */
-export function encodeCursor(value: unknown): string {
+export interface EncodeCursorOptions {
+  /**
+   * When supplied the cursor is signed with HMAC-SHA256 so clients cannot
+   * forge or tamper with its payload.
+   */
+  readonly secret?: string;
+}
+
+/**
+ * Options for decoding a cursor.
+ */
+export interface DecodeCursorOptions extends EncodeCursorOptions {
+  /**
+   * Keys the decoded payload may contain. Any other key is rejected.
+   */
+  readonly allowedFields?: readonly string[];
+}
+
+/**
+ * A validated cursor payload: a flat object of primitive values.
+ */
+export type CursorPayload = Readonly<
+  Record<string, string | number | boolean | null>
+>;
+
+const CURSOR_SIGNATURE_SEPARATOR = ".";
+
+const FORBIDDEN_CURSOR_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * Encodes a cursor value.
+ *
+ * Without a `secret` the cursor is plain base64url JSON and must be treated
+ * as client-controlled input; pass `allowedFields` to `decodeCursor` (or
+ * use a secret) before feeding it to a query.
+ */
+export function encodeCursor(
+  value: unknown,
+  options: EncodeCursorOptions = {},
+): string {
   const serialized = JSON.stringify(value);
 
   if (typeof serialized !== "string") {
     throw new TypeError("Cursor value could not be serialized.");
   }
 
-  return Buffer.from(serialized, "utf8").toString("base64url");
+  const payload = Buffer.from(serialized, "utf8").toString("base64url");
+
+  if (options.secret === undefined) {
+    return payload;
+  }
+
+  validateSecret(options.secret);
+
+  return `${payload}${CURSOR_SIGNATURE_SEPARATOR}${signCursor(
+    payload,
+    options.secret,
+  )}`;
 }
 
 /**
  * Decodes a cursor value.
+ *
+ * When `secret` is supplied the signature is verified; when
+ * `allowedFields` is supplied the payload must be a flat object whose keys
+ * are all allowed and whose values are primitives.
  */
-export function decodeCursor<T = unknown>(cursor: string): T {
+export function decodeCursor<T = unknown>(
+  cursor: string,
+  options: DecodeCursorOptions = {},
+): T {
   if (typeof cursor !== "string" || cursor.trim().length === 0) {
     throw new TypeError("A cursor value is required.");
   }
 
-  try {
-    const decoded = Buffer.from(cursor, "base64url").toString("utf8");
+  let payload = cursor;
 
-    return JSON.parse(decoded) as T;
+  if (options.secret !== undefined) {
+    validateSecret(options.secret);
+
+    const separator = cursor.lastIndexOf(CURSOR_SIGNATURE_SEPARATOR);
+
+    if (separator <= 0) {
+      throw new TypeError("Invalid pagination cursor signature.");
+    }
+
+    payload = cursor.slice(0, separator);
+
+    const signature = cursor.slice(separator + 1);
+
+    const expected = signCursor(payload, options.secret);
+
+    if (
+      signature.length !== expected.length ||
+      !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
+    ) {
+      throw new TypeError("Invalid pagination cursor signature.");
+    }
+  }
+
+  let decoded: unknown;
+
+  try {
+    decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
   } catch (error) {
     throw new TypeError("Invalid pagination cursor.", {
       cause: error,
     });
+  }
+
+  if (options.allowedFields !== undefined) {
+    validateCursorPayload(decoded, options.allowedFields);
+  }
+
+  return decoded as T;
+}
+
+/**
+ * Validates that a decoded cursor is a flat object of primitive values
+ * restricted to the allowed fields.
+ */
+export function validateCursorPayload(
+  value: unknown,
+  allowedFields: readonly string[],
+): asserts value is CursorPayload {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Pagination cursor payload must be an object.");
+  }
+
+  const allowed = new Set(allowedFields);
+
+  for (const [key, entry] of Object.entries(value)) {
+    if (FORBIDDEN_CURSOR_KEYS.has(key) || !allowed.has(key)) {
+      throw new TypeError(
+        `Pagination cursor contains an unexpected field "${key}".`,
+      );
+    }
+
+    if (
+      entry !== null &&
+      typeof entry !== "string" &&
+      typeof entry !== "number" &&
+      typeof entry !== "boolean"
+    ) {
+      throw new TypeError(
+        `Pagination cursor field "${key}" must be a primitive value.`,
+      );
+    }
+  }
+}
+
+function signCursor(payload: string, secret: string): string {
+  return createHmac("sha256", secret).update(payload).digest("base64url");
+}
+
+function validateSecret(secret: string): void {
+  if (typeof secret !== "string" || secret.length === 0) {
+    throw new TypeError("A cursor secret must be a non-empty string.");
   }
 }

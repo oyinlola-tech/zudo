@@ -1,8 +1,9 @@
 import {
+  DatabaseClient,
   createDatabaseClient,
-  type DatabaseClient,
   type DatabaseClientOptions,
   type DatabaseTransactionContext,
+  type PrismaClientLike,
 } from "../databaseClient/databaseClient.core.js";
 
 import type {
@@ -22,8 +23,13 @@ import type {
 export class Database {
   private readonly client: DatabaseClient;
 
-  constructor(options: DatabaseClientOptions = {}) {
-    this.client = createDatabaseClient(options);
+  /**
+   * @param options Client options, or an existing {@link DatabaseClient}
+   * to wrap so a single client is shared by the facade and other managers.
+   */
+  constructor(options: DatabaseClientOptions | DatabaseClient = {}) {
+    this.client =
+      options instanceof DatabaseClient ? options : createDatabaseClient(options);
   }
 
   /**
@@ -91,7 +97,7 @@ export class Database {
   /**
    * Returns the underlying Prisma client.
    */
-  public getPrisma() {
+  public getPrisma(): PrismaClientLike {
     return this.client.getPrisma();
   }
 
@@ -106,7 +112,9 @@ export class Database {
 /**
  * Creates a database facade.
  */
-export function createDatabase(options: DatabaseClientOptions = {}): Database {
+export function createDatabase(
+  options: DatabaseClientOptions | DatabaseClient = {},
+): Database {
   return new Database(options);
 }
 
@@ -123,10 +131,25 @@ let defaultDatabase: Database | undefined;
  *
  * The connection is not established automatically. Call
  * `connect()` during application bootstrap.
+ *
+ * @throws {TypeError} when options are supplied after the shared instance
+ * has already been created; they would otherwise be silently ignored.
+ * Call {@link resetDatabase} first to reconfigure.
  */
-export function getDatabase(options: DatabaseClientOptions = {}): Database {
+export function getDatabase(
+  options: DatabaseClientOptions | DatabaseClient = {},
+): Database {
   if (!defaultDatabase) {
     defaultDatabase = createDatabase(options);
+    return defaultDatabase;
+  }
+
+  const hasOptions =
+    options instanceof DatabaseClient || Object.keys(options).length > 0;
+  if (hasOptions && !(options instanceof DatabaseClient && defaultDatabase.getClient() === options)) {
+    throw new TypeError(
+      "The shared database instance already exists; options passed to getDatabase() would be ignored. Call resetDatabase() before reconfiguring.",
+    );
   }
 
   return defaultDatabase;
@@ -136,7 +159,7 @@ export function getDatabase(options: DatabaseClientOptions = {}): Database {
  * Connects the shared application database.
  */
 export async function connectDatabase(
-  options: DatabaseClientOptions = {},
+  options: DatabaseClientOptions | DatabaseClient = {},
 ): Promise<Database> {
   const database = getDatabase(options);
 
@@ -163,11 +186,14 @@ export async function disconnectDatabase(): Promise<void> {
  * runtime environments.
  */
 export async function resetDatabase(): Promise<void> {
-  if (!defaultDatabase) {
+  const database = defaultDatabase;
+  if (!database) {
     return;
   }
 
-  await defaultDatabase.destroy();
-
+  // Clear the singleton first so a failing destroy() never leaves a stale
+  // instance behind.
   defaultDatabase = undefined;
+
+  await database.destroy();
 }

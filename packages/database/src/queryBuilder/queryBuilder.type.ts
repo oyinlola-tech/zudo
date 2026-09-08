@@ -1,9 +1,8 @@
 import type {
   PaginationInput,
-  QueryOptions,
-  SortDirection,
   SortInput,
 } from "../databaseType/databaseType.type.js";
+import type { RelationInclude } from "../relations/relations.definition.js";
 
 export type {
   PaginationInput,
@@ -13,7 +12,11 @@ export type {
 } from "../databaseType/databaseType.type.js";
 
 /**
- * A generic query condition.
+ * Supported query operators.
+ *
+ * - `like` matches a SQL-style pattern using `%` wildcards at either end.
+ * - `some` / `every` / `none` apply a nested {@link QueryFilter} to a
+ *   collection relation; `is` / `isNot` apply one to a single relation.
  */
 export type QueryOperator =
   | "equals"
@@ -27,8 +30,19 @@ export type QueryOperator =
   | "contains"
   | "startsWith"
   | "endsWith"
+  | "like"
   | "isNull"
-  | "isNotNull";
+  | "isNotNull"
+  | "some"
+  | "every"
+  | "none"
+  | "is"
+  | "isNot";
+
+/**
+ * Operators that take a nested filter targeting a relation.
+ */
+export type RelationOperator = "some" | "every" | "none" | "is" | "isNot";
 
 /**
  * Generic filter condition.
@@ -55,6 +69,12 @@ export interface QueryFilter {
 export interface QueryBuilderState<TField extends string = string> {
   readonly filter?: QueryFilter;
   readonly pagination?: PaginationInput;
+  /**
+   * Explicit row offset. Takes precedence over `pagination.page` when both
+   * are present.
+   */
+  readonly offset?: number;
   readonly sort?: readonly SortInput<TField>[];
   readonly select?: readonly TField[];
+  readonly include?: readonly RelationInclude[];
 }

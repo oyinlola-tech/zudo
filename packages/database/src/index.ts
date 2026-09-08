@@ -24,11 +24,12 @@ export type {
   TransactionIsolationLevel,
   DatabaseOperation,
   DatabaseConnectionOptions,
+  DatabaseClientHealth,
   DatabaseHealth as DatabaseHealthInfo,
-  DatabaseMetrics,
   TransactionOptions,
   TransactionCallback,
   Repository,
+  SoftDeletableRepository,
   PaginationInput,
   PaginationMeta,
   PaginatedResult,
@@ -47,9 +48,34 @@ export { noopDatabaseLogger } from "./databaseType/index.js";
 // Client
 export {
   DatabaseClient,
+  DatabaseAbortError,
   createDatabaseClient,
+  buildPrismaTransactionOptions,
+  createAbortError,
+  raceAbort,
+  throwIfAborted,
+  SUPPORTED_ISOLATION_LEVELS,
+  normalizeDatabaseError,
+  withDatabaseErrorMetadata,
+  isPrismaError,
+  isRetryableTransactionError,
+  isConflictError,
+  isNotFoundError,
+  getDatabaseErrorCode,
+  getDatabaseErrorKind,
+  isDatabaseErrorLike,
+  toDatabaseErrorInfo,
+  RETRYABLE_DATABASE_CODES,
   type DatabaseClientOptions,
   type DatabaseTransactionContext,
+  type PrismaClientLike,
+  type PrismaDriverAdapterLike,
+  type PrismaQueryEvent,
+  type PrismaTransactionOptions,
+  type RawQueryOptions,
+  type DatabaseErrorKind,
+  type NormalizeDatabaseErrorOptions,
+  type PrismaErrorLike,
 } from "./databaseClient/index.js";
 
 // Connection
@@ -60,6 +86,7 @@ export {
   type DatabaseConnectionListener,
   type DatabaseConnectionEventDetails,
   type DatabaseConnectionManagerOptions,
+  type DatabaseReconnectOptions,
 } from "./databaseConnection/index.js";
 
 // Database facade
@@ -75,8 +102,16 @@ export {
 // Repository
 export {
   BaseRepository,
+  mapRepositoryError,
+  isPrismaErrorLike,
+  toDatabaseOperation,
   type RepositoryDelegate,
   type BaseRepositoryOptions,
+  type SoftDeleteOptions,
+  type CursorQueryOptions,
+  type TransactionClientLike,
+  type RepositoryOperation,
+  type RepositoryErrorContext,
 } from "./repository/index.js";
 
 // Transactions
@@ -87,11 +122,14 @@ export {
   withTransactionRetry,
   createTransactionContext,
   createTransactionId,
+  getTransactionContextFromError,
   isTransactionActive,
   isTransactionCommitted,
   isTransactionFailed,
   type TransactionStatus,
   type TransactionContext,
+  type TransactionOutcome,
+  type TransactionRetryOptions,
   type ManagedTransactionOptions,
 } from "./transaction/index.js";
 
@@ -108,10 +146,19 @@ export {
 export {
   QueryBuilder,
   createQueryBuilder,
+  toPrismaWhere,
+  toPrismaArgs,
+  toPrismaOrderBy,
+  toPrismaSelect,
+  toPrismaSkipTake,
   type QueryCondition,
   type QueryFilter,
   type QueryOperator,
+  type RelationOperator,
   type QueryBuilderState,
+  type PrismaWhere,
+  type PrismaQueryArgs,
+  type ToPrismaArgsOptions,
 } from "./queryBuilder/index.js";
 
 export {
@@ -143,6 +190,16 @@ export {
   hasConditions,
   flattenAnd,
   cloneFilter,
+  between,
+  matchesPattern,
+  isEmpty,
+  isNotEmpty,
+  dateOnly,
+  isBefore,
+  isAfter,
+  isBetween,
+  notCondition,
+  relational,
 } from "./queryBuilder/index.js";
 
 // Pagination
@@ -161,6 +218,11 @@ export {
   paginateCollection,
   encodeCursor,
   decodeCursor,
+  validateCursorPayload,
+  decodeKeysetCursor,
+  buildKeysetWhere,
+  createKeysetCursor,
+  createKeysetPage,
   normalizeCursorPagination,
   createCursorPaginationMeta,
   createCursorPaginatedResult,
@@ -171,6 +233,11 @@ export {
   type CursorPaginationInput,
   type CursorPaginationMeta,
   type CursorPaginatedResult,
+  type CursorPayload,
+  type EncodeCursorOptions,
+  type DecodeCursorOptions,
+  type KeysetPageOptions,
+  type KeysetWhere,
 } from "./pagination/index.js";
 
 // Relations
@@ -184,6 +251,9 @@ export {
   RelationRegistry,
   createRelationRegistry,
   validateRelation,
+  validateInclude,
+  toPrismaInclude,
+  DEFAULT_INCLUDE_DEPTH,
   isRelationType,
   isCollectionRelation,
   isSingleRelation,
@@ -191,6 +261,7 @@ export {
   type RelationType,
   type RelationLoadOptions,
   type RelationInclude,
+  type ToPrismaIncludeOptions,
 } from "./relations/index.js";
 
 // Locks
@@ -201,6 +272,8 @@ export {
   lockRow,
   buildLockClause,
   normalizeAdvisoryKey,
+  normalizeAdvisoryKeyPair,
+  resolveLockTransactionOptions,
   type DatabaseLockMode,
   type DatabaseLockOptions,
   type DatabaseLockResult,
@@ -211,11 +284,14 @@ export {
   MemoryDatabaseCache,
   createDatabaseCache,
   createCacheKey,
+  escapeCachePart,
   serializeCachePart,
   getOrSet,
   invalidateByPrefix,
+  CACHE_KEY_SEPARATOR,
   type CacheEntry,
   type CacheOptions,
+  type MemoryCacheOptions,
   type CacheStats,
   type DatabaseCache,
 } from "./cache/index.js";
@@ -230,11 +306,24 @@ export {
   getCurrentVersion,
   DEFAULT_MIGRATION_TABLE,
   DEFAULT_MIGRATION_LOCK,
+  SQL_IDENTIFIER_PATTERN,
+  validateIdentifier,
+  validateLockKey,
+  quoteIdentifier,
+  hashLockKey,
+  fnv1a64,
+  getSqlDialect,
+  isSqlDialectName,
+  UnsupportedDialectError,
+  DEFAULT_SQL_DIALECT,
   type Migration,
   type MigrationRecord,
   type MigrationResult,
   type MigrationStatus,
   type MigrationRunnerOptions,
+  type RunnerTransactionOptions,
+  type SqlDialect,
+  type SqlDialectName,
 } from "./migration/index.js";
 
 // Seeds
@@ -248,6 +337,7 @@ export {
   type Seed,
   type SeedRecord,
   type SeedResult,
+  type SeedStatus,
   type SeedRunnerOptions,
 } from "./seed/index.js";
 
@@ -257,6 +347,8 @@ export {
   checkDatabaseReadiness,
   assertDatabaseHealth,
   isDatabaseHealthy,
+  getHealthCheckCause,
+  DatabaseUnhealthyError,
   DEFAULT_HEALTH_TIMEOUT_MS,
   type DatabaseHealthStatus,
   type DatabaseHealth,

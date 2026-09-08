@@ -18,8 +18,8 @@ describe("Migration utilities", () => {
       ];
 
       const normalized = normalizeMigrations(migrations);
-      expect(normalized[0].version).toBe(1);
-      expect(normalized[1].version).toBe(2);
+      expect(normalized[0]?.version).toBe(1);
+      expect(normalized[1]?.version).toBe(2);
     });
 
     it("should handle empty migrations", () => {
@@ -39,30 +39,39 @@ describe("Migration utilities", () => {
     });
 
     it("should throw for migration without name", () => {
-      const migration = { version: 1, up: async () => {} } as Migration;
+      const migration = { version: 1, up: async () => {} } as unknown as Migration;
       expect(() => validateMigration(migration)).toThrow();
     });
 
     it("should throw for migration without version", () => {
-      const migration = { name: "test", up: async () => {} } as Migration;
+      const migration = { name: "test", up: async () => {} } as unknown as Migration;
       expect(() => validateMigration(migration)).toThrow();
     });
 
     it("should throw for migration without up function", () => {
-      const migration = { version: 1, name: "test" } as Migration;
+      const migration = { version: 1, name: "test" } as unknown as Migration;
       expect(() => validateMigration(migration)).toThrow();
+    });
+
+    it("accepts timestamp-style versions but rejects unsafe integers", () => {
+      expect(() =>
+        validateMigration({ version: 20260908120000, name: "ts", up: async () => {} }),
+      ).not.toThrow();
+      expect(() =>
+        validateMigration({ version: 2 ** 53, name: "big", up: async () => {} }),
+      ).toThrow(TypeError);
     });
   });
 
   describe("getLatestVersion", () => {
-    it("should return the latest version from the last item", () => {
+    it("should return the highest version regardless of order", () => {
       const migrations: Migration[] = [
         { version: 1, name: "first", up: async () => {} },
         { version: 3, name: "third", up: async () => {} },
         { version: 2, name: "second", up: async () => {} },
       ];
 
-      expect(getLatestVersion(migrations)).toBe(2);
+      expect(getLatestVersion(migrations)).toBe(3);
     });
 
     it("should return 0 for empty migrations", () => {

@@ -9,6 +9,8 @@ export {
   checkDatabaseReadiness,
   assertDatabaseHealth,
   isDatabaseHealthy,
+  getHealthCheckCause,
+  DatabaseUnhealthyError,
   DEFAULT_HEALTH_TIMEOUT_MS,
   type DatabaseHealthStatus,
   type DatabaseHealth,

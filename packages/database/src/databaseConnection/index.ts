@@ -11,4 +11,5 @@ export {
   type DatabaseConnectionListener,
   type DatabaseConnectionEventDetails,
   type DatabaseConnectionManagerOptions,
+  type DatabaseReconnectOptions,
 } from "./databaseConnection.manager.js";

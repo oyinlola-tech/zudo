@@ -19,6 +19,7 @@ export {
   paginateCollection,
   encodeCursor,
   decodeCursor,
+  validateCursorPayload,
   normalizeCursorPagination,
   createCursorPaginationMeta,
   createCursorPaginatedResult,
@@ -29,4 +30,16 @@ export {
   type CursorPaginationInput,
   type CursorPaginationMeta,
   type CursorPaginatedResult,
+  type CursorPayload,
+  type EncodeCursorOptions,
+  type DecodeCursorOptions,
 } from "./pagination.core.js";
+
+export {
+  decodeKeysetCursor,
+  buildKeysetWhere,
+  createKeysetCursor,
+  createKeysetPage,
+  type KeysetPageOptions,
+  type KeysetWhere,
+} from "./pagination.keyset.js";

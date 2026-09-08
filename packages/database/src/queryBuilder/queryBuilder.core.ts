@@ -9,7 +9,16 @@ import type {
   QueryOptions,
 } from "./queryBuilder.type.js";
 
-import { cloneFilter } from "./queryBuilder.factory.js";
+import { cloneFilter } from "./queryBuilder.filter.js";
+import {
+  type PrismaQueryArgs,
+  type ToPrismaArgsOptions,
+  toPrismaArgs,
+} from "./queryBuilder.prisma.js";
+import {
+  type RelationInclude,
+  includeRelation,
+} from "../relations/relations.definition.js";
 
 /**
  * Query builder used to construct database-neutral query definitions.
@@ -27,13 +36,14 @@ export class QueryBuilder<TField extends string = string> {
 
   private selectState: TField[] = [];
 
-  private _revision = 0;
+  private offsetState?: number;
+
+  private includeState: RelationInclude[] = [];
 
   private _cachedBuild?: QueryBuilderState<TField>;
 
   private invalidateCache(): void {
     this._cachedBuild = undefined;
-    this._revision++;
   }
 
   /**
@@ -251,6 +261,44 @@ export class QueryBuilder<TField extends string = string> {
   }
 
   /**
+   * Sets an explicit row offset. Takes precedence over `page()`.
+   */
+  public offset(offset: number): this {
+    if (!Number.isFinite(offset) || offset < 0) {
+      throw new TypeError("Query offset must be a non-negative number.");
+    }
+
+    this.offsetState = Math.floor(offset);
+
+    this.invalidateCache();
+
+    return this;
+  }
+
+  /**
+   * Adds relations to include. Accepts relation names or include
+   * definitions created with `includeRelation`.
+   */
+  public include(...relations: readonly (string | RelationInclude)[]): this {
+    for (const relation of relations) {
+      const include =
+        typeof relation === "string" ? includeRelation(relation) : relation;
+
+      if (!include || typeof include.relation !== "string") {
+        throw new TypeError("A relation include is required.");
+      }
+
+      if (!this.includeState.some((e) => e.relation === include.relation)) {
+        this.includeState.push(include);
+      }
+    }
+
+    this.invalidateCache();
+
+    return this;
+  }
+
+  /**
    * Sorts ascending by a field.
    */
   public orderByAsc(field: TField): this {
@@ -345,6 +393,33 @@ export class QueryBuilder<TField extends string = string> {
   }
 
   /**
+   * Clears included relations.
+   */
+  public clearInclude(): this {
+    this.includeState = [];
+
+    this.invalidateCache();
+
+    return this;
+  }
+
+  /**
+   * Resets the builder to its initial empty state.
+   */
+  public reset(): this {
+    this.filterState = undefined;
+    this.paginationState = undefined;
+    this.offsetState = undefined;
+    this.sortState = [];
+    this.selectState = [];
+    this.includeState = [];
+
+    this.invalidateCache();
+
+    return this;
+  }
+
+  /**
    * Returns the immutable query definition.
    */
   public build(): QueryBuilderState<TField> {
@@ -352,22 +427,20 @@ export class QueryBuilder<TField extends string = string> {
       return this._cachedBuild;
     }
 
-    const result = Object.freeze({
+    const result = deepFreeze({
       filter: cloneFilter(this.filterState),
       pagination: this.paginationState
-        ? Object.freeze({
-            ...this.paginationState,
-          })
+        ? { ...this.paginationState }
         : undefined,
+      offset: this.offsetState,
       sort:
         this.sortState.length > 0
-          ? Object.freeze([...this.sortState])
+          ? this.sortState.map((entry) => ({ ...entry }))
           : undefined,
-      select:
-        this.selectState.length > 0
-          ? Object.freeze([...this.selectState])
-          : undefined,
-    });
+      select: this.selectState.length > 0 ? [...this.selectState] : undefined,
+      include:
+        this.includeState.length > 0 ? [...this.includeState] : undefined,
+    }) as QueryBuilderState<TField>;
 
     this._cachedBuild = result;
 
@@ -375,13 +448,28 @@ export class QueryBuilder<TField extends string = string> {
   }
 
   /**
-   * Converts the builder into generic query options.
+   * Converts the builder into generic query options (pagination, sort and
+   * the built filter).
    */
-  public toQueryOptions(): QueryOptions<TField> {
+  public toQueryOptions(): QueryOptions<TField> & {
+    readonly filter?: QueryFilter;
+    readonly offset?: number;
+  } {
     return {
-      pagination: this.paginationState,
+      filter: cloneFilter(this.filterState),
+      pagination: this.paginationState
+        ? { ...this.paginationState }
+        : undefined,
+      offset: this.offsetState,
       sort: this.sortState.length > 0 ? [...this.sortState] : undefined,
     };
+  }
+
+  /**
+   * Translates the builder into Prisma `findMany`-style arguments.
+   */
+  public toPrismaArgs(options?: ToPrismaArgsOptions): PrismaQueryArgs {
+    return toPrismaArgs(this.build(), options);
   }
 
   /**
@@ -398,9 +486,13 @@ export class QueryBuilder<TField extends string = string> {
         }
       : undefined;
 
-    builder.sortState = [...this.sortState];
+    builder.offsetState = this.offsetState;
+
+    builder.sortState = this.sortState.map((entry) => ({ ...entry }));
 
     builder.selectState = [...this.selectState];
+
+    builder.includeState = [...this.includeState];
 
     return builder;
   }
@@ -444,4 +536,25 @@ export class QueryBuilder<TField extends string = string> {
 
     return this;
   }
+}
+
+/**
+ * Recursively freezes plain objects and arrays.
+ */
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) {
+    return value;
+  }
+
+  if (value instanceof Date) {
+    return value;
+  }
+
+  Object.freeze(value);
+
+  for (const entry of Object.values(value as Record<string, unknown>)) {
+    deepFreeze(entry);
+  }
+
+  return value;
 }

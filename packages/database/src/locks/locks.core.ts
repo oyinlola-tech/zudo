@@ -1,41 +1,84 @@
-import { DatabaseError } from "@zudojs/errors";
+import { DatabaseError, DatabaseOperation, ErrorCode } from "@zudojs/errors";
 
 import type {
   DatabaseClient,
   DatabaseTransactionContext,
 } from "../databaseClient/databaseClient.core.js";
+import { normalizeDatabaseError } from "../databaseClient/databaseClient.errors.js";
+import type { TransactionOptions } from "../databaseType/databaseType.type.js";
+import {
+  fnv1a64,
+  hashLockKey,
+  SQL_IDENTIFIER_PATTERN,
+} from "../migration/migration.helpers.js";
 
 /**
- * Supported lock modes.
+ * Supported row lock modes (PostgreSQL).
  */
 export type DatabaseLockMode =
   "for-update" | "for-no-key-update" | "for-share" | "for-key-share";
 
 /**
  * Options for acquiring a database lock.
+ *
+ * All locking in this module is PostgreSQL-specific (`pg_advisory_xact_lock`,
+ * `FOR UPDATE ... SKIP LOCKED`, `lock_timeout`).
  */
 export interface DatabaseLockOptions {
+  /**
+   * Row lock mode. Ignored for advisory locks.
+   */
   readonly mode?: DatabaseLockMode;
+
+  /**
+   * Maximum time to wait for the lock. Applied with
+   * `SET LOCAL lock_timeout` inside the transaction, so a contended lock
+   * fails with a lock-timeout error instead of Prisma's generic
+   * transaction timeout. When it exceeds Prisma's 5 s default and
+   * `transaction.timeoutMs` is not set, the transaction timeout is raised
+   * automatically (see `resolveLockTransactionOptions`).
+   */
   readonly timeoutMs?: number;
+
+  /**
+   * Row locks only: skip rows locked by other transactions instead of
+   * waiting. When the row is skipped the lock is *not* held and
+   * `acquired` is `false`.
+   */
   readonly skipLocked?: boolean;
+
+  /**
+   * Fail immediately when the lock is held by another transaction.
+   */
   readonly noWait?: boolean;
+
+  /**
+   * Advisory locks only: optional namespace. When supplied the two-int
+   * form `pg_advisory_xact_lock(int, int)` is used with the namespace
+   * hashed into the first argument, so unrelated services sharing one
+   * database cannot collide on the same 64-bit key space.
+   */
+  readonly namespace?: string;
+
+  /**
+   * Options forwarded to the transaction opened by the lock manager.
+   */
+  readonly transaction?: TransactionOptions;
 }
 
 /**
- * Result returned after executing work while holding a lock.
+ * Result of a lock acquisition.
  */
-export interface DatabaseLockResult<TResult> {
-  readonly result: TResult;
+export interface DatabaseLockResult {
+  readonly acquired: boolean;
   readonly lockKey: string;
-  readonly mode: DatabaseLockMode;
+  readonly mode?: DatabaseLockMode;
 }
 
 /**
- * Application-level lock abstraction.
+ * Application-level lock abstraction for PostgreSQL.
  *
- * Database row locks are normally acquired inside a transaction.
- * This class provides safe SQL generation for PostgreSQL-compatible
- * databases without interpolating untrusted values into SQL.
+ * Locks are acquired inside a transaction and released when it ends.
  */
 export class DatabaseLockManager {
   private readonly client: DatabaseClient;
@@ -44,16 +87,12 @@ export class DatabaseLockManager {
     if (!client) {
       throw new TypeError("A database client is required.");
     }
-
     this.client = client;
   }
 
   /**
    * Executes work inside a transaction after acquiring a PostgreSQL
    * advisory transaction lock.
-   *
-   * The lock is automatically released by PostgreSQL when the
-   * transaction ends.
    */
   public async withAdvisoryLock<TResult>(
     lockKey: string,
@@ -61,24 +100,19 @@ export class DatabaseLockManager {
     options: DatabaseLockOptions = {},
   ): Promise<TResult> {
     validateLockKey(lockKey);
-
-    if (typeof callback !== "function") {
-      throw new DatabaseError("A lock callback is required.");
-    }
+    validateCallback(callback);
 
     return this.client.transaction(async (transaction) => {
       await acquireAdvisoryLock(transaction, lockKey, options);
-
       return callback(transaction);
-    });
+    }, resolveLockTransactionOptions(options));
   }
 
   /**
-   * Acquires a row-level lock and executes work against the supplied
-   * table and identifier.
+   * Acquires a row-level lock and executes work while holding it.
    *
-   * The table name is validated as an SQL identifier before being
-   * interpolated into the query.
+   * @throws {DatabaseError} when the row does not exist or was skipped
+   * because another transaction holds it (`skipLocked`).
    */
   public async withRowLock<TResult>(
     tableName: string,
@@ -87,18 +121,24 @@ export class DatabaseLockManager {
     options: DatabaseLockOptions = {},
   ): Promise<TResult> {
     validateIdentifier(tableName, "table name");
-
     validateId(id);
-
-    if (typeof callback !== "function") {
-      throw new DatabaseError("A lock callback is required.");
-    }
+    validateCallback(callback);
 
     return this.client.transaction(async (transaction) => {
-      await lockRow(transaction, tableName, id, options);
-
+      const lock = await lockRow(transaction, tableName, id, options);
+      if (!lock.acquired) {
+        throw new DatabaseError(
+          `Row ${String(id)} in "${tableName}" is locked by another transaction.`,
+          {
+            code: ErrorCode.CONFLICT,
+            statusCode: 409,
+            operation: DatabaseOperation.QUERY,
+            metadata: { tableName, id, mode: lock.mode ?? null, skipped: true },
+          },
+        );
+      }
       return callback(transaction);
-    });
+    }, resolveLockTransactionOptions(options));
   }
 
   /**
@@ -119,93 +159,101 @@ export function createLockManager(client: DatabaseClient): DatabaseLockManager {
 /**
  * Acquires a PostgreSQL advisory transaction lock.
  *
- * The lock key is converted to a deterministic 64-bit advisory key.
+ * The lock key is hashed with FNV-1a to a signed 64-bit key (or, with a
+ * `namespace`, to a pair of signed 32-bit keys).
  */
 export async function acquireAdvisoryLock(
   transaction: DatabaseTransactionContext,
   lockKey: string,
   options: DatabaseLockOptions = {},
-): Promise<void> {
+): Promise<DatabaseLockResult> {
   validateLockKey(lockKey);
 
-  const key = normalizeAdvisoryKey(lockKey);
+  const useNamespace = options.namespace !== undefined;
+  if (useNamespace) validateLockKey(options.namespace as string, "lock namespace");
+
+  const fn = options.noWait ? "pg_try_advisory_xact_lock" : "pg_advisory_xact_lock";
+  const sql = useNamespace
+    ? `SELECT ${fn}($1, $2) AS acquired`
+    : `SELECT ${fn}($1) AS acquired`;
+  const values: readonly unknown[] = useNamespace
+    ? normalizeAdvisoryKeyPair(options.namespace as string, lockKey)
+    : [normalizeAdvisoryKey(lockKey)];
 
   try {
-    if (options.noWait) {
-      const acquired = await transaction.$queryRaw<
-        readonly [
-          {
-            acquired: boolean;
-          },
-        ]
-      >`
-          SELECT pg_try_advisory_xact_lock(
-            ${key}
-          ) AS acquired
-        `;
+    await applyLockTimeout(transaction, options.timeoutMs);
+    const rows = await transaction.$queryRawUnsafe<
+      readonly { acquired: boolean | null }[]
+    >(sql, ...values);
 
-      if (!acquired[0]?.acquired) {
-        throw new DatabaseError(
-          `Database advisory lock "${lockKey}" is already held.`,
-        );
-      }
-
-      return;
-    }
-
-    await transaction.$executeRaw`
-      SELECT pg_advisory_xact_lock(
-        ${key}
-      )
-    `;
-  } catch (error) {
-    if (error instanceof DatabaseError) {
-      throw error;
-    }
-
-    throw new DatabaseError(
-      `Failed to acquire database advisory lock "${lockKey}".`,
-      {
-        cause: error,
-        metadata: {
-          lockKey,
-          mode: options.mode ?? "for-update",
+    if (options.noWait && rows[0]?.acquired !== true) {
+      throw new DatabaseError(
+        `Database advisory lock "${lockKey}" is already held.`,
+        {
+          code: ErrorCode.CONFLICT,
+          statusCode: 409,
+          operation: DatabaseOperation.QUERY,
+          metadata: { lockKey, namespace: options.namespace ?? null },
         },
-      },
-    );
+      );
+    }
+
+    return { acquired: true, lockKey };
+  } catch (error) {
+    throw normalizeDatabaseError(error, {
+      operation: DatabaseOperation.QUERY,
+      fallbackMessage: `Failed to acquire database advisory lock "${lockKey}".`,
+      metadata: { lockKey, namespace: options.namespace ?? null },
+    });
   }
 }
 
 /**
  * Acquires a row-level PostgreSQL lock.
+ *
+ * @throws {DatabaseError} when the row does not exist.
+ * @returns `acquired: false` only when `skipLocked` skipped a row held by
+ * another transaction.
  */
 export async function lockRow(
   transaction: DatabaseTransactionContext,
   tableName: string,
   id: string | number,
   options: DatabaseLockOptions = {},
-): Promise<void> {
+): Promise<DatabaseLockResult> {
   validateIdentifier(tableName, "table name");
-
   validateId(id);
 
   const mode = options.mode ?? "for-update";
-
   const clause = buildLockClause(mode, options);
+  const lockKey = `${tableName}:${String(id)}`;
 
   try {
-    await transaction.$executeRawUnsafe(
+    await applyLockTimeout(transaction, options.timeoutMs);
+    const rows = await transaction.$queryRawUnsafe<readonly unknown[]>(
       `SELECT 1 FROM "${tableName}" WHERE "id" = $1 ${clause}`,
       id,
     );
-  } catch (error) {
-    throw new DatabaseError(`Failed to acquire row lock on "${tableName}".`, {
-      cause: error,
-      metadata: {
-        tableName,
-        id,
-        mode,
+
+    if (rows.length > 0) return { acquired: true, lockKey, mode };
+
+    if (options.skipLocked) return { acquired: false, lockKey, mode };
+
+    throw new DatabaseError(
+      `Row ${String(id)} in "${tableName}" was not found.`,
+      {
+        code: ErrorCode.RESOURCE_NOT_FOUND,
+        statusCode: 404,
+        expose: true,
+        operation: DatabaseOperation.QUERY,
+        metadata: { tableName, id, mode },
       },
+    );
+  } catch (error) {
+    throw normalizeDatabaseError(error, {
+      operation: DatabaseOperation.QUERY,
+      fallbackMessage: `Failed to acquire row lock on "${tableName}".`,
+      metadata: { tableName, id, mode },
     });
   }
 }
@@ -218,95 +266,141 @@ export function buildLockClause(
   options: DatabaseLockOptions = {},
 ): string {
   const lockMode = getLockModeSql(mode);
-
   const modifiers: string[] = [];
-
-  if (options.noWait) {
-    modifiers.push("NOWAIT");
-  } else if (options.skipLocked) {
-    modifiers.push("SKIP LOCKED");
-  }
-
+  if (options.noWait) modifiers.push("NOWAIT");
+  else if (options.skipLocked) modifiers.push("SKIP LOCKED");
   return [lockMode, ...modifiers].join(" ");
 }
 
-/**
- * Maps the public lock mode to PostgreSQL SQL.
- */
 function getLockModeSql(mode: DatabaseLockMode): string {
   switch (mode) {
     case "for-update":
       return "FOR UPDATE";
-
     case "for-no-key-update":
       return "FOR NO KEY UPDATE";
-
     case "for-share":
       return "FOR SHARE";
-
     case "for-key-share":
       return "FOR KEY SHARE";
-
     default:
       throw new TypeError(`Unsupported database lock mode: ${String(mode)}`);
   }
 }
 
 /**
- * Converts an application lock key into a deterministic signed
- * 64-bit integer represented as a bigint.
+ * Converts an application lock key into a deterministic signed 64-bit
+ * advisory key (FNV-1a 64).
  */
 export function normalizeAdvisoryKey(lockKey: string): bigint {
   validateLockKey(lockKey);
-
-  const bytes = new TextEncoder().encode(lockKey);
-
-  let hash = 1469598103934665603n;
-
-  for (const byte of bytes) {
-    hash ^= BigInt(byte);
-
-    hash = BigInt.asIntN(64, hash * 1099511628211n);
-  }
-
-  return BigInt.asIntN(64, hash);
+  return hashLockKey(lockKey);
 }
 
 /**
- * Validates an advisory lock key.
+ * Converts a namespace and key into the two signed 32-bit integers used by
+ * the two-argument advisory lock functions.
  */
-function validateLockKey(lockKey: string): void {
+export function normalizeAdvisoryKeyPair(
+  namespace: string,
+  lockKey: string,
+): readonly [number, number] {
+  validateLockKey(namespace, "lock namespace");
+  validateLockKey(lockKey);
+  return [toInt32(fnv1a64(namespace)), toInt32(fnv1a64(lockKey))];
+}
+
+function toInt32(value: bigint): number {
+  return Number(BigInt.asIntN(32, value ^ (value >> 32n)));
+}
+
+/**
+ * Prisma's default interactive-transaction timeout.
+ */
+const DEFAULT_PRISMA_TRANSACTION_TIMEOUT_MS = 5_000;
+
+/**
+ * Derives the transaction options for a lock so that `lock_timeout` is
+ * always shorter than the surrounding Prisma transaction timeout.
+ *
+ * Without this, a lock wait longer than Prisma's 5 s default would surface
+ * as a generic "transaction already closed" error instead of a lock
+ * timeout. When `transaction.timeoutMs` is not supplied it is raised to
+ * cover the lock wait plus the default budget for the callback.
+ *
+ * @throws {TypeError} when `transaction.timeoutMs` is explicitly shorter
+ * than `timeoutMs`.
+ */
+export function resolveLockTransactionOptions(
+  options: DatabaseLockOptions = {},
+): TransactionOptions | undefined {
+  const { timeoutMs, transaction } = options;
+  if (timeoutMs === undefined) return transaction;
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+    throw new TypeError("Lock timeoutMs must be a non-negative finite number.");
+  }
+
+  const explicit = transaction?.timeoutMs;
+  if (explicit !== undefined) {
+    if (explicit <= timeoutMs) {
+      throw new TypeError(
+        `Lock timeoutMs (${timeoutMs}) must be shorter than transaction.timeoutMs (${explicit}).`,
+      );
+    }
+    return transaction;
+  }
+
+  if (timeoutMs < DEFAULT_PRISMA_TRANSACTION_TIMEOUT_MS) return transaction;
+  return {
+    ...transaction,
+    timeoutMs: Math.floor(timeoutMs) + DEFAULT_PRISMA_TRANSACTION_TIMEOUT_MS,
+  };
+}
+
+/**
+ * Applies `SET LOCAL lock_timeout` for the current transaction.
+ */
+async function applyLockTimeout(
+  transaction: DatabaseTransactionContext,
+  timeoutMs: number | undefined,
+): Promise<void> {
+  if (timeoutMs === undefined) return;
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+    throw new TypeError("Lock timeoutMs must be a non-negative finite number.");
+  }
+  await transaction.$executeRawUnsafe(
+    `SET LOCAL lock_timeout = ${Math.floor(timeoutMs)}`,
+  );
+}
+
+function validateCallback(callback: unknown): void {
+  if (typeof callback !== "function") {
+    throw new TypeError("A lock callback is required.");
+  }
+}
+
+function validateLockKey(lockKey: string, name = "lock key"): void {
   if (typeof lockKey !== "string" || lockKey.trim().length === 0) {
-    throw new TypeError("A non-empty database lock key is required.");
+    throw new TypeError(`A non-empty database ${name} is required.`);
   }
-
   if (lockKey.length > 255) {
-    throw new TypeError("Database lock keys cannot exceed 255 characters.");
+    throw new TypeError(`Database ${name}s cannot exceed 255 characters.`);
   }
 }
 
-/**
- * Validates an SQL identifier.
- */
 function validateIdentifier(value: string, name: string): void {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new TypeError(`A valid ${name} is required.`);
-  }
-
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
-    throw new TypeError(`Invalid ${name}: "${value}".`);
+  if (typeof value !== "string" || !SQL_IDENTIFIER_PATTERN.test(value)) {
+    throw new TypeError(`Invalid ${name}: "${String(value)}".`);
   }
 }
 
-/**
- * Validates a database identifier value.
- */
 function validateId(id: string | number): void {
   if (typeof id === "string" && id.trim().length === 0) {
     throw new TypeError("A non-empty database identifier is required.");
   }
-
   if (typeof id === "number" && !Number.isFinite(id)) {
     throw new TypeError("A finite database identifier is required.");
+  }
+  if (typeof id !== "string" && typeof id !== "number") {
+    throw new TypeError("A database identifier must be a string or number.");
   }
 }

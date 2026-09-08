@@ -17,9 +17,9 @@ describe("Seed utilities", () => {
       ];
 
       const normalized = normalizeSeeds(seeds);
-      expect(normalized[0].name).toBe("roles");
-      expect(normalized[1].name).toBe("admin");
-      expect(normalized[2].name).toBe("users");
+      expect(normalized[0]?.name).toBe("roles");
+      expect(normalized[1]?.name).toBe("admin");
+      expect(normalized[2]?.name).toBe("users");
     });
 
     it("should handle empty seeds", () => {
@@ -38,12 +38,12 @@ describe("Seed utilities", () => {
     });
 
     it("should throw for seed without name", () => {
-      const seed = { run: async () => {} } as Seed;
+      const seed = { run: async () => {} } as unknown as Seed;
       expect(() => validateSeed(seed)).toThrow();
     });
 
     it("should throw for seed without run function", () => {
-      const seed = { name: "test" } as Seed;
+      const seed = { name: "test" } as unknown as Seed;
       expect(() => validateSeed(seed)).toThrow();
     });
   });
