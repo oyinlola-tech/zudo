@@ -10,4 +10,7 @@ export {
   createStructuredDocument,
 } from "./documentBuilder.core.js";
 
-export type { DocumentBuilderOptions } from "./documentBuilder.core.js";
+export type {
+  DocumentBuilderOptions,
+  DocumentBuilderExtras,
+} from "./documentBuilder.core.js";

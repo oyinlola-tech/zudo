@@ -10,8 +10,22 @@ export interface ParsedFrontmatter {
   readonly content: string;
 }
 
+/** Scalar value produced by the frontmatter parser. */
+export type FrontmatterScalar = string | number | boolean | null;
+
+/** Any value the frontmatter parser can produce for a key. */
+export type FrontmatterValue =
+  | FrontmatterScalar
+  | readonly FrontmatterScalar[]
+  | Readonly<Record<string, FrontmatterScalar>>;
+
 /**
  * Metadata extracted from frontmatter.
+ *
+ * The named keys below are always returned with the declared type
+ * (`version: 1.0` parses to the string `"1.0"`, `tags` items are
+ * strings). Unknown keys receive the parser's best-effort scalar,
+ * list, or one-level mapping.
  */
 export interface FrontmatterMetadata {
   readonly title?: string;
@@ -23,5 +37,5 @@ export interface FrontmatterMetadata {
   readonly deprecated?: boolean;
   readonly deprecatedMessage?: string;
   readonly visibility?: string;
-  readonly [key: string]: unknown;
+  readonly [key: string]: FrontmatterValue | undefined;
 }

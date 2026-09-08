@@ -35,17 +35,17 @@ describe("getBreadcrumbs", () => {
     const crumbs = getBreadcrumbs("routing", sampleNav);
 
     expect(crumbs).toHaveLength(3);
-    expect(crumbs[0].title).toBe("Guides");
-    expect(crumbs[1].title).toBe("HTTP");
-    expect(crumbs[2].title).toBe("Routing");
-    expect(crumbs[2].documentId).toBe("routing");
+    expect(crumbs[0]?.title).toBe("Guides");
+    expect(crumbs[1]?.title).toBe("HTTP");
+    expect(crumbs[2]?.title).toBe("Routing");
+    expect(crumbs[2]?.documentId).toBe("routing");
   });
 
   it("generates breadcrumbs for a top-level document", () => {
     const crumbs = getBreadcrumbs("api", sampleNav);
 
     expect(crumbs).toHaveLength(1);
-    expect(crumbs[0].title).toBe("API Reference");
+    expect(crumbs[0]?.title).toBe("API Reference");
   });
 
   it("returns empty for unknown document", () => {
@@ -94,19 +94,19 @@ describe("findNavigationItem", () => {
 });
 
 describe("getSiblings", () => {
-  it("returns siblings for a nested document", () => {
+  it("returns siblings for a nested document, excluding itself", () => {
     const siblings = getSiblings("routing", sampleNav);
 
-    expect(siblings).toContain("routing");
+    expect(siblings).not.toContain("routing");
     expect(siblings).toContain("middleware");
-    expect(siblings).toHaveLength(2);
+    expect(siblings).toHaveLength(1);
   });
 
-  it("returns siblings for a top-level document", () => {
+  it("returns no siblings for a lone top-level document", () => {
     const siblings = getSiblings("api", sampleNav);
 
-    expect(siblings).toContain("api");
-    expect(siblings).toHaveLength(1);
+    expect(siblings).not.toContain("api");
+    expect(siblings).toHaveLength(0);
   });
 
   it("returns empty for unknown document", () => {

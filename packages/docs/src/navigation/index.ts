@@ -9,4 +9,5 @@ export {
   flattenNavigation,
   findNavigationItem,
   getSiblings,
+  getAdjacent,
 } from "./navigation.core.js";

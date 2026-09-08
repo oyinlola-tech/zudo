@@ -3,7 +3,11 @@
  */
 
 import type { DocumentationDocument } from "../docsTypes/index.js";
-import type { ValidationResult, ValidationIssue } from "./validator.types.js";
+import {
+  toValidationResult,
+  type ValidationResult,
+  type ValidationIssue,
+} from "./validator.types.js";
 
 /**
  * Validates no duplicate IDs exist in a collection of documents.
@@ -11,7 +15,7 @@ import type { ValidationResult, ValidationIssue } from "./validator.types.js";
 export function validateNoDuplicateIds(
   documents: readonly DocumentationDocument[],
 ): ValidationResult {
-  const seen = new Map<string, string>();
+  const seen = new Set<string>();
   const issues: ValidationIssue[] = [];
 
   for (const doc of documents) {
@@ -23,12 +27,9 @@ export function validateNoDuplicateIds(
         documentId: doc.id,
       });
     } else {
-      seen.set(doc.id, doc.title);
+      seen.add(doc.id);
     }
   }
 
-  return {
-    valid: issues.length === 0,
-    issues,
-  };
+  return toValidationResult(issues);
 }

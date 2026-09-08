@@ -50,12 +50,12 @@ version: 1.0
     expect(result.metadata.visible).toBe(false);
   });
 
-  it("parses numeric values", () => {
+  it("parses numeric values but keeps version as a string", () => {
     const input = `---\nversion: 2\npriority: 10\n---\nContent`;
 
     const result = parseFrontmatter(input);
 
-    expect(result.metadata.version).toBe(2);
+    expect(result.metadata.version).toBe("2");
     expect(result.metadata.priority).toBe(10);
   });
 

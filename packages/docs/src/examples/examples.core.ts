@@ -6,6 +6,7 @@
  */
 
 import type { DocumentationMetadata } from "../docsTypes/index.js";
+import { fenceFor, sanitizeLanguage } from "../generator/generatorMarkdownNodes.js";
 
 /**
  * A code example for documentation.
@@ -34,17 +35,20 @@ export function validateExample(
   example: DocumentationExample,
 ): ExampleValidationResult {
   const errors: string[] = [];
+  const hasId =
+    typeof example.id === "string" && example.id.trim().length > 0;
+  const label = hasId ? `Example "${example.id}"` : "Example";
 
-  if (!example.id || example.id.trim().length === 0) {
+  if (!hasId) {
     errors.push("Example ID is required.");
   }
 
   if (!example.language || example.language.trim().length === 0) {
-    errors.push(`Example "${example.id}" requires a language.`);
+    errors.push(`${label} requires a language.`);
   }
 
   if (!example.code || example.code.trim().length === 0) {
-    errors.push(`Example "${example.id}" requires code content.`);
+    errors.push(`${label} requires code content.`);
   }
 
   return {
@@ -55,12 +59,18 @@ export function validateExample(
 
 /**
  * Renders an example as a markdown code block.
+ *
+ * The fence is chosen longer than any backtick run inside the code and
+ * the language is reduced to fence-safe characters, so example content
+ * cannot escape its code block.
  */
 export function renderExampleMarkdown(example: DocumentationExample): string {
   const lines: string[] = [];
+  const code = (example.code ?? "").trim();
+  const fence = fenceFor(code);
 
   if (example.title) {
-    lines.push(`### ${example.title}`);
+    lines.push(`### ${example.title.replace(/\r?\n/g, " ")}`);
     lines.push("");
   }
 
@@ -69,9 +79,9 @@ export function renderExampleMarkdown(example: DocumentationExample): string {
     lines.push("");
   }
 
-  lines.push("```" + example.language);
-  lines.push(example.code.trim());
-  lines.push("```");
+  lines.push(fence + sanitizeLanguage(example.language));
+  lines.push(code);
+  lines.push(fence);
 
   return lines.join("\n");
 }

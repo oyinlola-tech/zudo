@@ -5,13 +5,18 @@
  * produces immutable DocumentationDocument objects.
  */
 
+import { DocumentValidationError } from "@zudojs/errors";
+
 import type {
   DocumentationContent,
   DocumentationDocument,
   DocumentationCategory,
   DocumentationMetadata,
+  DocumentationNode,
   DocumentationStatus,
 } from "../docsTypes/index.js";
+import { deepFreezeClone } from "../utils/utils.freeze.js";
+import { isValidDocumentId } from "../utils/utils.helper.js";
 
 /**
  * Options for creating a document via the builder.
@@ -32,7 +37,23 @@ export interface DocumentBuilderOptions {
 }
 
 /**
+ * Options accepted by the convenience builders. The positional
+ * arguments (`id`, `title`, content) always win over these.
+ */
+export type DocumentBuilderExtras = Omit<
+  Partial<DocumentBuilderOptions>,
+  "id" | "title" | "content"
+>;
+
+/**
  * Creates a documentation document from structured options.
+ *
+ * The returned document is a deep-frozen copy: later mutation of the
+ * options object (or of nested `content`, `metadata`, `tags`) does not
+ * affect it.
+ *
+ * @throws {DocumentValidationError} when `id`, `title` or `content` is missing
+ *   or the ID is not a valid dot-separated identifier.
  *
  * @example
  * ```ts
@@ -50,20 +71,22 @@ export function createDocument(
 ): DocumentationDocument {
   validateDocumentOptions(options);
 
-  return Object.freeze({
+  const document: DocumentationDocument = {
     id: options.id,
     title: options.title,
     description: options.description,
     content: options.content,
     category: options.category,
-    tags: options.tags ? Object.freeze([...options.tags]) : undefined,
+    tags: options.tags ? [...options.tags] : undefined,
     version: options.version,
     status: options.status,
     metadata: options.metadata,
     deprecated: options.deprecated,
     deprecatedMessage: options.deprecatedMessage,
     visibility: options.visibility,
-  });
+  };
+
+  return deepFreezeClone(document);
 }
 
 /**
@@ -71,16 +94,32 @@ export function createDocument(
  * Throws on invalid input.
  */
 function validateDocumentOptions(options: DocumentBuilderOptions): void {
-  if (!options.id || options.id.trim().length === 0) {
-    throw new Error("Document ID is required.");
+  if (typeof options.id !== "string" || options.id.trim().length === 0) {
+    throw new DocumentValidationError("Document ID is required.");
   }
 
-  if (!options.title || options.title.trim().length === 0) {
-    throw new Error("Document title is required.");
+  if (!isValidDocumentId(options.id)) {
+    throw new DocumentValidationError(
+      `Document ID "${options.id}" is invalid. Use dot-separated segments of letters, digits, "_" and "-".`,
+      options.id,
+    );
   }
 
-  if (!options.content) {
-    throw new Error("Document content is required.");
+  if (
+    typeof options.title !== "string" ||
+    options.title.trim().length === 0
+  ) {
+    throw new DocumentValidationError(
+      "Document title is required.",
+      options.id,
+    );
+  }
+
+  if (!options.content || typeof options.content !== "object") {
+    throw new DocumentValidationError(
+      "Document content is required.",
+      options.id,
+    );
   }
 }
 
@@ -91,13 +130,13 @@ export function createMarkdownDocument(
   id: string,
   title: string,
   markdown: string,
-  options?: Partial<DocumentBuilderOptions>,
+  options?: DocumentBuilderExtras,
 ): DocumentationDocument {
   return createDocument({
+    ...options,
     id,
     title,
     content: { type: "markdown", value: markdown },
-    ...options,
   });
 }
 
@@ -107,16 +146,13 @@ export function createMarkdownDocument(
 export function createStructuredDocument(
   id: string,
   title: string,
-  nodes: DocumentationContent extends { readonly nodes: infer N } ? N : never,
-  options?: Partial<DocumentBuilderOptions>,
+  nodes: readonly DocumentationNode[],
+  options?: DocumentBuilderExtras,
 ): DocumentationDocument {
   return createDocument({
+    ...options,
     id,
     title,
-    content: {
-      type: "structured",
-      value: nodes,
-    } as unknown as DocumentationContent,
-    ...options,
+    content: { type: "structured", nodes },
   });
 }

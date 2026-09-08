@@ -27,6 +27,7 @@ export type {
   APISymbolKind,
   SourceLocation,
   APISymbol,
+  APIExample,
   APIParameter,
   DocumentationMetadata,
   DocumentationVersion,

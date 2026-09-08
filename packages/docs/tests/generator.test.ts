@@ -81,7 +81,7 @@ describe("generateIndex", () => {
     const index = generateIndex(docs);
 
     expect(index).toHaveLength(2);
-    expect(index[0].id).toBe("a");
-    expect(index[1].id).toBe("b");
+    expect(index[0]?.id).toBe("a");
+    expect(index[1]?.id).toBe("b");
   });
 });

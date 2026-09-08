@@ -9,4 +9,6 @@ export { parseFrontmatter, serializeFrontmatter } from "./frontmatter.core.js";
 export type {
   ParsedFrontmatter,
   FrontmatterMetadata,
+  FrontmatterScalar,
+  FrontmatterValue,
 } from "./frontmatter.core.js";

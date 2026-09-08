@@ -5,7 +5,16 @@
  */
 
 export { generateMarkdown } from "./generatorMarkdown.core.js";
-export { nodesToMarkdown } from "./generatorMarkdownNodes.js";
+export {
+  nodesToMarkdown,
+  clampHeadingLevel,
+  fenceFor,
+  sanitizeLanguage,
+  tableCell,
+} from "./generatorMarkdownNodes.js";
 export { generateJSON, generateIndex } from "./generatorJson.core.js";
 
-export type { MarkdownGeneratorOptions } from "./generator.types.js";
+export type {
+  MarkdownGeneratorOptions,
+  IndexGeneratorOptions,
+} from "./generator.types.js";

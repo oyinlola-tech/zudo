@@ -14,8 +14,24 @@ export interface ValidationIssue {
 
 /**
  * Result of validating documentation.
+ *
+ * `valid` is `false` only when at least one issue has severity
+ * `"error"`; warnings never make a result invalid.
  */
 export interface ValidationResult {
   readonly valid: boolean;
   readonly issues: readonly ValidationIssue[];
+}
+
+/**
+ * Builds a `ValidationResult` from a list of issues using the single
+ * rule shared by every validator in this package.
+ */
+export function toValidationResult(
+  issues: readonly ValidationIssue[],
+): ValidationResult {
+  return {
+    valid: !issues.some((issue) => issue.severity === "error"),
+    issues,
+  };
 }

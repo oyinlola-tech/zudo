@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createDocumentRegistry } from "../src/registry/index.js";
 import { createMarkdownDocument } from "../src/document/index.js";
+import { DuplicateDocumentError } from "../src/errors/index.js";
 
 function makeDoc(id: string, category?: string, tags?: string[]) {
   return createMarkdownDocument(id, `Title ${id}`, `# ${id}`, {
@@ -16,7 +17,7 @@ describe("DocumentRegistry", () => {
 
     registry.register(doc);
 
-    expect(registry.get("test.doc")).toBe(doc);
+    expect(registry.get("test.doc")).toEqual(doc);
     expect(registry.size).toBe(1);
   });
 
@@ -30,7 +31,10 @@ describe("DocumentRegistry", () => {
     registry.register(makeDoc("dup"));
 
     expect(() => registry.register(makeDoc("dup"))).toThrow(
-      'Duplicate document ID: "dup".',
+      DuplicateDocumentError,
+    );
+    expect(() => registry.register(makeDoc("dup"))).toThrow(
+      'Document "dup" is already registered.',
     );
   });
 

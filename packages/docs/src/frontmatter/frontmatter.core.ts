@@ -7,4 +7,6 @@ export { serializeFrontmatter } from "./frontmatter.serializer.js";
 export type {
   ParsedFrontmatter,
   FrontmatterMetadata,
+  FrontmatterScalar,
+  FrontmatterValue,
 } from "./frontmatter.types.js";

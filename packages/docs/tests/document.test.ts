@@ -101,7 +101,7 @@ describe("createMarkdownDocument", () => {
     expect(doc.id).toBe("guides.http.routing");
     expect(doc.title).toBe("HTTP Routing");
     expect(doc.content.type).toBe("markdown");
-    expect(doc.content.value).toContain("# Routing");
+    expect(doc.content).toMatchObject({ value: expect.stringContaining("# Routing") });
   });
 
   it("accepts optional overrides", () => {

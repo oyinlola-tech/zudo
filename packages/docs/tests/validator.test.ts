@@ -61,7 +61,7 @@ describe("validateNoDuplicateIds", () => {
 
     const result = validateNoDuplicateIds(docs);
     expect(result.valid).toBe(false);
-    expect(result.issues[0].code).toBe("DUPLICATE_ID");
+    expect(result.issues[0]?.code).toBe("DUPLICATE_ID");
   });
 });
 
@@ -119,7 +119,7 @@ describe("validateNavigation", () => {
 
     const result = validateNavigation(items, new Set());
     expect(result.valid).toBe(false);
-    expect(result.issues[0].code).toBe("NAVIGATION_UNKNOWN_DOCUMENT");
+    expect(result.issues[0]?.code).toBe("NAVIGATION_UNKNOWN_DOCUMENT");
   });
 
   it("checks nested children", () => {

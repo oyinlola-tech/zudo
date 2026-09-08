@@ -5,26 +5,60 @@
  * documentation documents. Prevents duplicate IDs.
  */
 
+import { DuplicateDocumentError } from "@zudojs/errors";
+
 import type {
   DocumentationDocument,
   DocumentationProvider,
 } from "../docsTypes/index.js";
+import { deepFreezeClone } from "../utils/utils.freeze.js";
+
+/** Visibility filter accepted by `getAll` and the generators. */
+export type DocumentVisibilityFilter = "SERVER" | "CLIENT" | "ALL";
+
+/** Options for `DocumentRegistry.getAll`. */
+export interface GetAllOptions {
+  /**
+   * Which documents to return. `"CLIENT"` returns documents whose
+   * `visibility` is `"CLIENT"` or unset; `"SERVER"` returns only
+   * server-only documents; `"ALL"` (default) returns everything.
+   */
+  readonly visibility?: DocumentVisibilityFilter;
+}
+
+/**
+ * Returns true when `document` should be included for the given filter.
+ */
+export function matchesVisibility(
+  document: DocumentationDocument,
+  filter: DocumentVisibilityFilter = "ALL",
+): boolean {
+  if (filter === "ALL") return true;
+  if (filter === "SERVER") return document.visibility === "SERVER";
+  return document.visibility !== "SERVER";
+}
 
 /**
  * Registry for managing documentation documents.
+ *
+ * Registered documents are stored as deep-frozen copies, so the
+ * caller's object is never mutated and later changes to it do not
+ * leak into the registry.
  */
 export class DocumentRegistry implements DocumentationProvider {
   private readonly documents = new Map<string, DocumentationDocument>();
 
   /**
-   * Registers a document. Throws if the ID is already registered.
+   * Registers a document.
+   *
+   * @throws {DuplicateDocumentError} if the ID is already registered.
    */
   register(document: DocumentationDocument): void {
     if (this.documents.has(document.id)) {
-      throw new Error(`Duplicate document ID: "${document.id}".`);
+      throw new DuplicateDocumentError(document.id);
     }
 
-    this.documents.set(document.id, Object.freeze(document));
+    this.documents.set(document.id, deepFreezeClone(document));
   }
 
   /**
@@ -44,10 +78,16 @@ export class DocumentRegistry implements DocumentationProvider {
   }
 
   /**
-   * Returns all registered documents.
+   * Returns all registered documents, optionally filtered by visibility.
    */
-  getAll(): readonly DocumentationDocument[] {
-    return Object.freeze([...this.documents.values()]);
+  getAll(options: GetAllOptions = {}): readonly DocumentationDocument[] {
+    const filter = options.visibility ?? "ALL";
+
+    return Object.freeze(
+      [...this.documents.values()].filter((doc) =>
+        matchesVisibility(doc, filter),
+      ),
+    );
   }
 
   /**
@@ -83,6 +123,14 @@ export class DocumentRegistry implements DocumentationProvider {
    */
   ids(): readonly string[] {
     return Object.freeze([...this.documents.keys()]);
+  }
+
+  /**
+   * Returns the registered IDs as a set, suitable for `validateLinks`
+   * and `validateNavigation`.
+   */
+  idSet(): ReadonlySet<string> {
+    return new Set(this.documents.keys());
   }
 
   /**

@@ -34,3 +34,6 @@ export * from "./generator/index.js";
 
 // Utils
 export * from "./utils/index.js";
+
+// Errors (re-exported from @zudojs/errors)
+export * from "./errors/index.js";
