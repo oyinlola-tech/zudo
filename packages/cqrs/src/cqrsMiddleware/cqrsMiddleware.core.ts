@@ -1,9 +1,4 @@
-import {
-  BaseError,
-  ErrorCategory,
-  ErrorCode,
-  ErrorSeverity,
-} from "@zudojs/errors";
+import { BaseError } from "@zudojs/errors";
 
 import type {
   Command,
@@ -13,6 +8,13 @@ import type {
   CommandMiddleware,
   QueryMiddleware,
 } from "../cqrsTypes/cqrsTypes.type.js";
+
+import {
+  CqrsError,
+  CqrsValidationError,
+  InvalidMiddlewareError,
+  MiddlewareExecutionError,
+} from "../cqrsErrors/cqrsError.base.js";
 
 /**
  * Next function used by middleware.
@@ -31,34 +33,178 @@ export interface MiddlewareOptions {
 }
 
 /**
+ * Measurement reported by `timingMiddleware` after every execution.
+ */
+export interface CqrsTiming {
+  /**
+   * Name given to the middleware (`options.name`, default `"timing"`).
+   */
+  readonly name: string;
+
+  /**
+   * The request that was executed.
+   */
+  readonly request: Command | Query;
+
+  /**
+   * The execution context the middleware received.
+   */
+  readonly context: CqrsContext | undefined;
+
+  /**
+   * Wall-clock duration of everything downstream of the middleware.
+   */
+  readonly durationMs: number;
+
+  /**
+   * Whether the downstream execution resolved (`true`) or threw.
+   */
+  readonly succeeded: boolean;
+
+  /**
+   * The error thrown downstream, when `succeeded` is `false`.
+   */
+  readonly error?: unknown;
+}
+
+/**
+ * Options for `timingMiddleware`.
+ */
+export interface TimingMiddlewareOptions extends MiddlewareOptions {
+  /**
+   * Receives the measurement after each execution (success or failure).
+   * Errors thrown by the callback propagate to the caller.
+   *
+   * Optional: measurements are always exposed through
+   * `TimingMiddleware.lastTiming` as well.
+   */
+  readonly onTiming?: (timing: CqrsTiming) => void | Promise<void>;
+
+  /**
+   * Monotonic clock in milliseconds. Defaults to `performance.now()`.
+   */
+  readonly now?: () => number;
+}
+
+/**
+ * Middleware returned by `timingMiddleware`.
+ *
+ * Besides acting as ordinary middleware it exposes the most recent
+ * measurement, so timings are observable even without an `onTiming`
+ * callback.
+ */
+export interface TimingMiddleware extends CqrsMiddleware {
+  /**
+   * Measurement of the most recent execution, or `undefined` before the
+   * first execution completes.
+   */
+  readonly lastTiming: CqrsTiming | undefined;
+
+  /**
+   * Number of executions measured so far.
+   */
+  readonly count: number;
+}
+
+/**
  * Middleware that measures command or query execution time.
+ *
+ * Every measurement is reported through `options.onTiming` (when given)
+ * and stored on the returned middleware as `lastTiming`.
  */
 export function timingMiddleware(
-  options: MiddlewareOptions = {},
-): CqrsMiddleware {
+  options: TimingMiddlewareOptions = {},
+): TimingMiddleware {
+  if (options.onTiming !== undefined && typeof options.onTiming !== "function") {
+    throw new InvalidMiddlewareError(
+      "timingMiddleware onTiming must be a function.",
+    );
+  }
+
+  if (options.now !== undefined && typeof options.now !== "function") {
+    throw new InvalidMiddlewareError(
+      "timingMiddleware now must be a function.",
+    );
+  }
+
   const name = options.name ?? "timing";
 
-  return async (request, context, next) => {
+  const now = options.now ?? (() => performance.now());
+
+  const onTiming = options.onTiming;
+
+  let lastTiming: CqrsTiming | undefined;
+
+  let count = 0;
+
+  const record = async (timing: CqrsTiming): Promise<void> => {
+    lastTiming = timing;
+
+    count += 1;
+
+    if (onTiming) {
+      await onTiming(timing);
+    }
+  };
+
+  const middleware = async (
+    request: Command | Query,
+    context: CqrsContext | undefined,
+    next: (request: Command | Query, context?: CqrsContext) => Promise<unknown>,
+  ): Promise<unknown> => {
     if (options.enabled === false) {
       return next(request, context);
     }
 
-    const startedAt = Date.now();
+    const startedAt = now();
+
+    let result: unknown;
 
     try {
-      return await next(request, context);
-    } finally {
-      const duration = Date.now() - startedAt;
+      result = await next(request, context);
+    } catch (error) {
+      await record({
+        name,
+        request,
+        context,
+        durationMs: now() - startedAt,
+        succeeded: false,
+        error,
+      });
 
-      void name;
-      void duration;
+      throw error;
     }
+
+    await record({
+      name,
+      request,
+      context,
+      durationMs: now() - startedAt,
+      succeeded: true,
+    });
+
+    return result;
   };
+
+  Object.defineProperty(middleware, "lastTiming", {
+    enumerable: true,
+    get: () => lastTiming,
+  });
+
+  Object.defineProperty(middleware, "count", {
+    enumerable: true,
+    get: () => count,
+  });
+
+  return middleware as TimingMiddleware;
 }
 
 /**
  * Middleware that catches unknown exceptions and normalizes them
- * into BaseError instances.
+ * into `CqrsError` instances.
+ *
+ * `BaseError` instances (including every CQRS error) pass through
+ * unchanged.
  */
 export function errorMiddleware(
   options: MiddlewareOptions = {},
@@ -75,18 +221,14 @@ export function errorMiddleware(
         throw error;
       }
 
-      throw new BaseError(
+      throw new CqrsError(
         error instanceof Error ? error.message : "CQRS execution failed.",
         {
-          code: ErrorCode.INTERNAL_ERROR,
-          category: ErrorCategory.SYSTEM,
-          severity: ErrorSeverity.ERROR,
-          statusCode: 500,
           expose: false,
           isOperational: false,
           cause: error,
           metadata: {
-            requestType: request.type,
+            requestType: getRequestType(request),
           },
         },
       );
@@ -95,7 +237,8 @@ export function errorMiddleware(
 }
 
 /**
- * Middleware that validates the basic CQRS request structure.
+ * Middleware that validates the basic CQRS request structure and throws
+ * `CqrsValidationError` when it is malformed.
  */
 export function validationMiddleware(
   options: MiddlewareOptions = {},
@@ -111,14 +254,9 @@ export function validationMiddleware(
       typeof request.type !== "string" ||
       request.type.trim().length === 0
     ) {
-      throw new BaseError("A valid CQRS request with a type is required.", {
-        code: ErrorCode.INVALID_INPUT,
-        category: ErrorCategory.VALIDATION,
-        severity: ErrorSeverity.WARNING,
-        statusCode: 400,
-        expose: true,
-        isOperational: true,
-      });
+      throw new CqrsValidationError(
+        "A valid CQRS request with a type is required.",
+      );
     }
 
     return next(request, context);
@@ -140,7 +278,7 @@ export function contextMiddleware(
       ...(context ?? {}),
       metadata: {
         ...(context?.metadata ?? {}),
-        cqrsRequestType: request.type,
+        cqrsRequestType: getRequestType(request),
       },
     };
 
@@ -149,22 +287,43 @@ export function contextMiddleware(
 }
 
 /**
- * Middleware that prevents concurrent execution of the same request type
- * when used with a shared lock implementation.
+ * Lock implementation used by `lockMiddleware`.
+ *
+ * `acquire` must resolve to a release function.
  */
 export interface CqrsLock {
   acquire(key: string): (() => void) | Promise<() => void>;
 }
 
 /**
- * Creates locking middleware.
+ * Options for `lockMiddleware`.
+ */
+export interface LockMiddlewareOptions extends MiddlewareOptions {
+  /**
+   * Derives the lock key from the request. Defaults to `request.type`,
+   * which serialises every request of that type.
+   */
+  readonly key?: (request: Command | Query, context?: CqrsContext) => string;
+}
+
+/**
+ * Creates locking middleware that prevents concurrent execution of
+ * requests sharing the same lock key.
  */
 export function lockMiddleware(
   lock: CqrsLock,
-  options: MiddlewareOptions = {},
+  options: LockMiddlewareOptions = {},
 ): CqrsMiddleware {
   if (!lock || typeof lock.acquire !== "function") {
-    throw new TypeError("A valid CQRS lock implementation is required.");
+    throw new InvalidMiddlewareError(
+      "A valid CQRS lock implementation with an acquire() method is required.",
+    );
+  }
+
+  if (options.key !== undefined && typeof options.key !== "function") {
+    throw new InvalidMiddlewareError(
+      "lockMiddleware key selector must be a function.",
+    );
   }
 
   return async (request, context, next) => {
@@ -172,7 +331,20 @@ export function lockMiddleware(
       return next(request, context);
     }
 
-    const release = await lock.acquire(request.type);
+    const key = options.key
+      ? options.key(request, context)
+      : (getRequestType(request) ?? "");
+
+    const release = await lock.acquire(key);
+
+    if (typeof release !== "function") {
+      throw new InvalidMiddlewareError(
+        `CQRS lock acquire() must resolve to a release function (key "${key}").`,
+        {
+          lockKey: key,
+        },
+      );
+    }
 
     try {
       return await next(request, context);
@@ -210,6 +382,11 @@ export function queryMiddleware(middleware: QueryMiddleware): CqrsMiddleware {
 
 /**
  * Combines multiple middleware functions into a single middleware.
+ *
+ * Each middleware may call `next()` at most once per execution; a second
+ * call throws `MiddlewareExecutionError`. The command and query buses
+ * build their pipelines with this function, so the same rule applies
+ * there.
  */
 export function composeMiddleware(
   middleware: readonly CqrsMiddleware[],
@@ -225,7 +402,7 @@ export function composeMiddleware(
       currentContext?: CqrsContext,
     ): Promise<unknown> => {
       if (currentIndex <= index) {
-        throw new Error("CQRS middleware called next() more than once.");
+        throw new MiddlewareExecutionError();
       }
 
       index = currentIndex;
@@ -302,4 +479,20 @@ export function onErrorMiddleware(
       throw error;
     }
   };
+}
+
+/**
+ * Reads the request discriminator defensively.
+ *
+ * Validation now runs inside the pipeline, so middleware may observe a
+ * malformed request before the bus rejects it.
+ */
+function getRequestType(request: unknown): string | undefined {
+  if (typeof request !== "object" || request === null) {
+    return undefined;
+  }
+
+  const type = (request as { type?: unknown }).type;
+
+  return typeof type === "string" ? type : undefined;
 }

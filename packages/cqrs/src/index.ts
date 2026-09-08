@@ -6,8 +6,14 @@
  */
 
 // Core types (interfaces, type aliases, type guards)
+//
+// The handler *interfaces* are exported as `CommandHandlerContract` /
+// `QueryHandlerContract` because the abstract classes below own the bare
+// `CommandHandler` / `QueryHandler` names.
 export {
   type CqrsContext,
+  type CommandHandler as CommandHandlerContract,
+  type QueryHandler as QueryHandlerContract,
   type CommandHandlerFunction,
   type QueryHandlerFunction,
   type CommandHandlerLike,
@@ -106,8 +112,27 @@ export * from "./cqrsMiddleware/index.js";
 // Handler Registry
 export * from "./handlerRegistry/index.js";
 
-// Decorators
-export * from "./cqrsDecorators/index.js";
+// Decorators (explicit list: nothing here may shadow the class exports above)
+export {
+  type CqrsHandlerKind,
+  type CqrsHandlerMetadata,
+  type CommandHandlerMetadata,
+  type QueryHandlerMetadata,
+  type CqrsClass,
+  type DecoratedCqrsClass,
+  CqrsHandler,
+  CommandHandlerFor,
+  QueryHandlerFor,
+  getCqrsHandlerMetadata,
+  getCommandHandlerMetadata,
+  getQueryHandlerMetadata,
+  getCqrsType,
+  isCqrsHandler,
+  isDecoratedCommandHandler,
+  isDecoratedQueryHandler,
+  createCommandHandlerDecorator,
+  createQueryHandlerDecorator,
+} from "./cqrsDecorators/index.js";
 
 // Execution Context
 export * from "./cqrsContext/index.js";

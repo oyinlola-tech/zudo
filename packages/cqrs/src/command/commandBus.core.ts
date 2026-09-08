@@ -1,10 +1,3 @@
-import {
-  BaseError,
-  ErrorCategory,
-  ErrorCode,
-  ErrorSeverity,
-} from "@zudojs/errors";
-
 import type {
   Command,
   CommandBus as CommandBusContract,
@@ -13,10 +6,21 @@ import type {
   CqrsMiddleware,
 } from "../cqrsTypes/cqrsTypes.type.js";
 
+import { executeCommandHandler } from "../command/commandHandler.core.js";
+
 import {
-  CommandHandler,
-  executeCommandHandler,
-} from "../command/commandHandler.core.js";
+  CommandHandlerNotFoundError,
+  DuplicateHandlerError,
+  InvalidCommandError,
+} from "../cqrsErrors/cqrsError.base.js";
+
+import { composeMiddleware } from "../cqrsMiddleware/cqrsMiddleware.core.js";
+
+import {
+  assertExecutableHandler,
+  assertHandlerType,
+  assertMiddleware,
+} from "../cqrsValidation/cqrsValidation.core.js";
 
 /**
  * Options for constructing a command bus.
@@ -45,8 +49,14 @@ export interface CommandRegistration<
 /**
  * Command bus implementation.
  *
- * The command bus resolves a handler by command type and executes it
- * through the registered middleware pipeline.
+ * The command bus runs every command through the registered middleware
+ * pipeline. Request validation and handler resolution happen at the end
+ * of the pipeline, so middleware observes `InvalidCommandError` and
+ * `CommandHandlerNotFoundError` like any other failure and may substitute
+ * the command (and therefore the handler) by forwarding a different
+ * request to `next()`.
+ *
+ * All failures are `CqrsError` instances (`isCqrsError(error) === true`).
  */
 export class CommandBus implements CommandBusContract {
   private readonly handlers = new Map<string, CommandHandlerLike>();
@@ -56,32 +66,34 @@ export class CommandBus implements CommandBusContract {
   private readonly contextFactory?: () => CqrsContext | Promise<CqrsContext>;
 
   constructor(options: CommandBusOptions = {}) {
-    this.middleware = [...(options.middleware ?? [])];
+    const middleware = [...(options.middleware ?? [])];
+
+    for (const entry of middleware) {
+      assertMiddleware("command", entry);
+    }
+
+    this.middleware = middleware;
 
     this.contextFactory = options.contextFactory;
   }
 
   /**
    * Registers a command handler.
+   *
+   * @throws InvalidHandlerTypeError when the type is empty or padded with whitespace.
+   * @throws HandlerConfigurationError when the handler is not callable.
+   * @throws DuplicateHandlerError when a handler already exists for the type.
    */
   public register<TCommand extends Command, TResult = void>(
     commandType: TCommand["type"],
     handler: CommandHandlerLike<TCommand, TResult>,
   ): this {
-    if (!commandType.trim()) {
-      throw new TypeError("Command type cannot be empty.");
-    }
+    assertHandlerType("command", commandType);
 
-    if (!handler) {
-      throw new TypeError(
-        `A handler is required for command "${commandType}".`,
-      );
-    }
+    assertExecutableHandler("command", commandType, handler);
 
     if (this.handlers.has(commandType)) {
-      throw new Error(
-        `A handler is already registered for command "${commandType}".`,
-      );
+      throw new DuplicateHandlerError("command", commandType);
     }
 
     this.handlers.set(commandType, handler as CommandHandlerLike);
@@ -101,15 +113,15 @@ export class CommandBus implements CommandBusContract {
   }
 
   /**
-   * Replaces an existing command handler.
+   * Replaces an existing command handler (or registers a new one).
    */
   public replace<TCommand extends Command, TResult = void>(
     commandType: TCommand["type"],
     handler: CommandHandlerLike<TCommand, TResult>,
   ): this {
-    if (!commandType.trim()) {
-      throw new TypeError("Command type cannot be empty.");
-    }
+    assertHandlerType("command", commandType);
+
+    assertExecutableHandler("command", commandType, handler);
 
     this.handlers.set(commandType, handler as CommandHandlerLike);
 
@@ -141,47 +153,33 @@ export class CommandBus implements CommandBusContract {
   }
 
   /**
-   * Executes a command.
+   * Executes a command through the middleware pipeline.
+   *
+   * @throws InvalidCommandError when the command delivered to the end of the pipeline is malformed.
+   * @throws CommandHandlerNotFoundError when no handler is registered for its type.
    */
   public async execute<TCommand extends Command, TResult = void>(
     command: TCommand,
     context?: CqrsContext,
   ): Promise<TResult> {
-    this.validateCommand(command);
-
-    const handler = this.getHandler<TCommand, TResult>(command.type);
-
-    if (!handler) {
-      throw new BaseError(
-        `No handler is registered for command "${command.type}".`,
-        {
-          code: ErrorCode.COMMAND_HANDLER_NOT_FOUND,
-          category: ErrorCategory.SYSTEM,
-          severity: ErrorSeverity.ERROR,
-          statusCode: 500,
-          expose: false,
-          isOperational: true,
-          metadata: {
-            commandType: command.type,
-          },
-        },
-      );
-    }
-
     const executionContext = await this.resolveContext(context);
 
-    const pipeline = this.buildPipeline<TCommand, TResult>(handler);
+    const pipeline = composeMiddleware(this.middleware);
 
-    return pipeline(command, executionContext);
+    const result = await pipeline(
+      command,
+      executionContext,
+      (request, requestContext) => this.dispatch(request, requestContext),
+    );
+
+    return result as TResult;
   }
 
   /**
    * Adds middleware to the end of the pipeline.
    */
   public use(middleware: CqrsMiddleware): this {
-    if (typeof middleware !== "function") {
-      throw new TypeError("Command middleware must be a function.");
-    }
+    assertMiddleware("command", middleware);
 
     this.middleware.push(middleware);
 
@@ -210,43 +208,22 @@ export class CommandBus implements CommandBusContract {
   }
 
   /**
-   * Builds the command execution pipeline.
+   * Terminal pipeline step: validates the delivered command, resolves
+   * its handler and executes it.
    */
-  private buildPipeline<TCommand extends Command, TResult>(
-    handler: CommandHandlerLike<TCommand, TResult>,
-  ): (command: TCommand, context?: CqrsContext) => Promise<TResult> {
-    let next = async (
-      command: TCommand,
-      context?: CqrsContext,
-    ): Promise<TResult> =>
-      executeCommandHandler(
-        handler as
-          | CommandHandler<TCommand, TResult>
-          | ((
-              command: TCommand,
-              context?: CqrsContext,
-            ) => TResult | Promise<TResult>),
-        command,
-        context,
-      );
+  private async dispatch(
+    request: Command | { readonly type: string },
+    context?: CqrsContext,
+  ): Promise<unknown> {
+    this.validateCommand(request);
 
-    for (let index = this.middleware.length - 1; index >= 0; index--) {
-      const middleware = this.middleware[index]!;
+    const handler = this.handlers.get(request.type);
 
-      const current = next;
-
-      next = async (command, context) =>
-        middleware(
-          command,
-          context,
-          current as (
-            request: Command | import("../cqrsTypes/cqrsTypes.type.js").Query,
-            context?: CqrsContext,
-          ) => Promise<unknown>,
-        ) as Promise<TResult>;
+    if (!handler) {
+      throw new CommandHandlerNotFoundError(request.type);
     }
 
-    return next;
+    return executeCommandHandler(handler, request, context);
   }
 
   /**
@@ -267,27 +244,15 @@ export class CommandBus implements CommandBusContract {
   /**
    * Validates a command before execution.
    */
-  private validateCommand(command: Command): void {
+  private validateCommand(command: unknown): asserts command is Command {
     if (!command || typeof command !== "object") {
-      throw new BaseError("A valid command is required.", {
-        code: ErrorCode.INVALID_COMMAND,
-        category: ErrorCategory.VALIDATION,
-        severity: ErrorSeverity.WARNING,
-        statusCode: 400,
-        expose: true,
-        isOperational: true,
-      });
+      throw new InvalidCommandError("A valid command is required.");
     }
 
-    if (typeof command.type !== "string" || command.type.trim().length === 0) {
-      throw new BaseError("Command type is required.", {
-        code: ErrorCode.INVALID_COMMAND,
-        category: ErrorCategory.VALIDATION,
-        severity: ErrorSeverity.WARNING,
-        statusCode: 400,
-        expose: true,
-        isOperational: true,
-      });
+    const type = (command as { type?: unknown }).type;
+
+    if (typeof type !== "string" || type.trim().length === 0) {
+      throw new InvalidCommandError("Command type is required.");
     }
   }
 }

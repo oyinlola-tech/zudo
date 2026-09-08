@@ -5,6 +5,16 @@ import type {
   QueryHandlerLike,
 } from "../cqrsTypes/cqrsTypes.type.js";
 
+import {
+  DuplicateHandlerError,
+  InvalidHandlerKindError,
+} from "../cqrsErrors/cqrsError.base.js";
+
+import {
+  assertExecutableHandler,
+  assertHandlerType,
+} from "../cqrsValidation/cqrsValidation.core.js";
+
 /**
  * Supported handler kinds.
  */
@@ -45,6 +55,11 @@ export type HandlerEntry = CommandHandlerEntry | QueryHandlerEntry;
  * The registry is intentionally independent from the buses so handlers
  * can be registered during application bootstrap and later consumed by
  * one or more buses.
+ *
+ * All failures are `CqrsError` instances: `InvalidHandlerTypeError` for
+ * malformed types, `HandlerConfigurationError` for non-callable handlers,
+ * `DuplicateHandlerError` for repeated registrations and
+ * `InvalidHandlerKindError` for kinds other than `"command"`/`"query"`.
  */
 export class HandlerRegistry {
   private readonly commandHandlers = new Map<string, CommandHandlerLike>();
@@ -63,7 +78,7 @@ export class HandlerRegistry {
     this.validateHandler(handler, "command", type);
 
     if (this.commandHandlers.has(type)) {
-      throw new Error(`A command handler is already registered for "${type}".`);
+      throw new DuplicateHandlerError("command", type);
     }
 
     this.commandHandlers.set(type, handler as CommandHandlerLike);
@@ -83,7 +98,7 @@ export class HandlerRegistry {
     this.validateHandler(handler, "query", type);
 
     if (this.queryHandlers.has(type)) {
-      throw new Error(`A query handler is already registered for "${type}".`);
+      throw new DuplicateHandlerError("query", type);
     }
 
     this.queryHandlers.set(type, handler as QueryHandlerLike);
@@ -95,11 +110,19 @@ export class HandlerRegistry {
    * Registers a generic handler entry.
    */
   public register(entry: HandlerEntry): this {
+    if (!entry || typeof entry !== "object") {
+      throw new InvalidHandlerKindError(entry);
+    }
+
     if (entry.kind === "command") {
       return this.registerCommand(entry.type, entry.handler);
     }
 
-    return this.registerQuery(entry.type, entry.handler);
+    if (entry.kind === "query") {
+      return this.registerQuery(entry.type, entry.handler);
+    }
+
+    throw new InvalidHandlerKindError((entry as { kind?: unknown }).kind);
   }
 
   /**
@@ -163,6 +186,8 @@ export class HandlerRegistry {
    * Removes either a command or query handler.
    */
   public unregister(kind: HandlerKind, type: string): boolean {
+    assertHandlerKind(kind);
+
     return kind === "command"
       ? this.unregisterCommand(type)
       : this.unregisterQuery(type);
@@ -206,6 +231,8 @@ export class HandlerRegistry {
    * Returns whether either kind of handler exists.
    */
   public has(kind: HandlerKind, type: string): boolean {
+    assertHandlerKind(kind);
+
     return kind === "command" ? this.hasCommand(type) : this.hasQuery(type);
   }
 
@@ -292,9 +319,7 @@ export class HandlerRegistry {
   }
 
   private validateType(type: string, kind: HandlerKind): void {
-    if (typeof type !== "string" || type.trim().length === 0) {
-      throw new TypeError(`${kind} type cannot be empty.`);
-    }
+    assertHandlerType(kind, type);
   }
 
   private validateHandler(
@@ -302,12 +327,16 @@ export class HandlerRegistry {
     kind: HandlerKind,
     type: string,
   ): void {
-    if (
-      typeof handler !== "function" &&
-      (typeof handler !== "object" || handler === null)
-    ) {
-      throw new TypeError(`A valid ${kind} handler is required for "${type}".`);
-    }
+    assertExecutableHandler(kind, type, handler);
+  }
+}
+
+/**
+ * Asserts that a handler kind is one of the supported values.
+ */
+function assertHandlerKind(kind: unknown): asserts kind is HandlerKind {
+  if (kind !== "command" && kind !== "query") {
+    throw new InvalidHandlerKindError(kind);
   }
 }
 

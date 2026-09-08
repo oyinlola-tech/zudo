@@ -35,17 +35,23 @@ export type CqrsEvent<
 
 /**
  * Input used to create a CQRS event.
+ *
+ * Identifiers are accepted as plain strings so values coming from a
+ * `CqrsContext` (`requestId`, `correlationId`, `causationId`) and from
+ * `createEventId()` can be passed without casts; the created event still
+ * carries the branded `EventId`/`EventCorrelationId` types of the base
+ * `Event` contract.
  */
 export interface CreateCqrsEventInput<
   TPayload extends Record<string, unknown> = Record<string, unknown>,
 > {
   readonly type: EventType;
   readonly payload: TPayload;
-  readonly id?: EventId;
+  readonly id?: string;
   readonly timestamp?: Date | number;
   readonly source?: string;
-  readonly correlationId?: EventCorrelationId;
-  readonly causationId?: EventCorrelationId;
+  readonly correlationId?: string;
+  readonly causationId?: string;
   readonly metadata?: Readonly<Record<string, unknown>>;
   readonly aggregateId?: string;
   readonly aggregateType?: string;
@@ -76,9 +82,10 @@ export interface CqrsEventHandlerRegistration<
 /**
  * Creates a unique CQRS event identifier.
  *
- * Delegates to the base Zudojs event ID generator.
+ * Delegates to the base Zudojs event ID generator and returns its
+ * branded `EventId` (assignable to `string`).
  */
-export function createEventId(): string {
+export function createEventId(): EventId {
   return baseCreateEventId();
 }
 
@@ -105,10 +112,10 @@ export function createCqrsEvent<TPayload extends Record<string, unknown>>(
   const base = baseCreateEvent({
     type: input.type,
     payload: input.payload,
-    id: input.id,
+    id: input.id as EventId | undefined,
     timestamp: input.timestamp,
     source: input.source,
-    correlationId: input.correlationId,
+    correlationId: input.correlationId as EventCorrelationId | undefined,
     causationId: input.causationId,
     metadata: input.metadata,
   });

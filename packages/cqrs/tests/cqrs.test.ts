@@ -14,28 +14,22 @@ import {
   commandType,
   // Query
   Query,
-  MetadataQuery,
   getQueryType,
   queryType,
   // Command Handler
-  CommandHandler,
   FunctionCommandHandler,
   createCommandHandler,
   isCommandHandler,
   isCommandHandlerLike,
   executeCommandHandler,
   // Query Handler
-  QueryHandler,
   FunctionQueryHandler,
   createQueryHandler,
   isQueryHandler,
   isQueryHandlerLike,
-  executeQueryHandler,
   // Command Bus
-  CommandBus,
   createCommandBus,
   // Query Bus
-  QueryBus,
   createQueryBus,
   // Middleware
   timingMiddleware,
@@ -47,14 +41,11 @@ import {
   afterMiddleware,
   onErrorMiddleware,
   // Handler Registry
-  HandlerRegistry,
   createHandlerRegistry,
   // Events
-  CqrsEvent,
   createEvent,
   createEventId,
   isCqrsEvent,
-  EventBus,
   createEventBus,
   // Execution Context
   createExecutionContext,
@@ -75,11 +66,18 @@ import {
   createCommandResult,
   createQueryResult,
   isSuccessfulCommandResult,
-  isFailedCommandResult,
   unwrapCommandResult,
   createEventResult,
   isEventPublished,
+  type CommandOf,
+  type QueryOf,
+  type CqrsContext,
+  type Event,
 } from "../src/index.js";
+
+type CreateUser = CommandOf<"CreateUser", { name: string }>;
+type DeleteUser = CommandOf<"DeleteUser", { id: string }>;
+type GetUser = QueryOf<"GetUser", { id: string }>;
 
 // ============================================================
 // Type Guards
@@ -113,13 +111,13 @@ describe("Commands", () => {
   it("createCommand creates frozen command objects", () => {
     const cmd = createCommand("CreateUser", { name: "Alice" });
     expect(cmd.type).toBe("CreateUser");
-    expect((cmd as any).name).toBe("Alice");
+    expect(cmd.name).toBe("Alice");
     expect(Object.isFrozen(cmd)).toBe(true);
   });
 
   it("getCommandType returns the type", () => {
     const cmd = createCommand("DeleteUser");
-    expect(getCommandType(cmd as any)).toBe("DeleteUser");
+    expect(getCommandType(cmd)).toBe("DeleteUser");
   });
 
   it("commandType creates a type factory", () => {
@@ -160,13 +158,13 @@ describe("Queries", () => {
   it("createQuery creates frozen query objects", () => {
     const q = createQuery("GetUser", { id: "123" });
     expect(q.type).toBe("GetUser");
-    expect((q as any).id).toBe("123");
+    expect(q.id).toBe("123");
     expect(Object.isFrozen(q)).toBe(true);
   });
 
   it("getQueryType returns the type", () => {
     const q = createQuery("ListUsers");
-    expect(getQueryType(q as any)).toBe("ListUsers");
+    expect(getQueryType(q)).toBe("ListUsers");
   });
 
   it("queryType creates a type factory", () => {
@@ -193,29 +191,35 @@ describe("Queries", () => {
 // ============================================================
 describe("Command Handlers", () => {
   it("FunctionCommandHandler wraps a function", async () => {
-    const handler = new FunctionCommandHandler("CreateUser", (cmd: any) => ({
-      id: "1",
-      name: cmd.name,
-    }));
+    const handler = new FunctionCommandHandler<CreateUser, { id: string; name: string }>(
+      "CreateUser",
+      (cmd) => ({
+        id: "1",
+        name: cmd.name,
+      }),
+    );
 
     expect(handler.commandType).toBe("CreateUser");
     const result = await handler.execute({
       type: "CreateUser",
       name: "Alice",
-    } as any);
+    });
     expect(result).toEqual({ id: "1", name: "Alice" });
   });
 
   it("createCommandHandler creates a handler", async () => {
-    const handler = createCommandHandler("DeleteUser", async (cmd: any) => {
-      return { deleted: cmd.id };
-    });
+    const handler = createCommandHandler<DeleteUser, { deleted: string }>(
+      "DeleteUser",
+      async (cmd) => {
+        return { deleted: cmd.id };
+      },
+    );
 
     expect(handler.commandType).toBe("DeleteUser");
     const result = await handler.execute({
       type: "DeleteUser",
       id: "1",
-    } as any);
+    });
     expect(result).toEqual({ deleted: "1" });
   });
 
@@ -234,18 +238,21 @@ describe("Command Handlers", () => {
   });
 
   it("executeCommandHandler executes function handlers", async () => {
-    const handler = (cmd: any) => `Handled ${cmd.type}`;
+    const handler = (cmd: CommandOf<"Test">) => `Handled ${cmd.type}`;
     const result = await executeCommandHandler(handler, {
       type: "Test",
-    } as any);
+    });
     expect(result).toBe("Handled Test");
   });
 
   it("executeCommandHandler executes class handlers", async () => {
-    const handler = createCommandHandler("Test", async () => "result");
+    const handler = createCommandHandler<CommandOf<"Test">, string>(
+      "Test",
+      async () => "result",
+    );
     const result = await executeCommandHandler(handler, {
       type: "Test",
-    } as any);
+    });
     expect(result).toBe("result");
   });
 });
@@ -255,20 +262,23 @@ describe("Command Handlers", () => {
 // ============================================================
 describe("Query Handlers", () => {
   it("FunctionQueryHandler wraps a function", async () => {
-    const handler = new FunctionQueryHandler("GetUser", (q: any) => ({
-      id: q.id,
-      name: "Alice",
-    }));
+    const handler = new FunctionQueryHandler<GetUser, { id: string; name: string }>(
+      "GetUser",
+      (q) => ({
+        id: q.id,
+        name: "Alice",
+      }),
+    );
 
     expect(handler.queryType).toBe("GetUser");
-    const result = await handler.execute({ type: "GetUser", id: "1" } as any);
+    const result = await handler.execute({ type: "GetUser", id: "1" });
     expect(result).toEqual({ id: "1", name: "Alice" });
   });
 
   it("createQueryHandler creates a handler", async () => {
     const handler = createQueryHandler("ListUsers", async () => []);
     expect(handler.queryType).toBe("ListUsers");
-    const result = await handler.execute({ type: "ListUsers" } as any);
+    const result = await handler.execute({ type: "ListUsers" });
     expect(result).toEqual([]);
   });
 
@@ -290,21 +300,26 @@ describe("Query Handlers", () => {
 describe("Command Bus", () => {
   it("registers and executes handlers", async () => {
     const bus = createCommandBus();
-    bus.register("CreateUser", async (cmd: any) => ({
-      id: "1",
-      name: cmd.name,
-    }));
+    bus.register<CreateUser, { id: string; name: string }>(
+      "CreateUser",
+      async (cmd) => ({
+        id: "1",
+        name: cmd.name,
+      }),
+    );
 
-    const result = await bus.execute({
+    const result = await bus.execute<CreateUser, { id: string; name: string }>({
       type: "CreateUser",
       name: "Alice",
-    } as any);
+    });
     expect(result).toEqual({ id: "1", name: "Alice" });
   });
 
   it("throws when no handler registered", async () => {
     const bus = createCommandBus();
-    await expect(bus.execute({ type: "Unknown" } as any)).rejects.toThrow();
+    await expect(bus.execute({ type: "Unknown" })).rejects.toThrow(
+      CommandHandlerNotFoundError,
+    );
   });
 
   it("throws on duplicate registration", () => {
@@ -325,7 +340,7 @@ describe("Command Bus", () => {
     const bus = createCommandBus();
     bus.register("Test", async () => "old");
     bus.replace("Test", async () => "new");
-    const result = await bus.execute({ type: "Test" } as any);
+    const result = await bus.execute({ type: "Test" });
     expect(result).toBe("new");
   });
 
@@ -363,7 +378,7 @@ describe("Command Bus", () => {
       return "done";
     });
 
-    const result = await bus.execute({ type: "Test" } as any);
+    const result = await bus.execute({ type: "Test" });
     expect(result).toBe("done");
     expect(order).toEqual(["before", "handler", "after"]);
   });
@@ -384,15 +399,20 @@ describe("Command Bus", () => {
 describe("Query Bus", () => {
   it("registers and executes handlers", async () => {
     const bus = createQueryBus();
-    bus.register("GetUser", async (q: any) => ({ id: q.id }));
+    bus.register<GetUser, { id: string }>("GetUser", async (q) => ({ id: q.id }));
 
-    const result = await bus.execute({ type: "GetUser", id: "42" } as any);
+    const result = await bus.execute<GetUser, { id: string }>({
+      type: "GetUser",
+      id: "42",
+    });
     expect(result).toEqual({ id: "42" });
   });
 
   it("throws when no handler registered", async () => {
     const bus = createQueryBus();
-    await expect(bus.execute({ type: "Unknown" } as any)).rejects.toThrow();
+    await expect(bus.execute({ type: "Unknown" })).rejects.toThrow(
+      QueryHandlerNotFoundError,
+    );
   });
 
   it("throws on duplicate registration", () => {
@@ -433,7 +453,7 @@ describe("Query Bus", () => {
       return "done";
     });
 
-    const result = await bus.execute({ type: "Test" } as any);
+    const result = await bus.execute({ type: "Test" });
     expect(result).toBe("done");
     expect(order).toEqual(["before", "handler", "after"]);
   });
@@ -444,28 +464,29 @@ describe("Query Bus", () => {
 // ============================================================
 describe("Middleware", () => {
   it("timingMiddleware measures execution", async () => {
-    const mw = timingMiddleware();
-    const result = await mw(
-      { type: "Test" } as any,
-      undefined,
-      async (req, ctx) => "done",
-    );
+    let tick = 0;
+    const mw = timingMiddleware({ now: () => (tick += 5) });
+    const result = await mw({ type: "Test" }, undefined, async () => "done");
     expect(result).toBe("done");
+    expect(mw.count).toBe(1);
+    expect(mw.lastTiming?.durationMs).toBe(5);
+    expect(mw.lastTiming?.succeeded).toBe(true);
+    expect(mw.lastTiming?.request.type).toBe("Test");
   });
 
   it("errorMiddleware wraps non-BaseError", async () => {
     const mw = errorMiddleware();
     await expect(
-      mw({ type: "Test" } as any, undefined, async () => {
+      mw({ type: "Test" }, undefined, async () => {
         throw new Error("fail");
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(CqrsError);
   });
 
   it("errorMiddleware passes through BaseError", async () => {
     const mw = errorMiddleware();
     await expect(
-      mw({ type: "Test" } as any, undefined, async () => {
+      mw({ type: "Test" }, undefined, async () => {
         throw new CqrsError("custom");
       }),
     ).rejects.toThrow("custom");
@@ -474,14 +495,14 @@ describe("Middleware", () => {
   it("validationMiddleware validates request", async () => {
     const mw = validationMiddleware();
     await expect(
-      mw(null as any, undefined, async () => "done"),
-    ).rejects.toThrow();
+      mw(null as never, undefined, async () => "done"),
+    ).rejects.toThrow(CqrsValidationError);
   });
 
   it("contextMiddleware enriches context", async () => {
     const mw = contextMiddleware();
-    let capturedCtx: any;
-    await mw({ type: "Test" } as any, undefined, async (req, ctx) => {
+    let capturedCtx: CqrsContext | undefined;
+    await mw({ type: "Test" }, undefined, async (req, ctx) => {
       capturedCtx = ctx;
       return "done";
     });
@@ -505,7 +526,7 @@ describe("Middleware", () => {
       },
     ]);
 
-    await composed({ type: "Test" } as any, undefined, async () => {
+    await composed({ type: "Test" }, undefined, async () => {
       order.push("handler");
       return "done";
     });
@@ -525,7 +546,7 @@ describe("Middleware", () => {
       order.push("before");
     });
 
-    await mw({ type: "Test" } as any, undefined, async () => {
+    await mw({ type: "Test" }, undefined, async () => {
       order.push("handler");
       return "done";
     });
@@ -539,7 +560,7 @@ describe("Middleware", () => {
       order.push(`after:${result}`);
     });
 
-    await mw({ type: "Test" } as any, undefined, async () => {
+    await mw({ type: "Test" }, undefined, async () => {
       order.push("handler");
       return "done";
     });
@@ -554,10 +575,10 @@ describe("Middleware", () => {
     });
 
     await expect(
-      mw({ type: "Test" } as any, undefined, async () => {
+      mw({ type: "Test" }, undefined, async () => {
         throw new Error("fail");
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow("fail");
 
     expect(order).toEqual(["error"]);
   });
@@ -598,8 +619,8 @@ describe("Handler Registry", () => {
     registry.registerQuery("B", async () => ({}));
     const entries = registry.getEntries();
     expect(entries).toHaveLength(2);
-    expect(entries[0].kind).toBe("command");
-    expect(entries[1].kind).toBe("query");
+    expect(entries[0]?.kind).toBe("command");
+    expect(entries[1]?.kind).toBe("query");
   });
 
   it("clear removes all handlers", () => {
@@ -644,9 +665,9 @@ describe("CQRS Events", () => {
 
   it("EventBus registers and publishes", async () => {
     const bus = createEventBus();
-    const received: any[] = [];
+    const received: Event[] = [];
 
-    bus.on("UserCreated", (event: any) => {
+    bus.on("UserCreated", (event) => {
       received.push(event);
     });
 
@@ -657,7 +678,7 @@ describe("CQRS Events", () => {
     await bus.publish(event);
 
     expect(received).toHaveLength(1);
-    expect(received[0].type).toBe("UserCreated");
+    expect(received[0]?.type).toBe("UserCreated");
   });
 
   it("EventBus supports multiple handlers per event", async () => {
@@ -791,7 +812,7 @@ describe("CQRS Errors", () => {
 describe("Results", () => {
   it("createCommandResult creates success result", () => {
     const cmd = createCommand("Test");
-    const result = createCommandResult({ id: "1" }, { command: cmd as any });
+    const result = createCommandResult({ id: "1" }, { command: cmd });
 
     expect(result.status).toBe("success");
     expect(result.result).toEqual({ id: "1" });
@@ -802,7 +823,7 @@ describe("Results", () => {
 
   it("createQueryResult creates success result", () => {
     const q = createQuery("GetUser");
-    const result = createQueryResult({ name: "Alice" }, { query: q as any });
+    const result = createQueryResult({ name: "Alice" }, { query: q });
 
     expect(result.status).toBe("success");
     expect(result.result).toEqual({ name: "Alice" });

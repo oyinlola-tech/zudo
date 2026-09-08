@@ -44,13 +44,20 @@ export function createRequestId(): string {
 
 /**
  * Creates an immutable CQRS execution context.
+ *
+ * Every context belongs to a correlation chain: when no `correlationId`
+ * is supplied the context starts a new chain using its own `requestId`,
+ * so children created with `createChildExecutionContext` always share a
+ * correlation with their root.
  */
 export function createExecutionContext(
   input: CreateExecutionContextInput = {},
 ): CqrsExecutionContext {
+  const requestId = input.requestId ?? createRequestId();
+
   const context: CqrsExecutionContext = {
-    requestId: input.requestId ?? createRequestId(),
-    correlationId: input.correlationId,
+    requestId,
+    correlationId: input.correlationId ?? requestId,
     causationId: input.causationId,
     userId: input.userId,
     tenantId: input.tenantId,
@@ -67,23 +74,38 @@ export function createExecutionContext(
 
 /**
  * Creates a child execution context while preserving correlation data.
+ *
+ * The child inherits the parent's correlation id; a parent without one
+ * (for example a hand-built object) contributes its `requestId` instead,
+ * and a fresh id is generated as a last resort, so `sharesCorrelation`
+ * holds between every parent and child. `metadata` is only set when the
+ * parent or the overrides supplied some.
  */
 export function createChildExecutionContext(
   parent: CqrsExecutionContext,
   overrides: CreateExecutionContextInput = {},
 ): CqrsExecutionContext {
+  const hasMetadata =
+    parent.metadata !== undefined || overrides.metadata !== undefined;
+
   return createExecutionContext({
     requestId: overrides.requestId,
-    correlationId: overrides.correlationId ?? parent.correlationId,
+    correlationId:
+      overrides.correlationId ??
+      parent.correlationId ??
+      parent.requestId ??
+      createRequestId(),
     causationId:
       overrides.causationId ?? parent.requestId ?? parent.causationId,
     userId: overrides.userId ?? parent.userId,
     tenantId: overrides.tenantId ?? parent.tenantId,
     source: overrides.source ?? parent.source,
-    metadata: {
-      ...(parent.metadata ?? {}),
-      ...(overrides.metadata ?? {}),
-    },
+    metadata: hasMetadata
+      ? {
+          ...(parent.metadata ?? {}),
+          ...(overrides.metadata ?? {}),
+        }
+      : undefined,
   });
 }
 

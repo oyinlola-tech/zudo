@@ -33,23 +33,10 @@ export interface CqrsContext {
 }
 
 /**
- * Result returned by a command handler.
- */
-export interface CommandResult<TResult = void> {
-  readonly result: TResult;
-  readonly commandType?: string;
-}
-
-/**
- * Result returned by a query handler.
- */
-export interface QueryResult<TResult> {
-  readonly result: TResult;
-  readonly queryType?: string;
-}
-
-/**
  * Generic command handler contract.
+ *
+ * Any object exposing an `execute` method satisfies this contract; the
+ * abstract `CommandHandler` class in `command/` is one implementation.
  */
 export interface CommandHandler<
   TCommand extends Command = Command,
@@ -60,6 +47,9 @@ export interface CommandHandler<
 
 /**
  * Generic query handler contract.
+ *
+ * Any object exposing an `execute` method satisfies this contract; the
+ * abstract `QueryHandler` class in `query/` is one implementation.
  */
 export interface QueryHandler<TQuery extends Query = Query, TResult = unknown> {
   execute(query: TQuery, context?: CqrsContext): Promise<TResult> | TResult;
@@ -183,26 +173,33 @@ export interface QueryBus {
 
 /**
  * Converts a command type into a strongly typed command definition.
+ *
+ * The payload defaults to an empty object (`Record<never, never>`), so
+ * `CommandOf<"Ping">` is satisfied by `{ type: "Ping" }`. A `type` key in
+ * the payload is dropped: the discriminator always wins, mirroring
+ * `createCommand`.
  */
 export type CommandOf<
   TType extends string,
-  TPayload extends Record<string, unknown> = Record<string, never>,
+  TPayload extends Record<string, unknown> = Record<never, never>,
 > = Readonly<
   {
     readonly type: TType;
-  } & TPayload
+  } & Omit<TPayload, "type">
 >;
 
 /**
  * Converts a query type into a strongly typed query definition.
+ *
+ * See `CommandOf` for the payload defaulting and `type` precedence rules.
  */
 export type QueryOf<
   TType extends string,
-  TPayload extends Record<string, unknown> = Record<string, never>,
+  TPayload extends Record<string, unknown> = Record<never, never>,
 > = Readonly<
   {
     readonly type: TType;
-  } & TPayload
+  } & Omit<TPayload, "type">
 >;
 
 /**
@@ -214,24 +211,6 @@ export type CqrsRequestType<TRequest extends CqrsRequest> = TRequest["type"];
  * Extracts the payload of a command or query without its discriminator.
  */
 export type CqrsPayload<TRequest extends CqrsRequest> = Omit<TRequest, "type">;
-
-/**
- * Determines whether a value is a command.
- */
-export function isCommand(value: unknown): value is Command {
-  return isCqrsRequest(value) && "type" in value;
-}
-
-/**
- * Determines whether a value is a query.
- *
- * Since commands and queries share the same runtime shape, this helper
- * should normally be used only when the surrounding code already knows
- * the request belongs to the query pipeline.
- */
-export function isQuery(value: unknown): value is Query {
-  return isCqrsRequest(value);
-}
 
 /**
  * Determines whether an unknown value satisfies the basic CQRS request shape.

@@ -1,10 +1,3 @@
-import {
-  BaseError,
-  ErrorCategory,
-  ErrorCode,
-  ErrorSeverity,
-} from "@zudojs/errors";
-
 import type {
   Query,
   QueryBus as QueryBusContract,
@@ -13,10 +6,21 @@ import type {
   CqrsMiddleware,
 } from "../cqrsTypes/cqrsTypes.type.js";
 
+import { executeQueryHandler } from "../query/queryHandler.core.js";
+
 import {
-  QueryHandler,
-  executeQueryHandler,
-} from "../query/queryHandler.core.js";
+  QueryHandlerNotFoundError,
+  DuplicateHandlerError,
+  InvalidQueryError,
+} from "../cqrsErrors/cqrsError.base.js";
+
+import { composeMiddleware } from "../cqrsMiddleware/cqrsMiddleware.core.js";
+
+import {
+  assertExecutableHandler,
+  assertHandlerType,
+  assertMiddleware,
+} from "../cqrsValidation/cqrsValidation.core.js";
 
 /**
  * Options for constructing a query bus.
@@ -45,8 +49,14 @@ export interface QueryRegistration<
 /**
  * Query bus implementation.
  *
- * The query bus resolves a handler by query type and executes it
- * through the registered middleware pipeline.
+ * The query bus runs every query through the registered middleware
+ * pipeline. Request validation and handler resolution happen at the end
+ * of the pipeline, so middleware observes `InvalidQueryError` and
+ * `QueryHandlerNotFoundError` like any other failure and may substitute
+ * the query (and therefore the handler) by forwarding a different
+ * request to `next()`.
+ *
+ * All failures are `CqrsError` instances (`isCqrsError(error) === true`).
  */
 export class QueryBus implements QueryBusContract {
   private readonly handlers = new Map<string, QueryHandlerLike>();
@@ -56,30 +66,34 @@ export class QueryBus implements QueryBusContract {
   private readonly contextFactory?: () => CqrsContext | Promise<CqrsContext>;
 
   constructor(options: QueryBusOptions = {}) {
-    this.middleware = [...(options.middleware ?? [])];
+    const middleware = [...(options.middleware ?? [])];
+
+    for (const entry of middleware) {
+      assertMiddleware("query", entry);
+    }
+
+    this.middleware = middleware;
 
     this.contextFactory = options.contextFactory;
   }
 
   /**
    * Registers a query handler.
+   *
+   * @throws InvalidHandlerTypeError when the type is empty or padded with whitespace.
+   * @throws HandlerConfigurationError when the handler is not callable.
+   * @throws DuplicateHandlerError when a handler already exists for the type.
    */
   public register<TQuery extends Query, TResult = unknown>(
     queryType: TQuery["type"],
     handler: QueryHandlerLike<TQuery, TResult>,
   ): this {
-    if (!queryType.trim()) {
-      throw new TypeError("Query type cannot be empty.");
-    }
+    assertHandlerType("query", queryType);
 
-    if (!handler) {
-      throw new TypeError(`A handler is required for query "${queryType}".`);
-    }
+    assertExecutableHandler("query", queryType, handler);
 
     if (this.handlers.has(queryType)) {
-      throw new Error(
-        `A handler is already registered for query "${queryType}".`,
-      );
+      throw new DuplicateHandlerError("query", queryType);
     }
 
     this.handlers.set(queryType, handler as QueryHandlerLike);
@@ -99,15 +113,15 @@ export class QueryBus implements QueryBusContract {
   }
 
   /**
-   * Replaces an existing query handler.
+   * Replaces an existing query handler (or registers a new one).
    */
   public replace<TQuery extends Query, TResult = unknown>(
     queryType: TQuery["type"],
     handler: QueryHandlerLike<TQuery, TResult>,
   ): this {
-    if (!queryType.trim()) {
-      throw new TypeError("Query type cannot be empty.");
-    }
+    assertHandlerType("query", queryType);
+
+    assertExecutableHandler("query", queryType, handler);
 
     this.handlers.set(queryType, handler as QueryHandlerLike);
 
@@ -139,47 +153,33 @@ export class QueryBus implements QueryBusContract {
   }
 
   /**
-   * Executes a query.
+   * Executes a query through the middleware pipeline.
+   *
+   * @throws InvalidQueryError when the query delivered to the end of the pipeline is malformed.
+   * @throws QueryHandlerNotFoundError when no handler is registered for its type.
    */
   public async execute<TQuery extends Query, TResult = unknown>(
     query: TQuery,
     context?: CqrsContext,
   ): Promise<TResult> {
-    this.validateQuery(query);
-
-    const handler = this.getHandler<TQuery, TResult>(query.type);
-
-    if (!handler) {
-      throw new BaseError(
-        `No handler is registered for query "${query.type}".`,
-        {
-          code: ErrorCode.QUERY_HANDLER_NOT_FOUND,
-          category: ErrorCategory.SYSTEM,
-          severity: ErrorSeverity.ERROR,
-          statusCode: 500,
-          expose: false,
-          isOperational: true,
-          metadata: {
-            queryType: query.type,
-          },
-        },
-      );
-    }
-
     const executionContext = await this.resolveContext(context);
 
-    const pipeline = this.buildPipeline<TQuery, TResult>(handler);
+    const pipeline = composeMiddleware(this.middleware);
 
-    return pipeline(query, executionContext);
+    const result = await pipeline(
+      query,
+      executionContext,
+      (request, requestContext) => this.dispatch(request, requestContext),
+    );
+
+    return result as TResult;
   }
 
   /**
    * Adds middleware to the end of the pipeline.
    */
   public use(middleware: CqrsMiddleware): this {
-    if (typeof middleware !== "function") {
-      throw new TypeError("Query middleware must be a function.");
-    }
+    assertMiddleware("query", middleware);
 
     this.middleware.push(middleware);
 
@@ -208,40 +208,22 @@ export class QueryBus implements QueryBusContract {
   }
 
   /**
-   * Builds the query execution pipeline.
+   * Terminal pipeline step: validates the delivered query, resolves
+   * its handler and executes it.
    */
-  private buildPipeline<TQuery extends Query, TResult>(
-    handler: QueryHandlerLike<TQuery, TResult>,
-  ): (query: TQuery, context?: CqrsContext) => Promise<TResult> {
-    let next = async (query: TQuery, context?: CqrsContext): Promise<TResult> =>
-      executeQueryHandler(
-        handler as
-          | QueryHandler<TQuery, TResult>
-          | ((
-              query: TQuery,
-              context?: CqrsContext,
-            ) => TResult | Promise<TResult>),
-        query,
-        context,
-      );
+  private async dispatch(
+    request: Query | { readonly type: string },
+    context?: CqrsContext,
+  ): Promise<unknown> {
+    this.validateQuery(request);
 
-    for (let index = this.middleware.length - 1; index >= 0; index--) {
-      const middleware = this.middleware[index]!;
+    const handler = this.handlers.get(request.type);
 
-      const current = next;
-
-      next = async (query, context) =>
-        middleware(
-          query,
-          context,
-          current as (
-            request: import("../cqrsTypes/cqrsTypes.type.js").Command | Query,
-            context?: CqrsContext,
-          ) => Promise<unknown>,
-        ) as Promise<TResult>;
+    if (!handler) {
+      throw new QueryHandlerNotFoundError(request.type);
     }
 
-    return next;
+    return executeQueryHandler(handler, request, context);
   }
 
   /**
@@ -262,27 +244,15 @@ export class QueryBus implements QueryBusContract {
   /**
    * Validates a query before execution.
    */
-  private validateQuery(query: Query): void {
+  private validateQuery(query: unknown): asserts query is Query {
     if (!query || typeof query !== "object") {
-      throw new BaseError("A valid query is required.", {
-        code: ErrorCode.INVALID_QUERY,
-        category: ErrorCategory.VALIDATION,
-        severity: ErrorSeverity.WARNING,
-        statusCode: 400,
-        expose: true,
-        isOperational: true,
-      });
+      throw new InvalidQueryError("A valid query is required.");
     }
 
-    if (typeof query.type !== "string" || query.type.trim().length === 0) {
-      throw new BaseError("Query type is required.", {
-        code: ErrorCode.INVALID_QUERY,
-        category: ErrorCategory.VALIDATION,
-        severity: ErrorSeverity.WARNING,
-        statusCode: 400,
-        expose: true,
-        isOperational: true,
-      });
+    const type = (query as { type?: unknown }).type;
+
+    if (typeof type !== "string" || type.trim().length === 0) {
+      throw new InvalidQueryError("Query type is required.");
     }
   }
 }

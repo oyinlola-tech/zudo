@@ -1,5 +1,9 @@
 import type { Command, Query } from "../cqrsTypes/cqrsTypes.type.js";
 
+import { HandlerConfigurationError } from "../cqrsErrors/cqrsError.base.js";
+
+import { assertHandlerType } from "../cqrsValidation/cqrsValidation.core.js";
+
 /**
  * Metadata key used to identify CQRS handler configuration.
  */
@@ -90,26 +94,19 @@ export function CqrsHandler<TType extends string>(
       type,
     });
 
-    Object.defineProperty(constructor, CQRS_HANDLER_METADATA, {
-      configurable: false,
-      enumerable: false,
-      writable: false,
-      value: metadata,
-    });
+    defineMetadata(constructor, CQRS_HANDLER_METADATA, metadata);
 
-    Object.defineProperty(constructor, CQRS_TYPE_METADATA, {
-      configurable: false,
-      enumerable: false,
-      writable: false,
-      value: type,
-    });
+    defineMetadata(constructor, CQRS_TYPE_METADATA, type);
   };
 }
 
 /**
- * Marks a class as a command handler.
+ * Marks a class as the command handler for `type`.
+ *
+ * Named `CommandHandlerFor` so it does not collide with the abstract
+ * `CommandHandler` class exported from the same package.
  */
-export function CommandHandler(type: string): ClassDecorator {
+export function CommandHandlerFor(type: string): ClassDecorator {
   validateHandlerMetadata("command", type);
 
   return (target) => {
@@ -120,33 +117,21 @@ export function CommandHandler(type: string): ClassDecorator {
       type,
     });
 
-    Object.defineProperty(constructor, COMMAND_HANDLER_METADATA, {
-      configurable: false,
-      enumerable: false,
-      writable: false,
-      value: metadata,
-    });
+    defineMetadata(constructor, COMMAND_HANDLER_METADATA, metadata);
 
-    Object.defineProperty(constructor, CQRS_HANDLER_METADATA, {
-      configurable: false,
-      enumerable: false,
-      writable: false,
-      value: metadata,
-    });
+    defineMetadata(constructor, CQRS_HANDLER_METADATA, metadata);
 
-    Object.defineProperty(constructor, CQRS_TYPE_METADATA, {
-      configurable: false,
-      enumerable: false,
-      writable: false,
-      value: type,
-    });
+    defineMetadata(constructor, CQRS_TYPE_METADATA, type);
   };
 }
 
 /**
- * Marks a class as a query handler.
+ * Marks a class as the query handler for `type`.
+ *
+ * Named `QueryHandlerFor` so it does not collide with the abstract
+ * `QueryHandler` class exported from the same package.
  */
-export function QueryHandler(type: string): ClassDecorator {
+export function QueryHandlerFor(type: string): ClassDecorator {
   validateHandlerMetadata("query", type);
 
   return (target) => {
@@ -157,26 +142,11 @@ export function QueryHandler(type: string): ClassDecorator {
       type,
     });
 
-    Object.defineProperty(constructor, QUERY_HANDLER_METADATA, {
-      configurable: false,
-      enumerable: false,
-      writable: false,
-      value: metadata,
-    });
+    defineMetadata(constructor, QUERY_HANDLER_METADATA, metadata);
 
-    Object.defineProperty(constructor, CQRS_HANDLER_METADATA, {
-      configurable: false,
-      enumerable: false,
-      writable: false,
-      value: metadata,
-    });
+    defineMetadata(constructor, CQRS_HANDLER_METADATA, metadata);
 
-    Object.defineProperty(constructor, CQRS_TYPE_METADATA, {
-      configurable: false,
-      enumerable: false,
-      writable: false,
-      value: type,
-    });
+    defineMetadata(constructor, CQRS_TYPE_METADATA, type);
   };
 }
 
@@ -238,16 +208,16 @@ export function isCqrsHandler(target: unknown): boolean {
 }
 
 /**
- * Determines whether a class is decorated as a command handler.
+ * Determines whether a class is decorated with `CommandHandlerFor`.
  */
-export function isCommandHandler(target: unknown): boolean {
+export function isDecoratedCommandHandler(target: unknown): boolean {
   return getCommandHandlerMetadata(target) !== undefined;
 }
 
 /**
- * Determines whether a class is decorated as a query handler.
+ * Determines whether a class is decorated with `QueryHandlerFor`.
  */
-export function isQueryHandler(target: unknown): boolean {
+export function isDecoratedQueryHandler(target: unknown): boolean {
   return getQueryHandlerMetadata(target) !== undefined;
 }
 
@@ -255,21 +225,93 @@ export function isQueryHandler(target: unknown): boolean {
  * Creates a reusable command handler decorator.
  */
 export function createCommandHandlerDecorator(type: string): ClassDecorator {
-  return CommandHandler(type);
+  return CommandHandlerFor(type);
 }
 
 /**
  * Creates a reusable query handler decorator.
  */
 export function createQueryHandlerDecorator(type: string): ClassDecorator {
-  return QueryHandler(type);
+  return QueryHandlerFor(type);
 }
 
 /**
  * Validates decorator arguments.
  */
 function validateHandlerMetadata(kind: CqrsHandlerKind, type: string): void {
-  if (typeof type !== "string" || type.trim().length === 0) {
-    throw new TypeError(`${kind} handler type cannot be empty.`);
+  assertHandlerType(kind, type);
+}
+
+/**
+ * Defines immutable metadata on a constructor.
+ *
+ * Re-applying a decorator that carries identical metadata is a no-op, so
+ * stacking `CqrsHandler("command", "A")` with `CommandHandlerFor("A")`
+ * works. Conflicting metadata throws `HandlerConfigurationError`.
+ */
+function defineMetadata(
+  constructor: DecoratedCqrsClass,
+  key: symbol,
+  value: CqrsHandlerMetadata | string,
+): void {
+  if (Object.prototype.hasOwnProperty.call(constructor, key)) {
+    const existing = (constructor as unknown as Record<symbol, unknown>)[key];
+
+    if (isSameMetadata(existing, value)) {
+      return;
+    }
+
+    throw new HandlerConfigurationError(
+      `Class "${constructor.name || "<anonymous>"}" already carries conflicting CQRS handler metadata (${describeMetadata(existing)} vs ${describeMetadata(value)}).`,
+      {
+        className: constructor.name,
+        existing: describeMetadata(existing),
+        incoming: describeMetadata(value),
+      },
+    );
   }
+
+  Object.defineProperty(constructor, key, {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value,
+  });
+}
+
+/**
+ * Compares two metadata values structurally.
+ */
+function isSameMetadata(existing: unknown, incoming: unknown): boolean {
+  if (typeof incoming === "string") {
+    return existing === incoming;
+  }
+
+  if (typeof existing !== "object" || existing === null) {
+    return false;
+  }
+
+  const current = existing as Partial<CqrsHandlerMetadata>;
+
+  return (
+    current.kind === (incoming as CqrsHandlerMetadata).kind &&
+    current.type === (incoming as CqrsHandlerMetadata).type
+  );
+}
+
+/**
+ * Renders metadata for error messages.
+ */
+function describeMetadata(value: unknown): string {
+  if (typeof value === "string") {
+    return `"${value}"`;
+  }
+
+  if (typeof value === "object" && value !== null) {
+    const metadata = value as Partial<CqrsHandlerMetadata>;
+
+    return `${String(metadata.kind)}:"${String(metadata.type)}"`;
+  }
+
+  return String(value);
 }

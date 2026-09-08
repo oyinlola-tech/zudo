@@ -1,8 +1,13 @@
 import type {
   CommandHandler as CommandHandlerContract,
+  CommandHandlerLike,
   Command,
   CqrsContext,
 } from "../cqrsTypes/cqrsTypes.type.js";
+
+import { HandlerConfigurationError } from "../cqrsErrors/cqrsError.base.js";
+
+import { isExecutableHandler } from "../cqrsValidation/cqrsValidation.core.js";
 
 /**
  * Abstract base class for command handlers.
@@ -52,7 +57,13 @@ export class FunctionCommandHandler<
     super();
 
     if (typeof handler !== "function") {
-      throw new TypeError("Command handler must be a function.");
+      throw new HandlerConfigurationError(
+        "Command handler must be a function.",
+        {
+          handlerKind: "command",
+          handlerType: commandType,
+        },
+      );
     }
 
     this.commandType = commandType;
@@ -90,37 +101,46 @@ export function isCommandHandler(value: unknown): value is CommandHandler {
 
 /**
  * Determines whether a value can be used as a command handler.
+ *
+ * Accepts handler functions, `CommandHandler` instances and any plain
+ * object exposing an `execute` method (the `CommandHandler` interface).
  */
-export function isCommandHandlerLike(
-  value: unknown,
-): value is
-  CommandHandler | ((command: Command, context?: CqrsContext) => unknown) {
-  return value instanceof CommandHandler || typeof value === "function";
+export function isCommandHandlerLike(value: unknown): value is CommandHandlerLike {
+  return isExecutableHandler(value);
 }
 
 /**
  * Executes either an object-based or function-based command handler.
+ *
+ * Object handlers only need an `execute` method; they do not have to
+ * extend the abstract `CommandHandler` class.
  */
 export async function executeCommandHandler<
   TCommand extends Command,
   TResult = void,
 >(
-  handler:
-    | CommandHandler<TCommand, TResult>
-    | ((
-        command: TCommand,
-        context?: CqrsContext,
-      ) => TResult | Promise<TResult>),
+  handler: CommandHandlerLike<TCommand, TResult>,
   command: TCommand,
   context?: CqrsContext,
 ): Promise<TResult> {
-  if (handler instanceof CommandHandler) {
-    return await handler.execute(command, context);
-  }
-
   if (typeof handler === "function") {
     return await handler(command, context);
   }
 
-  throw new TypeError(`Invalid command handler for "${command.type}".`);
+  if (
+    typeof handler === "object" &&
+    handler !== null &&
+    typeof (handler as Partial<CommandHandlerContract<TCommand, TResult>>)
+      .execute === "function"
+  ) {
+    return await handler.execute(command, context);
+  }
+
+  throw new HandlerConfigurationError(
+    `Invalid command handler for "${command.type}": expected a function or an object with an execute() method.`,
+    {
+      handlerKind: "command",
+      handlerType: command.type,
+    },
+  );
 }

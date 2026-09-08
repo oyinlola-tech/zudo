@@ -3,6 +3,7 @@ import {
   ErrorCategory,
   ErrorCode,
   ErrorSeverity,
+  type BaseErrorOptions,
   type ErrorMetadata,
 } from "@zudojs/errors";
 
@@ -10,39 +11,60 @@ import {
  * Base error for failures originating from the CQRS package.
  */
 export class CqrsError extends BaseError {
-  constructor(
-    message: string,
-    options: ConstructorParameters<typeof BaseError>[1] = {},
-  ) {
+  constructor(message: string, options: BaseErrorOptions = {}) {
     super(message, {
+      ...options,
       code: options.code ?? ErrorCode.INTERNAL_ERROR,
       category: options.category ?? ErrorCategory.SYSTEM,
       severity: options.severity ?? ErrorSeverity.ERROR,
       statusCode: options.statusCode ?? 500,
       expose: options.expose ?? false,
       isOperational: options.isOperational ?? true,
-      ...options,
     });
   }
 }
 
 /**
  * Thrown when a CQRS request is invalid.
+ *
+ * The error code defaults to `ERR_INVALID_INPUT`; request-specific
+ * subclasses (`InvalidCommandError`, `InvalidQueryError`) narrow it.
  */
 export class CqrsValidationError extends CqrsError {
   constructor(
     message = "The CQRS request is invalid.",
     metadata?: ErrorMetadata,
+    code: ErrorCode | string = ErrorCode.INVALID_INPUT,
   ) {
     super(message, {
-      code: ErrorCode.INVALID_INPUT,
+      code,
       category: ErrorCategory.VALIDATION,
       severity: ErrorSeverity.WARNING,
       statusCode: 400,
       expose: true,
       isOperational: true,
-      metadata: metadata as ErrorMetadata | undefined,
+      metadata,
     });
+  }
+}
+
+/**
+ * Thrown by the command bus when a command is malformed
+ * (not an object, or missing a non-empty `type`).
+ */
+export class InvalidCommandError extends CqrsValidationError {
+  constructor(message = "The command is invalid.", metadata?: ErrorMetadata) {
+    super(message, metadata, ErrorCode.INVALID_COMMAND);
+  }
+}
+
+/**
+ * Thrown by the query bus when a query is malformed
+ * (not an object, or missing a non-empty `type`).
+ */
+export class InvalidQueryError extends CqrsValidationError {
+  constructor(message = "The query is invalid.", metadata?: ErrorMetadata) {
+    super(message, metadata, ErrorCode.INVALID_QUERY);
   }
 }
 
@@ -194,9 +216,27 @@ export class InvalidHandlerTypeError extends CqrsValidationError {
     super(`Invalid ${handlerKind} handler type: "${String(handlerType)}".`, {
       handlerKind,
       handlerType: String(handlerType),
-    } as ErrorMetadata);
+    });
 
     this.handlerKind = handlerKind;
+  }
+}
+
+/**
+ * Thrown when a registry operation receives an unsupported handler kind.
+ */
+export class InvalidHandlerKindError extends CqrsValidationError {
+  public readonly handlerKind: string;
+
+  constructor(handlerKind: unknown) {
+    super(
+      `Unsupported handler kind "${String(handlerKind)}". Expected "command" or "query".`,
+      {
+        handlerKind: String(handlerKind),
+      },
+    );
+
+    this.handlerKind = String(handlerKind);
   }
 }
 
@@ -205,7 +245,7 @@ export class InvalidHandlerTypeError extends CqrsValidationError {
  */
 export class InvalidMiddlewareError extends CqrsValidationError {
   constructor(message = "Invalid CQRS middleware.", metadata?: ErrorMetadata) {
-    super(message, metadata as ErrorMetadata | undefined);
+    super(message, metadata);
   }
 }
 
@@ -244,7 +284,7 @@ export class HandlerConfigurationError extends CqrsError {
       statusCode: 500,
       expose: false,
       isOperational: true,
-      metadata: metadata as ErrorMetadata | undefined,
+      metadata,
     });
   }
 }
@@ -258,6 +298,14 @@ export function isCqrsError(error: unknown): error is CqrsError {
 
 /**
  * Converts an unknown error into a CQRS error.
+ *
+ * - `CqrsError` instances are returned unchanged.
+ * - Other `BaseError` instances keep their code, status, category,
+ *   severity, exposure and operational flags (and metadata).
+ * - Plain `Error` instances become a non-operational 500 `CqrsError`
+ *   using the original message.
+ * - Anything else becomes a non-operational 500 `CqrsError` using the
+ *   supplied `message`; the original value is attached as `cause`.
  */
 export function toCqrsError(
   error: unknown,
@@ -265,6 +313,19 @@ export function toCqrsError(
 ): CqrsError {
   if (error instanceof CqrsError) {
     return error;
+  }
+
+  if (error instanceof BaseError) {
+    return new CqrsError(error.message, {
+      code: error.code,
+      category: error.category,
+      severity: error.severity,
+      statusCode: error.statusCode,
+      expose: error.expose,
+      isOperational: error.isOperational,
+      metadata: error.metadata,
+      cause: error,
+    });
   }
 
   return new CqrsError(error instanceof Error ? error.message : message, {

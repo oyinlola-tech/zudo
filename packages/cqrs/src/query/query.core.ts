@@ -1,4 +1,5 @@
 import type { Query as QueryContract } from "../cqrsTypes/cqrsTypes.type.js";
+import { isCqrsRequest } from "../cqrsTypes/cqrsTypes.type.js";
 
 /**
  * Base abstract query.
@@ -34,31 +35,38 @@ export abstract class MetadataQuery<
   protected constructor(type: TType, options: QueryOptions = {}) {
     super(type);
 
-    this.metadata = options.metadata;
+    this.metadata = options.metadata
+      ? Object.freeze({
+          ...options.metadata,
+        })
+      : undefined;
   }
 }
 
 /**
  * Creates a simple immutable query object.
+ *
+ * The `type` argument always wins over any `type` key present in the
+ * payload, so untrusted payloads cannot reroute the query.
  */
 export function createQuery<
   TType extends string,
-  TPayload extends Record<string, unknown> = Record<string, never>,
+  TPayload extends Record<string, unknown> = Record<never, never>,
 >(
   type: TType,
   payload?: TPayload,
 ): Readonly<
   {
     readonly type: TType;
-  } & TPayload
+  } & Omit<TPayload, "type">
 > {
   return Object.freeze({
+    ...(payload ?? {}),
     type,
-    ...(payload ?? ({} as TPayload)),
   }) as Readonly<
     {
       readonly type: TType;
-    } & TPayload
+    } & Omit<TPayload, "type">
   >;
 }
 
@@ -77,21 +85,7 @@ export function getQueryType(query: QueryContract): string {
  * known to belong to the query pipeline.
  */
 export function isQuery(value: unknown): value is QueryContract {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "type" in value &&
-    typeof (
-      value as {
-        type?: unknown;
-      }
-    ).type === "string" &&
-    (
-      value as {
-        type: string;
-      }
-    ).type.length > 0
-  );
+  return isCqrsRequest(value);
 }
 
 /**

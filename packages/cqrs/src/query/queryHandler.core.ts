@@ -1,8 +1,13 @@
 import type {
   QueryHandler as QueryHandlerContract,
+  QueryHandlerLike,
   Query,
   CqrsContext,
 } from "../cqrsTypes/cqrsTypes.type.js";
+
+import { HandlerConfigurationError } from "../cqrsErrors/cqrsError.base.js";
+
+import { isExecutableHandler } from "../cqrsValidation/cqrsValidation.core.js";
 
 /**
  * Abstract base class for query handlers.
@@ -52,7 +57,13 @@ export class FunctionQueryHandler<
     super();
 
     if (typeof handler !== "function") {
-      throw new TypeError("Query handler must be a function.");
+      throw new HandlerConfigurationError(
+        "Query handler must be a function.",
+        {
+          handlerKind: "query",
+          handlerType: queryType,
+        },
+      );
     }
 
     this.queryType = queryType;
@@ -87,33 +98,46 @@ export function isQueryHandler(value: unknown): value is QueryHandler {
 
 /**
  * Determines whether a value can be used as a query handler.
+ *
+ * Accepts handler functions, `QueryHandler` instances and any plain
+ * object exposing an `execute` method (the `QueryHandler` interface).
  */
-export function isQueryHandlerLike(
-  value: unknown,
-): value is QueryHandler | ((query: Query, context?: CqrsContext) => unknown) {
-  return value instanceof QueryHandler || typeof value === "function";
+export function isQueryHandlerLike(value: unknown): value is QueryHandlerLike {
+  return isExecutableHandler(value);
 }
 
 /**
  * Executes either an object-based or function-based query handler.
+ *
+ * Object handlers only need an `execute` method; they do not have to
+ * extend the abstract `QueryHandler` class.
  */
 export async function executeQueryHandler<
   TQuery extends Query,
   TResult = unknown,
 >(
-  handler:
-    | QueryHandler<TQuery, TResult>
-    | ((query: TQuery, context?: CqrsContext) => TResult | Promise<TResult>),
+  handler: QueryHandlerLike<TQuery, TResult>,
   query: TQuery,
   context?: CqrsContext,
 ): Promise<TResult> {
-  if (handler instanceof QueryHandler) {
-    return await handler.execute(query, context);
-  }
-
   if (typeof handler === "function") {
     return await handler(query, context);
   }
 
-  throw new TypeError(`Invalid query handler for "${query.type}".`);
+  if (
+    typeof handler === "object" &&
+    handler !== null &&
+    typeof (handler as Partial<QueryHandlerContract<TQuery, TResult>>)
+      .execute === "function"
+  ) {
+    return await handler.execute(query, context);
+  }
+
+  throw new HandlerConfigurationError(
+    `Invalid query handler for "${query.type}": expected a function or an object with an execute() method.`,
+    {
+      handlerKind: "query",
+      handlerType: query.type,
+    },
+  );
 }
