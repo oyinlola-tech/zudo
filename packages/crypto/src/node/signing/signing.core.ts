@@ -1,14 +1,6 @@
-import type { SignatureAlgorithm } from "../../cryptoProvider/index.js";
-import {
-  generateKeyPairSync,
-  createPrivateKey,
-  createPublicKey,
-  type KeyObject,
-} from "node:crypto";
-import type { CryptoKey } from "../../cryptoKey/cryptoKey.type.js";
-import { CryptoAlgorithm } from "../../cryptoConstants/cryptoConstants.type.js";
+import { generateKeyPairSync, createPublicKey, type KeyObject } from "node:crypto";
 
-import { cryptoKeyToPrivateKey, toPrivateKey } from "./signing.conversion.js";
+import { toPrivateKey, type KeyMaterial } from "./signing.conversion.js";
 import { assertKeyObject } from "./signing.utils.js";
 
 /**
@@ -57,8 +49,6 @@ export function exportPublicKeyPem(publicKey: KeyObject): string {
 /**
  * Creates a public key from a private key.
  */
-export function derivePublicKey(
-  privateKey: KeyObject | string | Uint8Array,
-): KeyObject {
+export function derivePublicKey(privateKey: KeyMaterial): KeyObject {
   return createPublicKey(toPrivateKey(privateKey));
 }

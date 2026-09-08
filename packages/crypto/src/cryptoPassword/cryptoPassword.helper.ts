@@ -1,5 +1,7 @@
 import type { PasswordHashOptions } from "./cryptoPassword.type.js";
 
+import { PASSWORD_HASH } from "../cryptoConstants/cryptoConstants.security.js";
+
 import { decodePasswordHash } from "./cryptoPassword.codec.js";
 
 const PASSWORD_MINIMUM_DEFAULT_LENGTH = 8;
@@ -9,11 +11,11 @@ const PASSWORD_MINIMUM_DEFAULT_LENGTH = 8;
  */
 export function getDefaultPasswordHashOptions(): Required<PasswordHashOptions> {
   return {
-    saltBytes: 16,
-    keyBytes: 32,
-    cost: 16_384,
-    blockSize: 8,
-    parallelization: 1,
+    saltBytes: PASSWORD_HASH.SALT_BYTES,
+    keyBytes: PASSWORD_HASH.KEY_BYTES,
+    cost: PASSWORD_HASH.SCRYPT.COST,
+    blockSize: PASSWORD_HASH.SCRYPT.BLOCK_SIZE,
+    parallelization: PASSWORD_HASH.SCRYPT.PARALLELIZATION,
   };
 }
 

@@ -1,11 +1,14 @@
-import type { SignatureAlgorithm } from "../cryptoProvider.type.js";
+import type {
+  CryptoInput,
+  SignatureAlgorithm,
+} from "../cryptoProvider.type.js";
 
 /**
  * Options for signing.
  */
 export interface SignOptions {
-  readonly key: Uint8Array;
-  readonly data: Uint8Array;
+  readonly key: CryptoInput;
+  readonly data: CryptoInput;
   readonly algorithm?: SignatureAlgorithm;
 }
 
@@ -13,8 +16,8 @@ export interface SignOptions {
  * Options for verification.
  */
 export interface VerifyOptions {
-  readonly key: Uint8Array;
-  readonly data: Uint8Array;
+  readonly key: CryptoInput;
+  readonly data: CryptoInput;
   readonly signature: Uint8Array;
   readonly algorithm?: SignatureAlgorithm;
 }

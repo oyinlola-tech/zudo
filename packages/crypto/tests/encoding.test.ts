@@ -28,7 +28,8 @@ describe("hex encoding", () => {
   it("rejects invalid hex", () => {
     expect(isHex("xyz")).toBe(false);
     expect(isHex("abc")).toBe(false);
-    expect(isHex("")).toBe(false);
+    expect(isHex("")).toBe(true);
+    expect(fromHex("")).toEqual(new Uint8Array());
   });
 
   it("accepts valid hex", () => {

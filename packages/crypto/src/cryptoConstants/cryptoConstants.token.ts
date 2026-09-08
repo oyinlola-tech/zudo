@@ -18,6 +18,8 @@ export const TOKEN = Object.freeze({
 
 /**
  * Random value constraints.
+ *
+ * `MIN_BYTES` is the entropy floor (128 bits) enforced by `generateToken`.
  */
 export const RANDOM = Object.freeze({
   MIN_BYTES: 16,

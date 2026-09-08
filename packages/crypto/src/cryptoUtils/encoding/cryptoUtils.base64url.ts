@@ -1,46 +1,14 @@
-/**
- * Converts bytes into URL-safe Base64 without padding.
- */
-export function bytesToBase64Url(value: Uint8Array): string {
-  const binary = Array.from(value)
-    .map((b) => String.fromCharCode(b))
-    .join("");
-
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
+import {
+  toBase64Url,
+  fromBase64Url,
+} from "../../cryptoEncoding/encoding/cryptoEncoding.base64url.js";
 
 /**
- * Converts URL-safe Base64 into bytes.
+ * Converts bytes into URL-safe Base64 without padding. Alias of `toBase64Url`.
  */
-export function base64UrlToBytes(value: string): Uint8Array {
-  if (typeof value !== "string") {
-    throw new TypeError("Base64URL value must be a string.");
-  }
+export const bytesToBase64Url: (value: Uint8Array) => string = toBase64Url;
 
-  if (!/^[A-Za-z0-9_-]*$/.test(value)) {
-    throw new TypeError("Invalid Base64URL value.");
-  }
-
-  if (value.length % 4 === 1) {
-    throw new TypeError("Invalid Base64URL length.");
-  }
-
-  let base64 = value.replace(/-/g, "+").replace(/_/g, "/");
-
-  while (base64.length % 4) {
-    base64 += "=";
-  }
-
-  const binary = atob(base64);
-
-  const result = new Uint8Array(binary.length);
-
-  for (let i = 0; i < binary.length; i += 1) {
-    result[i] = binary.charCodeAt(i);
-  }
-
-  return result;
-}
+/**
+ * Converts URL-safe Base64 into bytes. Alias of `fromBase64Url`.
+ */
+export const base64UrlToBytes: (value: string) => Uint8Array = fromBase64Url;

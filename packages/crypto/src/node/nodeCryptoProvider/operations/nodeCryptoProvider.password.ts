@@ -1,149 +1,168 @@
 import type {
   CryptoInput,
-  KeyDerivationAlgorithm,
+  PasswordHashProviderOptions,
 } from "../../../cryptoProvider/index.js";
-import { randomBytes, pbkdf2, scrypt, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { toBytes } from "../nodeCryptoProvider.helper.js";
+import { timingSafeEqual } from "../../../compare/compare.helper.js";
+import { CryptoAlgorithm } from "../../../cryptoConstants/cryptoConstants.type.js";
+import { PASSWORD_HASH } from "../../../cryptoConstants/cryptoConstants.security.js";
 import {
-  toBytes,
-  toBase64Url,
-  fromBase64Url,
-} from "../nodeCryptoProvider.helper.js";
-import { PASSWORD_FORMAT_VERSION } from "../../../cryptoPassword/cryptoPassword.codec.js";
-import { decodePasswordHash } from "../../../cryptoPassword/cryptoPassword.codec.js";
+  PASSWORD_FORMAT_VERSION,
+  decodePasswordHash,
+  encodePasswordHash,
+  pbkdf2PasswordAlgorithm,
+} from "../../../cryptoPassword/cryptoPassword.codec.js";
+import { deriveKey } from "./nodeCryptoProvider.derivation.js";
+import { keyDerivationError } from "../../../cryptoErrors/cryptoErrors.helper.js";
 
+/**
+ * Hashes a password with scrypt (default) or PBKDF2 and returns the
+ * self-describing, versioned encoding produced by `encodePasswordHash`.
+ *
+ * The encoded string is validated against `PASSWORD_HASH.LIMITS`, so the
+ * provider refuses insecure parameters (short salts, tiny work factors)
+ * instead of producing a hash that can never be verified.
+ */
 export async function hashPassword(
   password: CryptoInput,
-  options?: {
-    algorithm?: KeyDerivationAlgorithm;
-    memoryCost?: number;
-    timeCost?: number;
-    blockSize?: number;
-    parallelism?: number;
-    keyBytes?: number;
-    salt?: Uint8Array;
-  },
+  options?: PasswordHashProviderOptions,
 ): Promise<string> {
   const algorithm = options?.algorithm ?? "scrypt";
-  const salt = options?.salt ?? randomBytes(16);
-  const blockSize = options?.blockSize ?? 8;
-  const keyBytes = options?.keyBytes ?? 32;
-
-  let hash: Uint8Array;
+  const salt =
+    options?.salt ?? new Uint8Array(randomBytes(PASSWORD_HASH.SALT_BYTES));
+  const keyBytes = options?.keyBytes ?? PASSWORD_HASH.KEY_BYTES;
+  const passwordBytes = toBytes(password);
 
   switch (algorithm) {
     case "scrypt": {
-      const passwordBytes = toBytes(password);
-      hash = await new Promise((resolve, reject) => {
-        scrypt(
-          passwordBytes,
-          salt,
-          keyBytes,
-          {
-            N: options?.memoryCost ?? 16384,
-            r: blockSize,
-            p: options?.parallelism ?? 1,
-          },
-          (err: Error | null, derived: Buffer) => {
-            if (err) {
-              reject(err);
-            } else {
-              resolve(new Uint8Array(derived));
-            }
-          },
-        );
-      });
-      break;
-    }
+      const cost = options?.memoryCost ?? PASSWORD_HASH.SCRYPT.COST;
+      const blockSize = options?.blockSize ?? PASSWORD_HASH.SCRYPT.BLOCK_SIZE;
+      const parallelization =
+        options?.parallelism ?? PASSWORD_HASH.SCRYPT.PARALLELIZATION;
 
-    case "argon2id": {
-      throw new TypeError("Argon2id requires the argon2 package.");
+      // Validate before deriving so invalid parameters fail fast.
+      const placeholder = new Uint8Array(keyBytes);
+      encodePasswordHash({
+        version: PASSWORD_FORMAT_VERSION,
+        algorithm: CryptoAlgorithm.SCRYPT,
+        salt,
+        hash: placeholder,
+        cost,
+        blockSize,
+        parallelization,
+      });
+
+      const hash = await deriveKey({
+        password: passwordBytes,
+        salt,
+        algorithm: "scrypt",
+        keyLength: keyBytes,
+        memoryCost: cost,
+        blockSize,
+        parallelism: parallelization,
+      });
+
+      return encodePasswordHash({
+        version: PASSWORD_FORMAT_VERSION,
+        algorithm: CryptoAlgorithm.SCRYPT,
+        salt,
+        hash,
+        cost,
+        blockSize,
+        parallelization,
+      });
     }
 
     case "pbkdf2": {
-      const passwordBytes = toBytes(password);
-      hash = await new Promise((resolve, reject) => {
-        pbkdf2(
-          passwordBytes,
-          salt,
-          options?.timeCost ?? 100_000,
-          keyBytes,
-          "sha256",
-          (err, derived) => {
-            if (err) {
-              reject(err);
-            } else {
-              resolve(new Uint8Array(derived));
-            }
-          },
-        );
+      const iterations = options?.timeCost ?? PASSWORD_HASH.PBKDF2.ITERATIONS;
+      const digest = options?.digest ?? "sha256";
+      const label = pbkdf2PasswordAlgorithm(digest);
+
+      const placeholder = new Uint8Array(keyBytes);
+      encodePasswordHash({
+        version: PASSWORD_FORMAT_VERSION,
+        algorithm: label,
+        digest,
+        salt,
+        hash: placeholder,
+        iterations,
       });
-      break;
+
+      const hash = await deriveKey({
+        password: passwordBytes,
+        salt,
+        algorithm: "pbkdf2",
+        keyLength: keyBytes,
+        iterations,
+        digest,
+      });
+
+      return encodePasswordHash({
+        version: PASSWORD_FORMAT_VERSION,
+        algorithm: label,
+        digest,
+        salt,
+        hash,
+        iterations,
+      });
     }
 
     default:
-      throw new TypeError(`Unsupported password algorithm: ${algorithm}.`);
+      throw keyDerivationError(
+        `Unsupported password algorithm: ${String(algorithm)}.`,
+        typeof algorithm === "string" ? algorithm : undefined,
+      );
   }
-
-  const saltB64 = toBase64Url(salt);
-  const hashB64 = toBase64Url(hash);
-
-  return [
-    PASSWORD_FORMAT_VERSION,
-    algorithm,
-    options?.memoryCost ?? 16384,
-    blockSize,
-    options?.parallelism ?? 1,
-    `${saltB64}.${hashB64}`,
-  ].join("$");
 }
 
+/**
+ * Verifies a password against an encoded hash.
+ *
+ * Returns false for any malformed, foreign or out-of-bounds hash string
+ * instead of throwing, so login paths fail closed. The hash is decoded
+ * and validated before any derivation work is done.
+ */
 export async function verifyPassword(
   password: CryptoInput,
   hash: string,
 ): Promise<boolean> {
-  const parts = hash.split("$");
-  if (parts.length !== 6 || parts[0] !== "v1") {
+  if (typeof hash !== "string") {
     return false;
   }
 
-  const [
-    version,
-    algorithm,
-    costPart,
-    blockSizePart,
-    parallelizationPart,
-    payload,
-  ] = parts;
-  if (version !== "v1" || !payload) {
+  let decoded;
+
+  try {
+    decoded = decodePasswordHash(hash);
+  } catch {
     return false;
   }
 
-  const payloadParts = payload.split(".");
-  if (payloadParts.length !== 2) {
-    return false;
+  const passwordBytes = toBytes(password);
+
+  let expected: Uint8Array;
+
+  if (decoded.algorithm === CryptoAlgorithm.SCRYPT) {
+    expected = await deriveKey({
+      password: passwordBytes,
+      salt: decoded.salt,
+      algorithm: "scrypt",
+      keyLength: decoded.hash.byteLength,
+      memoryCost: decoded.cost,
+      blockSize: decoded.blockSize,
+      parallelism: decoded.parallelization,
+    });
+  } else {
+    expected = await deriveKey({
+      password: passwordBytes,
+      salt: decoded.salt,
+      algorithm: "pbkdf2",
+      keyLength: decoded.hash.byteLength,
+      iterations: decoded.iterations,
+      digest: decoded.digest,
+    });
   }
 
-  const [saltB64] = payloadParts;
-  if (!saltB64) {
-    return false;
-  }
-  const salt = fromBase64Url(saltB64);
-
-  const computed = await hashPassword(password, {
-    algorithm: algorithm as KeyDerivationAlgorithm,
-    memoryCost: Number(costPart),
-    blockSize: Number(blockSizePart),
-    parallelism: Number(parallelizationPart),
-    salt,
-  });
-
-  const computedParts = computed.split("$");
-  if (computedParts.length !== 6) {
-    return false;
-  }
-
-  const expectedHash = fromBase64Url(computedParts[5]!.split(".")[1]!);
-
-  const decoded = decodePasswordHash(hash);
-  return timingSafeEqual(decoded.hash, expectedHash);
+  return timingSafeEqual(decoded.hash, expected);
 }

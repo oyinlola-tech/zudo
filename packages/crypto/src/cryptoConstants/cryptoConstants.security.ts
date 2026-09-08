@@ -2,6 +2,11 @@ import { TimeMs } from "@zudojs/constants";
 
 /**
  * Password hashing constants.
+ *
+ * Defaults follow current OWASP Password Storage Cheat Sheet guidance:
+ * scrypt N=2^14, r=8, p=1 (minimum) and PBKDF2-HMAC-SHA256 with 600 000
+ * iterations. `LIMITS` bounds parameters that are read back from stored
+ * hashes so that a tampered or foreign record cannot force unbounded work.
  */
 export const PASSWORD_HASH = Object.freeze({
   SALT_BYTES: 16,
@@ -14,8 +19,33 @@ export const PASSWORD_HASH = Object.freeze({
   }),
 
   PBKDF2: Object.freeze({
-    ITERATIONS: 310_000,
+    ITERATIONS: 600_000,
+    /**
+     * Floor for stored or caller-supplied iteration counts. Kept below the
+     * default so hashes produced by other systems with older (but still
+     * NIST-compliant) parameters remain verifiable; new hashes always use
+     * `ITERATIONS`.
+     */
+    MIN_ITERATIONS: 100_000,
     DIGEST: "sha256",
+  }),
+
+  LIMITS: Object.freeze({
+    MIN_SALT_BYTES: 16,
+    MAX_SALT_BYTES: 64,
+    MIN_KEY_BYTES: 16,
+    MAX_KEY_BYTES: 64,
+    MIN_SCRYPT_COST: 2,
+    MAX_SCRYPT_COST: 2 ** 20,
+    MAX_SCRYPT_BLOCK_SIZE: 32,
+    MAX_SCRYPT_PARALLELIZATION: 16,
+    /**
+     * Upper bound on `128 * N * r` (the scrypt working memory in bytes) so
+     * that a stored hash cannot combine the individual maxima into a
+     * multi-gigabyte allocation.
+     */
+    MAX_SCRYPT_MEMORY_BYTES: 1024 * 1024 * 1024,
+    MAX_PBKDF2_ITERATIONS: 10_000_000,
   }),
 } as const);
 
@@ -24,6 +54,10 @@ export const PASSWORD_HASH = Object.freeze({
  *
  * These values are intentionally conservative defaults.
  * Applications may impose stricter requirements.
+ *
+ * `MAX_LENGTH` is measured in UTF-16 code units and is enforced by
+ * `hashPassword`/`verifyPassword` to bound the work an unauthenticated
+ * caller can trigger.
  */
 export const PASSWORD_POLICY = Object.freeze({
   MIN_LENGTH: 8,

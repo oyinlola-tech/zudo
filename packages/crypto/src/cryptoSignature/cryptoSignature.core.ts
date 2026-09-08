@@ -1,26 +1,32 @@
-import { createNodeCryptoProvider } from "../node/index.js";
+import type { CryptoProvider } from "../cryptoProvider/index.js";
+
+import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
 
 import type { CryptoInput } from "../cryptoProvider/index.js";
 
 import type { SignatureAlgorithm } from "../cryptoProvider/index.js";
 
 /**
- * Supported signature algorithms.
+ * Signature options.
+ *
+ * The algorithm binds the key type: RSA algorithms require RSA keys,
+ * ECDSA algorithms require EC keys and `ed25519` requires an Ed25519 key.
  */
 export type SignatureOptions = {
   readonly algorithm?: SignatureAlgorithm;
+  readonly provider?: CryptoProvider;
 };
 
-const provider = createNodeCryptoProvider();
-
 /**
- * Signs arbitrary data using a private key.
+ * Signs arbitrary data using a private key (PEM text, DER bytes or KeyObject).
  */
 export async function sign(
   data: Uint8Array,
   privateKey: CryptoInput,
   options: SignatureOptions = {},
 ): Promise<Uint8Array> {
+  const provider = options.provider ?? getDefaultCryptoProvider();
+
   return provider.sign({
     key: privateKey,
     data,
@@ -30,6 +36,9 @@ export async function sign(
 
 /**
  * Verifies a signature using a public key.
+ *
+ * Returns false for malformed keys or signatures; throws only when the
+ * algorithm is unsupported or incompatible with the key type.
  */
 export async function verify(
   data: Uint8Array,
@@ -37,6 +46,8 @@ export async function verify(
   publicKey: CryptoInput,
   options: SignatureOptions = {},
 ): Promise<boolean> {
+  const provider = options.provider ?? getDefaultCryptoProvider();
+
   return provider.verify({
     key: publicKey,
     data,

@@ -1,34 +1,25 @@
-import { createNodeCryptoProvider } from "../node/index.js";
+import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
 
 import { encode } from "../cryptoEncoding/cryptoEncoding.core.js";
 
+import { isHex } from "../cryptoEncoding/encoding/cryptoEncoding.hex.js";
+
+import { timingSafeEqual } from "../compare/compare.helper.js";
+
 import type { CryptoProvider } from "../cryptoProvider/index.js";
-
-let defaultProvider: CryptoProvider | undefined;
-
-/**
- * Returns a lazily created default crypto provider.
- *
- * The provider abstraction keeps token hashing free of direct
- * `node:crypto` usage while still allowing callers to inject their own.
- */
-function getDefaultProvider(): CryptoProvider {
-  if (defaultProvider === undefined) {
-    defaultProvider = createNodeCryptoProvider();
-  }
-
-  return defaultProvider;
-}
 
 /**
  * Creates a deterministic SHA-256 identifier from a token.
  *
  * The returned value does not expose the original token.
  */
-export async function hashToken(token: string): Promise<string> {
+export async function hashToken(
+  token: string,
+  provider: CryptoProvider = getDefaultCryptoProvider(),
+): Promise<string> {
   assertToken(token);
 
-  const digest = await getDefaultProvider().hash("sha256", token);
+  const digest = await provider.hash("sha256", token);
 
   return encode(digest, "hex");
 }
@@ -36,32 +27,40 @@ export async function hashToken(token: string): Promise<string> {
 /**
  * Creates a Base64URL SHA-256 digest of a token.
  */
-export async function hashTokenBase64Url(token: string): Promise<string> {
+export async function hashTokenBase64Url(
+  token: string,
+  provider: CryptoProvider = getDefaultCryptoProvider(),
+): Promise<string> {
   assertToken(token);
 
-  const digest = await getDefaultProvider().hash("sha256", token);
+  const digest = await provider.hash("sha256", token);
 
   return encode(digest, "base64url");
 }
 
 /**
- * Compares a token with a stored hash.
+ * Compares a token with a stored hex SHA-256 hash.
  *
- * Comparison is performed with a constant-time XOR accumulation to
- * avoid timing side-channels.
+ * The comparison is constant time and case-insensitive on the hex digits,
+ * so hashes upper-cased by a database or copied from another tool still
+ * match. Returns false for a malformed token or stored hash.
  */
 export async function verifyTokenHash(
   token: string,
   expectedHash: string,
+  provider?: CryptoProvider,
 ): Promise<boolean> {
+  if (typeof expectedHash !== "string" || !isHex(expectedHash)) {
+    return false;
+  }
+
   try {
-    const actual = await hashToken(token);
+    const actual = await hashToken(token, provider);
 
-    if (actual.length !== expectedHash.length) {
-      return false;
-    }
-
-    return constantTimeEqual(actual, expectedHash);
+    return timingSafeEqual(
+      Buffer.from(actual, "hex"),
+      Buffer.from(expectedHash.toLowerCase(), "hex"),
+    );
   } catch {
     return false;
   }
@@ -72,27 +71,11 @@ export async function verifyTokenHash(
  *
  * This is useful when a raw bearer token must never be persisted.
  */
-export async function hashTokenForStorage(token: string): Promise<string> {
-  return hashToken(token);
-}
-
-/**
- * Compares two hex-encoded strings in constant time.
- */
-function constantTimeEqual(left: string, right: string): boolean {
-  let mismatch = 0;
-
-  const length = left.length;
-
-  if (length !== right.length) {
-    return false;
-  }
-
-  for (let i = 0; i < length; i += 1) {
-    mismatch |= left.charCodeAt(i) ^ right.charCodeAt(i);
-  }
-
-  return mismatch === 0;
+export async function hashTokenForStorage(
+  token: string,
+  provider?: CryptoProvider,
+): Promise<string> {
+  return hashToken(token, provider);
 }
 
 /**

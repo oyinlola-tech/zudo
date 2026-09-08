@@ -1,3 +1,5 @@
+import type { CryptoProvider } from "../cryptoProvider/index.js";
+
 import type { TokenEncoding } from "../cryptoToken/cryptoToken.core.js";
 
 import {
@@ -15,38 +17,55 @@ export async function factoryCreateToken(
   bytes = 32,
   prefix?: string,
   encoding: TokenEncoding = "base64url",
+  provider?: CryptoProvider,
 ): Promise<string> {
   return generateToken({
     bytes,
     encoding,
     prefix,
+    provider,
   });
 }
 
-export async function factoryCreateApiKey(): Promise<string> {
-  return generateApiKey();
+export async function factoryCreateApiKey(
+  provider?: CryptoProvider,
+): Promise<string> {
+  return generateApiKey(undefined, undefined, provider);
 }
 
-export async function factoryCreateSessionToken(): Promise<string> {
-  return generateSessionToken();
+export async function factoryCreateSessionToken(
+  provider?: CryptoProvider,
+): Promise<string> {
+  return generateSessionToken(undefined, provider);
 }
 
-export async function factoryCreateRefreshToken(): Promise<string> {
-  return generateRefreshToken();
+export async function factoryCreateRefreshToken(
+  provider?: CryptoProvider,
+): Promise<string> {
+  return generateRefreshToken(undefined, provider);
 }
 
-export async function factoryCreateVerificationToken(): Promise<string> {
-  return generateVerificationToken();
+export async function factoryCreateVerificationToken(
+  provider?: CryptoProvider,
+): Promise<string> {
+  return generateVerificationToken(undefined, provider);
 }
 
-export async function factoryCreatePasswordResetToken(): Promise<string> {
-  return generatePasswordResetToken();
+export async function factoryCreatePasswordResetToken(
+  provider?: CryptoProvider,
+): Promise<string> {
+  return generatePasswordResetToken(undefined, provider);
 }
 
-export async function factoryCreateCsrfToken(): Promise<string> {
-  return generateCsrfToken();
+export async function factoryCreateCsrfToken(
+  provider?: CryptoProvider,
+): Promise<string> {
+  return generateCsrfToken(undefined, provider);
 }
 
-export async function factoryCreateOtp(digits = 6): Promise<string> {
-  return generateOtp(digits);
+export async function factoryCreateOtp(
+  digits = 6,
+  provider?: CryptoProvider,
+): Promise<string> {
+  return generateOtp(digits, provider);
 }

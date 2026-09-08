@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  CryptoFactory,
-  createCryptoFactory,
-} from "../src/cryptoFactory/index.js";
+import { createCryptoFactory } from "../src/cryptoFactory/index.js";
 
 describe("CryptoFactory", () => {
   const factory = createCryptoFactory();

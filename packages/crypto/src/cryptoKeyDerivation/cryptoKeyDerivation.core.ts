@@ -1,12 +1,10 @@
-import { createNodeCryptoProvider } from "../node/index.js";
+import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
 
-import type {
-  KeyDerivationAlgorithm,
-  CryptoInput,
-  DerivedKeyResult,
-} from "../cryptoProvider/index.js";
+import type { DerivedKeyResult } from "../cryptoProvider/index.js";
 
 import { CryptoAlgorithm } from "../cryptoConstants/cryptoConstants.type.js";
+
+import { PASSWORD_HASH } from "../cryptoConstants/cryptoConstants.security.js";
 
 import type {
   Pbkdf2Options,
@@ -18,23 +16,41 @@ import {
   validateScryptOptions,
 } from "./cryptoKeyDerivation.validate.js";
 
-const provider = createNodeCryptoProvider();
+function pbkdf2Label(
+  digest: "sha256" | "sha384" | "sha512",
+):
+  | CryptoAlgorithm.PBKDF2_SHA256
+  | CryptoAlgorithm.PBKDF2_SHA384
+  | CryptoAlgorithm.PBKDF2_SHA512 {
+  switch (digest) {
+    case "sha256":
+      return CryptoAlgorithm.PBKDF2_SHA256;
+    case "sha384":
+      return CryptoAlgorithm.PBKDF2_SHA384;
+    case "sha512":
+      return CryptoAlgorithm.PBKDF2_SHA512;
+  }
+}
 
 /**
- * Derives a key from a password using PBKDF2.
+ * Derives a key from a password using PBKDF2-HMAC.
+ *
+ * The digest option is honoured end to end and reflected in
+ * `result.algorithm` (`pbkdf2-sha256`, `pbkdf2-sha384` or `pbkdf2-sha512`).
  */
 export async function derivePbkdf2(
   password: string | Uint8Array,
   options: Pbkdf2Options = {},
 ): Promise<DerivedKeyResult> {
-  const iterations = options.iterations ?? 310_000;
+  const provider = options.provider ?? getDefaultCryptoProvider();
+  const iterations = options.iterations ?? PASSWORD_HASH.PBKDF2.ITERATIONS;
   const keyLength = options.keyLength ?? 32;
+  const digest = options.digest ?? "sha256";
   const salt =
     options.salt ??
     new Uint8Array(await provider.randomBytes(options.saltLength ?? 16));
-  const digest = options.digest ?? "sha256";
 
-  validatePbkdf2Options(iterations, keyLength, salt);
+  validatePbkdf2Options(iterations, keyLength, salt, digest);
 
   const key = await provider.deriveKey({
     password,
@@ -42,13 +58,12 @@ export async function derivePbkdf2(
     algorithm: "pbkdf2",
     keyLength,
     iterations,
+    digest,
   });
 
   return Object.freeze({
-    algorithm:
-      digest === "sha512"
-        ? (CryptoAlgorithm.PBKDF2_SHA512 as KeyDerivationAlgorithm)
-        : (CryptoAlgorithm.PBKDF2_SHA256 as KeyDerivationAlgorithm),
+    algorithm: pbkdf2Label(digest),
+    digest,
     key,
     salt: new Uint8Array(salt),
   });
@@ -56,33 +71,46 @@ export async function derivePbkdf2(
 
 /**
  * Derives a key using scrypt.
+ *
+ * `blockSize` and `maxMemory` are forwarded to the provider, so work
+ * factors above the default (e.g. N = 2^17) are usable.
  */
 export async function deriveScrypt(
   password: string | Uint8Array,
   options: ScryptOptions = {},
 ): Promise<DerivedKeyResult> {
+  const provider = options.provider ?? getDefaultCryptoProvider();
   const keyLength = options.keyLength ?? 32;
-  const cost = options.cost ?? 16_384;
-  const blockSize = options.blockSize ?? 8;
-  const parallelization = options.parallelization ?? 1;
+  const cost = options.cost ?? PASSWORD_HASH.SCRYPT.COST;
+  const blockSize = options.blockSize ?? PASSWORD_HASH.SCRYPT.BLOCK_SIZE;
+  const parallelization =
+    options.parallelization ?? PASSWORD_HASH.SCRYPT.PARALLELIZATION;
   const salt =
     options.salt ??
     new Uint8Array(await provider.randomBytes(options.saltLength ?? 16));
 
-  validateScryptOptions(keyLength, cost, blockSize, parallelization, salt);
+  validateScryptOptions(
+    keyLength,
+    cost,
+    blockSize,
+    parallelization,
+    salt,
+    options.maxMemory,
+  );
 
   const key = await provider.deriveKey({
-    password:
-      password instanceof Uint8Array ? password : Buffer.from(password, "utf8"),
+    password,
     salt,
     algorithm: "scrypt",
     keyLength,
     memoryCost: cost,
+    blockSize,
     parallelism: parallelization,
+    maxMemory: options.maxMemory,
   });
 
   return Object.freeze({
-    algorithm: CryptoAlgorithm.SCRYPT as KeyDerivationAlgorithm,
+    algorithm: CryptoAlgorithm.SCRYPT,
     key,
     salt: new Uint8Array(salt),
   });
@@ -103,6 +131,12 @@ export async function deriveKey(
         digest: "sha256",
       });
 
+    case CryptoAlgorithm.PBKDF2_SHA384:
+      return derivePbkdf2(password, {
+        ...(options as Pbkdf2Options),
+        digest: "sha384",
+      });
+
     case CryptoAlgorithm.PBKDF2_SHA512:
       return derivePbkdf2(password, {
         ...(options as Pbkdf2Options),
@@ -114,7 +148,7 @@ export async function deriveKey(
 
     default:
       throw new TypeError(
-        `Unsupported key derivation algorithm: ${algorithm}.`,
+        `Unsupported key derivation algorithm: ${String(algorithm)}.`,
       );
   }
 }

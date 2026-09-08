@@ -51,17 +51,11 @@ export function getDefaultPasswordHashConfig(): {
 } {
   return {
     saltBytes: PASSWORD_HASH.SALT_BYTES,
-
     keyBytes: PASSWORD_HASH.KEY_BYTES,
-
     scryptCost: PASSWORD_HASH.SCRYPT.COST,
-
     scryptBlockSize: PASSWORD_HASH.SCRYPT.BLOCK_SIZE,
-
     scryptParallelization: PASSWORD_HASH.SCRYPT.PARALLELIZATION,
-
     pbkdf2Iterations: PASSWORD_HASH.PBKDF2.ITERATIONS,
-
     pbkdf2Digest: PASSWORD_HASH.PBKDF2.DIGEST,
   };
 }

@@ -1,10 +1,12 @@
 import type { CryptoKey } from "./cryptoKey.type.js";
 
 /**
- * Returns a stable SHA-256 fingerprint for a key.
+ * Returns the stable fingerprint of a key.
  *
- * The fingerprint can be used for identification without exposing
- * the secret key material.
+ * The fingerprint is `HMAC-SHA256(CRYPTO_KEY_FINGERPRINT_LABEL, keyBytes)`
+ * in hex. It can be used to identify a key without exposing the secret
+ * material, provided the key has at least 128 bits of entropy (which
+ * `createCryptoKey` enforces by minimum length).
  */
 export function getCryptoKeyFingerprint(key: CryptoKey): string {
   return key.fingerprint;

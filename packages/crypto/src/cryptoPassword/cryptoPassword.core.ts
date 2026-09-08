@@ -1,6 +1,10 @@
-import { createNodeCryptoProvider } from "../node/index.js";
+import type { CryptoProvider } from "../cryptoProvider/index.js";
+
+import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
 
 import { CryptoAlgorithm } from "../cryptoConstants/cryptoConstants.type.js";
+
+import { PASSWORD_HASH } from "../cryptoConstants/cryptoConstants.security.js";
 
 import type {
   PasswordHashOptions,
@@ -17,29 +21,33 @@ import {
   PASSWORD_FORMAT_VERSION,
 } from "./cryptoPassword.codec.js";
 
-const provider = createNodeCryptoProvider();
+/**
+ * Options for `hashPassword` including an optional provider override.
+ */
+export interface HashPasswordOptions extends PasswordHashOptions {
+  readonly provider?: CryptoProvider;
+}
 
 /**
- * Hashes a password using the configured algorithm.
+ * Hashes a password using scrypt.
+ *
+ * `saltBytes` and `keyBytes` are honoured, and the returned `salt`/`hash`
+ * are exactly the values inside `encoded`.
  */
 export async function hashPassword(
   password: string,
-  options: PasswordHashOptions = {},
+  options: HashPasswordOptions = {},
 ): Promise<PasswordHashResult> {
   assertPassword(password);
 
-  const algorithm =
-    options.cost !== undefined ||
-    options.blockSize !== undefined ||
-    options.parallelization !== undefined
-      ? "scrypt"
-      : "scrypt";
+  const provider = options.provider ?? getDefaultCryptoProvider();
 
-  const saltBytes = options.saltBytes ?? 16;
-  const keyBytes = options.keyBytes ?? 32;
-  const cost = options.cost ?? 16_384;
-  const blockSize = options.blockSize ?? 8;
-  const parallelization = options.parallelization ?? 1;
+  const saltBytes = options.saltBytes ?? PASSWORD_HASH.SALT_BYTES;
+  const keyBytes = options.keyBytes ?? PASSWORD_HASH.KEY_BYTES;
+  const cost = options.cost ?? PASSWORD_HASH.SCRYPT.COST;
+  const blockSize = options.blockSize ?? PASSWORD_HASH.SCRYPT.BLOCK_SIZE;
+  const parallelization =
+    options.parallelization ?? PASSWORD_HASH.SCRYPT.PARALLELIZATION;
 
   validateParameters({
     saltBytes,
@@ -56,33 +64,44 @@ export async function hashPassword(
     memoryCost: cost,
     blockSize,
     parallelism: parallelization,
+    keyBytes,
+    salt,
   });
 
-  const hash = decodePasswordHash(encoded).hash;
+  const decoded = decodePasswordHash(encoded);
+
+  if (decoded.algorithm !== CryptoAlgorithm.SCRYPT) {
+    throw new TypeError("Provider returned a non-scrypt password hash.");
+  }
 
   return Object.freeze({
     algorithm: CryptoAlgorithm.SCRYPT,
     version: PASSWORD_FORMAT_VERSION,
-    salt,
-    hash,
+    salt: decoded.salt,
+    hash: decoded.hash,
     encoded,
-    cost,
-    blockSize,
-    parallelization,
+    cost: decoded.cost,
+    blockSize: decoded.blockSize,
+    parallelization: decoded.parallelization,
   });
 }
 
 /**
  * Verifies a password against an encoded password hash.
+ *
+ * Returns false (never throws) for wrong passwords and for malformed,
+ * foreign or out-of-bounds hash strings. A non-string or over-long
+ * password also yields false.
  */
 export async function verifyPassword(
   password: string,
   encoded: string,
+  provider: CryptoProvider = getDefaultCryptoProvider(),
 ): Promise<boolean> {
   try {
     assertPassword(password);
 
-    return provider.verifyPassword(password, encoded);
+    return await provider.verifyPassword(password, encoded);
   } catch {
     return false;
   }

@@ -1,3 +1,6 @@
+import { PASSWORD_HASH } from "../cryptoConstants/cryptoConstants.security.js";
+import { isPbkdf2Digest } from "../cryptoProvider/cryptoProvider.type.js";
+
 /**
  * Validates PBKDF2 key derivation options.
  */
@@ -5,17 +8,27 @@ export function validatePbkdf2Options(
   iterations: number,
   keyLength: number,
   salt: Uint8Array,
+  digest: unknown = "sha256",
 ): void {
-  if (!Number.isInteger(iterations) || iterations < 100_000) {
-    throw new RangeError("PBKDF2 iterations must be at least 100000.");
+  if (
+    !Number.isInteger(iterations) ||
+    iterations < PASSWORD_HASH.PBKDF2.MIN_ITERATIONS
+  ) {
+    throw new RangeError(
+      `PBKDF2 iterations must be at least ${PASSWORD_HASH.PBKDF2.MIN_ITERATIONS}.`,
+    );
   }
 
   if (!Number.isInteger(keyLength) || keyLength < 16) {
     throw new RangeError("PBKDF2 keyLength must be at least 16 bytes.");
   }
 
-  if (salt.byteLength < 16) {
+  if (!(salt instanceof Uint8Array) || salt.byteLength < 16) {
     throw new RangeError("PBKDF2 salt must be at least 16 bytes.");
+  }
+
+  if (!isPbkdf2Digest(digest)) {
+    throw new TypeError(`Unsupported PBKDF2 digest: ${String(digest)}.`);
   }
 }
 
@@ -28,6 +41,7 @@ export function validateScryptOptions(
   blockSize: number,
   parallelization: number,
   salt: Uint8Array,
+  maxMemory?: number,
 ): void {
   if (!Number.isInteger(keyLength) || keyLength < 16) {
     throw new RangeError("scrypt keyLength must be at least 16 bytes.");
@@ -47,7 +61,14 @@ export function validateScryptOptions(
     throw new RangeError("scrypt parallelization must be a positive integer.");
   }
 
-  if (salt.byteLength < 16) {
+  if (!(salt instanceof Uint8Array) || salt.byteLength < 16) {
     throw new RangeError("scrypt salt must be at least 16 bytes.");
+  }
+
+  if (
+    maxMemory !== undefined &&
+    (!Number.isInteger(maxMemory) || maxMemory <= 0)
+  ) {
+    throw new RangeError("scrypt maxMemory must be a positive integer.");
   }
 }

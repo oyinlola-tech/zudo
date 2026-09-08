@@ -1,11 +1,22 @@
-import { createNodeCryptoProvider } from "../node/index.js";
+import type { CryptoProvider } from "../cryptoProvider/index.js";
 
-const provider = createNodeCryptoProvider();
+import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
+
+function assertLength(length: number, name = "length"): void {
+  if (!Number.isInteger(length) || length <= 0) {
+    throw new RangeError(`${name} must be a positive integer.`);
+  }
+}
 
 /**
  * Generates a cryptographically secure random hexadecimal string.
  */
-export async function randomHex(length: number): Promise<string> {
+export async function randomHex(
+  length: number,
+  provider: CryptoProvider = getDefaultCryptoProvider(),
+): Promise<string> {
+  assertLength(length);
+
   const bytes = await provider.randomBytes(Math.ceil(length / 2));
 
   return Buffer.from(bytes).toString("hex").slice(0, length);
@@ -14,7 +25,12 @@ export async function randomHex(length: number): Promise<string> {
 /**
  * Generates a cryptographically secure random base64 string.
  */
-export async function randomBase64(byteLength: number): Promise<string> {
+export async function randomBase64(
+  byteLength: number,
+  provider: CryptoProvider = getDefaultCryptoProvider(),
+): Promise<string> {
+  assertLength(byteLength, "byteLength");
+
   const bytes = await provider.randomBytes(byteLength);
 
   return Buffer.from(bytes).toString("base64");
@@ -23,7 +39,12 @@ export async function randomBase64(byteLength: number): Promise<string> {
 /**
  * Generates a cryptographically secure URL-safe random string.
  */
-export async function randomBase64Url(byteLength: number): Promise<string> {
+export async function randomBase64Url(
+  byteLength: number,
+  provider: CryptoProvider = getDefaultCryptoProvider(),
+): Promise<string> {
+  assertLength(byteLength, "byteLength");
+
   const bytes = await provider.randomBytes(byteLength);
 
   return Buffer.from(bytes).toString("base64url");
@@ -34,67 +55,67 @@ export async function randomBase64Url(byteLength: number): Promise<string> {
  *
  * The returned token contains only URL-safe characters.
  */
-export async function randomToken(byteLength = 32): Promise<string> {
-  return randomBase64Url(byteLength);
+export async function randomToken(
+  byteLength = 32,
+  provider?: CryptoProvider,
+): Promise<string> {
+  return randomBase64Url(byteLength, provider);
 }
 
 /**
  * Generates a random numeric code.
  *
- * Leading zeroes are preserved.
+ * Leading zeroes are preserved. Each digit is drawn uniformly.
  */
-export async function randomNumericCode(length = 6): Promise<string> {
-  let result = "";
+export async function randomNumericCode(
+  length = 6,
+  provider: CryptoProvider = getDefaultCryptoProvider(),
+): Promise<string> {
+  assertLength(length);
 
-  while (result.length < length) {
-    const value = await provider.randomInt(0, 1_000_000);
-
-    result += String(value).padStart(6, "0");
-  }
-
-  return result.slice(0, length);
+  return randomFromAlphabet(length, "0123456789", provider);
 }
 
 /**
  * Generates a random alphanumeric token.
  */
-export async function randomAlphanumeric(length: number): Promise<string> {
-  const alphabet =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-
-  let result = "";
-
-  while (result.length < length) {
-    const index = await provider.randomInt(0, alphabet.length);
-
-    result += alphabet[index]!;
-  }
-
-  return result;
+export async function randomAlphanumeric(
+  length: number,
+  provider: CryptoProvider = getDefaultCryptoProvider(),
+): Promise<string> {
+  return randomFromAlphabet(
+    length,
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+    provider,
+  );
 }
 
 /**
  * Generates random characters from a caller-provided alphabet.
  *
- * The alphabet must not be empty.
+ * `length` counts Unicode code points (so astral characters count once),
+ * the alphabet must not be empty, and each character is drawn uniformly.
  */
 export async function randomFromAlphabet(
   length: number,
   alphabet: string,
+  provider: CryptoProvider = getDefaultCryptoProvider(),
 ): Promise<string> {
-  if (alphabet.length === 0) {
+  assertLength(length);
+
+  if (typeof alphabet !== "string" || alphabet.length === 0) {
     throw new RangeError("alphabet must not be empty.");
   }
 
   const characters = Array.from(alphabet);
 
-  let result = "";
+  const result: string[] = [];
 
   while (result.length < length) {
     const index = await provider.randomInt(0, characters.length);
 
-    result += characters[index]!;
+    result.push(characters[index]!);
   }
 
-  return result;
+  return result.join("");
 }

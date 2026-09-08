@@ -30,22 +30,17 @@ import type {
   CryptoProvider,
   HashAlgorithm,
   HmacAlgorithm,
-  EncryptionAlgorithm,
-  SignatureAlgorithm,
-  KeyDerivationAlgorithm,
   CryptoInput,
   EncryptedData,
+  EncryptOptions,
+  DecryptOptions,
+  SignOptions,
+  VerifyOptions,
   DeriveKeyOptions,
+  PasswordHashProviderOptions,
 } from "../../cryptoProvider/index.js";
 
 import type { CryptoCapabilities } from "../../cryptoProvider/cryptoProvider.type.js";
-
-import {
-  cryptoHashError,
-  cryptoCipherError,
-  cryptoSignatureError,
-  cryptoKeyDerivationError,
-} from "@zudojs/errors";
 
 export class NodeCryptoProvider implements CryptoProvider {
   readonly name = "node";
@@ -83,37 +78,19 @@ export class NodeCryptoProvider implements CryptoProvider {
     return hmacImpl(algorithm, key, data);
   }
 
-  async encrypt(options: {
-    key: CryptoInput;
-    plaintext: CryptoInput;
-    associatedData?: CryptoInput;
-    nonce?: Uint8Array;
-  }): Promise<EncryptedData> {
+  async encrypt(options: EncryptOptions): Promise<EncryptedData> {
     return encryptImpl(options);
   }
 
-  async decrypt(options: {
-    key: CryptoInput;
-    encrypted: EncryptedData;
-    associatedData?: CryptoInput;
-  }): Promise<Uint8Array> {
+  async decrypt(options: DecryptOptions): Promise<Uint8Array> {
     return decryptImpl(options);
   }
 
-  async sign(options: {
-    key: CryptoInput;
-    data: CryptoInput;
-    algorithm?: SignatureAlgorithm;
-  }): Promise<Uint8Array> {
+  async sign(options: SignOptions): Promise<Uint8Array> {
     return signImpl(options);
   }
 
-  async verify(options: {
-    key: CryptoInput;
-    data: CryptoInput;
-    signature: Uint8Array;
-    algorithm?: SignatureAlgorithm;
-  }): Promise<boolean> {
+  async verify(options: VerifyOptions): Promise<boolean> {
     return verifyImpl(options);
   }
 
@@ -123,12 +100,7 @@ export class NodeCryptoProvider implements CryptoProvider {
 
   async hashPassword(
     password: CryptoInput,
-    options?: {
-      algorithm?: KeyDerivationAlgorithm;
-      memoryCost?: number;
-      timeCost?: number;
-      parallelism?: number;
-    },
+    options?: PasswordHashProviderOptions,
   ): Promise<string> {
     return hashPasswordImpl(password, options);
   }

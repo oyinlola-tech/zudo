@@ -1,49 +1,51 @@
-import { toBase64 } from "./cryptoEncoding.base64.js";
-
-import { fromBase64 } from "./cryptoEncoding.base64.js";
-
 /**
  * Encodes bytes as URL-safe Base64 without padding.
+ *
+ * An empty byte array encodes to the empty string.
  */
 export function toBase64Url(value: Uint8Array): string {
-  return toBase64(value)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+  assertBytes(value);
+
+  return Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString(
+    "base64url",
+  );
 }
 
 /**
  * Decodes URL-safe Base64 into bytes.
+ *
+ * Input must be canonical: unpadded, using only the URL-safe alphabet,
+ * never of length ≡ 1 (mod 4), and with zero-valued trailing bits. The
+ * empty string decodes to an empty byte array.
  */
 export function fromBase64Url(value: string): Uint8Array {
-  if (value.length === 0) {
-    return new Uint8Array();
-  }
-
   if (!isBase64Url(value)) {
     throw new TypeError("Invalid Base64URL value.");
   }
 
-  if (value.length % 4 === 1) {
-    throw new TypeError("Invalid Base64URL length.");
-  }
-
-  let base64 = value.replace(/-/g, "+").replace(/_/g, "/");
-
-  while (base64.length % 4) {
-    base64 += "=";
-  }
-
-  return fromBase64(base64);
+  return new Uint8Array(Buffer.from(value, "base64url"));
 }
 
 /**
- * Returns whether a string is valid URL-safe Base64.
+ * Returns whether a string is valid, canonical URL-safe Base64.
+ *
+ * The empty string is valid (it encodes zero bytes).
  */
 export function isBase64Url(value: string): boolean {
-  if (typeof value !== "string" || value.length === 0) {
+  if (typeof value !== "string" || value.length % 4 === 1) {
     return false;
   }
 
-  return /^(?:[A-Za-z0-9_-]{2,4})*(?:[A-Za-z0-9_-]{2,3})?$/.test(value);
+  if (!/^[A-Za-z0-9_-]*$/.test(value)) {
+    return false;
+  }
+
+  // Reject non-canonical encodings (non-zero trailing bits).
+  return Buffer.from(value, "base64url").toString("base64url") === value;
+}
+
+function assertBytes(value: Uint8Array): void {
+  if (!(value instanceof Uint8Array)) {
+    throw new TypeError("Value must be a Uint8Array.");
+  }
 }

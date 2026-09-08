@@ -1,32 +1,29 @@
 # @zudojs/crypto
 
-## 1.0.0
+> Note: this changelog was corrected. An earlier revision opened with a
+> `1.0.0` entry (describing a package rename) that never shipped; the
+> package is published at `0.1.0`. The `0.1.1`/`0.1.2` entries below
+> predate the monorepo-wide realignment to `0.1.0` and are kept for history.
 
-### Major Changes
+## Unreleased
 
-- [`16f14c3`](https://github.com/oyinlola-tech/zudo/commit/16f14c36d05f664d914bc6e1b9de70f67ff55860) Thanks [@oyinlola-tech](https://github.com/oyinlola-tech)! - BREAKING CHANGE: Rename all packages from `@zudojs/*` to `@zudojs/*` and `@zudojs/cli` to `zudojs-cli`.
+### Security hardening (audit round 5)
 
-  - Scoped packages: `@zudojs/adapters`, `@zudojs/api`, `@zudojs/auth`, etc.
-  - CLI package: `zudojs-cli` (unscoped)
-  - All internal imports, docs, CI, and examples updated
+Breaking: unimplemented members were removed from `CryptoAlgorithm`
+(`AES_256_CBC`, `CHACHA20_POLY1305`, `ARGON2ID`, `X25519`); `EncryptionAlgorithm`
+and `KeyDerivationAlgorithm` no longer list them either.
 
-  Migration:
-
-  ```bash
-  # Old
-  npm install @zudojs/cli
-  npm install @zudojs/errors
-
-  # New
-  npm install zudojs-cli
-  npm install @zudojs/errors
-  ```
-
-### Patch Changes
-
-- Updated dependencies [[`16f14c3`](https://github.com/oyinlola-tech/zudo/commit/16f14c36d05f664d914bc6e1b9de70f67ff55860)]:
-  - @zudojs/constants@1.0.0
-  - @zudojs/errors@1.0.0
+- AES-256-GCM: enforce 16-byte authentication tags and 12-byte IVs at the provider, `decrypt` and `decryptEnvelope`; reject foreign algorithm labels; all cipher failures are `CryptoError` (`ERR_CRYPTO_CIPHER`) with the Node error as `cause`.
+- Random: `randomInt` now delegates to `node:crypto.randomInt` (unbiased up to 2^48, single-value ranges return `min`); string helpers validate lengths and count code points.
+- Key derivation: PBKDF2 honours `digest` (`pbkdf2-sha384` label added) and defaults to 600 000 iterations; scrypt forwards `blockSize`/`maxMemory` with a derived memory bound so work factors above 2^14 work; `DerivedKeyResult.algorithm` matches runtime values.
+- Passwords: `hashPassword` honours `saltBytes`/`keyBytes` and returns the salt/hash that are inside `encoded`; `verifyPassword` decodes and bounds-checks stored parameters (including a combined `128 * N * r` memory bound) before deriving and never throws; passwords are capped at `PASSWORD_POLICY.MAX_LENGTH`; PBKDF2 password hashes (`v1$pbkdf2-<digest>$<iterations>$salt.hash`) are supported at the provider level.
+- Signatures: ECDSA algorithms work; the algorithm binds the key type; `verify` returns false for malformed keys/signatures; keys may be PEM text, PEM bytes or DER.
+- Hash/HMAC: runtime allowlist (md5/sha1 rejected), HMAC keys must be at least 16 bytes.
+- Keys: `createCryptoKey` validates length per algorithm, fingerprints are domain-separated HMACs, random key generation is restricted to symmetric algorithms.
+- Encoding: single Buffer-based implementation with canonical-form validation (non-canonical base64/base64url rejected), strict UTF-8 decoding, token encodings allowlisted, `timingSafeEqualEncoded` returns false on malformed input; constant-time compares use `node:crypto.timingSafeEqual`.
+- Service/factory: every wrapper preserves `cause`; factory merges password defaults and copies option objects; provider injection via `setDefaultCryptoProvider`, `createCryptoService({ provider })`, `createCryptoFactory({ provider })` and per-call `provider` options.
+- `CRYPTO_ALGORITHM` mirrors `CryptoAlgorithm` exactly (compile-time checked).
+- Packaging: source maps and build info no longer ship; LICENSE included; tests are typechecked.
 
 ## 0.1.2
 

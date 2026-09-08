@@ -1,9 +1,15 @@
+import type { CryptoProvider } from "../cryptoProvider/index.js";
+import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
 import {
   CryptoService,
   createCryptoService,
 } from "../cryptoService/cryptoService.core.js";
 import { CryptoAlgorithm } from "../cryptoConstants/cryptoConstants.type.js";
-import { generateCryptoKey } from "../cryptoKey/cryptoKey.factory.js";
+import {
+  generateCryptoKey,
+  defaultKeyLength,
+} from "../cryptoKey/cryptoKey.factory.js";
+import { assertBinaryEncoding } from "../cryptoEncoding/cryptoEncoding.core.js";
 import {
   factoryCreateToken,
   factoryCreateApiKey,
@@ -20,36 +26,60 @@ import {
 } from "./cryptoFactory.password.js";
 import { factoryEncode, factoryDecode } from "./cryptoFactory.encoding.js";
 import type { CryptoKey } from "../cryptoKey/cryptoKey.type.js";
+import type { PasswordHashResult } from "../cryptoPassword/cryptoPassword.type.js";
 import type { PasswordHashOptions } from "./cryptoFactory.password.js";
 import type { CryptoEncoding } from "./cryptoFactory.encoding.js";
+import type { TokenEncoding } from "../cryptoToken/cryptoToken.core.js";
 
 /**
  * Configuration used to create a CryptoFactory.
  */
 export interface CryptoFactoryOptions {
   readonly defaultKeyAlgorithm?: CryptoAlgorithm;
+  /** Default scrypt parameters; per-call options are merged on top. */
   readonly password?: PasswordHashOptions;
-  readonly encoding?: CryptoEncoding;
+  /** Default binary encoding for tokens and `encode`/`decode`. */
+  readonly encoding?: TokenEncoding;
+  /** Provider used for every operation. */
+  readonly provider?: CryptoProvider;
+}
+
+interface ResolvedFactoryOptions {
+  readonly defaultKeyAlgorithm: CryptoAlgorithm;
+  readonly password: Readonly<PasswordHashOptions>;
+  readonly encoding: TokenEncoding;
 }
 
 /**
  * Central factory for constructing and accessing crypto services.
+ *
+ * Options are deep-copied on construction, so later mutation of the
+ * caller's option objects cannot change the factory's behaviour.
  */
 export class CryptoFactory {
-  private readonly options: Readonly<
-    Required<Pick<CryptoFactoryOptions, "defaultKeyAlgorithm" | "encoding">>
-  > &
-    Omit<CryptoFactoryOptions, "defaultKeyAlgorithm" | "encoding">;
+  private readonly options: ResolvedFactoryOptions;
+  private readonly configuredProvider: CryptoProvider | undefined;
   private readonly service: CryptoService;
 
   constructor(options: CryptoFactoryOptions = {}) {
+    const encoding = options.encoding ?? "base64url";
+
+    assertBinaryEncoding(encoding);
+
+    this.configuredProvider = options.provider;
+
     this.options = Object.freeze({
-      ...options,
       defaultKeyAlgorithm:
         options.defaultKeyAlgorithm ?? CryptoAlgorithm.AES_256_GCM,
-      encoding: options.encoding ?? "base64url",
+      password: Object.freeze({ ...(options.password ?? {}) }),
+      encoding,
     });
-    this.service = createCryptoService();
+
+    this.service = createCryptoService({ provider: options.provider });
+  }
+
+  private get provider(): CryptoProvider {
+    return this.configuredProvider ?? getDefaultCryptoProvider();
   }
 
   /** Returns the configured crypto service. */
@@ -57,18 +87,27 @@ export class CryptoFactory {
     return this.service;
   }
 
-  /** Generates a key using the configured default algorithm. */
+  /**
+   * Returns the provider backing this factory (the process-wide default
+   * when none was configured).
+   */
+  getProvider(): CryptoProvider {
+    return this.provider;
+  }
+
+  /**
+   * Generates a symmetric key using the configured default algorithm.
+   *
+   * Asymmetric algorithms are rejected.
+   */
   async createKey(
-    algorithm = this.options.defaultKeyAlgorithm,
+    algorithm: CryptoAlgorithm = this.options.defaultKeyAlgorithm,
   ): Promise<CryptoKey> {
-    const length = algorithm.includes("256")
-      ? 32
-      : algorithm.includes("384")
-        ? 48
-        : algorithm.includes("512")
-          ? 64
-          : 32;
-    return generateCryptoKey(length, { algorithm, extractable: true });
+    return generateCryptoKey(
+      defaultKeyLength(algorithm),
+      { algorithm, extractable: true },
+      this.provider,
+    );
   }
 
   /** Generates a secure opaque token. */
@@ -76,51 +115,59 @@ export class CryptoFactory {
     return factoryCreateToken(
       bytes,
       prefix,
-      this.options
-        .encoding as import("../cryptoToken/cryptoToken.core.js").TokenEncoding,
+      this.options.encoding,
+      this.provider,
     );
   }
 
   /** Generates an API key. */
   async createApiKey(): Promise<string> {
-    return factoryCreateApiKey();
+    return factoryCreateApiKey(this.provider);
   }
 
   /** Generates a session token. */
   async createSessionToken(): Promise<string> {
-    return factoryCreateSessionToken();
+    return factoryCreateSessionToken(this.provider);
   }
 
   /** Generates a refresh token. */
   async createRefreshToken(): Promise<string> {
-    return factoryCreateRefreshToken();
+    return factoryCreateRefreshToken(this.provider);
   }
 
   /** Generates an email or account verification token. */
   async createVerificationToken(): Promise<string> {
-    return factoryCreateVerificationToken();
+    return factoryCreateVerificationToken(this.provider);
   }
 
   /** Generates a password reset token. */
   async createPasswordResetToken(): Promise<string> {
-    return factoryCreatePasswordResetToken();
+    return factoryCreatePasswordResetToken(this.provider);
   }
 
   /** Generates a CSRF token. */
   async createCsrfToken(): Promise<string> {
-    return factoryCreateCsrfToken();
+    return factoryCreateCsrfToken(this.provider);
   }
 
   /** Generates a numeric one-time password. */
   async createOtp(digits = 6): Promise<string> {
-    return factoryCreateOtp(digits);
+    return factoryCreateOtp(digits, this.provider);
   }
 
-  /** Hashes a password using the configured password options. */
-  async createPasswordHash(password: string, options?: PasswordHashOptions) {
+  /**
+   * Hashes a password using the configured password options.
+   *
+   * Per-call options are layered on top of the configured defaults.
+   */
+  async createPasswordHash(
+    password: string,
+    options?: PasswordHashOptions,
+  ): Promise<PasswordHashResult> {
     return factoryCreatePasswordHash(
       password,
-      options ?? this.options.password,
+      { ...this.options.password, ...options },
+      this.provider,
     );
   }
 
@@ -129,26 +176,28 @@ export class CryptoFactory {
     password: string,
     encodedHash: string,
   ): Promise<boolean> {
-    return factoryVerifyPassword(password, encodedHash);
+    return factoryVerifyPassword(password, encodedHash, this.provider);
   }
 
   /** Encodes bytes using the configured default encoding. */
-  encode(value: Uint8Array, encoding = this.options.encoding): string {
+  encode(value: Uint8Array, encoding: CryptoEncoding = this.options.encoding): string {
     return factoryEncode(value, encoding);
   }
 
   /** Decodes binary data using the configured default encoding. */
-  decode(value: string, encoding = this.options.encoding): Uint8Array {
+  decode(
+    value: string,
+    encoding: CryptoEncoding = this.options.encoding,
+  ): Uint8Array {
     return factoryDecode(value, encoding);
   }
 
-  /** Returns the factory configuration. */
-  getOptions(): Readonly<CryptoFactoryOptions> {
+  /** Returns a frozen copy of the factory configuration. */
+  getOptions(): Readonly<Required<Omit<CryptoFactoryOptions, "provider">>> {
     return Object.freeze({
-      ...this.options,
-      password: this.options.password
-        ? Object.freeze({ ...this.options.password })
-        : undefined,
+      defaultKeyAlgorithm: this.options.defaultKeyAlgorithm,
+      encoding: this.options.encoding,
+      password: Object.freeze({ ...this.options.password }),
     });
   }
 }
@@ -164,5 +213,14 @@ export function createCryptoFactory(
 
 /**
  * Default application crypto factory.
+ *
+ * Construction is trivial (no provider is created until first use).
  */
-export const cryptoFactory = createCryptoFactory();
+export const cryptoFactory: CryptoFactory = createCryptoFactory();
+
+/**
+ * Returns the default application crypto factory.
+ */
+export function getCryptoFactory(): CryptoFactory {
+  return cryptoFactory;
+}

@@ -1,4 +1,7 @@
-import type { DerivedKeyResult } from "../cryptoProvider/index.js";
+import type {
+  CryptoProvider,
+  DerivedKeyResult,
+} from "../cryptoProvider/index.js";
 
 import type {
   Pbkdf2Options,
@@ -7,9 +10,12 @@ import type {
 
 import { deriveKey } from "../cryptoKeyDerivation/cryptoKeyDerivation.core.js";
 
-import { cryptoKeyDerivationError } from "@zudojs/errors";
+import {
+  keyDerivationError,
+  rethrowAsCryptoError,
+} from "../cryptoErrors/cryptoErrors.helper.js";
 
-import { CryptoAlgorithm } from "../cryptoConstants/cryptoConstants.type.js";
+import type { CryptoAlgorithm } from "../cryptoConstants/cryptoConstants.type.js";
 
 export type { DerivedKeyResult, Pbkdf2Options, ScryptOptions };
 
@@ -17,10 +23,16 @@ export async function serviceDeriveKey(
   password: string | Uint8Array,
   algorithm: CryptoAlgorithm,
   options?: Pbkdf2Options | ScryptOptions,
+  provider?: CryptoProvider,
 ): Promise<DerivedKeyResult> {
   try {
-    return await deriveKey(password, algorithm, options);
-  } catch {
-    throw cryptoKeyDerivationError("Key derivation failed.", algorithm);
+    return await deriveKey(password, algorithm, {
+      ...options,
+      provider: options?.provider ?? provider,
+    });
+  } catch (error) {
+    return rethrowAsCryptoError(error, (cause) =>
+      keyDerivationError("Key derivation failed.", algorithm, cause),
+    );
   }
 }

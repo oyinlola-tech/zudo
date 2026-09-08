@@ -5,6 +5,7 @@ import {
   deriveKey,
   generateSalt,
 } from "../src/cryptoKeyDerivation/index.js";
+import { CryptoAlgorithm } from "../src/cryptoConstants/index.js";
 
 describe("derivePbkdf2", () => {
   it("derives a key from a password", async () => {
@@ -53,7 +54,7 @@ describe("deriveScrypt", () => {
 
 describe("deriveKey", () => {
   it("routes to PBKDF2 for pbkdf2-sha256", async () => {
-    const result = await deriveKey("password", "pbkdf2-sha256", {
+    const result = await deriveKey("password", CryptoAlgorithm.PBKDF2_SHA256, {
       salt: new Uint8Array(16).fill(1),
     });
     expect(result.key).toBeInstanceOf(Uint8Array);
@@ -61,7 +62,7 @@ describe("deriveKey", () => {
   });
 
   it("routes to scrypt for scrypt", async () => {
-    const result = await deriveKey("password", "scrypt", {
+    const result = await deriveKey("password", CryptoAlgorithm.SCRYPT, {
       salt: new Uint8Array(16).fill(1),
     });
     expect(result.key).toBeInstanceOf(Uint8Array);

@@ -4,6 +4,7 @@ import {
   HASH_ALGORITHMS,
   KEY_DERIVATION_ALGORITHMS,
   MAC_ALGORITHMS,
+  SIGNATURE_ALGORITHMS,
 } from "./cryptoConstants.type.js";
 
 /**
@@ -38,6 +39,27 @@ export function isKeyDerivationAlgorithm(algorithm: CryptoAlgorithm): boolean {
  */
 export function isMacAlgorithm(algorithm: CryptoAlgorithm): boolean {
   return MAC_ALGORITHMS.includes(algorithm as (typeof MAC_ALGORITHMS)[number]);
+}
+
+/**
+ * Returns true when an algorithm is a digital signature algorithm.
+ */
+export function isSignatureAlgorithm(algorithm: CryptoAlgorithm): boolean {
+  return SIGNATURE_ALGORITHMS.includes(
+    algorithm as (typeof SIGNATURE_ALGORITHMS)[number],
+  );
+}
+
+/**
+ * Returns true when an algorithm is a symmetric key algorithm
+ * (encryption, MAC or key derivation output).
+ */
+export function isSymmetricKeyAlgorithm(algorithm: CryptoAlgorithm): boolean {
+  return (
+    isAeadAlgorithm(algorithm) ||
+    isMacAlgorithm(algorithm) ||
+    isKeyDerivationAlgorithm(algorithm)
+  );
 }
 
 /**

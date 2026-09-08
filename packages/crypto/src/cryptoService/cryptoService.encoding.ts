@@ -2,7 +2,12 @@ import type { CryptoEncoding } from "../cryptoEncoding/cryptoEncoding.core.js";
 
 import { encode, decode } from "../cryptoEncoding/cryptoEncoding.core.js";
 
-import { createCryptoError } from "@zudojs/errors";
+import { CryptoOperation } from "@zudojs/errors";
+
+import {
+  operationError,
+  rethrowAsCryptoError,
+} from "../cryptoErrors/cryptoErrors.helper.js";
 
 export type { CryptoEncoding };
 
@@ -12,8 +17,10 @@ export function serviceEncode(
 ): string {
   try {
     return encode(value, encoding);
-  } catch {
-    throw createCryptoError("Crypto encoding failed.", {});
+  } catch (error) {
+    return rethrowAsCryptoError(error, (cause) =>
+      operationError("Crypto encoding failed.", CryptoOperation.ENCODE, cause),
+    );
   }
 }
 
@@ -23,7 +30,9 @@ export function serviceDecode(
 ): Uint8Array {
   try {
     return decode(value, encoding);
-  } catch {
-    throw createCryptoError("Crypto decoding failed.", {});
+  } catch (error) {
+    return rethrowAsCryptoError(error, (cause) =>
+      operationError("Crypto decoding failed.", CryptoOperation.DECODE, cause),
+    );
   }
 }

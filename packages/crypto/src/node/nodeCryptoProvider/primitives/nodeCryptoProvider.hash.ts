@@ -10,8 +10,9 @@ export async function hash(
   algorithm: HashAlgorithm,
   data: CryptoInput,
 ): Promise<Uint8Array> {
+  const digestName = nodeHashAlgorithm(algorithm);
   const normalized = toBytes(data);
-  const hasher = createHash(nodeHashAlgorithm(algorithm));
+  const hasher = createHash(digestName);
   hasher.update(normalized);
   return new Uint8Array(hasher.digest());
 }
@@ -21,9 +22,15 @@ export async function hmac(
   key: CryptoInput,
   data: CryptoInput,
 ): Promise<Uint8Array> {
+  const digestName = nodeHashAlgorithm(algorithm);
   const normalizedKey = toBytes(key);
+
+  if (normalizedKey.byteLength === 0) {
+    throw new TypeError("HMAC key must not be empty.");
+  }
+
   const normalizedData = toBytes(data);
-  const h = createHmac(nodeHashAlgorithm(algorithm), normalizedKey);
+  const h = createHmac(digestName, normalizedKey);
   h.update(normalizedData);
   return new Uint8Array(h.digest());
 }

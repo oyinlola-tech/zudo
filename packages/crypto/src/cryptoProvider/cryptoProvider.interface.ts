@@ -1,9 +1,6 @@
 import type {
   HashAlgorithm,
   HmacAlgorithm,
-  EncryptionAlgorithm,
-  SignatureAlgorithm,
-  KeyDerivationAlgorithm,
   CryptoInput,
   CryptoCapabilities,
 } from "./cryptoProvider.type.js";
@@ -20,8 +17,8 @@ import type {
 } from "./types/cryptoSignature.type.js";
 
 import type {
-  DerivedKeyResult,
   DeriveKeyOptions,
+  PasswordHashProviderOptions,
 } from "./types/cryptoKeyDerivation.type.js";
 
 /**
@@ -67,18 +64,9 @@ export interface EncryptionProvider {
   readonly name: string;
   readonly capabilities: CryptoCapabilities;
 
-  encrypt(options: {
-    key: CryptoInput;
-    plaintext: CryptoInput;
-    associatedData?: CryptoInput;
-    nonce?: Uint8Array;
-  }): Promise<EncryptedData>;
+  encrypt(options: EncryptOptions): Promise<EncryptedData>;
 
-  decrypt(options: {
-    key: CryptoInput;
-    encrypted: EncryptedData;
-    associatedData?: CryptoInput;
-  }): Promise<Uint8Array>;
+  decrypt(options: DecryptOptions): Promise<Uint8Array>;
 }
 
 /**
@@ -88,18 +76,9 @@ export interface SigningProvider {
   readonly name: string;
   readonly capabilities: CryptoCapabilities;
 
-  sign(options: {
-    key: CryptoInput;
-    data: CryptoInput;
-    algorithm?: SignatureAlgorithm;
-  }): Promise<Uint8Array>;
+  sign(options: SignOptions): Promise<Uint8Array>;
 
-  verify(options: {
-    key: CryptoInput;
-    data: CryptoInput;
-    signature: Uint8Array;
-    algorithm?: SignatureAlgorithm;
-  }): Promise<boolean>;
+  verify(options: VerifyOptions): Promise<boolean>;
 }
 
 /**
@@ -121,15 +100,7 @@ export interface PasswordProvider {
 
   hashPassword(
     password: CryptoInput,
-    options?: {
-      algorithm?: KeyDerivationAlgorithm;
-      memoryCost?: number;
-      timeCost?: number;
-      blockSize?: number;
-      parallelism?: number;
-      keyBytes?: number;
-      salt?: Uint8Array;
-    },
+    options?: PasswordHashProviderOptions,
   ): Promise<string>;
 
   verifyPassword(password: CryptoInput, hash: string): Promise<boolean>;

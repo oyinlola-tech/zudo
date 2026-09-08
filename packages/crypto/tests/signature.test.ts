@@ -36,7 +36,7 @@ describe("sign / verify", () => {
   });
 
   it("rejects signature with wrong key", async () => {
-    const { privateKey: pk1, publicKey: pub1 } = generateEd25519KeyPair();
+    const { privateKey: pk1 } = generateEd25519KeyPair();
     const { publicKey: pub2 } = generateEd25519KeyPair();
     const privatePem = exportPrivateKeyPem(pk1);
     const pub2Pem = exportPublicKeyPem(pub2);

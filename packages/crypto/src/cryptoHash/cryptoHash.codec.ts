@@ -1,5 +1,15 @@
 import type { HashEncoding } from "./cryptoHash.core.js";
 
+import { toHex, fromHex } from "../cryptoEncoding/encoding/cryptoEncoding.hex.js";
+import {
+  toBase64,
+  fromBase64,
+} from "../cryptoEncoding/encoding/cryptoEncoding.base64.js";
+import {
+  toBase64Url,
+  fromBase64Url,
+} from "../cryptoEncoding/encoding/cryptoEncoding.base64url.js";
+
 /**
  * Converts a hash result into its encoded representation.
  */
@@ -7,15 +17,13 @@ export function encodeDigest(
   digest: Uint8Array,
   encoding: HashEncoding,
 ): string {
-  const buffer = Buffer.from(digest);
-
   switch (encoding) {
     case "hex":
-      return buffer.toString("hex");
+      return toHex(digest);
     case "base64":
-      return buffer.toString("base64");
+      return toBase64(digest);
     case "base64url":
-      return buffer.toString("base64url");
+      return toBase64Url(digest);
     default:
       throw new TypeError(`Unsupported hash encoding: ${String(encoding)}.`);
   }
@@ -23,6 +31,8 @@ export function encodeDigest(
 
 /**
  * Decodes a hash string into bytes.
+ *
+ * Input must be a non-empty, canonical encoding.
  */
 export function decodeDigest(
   digest: string,
@@ -33,20 +43,12 @@ export function decodeDigest(
   }
 
   switch (encoding) {
-    case "hex": {
-      if (!/^[0-9a-fA-F]+$/.test(digest) || digest.length % 2 !== 0) {
-        throw new TypeError("Invalid hexadecimal digest.");
-      }
-
-      return new Uint8Array(Buffer.from(digest, "hex"));
-    }
-
+    case "hex":
+      return fromHex(digest);
     case "base64":
-      return new Uint8Array(Buffer.from(digest, "base64"));
-
+      return fromBase64(digest);
     case "base64url":
-      return new Uint8Array(Buffer.from(digest, "base64url"));
-
+      return fromBase64Url(digest);
     default:
       throw new TypeError(`Unsupported hash encoding: ${String(encoding)}.`);
   }

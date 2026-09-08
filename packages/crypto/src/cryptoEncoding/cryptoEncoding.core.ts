@@ -9,8 +9,57 @@ import {
 
 /**
  * Supported binary encodings.
+ *
+ * `utf8` is a text encoding, not a binary one: `encode(bytes, "utf8")`
+ * throws when the bytes are not valid UTF-8 rather than producing
+ * replacement characters.
  */
 export type CryptoEncoding = "hex" | "base64" | "base64url" | "utf8";
+
+/**
+ * Binary-safe encodings (every byte sequence round-trips).
+ */
+export type BinaryEncoding = Exclude<CryptoEncoding, "utf8">;
+
+const CRYPTO_ENCODINGS: ReadonlySet<string> = new Set([
+  "hex",
+  "base64",
+  "base64url",
+  "utf8",
+]);
+
+const BINARY_ENCODINGS: ReadonlySet<string> = new Set([
+  "hex",
+  "base64",
+  "base64url",
+]);
+
+/**
+ * Returns whether a value names a supported encoding.
+ */
+export function isCryptoEncoding(value: unknown): value is CryptoEncoding {
+  return typeof value === "string" && CRYPTO_ENCODINGS.has(value);
+}
+
+/**
+ * Returns whether a value names a binary-safe encoding.
+ */
+export function isBinaryEncoding(value: unknown): value is BinaryEncoding {
+  return typeof value === "string" && BINARY_ENCODINGS.has(value);
+}
+
+/**
+ * Asserts that a value names a binary-safe encoding.
+ */
+export function assertBinaryEncoding(
+  value: unknown,
+): asserts value is BinaryEncoding {
+  if (!isBinaryEncoding(value)) {
+    throw new TypeError(
+      `Unsupported binary encoding: ${String(value)}. Use hex, base64 or base64url.`,
+    );
+  }
+}
 
 /**
  * Encodes bytes into a string.
@@ -32,7 +81,7 @@ export function encode(
       return toBase64Url(value);
 
     case "utf8":
-      return new TextDecoder().decode(value);
+      return utf8Decode(value);
 
     default:
       throw new TypeError(`Unsupported crypto encoding: ${String(encoding)}.`);
@@ -61,7 +110,7 @@ export function decode(
       return fromBase64Url(value);
 
     case "utf8":
-      return new TextEncoder().encode(value);
+      return utf8Encode(value);
 
     default:
       throw new TypeError(`Unsupported crypto encoding: ${String(encoding)}.`);
@@ -81,11 +130,17 @@ export function utf8Encode(value: string): Uint8Array {
 
 /**
  * Decodes UTF-8 bytes into a string.
+ *
+ * Throws when the bytes are not well-formed UTF-8.
  */
 export function utf8Decode(value: Uint8Array): string {
   assertBytes(value);
 
-  return new TextDecoder().decode(value);
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(value);
+  } catch (error) {
+    throw new TypeError("Value is not valid UTF-8.", { cause: error });
+  }
 }
 
 function assertBytes(value: Uint8Array): void {

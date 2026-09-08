@@ -17,7 +17,9 @@ export type { SignOptions, VerifyOptions } from "./cryptoSignature.type.js";
 
 export type {
   DerivedKeyResult,
+  DerivedKeyAlgorithm,
   DeriveKeyOptions,
+  PasswordHashProviderOptions,
 } from "./cryptoKeyDerivation.type.js";
 
 export type { RandomTokenOptions } from "./cryptoRandom.type.js";

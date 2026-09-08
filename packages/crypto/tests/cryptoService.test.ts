@@ -1,8 +1,6 @@
 import { describe, it, expect } from "vitest";
-import {
-  CryptoService,
-  createCryptoService,
-} from "../src/cryptoService/index.js";
+import { createCryptoService } from "../src/cryptoService/index.js";
+import { CryptoAlgorithm } from "../src/cryptoConstants/index.js";
 
 describe("CryptoService", () => {
   const service = createCryptoService();
@@ -70,7 +68,7 @@ describe("CryptoService", () => {
 
   describe("deriveKey", () => {
     it("derives a key", async () => {
-      const result = await service.deriveKey("password", "scrypt", {
+      const result = await service.deriveKey("password", CryptoAlgorithm.SCRYPT, {
         salt: new Uint8Array(16).fill(1),
       });
       expect(result.key).toBeInstanceOf(Uint8Array);

@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  NodeCryptoProvider,
-  createNodeCryptoProvider,
-} from "../src/node/index.js";
+import { createNodeCryptoProvider } from "../src/node/index.js";
 
 describe("NodeCryptoProvider", () => {
   const provider = createNodeCryptoProvider();
@@ -180,12 +177,12 @@ describe("NodeCryptoProvider", () => {
       expect(key.length).toBe(32);
     });
 
-    it("throws for argon2id", async () => {
+    it("throws for unsupported algorithms such as argon2id", async () => {
       await expect(
         provider.deriveKey({
           password: "password",
           salt: new Uint8Array(16),
-          algorithm: "argon2id",
+          algorithm: "argon2id" as never,
         }),
       ).rejects.toThrow();
     });

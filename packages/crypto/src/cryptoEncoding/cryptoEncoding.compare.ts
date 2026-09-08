@@ -7,18 +7,23 @@ import { decode } from "./cryptoEncoding.core.js";
 /**
  * Compares two encoded values using constant-time comparison.
  *
- * Both values must use the same encoding.
+ * Both values must use the same encoding. Returns false (rather than
+ * throwing) when either value is not a valid, canonical encoding, so
+ * malleable encodings of the same bytes never compare equal to each other
+ * through a non-canonical form.
  */
 export function timingSafeEqualEncoded(
   left: string,
   right: string,
   encoding: CryptoEncoding = "base64url",
 ): boolean {
-  const leftBytes = decode(left, encoding);
+  let leftBytes: Uint8Array;
+  let rightBytes: Uint8Array;
 
-  const rightBytes = decode(right, encoding);
-
-  if (leftBytes.byteLength !== rightBytes.byteLength) {
+  try {
+    leftBytes = decode(left, encoding);
+    rightBytes = decode(right, encoding);
+  } catch {
     return false;
   }
 

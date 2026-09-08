@@ -1,8 +1,12 @@
 import type { SignatureAlgorithm } from "../../cryptoProvider/index.js";
-import type { KeyObject } from "node:crypto";
+import { KeyObject } from "node:crypto";
 
 /**
- * Maps a signature algorithm to a Node.js hash algorithm name.
+ * Maps a signature algorithm to the OpenSSL digest name used with
+ * `createSign`/`createVerify`.
+ *
+ * Ed25519 is a pure signature scheme and has no digest; use
+ * `crypto.sign(null, ...)` for it instead.
  */
 export function nodeSignatureAlgorithm(algorithm: SignatureAlgorithm): string {
   switch (algorithm) {
@@ -28,15 +32,34 @@ export function nodeSignatureAlgorithm(algorithm: SignatureAlgorithm): string {
 }
 
 /**
+ * Returns the `KeyObject.asymmetricKeyType` a signature algorithm requires.
+ */
+export function expectedAsymmetricKeyType(
+  algorithm: SignatureAlgorithm,
+): "rsa" | "ec" | "ed25519" {
+  switch (algorithm) {
+    case "rsa-sha256":
+    case "rsa-sha384":
+    case "rsa-sha512":
+      return "rsa";
+    case "ecdsa-sha256":
+    case "ecdsa-sha384":
+    case "ecdsa-sha512":
+      return "ec";
+    case "ed25519":
+      return "ed25519";
+    default:
+      throw new TypeError(
+        `Unsupported signature algorithm: ${String(algorithm)}.`,
+      );
+  }
+}
+
+/**
  * Checks whether a value is a Node.js KeyObject.
  */
 export function isKeyObject(value: unknown): value is KeyObject {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "type" in value &&
-    "export" in value
-  );
+  return value instanceof KeyObject;
 }
 
 /**

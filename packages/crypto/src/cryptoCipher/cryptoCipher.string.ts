@@ -1,3 +1,5 @@
+import type { CryptoProvider } from "../cryptoProvider/index.js";
+
 import type { CipherOptions, CipherResult } from "./cryptoCipher.core.js";
 
 import { encrypt, decrypt } from "./cryptoCipher.core.js";
@@ -22,8 +24,9 @@ export async function decryptString(
   iv: Uint8Array,
   authTag: Uint8Array,
   aad?: Uint8Array,
+  provider?: CryptoProvider,
 ): Promise<string> {
-  const plaintext = await decrypt(ciphertext, key, iv, authTag, aad);
+  const plaintext = await decrypt(ciphertext, key, iv, authTag, aad, provider);
 
   return Buffer.from(plaintext).toString("utf8");
 }
