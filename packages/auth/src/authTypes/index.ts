@@ -16,6 +16,7 @@ export {
   type TokenPayload,
   type TokenPair,
   type TokenConfig,
+  type TokenRevocationStore,
   type TokenVerificationResult,
 } from "./authToken.type.js";
 export {

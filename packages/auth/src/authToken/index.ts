@@ -10,3 +10,4 @@ export {
   verifyRefreshToken,
   refreshAccessToken,
 } from "./authToken.core.js";
+export { createMemoryTokenRevocationStore } from "./authToken.revocation.js";

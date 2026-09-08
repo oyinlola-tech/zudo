@@ -58,7 +58,7 @@ export function isTokenExpired(token: string): boolean {
       ).toString("utf-8"),
     );
     const now = Math.floor(Date.now() / 1000);
-    return payload.exp < now;
+    return typeof payload.exp !== "number" || payload.exp < now;
   } catch {
     return true;
   }

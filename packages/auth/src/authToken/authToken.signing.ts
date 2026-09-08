@@ -33,7 +33,8 @@ export function signToken(payload: TokenPayload, secret: string): JwtToken {
 }
 
 /**
- * Verify a JWT token's signature, expiration, and type.
+ * Verify a JWT token's signature, algorithm, expiration, type,
+ * and (when configured) issuer and audience.
  */
 export function verifyToken(
   token: JwtToken,
@@ -47,11 +48,22 @@ export function verifyToken(
   }
 
   const [headerB64, bodyB64, signature] = parts;
+
+  let header: { alg?: string };
+  try {
+    header = JSON.parse(base64UrlDecode(headerB64!)) as { alg?: string };
+  } catch {
+    return { valid: false, error: "Invalid header" };
+  }
+  if (header.alg !== ALGORITHM) {
+    return { valid: false, error: "Unsupported algorithm" };
+  }
+
   const signatureInput = `${headerB64}.${bodyB64}`;
   const expectedSignature = hmacSha256(signatureInput, secret);
 
-  const sigBuffer = Buffer.from(signature ?? "", "hex");
-  const expectedBuffer = Buffer.from(expectedSignature, "hex");
+  const sigBuffer = Buffer.from(signature ?? "", "base64url");
+  const expectedBuffer = Buffer.from(expectedSignature, "base64url");
 
   if (
     sigBuffer.length !== expectedBuffer.length ||
@@ -69,6 +81,10 @@ export function verifyToken(
 
   const now = Math.floor(Date.now() / 1000);
 
+  if (typeof payload.exp !== "number") {
+    return { valid: false, error: "Missing expiration" };
+  }
+
   if (payload.exp < now) {
     return { valid: false, error: "Token expired" };
   }
@@ -79,6 +95,10 @@ export function verifyToken(
 
   if (config.issuer && payload.iss !== config.issuer) {
     return { valid: false, error: "Invalid issuer" };
+  }
+
+  if (config.audience && payload.aud !== config.audience) {
+    return { valid: false, error: "Invalid audience" };
   }
 
   return { valid: true, payload };
@@ -94,25 +114,13 @@ export function generateTokenId(): TokenId {
 // ─── Internal helpers ─────────────────────────────────────────────────────
 
 function hmacSha256(data: string, secret: string): string {
-  return createHmac("sha256", secret).update(data).digest("hex");
+  return createHmac("sha256", secret).update(data).digest("base64url");
 }
 
 function base64UrlEncode(data: string): string {
-  const encoded = Buffer.from(data).toString("base64");
-  let result = "";
-  for (let i = 0; i < encoded.length; i++) {
-    const char = encoded[i];
-    if (char === "+") result += "-";
-    else if (char === "/") result += "_";
-    else if (char !== "=") result += char;
-  }
-  return result;
+  return Buffer.from(data, "utf-8").toString("base64url");
 }
 
 function base64UrlDecode(data: string): string {
-  const padded = data.replace(/-/g, "+").replace(/_/g, "/");
-  const padLength = (4 - (padded.length % 4)) % 4;
-  return Buffer.from(padded + "=".repeat(padLength), "base64").toString(
-    "utf-8",
-  );
+  return Buffer.from(data, "base64url").toString("utf-8");
 }

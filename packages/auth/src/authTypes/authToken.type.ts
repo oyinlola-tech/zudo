@@ -66,6 +66,26 @@ export interface TokenConfig {
 }
 
 /**
+ * Store for revoked token IDs (`jti` claims).
+ *
+ * Backs refresh-token rotation and explicit revocation. The in-memory
+ * implementation is good for development; production should use Redis
+ * or a database with the same interface.
+ */
+export interface TokenRevocationStore {
+  /**
+   * Mark a token ID as revoked.
+   *
+   * @param tokenId - The token's `jti` claim
+   * @param expiresAt - The token's `exp` claim (Unix seconds); entries
+   *   may be discarded after this time since the token is then invalid anyway.
+   */
+  revoke(tokenId: TokenId, expiresAt: number): Promise<void>;
+  /** Check whether a token ID has been revoked. */
+  isRevoked(tokenId: TokenId): Promise<boolean>;
+}
+
+/**
  * Result of token verification.
  */
 export interface TokenVerificationResult {

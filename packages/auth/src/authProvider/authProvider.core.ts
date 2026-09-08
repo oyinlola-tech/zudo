@@ -9,7 +9,11 @@ import type {
   UserCredentials,
   UserId,
 } from "../authTypes/authUser.type.js";
-import type { TokenPair, TokenConfig } from "../authTypes/authToken.type.js";
+import type {
+  TokenPair,
+  TokenConfig,
+  TokenRevocationStore,
+} from "../authTypes/authToken.type.js";
 import type {
   SessionStore,
   CreateSessionOptions,
@@ -24,11 +28,13 @@ import {
 import {
   createTokenPair,
   verifyAccessToken,
-  refreshAccessToken,
+  verifyRefreshToken,
 } from "../authToken/authToken.core.js";
 import {
   InvalidCredentialsError,
   TokenExpiredError,
+  TokenInvalidError,
+  TokenRevokedError,
   AccountDeactivatedError,
 } from "../authErrors/authError.base.js";
 
@@ -56,6 +62,11 @@ export interface AuthServiceConfig {
   readonly sessionTtlSeconds: number;
   /** Optional permission engine */
   readonly permissions?: PermissionEngine;
+  /**
+   * Optional revocation store. When provided, `refresh()` rotates refresh
+   * tokens: the used token's `jti` is revoked so it cannot be replayed.
+   */
+  readonly revocationStore?: TokenRevocationStore;
 }
 
 /**
@@ -102,6 +113,7 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
     verifyPassword: verifyPwd,
     sessionTtlSeconds,
     permissions,
+    revocationStore,
   } = config;
 
   return {
@@ -144,7 +156,10 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
     verifyToken(token: string) {
       const result = verifyAccessToken(token, tokenConfig);
       if (!result.valid) {
-        throw new TokenExpiredError(
+        if (result.error === "Token expired") {
+          throw new TokenExpiredError(result.error);
+        }
+        throw new TokenInvalidError(
           result.error ?? "Token verification failed",
         );
       }
@@ -153,13 +168,32 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
 
     /**
      * Refresh an access token using a refresh token.
+     *
+     * When a revocation store is configured, the used refresh token is
+     * revoked (rotation) so it cannot be replayed.
      */
     async refresh(refreshToken: string): Promise<TokenPair> {
-      const result = refreshAccessToken(refreshToken, tokenConfig);
-      if (!result) {
-        throw new TokenExpiredError("Refresh token is invalid or expired");
+      const result = verifyRefreshToken(refreshToken, tokenConfig);
+      if (!result.valid || !result.payload) {
+        if (result.error === "Token expired") {
+          throw new TokenExpiredError("Refresh token has expired");
+        }
+        throw new TokenInvalidError("Refresh token is invalid");
       }
-      return result;
+
+      const { sub, jti, exp, roles } = result.payload;
+
+      if (revocationStore && (await revocationStore.isRevoked(jti))) {
+        throw new TokenRevokedError("Refresh token has been revoked");
+      }
+
+      const tokens = createTokenPair(sub, tokenConfig, { roles });
+
+      if (revocationStore) {
+        await revocationStore.revoke(jti, exp);
+      }
+
+      return tokens;
     },
 
     /**
@@ -215,7 +249,8 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
 
 /**
  * Simple fallback guard when no permissions engine is configured.
- * Performs basic wildcard matching without full ABAC support.
+ * Grants access to resource owners and to the "admin" role only —
+ * configure @zudojs/permissions for real role/permission matching.
  */
 function simpleGuard(
   userRoles: readonly string[],
@@ -228,13 +263,8 @@ function simpleGuard(
     return { allowed: true, userRoles: [...userRoles] };
   }
 
-  const [requiredResource, requiredAction] = permission.split(":");
-
-  for (const role of userRoles) {
-    // Role-based — simplified check
-    if (role === "admin") {
-      return { allowed: true, userRoles: [...userRoles] };
-    }
+  if (userRoles.includes("admin")) {
+    return { allowed: true, userRoles: [...userRoles] };
   }
 
   return {

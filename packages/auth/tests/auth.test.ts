@@ -15,11 +15,17 @@ import {
   // Session
   createMemorySessionStore,
 
+  // Revocation
+  createMemoryTokenRevocationStore,
+
   // Provider
   createAuthService,
   type AuthUser,
   type TokenConfig,
+  TokenRevokedError,
+  TokenInvalidError,
 } from "../src/index.js";
+import { scryptSync, createHmac } from "node:crypto";
 
 import {
   createPermissionEngine,
@@ -73,6 +79,30 @@ describe("Password Hashing", () => {
   it("needsRehash should detect old format", () => {
     expect(needsRehash("invalid-format")).toBe(true);
     expect(needsRehash("scrypt$a$hash")).toBe(true);
+  });
+
+  it("should produce the documented scrypt$N$r$p$salt$hash format", async () => {
+    const hash = await hashPassword("my-password");
+    const parts = hash.split("$");
+    expect(parts).toHaveLength(6);
+    expect(parts[0]).toBe("scrypt");
+    expect(Number(parts[1])).toBe(16384);
+    expect(needsRehash(hash)).toBe(false);
+  });
+
+  it("should verify legacy-format hashes (≤ 0.1.1) and flag them for rehash", async () => {
+    // Legacy format: "scrypt<salt>$<hash>" with default params
+    const salt = "ab".repeat(32);
+    const key = scryptSync("legacy-password", salt, 64, {
+      N: 16384,
+      r: 8,
+      p: 1,
+    }).toString("hex");
+    const legacyHash = `scrypt${salt}$${key}`;
+
+    expect(await verifyPassword("legacy-password", legacyHash)).toBe(true);
+    expect(await verifyPassword("wrong-password", legacyHash)).toBe(false);
+    expect(needsRehash(legacyHash)).toBe(true);
   });
 
   it("should generate random tokens", () => {
@@ -153,7 +183,83 @@ describe("JWT Tokens", () => {
     const result = refreshAccessToken("invalid-token", TEST_TOKEN_CONFIG);
     expect(result).toBeNull();
   });
+
+  it("should honor TTLs in seconds (default 15 min / 7 days)", () => {
+    const config: TokenConfig = {
+      accessSecret: TEST_TOKEN_CONFIG.accessSecret,
+      refreshSecret: TEST_TOKEN_CONFIG.refreshSecret,
+    };
+    const tokens = createTokenPair("user-123", config);
+    const access = decodePayload(tokens.accessToken);
+    const refresh = decodePayload(tokens.refreshToken);
+    expect(access.exp - access.iat).toBe(900);
+    expect(refresh.exp - refresh.iat).toBe(604_800);
+    expect(tokens.expiresIn).toBe(900);
+  });
+
+  it("should carry roles through a refresh without re-supplying them", () => {
+    const tokens = createTokenPair("user-123", TEST_TOKEN_CONFIG, {
+      roles: ["editor"],
+    });
+    const newTokens = refreshAccessToken(tokens.refreshToken, TEST_TOKEN_CONFIG);
+    expect(newTokens).not.toBeNull();
+    const result = verifyAccessToken(newTokens!.accessToken, TEST_TOKEN_CONFIG);
+    expect(result.valid).toBe(true);
+    expect(result.payload?.roles).toEqual(["editor"]);
+  });
+
+  it("should reject a token with a mismatched audience", () => {
+    const tokens = createTokenPair("user-123", TEST_TOKEN_CONFIG);
+    const otherAudience: TokenConfig = {
+      ...TEST_TOKEN_CONFIG,
+      audience: "some-other-client",
+    };
+    const result = verifyAccessToken(tokens.accessToken, otherAudience);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe("Invalid audience");
+  });
+
+  it("should reject a token without an exp claim", () => {
+    // Forge an unsigned-exp token by re-signing a payload missing exp
+    const header = Buffer.from(
+      JSON.stringify({ alg: "HS256", typ: "JWT" }),
+    ).toString("base64url");
+    const body = Buffer.from(
+      JSON.stringify({ sub: "user-123", typ: "access", iat: 1 }),
+    ).toString("base64url");
+    const sig = createHmac("sha256", TEST_TOKEN_CONFIG.accessSecret)
+      .update(`${header}.${body}`)
+      .digest("base64url");
+    const result = verifyAccessToken(
+      `${header}.${body}.${sig}`,
+      TEST_TOKEN_CONFIG,
+    );
+    expect(result.valid).toBe(false);
+  });
+
+  it("should reject a token whose header declares another algorithm", () => {
+    const tokens = createTokenPair("user-123", TEST_TOKEN_CONFIG);
+    const [, body, sig] = tokens.accessToken.split(".");
+    const noneHeader = Buffer.from(
+      JSON.stringify({ alg: "none", typ: "JWT" }),
+    ).toString("base64url");
+    const result = verifyAccessToken(
+      `${noneHeader}.${body}.${sig}`,
+      TEST_TOKEN_CONFIG,
+    );
+    expect(result.valid).toBe(false);
+  });
 });
+
+function decodePayload(token: string): {
+  iat: number;
+  exp: number;
+  roles?: string[];
+} {
+  return JSON.parse(
+    Buffer.from(token.split(".")[1]!, "base64url").toString("utf-8"),
+  );
+}
 
 // ─── Session ───────────────────────────────────────────────────────────────
 
@@ -208,6 +314,17 @@ describe("Session Management", () => {
     expect(
       await store.get((await store.create({ userId: "user-123" })).id),
     ).not.toBeNull();
+  });
+
+  it("should extend expiration on touch (sliding expiration)", async () => {
+    const store = createMemorySessionStore();
+    const session = await store.create({ userId: "user-123", ttlSeconds: 60 });
+    await new Promise((r) => setTimeout(r, 5));
+    await store.touch(session.id);
+    const touched = await store.get(session.id);
+    expect(touched!.expiresAt.getTime()).toBeGreaterThan(
+      session.expiresAt.getTime(),
+    );
   });
 });
 
@@ -374,6 +491,49 @@ describe("Auth Service", () => {
       password: "password123",
     });
     await auth.logout(sessionId);
+  });
+
+  it("should carry roles into refreshed access tokens", async () => {
+    const auth = await setup();
+    const { tokens } = await auth.login({
+      identifier: "alice@example.com",
+      password: "password123",
+    });
+    const newTokens = await auth.refresh(tokens.refreshToken);
+    const payload = auth.verifyToken(newTokens.accessToken);
+    expect(payload.roles).toEqual(["admin", "editor"]);
+  });
+
+  it("should throw TokenInvalidError for malformed tokens", async () => {
+    const auth = await setup();
+    expect(() => auth.verifyToken("garbage")).toThrow(TokenInvalidError);
+  });
+
+  it("should rotate refresh tokens when a revocation store is configured", async () => {
+    const users2 = new Map<string, AuthUser & { passwordHash: string }>();
+    const hash = await hashPassword("password123");
+    users2.set("alice@example.com", { ...TEST_USER, passwordHash: hash });
+
+    const auth = createAuthService({
+      token: TEST_TOKEN_CONFIG,
+      sessionStore: createMemorySessionStore(),
+      revocationStore: createMemoryTokenRevocationStore(),
+      findUser: async (id) => users2.get(id) ?? null,
+      verifyPassword: async () => true,
+      sessionTtlSeconds: 3600,
+    });
+
+    const { tokens } = await auth.login({
+      identifier: "alice@example.com",
+      password: "password123",
+    });
+
+    // First refresh succeeds and revokes the used refresh token
+    await auth.refresh(tokens.refreshToken);
+    // Replaying the same refresh token is rejected
+    await expect(auth.refresh(tokens.refreshToken)).rejects.toThrow(
+      TokenRevokedError,
+    );
   });
 
   it("should check access permissions via engine", async () => {

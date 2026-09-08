@@ -11,14 +11,28 @@ npm install @zudojs/auth
 ## Quick Start
 
 ```typescript
-import { createJWTStrategy, createSessionStore } from "@zudojs/auth";
+import {
+  createTokenPair,
+  verifyAccessToken,
+  createMemorySessionStore,
+  hashPassword,
+  verifyPassword,
+  type TokenConfig,
+} from "@zudojs/auth";
 
-const strategy = createJWTStrategy({
-  secret: process.env.JWT_SECRET,
-  expiresIn: "1h",
-});
+const tokenConfig: TokenConfig = {
+  accessSecret: process.env.JWT_ACCESS_SECRET!,
+  refreshSecret: process.env.JWT_REFRESH_SECRET!,
+  accessTtl: 900, // seconds (15 minutes)
+  refreshTtl: 604_800, // seconds (7 days)
+};
 
-const token = await strategy.sign({ sub: user.id, role: user.role });
+const tokens = createTokenPair(user.id, tokenConfig, { roles: user.roles });
+const result = verifyAccessToken(tokens.accessToken, tokenConfig);
+
+const sessionStore = createMemorySessionStore();
+const hash = await hashPassword("plain-text-password");
+const ok = await verifyPassword("plain-text-password", hash);
 ```
 
 ## Features

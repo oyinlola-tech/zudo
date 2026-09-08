@@ -7,7 +7,6 @@
  * Uses HMAC SHA-256 for signing.
  */
 
-import { TimeMs } from "@zudojs/constants";
 import type { UserId } from "@zudojs/constants";
 import type {
   JwtToken,
@@ -21,8 +20,9 @@ import {
   generateTokenId,
 } from "./authToken.signing.js";
 
-const DEFAULT_ACCESS_TTL = TimeMs.SECOND * 15; // 15 minutes
-const DEFAULT_REFRESH_TTL = TimeMs.SECOND * 60 * 60 * 24 * 7; // 7 days
+// TTLs are in seconds — they are added to Unix-second `iat`/`exp` claims.
+const DEFAULT_ACCESS_TTL = 900; // 15 minutes
+const DEFAULT_REFRESH_TTL = 604_800; // 7 days
 
 /**
  * Create a new token pair (access + refresh).
@@ -57,6 +57,7 @@ export function createTokenPair(
       exp: now + refreshTtl,
       typ: "refresh",
       jti: generateTokenId(),
+      roles: options?.roles,
       ...(config.issuer ? { iss: config.issuer } : {}),
       ...(config.audience ? { aud: config.audience } : {}),
     },
