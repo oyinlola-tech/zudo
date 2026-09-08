@@ -50,7 +50,13 @@ export const DefaultTimeout = Object.freeze({
  * Default retry configuration values.
  */
 export const DefaultRetry = Object.freeze({
-  /** Maximum number of retry attempts */
+  /**
+   * Default number of retry attempts used when nothing is configured.
+   *
+   * Distinct from `Limits.MAX_RETRY_ATTEMPTS` (10; also surfaced as
+   * `ValidationRange.MAX_RETRIES`), which is the upper bound on what a caller
+   * may configure — this is merely the out-of-the-box default.
+   */
   MAX_ATTEMPTS: 3,
   /** Base delay between retries in ms */
   BASE_DELAY_MS: 1_000,
@@ -93,11 +99,11 @@ export function toMilliseconds(
  */
 export function formatDuration(ms: number): string {
   if (ms < TimeMs.SECOND) return `${ms}ms`;
-  if (ms < TimeMs.MINUTE) return `${Math.round(ms / TimeMs.SECOND)}s`;
+  if (ms < TimeMs.MINUTE) return `${Math.floor(ms / TimeMs.SECOND)}s`;
   if (ms < TimeMs.HOUR) {
-    const s = Math.floor(ms / TimeMs.SECOND);
-    const r = Math.round(((ms % TimeMs.SECOND) / TimeMs.SECOND) * 10) / 10;
-    return r >= 0.5 ? `${s + 1}m` : `${s}s`;
+    const m = Math.floor(ms / TimeMs.MINUTE);
+    const s = Math.floor((ms % TimeMs.MINUTE) / TimeMs.SECOND);
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
   }
   if (ms < TimeMs.DAY) {
     const h = Math.floor(ms / TimeMs.HOUR);

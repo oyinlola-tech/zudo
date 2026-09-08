@@ -4,6 +4,8 @@
  * @module environment/environment
  */
 
+import { ImmutableSet } from "../internal/immutableSet.js";
+
 /** Type-safe environment name string. */
 export type Environment = "development" | "test" | "staging" | "production";
 
@@ -17,10 +19,9 @@ export const Environments = Object.freeze({
   PRODUCTION: "production",
 } as const);
 
-/** Set of all valid environments for quick membership checks. */
-export const ENVIRONMENTS: ReadonlySet<Environment> = new Set<Environment>(
-  Object.values(Environments) as Environment[],
-);
+/** Set of all valid environments for quick membership checks (immutable at runtime). */
+export const ENVIRONMENTS: ReadonlySet<Environment> =
+  new ImmutableSet<Environment>(Object.values(Environments));
 
 /**
  * Check whether a string is a valid Environment value.

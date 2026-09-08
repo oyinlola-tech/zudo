@@ -4,6 +4,9 @@
  * @module common/common.serialization
  */
 
+import { ContentTypes } from "../http/httpContentType.type.js";
+import { Limits } from "./common.constant.js";
+
 /** Canonical serialization format names. */
 export const SerializationFormat = Object.freeze({
   JSON: "json",
@@ -12,19 +15,32 @@ export const SerializationFormat = Object.freeze({
   MESSAGEPACK: "messagepack",
 } as const);
 
-/** MIME content types for serialized data. */
+/**
+ * MIME content types for serialized data
+ * (canonical values: {@link ContentTypes}).
+ */
 export const SerializationContentType = Object.freeze({
-  JSON: "application/json",
-  TEXT: "text/plain",
-  OCTET: "application/octet-stream",
-  MSGPACK: "application/msgpack",
+  JSON: ContentTypes.JSON,
+  TEXT: ContentTypes.TEXT_PLAIN,
+  OCTET: ContentTypes.OCTET_STREAM,
+  /** De facto standard MessagePack MIME type. */
+  MSGPACK: "application/x-msgpack",
 } as const);
 
 /** Default limits for serialization operations. */
 export const SerializationLimits = Object.freeze({
-  /** Default maximum serialized payload size (10 MB). */
-  MAX_SIZE: 10 * 1024 * 1024,
-  /** Default maximum object nesting depth. */
+  /**
+   * Default maximum serialized payload size (10 MB;
+   * canonical: {@link Limits.MAX_FILE_SIZE}).
+   */
+  MAX_SIZE: Limits.MAX_FILE_SIZE,
+  /**
+   * Default maximum object nesting depth (serializer recursion guard).
+   *
+   * Intentionally distinct from `Limits.MAX_NESTING_DEPTH` (10 — bound on
+   * acceptable user data shape) and `SCHEMA_DEFAULT_MAX_DEPTH` (100 — schema
+   * validation recursion guard).
+   */
   MAX_DEPTH: 128,
   /** Maximum number of registered type transformers. */
   MAX_TRANSFORMERS: 256,

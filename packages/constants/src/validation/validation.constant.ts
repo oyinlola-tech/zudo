@@ -4,6 +4,8 @@
  * @module validation/validation
  */
 
+import { Limits } from "../common/common.constant.js";
+
 /**
  * Maximum allowed lengths for common fields.
  */
@@ -12,10 +14,10 @@ export const ValidationLength = Object.freeze({
   SHORT: 64,
   /** Standard name field */
   NAME: 128,
-  /** Email address */
-  EMAIL: 255,
-  /** Display name or title */
-  DISPLAY: 255,
+  /** Email address (RFC 5321 maximum total length) */
+  EMAIL: 254,
+  /** Display name or title (canonical: {@link Limits.MAX_DISPLAY_LENGTH}) */
+  DISPLAY: Limits.MAX_DISPLAY_LENGTH,
   /** Short description */
   DESCRIPTION_SHORT: 500,
   /** Long description or text body */
@@ -42,14 +44,21 @@ export const ValidationRange = Object.freeze({
   MAX_PERCENTAGE: 100,
   /** Minimum page number (1-based) */
   MIN_PAGE: 1,
-  /** Maximum page size */
-  MAX_PAGE_SIZE: 100,
+  /** Maximum page size (canonical: {@link Limits.MAX_PAGE_SIZE}) */
+  MAX_PAGE_SIZE: Limits.MAX_PAGE_SIZE,
   /** Minimum pagination offset */
   MIN_OFFSET: 0,
   /** Maximum timeout in seconds */
   MAX_TIMEOUT_SECONDS: 3_600,
   /** Minimum retry count */
   MIN_RETRIES: 0,
-  /** Maximum retry count */
-  MAX_RETRIES: 10,
+  /**
+   * Maximum retry count a caller may configure (upper validation bound;
+   * canonical: {@link Limits.MAX_RETRY_ATTEMPTS}).
+   *
+   * Note: this is intentionally larger than `DefaultRetry.MAX_ATTEMPTS` (3),
+   * which is the out-of-the-box default — this constant caps what users may
+   * request, the other is what they get if they configure nothing.
+   */
+  MAX_RETRIES: Limits.MAX_RETRY_ATTEMPTS,
 } as const);

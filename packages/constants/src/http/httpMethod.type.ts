@@ -4,6 +4,8 @@
  * @module http/httpMethod
  */
 
+import { ImmutableSet } from "../internal/immutableSet.js";
+
 /** Type-safe HTTP method string. */
 export type HttpMethod =
   | "GET"
@@ -31,25 +33,25 @@ export const HttpMethods = Object.freeze({
   CONNECT: "CONNECT",
 } as const);
 
-/** Set of all HTTP methods for quick membership checks. */
-export const HTTP_METHODS: ReadonlySet<HttpMethod> = new Set<HttpMethod>(
-  Object.values(HttpMethods) as HttpMethod[],
-);
+/** Set of all HTTP methods for quick membership checks (immutable at runtime). */
+export const HTTP_METHODS: ReadonlySet<HttpMethod> =
+  new ImmutableSet<HttpMethod>(Object.values(HttpMethods));
 
-/** HTTP methods that are safe (no side effects). */
-export const SAFE_HTTP_METHODS: ReadonlySet<HttpMethod> = new Set<HttpMethod>([
-  HttpMethods.GET as HttpMethod,
-  HttpMethods.HEAD as HttpMethod,
-  HttpMethods.OPTIONS as HttpMethod,
-]);
+/** HTTP methods that are safe (no side effects). Immutable at runtime. */
+export const SAFE_HTTP_METHODS: ReadonlySet<HttpMethod> =
+  new ImmutableSet<HttpMethod>([
+    HttpMethods.GET,
+    HttpMethods.HEAD,
+    HttpMethods.OPTIONS,
+  ]);
 
-/** HTTP methods that are idempotent. */
+/** HTTP methods that are idempotent. Immutable at runtime. */
 export const IDEMPOTENT_HTTP_METHODS: ReadonlySet<HttpMethod> =
-  new Set<HttpMethod>([
-    HttpMethods.GET as HttpMethod,
-    HttpMethods.HEAD as HttpMethod,
-    HttpMethods.PUT as HttpMethod,
-    HttpMethods.DELETE as HttpMethod,
-    HttpMethods.OPTIONS as HttpMethod,
-    HttpMethods.TRACE as HttpMethod,
+  new ImmutableSet<HttpMethod>([
+    HttpMethods.GET,
+    HttpMethods.HEAD,
+    HttpMethods.PUT,
+    HttpMethods.DELETE,
+    HttpMethods.OPTIONS,
+    HttpMethods.TRACE,
   ]);

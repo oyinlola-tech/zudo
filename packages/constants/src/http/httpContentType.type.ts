@@ -4,8 +4,7 @@
  * @module http/httpContentType
  */
 
-/** Type-safe MIME content type string. */
-export type ContentType = string;
+import { InvalidConstantError } from "../constantsErrors/constantsError.base.js";
 
 /**
  * Common MIME content types.
@@ -34,12 +33,25 @@ export const ContentTypes = Object.freeze({
   WILDCARD: "*/*",
 } as const);
 
+/** Type-safe MIME content type — the union of all {@link ContentTypes} values. */
+export type ContentType = (typeof ContentTypes)[keyof typeof ContentTypes];
+
+/**
+ * Any MIME content type string — use when handling types outside the
+ * {@link ContentTypes} catalogue (still autocompletes the known types).
+ */
+export type AnyContentType = ContentType | (string & {});
+
 /**
  * Common charset values.
+ *
+ * These are IANA/MIME charset labels for use in `Content-Type` headers
+ * (e.g. `charset=us-ascii`) — they are NOT Node.js `Buffer` encoding names
+ * (Node uses `"ascii"`, `"utf16le"`, `"latin1"`, etc.).
  */
 export const Charset = Object.freeze({
   UTF_8: "utf-8",
-  ASCII: "ascii",
+  ASCII: "us-ascii",
   ISO_8859_1: "iso-8859-1",
   UTF_16: "utf-16",
 } as const);
@@ -47,13 +59,34 @@ export const Charset = Object.freeze({
 /**
  * Build a Content-Type header value with optional charset.
  *
+ * The charset is omitted for `multipart/*` types, where a charset parameter
+ * is not meaningful (multipart types take a `boundary` parameter instead).
+ *
  * @param mimeType - The MIME type (e.g. ContentTypes.JSON)
  * @param charset - Optional charset (e.g. Charset.UTF_8)
  * @returns Full Content-Type string (e.g. "application/json; charset=utf-8")
+ * @throws {InvalidConstantError} if `mimeType` is empty, or `charset` is
+ * provided but empty/blank.
  */
 export function buildContentType(
-  mimeType: ContentType,
+  mimeType: AnyContentType,
   charset?: string,
 ): string {
-  return charset ? `${mimeType}; charset=${charset}` : mimeType;
+  if (mimeType.trim().length === 0) {
+    throw new InvalidConstantError(
+      "buildContentType: mimeType must not be empty",
+    );
+  }
+  if (charset !== undefined && charset.trim().length === 0) {
+    throw new InvalidConstantError(
+      "buildContentType: charset must not be empty",
+    );
+  }
+  if (
+    charset === undefined ||
+    mimeType.toLowerCase().startsWith("multipart/")
+  ) {
+    return mimeType;
+  }
+  return `${mimeType}; charset=${charset}`;
 }

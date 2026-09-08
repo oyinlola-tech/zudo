@@ -12,6 +12,7 @@ export {
 } from "./environment.type.js";
 export {
   NODE_ENV_KEY,
+  type ResolveEnvironmentOptions,
   resolveEnvironment,
   isProduction,
   isDevelopment,

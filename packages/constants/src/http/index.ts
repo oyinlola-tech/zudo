@@ -13,6 +13,7 @@ export {
 } from "./httpMethod.type.js";
 export {
   type HttpStatusCode,
+  type AnyHttpStatusCode,
   HttpStatus,
   isSuccessStatus,
   isRedirectStatus,
@@ -20,9 +21,14 @@ export {
   isServerError,
   isErrorStatus,
 } from "./httpStatus.type.js";
-export { type HttpHeaderName, HttpHeader } from "./httpHeader.type.js";
+export {
+  type HttpHeaderName,
+  type AnyHttpHeaderName,
+  HttpHeader,
+} from "./httpHeader.type.js";
 export {
   type ContentType,
+  type AnyContentType,
   ContentTypes,
   Charset,
   buildContentType,

@@ -4,9 +4,6 @@
  * @module http/httpHeader
  */
 
-/** Type-safe HTTP header name string. */
-export type HttpHeaderName = string;
-
 /**
  * Common HTTP header names.
  */
@@ -41,3 +38,12 @@ export const HttpHeader = Object.freeze({
   X_API_KEY: "X-Api-Key",
   X_CORRELATION_ID: "X-Correlation-Id",
 } as const);
+
+/** Type-safe HTTP header name — the union of all {@link HttpHeader} values. */
+export type HttpHeaderName = (typeof HttpHeader)[keyof typeof HttpHeader];
+
+/**
+ * Any HTTP header name — use when handling headers outside the
+ * {@link HttpHeader} catalogue (still autocompletes the known names).
+ */
+export type AnyHttpHeaderName = HttpHeaderName | (string & {});
