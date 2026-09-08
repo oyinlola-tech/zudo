@@ -8,7 +8,10 @@ import {
 
 import type { ConfigEntry } from "../configEntry/configEntry.type.js";
 
-import { createConfigEntry } from "../configEntry/configEntry.type.js";
+import {
+  createConfigEntry,
+  toSafeConfigEntry,
+} from "../configEntry/configEntry.type.js";
 
 import type { ConfigSourceType } from "../configSource/configSource.core.js";
 
@@ -165,7 +168,9 @@ export class ConfigStore {
       previous.sensitive === entry.sensitive &&
       previous.resolved === entry.resolved
     ) {
-      return entry;
+      // No-op write: return the entry that is actually stored so
+      // callers always hold a reference to live store state.
+      return previous as ConfigEntry<T>;
     }
 
     this.entries.set(normalizedKey, entry);
@@ -291,6 +296,14 @@ export class ConfigStore {
 
   /**
    * Returns a plain object containing all configuration values.
+   *
+   * WARNING: values are returned RAW — sensitive entries are NOT
+   * redacted. Use toSafeObject() for logging or diagnostics.
+   *
+   * The returned object is a defensive snapshot: when the store does
+   * not freeze values, each value is deep-cloned so later mutations
+   * of the snapshot never affect the store (and vice versa). Frozen
+   * stores share their (immutable) values directly.
    */
   toObject(): Readonly<Record<string, ConfigValue>> {
     this.assertActive();
@@ -298,7 +311,9 @@ export class ConfigStore {
     const result: Record<string, ConfigValue> = {};
 
     for (const entry of this.entries.values()) {
-      result[entry.key] = entry.value;
+      result[entry.key] = this.shouldFreeze
+        ? entry.value
+        : cloneConfigValue(entry.value);
     }
 
     if (this.shouldFreeze) {
@@ -306,6 +321,28 @@ export class ConfigStore {
     }
 
     return result;
+  }
+
+  /**
+   * Returns a plain object with sensitive values redacted.
+   *
+   * Entries marked sensitive are replaced with "[REDACTED]". This is
+   * the safe counterpart to toObject() for logging and diagnostics.
+   */
+  toSafeObject(): Readonly<Record<string, ConfigValue>> {
+    this.assertActive();
+
+    const result: Record<string, ConfigValue> = {};
+
+    for (const entry of this.entries.values()) {
+      const safeEntry = toSafeConfigEntry(entry);
+
+      result[safeEntry.key] = safeEntry.sensitive
+        ? safeEntry.value
+        : cloneConfigValue(safeEntry.value);
+    }
+
+    return Object.freeze(result);
   }
 
   /**

@@ -21,17 +21,6 @@ export enum ConfigSourceType {
 }
 
 /**
- * A single configuration value supplied by a source.
- */
-export interface ConfigSourceEntry {
-  readonly key: string;
-  readonly value: ConfigValue;
-  readonly source: string;
-  readonly priority?: number;
-  readonly sensitive?: boolean;
-}
-
-/**
  * Context supplied to a configuration source while loading values.
  */
 export interface ConfigSourceContext {
@@ -47,6 +36,14 @@ export interface ConfigSourceResult {
   readonly values: Readonly<Record<string, ConfigValue>>;
   readonly source: string;
   readonly type: ConfigSourceType;
+
+  /**
+   * Keys within `values` whose entries must be marked sensitive.
+   *
+   * Sensitive entries are redacted by safe serialization paths such
+   * as ConfigStore.toSafeObject() and toSafeConfigEntry().
+   */
+  readonly sensitiveKeys?: readonly string[];
 }
 
 /**
@@ -214,6 +211,12 @@ export function createCustomConfigSource(
 
 /**
  * Normalizes a source result.
+ *
+ * Note on reference semantics: the returned `values` record is a
+ * frozen SHALLOW copy — nested objects and arrays are still shared
+ * with the object the source returned. Consumers that need isolation
+ * (e.g. the loader/store with freeze enabled) clone values before
+ * storing them.
  */
 export function normalizeConfigSourceResult(
   result: ConfigSourceResult,
@@ -244,24 +247,27 @@ export function normalizeConfigSourceResult(
     values: Object.freeze({
       ...result.values,
     }),
+
+    ...(result.sensitiveKeys
+      ? { sensitiveKeys: Object.freeze([...result.sensitiveKeys]) }
+      : {}),
   });
 }
 
 /**
  * Sorts configuration sources by priority.
  *
- * Higher-priority sources are returned first.
+ * Higher-priority sources are returned first. Sources with equal
+ * priority keep their REGISTRATION ORDER (the sort is stable), so
+ * among equal priorities the last-registered source is applied last
+ * and wins.
  */
 export function sortConfigSources(
   sources: readonly ConfigSource[],
 ): readonly ConfigSource[] {
-  return [...sources].sort((left, right) => {
-    if (right.priority !== left.priority) {
-      return right.priority - left.priority;
-    }
-
-    return left.name.localeCompare(right.name);
-  });
+  // Array.prototype.sort is stable, so equal priorities preserve the
+  // original registration order.
+  return [...sources].sort((left, right) => right.priority - left.priority);
 }
 
 /**

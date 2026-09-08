@@ -63,6 +63,12 @@ export interface ConfigSchema<T extends ConfigValue = ConfigValue> {
   readonly nullable?: boolean;
   readonly default?: T | (() => T);
   readonly description?: string;
+  /**
+   * Marks the value as secret. When a ConfigManager validates its
+   * configuration, store entries whose property schema is flagged
+   * `secret` are marked sensitive, so toSafeObject() and safe entry
+   * serialization redact them.
+   */
   readonly secret?: boolean;
   readonly validate?: (
     value: T,
@@ -126,14 +132,3 @@ export interface ConfigNumberSchema extends ConfigSchema<number> {
 export interface ConfigBooleanSchema extends ConfigSchema<boolean> {
   readonly type: ConfigValueType.BOOLEAN;
 }
-
-/**
- * Schema definition shorthand.
- */
-export type ConfigSchemaDefinition =
-  ConfigSchema | ConfigSchemaDefinition[] | ConfigSchemaBuilder;
-
-/**
- * Schema builder function.
- */
-export type ConfigSchemaBuilder = () => ConfigSchema;

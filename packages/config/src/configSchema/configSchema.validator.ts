@@ -1,5 +1,7 @@
 import type { ConfigValue } from "../configValue/configValue.core.js";
 
+import { isUnsafeConfigKey } from "../configValue/configValue.core.js";
+
 import type {
   ConfigSchema,
   ConfigArraySchema,
@@ -194,12 +196,12 @@ function appendCustomValidationResult(
   }
 
   if (Array.isArray(result)) {
-    issues.push(...result);
+    issues.push(...(result as readonly ConfigValidationIssue[]));
 
     return;
   }
 
-  issues.push(...(Array.isArray(result) ? result : [result]));
+  issues.push(result as ConfigValidationIssue);
 }
 
 /**
@@ -394,11 +396,19 @@ export function validateConfigValue(
       };
     }
 
-    return {
-      valid: true,
-      value: resolveDefaultValue(schema),
-      issues,
-    };
+    const defaultValue = resolveDefaultValue(schema);
+
+    if (defaultValue === undefined) {
+      return {
+        valid: true,
+        issues,
+      };
+    }
+
+    // Applied defaults run through the same validation and transform
+    // pipeline as supplied values (defaultValue is defined here, so
+    // this recursion terminates immediately).
+    return validateConfigValue(defaultValue, schema, context);
   }
 
   if (value === null && schema.nullable) {
@@ -438,7 +448,12 @@ export function validateConfigValue(
 
   let transformed: ConfigValue = value as ConfigValue;
 
-  if (schema.transform) {
+  const hasErrors = (): boolean =>
+    issues.some((issue) => issue.severity === ConfigValidationSeverity.ERROR);
+
+  // Transforms only run on values that passed validation; running
+  // them on invalid input would surface invalid values to callers.
+  if (schema.transform && !hasErrors()) {
     try {
       transformed = schema.transform(value as ConfigValue, validationContext);
     } catch (error) {
@@ -452,11 +467,13 @@ export function validateConfigValue(
     }
   }
 
+  const valid = !hasErrors();
+
   return {
-    valid: !issues.some(
-      (issue) => issue.severity === ConfigValidationSeverity.ERROR,
-    ),
-    value: transformed,
+    valid,
+    // Invalid values are never returned; callers fall back to the
+    // schema default or undefined instead.
+    value: valid ? transformed : undefined,
     issues,
   };
 }
@@ -491,6 +508,10 @@ export function validateConfigObject(
   const result: Record<string, ConfigValue> = {};
 
   for (const [key, propertySchema] of Object.entries(schema.properties)) {
+    if (isUnsafeConfigKey(key)) {
+      continue;
+    }
+
     const propertyPath = `${path}.${key}`;
 
     const propertyResult = validateConfigValue(value[key], propertySchema, {
@@ -508,6 +529,13 @@ export function validateConfigObject(
   }
 
   for (const [key, child] of Object.entries(value)) {
+    // Own "__proto__"/"constructor"/"prototype" keys (e.g. from
+    // JSON.parse of untrusted input) must never be copied onto the
+    // plain result object: assigning them would mutate its prototype.
+    if (isUnsafeConfigKey(key)) {
+      continue;
+    }
+
     if (Object.prototype.hasOwnProperty.call(schema.properties, key)) {
       continue;
     }

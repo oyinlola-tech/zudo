@@ -1,8 +1,7 @@
 /**
  * @zudojs/config/configResolver/accessors
  *
- * Configuration accessors and scoped resolver.
+ * Scoped configuration resolver.
  */
 
-export * from "./configResolver.accessors.js";
 export * from "./configResolver.scoped.js";

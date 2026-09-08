@@ -1,5 +1,3 @@
-import type { ConfigValue } from "../configValue/configValue.core.js";
-
 import { cloneConfigValue } from "../configValue/configValue.core.js";
 
 import type { ConfigEntry } from "../configEntry/configEntry.type.js";
@@ -12,10 +10,7 @@ import type {
   ConfigSourceResult,
 } from "../configSource/configSource.core.js";
 
-import {
-  loadConfigSources,
-  sortConfigSources,
-} from "../configSource/configSource.core.js";
+import { sortConfigSources } from "../configSource/configSource.core.js";
 
 import type { ConfigStore } from "../configStore/configStore.core.js";
 
@@ -31,6 +26,12 @@ export interface ConfigLoaderOptions {
 
   readonly store?: ConfigStore;
 
+  /**
+   * Whether a store created by the loader deep-clones and freezes
+   * stored values. When false, the store shares REFERENCES with the
+   * values that sources returned — mutating them later mutates the
+   * store's view as well. Ignored when an existing `store` is given.
+   */
   readonly freeze?: boolean;
 
   readonly clearStore?: boolean;
@@ -78,6 +79,8 @@ export class ConfigLoader {
 
   private readonly clearStore: boolean;
 
+  private readonly freeze: boolean;
+
   private loading = false;
 
   private loaded = false;
@@ -102,6 +105,8 @@ export class ConfigLoader {
     this.onSourceError = options.onSourceError;
 
     this.clearStore = options.clearStore ?? true;
+
+    this.freeze = options.freeze ?? true;
   }
 
   /**
@@ -145,6 +150,11 @@ export class ConfigLoader {
 
   /**
    * Loads all configured sources.
+   *
+   * When the loader context carries an AbortSignal, the signal is
+   * checked between sources: once aborted, loading stops early and
+   * this method throws the signal's abort reason. Values applied by
+   * sources that completed before the abort remain in the store.
    */
   async load(): Promise<ConfigLoadResult> {
     this.assertActive();
@@ -164,7 +174,16 @@ export class ConfigLoader {
 
       const results: ConfigSourceResult[] = [];
 
+      const signal = this.context.signal;
+
       for (const source of sortedSources) {
+        if (signal?.aborted) {
+          throw (
+            (signal.reason as Error | undefined) ??
+            new Error("Configuration loading was aborted.")
+          );
+        }
+
         try {
           const result = await loadSingleSource(source, this.context);
 
@@ -222,6 +241,10 @@ export class ConfigLoader {
 
   /**
    * Loads only selected sources.
+   *
+   * The shared store is never cleared: values loaded previously are
+   * retained and only the given sources are (re)applied. Source
+   * callbacks configured on this loader are invoked as usual.
    */
   async loadSources(
     sources: readonly ConfigSource[],
@@ -232,7 +255,10 @@ export class ConfigLoader {
       sources,
       context: this.context,
       store: this.store,
-      clearStore: this.clearStore,
+      clearStore: false,
+      freeze: this.freeze,
+      onSourceLoaded: this.onSourceLoaded,
+      onSourceError: this.onSourceError,
     });
 
     const result = await temporaryLoader.load();
@@ -284,9 +310,14 @@ export class ConfigLoader {
   }
 
   /**
-   * Disposes the loader and its source resources.
+   * Disposes the loader and, by default, its source resources.
+   *
+   * Pass `closeSources: false` when the sources are owned by the
+   * caller and must outlive this loader.
    */
-  async dispose(): Promise<void> {
+  async dispose(
+    options: { readonly closeSources?: boolean } = {},
+  ): Promise<void> {
     if (this.disposed) {
       return;
     }
@@ -294,15 +325,17 @@ export class ConfigLoader {
     this.disposed = true;
     this.loaded = false;
 
-    for (const source of this.sources) {
-      if (!source.close) {
-        continue;
-      }
+    if (options.closeSources ?? true) {
+      for (const source of this.sources) {
+        if (!source.close) {
+          continue;
+        }
 
-      try {
-        await source.close();
-      } catch {
-        // Continue closing remaining sources.
+        try {
+          await source.close();
+        } catch {
+          // Continue closing remaining sources.
+        }
       }
     }
 
@@ -325,11 +358,18 @@ export class ConfigLoader {
    * Applies one source to the configuration store.
    *
    * Sources are processed from highest to lowest priority. Existing
-   * values are therefore retained when a lower-priority source
-   * attempts to replace them.
+   * strictly-higher-priority values are retained; an EQUAL-priority
+   * source overwrites, so among equal priorities the last-applied
+   * (last-registered) source wins.
+   *
+   * Keys listed in the result's `sensitiveKeys` are marked sensitive.
+   * Once an entry is sensitive it stays sensitive even when a later
+   * source overwrites its value.
    */
   private applySource(source: ConfigSource, result: ConfigSourceResult): void {
     const priority = source.priority;
+
+    const sensitiveKeys = new Set(result.sensitiveKeys ?? []);
 
     for (const [key, value] of Object.entries(result.values)) {
       const existing = this.store.getEntry(key);
@@ -342,7 +382,7 @@ export class ConfigLoader {
         source: source.name,
         sourceType: source.type,
         priority,
-        sensitive: existing?.sensitive ?? false,
+        sensitive: sensitiveKeys.has(key) || (existing?.sensitive ?? false),
         resolved: true,
       });
     }
@@ -396,6 +436,9 @@ export function createConfigLoader(
 
 /**
  * Loads configuration directly from a collection of sources.
+ *
+ * The temporary loader is disposed afterwards WITHOUT closing the
+ * given sources — they are owned by the caller and remain usable.
  */
 export async function loadConfiguration(
   sources: readonly ConfigSource[],
@@ -409,7 +452,7 @@ export async function loadConfiguration(
   try {
     return await loader.load();
   } finally {
-    await loader.dispose();
+    await loader.dispose({ closeSources: false });
   }
 }
 

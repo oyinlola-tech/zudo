@@ -1,7 +1,7 @@
 /**
  * @zudojs/config/configSchema
  *
- * Configuration schema validation with Zod.
+ * Dependency-free configuration schema validation.
  */
 
 export * from "./configSchema.type.js";

@@ -1,6 +1,6 @@
 import type { ConfigValue } from "../../configValue/configValue.core.js";
 
-import type { ConfigSchema } from "../../configSchema/configSchema.core.js";
+import type { ConfigSchema } from "../../configSchema/index.js";
 
 import type { ConfigStore } from "../../configStore/configStore.core.js";
 

@@ -1,15 +1,16 @@
 import type { ConfigValue } from "../../configValue/configValue.core.js";
 
 import {
+  isUnsafeConfigKey,
   parseConfigBigInt,
   parseConfigBoolean,
   parseConfigDate,
   parseConfigNumber,
 } from "../../configValue/configValue.core.js";
 
-import type { ConfigSchema } from "../../configSchema/configSchema.core.js";
+import type { ConfigSchema } from "../../configSchema/index.js";
 
-import { validateConfigValue } from "../../configSchema/configSchema.core.js";
+import { validateConfigValue } from "../../configSchema/index.js";
 
 import type { ConfigStore } from "../../configStore/configStore.core.js";
 
@@ -68,8 +69,23 @@ export class ConfigResolver {
       },
     );
 
-    if (!result.valid && this.options.strict) {
-      throw new ConfigResolutionError(key, result.issues);
+    if (!result.valid) {
+      if (this.options.strict) {
+        throw new ConfigResolutionError(key, result.issues);
+      }
+
+      // Non-strict mode: never return an invalid value. Fall back to
+      // the schema default when present, otherwise undefined.
+      const fallback =
+        typeof schema.default === "function"
+          ? (schema.default as () => T)()
+          : schema.default;
+
+      if (fallback === undefined && !this.options.allowUndefined) {
+        throw new ConfigResolutionError(key, result.issues);
+      }
+
+      return this.prepareValue(fallback) as T | undefined;
     }
 
     if (result.value === undefined && !this.options.allowUndefined) {
@@ -295,7 +311,15 @@ export class ConfigResolver {
     }
 
     if (value instanceof Date) {
-      return parseConfigDate(value);
+      const parsed = parseConfigDate(value);
+
+      if (parsed !== undefined) {
+        return parsed;
+      }
+
+      // Invalid Date instances route through the same strict/fallback
+      // handling as any other invalid type.
+      return this.invalidType(key, "date", value, fallback);
     }
 
     if (typeof value === "string") {
@@ -430,6 +454,10 @@ export class ConfigResolver {
     const result: Record<string, ConfigValue> = {};
 
     for (const [key, child] of Object.entries(value)) {
+      if (isUnsafeConfigKey(key)) {
+        continue;
+      }
+
       result[key] = this.prepareValue(child) as ConfigValue;
     }
 

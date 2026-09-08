@@ -54,6 +54,27 @@ export type ResolvedConfigValue =
     };
 
 /**
+ * Object keys that must never be copied onto plain objects.
+ *
+ * Assigning these keys (most notably "__proto__") on a plain object
+ * mutates its prototype instead of creating an own property, which
+ * enables prototype-pollution attacks via untrusted configuration
+ * payloads such as JSON.parse output.
+ */
+const UNSAFE_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+
+/**
+ * Checks whether an object key is unsafe to copy onto plain objects.
+ */
+export function isUnsafeConfigKey(key: string): boolean {
+  return UNSAFE_CONFIG_KEYS.has(key);
+}
+
+/**
  * Checks whether a value is a configuration primitive.
  */
 export function isConfigPrimitive(value: unknown): value is ConfigPrimitive {
@@ -340,31 +361,47 @@ export function parseConfigDate(
  *
  * Configuration objects should normally be immutable after
  * resolution to prevent accidental runtime mutation.
+ *
+ * A shallow-frozen container is still traversed so its nested
+ * children are frozen as well. Non-plain objects (class instances)
+ * are returned by reference WITHOUT being frozen — consistent with
+ * cloneConfigValue, which also returns such values by reference.
+ * Values are assumed to be acyclic, as required by ConfigValue.
  */
 export function freezeConfigValue<T extends ConfigValue>(value: T): T {
   if (typeof value !== "object" || value === null) {
     return value;
   }
 
-  if (Object.isFrozen(value)) {
+  if (value instanceof Date) {
+    return Object.isFrozen(value) ? value : (Object.freeze(value) as T);
+  }
+
+  if (!Array.isArray(value) && !isConfigObject(value)) {
+    // Non-plain values (class instances) are intentionally left
+    // untouched; they are not valid ConfigValues and callers keep
+    // full ownership of them.
     return value;
   }
 
-  if (value instanceof Date) {
-    return Object.freeze(value) as T;
-  }
-
   for (const child of Object.values(value)) {
-    if (isConfigValue(child)) {
-      freezeConfigValue(child);
+    if (typeof child === "object" && child !== null) {
+      freezeConfigValue(child as ConfigValue);
     }
   }
 
-  return Object.freeze(value) as T;
+  return Object.isFrozen(value) ? value : (Object.freeze(value) as T);
 }
 
 /**
  * Deeply clones a configuration value.
+ *
+ * Plain objects, arrays, and Dates are copied deeply. Non-plain
+ * objects (class instances) are returned BY REFERENCE — the clone
+ * shares them with the original (freezeConfigValue treats them the
+ * same way and never freezes them). Unsafe keys ("__proto__",
+ * "constructor", "prototype") are skipped so untrusted payloads
+ * cannot pollute prototypes through the clone.
  */
 export function cloneConfigValue<T extends ConfigValue>(value: T): T {
   if (value === null || value === undefined || typeof value !== "object") {
@@ -383,6 +420,10 @@ export function cloneConfigValue<T extends ConfigValue>(value: T): T {
     const result: Record<string, ConfigValue> = {};
 
     for (const [key, child] of Object.entries(value)) {
+      if (isUnsafeConfigKey(key)) {
+        continue;
+      }
+
       result[key] = cloneConfigValue(child);
     }
 

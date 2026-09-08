@@ -2,12 +2,12 @@ import type { ConfigValue } from "../configValue/configValue.core.js";
 
 import { cloneConfigValue } from "../configValue/configValue.core.js";
 
-import type { ConfigSchema } from "../configSchema/configSchema.core.js";
+import type { ConfigSchema } from "../configSchema/index.js";
 
 import {
   ConfigValueType,
   validateConfigObject,
-} from "../configSchema/configSchema.core.js";
+} from "../configSchema/index.js";
 
 import type { ConfigSource } from "../configSource/configSource.core.js";
 
@@ -65,21 +65,33 @@ export class ConfigManager {
 
   private disposed = false;
 
+  private loadPromise?: Promise<ConfigLoadResult>;
+
   constructor(options: ConfigManagerOptions = {}) {
+    // When a caller supplies a loader (and no explicit store), the
+    // manager must resolve values from the SAME store that loader
+    // writes to.
+    const providedLoader = options.loader;
+
     this.store =
       options.store ??
+      providedLoader?.getStore() ??
       createConfigStore({
         initialValues: options.initialValues,
         freeze: options.freeze ?? true,
       });
 
     this.loader =
-      options.loader ??
+      providedLoader ??
       createConfigLoader({
         sources: options.sources,
         context: options.context,
         store: this.store,
         freeze: options.freeze ?? true,
+        // The manager seeds its store with initialValues and accepts
+        // runtime set() writes; loading must layer sources on top of
+        // those (by priority) instead of wiping them.
+        clearStore: false,
       });
 
     this.resolver = createConfigResolver(this.store, {
@@ -87,6 +99,14 @@ export class ConfigManager {
       allowUndefined: options.allowUndefined ?? true,
       clone: options.clone ?? false,
     });
+
+    if (options.autoLoad) {
+      // Kick off the initial load immediately; ready() (or load())
+      // exposes the in-flight promise. The catch handler prevents an
+      // unhandled rejection when nobody awaits ready(): the failure
+      // is still recorded in the FAILED state and lastError.
+      this.load().catch(() => {});
+    }
   }
 
   /**
@@ -151,33 +171,51 @@ export class ConfigManager {
 
   /**
    * Loads configuration.
+   *
+   * Calling load() while a load is already in flight returns the
+   * in-flight promise instead of starting a second load.
    */
   async load(): Promise<ConfigLoadResult> {
     this.assertActive();
 
     if (this.isLoading) {
+      if (this.loadPromise) {
+        return this.loadPromise;
+      }
+
       throw new Error("Configuration manager is already loading.");
     }
 
     this.setState(ConfigManagerState.LOADING);
 
-    try {
-      const result = await this.loader.load();
+    const promise = this.performLoad(false);
 
-      this.lastLoadedAt = result.loadedAt;
+    this.loadPromise = promise;
 
-      this.lastError = undefined;
+    return promise;
+  }
 
-      this.setState(ConfigManagerState.READY);
+  /**
+   * Waits until the initial configuration load has completed.
+   *
+   * With `autoLoad: true` this awaits the load started by the
+   * constructor (rethrowing its failure). Otherwise it starts a load
+   * when none has happened yet.
+   */
+  async ready(): Promise<void> {
+    this.assertActive();
 
-      return result;
-    } catch (error) {
-      this.lastError = error;
+    if (this.loadPromise) {
+      await this.loadPromise;
 
-      this.setState(ConfigManagerState.FAILED);
-
-      throw error;
+      return;
     }
+
+    if (this.isReady) {
+      return;
+    }
+
+    await this.load();
   }
 
   /**
@@ -192,8 +230,28 @@ export class ConfigManager {
 
     this.setState(ConfigManagerState.RELOADING);
 
+    const promise = this.performLoad(true);
+
+    this.loadPromise = promise;
+
+    return promise;
+  }
+
+  /**
+   * Executes a load or reload while keeping lifecycle state safe.
+   *
+   * If the manager is disposed while the load is in flight, no state
+   * transition happens afterwards: a disposed manager stays DISPOSED.
+   */
+  private async performLoad(reload: boolean): Promise<ConfigLoadResult> {
     try {
-      const result = await this.loader.reload();
+      const result = reload
+        ? await this.loader.reload()
+        : await this.loader.load();
+
+      if (this.disposed) {
+        return result;
+      }
 
       this.lastLoadedAt = result.loadedAt;
 
@@ -203,9 +261,11 @@ export class ConfigManager {
 
       return result;
     } catch (error) {
-      this.lastError = error;
+      if (!this.disposed) {
+        this.lastError = error;
 
-      this.setState(ConfigManagerState.FAILED);
+        this.setState(ConfigManagerState.FAILED);
+      }
 
       throw error;
     }
@@ -228,6 +288,26 @@ export class ConfigManager {
 
     if (!result.valid) {
       throw new ConfigManagerValidationError(result.issues);
+    }
+
+    // Property schemas flagged `secret` mark the corresponding store
+    // entries as sensitive so safe serialization redacts them.
+    for (const [key, propertySchema] of Object.entries(schema.properties)) {
+      if (!propertySchema.secret) {
+        continue;
+      }
+
+      const entry = this.store.getEntry(key);
+
+      if (entry && !entry.sensitive) {
+        this.store.set(key, entry.value, {
+          source: entry.source,
+          sourceType: entry.sourceType,
+          priority: entry.priority,
+          sensitive: true,
+          resolved: entry.resolved,
+        });
+      }
     }
 
     return cloneConfigValue(result.value as T);
@@ -364,11 +444,23 @@ export class ConfigManager {
 
   /**
    * Returns the complete configuration object.
+   *
+   * WARNING: values are returned RAW — sensitive entries are NOT
+   * redacted. Use toSafeObject() for logging or diagnostics.
    */
   toObject(): Readonly<Record<string, ConfigValue>> {
     this.assertActive();
 
     return this.store.toObject();
+  }
+
+  /**
+   * Returns the configuration object with sensitive values redacted.
+   */
+  toSafeObject(): Readonly<Record<string, ConfigValue>> {
+    this.assertActive();
+
+    return this.store.toSafeObject();
   }
 
   /**

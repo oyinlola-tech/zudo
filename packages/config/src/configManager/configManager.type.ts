@@ -34,6 +34,12 @@ export interface ConfigManagerOptions extends ConfigResolverOptions {
 
   readonly freeze?: boolean;
 
+  /**
+   * When true, the manager starts loading configuration immediately
+   * on construction. Await `manager.ready()` to wait for (and surface
+   * errors from) that initial load; `load()` called while the initial
+   * load is in flight reuses the same promise.
+   */
   readonly autoLoad?: boolean;
 
   readonly context?: {

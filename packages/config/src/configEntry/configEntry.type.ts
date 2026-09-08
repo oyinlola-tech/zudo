@@ -102,23 +102,15 @@ export function isConfigEntry(value: unknown): value is ConfigEntry {
 
 /**
  * Masks a sensitive configuration value.
+ *
+ * The entire value — including arrays and objects — collapses to a
+ * single replacement token so that no structural information (such
+ * as an array's length) leaks about the sensitive value.
  */
 export function redactConfigValue(
-  value: ConfigValue,
+  _value: ConfigValue,
   replacement = "[REDACTED]",
 ): ConfigValue {
-  if (value === undefined || value === null || typeof value !== "object") {
-    return replacement;
-  }
-
-  if (value instanceof Date) {
-    return replacement;
-  }
-
-  if (Array.isArray(value)) {
-    return value.map(() => replacement);
-  }
-
   return replacement;
 }
 
