@@ -240,3 +240,134 @@ describe("createCacheStore", () => {
     expect(s.name).toBe("memory");
   });
 });
+
+// ─── Regression: real payloads in delete/clear events ──────────────────────
+
+describe("DefaultCacheStore — event payloads", () => {
+  it("cache.delete carries the real deleted flag", async () => {
+    const handler = vi.fn();
+    store.subscribe("cache.delete", handler);
+    await store.delete("missing");
+    expect(handler.mock.calls[0][0].deleted).toBe(false);
+    await store.set("k", "v");
+    await store.delete("k");
+    expect(handler.mock.calls[1][0].deleted).toBe(true);
+  });
+
+  it("cache.clear carries the real cleared count", async () => {
+    await store.set("a", 1);
+    await store.set("b", 2);
+    const handler = vi.fn();
+    store.subscribe("cache.clear", handler);
+    await store.clear();
+    expect(handler.mock.calls[0][0].cleared).toBe(2);
+  });
+});
+
+// ─── Regression: batch ops are instrumented ────────────────────────────────
+
+describe("DefaultCacheStore — batch instrumentation", () => {
+  it("getMany fires per-key hit/miss metrics and events", async () => {
+    const metrics = createCacheMetrics();
+    const s = createCacheStore({ adapter, metrics });
+    const events: string[] = [];
+    s.subscribe("*", (e) => {
+      events.push(e.type);
+    });
+    await s.set("a", 1);
+    await s.getMany(["a", "missing"]);
+    const stats = metrics.getStats();
+    expect(stats.hits).toBe(1);
+    expect(stats.misses).toBe(1);
+    expect(events).toContain("cache.hit");
+    expect(events).toContain("cache.miss");
+  });
+
+  it("setMany fires per-key set metrics and events", async () => {
+    const metrics = createCacheMetrics();
+    const s = createCacheStore({ adapter, metrics });
+    const handler = vi.fn();
+    s.subscribe("cache.set", handler);
+    await s.setMany(
+      new Map([
+        ["a", 1],
+        ["b", 2],
+      ]),
+    );
+    expect(metrics.getStats().sets).toBe(2);
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
+  it("deleteMany fires per-key delete events with real deleted flags", async () => {
+    const metrics = createCacheMetrics();
+    const s = createCacheStore({ adapter, metrics });
+    const handler = vi.fn();
+    s.subscribe("cache.delete", handler);
+    await s.set("a", 1);
+    await s.deleteMany(["a", "missing"]);
+    expect(metrics.getStats().deletes).toBe(2);
+    const flags = handler.mock.calls.map((c) => [c[0].key, c[0].deleted]);
+    expect(flags).toContainEqual(["a", true]);
+    expect(flags).toContainEqual(["missing", false]);
+  });
+
+  it("wraps batch adapter errors in CacheError", async () => {
+    const { CacheError } = await import("../src/errors.js");
+    const failing = createMemoryCacheAdapter();
+    failing.getMany = async () => {
+      throw new Error("boom");
+    };
+    const s = createCacheStore({ adapter: failing });
+    await expect(s.getMany(["a"])).rejects.toBeInstanceOf(CacheError);
+  });
+});
+
+// ─── Regression: error wrapping ────────────────────────────────────────────
+
+describe("DefaultCacheStore — error wrapping", () => {
+  it("does not double-wrap CacheError", async () => {
+    const { CacheError } = await import("../src/errors.js");
+    const inner = new CacheError("already wrapped");
+    const failing = createMemoryCacheAdapter();
+    failing.get = async () => {
+      throw inner;
+    };
+    const s = createCacheStore({ adapter: failing });
+    await expect(s.get("k")).rejects.toBe(inner);
+  });
+});
+
+// ─── Regression: async event handler rejections are swallowed ──────────────
+
+describe("DefaultCacheStore — async handler rejections", () => {
+  it("does not let rejected async handlers escape", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      store.subscribe("cache.set", async () => {
+        throw new Error("async handler boom");
+      });
+      await store.set("k", "v");
+      // Give the rejection a chance to surface if it were unhandled
+      await new Promise((r) => setTimeout(r, 10));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+});
+
+// ─── Regression: ttl/expire exposed through the store ──────────────────────
+
+describe("DefaultCacheStore — ttl/expire", () => {
+  it("exposes the adapter's ttl and expire", async () => {
+    await store.set("k", "v", { ttl: 10_000 });
+    const remaining = await store.ttl("k");
+    expect(remaining).toBeGreaterThan(0);
+    expect(await store.expire("k", 60_000)).toBe(true);
+    expect(await store.ttl("missing")).toBeUndefined();
+  });
+});

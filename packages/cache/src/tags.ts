@@ -3,12 +3,16 @@
  *
  * Tag-based cache invalidation registry. Maps tags to cache keys,
  * allowing bulk invalidation of related entries.
+ *
+ * NOTE: The tag store is not notified when entries expire or are evicted
+ * by the adapter, so cleanup of stale mappings is lazy — dead keys linger
+ * until `invalidateByTag`/`removeKey`/`clear` touches them, and
+ * invalidation tolerates keys that no longer exist in the cache.
  */
 
 import type {
   CacheClearResult,
   CacheKey,
-  CacheNamespace,
   CacheTag,
   CacheTagOptions,
   CacheTagStore,
@@ -104,7 +108,26 @@ export class InMemoryTagStore implements CacheTagStore {
     return { cleared: count };
   }
 
+  /* ---- Remove Key ---- */
+
+  /** Removes all tag mappings for a key (e.g. after the key is deleted). */
+  removeKey(key: CacheKey): void {
+    const tags = this.keyToTags.get(key);
+    if (!tags) return;
+    for (const tag of tags) {
+      const keys = this.tagToKeys.get(tag);
+      keys?.delete(key);
+      if (keys && keys.size === 0) this.tagToKeys.delete(tag);
+    }
+    this.keyToTags.delete(key);
+  }
+
   /* ---- Utility ---- */
+
+  /** Returns all keys that currently have tag mappings. */
+  trackedKeys(): readonly CacheKey[] {
+    return [...this.keyToTags.keys()];
+  }
 
   /** Returns all registered tags. */
   tags(): readonly CacheTag[] {

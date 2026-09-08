@@ -110,7 +110,7 @@ describe("MemoryCacheAdapter — TTL", () => {
   });
 
   it("does not expire entries with null TTL", async () => {
-    await adapter.set("permanent", "value", { ttl: null as any });
+    await adapter.set("permanent", "value", { ttl: null });
     await new Promise((r) => setTimeout(r, 10));
     const result = await adapter.get("permanent");
     expect(result.hit).toBe(true);
@@ -129,8 +129,34 @@ describe("MemoryCacheAdapter — TTL", () => {
     expect(remaining).toBeLessThanOrEqual(10_000);
   });
 
-  it("ttl() returns null for missing key", async () => {
-    expect(await adapter.ttl("missing")).toBeNull();
+  it("ttl() returns undefined for missing key", async () => {
+    expect(await adapter.ttl("missing")).toBeUndefined();
+  });
+
+  // Regression: ttl() distinguishes "no expiry" (null) from missing
+  // (undefined), and deletes expired entries when encountered.
+  it("ttl() returns null for entries that never expire", async () => {
+    await adapter.set("forever", "value", { ttl: null });
+    expect(await adapter.ttl("forever")).toBeNull();
+  });
+
+  it("ttl() deletes expired entries and returns undefined", async () => {
+    await adapter.set("stale", "value", { ttl: 1 });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(await adapter.ttl("stale")).toBeUndefined();
+    expect((await adapter.keys()).includes("stale")).toBe(false);
+  });
+
+  it("expire() treats expired entries as missing", async () => {
+    await adapter.set("stale", "value", { ttl: 1 });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(await adapter.expire("stale", 10_000)).toBe(false);
+  });
+
+  it("expire(key, null) removes the expiry", async () => {
+    await adapter.set("k", "v", { ttl: 10_000 });
+    expect(await adapter.expire("k", null)).toBe(true);
+    expect(await adapter.ttl("k")).toBeNull();
   });
 
   it("ttl() returns remaining TTL for entry with default TTL", async () => {
@@ -304,5 +330,74 @@ describe("createMemoryCacheAdapter", () => {
     await a.set("b", 2);
     await a.set("c", 3); // evicts "a"
     expect((await a.get("a")).hit).toBe(false);
+  });
+});
+
+// ─── Regression: keys() excludes expired entries ───────────────────────────
+
+describe("MemoryCacheAdapter — keys expiry", () => {
+  it("keys() filters out (and deletes) expired entries", async () => {
+    await adapter.set("live", "v", { ttl: 60_000 });
+    await adapter.set("dead", "v", { ttl: 1 });
+    await new Promise((r) => setTimeout(r, 5));
+    const keys = await adapter.keys();
+    expect(keys).toContain("live");
+    expect(keys).not.toContain("dead");
+  });
+});
+
+// ─── Regression: eviction behavior ─────────────────────────────────────────
+
+describe("MemoryCacheAdapter — eviction regressions", () => {
+  it("overwriting an existing key at capacity does not evict", async () => {
+    const small = createMemoryCacheAdapter({ maxEntries: 2 });
+    await small.set("a", 1);
+    await small.set("b", 2);
+    await small.set("a", 10); // overwrite — must not evict anything
+    expect((await small.get("a")).value).toBe(10);
+    expect((await small.get("b")).hit).toBe(true);
+  });
+
+  it("purges expired entries before evicting live ones", async () => {
+    const small = createMemoryCacheAdapter({ maxEntries: 2 });
+    await small.set("expired", 1, { ttl: 1 });
+    await small.set("live", 2, { ttl: 60_000 });
+    await new Promise((r) => setTimeout(r, 5));
+    await small.set("new", 3, { ttl: 60_000 }); // evicts "expired", not "live"
+    expect((await small.get("live")).hit).toBe(true);
+    expect((await small.get("new")).hit).toBe(true);
+  });
+});
+
+// ─── Regression: overwrite: false at the adapter level ─────────────────────
+
+describe("MemoryCacheAdapter — overwrite: false", () => {
+  it("skips existing keys and reports skipped", async () => {
+    await adapter.set("k", "old");
+    const result = await adapter.set("k", "new", { overwrite: false });
+    expect(result.skipped).toBe(true);
+    expect(result.success).toBe(false);
+    expect((await adapter.get("k")).value).toBe("old");
+  });
+
+  it("overwrites expired entries even with overwrite: false", async () => {
+    await adapter.set("k", "old", { ttl: 1 });
+    await new Promise((r) => setTimeout(r, 5));
+    const result = await adapter.set("k", "new", { overwrite: false });
+    expect(result.success).toBe(true);
+    expect((await adapter.get("k")).value).toBe("new");
+  });
+});
+
+// ─── Regression: TTL validation ────────────────────────────────────────────
+
+describe("MemoryCacheAdapter — TTL validation", () => {
+  it("rejects zero, negative, and oversized TTLs", async () => {
+    await expect(adapter.set("k", "v", { ttl: 0 })).rejects.toThrow();
+    await expect(adapter.set("k", "v", { ttl: -1 })).rejects.toThrow();
+    await expect(
+      adapter.set("k", "v", { ttl: 25 * 60 * 60 * 1000 }),
+    ).rejects.toThrow();
+    await expect(adapter.expire("k", 0)).rejects.toThrow();
   });
 });

@@ -9,7 +9,11 @@ import type {
   CacheOperation,
   CacheStats,
 } from "./types.js";
-import { LATENCY_BUCKETS, MAX_LATENCY_SAMPLES } from "./constants.js";
+import {
+  LATENCY_BUCKETS,
+  MAX_LATENCY_SAMPLES,
+  MAX_TRACKED_KEYS,
+} from "./constants.js";
 
 export class InMemoryCacheMetrics implements CacheMetrics {
   private hits = 0;
@@ -22,7 +26,16 @@ export class InMemoryCacheMetrics implements CacheMetrics {
 
   incrementHit(key?: CacheKey): void {
     this.hits++;
-    if (key) this.keyHits.set(key, (this.keyHits.get(key) ?? 0) + 1);
+    if (!key) return;
+    const current = this.keyHits.get(key);
+    if (current !== undefined) {
+      this.keyHits.set(key, current + 1);
+      return;
+    }
+    // Cap the number of distinct tracked keys so hot-key tracking cannot
+    // grow without bound; new keys are ignored once the cap is reached.
+    if (this.keyHits.size >= MAX_TRACKED_KEYS) return;
+    this.keyHits.set(key, 1);
   }
   incrementMiss(_key?: CacheKey): void {
     this.misses++;
@@ -96,7 +109,12 @@ export class InMemoryCacheMetrics implements CacheMetrics {
     operation: CacheOperation,
   ): readonly { readonly bucket: number; readonly count: number }[] {
     const samples = this.latencies.get(operation) ?? [];
-    return LATENCY_BUCKETS.map((boundary) => ({
+    // A +Infinity bucket captures samples above the largest finite boundary.
+    const boundaries: readonly number[] = [
+      ...LATENCY_BUCKETS,
+      Number.POSITIVE_INFINITY,
+    ];
+    return boundaries.map((boundary) => ({
       bucket: boundary,
       count: samples.filter((s) => s <= boundary).length,
     }));

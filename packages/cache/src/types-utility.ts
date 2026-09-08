@@ -1,14 +1,11 @@
-import type { CacheKey } from "./types-keys.js";
+import type { CacheKey, CacheNamespace } from "./types-keys.js";
 import type { MaybePromise as BaseMaybePromise } from "@zudojs/types";
-import type {
-  CacheDeleteOptions,
-  CacheGetOptions,
-  CacheSetOptions,
-} from "./types-operations.js";
+import type { CacheSetOptions } from "./types-operations.js";
 
 export type { BaseMaybePromise as MaybePromise };
 
 export interface CacheOrComputeOptions extends CacheSetOptions {
+  readonly namespace?: CacheNamespace;
   readonly forceRefresh?: boolean;
 }
 
@@ -21,7 +18,7 @@ export interface CacheBatchOperation {
   readonly type: "get" | "set" | "delete";
   readonly key: CacheKey;
   readonly value?: unknown;
-  readonly options?: CacheGetOptions | CacheSetOptions | CacheDeleteOptions;
+  readonly options?: CacheSetOptions;
 }
 
 export interface CacheBatchResult {

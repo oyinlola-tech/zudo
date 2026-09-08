@@ -140,3 +140,30 @@ describe("createTagStore", () => {
     expect(store).toBeInstanceOf(InMemoryTagStore);
   });
 });
+
+// ─── Regression: removeKey / trackedKeys ───────────────────────────────────
+
+describe("InMemoryTagStore — removeKey", () => {
+  it("removes all tag mappings for a key", async () => {
+    await tagStore.add("k1", ["a", "b"]);
+    await tagStore.add("k2", ["a"]);
+    tagStore.removeKey("k1");
+    expect(await tagStore.getKeys("a")).toEqual(["k2"]);
+    expect(await tagStore.getKeys("b")).toEqual([]);
+    expect(tagStore.tagsForKey("k1")).toEqual([]);
+    // Empty tags are pruned entirely
+    expect(tagStore.tags()).toEqual(["a"]);
+  });
+
+  it("is a no-op for unknown keys", () => {
+    expect(() => tagStore.removeKey("missing")).not.toThrow();
+  });
+});
+
+describe("InMemoryTagStore — trackedKeys", () => {
+  it("lists keys that currently have tag mappings", async () => {
+    await tagStore.add("k1", ["a"]);
+    await tagStore.add("k2", ["b"]);
+    expect([...tagStore.trackedKeys()].sort()).toEqual(["k1", "k2"]);
+  });
+});

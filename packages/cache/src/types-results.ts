@@ -11,6 +11,8 @@ export interface CacheSetResult {
   readonly success: boolean;
   readonly key: CacheKey;
   readonly expiresAt: Date | null;
+  /** True when the set was skipped because the key exists and `overwrite: false` was passed. */
+  readonly skipped?: boolean;
 }
 
 export interface CacheDeleteResult {

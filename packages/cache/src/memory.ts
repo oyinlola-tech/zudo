@@ -1,25 +1,25 @@
 /**
  * @zudojs/cache — Memory Adapter
  * In-memory cache adapter using a Map. Suitable for development, testing, and single-process deployments.
+ *
+ * Receives fully-qualified keys; namespace resolution happens in CacheService.
  */
 
 import type {
-  CacheAdapter,
   CacheClearOptions,
   CacheClearResult,
-  CacheDeleteOptions,
+  CacheDeleteManyResult,
   CacheDeleteResult,
-  CacheGetManyOptions,
-  CacheGetOptions,
   CacheGetResult,
-  CacheHasOptions,
   CacheKeysOptions,
   CacheSetManyOptions,
   CacheSetOptions,
   CacheSetResult,
   CacheTTL,
 } from "./types.js";
+import type { CacheAdapter } from "./types.js";
 import { DEFAULT_MAX_ENTRIES, DEFAULT_TTL_MS } from "./constants.js";
+import { assertValidTtl, deleteManyViaDelete, globToRegExp } from "./utils.js";
 
 interface MemoryEntry {
   readonly value: unknown;
@@ -58,8 +58,14 @@ export class MemoryCacheAdapter implements CacheAdapter {
     value: TValue,
     options?: CacheSetOptions,
   ): Promise<CacheSetResult> {
-    this.evictIfNeeded();
-    const ttl = options?.ttl ?? this.defaultTtl;
+    const ttl = options?.ttl !== undefined ? options.ttl : this.defaultTtl;
+    assertValidTtl(ttl);
+    if (options?.overwrite === false && (await this.has(key))) {
+      return { success: false, key, expiresAt: null, skipped: true };
+    }
+    // Overwriting an existing key does not grow the store, so only evict
+    // when inserting a genuinely new key.
+    if (!this.store.has(key)) this.evictIfNeeded();
     const now = Date.now();
     this.store.set(key, {
       value,
@@ -98,7 +104,7 @@ export class MemoryCacheAdapter implements CacheAdapter {
       return { cleared: size };
     }
     let cleared = 0;
-    const regex = this.patternToRegex(options.pattern);
+    const regex = globToRegExp(options.pattern);
     for (const key of [...this.store.keys()]) {
       if (regex.test(key)) {
         this.store.delete(key);
@@ -109,9 +115,16 @@ export class MemoryCacheAdapter implements CacheAdapter {
   }
 
   async keys(options?: CacheKeysOptions): Promise<readonly string[]> {
-    let filtered = [...this.store.keys()];
+    let filtered: string[] = [];
+    for (const [key, entry] of [...this.store]) {
+      if (this.isExpired(entry)) {
+        this.store.delete(key);
+        continue;
+      }
+      filtered.push(key);
+    }
     if (options?.pattern) {
-      const regex = this.patternToRegex(options.pattern);
+      const regex = globToRegExp(options.pattern);
       filtered = filtered.filter((k) => regex.test(k));
     }
     if (options?.limit !== undefined)
@@ -137,32 +150,39 @@ export class MemoryCacheAdapter implements CacheAdapter {
     return results;
   }
 
-  async deleteMany(
-    keys: readonly string[],
-  ): Promise<{ readonly deleted: number; readonly keys: readonly string[] }> {
-    let deleted = 0;
-    const deletedKeys: string[] = [];
-    for (const key of keys) {
-      const result = await this.delete(key);
-      if (result.deleted) {
-        deleted++;
-        deletedKeys.push(key);
-      }
-    }
-    return { deleted, keys: deletedKeys };
+  async deleteMany(keys: readonly string[]): Promise<CacheDeleteManyResult> {
+    return deleteManyViaDelete(keys, (key) => this.delete(key));
   }
 
-  async ttl(key: string): Promise<number | null> {
+  /**
+   * Remaining TTL for a key in milliseconds.
+   * - `undefined` — the key does not exist (expired entries are deleted)
+   * - `null` — the key exists and never expires
+   * - `number` — remaining milliseconds until expiry
+   */
+  async ttl(key: string): Promise<number | null | undefined> {
     const entry = this.store.get(key);
-    if (!entry || entry.expiresAt === null) return null;
-    const remaining = entry.expiresAt - Date.now();
-    return remaining > 0 ? remaining : null;
+    if (!entry) return undefined;
+    if (this.isExpired(entry)) {
+      this.store.delete(key);
+      return undefined;
+    }
+    if (entry.expiresAt === null) return null;
+    return entry.expiresAt - Date.now();
   }
 
   async expire(key: string, ttl: CacheTTL): Promise<boolean> {
+    assertValidTtl(ttl);
     const entry = this.store.get(key);
     if (!entry) return false;
-    this.store.set(key, { ...entry, expiresAt: Date.now() + ttl });
+    if (this.isExpired(entry)) {
+      this.store.delete(key);
+      return false;
+    }
+    this.store.set(key, {
+      ...entry,
+      expiresAt: ttl !== null ? Date.now() + ttl : null,
+    });
     return true;
   }
 
@@ -171,16 +191,15 @@ export class MemoryCacheAdapter implements CacheAdapter {
   }
 
   private evictIfNeeded(): void {
+    if (this.store.size < this.maxEntries) return;
+    // Purge expired entries before evicting live ones.
+    for (const [key, entry] of [...this.store]) {
+      if (this.isExpired(entry)) this.store.delete(key);
+    }
     if (this.store.size >= this.maxEntries) {
       const firstKey = this.store.keys().next().value;
       if (firstKey !== undefined) this.store.delete(firstKey);
     }
-  }
-
-  private patternToRegex(pattern: string): RegExp {
-    const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regexStr = escaped.replace(/\\\*/g, ".*").replace(/\\\?/g, ".");
-    return new RegExp(`^${regexStr}$`);
   }
 }
 

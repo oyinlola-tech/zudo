@@ -26,4 +26,6 @@ export interface CacheTagStore {
     tag: CacheTag,
     options?: CacheTagOptions,
   ): Promise<CacheClearResult>;
+  /** Removes all tag mappings. */
+  clear?(): void;
 }

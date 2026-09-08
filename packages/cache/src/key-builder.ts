@@ -3,6 +3,10 @@
  *
  * Builds fully qualified cache keys from key parts, namespaces,
  * and prefixes. Ensures keys are well-formed and consistently formatted.
+ *
+ * Each part (prefix, namespace, raw key) is validated individually with a
+ * pattern that excludes the separator character, so raw keys cannot forge
+ * namespaced/prefixed keys (e.g. `build("admin:x")` throws).
  */
 
 import type { CacheKey, CacheKeyOptions, CacheNamespace } from "./types.js";
@@ -44,6 +48,10 @@ export class DefaultKeyBuilder implements CacheKeyBuilder {
     const namespace = options?.namespace ?? this.currentNamespace;
     const prefix = options?.prefix ?? this.globalPrefix;
 
+    if (key.length === 0) {
+      throw cacheInvalidKeyError(key, "Cache key must not be empty.");
+    }
+
     const parts: string[] = [];
 
     if (prefix) {
@@ -56,6 +64,10 @@ export class DefaultKeyBuilder implements CacheKeyBuilder {
 
     parts.push(key);
 
+    for (const part of parts) {
+      this.validatePart(part, separator);
+    }
+
     const fullKey = parts.join(separator);
 
     if (fullKey.length > MAX_KEY_LENGTH) {
@@ -65,11 +77,19 @@ export class DefaultKeyBuilder implements CacheKeyBuilder {
       );
     }
 
-    if (!CACHE_KEY_PATTERN.test(fullKey)) {
-      throw cacheInvalidKeyError(fullKey);
-    }
-
     return fullKey;
+  }
+
+  buildPattern(pattern: string, options?: CacheKeyOptions): string {
+    const separator = options?.separator ?? this.globalSeparator;
+    const namespace = options?.namespace ?? this.currentNamespace;
+    const prefix = options?.prefix ?? this.globalPrefix;
+
+    const parts: string[] = [];
+    if (prefix) parts.push(prefix);
+    if (namespace) parts.push(namespace);
+    parts.push(pattern);
+    return parts.join(separator);
   }
 
   namespace(namespace: CacheNamespace): CacheKeyBuilder {
@@ -78,6 +98,17 @@ export class DefaultKeyBuilder implements CacheKeyBuilder {
       separator: this.globalSeparator,
       namespace,
     });
+  }
+
+  private validatePart(part: string, separator: string): void {
+    if (part.includes(separator) || !CACHE_KEY_PATTERN.test(part)) {
+      throw cacheInvalidKeyError(
+        part,
+        `Invalid cache key part "${part}": parts must match ${String(
+          CACHE_KEY_PATTERN,
+        )} and must not contain the separator "${separator}".`,
+      );
+    }
   }
 }
 

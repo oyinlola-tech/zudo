@@ -14,4 +14,9 @@ export interface CacheKeyOptions {
 
 export interface CacheKeyBuilder {
   build(key: string, options?: CacheKeyOptions): CacheKey;
+  /**
+   * Builds a fully-qualified glob pattern (prefix/namespace prepended,
+   * no per-part validation) for pattern-based operations.
+   */
+  buildPattern?(pattern: string, options?: CacheKeyOptions): string;
 }

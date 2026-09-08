@@ -161,3 +161,48 @@ describe("createLockManager", () => {
     expect(customStore.size).toBe(1);
   });
 });
+
+// ─── Regression: per-call retry options ────────────────────────────────────
+
+describe("CacheLockManager — per-call retry", () => {
+  it("honors retry.attempts = 0 (single attempt, no delay)", async () => {
+    await store.acquire("resource");
+    const start = Date.now();
+    const lock = await manager.acquire("resource", {
+      retry: { attempts: 0, delay: 100 },
+    });
+    expect(lock).toBeNull();
+    expect(Date.now() - start).toBeLessThan(50);
+  });
+
+  it("honors per-call retry attempts and delay", async () => {
+    const held = await store.acquire("resource", { ttl: 40 });
+    expect(held).not.toBeNull();
+    // 5 attempts x 20ms delay outlives the 40ms lock TTL
+    const lock = await manager.acquire("resource", {
+      retry: { attempts: 5, delay: 20 },
+    });
+    expect(lock).not.toBeNull();
+  });
+});
+
+// ─── Regression: expired locks are swept ───────────────────────────────────
+
+describe("InMemoryLockStore — expired lock sweeping", () => {
+  it("sweeps all expired locks on acquire, not just the requested key", async () => {
+    await store.acquire("stale-1", { ttl: 1 });
+    await store.acquire("stale-2", { ttl: 1 });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(store.size).toBe(2);
+    await store.acquire("fresh");
+    expect(store.size).toBe(1); // only "fresh" remains
+  });
+
+  it("supports null TTL (never-expiring lock)", async () => {
+    const lock = await store.acquire("permanent", { ttl: null });
+    expect(lock).not.toBeNull();
+    expect(lock!.expiresAt).toBeNull();
+    store.sweepExpired();
+    expect(store.size).toBe(1);
+  });
+});

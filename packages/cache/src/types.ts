@@ -15,11 +15,6 @@ export type {
 } from "./types-values.js";
 export type {
   CacheClearOptions,
-  CacheDeleteManyOptions,
-  CacheDeleteOptions,
-  CacheGetManyOptions,
-  CacheGetOptions,
-  CacheHasOptions,
   CacheKeysOptions,
   CacheSetManyOptions,
   CacheSetOptions,

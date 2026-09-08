@@ -173,3 +173,42 @@ describe("createCacheMetrics", () => {
     expect(createCacheMetrics()).toBeInstanceOf(InMemoryCacheMetrics);
   });
 });
+
+// ─── Regression: hot-key tracking is bounded ───────────────────────────────
+
+describe("InMemoryCacheMetrics — tracked key cap", () => {
+  it("stops tracking new keys at MAX_TRACKED_KEYS", async () => {
+    const { MAX_TRACKED_KEYS } = await import("../src/constants.js");
+    for (let i = 0; i < MAX_TRACKED_KEYS + 500; i++) {
+      metrics.incrementHit(`key:${i}`);
+    }
+    // Total hit counter still counts everything...
+    expect(metrics.getStats().hits).toBe(MAX_TRACKED_KEYS + 500);
+    // ...but per-key tracking is capped.
+    const all = metrics.getHotKeys(MAX_TRACKED_KEYS + 500);
+    expect(all.length).toBe(MAX_TRACKED_KEYS);
+  });
+
+  it("keeps counting hits for already-tracked keys at the cap", async () => {
+    const { MAX_TRACKED_KEYS } = await import("../src/constants.js");
+    for (let i = 0; i < MAX_TRACKED_KEYS; i++) {
+      metrics.incrementHit(`key:${i}`);
+    }
+    metrics.incrementHit("key:0");
+    expect(metrics.getHotKeys(1)[0]).toEqual({ key: "key:0", hits: 2 });
+  });
+});
+
+// ─── Regression: histogram overflow bucket ─────────────────────────────────
+
+describe("InMemoryCacheMetrics — histogram overflow", () => {
+  it("captures samples above the largest bucket in a +Infinity bucket", () => {
+    metrics.observeLatency("get" as any, 5_000); // above the 1000ms bucket
+    const histogram = metrics.getLatencyHistogram("get" as any);
+    const last = histogram[histogram.length - 1]!;
+    expect(last.bucket).toBe(Number.POSITIVE_INFINITY);
+    expect(last.count).toBe(1);
+    // No finite bucket contains it
+    expect(histogram.slice(0, -1).every((b) => b.count === 0)).toBe(true);
+  });
+});

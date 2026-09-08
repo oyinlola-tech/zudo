@@ -3,7 +3,7 @@
  * Distributed lock manager for preventing concurrent cache operations.
  */
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type {
   CacheLock,
   CacheLockOptions,
@@ -18,10 +18,7 @@ import {
 import { CacheError, CacheOperation } from "./errors.js";
 
 function generateToken(): string {
-  if (typeof randomUUID === "function") {
-    return randomUUID();
-  }
-  return randomBytes(16).toString("hex");
+  return randomUUID();
 }
 
 export class InMemoryLockStore implements CacheLockStore {
@@ -34,20 +31,18 @@ export class InMemoryLockStore implements CacheLockStore {
     key: string,
     options?: CacheLockOptions,
   ): Promise<CacheLock | null> {
-    const ttl = options?.ttl ?? DEFAULT_LOCK_TTL_MS;
+    const ttl = options?.ttl !== undefined ? options.ttl : DEFAULT_LOCK_TTL_MS;
     const token = generateToken();
     const now = Date.now();
-    const expiresAt = now + ttl;
-    const existing = this.locks.get(key);
-    if (existing && existing.expiresAt !== null && now > existing.expiresAt)
-      this.locks.delete(key);
+    const expiresAt = ttl !== null ? now + ttl : null;
+    this.sweepExpired(now);
     if (this.locks.has(key)) return null;
     this.locks.set(key, { token, expiresAt });
     return {
       key,
       token,
       acquiredAt: new Date(now),
-      expiresAt: new Date(expiresAt),
+      expiresAt: expiresAt !== null ? new Date(expiresAt) : null,
       release: async (): Promise<boolean> => {
         const current = this.locks.get(key);
         if (current && current.token === token) {
@@ -59,12 +54,24 @@ export class InMemoryLockStore implements CacheLockStore {
       extend: async (newTtl: CacheTTL): Promise<boolean> => {
         const current = this.locks.get(key);
         if (current && current.token === token) {
-          this.locks.set(key, { ...current, expiresAt: Date.now() + newTtl });
+          this.locks.set(key, {
+            ...current,
+            expiresAt: newTtl !== null ? Date.now() + newTtl : null,
+          });
           return true;
         }
         return false;
       },
     };
+  }
+
+  /** Removes all expired locks. Called opportunistically on each acquire. */
+  sweepExpired(now = Date.now()): void {
+    for (const [key, lock] of [...this.locks]) {
+      if (lock.expiresAt !== null && now > lock.expiresAt) {
+        this.locks.delete(key);
+      }
+    }
   }
 
   get size(): number {
@@ -94,19 +101,23 @@ export class CacheLockManager {
     key: string,
     options?: CacheLockOptions,
   ): Promise<CacheLock | null> {
+    // Per-call retry options take precedence over manager defaults.
+    // `attempts: 0` is honored (single attempt, no retries).
+    const attempts = options?.retry?.attempts ?? this.retryAttempts;
+    const delay = options?.retry?.delay ?? this.retryDelayMs;
     let lastError: unknown;
-    for (let attempt = 0; attempt <= this.retryAttempts; attempt++) {
+    for (let attempt = 0; attempt <= attempts; attempt++) {
       try {
         const lock = await this.store.acquire(key, options);
         if (lock) return lock;
       } catch (error) {
         lastError = error;
       }
-      if (attempt < this.retryAttempts) await sleep(this.retryDelayMs);
+      if (attempt < attempts) await sleep(delay);
     }
     if (lastError)
       throw new CacheError(
-        `Failed to acquire lock "${key}" after ${this.retryAttempts} retries.`,
+        `Failed to acquire lock "${key}" after ${attempts} retries.`,
         { cause: lastError, operation: CacheOperation.LOCK_ACQUIRE, key },
       );
     return null;

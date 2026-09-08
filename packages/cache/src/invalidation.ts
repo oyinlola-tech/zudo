@@ -4,6 +4,11 @@
  * Coordinates cache invalidation across tags, patterns, and keys.
  * Works with both the tag store and the cache adapter to ensure
  * consistent invalidation.
+ *
+ * The adapter passed in may be an instrumented `CacheStore` (as done by
+ * `CacheService`), in which case deletions flow through metrics/events.
+ * Adapters operate on fully-qualified keys and glob patterns only;
+ * namespace scoping is translated into patterns via the key builder.
  */
 
 import type {
@@ -14,7 +19,9 @@ import type {
   CacheTag,
   CacheTagStore,
 } from "./types.js";
-import type { InMemoryTagStore } from "./tags.js";
+import type { CacheKeyBuilder } from "./types-keys.js";
+import { DEFAULT_SEPARATOR } from "./constants.js";
+import { deleteManyViaDelete } from "./utils.js";
 
 /* -------------------------------------------------------------------------- */
 /* Invalidation Manager                                                       */
@@ -29,65 +36,70 @@ import type { InMemoryTagStore } from "./tags.js";
 export class CacheInvalidationManager {
   private readonly adapter: CacheAdapter;
   private readonly tagStore: CacheTagStore;
+  private readonly keyBuilder?: CacheKeyBuilder;
 
   constructor(options: {
     readonly adapter: CacheAdapter;
     readonly tagStore: CacheTagStore;
+    /** Used to translate namespaces into fully-qualified key patterns. */
+    readonly keyBuilder?: CacheKeyBuilder;
   }) {
     this.adapter = options.adapter;
     this.tagStore = options.tagStore;
+    this.keyBuilder = options.keyBuilder;
   }
 
   /* ---- Tag Invalidation ---- */
 
   /**
    * Invalidates all cache entries associated with the given tags.
-   * Returns the number of keys that were affected.
+   * Keys are de-duplicated across tags and only actual successful
+   * deletions are counted; keys that already expired or were evicted
+   * (dead tag mappings) are tolerated and simply skipped.
    */
-  async invalidateByTag(
-    tags: readonly CacheTag[],
-    options?: { readonly namespace?: CacheNamespace },
-  ): Promise<CacheClearResult> {
-    let totalCleared = 0;
-
+  async invalidateByTag(tags: readonly CacheTag[]): Promise<CacheClearResult> {
+    const keys = new Set<CacheKey>();
     for (const tag of tags) {
-      const keys = await this.tagStore.getKeys(tag, options);
-
-      for (const key of keys) {
-        await this.adapter.delete(key, options);
-      }
-
-      const result = await this.tagStore.invalidate(tag, options);
-      totalCleared += result.cleared;
+      for (const key of await this.tagStore.getKeys(tag)) keys.add(key);
     }
 
-    return { cleared: totalCleared };
+    let cleared = 0;
+    for (const key of keys) {
+      const result = await this.adapter.delete(key);
+      if (result.deleted) cleared++;
+    }
+
+    for (const tag of tags) {
+      await this.tagStore.invalidate(tag);
+    }
+
+    return { cleared };
   }
 
   /* ---- Pattern Invalidation ---- */
 
   /**
    * Invalidates all cache entries matching the given glob pattern.
+   * The pattern is matched against fully-qualified keys as-is; use
+   * `CacheService.invalidateByPattern` for prefix/namespace-aware patterns.
    */
-  async invalidateByPattern(
-    pattern: string,
-    options?: { readonly namespace?: CacheNamespace },
-  ): Promise<CacheClearResult> {
-    return this.adapter.clear({
-      ...options,
-      pattern,
-    });
+  async invalidateByPattern(pattern: string): Promise<CacheClearResult> {
+    return this.adapter.clear({ pattern });
   }
 
   /* ---- Namespace Invalidation ---- */
 
   /**
-   * Invalidates all cache entries in the given namespace.
+   * Invalidates all cache entries in the given namespace by building a
+   * key pattern (`prefix:namespace:*`) instead of wiping the whole cache.
    */
   async invalidateByNamespace(
     namespace: CacheNamespace,
   ): Promise<CacheClearResult> {
-    return this.adapter.clear({ namespace });
+    const pattern =
+      this.keyBuilder?.buildPattern?.("*", { namespace }) ??
+      `${namespace}${DEFAULT_SEPARATOR}*`;
+    return this.adapter.clear({ pattern });
   }
 
   /* ---- Direct Key Invalidation ---- */
@@ -95,11 +107,8 @@ export class CacheInvalidationManager {
   /**
    * Invalidates a specific cache key.
    */
-  async invalidateKey(
-    key: CacheKey,
-    options?: { readonly namespace?: CacheNamespace },
-  ): Promise<{ readonly deleted: boolean }> {
-    const result = await this.adapter.delete(key, options);
+  async invalidateKey(key: CacheKey): Promise<{ readonly deleted: boolean }> {
+    const result = await this.adapter.delete(key);
     return { deleted: result.deleted };
   }
 
@@ -108,25 +117,11 @@ export class CacheInvalidationManager {
   /**
    * Invalidates multiple cache keys at once.
    */
-  async invalidateKeys(
-    keys: readonly CacheKey[],
-    options?: { readonly namespace?: CacheNamespace },
-  ): Promise<{
+  async invalidateKeys(keys: readonly CacheKey[]): Promise<{
     readonly deleted: number;
     readonly keys: readonly CacheKey[];
   }> {
-    let deleted = 0;
-    const deletedKeys: CacheKey[] = [];
-
-    for (const key of keys) {
-      const result = await this.adapter.delete(key, options);
-      if (result.deleted) {
-        deleted++;
-        deletedKeys.push(key);
-      }
-    }
-
-    return { deleted, keys: deletedKeys };
+    return deleteManyViaDelete(keys, (key) => this.adapter.delete(key));
   }
 
   /* ---- Full Flush ---- */
@@ -136,11 +131,7 @@ export class CacheInvalidationManager {
    */
   async flushAll(): Promise<CacheClearResult> {
     const result = await this.adapter.clear();
-
-    if (typeof (this.tagStore as InMemoryTagStore).clear === "function") {
-      (this.tagStore as InMemoryTagStore).clear();
-    }
-
+    this.tagStore.clear?.();
     return result;
   }
 }
@@ -155,6 +146,7 @@ export class CacheInvalidationManager {
 export function createInvalidationManager(options: {
   readonly adapter: CacheAdapter;
   readonly tagStore: CacheTagStore;
+  readonly keyBuilder?: CacheKeyBuilder;
 }): CacheInvalidationManager {
   return new CacheInvalidationManager(options);
 }

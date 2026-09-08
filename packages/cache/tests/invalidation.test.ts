@@ -64,6 +64,30 @@ describe("CacheInvalidationManager — invalidateByTag", () => {
     const result = await invalidation.invalidateByTag(["unknown"]);
     expect(result.cleared).toBe(0);
   });
+
+  // Regression: keys shared across tags are counted once, and dead keys
+  // (already gone from the cache) are not counted at all.
+  it("de-duplicates keys across tags and counts real deletions", async () => {
+    await adapter.set("shared", "v");
+    await tagStore.add("shared", ["a", "b"]);
+    await tagStore.add("dead", ["a"]); // never written to the adapter
+    const result = await invalidation.invalidateByTag(["a", "b"]);
+    expect(result.cleared).toBe(1);
+  });
+
+  // Regression: when the "adapter" is an instrumented store, tag
+  // invalidation flows through its metrics.
+  it("routes deletions through the given store", async () => {
+    const { createCacheStore } = await import("../src/store.js");
+    const { createCacheMetrics } = await import("../src/metrics.js");
+    const metrics = createCacheMetrics();
+    const store = createCacheStore({ adapter, metrics });
+    const mgr = createInvalidationManager({ adapter: store, tagStore });
+    await adapter.set("k1", "v");
+    await tagStore.add("k1", ["t"]);
+    await mgr.invalidateByTag(["t"]);
+    expect(metrics.getStats().deletes).toBe(1);
+  });
 });
 
 // ─── Pattern Invalidation ──────────────────────────────────────────────────
@@ -90,13 +114,31 @@ describe("CacheInvalidationManager — invalidateByPattern", () => {
 // ─── Namespace Invalidation ────────────────────────────────────────────────
 
 describe("CacheInvalidationManager — invalidateByNamespace", () => {
-  it("invalidates entries by namespace", async () => {
-    await adapter.set("ns:item1", "a", { namespace: "ns" });
-    await adapter.set("ns:item2", "b", { namespace: "ns" });
-    await adapter.set("other:item1", "c", { namespace: "other" });
+  // Regression: namespace invalidation must be scoped to the namespace
+  // (translated into a key pattern), never wipe the whole cache.
+  it("invalidates only entries in the namespace", async () => {
+    await adapter.set("ns:item1", "a");
+    await adapter.set("ns:item2", "b");
+    await adapter.set("other:item1", "c");
 
     const result = await invalidation.invalidateByNamespace("ns");
-    expect(result.cleared).toBeGreaterThanOrEqual(0);
+    expect(result.cleared).toBe(2);
+    expect((await adapter.get("ns:item1")).hit).toBe(false);
+    expect((await adapter.get("other:item1")).hit).toBe(true);
+  });
+
+  it("uses the key builder to qualify the namespace pattern", async () => {
+    const { createKeyBuilder } = await import("../src/key-builder.js");
+    const mgr = createInvalidationManager({
+      adapter,
+      tagStore,
+      keyBuilder: createKeyBuilder({ prefix: "app" }),
+    });
+    await adapter.set("app:ns:item1", "a");
+    await adapter.set("app:other:item1", "b");
+    const result = await mgr.invalidateByNamespace("ns");
+    expect(result.cleared).toBe(1);
+    expect((await adapter.get("app:other:item1")).hit).toBe(true);
   });
 });
 

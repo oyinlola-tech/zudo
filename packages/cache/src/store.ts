@@ -1,21 +1,21 @@
 /**
  * @zudojs/cache — Store
  * Wraps a CacheAdapter with metrics, events, middleware, and error handling.
+ * Batch operations run through the same instrumentation path as single
+ * operations: per-key hit/miss metrics and events fire, and errors are
+ * wrapped in CacheError.
  */
 
 import type {
   CacheAdapter,
   CacheClearOptions,
   CacheClearResult,
-  CacheDeleteOptions,
+  CacheDeleteManyResult,
   CacheDeleteResult,
   CacheEvent,
   CacheEventHandler,
   CacheEventSubscription,
-  CacheGetManyOptions,
-  CacheGetOptions,
   CacheGetResult,
-  CacheHasOptions,
   CacheKeysOptions,
   CacheMiddleware,
   CacheMiddlewareContext,
@@ -24,8 +24,10 @@ import type {
   CacheSetOptions,
   CacheSetResult,
   CacheStore,
+  CacheTTL,
 } from "./types.js";
 import { CacheError, CacheOperation } from "./errors.js";
+import { deleteManyViaDelete } from "./utils.js";
 
 export class DefaultCacheStore implements CacheStore {
   readonly name: string;
@@ -52,24 +54,21 @@ export class DefaultCacheStore implements CacheStore {
     return this.adapter.disconnect?.() ?? Promise.resolve();
   }
 
-  async get<TValue = unknown>(
-    key: string,
-    options?: CacheGetOptions,
-  ): Promise<CacheGetResult<TValue>> {
-    return this.executeWithMiddleware("get" as CacheOperation, key, () =>
-      this.adapter.get<TValue>(key, options),
+  async get<TValue = unknown>(key: string): Promise<CacheGetResult<TValue>> {
+    return this.executeWithMiddleware(CacheOperation.GET, key, () =>
+      this.adapter.get<TValue>(key),
     );
   }
 
-  async has(key: string, options?: CacheHasOptions): Promise<boolean> {
-    return this.executeWithMiddleware("has" as CacheOperation, key, () =>
-      this.adapter.has(key, options),
+  async has(key: string): Promise<boolean> {
+    return this.executeWithMiddleware(CacheOperation.HAS, key, () =>
+      this.adapter.has(key),
     );
   }
 
   async keys(options?: CacheKeysOptions): Promise<readonly string[]> {
     return this.executeWithMiddleware(
-      "keys" as CacheOperation,
+      CacheOperation.KEYS,
       "*",
       () => this.adapter.keys?.(options) ?? Promise.resolve([]),
     );
@@ -80,35 +79,39 @@ export class DefaultCacheStore implements CacheStore {
     value: TValue,
     options?: CacheSetOptions,
   ): Promise<CacheSetResult> {
-    return this.executeWithMiddleware("set" as CacheOperation, key, () =>
+    return this.executeWithMiddleware(CacheOperation.SET, key, () =>
       this.adapter.set<TValue>(key, value, options),
     );
   }
 
-  async delete(
-    key: string,
-    options?: CacheDeleteOptions,
-  ): Promise<CacheDeleteResult> {
-    return this.executeWithMiddleware("delete" as CacheOperation, key, () =>
-      this.adapter.delete(key, options),
+  async delete(key: string): Promise<CacheDeleteResult> {
+    return this.executeWithMiddleware(CacheOperation.DELETE, key, () =>
+      this.adapter.delete(key),
     );
   }
 
   async clear(options?: CacheClearOptions): Promise<CacheClearResult> {
-    return this.executeWithMiddleware("clear" as CacheOperation, "*", () =>
+    return this.executeWithMiddleware(CacheOperation.CLEAR, "*", () =>
       this.adapter.clear(options),
     );
   }
 
   async getMany<TValue = unknown>(
     keys: readonly string[],
-    options?: CacheGetManyOptions,
   ): Promise<ReadonlyMap<string, CacheGetResult<TValue>>> {
-    if (this.adapter.getMany)
-      return this.adapter.getMany<TValue>(keys, options);
-    const results = new Map<string, CacheGetResult<TValue>>();
-    for (const key of keys)
-      results.set(key, await this.get<TValue>(key, options));
+    if (!this.adapter.getMany) {
+      const results = new Map<string, CacheGetResult<TValue>>();
+      for (const key of keys) results.set(key, await this.get<TValue>(key));
+      return results;
+    }
+    const results = await this.executeWithMiddleware(
+      CacheOperation.GET_MANY,
+      "*",
+      () => this.adapter.getMany!<TValue>(keys),
+    );
+    for (const key of keys) {
+      this.recordGetOutcome(key, results.get(key)?.hit ?? false);
+    }
     return results;
   }
 
@@ -116,29 +119,59 @@ export class DefaultCacheStore implements CacheStore {
     entries: ReadonlyMap<string, TValue>,
     options?: CacheSetManyOptions,
   ): Promise<readonly CacheSetResult[]> {
-    if (this.adapter.setMany)
-      return this.adapter.setMany<TValue>(entries, options);
-    const results: CacheSetResult[] = [];
-    for (const [key, value] of entries)
-      results.push(await this.set<TValue>(key, value, options));
+    if (!this.adapter.setMany) {
+      const results: CacheSetResult[] = [];
+      for (const [key, value] of entries)
+        results.push(await this.set<TValue>(key, value, options));
+      return results;
+    }
+    const results = await this.executeWithMiddleware(
+      CacheOperation.SET_MANY,
+      "*",
+      () => this.adapter.setMany!<TValue>(entries, options),
+    );
+    for (const result of results) {
+      if (!result.success) continue;
+      this.metrics?.incrementSet(result.key);
+      this.emit({ type: "cache.set", key: result.key, occurredAt: new Date() });
+    }
     return results;
   }
 
-  async deleteMany(
-    keys: readonly string[],
-    options?: { readonly namespace?: string },
-  ): Promise<{ readonly deleted: number; readonly keys: readonly string[] }> {
-    if (this.adapter.deleteMany) return this.adapter.deleteMany(keys, options);
-    let deleted = 0;
-    const deletedKeys: string[] = [];
-    for (const key of keys) {
-      const result = await this.delete(key, options);
-      if (result.deleted) {
-        deleted++;
-        deletedKeys.push(key);
-      }
+  async deleteMany(keys: readonly string[]): Promise<CacheDeleteManyResult> {
+    if (!this.adapter.deleteMany) {
+      return deleteManyViaDelete(keys, (key) => this.delete(key));
     }
-    return { deleted, keys: deletedKeys };
+    const result = await this.executeWithMiddleware(
+      CacheOperation.DELETE_MANY,
+      "*",
+      () => this.adapter.deleteMany!(keys),
+    );
+    const deletedKeys = new Set(result.keys);
+    for (const key of keys) {
+      this.metrics?.incrementDelete(key);
+      this.emit({
+        type: "cache.delete",
+        key,
+        occurredAt: new Date(),
+        deleted: deletedKeys.has(key),
+      });
+    }
+    return result;
+  }
+
+  async ttl(key: string): Promise<number | null | undefined> {
+    if (!this.adapter.ttl) return undefined;
+    return this.executeWithMiddleware(CacheOperation.TTL, key, () =>
+      this.adapter.ttl!(key),
+    );
+  }
+
+  async expire(key: string, ttl: CacheTTL): Promise<boolean> {
+    if (!this.adapter.expire) return false;
+    return this.executeWithMiddleware(CacheOperation.EXPIRE, key, () =>
+      this.adapter.expire!(key, ttl),
+    );
   }
 
   subscribe(
@@ -163,10 +196,24 @@ export class DefaultCacheStore implements CacheStore {
     ]);
     for (const handler of all) {
       try {
-        handler(event);
+        // Swallow both sync throws and async rejections so a faulty
+        // handler can never crash the process.
+        Promise.resolve(handler(event)).catch(() => {
+          /* swallow */
+        });
       } catch {
         /* swallow */
       }
+    }
+  }
+
+  private recordGetOutcome(key: string, hit: boolean, latencyMs?: number): void {
+    if (hit) {
+      this.metrics?.incrementHit(key);
+      this.emit({ type: "cache.hit", key, occurredAt: new Date(), latencyMs });
+    } else {
+      this.metrics?.incrementMiss(key);
+      this.emit({ type: "cache.miss", key, occurredAt: new Date(), latencyMs });
     }
   }
 
@@ -186,47 +233,32 @@ export class DefaultCacheStore implements CacheStore {
         const result = await fn();
         const latencyMs = performance.now() - start;
         this.metrics?.observeLatency(operation, latencyMs);
-        if (operation === "get") {
+        if (operation === CacheOperation.GET) {
           const hitResult = result as CacheGetResult;
-          if (hitResult.hit) {
-            this.metrics?.incrementHit(key);
-            this.emit({
-              type: "cache.hit",
-              key,
-              occurredAt: new Date(),
-              latencyMs,
-            });
-          } else {
-            this.metrics?.incrementMiss(key);
-            this.emit({
-              type: "cache.miss",
-              key,
-              occurredAt: new Date(),
-              latencyMs,
-            });
-          }
-        } else if (operation === "set") {
+          this.recordGetOutcome(key, hitResult.hit, latencyMs);
+        } else if (operation === CacheOperation.SET) {
           this.metrics?.incrementSet(key);
           this.emit({ type: "cache.set", key, occurredAt: new Date() });
-        } else if (operation === "delete") {
+        } else if (operation === CacheOperation.DELETE) {
           this.metrics?.incrementDelete(key);
           this.emit({
             type: "cache.delete",
             key,
             occurredAt: new Date(),
-            deleted: true,
+            deleted: (result as CacheDeleteResult).deleted,
           });
-        } else if (operation === "clear") {
+        } else if (operation === CacheOperation.CLEAR) {
           this.emit({
             type: "cache.clear",
             occurredAt: new Date(),
-            cleared: 0,
+            cleared: (result as CacheClearResult).cleared,
           });
         }
         return result;
       } catch (error) {
         this.metrics?.incrementError(key);
         this.emit({ type: "cache.error", key, occurredAt: new Date(), error });
+        if (error instanceof CacheError) throw error;
         throw new CacheError(`Cache ${operation} failed for key "${key}".`, {
           cause: error,
           operation,

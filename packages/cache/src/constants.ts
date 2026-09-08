@@ -11,11 +11,14 @@
 /** Default time-to-live in milliseconds (5 minutes). */
 export const DEFAULT_TTL_MS = 5 * 60 * 1000;
 
-/** Maximum supported TTL (24 hours). */
+/** Maximum supported TTL (24 hours). TTLs above this are rejected. */
 export const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 
-/** Minimum TTL (1 second). */
-export const MIN_TTL_MS = 1_000;
+/**
+ * Minimum TTL (1 millisecond). TTLs below this (zero or negative) are
+ * rejected; use `ttl: null` for entries that never expire.
+ */
+export const MIN_TTL_MS = 1;
 
 /* -------------------------------------------------------------------------- */
 /* Key Generation                                                             */
@@ -30,8 +33,13 @@ export const DEFAULT_PREFIX = "zudojs";
 /** Maximum key length in characters. */
 export const MAX_KEY_LENGTH = 256;
 
-/** Pattern used to validate cache keys. */
-export const CACHE_KEY_PATTERN = /^[a-zA-Z0-9._\-:]+$/;
+/**
+ * Pattern used to validate each individual cache key part (prefix,
+ * namespace, and raw key). Deliberately excludes the default separator
+ * (`:`) so callers cannot forge namespaced keys (e.g. `build("admin:x")`
+ * throws). Parts are additionally checked against the active separator.
+ */
+export const CACHE_KEY_PATTERN = /^[a-zA-Z0-9._\-]+$/;
 
 /* -------------------------------------------------------------------------- */
 /* Lock Defaults                                                              */
@@ -53,7 +61,10 @@ export const DEFAULT_LOCK_RETRY_DELAY_MS = 100;
 /** Maximum number of latency samples to keep per operation. */
 export const MAX_LATENCY_SAMPLES = 1_000;
 
-/** Bucket boundaries for latency histograms (ms). */
+/** Maximum number of distinct keys tracked for hot-key metrics. */
+export const MAX_TRACKED_KEYS = 1_024;
+
+/** Bucket boundaries for latency histograms (ms). A +Infinity bucket is appended at query time. */
 export const LATENCY_BUCKETS = [1, 5, 10, 25, 50, 100, 250, 500, 1000] as const;
 
 /* -------------------------------------------------------------------------- */
@@ -65,20 +76,3 @@ export const DEFAULT_MAX_ENTRIES = 10_000;
 
 /** Default maximum memory budget in bytes (50 MB). */
 export const DEFAULT_MAX_MEMORY_BYTES = 50 * 1024 * 1024;
-
-/* -------------------------------------------------------------------------- */
-/* Batch Operations                                                           */
-/* -------------------------------------------------------------------------- */
-
-/** Maximum number of keys in a single batch operation. */
-export const MAX_BATCH_SIZE = 100;
-
-/* -------------------------------------------------------------------------- */
-/* Patterns                                                                   */
-/* -------------------------------------------------------------------------- */
-
-/** Glob pattern for matching all keys. */
-export const MATCH_ALL_PATTERN = "*";
-
-/** Regex pattern that matches valid namespace characters. */
-export const NAMESPACE_PATTERN = /^[a-zA-Z0-9._\-]+$/;

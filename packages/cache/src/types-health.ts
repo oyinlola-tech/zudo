@@ -17,6 +17,4 @@ export interface CacheSerializer<TValue = unknown, TSerialized = unknown> {
 
 export interface CacheSerializationOptions {
   readonly serializer?: CacheSerializer;
-  readonly compress?: boolean;
-  readonly encryption?: boolean;
 }

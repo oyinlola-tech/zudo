@@ -23,32 +23,32 @@ import {
 describe("DefaultKeyBuilder", () => {
   it("builds a key with default prefix and separator", () => {
     const builder = new DefaultKeyBuilder();
-    const key = builder.build("user:123");
-    expect(key).toBe(`${DEFAULT_PREFIX}${DEFAULT_SEPARATOR}user:123`);
+    const key = builder.build("user-123");
+    expect(key).toBe(`${DEFAULT_PREFIX}${DEFAULT_SEPARATOR}user-123`);
   });
 
   it("builds a key with custom prefix", () => {
     const builder = new DefaultKeyBuilder({ prefix: "myapp" });
-    const key = builder.build("user:123");
-    expect(key).toBe("myapp:user:123");
+    const key = builder.build("user-123");
+    expect(key).toBe("myapp:user-123");
   });
 
   it("builds a key with custom separator", () => {
     const builder = new DefaultKeyBuilder({ separator: "." });
-    const key = builder.build("user:123");
-    expect(key).toBe(`zudojs.user:123`);
+    const key = builder.build("user123");
+    expect(key).toBe(`zudojs.user123`);
   });
 
   it("builds a key with no prefix", () => {
     const builder = new DefaultKeyBuilder({ prefix: "" });
-    const key = builder.build("user:123");
-    expect(key).toBe("user:123");
+    const key = builder.build("user-123");
+    expect(key).toBe("user-123");
   });
 
   it("builds a key with namespace", () => {
     const builder = new DefaultKeyBuilder({ namespace: "auth" });
-    const key = builder.build("token:abc");
-    expect(key).toBe("zudojs:auth:token:abc");
+    const key = builder.build("token-abc");
+    expect(key).toBe("zudojs:auth:token-abc");
   });
 
   it("builds a key with prefix, namespace, and custom separator", () => {
@@ -131,7 +131,30 @@ describe("DefaultKeyBuilder validation", () => {
   it("accepts valid key characters", () => {
     const builder = new DefaultKeyBuilder();
     expect(() => builder.build("valid-key_123.test")).not.toThrow();
-    expect(() => builder.build("user:123")).not.toThrow();
+  });
+
+  // Regression: raw keys must not be able to forge namespaced keys (the
+  // separator is excluded from the per-part validation pattern).
+  it("rejects raw keys containing the separator", () => {
+    const builder = new DefaultKeyBuilder();
+    expect(() => builder.build("admin:x")).toThrow();
+    expect(() => builder.build("user:123")).toThrow();
+  });
+
+  it("rejects parts containing a custom separator", () => {
+    const builder = new DefaultKeyBuilder({ separator: "." });
+    expect(() => builder.build("a.b")).toThrow();
+  });
+
+  it("rejects empty keys", () => {
+    const builder = new DefaultKeyBuilder();
+    expect(() => builder.build("")).toThrow();
+  });
+
+  it("validates namespace and prefix parts individually", () => {
+    const builder = new DefaultKeyBuilder();
+    expect(() => builder.build("key", { namespace: "bad:ns" })).toThrow();
+    expect(() => builder.build("key", { prefix: "bad:prefix" })).toThrow();
   });
 });
 
@@ -153,5 +176,26 @@ describe("defaultKeyBuilder", () => {
   it("is a singleton", () => {
     expect(defaultKeyBuilder).toBeInstanceOf(DefaultKeyBuilder);
     expect(defaultKeyBuilder.build("key")).toBe("zudojs:key");
+  });
+});
+
+// ─── buildPattern ──────────────────────────────────────────────────────────
+
+describe("DefaultKeyBuilder buildPattern", () => {
+  it("prepends prefix to patterns", () => {
+    const builder = new DefaultKeyBuilder();
+    expect(builder.buildPattern("user.*")).toBe("zudojs:user.*");
+  });
+
+  it("prepends namespace when given", () => {
+    const builder = new DefaultKeyBuilder();
+    expect(builder.buildPattern("*", { namespace: "sessions" })).toBe(
+      "zudojs:sessions:*",
+    );
+  });
+
+  it("uses the configured namespace when set", () => {
+    const builder = new DefaultKeyBuilder({ namespace: "auth" });
+    expect(builder.buildPattern("*")).toBe("zudojs:auth:*");
   });
 });

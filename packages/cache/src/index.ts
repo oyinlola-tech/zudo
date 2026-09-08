@@ -30,14 +30,9 @@ export type {
   CacheExpiration,
   CacheExpirationInfo,
   CacheSetOptions,
-  CacheGetOptions,
-  CacheDeleteOptions,
-  CacheHasOptions,
   CacheClearOptions,
   CacheKeysOptions,
-  CacheGetManyOptions,
   CacheSetManyOptions,
-  CacheDeleteManyOptions,
   CacheEntry,
   CacheEntryMetadata,
   CacheGetResult,
@@ -61,7 +56,6 @@ export type {
   CacheHealthChecker,
   CacheSerializer,
   CacheMetrics,
-  CacheOperation,
   CacheMiddlewareContext,
   CacheMiddleware,
   CacheSerializationOptions,
@@ -102,12 +96,10 @@ export {
   DEFAULT_LOCK_RETRY_ATTEMPTS,
   DEFAULT_LOCK_RETRY_DELAY_MS,
   MAX_LATENCY_SAMPLES,
+  MAX_TRACKED_KEYS,
   LATENCY_BUCKETS,
   DEFAULT_MAX_ENTRIES,
   DEFAULT_MAX_MEMORY_BYTES,
-  MAX_BATCH_SIZE,
-  MATCH_ALL_PATTERN,
-  NAMESPACE_PATTERN,
 } from "./constants.js";
 
 // Errors (re-exported from @zudojs/errors)
@@ -120,6 +112,7 @@ export {
   cacheDeserializationError,
   cacheInvalidKeyError,
   cacheAdapterNotConfiguredError,
+  CacheOperation,
 } from "./errors.js";
 
 export type { CacheErrorOptions } from "./errors.js";

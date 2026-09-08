@@ -1,6 +1,7 @@
 import type { CacheNamespace } from "./types-keys.js";
 import type { CacheTTL } from "./types-values.js";
 import type { CacheOperation } from "./types-metrics.js";
+import type { CacheSerializer } from "./types-health.js";
 
 export interface CacheConfig {
   readonly enabled?: boolean;
@@ -8,8 +9,18 @@ export interface CacheConfig {
   readonly namespace?: CacheNamespace;
   readonly prefix?: string;
   readonly separator?: string;
+  /**
+   * When true, get/has return miss/false on adapter errors instead of
+   * throwing, and set/delete return no-op results.
+   */
   readonly failSilently?: boolean;
   readonly collectStats?: boolean;
+  /**
+   * Optional serializer applied by CacheService: values are serialized on
+   * set and deserialized on get, so cached values are structural copies.
+   * When omitted, values are stored by reference (memory adapter).
+   */
+  readonly serializer?: CacheSerializer;
 }
 
 export type CacheErrorCode =
