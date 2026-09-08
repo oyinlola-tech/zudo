@@ -98,1270 +98,603 @@
         <span class="text-black/50">@zudojs/database</span>
       </div>
 
+
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
         <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/database</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
-          Database infrastructure for Zudo — Prisma-backed clients, generic repositories, query builders, managed transactions, unit-of-work, pagination, migrations, seeding, advisory locks, caching, health checks, and relation definitions.
+          PostgreSQL data-access layer for Zudo applications, built on Prisma 7 — a lifecycle-aware client, generic repositories with soft delete, a query builder that translates to Prisma <code>where</code> clauses, managed transactions, keyset pagination with signed cursors, migration and seed runners guarded by advisory locks, health checks with reconnect, and a bounded in-memory cache.
         </p>
         <div class="flex flex-wrap gap-2 mt-4">
-          <span class="px-3 py-1 border-2 border-black text-xs font-bold">PRISMA</span>
+          <span class="px-3 py-1 border-2 border-black text-xs font-bold">PRISMA 7</span>
+          <span class="px-3 py-1 border-2 border-black text-xs font-bold">POSTGRESQL</span>
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">REPOSITORY PATTERN</span>
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">TRANSACTIONS</span>
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">MIGRATIONS</span>
-          <span class="px-3 py-1 border-2 border-black text-xs font-bold">CONNECTION POOLING</span>
         </div>
       </div>
 
-      <!-- Installation -->
-      <section id="installation" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-        <div class="code-block mb-4"><span class="cm">// npm</span>
-npm install @zudojs/database
+<section id="installation" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
+<div class="code-block"><span class="cmt">// npm</span>
+npm install @zudojs/database @prisma/client @prisma/adapter-pg
 
-<span class="cm">// pnpm</span>
-pnpm add @zudojs/database</div>
+<span class="cmt">// pnpm</span>
+pnpm add @zudojs/database @prisma/client @prisma/adapter-pg</div>
+<div class="callout callout-note mb-4"><strong class="text-zudo-blue">Peer dependency:</strong> <code class="bg-black/5 px-1">@prisma/client</code> (<code>&gt;=7.0.0 &lt;8</code>) is a peer dependency. Prisma 7 connects through a driver adapter, so you also need one for PostgreSQL (<code class="bg-black/5 px-1">@prisma/adapter-pg</code>). <code class="bg-black/5 px-1">@zudojs/errors</code> 0.1.0 is a regular dependency.</div>
+<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">PostgreSQL only.</strong> The migration, seed and lock helpers emit PostgreSQL SQL (advisory locks, <code>$1</code> placeholders, <code>BIGSERIAL</code>). Requesting another dialect throws <code>UnsupportedDialectError</code>.</div>
+</section>
 
-        <div class="callout callout-note">
-          <strong class="text-zudo-blue">Peer Dependencies:</strong> @zudojs/database depends on <code>@zudojs/errors</code> (v0.1.0) and <code>@prisma/client</code>. You must have a working Prisma setup with a <code>schema.prisma</code> file.
-        </div>
-      </section>
+<section id="what-it-does" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHAT IT DOES</h2>
+<p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">@zudojs/database</code> provides the data-access layer for Zudo applications:</p>
+<ul class="list-disc pl-6 mb-4 space-y-1"><li><strong>DatabaseClient</strong> — wraps a Prisma client with a connection lifecycle (de-duplicated <code>connect()</code>), raw queries, transactions and typed error normalisation</li><li><strong>Database facade</strong> — a lazily created shared instance (<code class="bg-black/5 px-1">getDatabase</code>, <code class="bg-black/5 px-1">connectDatabase</code>, <code class="bg-black/5 px-1">resetDatabase</code>)</li><li><strong>DatabaseConnectionManager</strong> — lifecycle events, scheduled health checks with timeout and overlap guard, reconnect with exponential back-off</li><li><strong>BaseRepository</strong> — CRUD, bulk operations, soft delete, offset and keyset pagination, query-builder execution and transaction rebinding</li><li><strong>QueryBuilder</strong> and 40 filter helpers — database-neutral filters translated to Prisma <code>where</code> / <code>orderBy</code> / <code>select</code> / <code>include</code></li><li><strong>TransactionManager</strong>, <code class="bg-black/5 px-1">withTransaction</code>, <code class="bg-black/5 px-1">withTransactionRetry</code> — managed transactions with context, error enrichment and retry of serialization failures</li><li><strong>DatabaseUnitOfWork</strong> — one transaction for several repository operations</li><li><strong>Pagination</strong> — offset helpers plus keyset helpers with HMAC-signed, shape-validated cursors</li><li><strong>MigrationRunner</strong> / <strong>SeedRunner</strong> — versioned, tracked execution under PostgreSQL advisory locks, one transaction per item by default</li><li><strong>DatabaseLockManager</strong> — advisory and row locks with <code>lock_timeout</code>, <code>SKIP LOCKED</code> / <code>NOWAIT</code></li><li><strong>MemoryDatabaseCache</strong> — LRU cache with TTL, background pruning and loader coalescing</li><li><strong>Relations</strong> — typed relation definitions, a registry keyed by parent model, and <code class="bg-black/5 px-1">toPrismaInclude</code></li><li><strong>Health</strong> — <code class="bg-black/5 px-1">checkDatabaseHealth</code>, <code class="bg-black/5 px-1">checkDatabaseReadiness</code>, <code class="bg-black/5 px-1">assertDatabaseHealth</code></li></ul>
+<div class="callout callout-note mb-4"><strong class="text-zudo-blue">Prisma stays visible.</strong> Repositories wrap a Prisma model delegate (<code>prisma.user</code>) and transaction callbacks receive Prisma's interactive transaction client. The package normalises errors, lifecycle and pagination; it does not hide Prisma.</div>
+</section>
 
-      <!-- What It Does -->
-      <section id="what-it-does" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHAT IT DOES</h2>
-        <p class="mb-4 leading-relaxed">
-          <code class="bg-black/5 px-1">@zudojs/database</code> provides the full data-access layer for Zudo applications:
-        </p>
-        <ul class="space-y-2 mb-6">
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>DatabaseClient</strong> — Prisma-backed client with connection lifecycle, health checks, and raw query support</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Database Facade</strong> — singleton interface for connect, disconnect, transactions, and repository access</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>ConnectionManager</strong> — connection lifecycle tracking, readiness gating, event-driven health monitoring</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>BaseRepository</strong> — generic CRUD with typed pagination, sorting, and soft-delete support</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>QueryBuilder</strong> — database-neutral filter and sort clause construction with 25+ filter functions</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>TransactionManager</strong> — managed transactions with automatic retry and rollback</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>DatabaseUnitOfWork</strong> — tracks dirty entities across a transaction boundary</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Pagination</strong> — offset-based and cursor-based pagination with metadata</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>MigrationRunner</strong> — versioned migrations with advisory locks and history tracking</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>SeedRunner</strong> — tracked seed execution with advisory locks and idempotent seeding</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Advisory Locks</strong> — database-level locking for single-execution coordination</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>In-Memory Cache</strong> — TTL-based cache with getOrSet pattern and tag-based invalidation</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Relation Definitions</strong> — typed one-to-one, one-to-many, many-to-one, many-to-many relation registry</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Health Checks</strong> — database health, readiness probes, and latency monitoring</li>
-        </ul>
+<section id="architecture-position" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHERE IT SITS</h2>
+<div class="code-block">APPLICATION LAYER (services, handlers, CQRS)
+        │  repositories, query builder, transactions
+        ▼
+DATABASE LAYER (@zudojs/database)
+        │  PrismaClientLike (structural), interactive $transaction, $queryRawUnsafe
+        ▼
+PRISMA CLIENT 7 (@prisma/client) + DRIVER ADAPTER (@prisma/adapter-pg)
+        │
+        ▼
+POSTGRESQL</div>
+<p class="mb-4 leading-relaxed">The package depends on Prisma structurally: any object exposing <code>$connect</code>, <code>$disconnect</code>, <code>$transaction</code>, <code>$queryRawUnsafe</code> and <code>$executeRawUnsafe</code> satisfies <code>PrismaClientLike</code>. Nothing is read from the generated <code>Prisma</code> namespace at runtime, so a generated client living outside <code>@prisma/client</code> (the Prisma 7 default) works.</p>
+</section>
 
-        <div class="callout callout-tip">
-          <strong class="text-zudo-green">Core Principle:</strong> Your application code works with <code>BaseRepository</code> and <code>QueryBuilder</code>. It never touches Prisma directly. The database layer handles connection management, transaction coordination, and caching transparently.
-        </div>
-      </section>
+<section id="dependencies" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DEPENDENCIES</h2>
+<div class="border-4 border-black overflow-x-auto"><table class="w-full text-sm"><thead class="bg-black text-white"><tr><th class="p-3 text-left">Package</th><th class="p-3 text-left">Version</th><th class="p-3 text-left">Kind</th><th class="p-3 text-left">Purpose</th></tr></thead><tbody><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/errors</td><td class="p-3">0.1.0</td><td class="p-3">dependency</td><td class="p-3"><code>DatabaseError</code>, <code>DatabaseOperation</code>, <code>ErrorCode</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@prisma/client</td><td class="p-3">&gt;=7.0.0 &lt;8</td><td class="p-3">peer dependency</td><td class="p-3">Prisma client and interactive transactions</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@prisma/adapter-pg</td><td class="p-3">any Prisma 7 adapter</td><td class="p-3">provided by the consumer</td><td class="p-3">Driver adapter that owns the connection URL, pool size and SSL settings</td></tr></tbody></table></div>
+</section>
 
-      <!-- Architecture Position -->
-      <section id="architecture-position" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHERE IT SITS</h2>
-        <div class="border-4 border-black p-6 space-y-3">
-          <div class="bg-zudo-red text-black p-3 font-bold text-center text-sm">APPLICATION LAYER (Services, Handlers, CQRS)</div>
-          <div class="bg-zudo-blue text-white p-3 font-bold text-center text-sm">DATABASE LAYER (@zudojs/database)</div>
-          <div class="bg-black text-white p-3 font-bold text-center text-sm">PRISMA CLIENT (@prisma/client)</div>
-          <div class="bg-white border-2 border-black p-3 font-bold text-center text-sm">DATABASE ENGINE (PostgreSQL, MySQL, SQLite)</div>
-        </div>
-        <p class="mt-4 text-sm text-black/60">
-          The database package sits between your application code and Prisma. Services call repositories; repositories build queries; the client executes them against the database engine.
-        </p>
-      </section>
-
-      <!-- Dependencies -->
-      <section id="dependencies" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DEPENDENCIES</h2>
-        <div class="border-4 border-black">
-          <table class="w-full text-smw-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Package</th>
-                <th class="p-3 text-left">Version</th>
-                <th class="p-3 text-left">Purpose</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono text-sm">@zudojs/errors</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Database error hierarchy (ConnectionError, QueryError, TransactionError)</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono text-sm">@prisma/client</td>
-                <td class="p-3">latest</td>
-                <td class="p-3">Prisma ORM client for type-safe database access</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="mt-4 callout callout-warning">
-          <strong class="text-zudo-yellow">Prisma Required:</strong> This package requires a working Prisma setup. Run <code>npx prisma generate</code> after installing to generate your client.
-        </div>
-      </section>
-
-      <!-- Core API: DatabaseClient -->
-      <section id="database-client" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CORE API — DATABASE CLIENT</h2>
-
-        <p class="mb-4">
-          The <code class="bg-black/5 px-1">DatabaseClient</code> wraps a Prisma client with connection lifecycle, health checks, and raw query support. It implements the <code>Adapter</code> contract from <code>@zudojs/adapters</code>.
-        </p>
-
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">DatabaseClientOptions</span> {
-  <span class="kw">readonly</span> provider: <span class="tp">string</span>;        <span class="cm">// "postgresql" | "mysql" | "sqlite"</span>
-  <span class="kw">readonly</span> url: <span class="tp">string</span>;            <span class="cm">// DATABASE_URL</span>
-  <span class="kw">readonly</span> log?: <span class="tp">DatabaseLogger</span>;
-  <span class="kw">readonly</span> maxRetries?: <span class="tp">number</span>;     <span class="cm">// default: 3</span>
-  <span class="kw">readonly</span> retryDelay?: <span class="tp">number</span>;     <span class="cm">// default: 1000ms</span>
+<section id="database-client" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DATABASE CLIENT</h2>
+<p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">DatabaseClient</code> wraps a Prisma client with a connection lifecycle, raw query helpers, transactions and error normalisation.</p>
+<div class="code-block"><span class="kw">interface</span> DatabaseClientOptions {
+  <span class="kw">readonly</span> prisma?: PrismaClientLike;          <span class="cmt">// pre-built client (takes precedence)</span>
+  <span class="kw">readonly</span> adapter?: PrismaDriverAdapterLike;  <span class="cmt">// used to construct a PrismaClient when prisma is absent</span>
+  <span class="kw">readonly</span> logger?: DatabaseLogger;
+  <span class="kw">readonly</span> connectionTimeoutMs?: number;       <span class="cmt">// client-side deadline for $connect (default 10 000)</span>
+  <span class="kw">readonly</span> logging?: boolean;                  <span class="cmt">// emit query duration/target to the logger</span>
 }
 
-<span class="kw">class</span> <span class="tp">DatabaseClient</span> {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="kw">readonly</span> version: <span class="tp">string</span>;
-  <span class="kw">readonly</span> capabilities: <span class="tp">AdapterCapabilities</span>;
+<span class="kw">class</span> DatabaseClient {
+  constructor(options?: DatabaseClientOptions); <span class="cmt">// throws DatabaseError when neither prisma nor adapter is given</span>
 
-  <span class="kw">constructor</span>(options: <span class="tp">DatabaseClientOptions</span>);
+  connect(): Promise&lt;void&gt;;        <span class="cmt">// concurrent calls share one in-flight attempt</span>
+  disconnect(): Promise&lt;void&gt;;     <span class="cmt">// waits for an in-flight connect first</span>
+  ensureConnected(): Promise&lt;void&gt;;
+  destroy(): Promise&lt;void&gt;;
 
-  <span class="fn">initialize</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">connect</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">disconnect</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">getClient</span>(): <span class="tp">PrismaClient</span>;
-  <span class="fn">execute</span>&lt;<span class="tp">T</span>&gt;(fn: (client: <span class="tp">PrismaClient</span>) =&gt; <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-  <span class="fn">queryRaw</span>(query: <span class="tp">string</span>, ...args: <span class="tp">unknown</span>[]): <span class="tp">Promise</span>&lt;<span class="tp">unknown</span>[]&gt;;
-  <span class="fn">executeRaw</span>(query: <span class="tp">string</span>, ...args: <span class="tp">unknown</span>[]): <span class="tp">Promise</span>&lt;<span class="tp">number</span>&gt;;
-  <span class="fn">healthCheck</span>(): <span class="tp">Promise</span>&lt;<span class="tp">DatabaseHealth</span>&gt;;
-  <span class="fn">isConnected</span>(): <span class="tp">boolean</span>;
-  <span class="fn">connectionCount</span>(): <span class="tp">number</span>;
+  ping(options?: RawQueryOptions): Promise&lt;void&gt;;
+  healthCheck(options?: RawQueryOptions): Promise&lt;DatabaseClientHealth&gt;;
+  getStatus(): DatabaseStatus;     <span class="cmt">// "disconnected" | "connecting" | "connected" | "disconnecting" | "error"</span>
+  getConnectedAt(): Date | undefined;
+  getPrisma(): PrismaClientLike;
+
+  transaction&lt;T&gt;(callback: (tx: DatabaseTransactionContext) =&gt; Promise&lt;T&gt;, options?: TransactionOptions): Promise&lt;T&gt;;
+  queryRawUnsafe&lt;T&gt;(sql: string, values?: <span class="kw">readonly</span> unknown[], options?: RawQueryOptions): Promise&lt;T&gt;;
+  executeRawUnsafe(sql: string, values?: <span class="kw">readonly</span> unknown[], options?: RawQueryOptions): Promise&lt;number&gt;;
+  queryRaw&lt;T&gt;(query: Prisma.Sql, options?: RawQueryOptions): Promise&lt;T&gt;;
+  executeRaw(query: Prisma.Sql, options?: RawQueryOptions): Promise&lt;number&gt;;
 }</div>
+<h3 class="text-lg font-bold mb-3 mt-6">Operation options</h3>
+<div class="border-4 border-black overflow-x-auto"><table class="w-full text-sm"><thead class="bg-black text-white"><tr><th class="p-3 text-left">Option</th><th class="p-3 text-left">Type</th><th class="p-3 text-left">Effect</th></tr></thead><tbody><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">signal</td><td class="p-3">AbortSignal</td><td class="p-3">Rejects with <code>DatabaseAbortError</code> (code <code>ERR_ABORTED</code>) as soon as the signal aborts, even mid-query.</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">timeoutMs</td><td class="p-3">number</td><td class="p-3">Client-side deadline (<code>ERR_DATABASE_TIMEOUT</code>, 503). The statement is not cancelled server-side; use <code>statement_timeout</code> for that.</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">metadata</td><td class="p-3">Record&lt;string, unknown&gt;</td><td class="p-3">Merged into the metadata of any <code>DatabaseError</code> raised.</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">isolationLevel / timeoutMs / maxWaitMs</td><td class="p-3">TransactionOptions</td><td class="p-3">Forwarded to Prisma's interactive <code>$transaction</code>. Isolation levels are validated against <code>SUPPORTED_ISOLATION_LEVELS</code>.</td></tr></tbody></table></div>
+<h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
+<div class="code-block"><span class="kw">import</span> { PrismaClient } <span class="kw">from</span> <span class="str">"@prisma/client"</span>;
+<span class="kw">import</span> { PrismaPg } <span class="kw">from</span> <span class="str">"@prisma/adapter-pg"</span>;
+<span class="kw">import</span> { createDatabaseClient } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Methods</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-smw-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Method</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">connect()</td>
-                <td class="p-3">connect(): Promise&lt;void&gt;</td>
-                <td class="p-3">Establishes connection with retry logic. Throws ConnectionError on failure.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">disconnect()</td>
-                <td class="p-3">disconnect(): Promise&lt;void&gt;</td>
-                <td class="p-3">Gracefully closes connection pool.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">getClient()</td>
-                <td class="p-3">getClient(): PrismaClient</td>
-                <td class="p-3">Returns raw Prisma client. Throws if not connected.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">execute()</td>
-                <td class="p-3">execute&lt;T&gt;(fn): Promise&lt;T&gt;</td>
-                <td class="p-3">Executes callback with Prisma client. Validates connection first.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">queryRaw()</td>
-                <td class="p-3">queryRaw(query, ...args): Promise&lt;unknown[]&gt;</td>
-                <td class="p-3">Executes raw SQL query. Returns row results.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">executeRaw()</td>
-                <td class="p-3">executeRaw(query, ...args): Promise&lt;number&gt;</td>
-                <td class="p-3">Executes raw SQL statement. Returns affected row count.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">healthCheck()</td>
-                <td class="p-3">healthCheck(): Promise&lt;DatabaseHealth&gt;</td>
-                <td class="p-3">Returns health status with latency, pool stats, and provider info.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">isConnected()</td>
-                <td class="p-3">isConnected(): boolean</td>
-                <td class="p-3">Returns true if connection pool is active.</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">connectionCount()</td>
-                <td class="p-3">connectionCount(): number</td>
-                <td class="p-3">Returns number of active connections in pool.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Using the Client</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">DatabaseClient</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> client = <span class="kw">new</span> <span class="fn">DatabaseClient</span>({
-  provider: <span class="str">"postgresql"</span>,
-  url: process.env.<span class="tp">DATABASE_URL</span>!,
-  maxRetries: <span class="num">5</span>,
-  retryDelay: <span class="num">2000</span>,
+<span class="kw">const</span> prisma = <span class="kw">new</span> PrismaClient({
+  adapter: <span class="kw">new</span> PrismaPg({ connectionString: process.env.DATABASE_URL }),
 });
+<span class="kw">const</span> client = createDatabaseClient({ prisma, connectionTimeoutMs: 5_000 });
 
-<span class="cm">// Connect with retries</span>
-<span class="kw">await</span> client.<span class="fn">connect</span>();
+<span class="kw">await</span> client.connect();
 
-<span class="cm">// Execute queries via callback</span>
-<span class="kw">const</span> users = <span class="kw">await</span> client.<span class="fn">execute</span>(<span class="kw">async</span> (prisma) =&gt; {
-  <span class="kw">return</span> prisma.user.<span class="fn">findMany</span>({ where: { active: <span class="num">true</span> } });
-});
-
-<span class="cm">// Raw queries</span>
-<span class="kw">const</span> rows = <span class="kw">await</span> client.<span class="fn">queryRaw</span>(<span class="str">"SELECT * FROM users WHERE id = $1"</span>, userId);
-<span class="kw">const</span> affected = <span class="kw">await</span> client.<span class="fn">executeRaw</span>(<span class="str">"UPDATE users SET active = false WHERE id = $1"</span>, userId);
-
-<span class="cm">// Health check</span>
-<span class="kw">const</span> health = <span class="kw">await</span> client.<span class="fn">healthCheck</span>();
-console.<span class="fn">log</span>(health.status);  <span class="cm">// "healthy" | "unhealthy"</span>
-console.<span class="fn">log</span>(health.latency); <span class="cm">// 12</span></div>
-      </section>
-
-      <!-- Database Facade -->
-      <section id="database-facade" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DATABASE FACADE</h2>
-        <p class="mb-4">
-          The <code class="bg-black/5 px-1">Database</code> class provides a high-level singleton interface for managing connections, repositories, and transactions.
-        </p>
-
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">DatabaseConfig</span> {
-  <span class="kw">readonly</span> provider: <span class="tp">string</span>;
-  <span class="kw">readonly</span> url: <span class="tp">string</span>;
-  <span class="kw">readonly</span> cache?: <span class="tp">CacheConfig</span>;
-  <span class="kw">readonly</span> migrations?: <span class="tp">MigrationConfig</span>;
-}
-
-<span class="kw">class</span> <span class="tp">Database</span> {
-  <span class="kw">static</span> <span class="fn">createDatabase</span>(config: <span class="tp">DatabaseConfig</span>): <span class="tp">Database</span>;
-  <span class="kw">static</span> <span class="fn">createDatabaseFromClient</span>(client: <span class="tp">DatabaseClient</span>): <span class="tp">Database</span>;
-
-  <span class="fn">connect</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">disconnect</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">getClient</span>(): <span class="tp">DatabaseClient</span>;
-  <span class="fn">getRepository</span>&lt;<span class="tp">T</span>&gt;(model: <span class="tp">string</span>): <span class="tp">BaseRepository</span>&lt;<span class="tp">T</span>&gt;;
-  <span class="fn">execute</span>&lt;<span class="tp">T</span>&gt;(fn: (client: <span class="tp">PrismaClient</span>) =&gt; <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-  <span class="fn">transaction</span>&lt;<span class="tp">T</span>&gt;(fn: (tx: <span class="tp">PrismaClient</span>) =&gt; <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-  <span class="fn">healthCheck</span>(): <span class="tp">Promise</span>&lt;<span class="tp">DatabaseHealth</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Full Database Lifecycle</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">createDatabase</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> db = <span class="fn">createDatabase</span>({
-  provider: <span class="str">"postgresql"</span>,
-  url: process.env.<span class="tp">DATABASE_URL</span>!,
-});
-
-<span class="cm">// Connect</span>
-<span class="kw">await</span> db.<span class="fn">connect</span>();
-
-<span class="cm">// Get typed repository</span>
-<span class="kw">const</span> users = db.<span class="fn">getRepository</span>&lt;<span class="tp">User</span>&gt;(<span class="str">"user"</span>);
-
-<span class="cm">// Use repository</span>
-<span class="kw">const</span> user = <span class="kw">await</span> users.<span class="fn">findById</span>(<span class="str">"clx1234..."</span>);
-<span class="kw">await</span> users.<span class="fn">create</span>({ name: <span class="str">"Alice"</span>, email: <span class="str">"alice@example.com"</span> });
-
-<span class="cm">// Transaction</span>
-<span class="kw">await</span> db.<span class="fn">transaction</span>(<span class="kw">async</span> (tx) =&gt; {
-  <span class="kw">await</span> tx.user.<span class="fn">update</span>({ where: { id }, data: { balance: { decrement: <span class="num">100</span> } } });
-  <span class="kw">await</span> tx.transaction.<span class="fn">create</span>({ data: { userId: id, amount: <span class="num">100</span> } });
-});
-
-<span class="cm">// Health check</span>
-<span class="kw">const</span> health = <span class="kw">await</span> db.<span class="fn">healthCheck</span>();
-
-<span class="cm">// Disconnect</span>
-<span class="kw">await</span> db.<span class="fn">disconnect</span>();</div>
-      </section>
-
-      <!-- Connection Manager -->
-      <section id="connection-manager" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONNECTION MANAGER</h2>
-        <p class="mb-4">
-          <code class="bg-black/5 px-1">DatabaseConnectionManager</code> tracks connection lifecycle, emits events, and provides readiness gating and health monitoring.
-        </p>
-
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ConnectionManagerConfig</span> {
-  <span class="kw">readonly</span> healthCheckInterval?: <span class="tp">number</span>;   <span class="cm">// default: 30000ms</span>
-  <span class="kw">readonly</span> readinessTimeout?: <span class="tp">number</span>;     <span class="cm">// default: 5000ms</span>
-  <span class="kw">readonly</span> maxRetries?: <span class="tp">number</span>;            <span class="cm">// default: 3</span>
-}
-
-<span class="kw">class</span> <span class="tp">DatabaseConnectionManager</span> {
-  <span class="kw">constructor</span>(client: <span class="tp">DatabaseClient</span>, config?: <span class="tp">ConnectionManagerConfig</span>);
-
-  <span class="fn">connect</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">disconnect</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">waitForReady</span>(timeout?: <span class="tp">number</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">waitForHealthy</span>(timeout?: <span class="tp">number</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">isReady</span>(): <span class="tp">boolean</span>;
-  <span class="fn">isHealthy</span>(): <span class="tp">boolean</span>;
-  <span class="fn">on</span>(event: <span class="tp">string</span>, handler: <span class="tp">Function</span>): () =&gt; <span class="tp">void</span>;
-  <span class="fn">removeListener</span>(event: <span class="tp">string</span>, handler: <span class="tp">Function</span>): <span class="tp">void</span>;
-  <span class="fn">healthCheck</span>(): <span class="tp">Promise</span>&lt;<span class="tp">DatabaseHealth</span>&gt;;
-  <span class="fn">startHealthChecks</span>(): <span class="tp">void</span>;
-  <span class="fn">stopHealthChecks</span>(): <span class="tp">void</span>;
-  <span class="fn">getHealthHistory</span>(): <span class="tp">readonly</span> <span class="tp">DatabaseHealth</span>[];
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Events</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-smw-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Event</th>
-                <th class="p-3 text-left">Payload</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">connected</td><td class="p-3">void</td><td class="p-3">Emitted when connection pool is established</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">disconnected</td><td class="p-3">void</td><td class="p-3">Emitted when connection pool is closed</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">error</td><td class="p-3">Error</td><td class="p-3">Emitted on connection errors</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">healthChange</td><td class="p-3">DatabaseHealth</td><td class="p-3">Emitted when health status changes</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">retrying</td><td class="p-3">{attempt, maxRetries}</td><td class="p-3">Emitted during reconnection attempts</td></tr>
-              <tr><td class="p-3 font-mono">ready</td><td class="p-3">void</td><td class="p-3">Emitted when connection is ready for queries</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Event-Driven Monitoring</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">DatabaseConnectionManager</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> manager = <span class="kw">new</span> <span class="fn">DatabaseConnectionManager</span>(client, {
-  healthCheckInterval: <span class="num">15000</span>,
-  readinessTimeout: <span class="num">3000</span>,
-});
-
-manager.<span class="fn">on</span>(<span class="str">"healthChange"</span>, (health) =&gt; {
-  <span class="kw">if</span> (health.status === <span class="str">"unhealthy"</span>) {
-    <span class="fn">alertOps</span>(<span class="str">"Database unhealthy!"</span>, health);
-  }
-});
-
-manager.<span class="fn">on</span>(<span class="str">"retrying"</span>, ({ attempt, maxRetries }) =&gt; {
-  console.<span class="fn">log</span>(<span class="str">`Retrying connection ${attempt}/${maxRetries}`</span>);
-});
-
-<span class="kw">await</span> manager.<span class="fn">connect</span>();
-<span class="kw">await</span> manager.<span class="fn">waitForReady</span>();  <span class="cm">// Blocks until ready</span>
-manager.<span class="fn">startHealthChecks</span>();   <span class="cm">// Periodic background checks</span></div>
-      </section>
-
-      <!-- BaseRepository -->
-      <section id="base-repository" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">BASE REPOSITORY</h2>
-        <p class="mb-4">
-          <code class="bg-black/5 px-1">BaseRepository&lt;T&gt;</code> provides generic CRUD operations with typed pagination, sorting, and soft-delete support.
-        </p>
-
-        <div class="code-block"><span class="kw">class</span> <span class="tp">BaseRepository</span>&lt;<span class="tp">T</span> <span class="kw">extends</span> <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt; {
-  <span class="kw">constructor</span>(client: <span class="tp">DatabaseClient</span>, model: <span class="tp">string</span>);
-
-  <span class="cm">// CRUD</span>
-  <span class="fn">findById</span>(id: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">T</span> | <span class="num">null</span>&gt;;
-  <span class="fn">findFirst</span>(where: <span class="tp">Partial</span>&lt;<span class="tp">T</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">T</span> | <span class="num">null</span>&gt;;
-  <span class="fn">findMany</span>(options?: <span class="tp">FindManyOptions</span>&lt;<span class="tp">T</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">T</span>[]&gt;;
-  <span class="fn">create</span>(data: <span class="tp">CreateInput</span>&lt;<span class="tp">T</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-  <span class="fn">createMany</span>(items: <span class="tp">CreateInput</span>&lt;<span class="tp">T</span>&gt;[]): <span class="tp">Promise</span>&lt;<span class="tp">number</span>&gt;;
-  <span class="fn">update</span>(id: <span class="tp">string</span>, data: <span class="tp">UpdateInput</span>&lt;<span class="tp">T</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-  <span class="fn">upsert</span>(where: <span class="tp">Partial</span>&lt;<span class="tp">T</span>&gt;, create: <span class="tp">CreateInput</span>&lt;<span class="tp">T</span>&gt;, update: <span class="tp">UpdateInput</span>&lt;<span class="tp">T</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-  <span class="fn">delete</span>(id: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">deleteMany</span>(where: <span class="tp">Partial</span>&lt;<span class="tp">T</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">number</span>&gt;;
-
-  <span class="cm">// Aggregation</span>
-  <span class="fn">count</span>(where?: <span class="tp">Partial</span>&lt;<span class="tp">T</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">number</span>&gt;;
-  <span class="fn">exists</span>(where: <span class="tp">Partial</span>&lt;<span class="tp">T</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">boolean</span>&gt;;
-
-  <span class="cm">// Pagination</span>
-  <span class="fn">paginate</span>(options: <span class="tp">PaginateOptions</span>&lt;<span class="tp">T</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">PaginatedResult</span>&lt;<span class="tp">T</span>&gt;&gt;;
-  <span class="fn">paginateCursor</span>(options: <span class="tp">CursorPaginateOptions</span>&lt;<span class="tp">T</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">CursorPaginatedResult</span>&lt;<span class="tp">T</span>&gt;&gt;;
-
-  <span class="cm">// Soft delete</span>
-  <span class="fn">softDelete</span>(id: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">restore</span>(id: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">findDeleted</span>(options?: <span class="tp">FindManyOptions</span>&lt;<span class="tp">T</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">T</span>[]&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Custom Repository</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">BaseRepository</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">interface</span> <span class="tp">User</span> {
-  id: <span class="tp">string</span>;
-  name: <span class="tp">string</span>;
-  email: <span class="tp">string</span>;
-  active: <span class="tp">boolean</span>;
-  createdAt: <span class="tp">Date</span>;
-}
-
-<span class="kw">class</span> <span class="tp">UserRepository</span> <span class="kw">extends</span> <span class="tp">BaseRepository</span>&lt;<span class="tp">User</span>&gt; {
-  <span class="kw">async</span> <span class="fn">findByEmail</span>(email: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">User</span> | <span class="num">null</span>&gt; {
-    <span class="kw">return</span> <span class="kw">this</span>.<span class="fn">findFirst</span>({ email });
-  }
-
-  <span class="kw">async</span> <span class="fn">findActiveUsers</span>(): <span class="tp">Promise</span>&lt;<span class="tp">User</span>[]&gt; {
-    <span class="kw">return</span> <span class="kw">this</span>.<span class="fn">findMany</span>({
-      where: { active: <span class="num">true</span> },
-      orderBy: [{ field: <span class="str">"createdAt"</span>, direction: <span class="str">"desc"</span> }],
-    });
-  }
-}
-
-<span class="kw">const</span> userRepo = <span class="kw">new</span> <span class="fn">UserRepository</span>(client, <span class="str">"user"</span>);
-<span class="kw">const</span> alice = <span class="kw">await</span> userRepo.<span class="fn">findByEmail</span>(<span class="str">"alice@example.com"</span>);
-<span class="kw">const</span> active = <span class="kw">await</span> userRepo.<span class="fn">findActiveUsers</span>();</div>
-      </section>
-
-      <!-- Query Builder -->
-      <section id="query-builder" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUERY BUILDER</h2>
-        <p class="mb-4">
-          <code class="bg-black/5 px-1">QueryBuilder</code> constructs database-neutral filter and sort clauses that repositories translate into provider-specific queries.
-        </p>
-
-        <div class="code-block"><span class="kw">class</span> <span class="tp">QueryBuilder</span>&lt;<span class="tp">T</span>&gt; {
-  <span class="fn">where</span>(condition: <span class="tp">QueryCondition</span>&lt;<span class="tp">T</span>&gt;): <span class="kw">this</span>;
-  <span class="fn">and</span>(...conditions: <span class="tp">QueryCondition</span>&lt;<span class="tp">T</span>&gt;[]): <span class="kw">this</span>;
-  <span class="fn">or</span>(...conditions: <span class="tp">QueryCondition</span>&lt;<span class="tp">T</span>&gt;[]): <span class="kw">this</span>;
-  <span class="fn">not</span>(condition: <span class="tp">QueryCondition</span>&lt;<span class="tp">T</span>&gt;): <span class="kw">this</span>;
-  <span class="fn">orderBy</span>(field: <span class="kw">keyof</span> <span class="tp">T</span>, direction?: <span class="str">"asc"</span> | <span class="str">"desc"</span>): <span class="kw">this</span>;
-  <span class="fn">limit</span>(n: <span class="tp">number</span>): <span class="kw">this</span>;
-  <span class="fn">offset</span>(n: <span class="tp">number</span>): <span class="kw">this</span>;
-  <span class="fn">select</span>(...fields: (<span class="kw">keyof</span> <span class="tp">T</span>)[]): <span class="kw">this</span>;
-  <span class="fn">include</span>(relation: <span class="tp">string</span>): <span class="kw">this</span>;
-  <span class="fn">build</span>(): <span class="tp">QueryFilter</span>&lt;<span class="tp">T</span>&gt;;
-  <span class="fn">reset</span>(): <span class="kw">this</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Building Queries</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">QueryBuilder</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="cm">// Simple filter</span>
-<span class="kw">const</span> query = <span class="kw">new</span> <span class="fn">QueryBuilder</span>&lt;<span class="tp">User</span>&gt;()
-  .<span class="fn">where</span>({ field: <span class="str">"active"</span>, operator: <span class="str">"equals"</span>, value: <span class="num">true</span> })
-  .<span class="fn">where</span>({ field: <span class="str">"age"</span>, operator: <span class="str">"gte"</span>, value: <span class="num">18</span> })
-  .<span class="fn">orderBy</span>(<span class="str">"createdAt"</span>, <span class="str">"desc"</span>)
-  .<span class="fn">limit</span>(<span class="num">20</span>)
-  .<span class="fn">build</span>();
-
-<span class="cm">// Complex filter</span>
-<span class="kw">const</span> complex = <span class="kw">new</span> <span class="fn">QueryBuilder</span>&lt;<span class="tp">User</span>&gt;()
-  .<span class="fn">and</span>(
-    { field: <span class="str">"role"</span>, operator: <span class="str">"equals"</span>, value: <span class="str">"admin"</span> },
-    { field: <span class="str">"active"</span>, operator: <span class="str">"equals"</span>, value: <span class="num">true</span> },
-  )
-  .<span class="fn">or</span>(
-    { field: <span class="str">"email"</span>, operator: <span class="str">"contains"</span>, value: <span class="str">"@company.com"</span> },
-    { field: <span class="str">"role"</span>, operator: <span class="str">"equals"</span>, value: <span class="str">"superadmin"</span> },
-  )
-  .<span class="fn">orderBy</span>(<span class="str">"name"</span>, <span class="str">"asc"</span>)
-  .<span class="fn">build</span>();</div>
-      </section>
-
-      <!-- Query Filters -->
-      <section id="query-filters" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUERY FILTERS</h2>
-        <p class="mb-4">
-          25+ filter factory functions for building typed query conditions.
-        </p>
-
-        <h3 class="text-lg font-bold mb-3">Comparison Filters</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">equals</span>, <span class="fn">not</span>, <span class="fn">gt</span>, <span class="fn">gte</span>, <span class="fn">lt</span>, <span class="fn">lte</span>,
-  <span class="fn">inList</span>, <span class="fn">notInList</span>, <span class="fn">between</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="fn">equals</span>(<span class="str">"status"</span>, <span class="str">"active"</span>);           <span class="cm">// { field: "status", op: "equals", value: "active" }</span>
-<span class="fn">not</span>(<span class="str">"role"</span>, <span class="str">"guest"</span>);                 <span class="cm">// { field: "role", op: "not", value: "guest" }</span>
-<span class="fn">gt</span>(<span class="str">"age"</span>, <span class="num">18</span>);                        <span class="cm">// { field: "age", op: "gt", value: 18 }</span>
-<span class="fn">gte</span>(<span class="str">"score"</span>, <span class="num">90</span>);                     <span class="cm">// { field: "score", op: "gte", value: 90 }</span>
-<span class="fn">lt</span>(<span class="str">"price"</span>, <span class="num">50</span>);                      <span class="cm">// { field: "price", op: "lt", value: 50 }</span>
-<span class="fn">lte</span>(<span class="str">"attempts"</span>, <span class="num">3</span>);                   <span class="cm">// { field: "attempts", op: "lte", value: 3 }</span>
-<span class="fn">inList</span>(<span class="str">"status"</span>, [<span class="str">"active"</span>, <span class="str">"pending"</span>]); <span class="cm">// { field: "status", op: "in", value: [...] }</span>
-<span class="fn">notInList</span>(<span class="str">"role"</span>, [<span class="str">"banned"</span>, <span class="str">"deleted"</span>]);
-<span class="fn">between</span>(<span class="str">"price"</span>, <span class="num">10</span>, <span class="num">100</span>);            <span class="cm">// Combined gt + lt</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">String Filters</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">contains</span>, <span class="fn">startsWith</span>, <span class="fn">endsWith</span>,
-  <span class="fn">matchesPattern</span>, <span class="fn">isEmpty</span>, <span class="fn">isNotEmpty</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="fn">contains</span>(<span class="str">"name"</span>, <span class="str">"john"</span>);          <span class="cm">// LIKE %john%</span>
-<span class="fn">startsWith</span>(<span class="str">"email"</span>, <span class="str">"admin@"</span>);     <span class="cm">// LIKE admin@%</span>
-<span class="fn">endsWith</span>(<span class="str">"email"</span>, <span class="str">"@company.com"</span>); <span class="cm">// LIKE %@company.com</span>
-<span class="fn">matchesPattern</span>(<span class="str">"phone"</span>, <span class="str">"^\\+1"</span>);  <span class="cm">// Regex match</span>
-<span class="fn">isEmpty</span>(<span class="str">"bio"</span>);                    <span class="cm">// IS NULL OR = ""</span>
-<span class="fn">isNotEmpty</span>(<span class="str">"bio"</span>);                 <span class="cm">// IS NOT NULL AND != ""</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Date Filters</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">dateRange</span>, <span class="fn">dateOnly</span>, <span class="fn">timeOnly</span>, <span class="fn">timestamp</span>,
-  <span class="fn">isBefore</span>, <span class="fn">isAfter</span>, <span class="fn">isBetween</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="fn">dateRange</span>(<span class="str">"createdAt"</span>, startDate, endDate);
-<span class="fn">dateOnly</span>(<span class="str">"birthDate"</span>, <span class="str">"2000-01-15"</span>);
-<span class="fn">isBefore</span>(<span class="str">"expiresAt"</span>, <span class="kw">new</span> <span class="fn">Date</span>());
-<span class="fn">isAfter</span>(<span class="str">"createdAt"</span>, lastWeek);
-<span class="fn">isBetween</span>(<span class="str">"createdAt"</span>, startOfMonth, endOfMonth);</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Logical Composition</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">and</span>, <span class="fn">or</span>, <span class="fn">notCondition</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> filter = <span class="fn">and</span>(
-  <span class="fn">equals</span>(<span class="str">"active"</span>, <span class="num">true</span>),
-  <span class="fn">or</span>(
-    <span class="fn">equals</span>(<span class="str">"role"</span>, <span class="str">"admin"</span>),
-    <span class="fn">gte</span>(<span class="str">"permissionLevel"</span>, <span class="num">5</span>),
-  ),
-  <span class="fn">notCondition</span>(<span class="fn">equals</span>(<span class="str">"banned"</span>, <span class="num">true</span>)),
-);</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Relational Filters</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">relational</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="cm">// Filter through relations</span>
-<span class="kw">const</span> filter = <span class="fn">relational</span>(<span class="str">"orders"</span>, <span class="fn">gt</span>(<span class="str">"total"</span>, <span class="num">100</span>));
-<span class="kw">const</span> nested = <span class="fn">relational</span>(<span class="str">"orders.items"</span>, <span class="fn">equals</span>(<span class="str">"category"</span>, <span class="str">"electronics"</span>));</div>
-
-        <div class="callout callout-note mt-6">
-          <strong class="text-zudo-blue">Tip:</strong> All filter functions return typed <code>QueryCondition</code> objects. They compose naturally with <code>QueryBuilder</code> and can be combined with <code>and()</code> / <code>or()</code> logical filters.
-        </div>
-      </section>
-
-      <!-- Transaction Manager -->
-      <section id="transaction-manager" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TRANSACTION MANAGER</h2>
-        <p class="mb-4">
-          <code class="bg-black/5 px-1">TransactionManager</code> provides managed transactions with automatic retry, rollback, and isolation level configuration.
-        </p>
-
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">TransactionOptions</span> {
-  <span class="kw">readonly</span> isolationLevel?: <span class="str">"read-uncommitted"</span> | <span class="str">"read-committed"</span> | <span class="str">"repeatable-read"</span> | <span class="str">"serializable"</span>;
-  <span class="kw">readonly</span> timeout?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> maxRetries?: <span class="tp">number</span>;
-}
-
-<span class="kw">class</span> <span class="tp">TransactionManager</span> {
-  <span class="kw">constructor</span>(client: <span class="tp">DatabaseClient</span>);
-
-  <span class="fn">execute</span>&lt;<span class="tp">T</span>&gt;(
-    fn: (tx: <span class="tp">PrismaClient</span>) =&gt; <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;,
-    options?: <span class="tp">TransactionOptions</span>,
-  ): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-
-  <span class="fn">savepoint</span>&lt;<span class="tp">T</span>&gt;(
-    name: <span class="tp">string</span>,
-    fn: (tx: <span class="tp">PrismaClient</span>) =&gt; <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;,
-  ): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Managed Transactions</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">TransactionManager</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> txManager = <span class="kw">new</span> <span class="fn">TransactionManager</span>(client);
-
-<span class="cm">// Automatic retry on transient failures</span>
-<span class="kw">const</span> result = <span class="kw">await</span> txManager.<span class="fn">execute</span>(<span class="kw">async</span> (tx) =&gt; {
-  <span class="kw">const</span> user = <span class="kw">await</span> tx.user.<span class="fn">update</span>({
-    where: { id: userId },
-    data: { balance: { decrement: <span class="num">50</span> } },
-  });
-  <span class="kw">await</span> tx.payment.<span class="fn">create</span>({
-    data: { userId, amount: <span class="num">50</span>, status: <span class="str">"completed"</span> },
-  });
-  <span class="kw">return</span> user;
-}, {
-  isolationLevel: <span class="str">"serializable"</span>,
-  timeout: <span class="num">10000</span>,
-  maxRetries: <span class="num">2</span>,
-});
-
-<span class="cm">// Savepoints for partial rollback</span>
-<span class="kw">await</span> txManager.<span class="fn">execute</span>(<span class="kw">async</span> (tx) =&gt; {
-  <span class="kw">await</span> tx.order.<span class="fn">create</span>({ data: orderData });
-  <span class="kw">try</span> {
-    <span class="kw">await</span> txManager.<span class="fn">savepoint</span>(<span class="str">"inventory-check"</span>, <span class="kw">async</span> (sp) =&gt; {
-      <span class="kw">await</span> sp.inventory.<span class="fn">update</span>({ where: { id }, data: { stock: { decrement: <span class="num">1</span> } } });
-    });
-  } <span class="kw">catch</span> {
-    <span class="cm">// Inventory update failed, but order is still created</span>
-  }
-});</div>
-      </section>
-
-      <!-- Unit of Work -->
-      <section id="unit-of-work" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">UNIT OF WORK</h2>
-        <p class="mb-4">
-          <code class="bg-black/5 px-1">DatabaseUnitOfWork</code> tracks dirty entities across a transaction boundary and flushes all changes atomically.
-        </p>
-
-        <div class="code-block"><span class="kw">class</span> <span class="tp">DatabaseUnitOfWork</span> {
-  <span class="kw">constructor</span>(client: <span class="tp">DatabaseClient</span>);
-
-  <span class="fn">registerNew</span>(entity: <span class="tp">unknown</span>): <span class="tp">void</span>;
-  <span class="fn">registerDirty</span>(entity: <span class="tp">unknown</span>): <span class="tp">void</span>;
-  <span class="fn">registerDeleted</span>(entity: <span class="tp">unknown</span>): <span class="tp">void</span>;
-  <span class="fn">commit</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">rollback</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">clear</span>(): <span class="tp">void</span>;
-  <span class="fn">hasChanges</span>(): <span class="tp">boolean</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Unit of Work</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">DatabaseUnitOfWork</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> uow = <span class="kw">new</span> <span class="fn">DatabaseUnitOfWork</span>(client);
-
-<span class="cm">// Track entities</span>
-uow.<span class="fn">registerNew</span>({ model: <span class="str">"order"</span>, data: { userId, total: <span class="num">100</span> } });
-uow.<span class="fn">registerDirty</span>({ model: <span class="str">"user"</span>, id: userId, data: { balance: { decrement: <span class="num">100</span> } } });
-uow.<span class="fn">registerDeleted</span>({ model: <span class="str">"cart"</span>, id: cartId });
-
-<span class="cm">// Flush all changes atomically</span>
-<span class="kw">if</span> (uow.<span class="fn">hasChanges</span>()) {
-  <span class="kw">await</span> uow.<span class="fn">commit</span>();
-}</div>
-      </section>
-
-      <!-- Pagination -->
-      <section id="pagination" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">PAGINATION</h2>
-        <p class="mb-4">
-          Two strategies: offset-based for simple cases, cursor-based for large datasets and infinite scroll.
-        </p>
-
-        <h3 class="text-lg font-bold mb-3">Offset-Based Pagination</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">PaginatedResult</span>&lt;<span class="tp">T</span>&gt; {
-  <span class="kw">readonly</span> data: <span class="tp">T</span>[];
-  <span class="kw">readonly</span> meta: {
-    <span class="kw">readonly</span> page: <span class="tp">number</span>;
-    <span class="kw">readonly</span> limit: <span class="tp">number</span>;
-    <span class="kw">readonly</span> total: <span class="tp">number</span>;
-    <span class="kw">readonly</span> totalPages: <span class="tp">number</span>;
-    <span class="kw">readonly</span> hasNext: <span class="tp">boolean</span>;
-    <span class="kw">readonly</span> hasPrev: <span class="tp">boolean</span>;
-  };
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Cursor-Based Pagination</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">CursorPaginatedResult</span>&lt;<span class="tp">T</span>&gt; {
-  <span class="kw">readonly</span> data: <span class="tp">T</span>[];
-  <span class="kw">readonly</span> meta: {
-    <span class="kw">readonly</span> nextCursor?: <span class="tp">string</span>;
-    <span class="kw">readonly</span> prevCursor?: <span class="tp">string</span>;
-    <span class="kw">readonly</span> hasNext: <span class="tp">boolean</span>;
-    <span class="kw">readonly</span> hasPrev: <span class="tp">boolean</span>;
-    <span class="kw">readonly</span> limit: <span class="tp">number</span>;
-  };
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="cm">// Offset pagination</span>
-<span class="kw">const</span> page1 = <span class="kw">await</span> userRepo.<span class="fn">paginate</span>({
-  page: <span class="num">1</span>,
-  limit: <span class="num">20</span>,
-  where: { active: <span class="num">true</span> },
-  orderBy: [{ field: <span class="str">"createdAt"</span>, direction: <span class="str">"desc"</span> }],
-});
-<span class="cm">// page1.meta.totalPages → 5</span>
-
-<span class="cm">// Cursor pagination</span>
-<span class="kw">const</span> cursor1 = <span class="kw">await</span> userRepo.<span class="fn">paginateCursor</span>({
-  limit: <span class="num">20</span>,
-  orderBy: [{ field: <span class="str">"createdAt"</span>, direction: <span class="str">"desc"</span> }],
-});
-<span class="kw">const</span> cursor2 = <span class="kw">await</span> userRepo.<span class="fn">paginateCursor</span>({
-  cursor: cursor1.meta.nextCursor,
-  limit: <span class="num">20</span>,
-  orderBy: [{ field: <span class="str">"createdAt"</span>, direction: <span class="str">"desc"</span> }],
-});</div>
-      </section>
-
-      <!-- Migrations -->
-      <section id="migrations" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MIGRATIONS</h2>
-        <p class="mb-4">
-          <code class="bg-black/5 px-1">MigrationRunner</code> manages versioned database migrations with advisory locks.
-        </p>
-
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Migration</span> {
-  <span class="kw">readonly</span> version: <span class="tp">string</span>;
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="fn">up</span>(client: <span class="tp">PrismaClient</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">down</span>(client: <span class="tp">PrismaClient</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-}
-
-<span class="kw">class</span> <span class="tp">MigrationRunner</span> {
-  <span class="kw">constructor</span>(client: <span class="tp">DatabaseClient</span>, config?: <span class="tp">MigrationConfig</span>);
-
-  <span class="fn">run</span>(): <span class="tp">Promise</span>&lt;<span class="tp">MigrationResult</span>&gt;;
-  <span class="fn">rollback</span>(steps?: <span class="tp">number</span>): <span class="tp">Promise</span>&lt;<span class="tp">MigrationResult</span>&gt;;
-  <span class="fn">status</span>(): <span class="tp">Promise</span>&lt;<span class="tp">MigrationStatus</span>&gt;;
-  <span class="fn">getHistory</span>(): <span class="tp">Promise</span>&lt;<span class="tp">readonly</span> <span class="tp">MigrationRecord</span>[]&gt;;
-  <span class="fn">createTable</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Running Migrations</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">MigrationRunner</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> runner = <span class="kw">new</span> <span class="fn">MigrationRunner</span>(client, {
-  migrations: [{
-    version: <span class="str">"001"</span>,
-    name: <span class="str">"create-users"</span>,
-    <span class="kw">async</span> <span class="fn">up</span>(prisma) {
-      <span class="kw">await</span> prisma.<span class="fn">executeRaw</span>`CREATE TABLE users (
-        id TEXT PRIMARY KEY, name TEXT NOT NULL,
-        email TEXT UNIQUE NOT NULL
-      )`;
-    },
-    <span class="kw">async</span> <span class="fn">down</span>(prisma) {
-      <span class="kw">await</span> prisma.<span class="fn">executeRaw</span>`DROP TABLE users`;
-    },
-  }],
-});
-
-<span class="kw">const</span> status = <span class="kw">await</span> runner.<span class="fn">status</span>();
-<span class="kw">const</span> result = <span class="kw">await</span> runner.<span class="fn">run</span>();
-<span class="kw">await</span> runner.<span class="fn">rollback</span>(<span class="num">1</span>);</div>
-      </section>
-
-      <!-- Seeds -->
-      <section id="seeds" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SEEDS</h2>
-        <p class="mb-4">
-          <code class="bg-black/5 px-1">SeedRunner</code> manages idempotent seed execution with advisory locks and tracking.
-        </p>
-
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Seed</span> {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="kw">readonly</span> dependencies?: <span class="tp">string</span>[];
-  <span class="fn">run</span>(client: <span class="tp">PrismaClient</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-}
-
-<span class="kw">class</span> <span class="tp">SeedRunner</span> {
-  <span class="kw">constructor</span>(client: <span class="tp">DatabaseClient</span>, config?: <span class="tp">SeedConfig</span>);
-  <span class="fn">run</span>(seedNames?: <span class="tp">string</span>[]): <span class="tp">Promise</span>&lt;<span class="tp">SeedResult</span>&gt;;
-  <span class="fn">status</span>(): <span class="tp">Promise</span>&lt;<span class="tp">SeedStatus</span>&gt;;
-  <span class="fn">getHistory</span>(): <span class="tp">Promise</span>&lt;<span class="tp">readonly</span> <span class="tp">SeedRecord</span>[]&gt;;
-  <span class="fn">reset</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Seeding</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">SeedRunner</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> seeder = <span class="kw">new</span> <span class="fn">SeedRunner</span>(client, {
-  seeds: [
-    {
-      name: <span class="str">"roles"</span>,
-      <span class="kw">async</span> <span class="fn">run</span>(prisma) {
-        <span class="kw">await</span> prisma.role.<span class="fn">createMany</span>({
-          data: [
-            { name: <span class="str">"admin"</span>, permissions: [<span class="str">"read"</span>, <span class="str">"write"</span>, <span class="str">"delete"</span>] },
-            { name: <span class="str">"user"</span>, permissions: [<span class="str">"read"</span>] },
-          ],
-        });
-      },
-    },
-    {
-      name: <span class="str">"admin-user"</span>,
-      dependencies: [<span class="str">"roles"</span>],
-      <span class="kw">async</span> <span class="fn">run</span>(prisma) {
-        <span class="kw">await</span> prisma.user.<span class="fn">create</span>({
-          data: { name: <span class="str">"Admin"</span>, email: <span class="str">"admin@example.com"</span>, role: <span class="str">"admin"</span> },
-        });
-      },
-    },
-  ],
-});
-
-<span class="kw">await</span> seeder.<span class="fn">run</span>();</div>
-      </section>
-
-      <!-- Health Checks -->
-      <section id="health-checks" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HEALTH CHECKS</h2>
-
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">DatabaseHealth</span> {
-  <span class="kw">readonly</span> status: <span class="str">"healthy"</span> | <span class="str">"unhealthy"</span>;
-  <span class="kw">readonly</span> latency?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> provider?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> connectionCount?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> timestamp: <span class="tp">number</span>;
-  <span class="kw">readonly</span> error?: <span class="tp">string</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">checkDatabaseHealth</span>, <span class="fn">checkDatabaseReadiness</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> health = <span class="kw">await</span> <span class="fn">checkDatabaseHealth</span>(client);
-<span class="kw">if</span> (health.status === <span class="str">"unhealthy"</span>) {
-  console.<span class="fn">error</span>(<span class="str">`DB unhealthy: ${health.error} (${health.latency}ms)`</span>);
-}
-
-<span class="kw">const</span> ready = <span class="kw">await</span> <span class="fn">checkDatabaseReadiness</span>(client);
-<span class="kw">if</span> (!ready.ready) {
-  <span class="cm">// Return 503 from health endpoint</span>
-}</div>
-      </section>
-
-      <!-- Locks -->
-      <section id="locks" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ADVISORY LOCKS</h2>
-        <p class="mb-4">
-          <code class="bg-black/5 px-1">DatabaseLockManager</code> provides database-level advisory locks for coordinating single-execution tasks.
-        </p>
-
-        <div class="code-block"><span class="kw">class</span> <span class="tp">DatabaseLockManager</span> {
-  <span class="kw">constructor</span>(client: <span class="tp">DatabaseClient</span>);
-  <span class="fn">acquireLock</span>(lockName: <span class="tp">string</span>, timeout?: <span class="tp">number</span>): <span class="tp">Promise</span>&lt;<span class="tp">Lock</span>&gt;;
-  <span class="fn">tryLock</span>(lockName: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">Lock</span> | <span class="num">null</span>&gt;;
-  <span class="fn">releaseLock</span>(lock: <span class="tp">Lock</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">withLock</span>&lt;<span class="tp">T</span>&gt;(lockName: <span class="tp">string</span>, fn: () =&gt; <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;, timeout?: <span class="tp">number</span>): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">DatabaseLockManager</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> lockManager = <span class="kw">new</span> <span class="fn">DatabaseLockManager</span>(client);
-
-<span class="cm">// Ensure only one process runs this at a time</span>
-<span class="kw">await</span> lockManager.<span class="fn">withLock</span>(<span class="str">"daily-report"</span>, <span class="kw">async</span> () =&gt; {
-  <span class="kw">const</span> report = <span class="kw">await</span> <span class="fn">generateDailyReport</span>();
-  <span class="kw">await</span> <span class="fn">sendReport</span>(report);
-});
-
-<span class="cm">// Explicit lock management</span>
-<span class="kw">const</span> lock = <span class="kw">await</span> lockManager.<span class="fn">acquireLock</span>(<span class="str">"data-sync"</span>, <span class="num">30000</span>);
-<span class="kw">try</span> {
-  <span class="kw">await</span> <span class="fn">syncData</span>();
-} <span class="kw">finally</span> {
-  <span class="kw">await</span> lock.<span class="fn">release</span>();
-}</div>
-      </section>
-
-      <!-- Cache -->
-      <section id="cache" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">IN-MEMORY CACHE</h2>
-        <p class="mb-4">
-          <code class="bg-black/5 px-1">MemoryDatabaseCache</code> provides TTL-based caching with getOrSet pattern and tag-based invalidation.
-        </p>
-
-        <div class="code-block"><span class="kw">class</span> <span class="tp">MemoryDatabaseCache</span> {
-  <span class="kw">constructor</span>(config?: <span class="tp">CacheConfig</span>);
-  <span class="fn">get</span>&lt;<span class="tp">T</span>&gt;(key: <span class="tp">string</span>): <span class="tp">T</span> | <span class="num">undefined</span>;
-  <span class="fn">set</span>&lt;<span class="tp">T</span>&gt;(key: <span class="tp">string</span>, value: <span class="tp">T</span>, ttl?: <span class="tp">number</span>, tags?: <span class="tp">string</span>[]): <span class="tp">void</span>;
-  <span class="fn">getOrSet</span>&lt;<span class="tp">T</span>&gt;(key: <span class="tp">string</span>, factory: () =&gt; <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;, ttl?: <span class="tp">number</span>): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-  <span class="fn">delete</span>(key: <span class="tp">string</span>): <span class="tp">boolean</span>;
-  <span class="fn">invalidateTag</span>(tag: <span class="tp">string</span>): <span class="tp">number</span>;
-  <span class="fn">clear</span>(): <span class="tp">void</span>;
-  <span class="fn">size</span>(): <span class="tp">number</span>;
-  <span class="fn">has</span>(key: <span class="tp">string</span>): <span class="tp">boolean</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">MemoryDatabaseCache</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> cache = <span class="kw">new</span> <span class="fn">MemoryDatabaseCache</span>({ defaultTTL: <span class="num">30000</span> });
-
-<span class="cm">// Cache expensive query</span>
-<span class="kw">const</span> users = <span class="kw">await</span> cache.<span class="fn">getOrSet</span>(
-  <span class="str">"active-users"</span>,
-  <span class="kw">async</span> () =&gt; userRepo.<span class="fn">findMany</span>({ where: { active: <span class="num">true</span> } }),
-  <span class="num">60000</span>,
-  [<span class="str">"users"</span>, <span class="str">"list"</span>],
+<span class="kw">const</span> rows = <span class="kw">await</span> client.queryRawUnsafe&lt;{ id: string }[]&gt;(
+  'SELECT <span class="str">"id"</span> FROM <span class="str">"users"</span> WHERE <span class="str">"email"</span> = $1',
+  [<span class="str">"alice@example.com"</span>],
+  { timeoutMs: 2_000 },
 );
 
-<span class="cm">// Invalidate by tag</span>
-<span class="kw">await</span> userRepo.<span class="fn">update</span>(id, { name: <span class="str">"New Name"</span> });
-cache.<span class="fn">invalidateTag</span>(<span class="str">"users"</span>);</div>
-      </section>
+<span class="kw">await</span> client.transaction(<span class="kw">async</span> (tx) =&gt; {
+  <span class="kw">await</span> tx.user.update({ where: { id }, data: { balance: { decrement: 100 } } });
+  <span class="kw">await</span> tx.ledger.create({ data: { userId: id, amount: 100 } });
+}, { isolationLevel: <span class="str">"Serializable"</span>, timeoutMs: 10_000 });
 
-      <!-- Relations -->
-      <section id="relations" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATIONS</h2>
-        <p class="mb-4">
-          Typed relation definitions for one-to-one, one-to-many, many-to-one, and many-to-many relationships.
-        </p>
+<span class="kw">await</span> client.disconnect();</div>
+</section>
 
-        <div class="code-block"><span class="kw">type</span> <span class="tp">RelationType</span> = <span class="str">"one-to-one"</span> | <span class="str">"one-to-many"</span> | <span class="str">"many-to-one"</span> | <span class="str">"many-to-many"</span>;
-
-<span class="kw">interface</span> <span class="tp">RelationDefinition</span> {
-  <span class="kw">readonly</span> type: <span class="tp">RelationType</span>;
-  <span class="kw">readonly</span> from: <span class="tp">string</span>;
-  <span class="kw">readonly</span> to: <span class="tp">string</span>;
-  <span class="kw">readonly</span> foreignKey?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> joinTable?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> through?: <span class="tp">string</span>;
+<section id="database-facade" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DATABASE FACADE</h2>
+<p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">Database</code> is a thin facade over one <code class="bg-black/5 px-1">DatabaseClient</code>. A shared instance is created lazily by <code class="bg-black/5 px-1">getDatabase()</code>; nothing connects at import time.</p>
+<div class="code-block"><span class="kw">class</span> Database {
+  constructor(options?: DatabaseClientOptions | DatabaseClient);
+  connect(): Promise&lt;void&gt;;
+  disconnect(): Promise&lt;void&gt;;
+  ensureConnected(): Promise&lt;void&gt;;
+  ping(): Promise&lt;void&gt;;
+  getStatus(): DatabaseStatus;
+  healthCheck(): Promise&lt;DatabaseClientHealth&gt;;
+  transaction&lt;T&gt;(callback, options?): Promise&lt;T&gt;;
+  getClient(): DatabaseClient;
+  getPrisma(): PrismaClientLike;
+  destroy(): Promise&lt;void&gt;;
 }
 
-<span class="kw">class</span> <span class="tp">RelationRegistry</span> {
-  <span class="fn">register</span>(definition: <span class="tp">RelationDefinition</span>): <span class="tp">void</span>;
-  <span class="fn">get</span>(from: <span class="tp">string</span>, to: <span class="tp">string</span>): <span class="tp">RelationDefinition</span> | <span class="num">undefined</span>;
-  <span class="fn">getAll</span>(model: <span class="tp">string</span>): <span class="tp">readonly</span> <span class="tp">RelationDefinition</span>[];
-  <span class="fn">has</span>(from: <span class="tp">string</span>, to: <span class="tp">string</span>): <span class="tp">boolean</span>;
-  <span class="fn">clear</span>(): <span class="tp">void</span>;
+<span class="kw">function</span> createDatabase(options?): Database;
+<span class="kw">function</span> getDatabase(options?): Database;        <span class="cmt">// shared instance; throws TypeError if options are passed once it exists</span>
+<span class="kw">function</span> connectDatabase(options?): Promise&lt;Database&gt;;
+<span class="kw">function</span> disconnectDatabase(): Promise&lt;void&gt;;
+<span class="kw">function</span> resetDatabase(): Promise&lt;void&gt;;         <span class="cmt">// clears the singleton first, then destroys it</span></div>
+<div class="code-block"><span class="kw">import</span> { connectDatabase, getDatabase, resetDatabase } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
+
+<span class="kw">const</span> db = <span class="kw">await</span> connectDatabase({ prisma });   <span class="cmt">// bootstrap</span>
+<span class="kw">const</span> sameDb = getDatabase();                    <span class="cmt">// anywhere else</span>
+
+process.on(<span class="str">"SIGTERM"</span>, () =&gt; void resetDatabase());</div>
+</section>
+
+<section id="connection-manager" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONNECTION MANAGER</h2>
+<p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">DatabaseConnectionManager</code> adds lifecycle events, scheduled health checks and reconnect policy on top of a client. Pass an existing client so one Prisma instance is never tracked by two state machines.</p>
+<div class="code-block"><span class="kw">interface</span> DatabaseConnectionManagerOptions <span class="kw">extends</span> DatabaseClientOptions {
+  <span class="kw">readonly</span> client?: DatabaseClient;         <span class="cmt">// wrap an existing client</span>
+  <span class="kw">readonly</span> autoConnect?: boolean;           <span class="cmt">// connect() during initialize() (default false)</span>
+  <span class="kw">readonly</span> healthCheckIntervalMs?: number;  <span class="cmt">// scheduled checks; disabled when omitted</span>
+  <span class="kw">readonly</span> healthCheckTimeoutMs?: number;   <span class="cmt">// default min(interval, 5000)</span>
+  <span class="kw">readonly</span> reconnect?: DatabaseReconnectOptions | false;
+}
+
+<span class="kw">interface</span> DatabaseReconnectOptions {
+  <span class="kw">readonly</span> failureThreshold?: number;  <span class="cmt">// consecutive failures before reconnecting (default 1)</span>
+  <span class="kw">readonly</span> maxAttempts?: number;       <span class="cmt">// default 5</span>
+  <span class="kw">readonly</span> baseDelayMs?: number;       <span class="cmt">// default 500, doubles per attempt</span>
+  <span class="kw">readonly</span> maxDelayMs?: number;        <span class="cmt">// default 30 000</span>
+}
+
+<span class="kw">class</span> DatabaseConnectionManager {
+  initialize(): Promise&lt;void&gt;;
+  connect(): Promise&lt;void&gt;;
+  disconnect(): Promise&lt;void&gt;;
+  ensureConnected(): Promise&lt;void&gt;;
+  getStatus(): DatabaseStatus;
+  healthCheck(): Promise&lt;DatabaseClientHealth&gt;;
+  getLastHealth(): DatabaseHealth | undefined;     <span class="cmt">// result of the last scheduled check</span>
+  runScheduledHealthCheck(): Promise&lt;void&gt;;         <span class="cmt">// one tick; overlapping ticks are skipped</span>
+  startHealthChecks(): void;
+  stopHealthChecks(): void;
+  on(listener): () =&gt; void;
+  off(listener): boolean;
+  removeAllListeners(): void;
+  getClient(): DatabaseClient;
+  destroy(): Promise&lt;void&gt;;
 }</div>
+<h3 class="text-lg font-bold mb-3 mt-6">Events</h3>
+<div class="border-4 border-black overflow-x-auto"><table class="w-full text-sm"><thead class="bg-black text-white"><tr><th class="p-3 text-left">Event</th><th class="p-3 text-left">Details</th><th class="p-3 text-left">When</th></tr></thead><tbody><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">connecting / connected</td><td class="p-3">status, timestamp</td><td class="p-3">Around <code>connect()</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">disconnecting / disconnected</td><td class="p-3">status, timestamp</td><td class="p-3">Around <code>disconnect()</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">error</td><td class="p-3">error</td><td class="p-3">Connect/disconnect failure, or a failed scheduled health check (with the real cause)</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">reconnecting</td><td class="p-3">attempt</td><td class="p-3">Each reconnect attempt after <code>failureThreshold</code> consecutive failures</td></tr></tbody></table></div>
+<div class="code-block"><span class="kw">import</span> { createConnectionManager } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">RelationRegistry</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
+<span class="kw">const</span> manager = createConnectionManager({
+  client,
+  healthCheckIntervalMs: 15_000,
+  reconnect: { failureThreshold: 2, maxAttempts: 10 },
+});
 
-<span class="kw">const</span> relations = <span class="kw">new</span> <span class="fn">RelationRegistry</span>();
+manager.on((event, details) =&gt; {
+  <span class="kw">if</span> (event === <span class="str">"error"</span>) alertOps(<span class="str">"Database error"</span>, details.error);
+  <span class="kw">if</span> (event === <span class="str">"reconnecting"</span>) log.warn(`Reconnect attempt ${details.attempt}`);
+});
 
-<span class="cm">// One-to-many: User has many Posts</span>
-relations.<span class="fn">register</span>({ type: <span class="str">"one-to-many"</span>, from: <span class="str">"User"</span>, to: <span class="str">"Post"</span>, foreignKey: <span class="str">"authorId"</span> });
+<span class="kw">await</span> manager.connect(); <span class="cmt">// starts the scheduled checks</span></div>
+</section>
 
-<span class="cm">// Many-to-many: Post has many Tags</span>
-relations.<span class="fn">register</span>({ type: <span class="str">"many-to-many"</span>, from: <span class="str">"Post"</span>, to: <span class="str">"Tag"</span>, joinTable: <span class="str">"PostTag"</span> });
+<section id="base-repository" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">BASE REPOSITORY</h2>
+<p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">BaseRepository</code> is an abstract class over a Prisma model delegate. Extend it per model.</p>
+<div class="code-block"><span class="kw">interface</span> BaseRepositoryOptions {
+  <span class="kw">readonly</span> modelName?: string;            <span class="cmt">// used in error messages (default "DatabaseEntity")</span>
+  <span class="kw">readonly</span> idField?: string;              <span class="cmt">// primary key field (default "id")</span>
+  <span class="kw">readonly</span> softDelete?: boolean | { field?: string };  <span class="cmt">// default field "deletedAt"</span>
+  <span class="kw">readonly</span> cursorSecret?: string;         <span class="cmt">// HMAC secret for paginateCursor cursors</span>
+  <span class="kw">readonly</span> delegateKey?: string;          <span class="cmt">// property on a transaction client (default lower-cased modelName)</span>
+  <span class="kw">readonly</span> relations?: RelationRegistry;  <span class="cmt">// validates include definitions in findByQuery</span>
+  <span class="kw">readonly</span> relationParent?: unknown;      <span class="cmt">// model key in the registry (default modelName)</span>
+}
 
-<span class="cm">// One-to-one: User has one Profile</span>
-relations.<span class="fn">register</span>({ type: <span class="str">"one-to-one"</span>, from: <span class="str">"User"</span>, to: <span class="str">"Profile"</span>, foreignKey: <span class="str">"userId"</span> });
+abstract <span class="kw">class</span> BaseRepository&lt;TEntity, TId = string, TCreate = Partial&lt;TEntity&gt;, TUpdate = Partial&lt;TEntity&gt;, TWhere = Record&lt;string, unknown&gt;&gt; {
+  constructor(delegate: RepositoryDelegate&lt;...&gt;, options?: BaseRepositoryOptions);
+}</div>
+<h3 class="text-lg font-bold mb-3 mt-6">Methods</h3>
+<div class="border-4 border-black overflow-x-auto"><table class="w-full text-sm"><thead class="bg-black text-white"><tr><th class="p-3 text-left">Method</th><th class="p-3 text-left">Returns</th><th class="p-3 text-left">Notes</th></tr></thead><tbody><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">findById(id, options?)</td><td class="p-3">TEntity | null</td><td class="p-3">Uses <code>findUnique</code>, or <code>findFirst</code> with the soft-delete scope</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">findOne(filter, options?)</td><td class="p-3">TEntity | null</td><td class="p-3"></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">findMany(filter?, options?)</td><td class="p-3">readonly TEntity[]</td><td class="p-3"></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">findPaginated(filter?, { pagination, sort }) / paginate</td><td class="p-3">PaginatedResult</td><td class="p-3">NaN / Infinity page and limit are normalised (limit capped at 100)</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">paginateCursor(filter?, { cursor, limit, sort })</td><td class="p-3">CursorPaginatedResult</td><td class="p-3">Keyset pagination: fetches <code>limit + 1</code>, appends the id field as tiebreaker, validates and (with <code>cursorSecret</code>) signs cursors</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">findByQuery(builder | state, options?)</td><td class="p-3">readonly TEntity[]</td><td class="p-3">Applies filter, sort, select, include and pagination from a <code>QueryBuilder</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">create(input) / createMany(inputs)</td><td class="p-3">TEntity / number</td><td class="p-3"></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">update(id, input)</td><td class="p-3">TEntity</td><td class="p-3">Scoped to live rows when soft delete is on</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">delete(id) / deleteMany(filter)</td><td class="p-3">void / number</td><td class="p-3">Hard delete</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">softDelete(id) / restore(id) / findDeleted(filter?)</td><td class="p-3">TEntity / TEntity / TEntity[]</td><td class="p-3">Require the <code>softDelete</code> option</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">withDeleted()</td><td class="p-3">this</td><td class="p-3">Copy whose reads include soft-deleted rows</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">exists(filter) / count(filter?)</td><td class="p-3">boolean / number</td><td class="p-3"><code>exists</code> uses <code>count</code>, never fetches a row</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">upsert(where, create, update)</td><td class="p-3">TEntity</td><td class="p-3"></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">withTransaction(tx) / withDelegate(delegate)</td><td class="p-3">this</td><td class="p-3">Rebinds the repository to a transaction client's delegate</td></tr></tbody></table></div>
+<p class="mb-4 leading-relaxed">Every method accepts <code>DatabaseOperationOptions</code> (<code>signal</code>, <code>timeoutMs</code>, <code>metadata</code>). Failures are mapped by <code>mapRepositoryError</code>: <code>P2002</code> → 409 <code>ERR_CONFLICT</code>, <code>P2025</code> → 404 <code>ERR_NOT_FOUND</code>, <code>P2003</code> → 409, <code>P2034</code> → retryable, <code>P1xxx</code> → 503 connection.</p>
+<h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
+<div class="code-block"><span class="kw">import</span> { BaseRepository, withTransaction } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
 
-<span class="cm">// Query</span>
-<span class="kw">const</span> userRelations = relations.<span class="fn">getAll</span>(<span class="str">"User"</span>);</div>
-      </section>
+<span class="kw">interface</span> User { id: string; email: string; name: string; deletedAt: Date | null }
 
-      <!-- Errors -->
-      <section id="errors" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERROR HIERARCHY</h2>
-        <p class="mb-4">All error types are defined in <code class="bg-black/5 px-1">@zudojs/errors</code> and re-exported by this package.</p>
+<span class="kw">class</span> UserRepository <span class="kw">extends</span> BaseRepository&lt;User&gt; {
+  constructor(delegate: ConstructorParameters&lt;typeof BaseRepository&lt;User&gt;&gt;[0]) {
+    super(delegate, { modelName: <span class="str">"User"</span>, softDelete: true, cursorSecret: process.env.CURSOR_SECRET });
+  }
 
-        <div class="border-4 border-black">
-          <table class="w-full text-smw-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Error</th>
-                <th class="p-3 text-left">When Thrown</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DatabaseError</td><td class="p-3">Base error for all database issues</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ConnectionError</td><td class="p-3">Connection pool exhausted, timeout, or refused</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">QueryError</td><td class="p-3">Invalid query, constraint violation, or SQL syntax error</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">TransactionError</td><td class="p-3">Transaction commit/rollback failure or deadlock</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MigrationError</td><td class="p-3">Migration execution or version conflict</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">LockError</td><td class="p-3">Advisory lock acquisition timeout or failure</td></tr>
-              <tr><td class="p-3 font-mono">SeedError</td><td class="p-3">Seed execution failure or dependency cycle</td></tr>
-            </tbody>
-          </table>
-        </div>
+  findByEmail(email: string) {
+    <span class="kw">return</span> this.findOne({ email });
+  }
+}
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Error Handling Pattern</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">isDatabaseError</span>, <span class="tp">ConnectionError</span>, <span class="tp">QueryError</span>, <span class="tp">TransactionError</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
+<span class="kw">const</span> users = <span class="kw">new</span> UserRepository(prisma.user);
+<span class="kw">const</span> alice = <span class="kw">await</span> users.create({ email: <span class="str">"alice@example.com"</span>, name: <span class="str">"Alice"</span> });
+<span class="kw">await</span> users.softDelete(alice.id);           <span class="cmt">// reads now skip the row</span>
+<span class="kw">await</span> users.withDeleted().findById(alice.id); <span class="cmt">// still visible here</span>
+
+<span class="kw">await</span> withTransaction(client, <span class="kw">async</span> (tx) =&gt; {
+  <span class="kw">const</span> txUsers = users.withTransaction(tx);  <span class="cmt">// runs inside the transaction</span>
+  <span class="kw">await</span> txUsers.restore(alice.id);
+  <span class="kw">await</span> txUsers.update(alice.id, { name: <span class="str">"Alice Doe"</span> });
+});</div>
+</section>
+
+<section id="query-builder" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUERY BUILDER</h2>
+<p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">QueryBuilder</code> accumulates a database-neutral definition (filter, sort, select, include, pagination) and translates it to Prisma arguments. <code class="bg-black/5 px-1">build()</code> returns a deeply frozen snapshot; mutating it cannot affect later builds.</p>
+<div class="code-block"><span class="kw">const</span> query = createQueryBuilder&lt;<span class="str">"email"</span> | <span class="str">"role"</span> | <span class="str">"createdAt"</span>&gt;()
+  .where(<span class="str">"role"</span>, <span class="str">"admin"</span>)                  <span class="cmt">// equals</span>
+  .whereContains(<span class="str">"email"</span>, <span class="str">"@example.com"</span>)  <span class="cmt">// whereOperator, whereNot, whereIn, whereNotIn, whereLessThan, ...</span>
+  .whereNotNull(<span class="str">"createdAt"</span>)
+  .or(equals(<span class="str">"role"</span>, <span class="str">"owner"</span>), equals(<span class="str">"role"</span>, <span class="str">"admin"</span>))   <span class="cmt">// and() / or() / not() groups</span>
+  .orderByDesc(<span class="str">"createdAt"</span>)                <span class="cmt">// orderBy, orderByAsc, sort([...])</span>
+  .select(<span class="str">"email"</span>, <span class="str">"role"</span>)
+  .include(<span class="str">"profile"</span>)                      <span class="cmt">// relation names or includeRelation(...)</span>
+  .paginate({ page: 2, limit: 20 })        <span class="cmt">// page(), limit(), offset()</span>
+  ;
+
+<span class="kw">const</span> state = query.build();               <span class="cmt">// QueryBuilderState (frozen)</span>
+<span class="kw">const</span> args  = query.toPrismaArgs();        <span class="cmt">// { where, orderBy, skip, take, select }</span>
+<span class="kw">const</span> admins = <span class="kw">await</span> users.findByQuery(query);
+
+query.clearFilters().clearSort().clearSelect().clearInclude().clearPagination().reset();
+<span class="kw">const</span> copy = query.clone();</div>
+<h3 class="text-lg font-bold mb-3 mt-6">Translation helpers</h3>
+<div class="border-4 border-black overflow-x-auto"><table class="w-full text-sm"><thead class="bg-black text-white"><tr><th class="p-3 text-left">Function</th><th class="p-3 text-left">Produces</th></tr></thead><tbody><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">toPrismaWhere(filter)</td><td class="p-3">Prisma <code>where</code>; <code>undefined</code> for an empty filter. Repeated operators on one field are moved into <code>AND</code>; unsafe field names throw.</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">toPrismaArgs(state, options?)</td><td class="p-3"><code>{ where, orderBy, skip, take, select, include }</code>. When both <code>select</code> and <code>include</code> are present the relations are folded into <code>select</code>.</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">toPrismaOrderBy(sort) / toPrismaSelect(fields) / toPrismaSkipTake(pagination, offset)</td><td class="p-3">The individual pieces</td></tr></tbody></table></div>
+</section>
+
+<section id="query-filters" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUERY FILTERS</h2>
+<p class="mb-4 leading-relaxed">Filter helpers return <code>QueryFilter</code> values (<code>{ conditions, and, or, not }</code>). Field names are validated; <code>__proto__</code> / <code>constructor</code> / <code>prototype</code> are rejected and values are deep-cloned.</p>
+<div class="border-4 border-black overflow-x-auto"><table class="w-full text-sm"><thead class="bg-black text-white"><tr><th class="p-3 text-left">Group</th><th class="p-3 text-left">Helpers</th></tr></thead><tbody><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Comparison</td><td class="p-3"><code>equals</code>, <code>notEquals</code>, <code>lessThan</code>, <code>lessThanOrEqual</code>, <code>greaterThan</code>, <code>greaterThanOrEqual</code>, <code>between</code>, <code>inList</code> / <code>oneOf</code>, <code>notInList</code> / <code>noneOf</code>, <code>isNull</code>, <code>isNotNull</code>, <code>isEmpty</code>, <code>isNotEmpty</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">String</td><td class="p-3"><code>contains</code>, <code>startsWith</code>, <code>endsWith</code>, <code>matchesPattern</code> (leading/trailing <code>%</code> only), <code>optionalContains</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Date</td><td class="p-3"><code>dateRange</code>, <code>dateOnly</code>, <code>isBefore</code>, <code>isAfter</code>, <code>isBetween</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Logical</td><td class="p-3"><code>and</code>, <code>or</code>, <code>not</code>, <code>allOf</code>, <code>anyOf</code> (empty filters collapse), <code>notCondition</code>, <code>condition</code>, <code>fromObject</code>, <code>optionalEquals</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Relations</td><td class="p-3"><code>relational(relation, filter, "some" | "every" | "none" | "is" | "isNot")</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Utilities</td><td class="p-3"><code>hasConditions</code>, <code>flattenAnd</code> (throws on OR/NOT branches), <code>cloneFilter</code></td></tr></tbody></table></div>
+<div class="code-block"><span class="kw">import</span> { and, or, equals, isAfter, relational, toPrismaWhere } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
+
+<span class="kw">const</span> where = toPrismaWhere(
+  and(
+    equals(<span class="str">"tenantId"</span>, tenantId),
+    or(equals(<span class="str">"role"</span>, <span class="str">"admin"</span>), equals(<span class="str">"role"</span>, <span class="str">"owner"</span>)),
+    isAfter(<span class="str">"createdAt"</span>, <span class="kw">new</span> Date(<span class="str">"2026-01-01"</span>)),
+    relational(<span class="str">"posts"</span>, equals(<span class="str">"published"</span>, true), <span class="str">"some"</span>),
+  ),
+);
+<span class="cmt">// { tenantId: { equals: ... }, createdAt: { gt: ... }, posts: { some: { published: { equals: true } } }, OR: [...] }</span></div>
+</section>
+
+<section id="transaction-manager" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TRANSACTIONS</h2>
+<div class="code-block"><span class="kw">interface</span> ManagedTransactionOptions <span class="kw">extends</span> TransactionOptions {
+  <span class="kw">readonly</span> transactionId?: string;
+  <span class="kw">readonly</span> metadata?: Record&lt;string, unknown&gt;;
+}
+
+<span class="kw">class</span> TransactionManager {
+  constructor(client: DatabaseClient);
+  execute&lt;T&gt;(callback: (tx, context) =&gt; Promise&lt;T&gt;, options?): Promise&lt;T&gt;;
+  run&lt;T&gt;(callback, options?): Promise&lt;{ result: T; context: TransactionContext }&gt;;  <span class="cmt">// context.status === "committed"</span>
+}
+
+<span class="kw">function</span> withTransaction&lt;T&gt;(client, callback, options?): Promise&lt;T&gt;;
+<span class="kw">function</span> withTransactionRetry&lt;T&gt;(client, callback, options?: TransactionRetryOptions): Promise&lt;T&gt;;
+<span class="kw">function</span> getTransactionContextFromError(error): TransactionContext | undefined;   <span class="cmt">// status "failed"</span>
+<span class="kw">function</span> isTransactionActive(ctx) / isTransactionCommitted(ctx) / isTransactionFailed(ctx): boolean;</div>
+<p class="mb-4 leading-relaxed">Failures are normalised to <code>DatabaseError</code> and enriched with <code>transactionId</code>, <code>transactionStatus: "failed"</code> and the supplied metadata. <code>withTransactionRetry</code> retries up to <code>retries</code> (default 3) with exponential back-off when <code>isRetryableTransactionError</code> matches (<code>P2034</code>, <code>P2028</code>, <code>P1017</code>, PostgreSQL <code>40001</code> / <code>40P01</code>) or a custom <code>shouldRetry</code> returns true.</p>
+<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">Retries re-run the whole callback.</strong> Side effects performed outside the transaction client (emails, queues) must be idempotent.</div>
+<div class="code-block"><span class="kw">import</span> { withTransactionRetry } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
+
+<span class="kw">const</span> order = <span class="kw">await</span> withTransactionRetry(client, <span class="kw">async</span> (tx, context) =&gt; {
+  <span class="kw">const</span> stock = <span class="kw">await</span> tx.product.update({ where: { id }, data: { stock: { decrement: 1 } } });
+  <span class="kw">return</span> tx.order.create({ data: { productId: id, transactionId: context.transactionId } });
+}, { isolationLevel: <span class="str">"Serializable"</span>, retries: 5, metadata: { userId } });</div>
+</section>
+
+<section id="unit-of-work" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">UNIT OF WORK</h2>
+<p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">DatabaseUnitOfWork</code> runs a callback in one transaction and tags failures with <code class="bg-black/5 px-1">unitOfWork: true</code>. Rebind repositories with <code class="bg-black/5 px-1">withTransaction(tx)</code> inside the callback; repositories built from the root client run outside the transaction.</p>
+<div class="code-block"><span class="kw">import</span> { createUnitOfWork } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
+
+<span class="kw">const</span> uow = createUnitOfWork(client);
+<span class="kw">await</span> uow.execute(<span class="kw">async</span> (tx) =&gt; {
+  <span class="kw">await</span> users.withTransaction(tx).update(userId, { balance: 0 });
+  <span class="kw">await</span> ledger.withTransaction(tx).create({ userId, amount: -balance });
+}, { timeoutMs: 15_000 });</div>
+</section>
+
+<section id="pagination" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">PAGINATION</h2>
+<h3 class="text-lg font-bold mb-3 mt-6">Offset</h3>
+<div class="code-block">normalizePage(page) / normalizeLimit(limit) / normalizePagination({ page, limit })  <span class="cmt">// NaN, Infinity, 0 → defaults; limit capped at MAX_LIMIT (100)</span>
+createPaginationMeta(page, limit, total)  <span class="cmt">// { page, limit, total, totalPages, hasNextPage, hasPreviousPage, hasNext, hasPrev }</span>
+createPaginatedResult(data, page, limit, total)
+paginateCollection(items, { page, limit })
+getNextPage(meta) / getPreviousPage(meta) / isValidPage(page, totalPages) / getItemRange(page, limit, total)</div>
+<h3 class="text-lg font-bold mb-3 mt-6">Keyset (cursor)</h3>
+<div class="code-block">encodeCursor(payload, { secret? })                 <span class="cmt">// base64url JSON, HMAC-SHA256 signed when a secret is given</span>
+decodeCursor(cursor, { secret?, allowedFields? })  <span class="cmt">// verifies the signature; allowedFields rejects any other key or non-primitive value</span>
+decodeKeysetCursor(cursor, sort, secret?)          <span class="cmt">// requires every sort field</span>
+buildKeysetWhere(payload, sort)                    <span class="cmt">// rows strictly after the cursor: OR: [{a: {gt}}, {AND: [{a}, {b: {lt}}]}]</span>
+createKeysetCursor(row, sort, secret?)
+createKeysetPage(rows, { sort, limit, cursor, secret })  <span class="cmt">// pass limit + 1 rows; the extra row sets hasNextPage</span></div>
+<div class="code-block"><span class="kw">const</span> first = <span class="kw">await</span> users.paginateCursor(undefined, { limit: 25, sort: [{ field: <span class="str">"createdAt"</span>, direction: <span class="str">"desc"</span> }] });
+<span class="kw">const</span> next = <span class="kw">await</span> users.paginateCursor(undefined, {
+  cursor: first.meta.nextCursor,
+  limit: 25,
+  sort: [{ field: <span class="str">"createdAt"</span>, direction: <span class="str">"desc"</span> }],
+});</div>
+<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">Unsigned cursors are client-controlled input.</strong> Set <code>cursorSecret</code> on repositories exposed to the public, or always pass <code>allowedFields</code> to <code>decodeCursor</code>.</div>
+</section>
+
+<section id="migrations" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MIGRATIONS</h2>
+<div class="code-block"><span class="kw">interface</span> Migration {
+  <span class="kw">readonly</span> version: number;   <span class="cmt">// positive integer up to Number.MAX_SAFE_INTEGER (BIGINT column; timestamps like 20260908120000 are fine)</span>
+  <span class="kw">readonly</span> name: string;
+  <span class="kw">readonly</span> up: (tx: DatabaseTransactionContext) =&gt; Promise&lt;void&gt;;
+  <span class="kw">readonly</span> down?: (tx: DatabaseTransactionContext) =&gt; Promise&lt;void&gt;;
+}
+
+<span class="kw">interface</span> MigrationRunnerOptions {
+  <span class="kw">readonly</span> tableName?: string;          <span class="cmt">// default "_migrations"</span>
+  <span class="kw">readonly</span> lockKey?: string;            <span class="cmt">// default "database:migrations"</span>
+  <span class="kw">readonly</span> dialect?: <span class="str">"postgresql"</span>;      // <span class="str">"mysql"</span> / <span class="str">"sqlite"</span> <span class="kw">throw</span> UnsupportedDialectError
+  <span class="kw">readonly</span> transaction?: { timeoutMs?, maxWaitMs?, isolationLevel? };
+  <span class="kw">readonly</span> perItemTransaction?: boolean; <span class="cmt">// default true: one transaction per migration</span>
+}
+
+<span class="kw">class</span> MigrationRunner {
+  status(): Promise&lt;MigrationStatus&gt;;                  <span class="cmt">// { currentVersion, latestVersion, pending, applied }</span>
+  migrate() / run(): Promise&lt;MigrationResult&gt;;         <span class="cmt">// { applied, skipped }</span>
+  rollback(): Promise&lt;MigrationRecord | null&gt;;
+  rollback(steps: number): Promise&lt;<span class="kw">readonly</span> MigrationRecord[]&gt;;
+  rollbackAll(): Promise&lt;<span class="kw">readonly</span> MigrationRecord[]&gt;;
+  ensureMigrationTable(): Promise&lt;void&gt;;
+  getAppliedMigrations(tx?) / getHistory(): Promise&lt;<span class="kw">readonly</span> MigrationRecord[]&gt;;
+}</div>
+<p class="mb-4 leading-relaxed">Every entry point re-reads the applied history <em>inside</em> the advisory lock (<code>pg_advisory_xact_lock</code> with an FNV-1a 64 key), so two runners started together never apply or revert the same migration twice. With <code>perItemTransaction: false</code> the whole batch is one all-or-nothing transaction.</p>
+<div class="code-block"><span class="kw">import</span> { createMigrationRunner } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
+
+<span class="kw">const</span> runner = createMigrationRunner(client, migrations, { transaction: { timeoutMs: 60_000 } });
+<span class="kw">const</span> { applied } = <span class="kw">await</span> runner.migrate();
+<span class="kw">const</span> status = <span class="kw">await</span> runner.status();</div>
+</section>
+
+<section id="seeds" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SEEDS</h2>
+<div class="code-block"><span class="kw">interface</span> Seed {
+  <span class="kw">readonly</span> name: string;
+  <span class="kw">readonly</span> order?: number;   <span class="cmt">// stable sort; equal orders keep declaration order</span>
+  <span class="kw">readonly</span> run: (tx: DatabaseTransactionContext) =&gt; Promise&lt;void&gt;;
+  <span class="kw">readonly</span> rollback?: (tx: DatabaseTransactionContext) =&gt; Promise&lt;void&gt;;
+}
+
+<span class="kw">class</span> SeedRunner {                        <span class="cmt">// options mirror MigrationRunnerOptions (table "_seeds", lock "database:seeds")</span>
+  status(): Promise&lt;SeedStatus&gt;;
+  run(): Promise&lt;SeedResult&gt;;
+  runOne(name: string): Promise&lt;SeedRecord&gt;;   <span class="cmt">// idempotent</span>
+  rollback(): Promise&lt;SeedRecord | null&gt;;      <span class="cmt">// most recently executed seed</span>
+  rollbackAll(): Promise&lt;<span class="kw">readonly</span> SeedRecord[]&gt;;
+  ensureSeedTable(): Promise&lt;void&gt;;
+  getAppliedSeeds(tx?) / getHistory(): Promise&lt;<span class="kw">readonly</span> SeedRecord[]&gt;;
+}</div>
+<p class="mb-4 leading-relaxed">Seed records carry an execution <code>sequence</code> (<code>BIGSERIAL</code>), so rollbacks walk in reverse execution order even when every seed in a batch shares the same <code>applied_at</code>.</p>
+</section>
+
+<section id="health-checks" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HEALTH CHECKS</h2>
+<div class="code-block">checkDatabaseHealth(client, { timeoutMs? })     <span class="cmt">// { status: "healthy" | "degraded" | "unhealthy", healthy, latencyMs, checkedAt, message, error? }</span>
+checkDatabaseReadiness(client, { timeoutMs? })  <span class="cmt">// { ready, latencyMs, checkedAt, message }</span>
+assertDatabaseHealth(client, options?)          <span class="cmt">// throws DatabaseUnhealthyError (503) with the real failure as cause</span>
+isDatabaseHealthy(client, options?)             <span class="cmt">// boolean</span>
+getHealthCheckCause(health)                     <span class="cmt">// original error of an unhealthy result (non-enumerable)</span></div>
+<p class="mb-4 leading-relaxed">The default timeout is 5 000 ms (<code>DEFAULT_HEALTH_TIMEOUT_MS</code>); latency above 75% of it reports <code>degraded</code>. Connection failures are reported with a fixed message, so host names from Prisma's messages never reach health output.</p>
+</section>
+
+<section id="locks" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">LOCKS</h2>
+<div class="code-block"><span class="kw">interface</span> DatabaseLockOptions {
+  <span class="kw">readonly</span> mode?: <span class="str">"for-update"</span> | <span class="str">"for-no-key-update"</span> | <span class="str">"for-share"</span> | <span class="str">"for-key-share"</span>;  <span class="cmt">// row locks</span>
+  <span class="kw">readonly</span> timeoutMs?: number;      <span class="cmt">// SET LOCAL lock_timeout; the transaction timeout is raised to cover it</span>
+  <span class="kw">readonly</span> skipLocked?: boolean;    <span class="cmt">// row locks: acquired: false instead of waiting</span>
+  <span class="kw">readonly</span> noWait?: boolean;        <span class="cmt">// fail immediately when held</span>
+  <span class="kw">readonly</span> namespace?: string;      <span class="cmt">// advisory locks: two-int form pg_advisory_xact_lock(int, int)</span>
+  <span class="kw">readonly</span> transaction?: TransactionOptions;
+}
+
+<span class="kw">class</span> DatabaseLockManager {
+  withAdvisoryLock&lt;T&gt;(lockKey, callback: (tx) =&gt; Promise&lt;T&gt;, options?): Promise&lt;T&gt;;
+  withRowLock&lt;T&gt;(tableName, id, callback, options?): Promise&lt;T&gt;;   <span class="cmt">// 404 when the row is missing, 409 when skipped</span>
+}
+
+acquireAdvisoryLock(tx, lockKey, options?): Promise&lt;DatabaseLockResult&gt;
+lockRow(tx, tableName, id, options?): Promise&lt;DatabaseLockResult&gt;   <span class="cmt">// { acquired, lockKey, mode }</span>
+normalizeAdvisoryKey(key): bigint          <span class="cmt">// FNV-1a 64, signed</span>
+normalizeAdvisoryKeyPair(namespace, key)   <span class="cmt">// [int32, int32]</span>
+resolveLockTransactionOptions(options)</div>
+<div class="code-block"><span class="kw">const</span> locks = createLockManager(client);
+
+<span class="kw">await</span> locks.withAdvisoryLock(<span class="str">"reports:nightly"</span>, <span class="kw">async</span> (tx) =&gt; {
+  <span class="kw">await</span> tx.$executeRawUnsafe(<span class="str">"REFRESH MATERIALIZED VIEW nightly_report"</span>);
+}, { timeoutMs: 10_000 });</div>
+</section>
+
+<section id="cache" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">IN-MEMORY CACHE</h2>
+<div class="code-block"><span class="kw">interface</span> MemoryCacheOptions {
+  <span class="kw">readonly</span> ttlMs?: number;          <span class="cmt">// default TTL; entries live forever when omitted</span>
+  <span class="kw">readonly</span> maxEntries?: number;     <span class="cmt">// LRU eviction when exceeded</span>
+  <span class="kw">readonly</span> pruneIntervalMs?: number; <span class="cmt">// background prune (unref'd timer); call dispose() to stop it</span>
+}
+
+<span class="kw">class</span> MemoryDatabaseCache&lt;T&gt; {
+  get / set / has / delete / clear / keys / prune / dispose / getStats / resetStats; size
+}
+
+createCacheKey(namespace, ...parts)   <span class="cmt">// deterministic nested serialisation, escaped ":" in string parts</span>
+getOrSet(cache, key, loader, options?) <span class="cmt">// concurrent misses share one loader call</span>
+invalidateByPrefix(cache, prefix)     <span class="cmt">// separator-aware: "user" matches "user" and "user:*", not "users:*"</span></div>
+<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">Not transaction-aware.</strong> Never populate the cache from inside a transaction that may roll back; other callers would observe the uncommitted value.</div>
+</section>
+
+<section id="relations" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATIONS</h2>
+<div class="code-block">oneToOne / oneToMany / manyToOne / manyToMany({ name, parent, child, foreignKey, referencedKey, nullable? })  <span class="cmt">// validated, frozen</span>
+<span class="kw">const</span> registry = createRelationRegistry([...]);   <span class="cmt">// keyed by parent + name</span>
+registry.register / registerMany / get(name, parent?) / has / remove / all() / forParent(parent) / forChild(child) / clear()
+
+includeRelation(<span class="str">"profile"</span>, { select: [<span class="str">"bio"</span>], include: [includeRelation(<span class="str">"avatar"</span>)] })
+toPrismaInclude(includes, { registry, parent, depth = 5, includeDeleted, softDeleteField })  <span class="cmt">// rejects cycles and excessive depth</span></div>
+</section>
+
+<section id="errors" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERRORS</h2>
+<p class="mb-4 leading-relaxed">Every failure is a <code>DatabaseError</code> from <code>@zudojs/errors</code> carrying <code>databaseCode</code> (the Prisma code), <code>operation</code>, <code>ErrorCode</code> and an HTTP status. Detection is structural (<code>isDatabaseErrorLike</code>), so errors raised by a second copy of <code>@zudojs/errors</code> are passed through instead of double-wrapped.</p>
+<div class="border-4 border-black overflow-x-auto"><table class="w-full text-sm"><thead class="bg-black text-white"><tr><th class="p-3 text-left">Prisma code</th><th class="p-3 text-left">Kind</th><th class="p-3 text-left">Status</th><th class="p-3 text-left">ErrorCode</th></tr></thead><tbody><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">P2002</td><td class="p-3">conflict</td><td class="p-3">409</td><td class="p-3">ERR_CONFLICT</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">P2003 / P2004 / P2014</td><td class="p-3">constraint</td><td class="p-3">409</td><td class="p-3">ERR_CONFLICT</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">P2025 / P2015 / P2018</td><td class="p-3">not-found</td><td class="p-3">404</td><td class="p-3">ERR_NOT_FOUND</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">P2034</td><td class="p-3">serialization (retryable)</td><td class="p-3">409</td><td class="p-3">ERR_DATABASE_TRANSACTION</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">P2024 / P2028 / P1002 / P1008</td><td class="p-3">timeout</td><td class="p-3">503</td><td class="p-3">ERR_DATABASE_TIMEOUT / ERR_DATABASE_TRANSACTION</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">P1000 / P1001 / P1003 / P1010 / P1011 / P1017</td><td class="p-3">connection</td><td class="p-3">503</td><td class="p-3">ERR_DATABASE_CONNECTION (fixed message)</td></tr></tbody></table></div>
+<div class="code-block"><span class="kw">import</span> {
+  normalizeDatabaseError, mapRepositoryError, toDatabaseErrorInfo,
+  isConflictError, isNotFoundError, isRetryableTransactionError,
+  getDatabaseErrorCode, getDatabaseErrorKind, isDatabaseErrorLike,
+  DatabaseAbortError, DatabaseUnhealthyError, UnsupportedDialectError,
+} <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
 
 <span class="kw">try</span> {
-  <span class="kw">await</span> userRepo.<span class="fn">create</span>(data);
+  <span class="kw">await</span> users.create(input);
 } <span class="kw">catch</span> (error) {
-  <span class="kw">if</span> (<span class="fn">isDatabaseError</span>(error)) {
-    <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">ConnectionError</span>) {
-      <span class="cm">// Retry or fail gracefully</span>
-    } <span class="kw">else if</span> (error <span class="kw">instanceof</span> <span class="tp">QueryError</span>) {
-      <span class="cm">// Log invalid query</span>
-    } <span class="kw">else if</span> (error <span class="kw">instanceof</span> <span class="tp">TransactionError</span>) {
-      <span class="cm">// Handle deadlock</span>
-    }
+  <span class="kw">if</span> (isConflictError(error)) <span class="kw">return</span> reply.status(409);
+  log.error(toDatabaseErrorInfo(error));   <span class="cmt">// { code: "P2002", message, operation, model, constraint, metadata }</span>
+  <span class="kw">throw</span> error;
+}</div>
+</section>
+
+<section id="types" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TYPES</h2>
+<div class="code-block"><span class="kw">interface</span> DatabaseEntity&lt;TId = string&gt; { id: TId; createdAt: Date; updatedAt: Date }
+<span class="kw">interface</span> SoftDeletableEntity <span class="kw">extends</span> DatabaseEntity { deletedAt: Date | null }
+<span class="kw">interface</span> AuditableEntity <span class="kw">extends</span> DatabaseEntity { createdBy?: string; updatedBy?: string }
+
+<span class="kw">interface</span> DatabaseLogger { debug(msg, meta?); info(msg, meta?); warn(msg, meta?); error(msg, error?, meta?) }
+<span class="kw">const</span> noopDatabaseLogger: DatabaseLogger;
+
+<span class="kw">interface</span> DatabaseConnectionOptions { connectionTimeoutMs?: number; logging?: boolean }
+<span class="kw">interface</span> DatabaseClientHealth { status: DatabaseStatus; latencyMs?: number; checkedAt: Date; error?: string }
+<span class="kw">interface</span> DatabaseErrorInfo { code?: string; message: string; operation?: string; model?; field?; constraint?; cause?; metadata? }
+<span class="kw">interface</span> PaginationMeta { page; limit; total; totalPages; hasNextPage; hasPreviousPage; hasNext; hasPrev }</div>
+</section>
+
+<section id="testing" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TESTING</h2>
+<p class="mb-4 leading-relaxed">There is no testing subpath. Because the client depends on Prisma structurally, a stub implementing <code>PrismaClientLike</code> is enough to exercise the lifecycle, runners, locks and repositories without a database. Repositories take any object implementing <code>RepositoryDelegate</code>.</p>
+<div class="code-block"><span class="kw">import</span> { DatabaseClient, MigrationRunner, noopDatabaseLogger, <span class="kw">type</span> PrismaClientLike } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
+
+<span class="kw">const</span> queries: string[] = [];
+<span class="kw">const</span> prisma: PrismaClientLike = {
+  <span class="kw">async</span> $connect() {},
+  <span class="kw">async</span> $disconnect() {},
+  <span class="kw">async</span> $transaction(callback) { <span class="kw">return</span> callback(prisma as never); },
+  <span class="kw">async</span> $queryRawUnsafe(sql) { queries.push(sql); <span class="kw">return</span> []; },
+  <span class="kw">async</span> $executeRawUnsafe(sql) { queries.push(sql); <span class="kw">return</span> 1; },
+};
+
+<span class="kw">const</span> client = <span class="kw">new</span> DatabaseClient({ prisma, logger: noopDatabaseLogger });
+<span class="kw">await</span> <span class="kw">new</span> MigrationRunner(client, migrations).migrate();
+expect(queries[0]).toContain('CREATE TABLE IF NOT EXISTS <span class="str">"_migrations"</span>');</div>
+</section>
+
+<section id="full-example" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">FULL EXAMPLE</h2>
+<div class="code-block"><span class="kw">import</span> { PrismaClient } <span class="kw">from</span> <span class="str">"@prisma/client"</span>;
+<span class="kw">import</span> { PrismaPg } <span class="kw">from</span> <span class="str">"@prisma/adapter-pg"</span>;
+<span class="kw">import</span> {
+  BaseRepository, createConnectionManager, createDatabaseClient, createQueryBuilder,
+  createMigrationRunner, withTransactionRetry, checkDatabaseHealth,
+} <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
+
+<span class="kw">const</span> prisma = <span class="kw">new</span> PrismaClient({ adapter: <span class="kw">new</span> PrismaPg({ connectionString: process.env.DATABASE_URL }) });
+<span class="kw">const</span> client = createDatabaseClient({ prisma });
+<span class="kw">const</span> manager = createConnectionManager({ client, healthCheckIntervalMs: 30_000 });
+<span class="kw">await</span> manager.connect();
+
+<span class="kw">await</span> createMigrationRunner(client, migrations).migrate();
+
+<span class="kw">class</span> OrderRepository <span class="kw">extends</span> BaseRepository&lt;Order&gt; {
+  constructor(delegate: ConstructorParameters&lt;typeof BaseRepository&lt;Order&gt;&gt;[0]) {
+    super(delegate, { modelName: <span class="str">"Order"</span>, softDelete: true });
   }
-}</div>
-      </section>
-
-      <!-- Types -->
-      <section id="types" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TYPES</h2>
-
-        <h3 class="text-lg font-bold mb-3">Entity Contract</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Entity</span> {
-  <span class="kw">readonly</span> id: <span class="tp">string</span>;
-  <span class="kw">readonly</span> createdAt: <span class="tp">Date</span>;
-  <span class="kw">readonly</span> updatedAt: <span class="tp">Date</span>;
 }
+<span class="kw">const</span> orders = <span class="kw">new</span> OrderRepository(prisma.order);
 
-<span class="kw">interface</span> <span class="tp">SoftDeletable</span> <span class="kw">extends</span> <span class="tp">Entity</span> {
-  <span class="kw">readonly</span> deletedAt?: <span class="tp">Date</span> | <span class="num">null</span>;
-}</div>
+<span class="kw">const</span> recent = <span class="kw">await</span> orders.findByQuery(
+  createQueryBuilder&lt;<span class="str">"status"</span> | <span class="str">"total"</span> | <span class="str">"createdAt"</span>&gt;()
+    .where(<span class="str">"status"</span>, <span class="str">"completed"</span>)
+    .whereGreaterThanOrEqual(<span class="str">"total"</span>, 50)
+    .orderByDesc(<span class="str">"createdAt"</span>)
+    .paginate({ page: 1, limit: 10 }),
+);
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Logger Contract</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">DatabaseLogger</span> {
-  <span class="fn">info</span>(message: <span class="tp">string</span>, meta?: <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;): <span class="tp">void</span>;
-  <span class="fn">warn</span>(message: <span class="tp">string</span>, meta?: <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;): <span class="tp">void</span>;
-  <span class="fn">error</span>(message: <span class="tp">string</span>, meta?: <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;): <span class="tp">void</span>;
-  <span class="fn">debug</span>(message: <span class="tp">string</span>, meta?: <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;): <span class="tp">void</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Metrics Contract</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">DatabaseMetrics</span> {
-  <span class="fn">increment</span>(name: <span class="tp">string</span>, tags?: <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">string</span>&gt;): <span class="tp">void</span>;
-  <span class="fn">timing</span>(name: <span class="tp">string</span>, duration: <span class="tp">number</span>, tags?: <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">string</span>&gt;): <span class="tp">void</span>;
-  <span class="fn">gauge</span>(name: <span class="tp">string</span>, value: <span class="tp">number</span>, tags?: <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">string</span>&gt;): <span class="tp">void</span>;
-}</div>
-      </section>
-
-      <!-- Testing -->
-      <section id="testing" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TESTING UTILITIES</h2>
-        <p class="mb-4">Import from <code class="bg-black/5 px-1">@zudojs/database/testing</code> for mock clients and test helpers.</p>
-
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">createMockDatabaseClient</span>,
-  <span class="fn">createMockPrismaClient</span>,
-  <span class="fn">createTestDatabase</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/database/testing"</span>;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Full Test Example</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">describe</span>, <span class="fn">it</span>, <span class="fn">expect</span>, <span class="fn">beforeEach</span> } <span class="kw">from</span> <span class="str">"vitest"</span>;
-<span class="kw">import</span> { <span class="fn">createMockDatabaseClient</span> } <span class="kw">from</span> <span class="str">"@zudojs/database/testing"</span>;
-<span class="kw">import</span> { <span class="tp">UserRepository</span> } <span class="kw">from</span> <span class="str">"./user.repository"</span>;
-
-<span class="fn">describe</span>(<span class="str">"UserRepository"</span>, () =&gt; {
-  <span class="kw">let</span> repo: <span class="tp">UserRepository</span>;
-  <span class="kw">let</span> mockClient: <span class="kw">ReturnType</span>&lt;<span class="kw">typeof</span> <span class="fn">createMockDatabaseClient</span>&gt;;
-
-  <span class="fn">beforeEach</span>(() =&gt; {
-    mockClient = <span class="fn">createMockDatabaseClient</span>();
-    repo = <span class="kw">new</span> <span class="fn">UserRepository</span>(mockClient, <span class="str">"user"</span>);
-  });
-
-  <span class="fn">it</span>(<span class="str">"finds user by email"</span>, <span class="kw">async</span> () =&gt; {
-    mockClient.<span class="fn">mockFindFirst</span>({ id: <span class="str">"1"</span>, email: <span class="str">"test@example.com"</span> });
-    <span class="kw">const</span> user = <span class="kw">await</span> repo.<span class="fn">findByEmail</span>(<span class="str">"test@example.com"</span>);
-    <span class="fn">expect</span>(user?.email).<span class="fn">toBe</span>(<span class="str">"test@example.com"</span>);
-  });
-
-  <span class="fn">it</span>(<span class="str">"returns null for missing user"</span>, <span class="kw">async</span> () =&gt; {
-    mockClient.<span class="fn">mockFindFirst</span>(<span class="num">null</span>);
-    <span class="kw">const</span> user = <span class="kw">await</span> repo.<span class="fn">findByEmail</span>(<span class="str">"missing@example.com"</span>);
-    <span class="fn">expect</span>(user).<span class="fn">toBeNull</span>();
-  });
-});</div>
-      </section>
-
-      <!-- Full Integration Example -->
-      <section id="full-example" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">FULL INTEGRATION EXAMPLE</h2>
-        <p class="mb-4">Complete example: repository, query builder, transactions, pagination, and health monitoring.</p>
-
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">createDatabase</span>, <span class="tp">BaseRepository</span>, <span class="tp">QueryBuilder</span>,
-  <span class="fn">equals</span>, <span class="fn">gte</span>, <span class="fn">contains</span>,
-  <span class="tp">TransactionManager</span>, <span class="tp">MemoryDatabaseCache</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="cm">// 1. Create database connection</span>
-<span class="kw">const</span> db = <span class="fn">createDatabase</span>({
-  provider: <span class="str">"postgresql"</span>,
-  url: process.env.<span class="tp">DATABASE_URL</span>!,
-  cache: { defaultTTL: <span class="num">30000</span> },
+<span class="kw">await</span> withTransactionRetry(client, <span class="kw">async</span> (tx) =&gt; {
+  <span class="kw">const</span> txOrders = orders.withTransaction(tx);
+  <span class="kw">await</span> txOrders.update(recent[0]!.id, { status: <span class="str">"archived"</span> });
 });
-<span class="kw">await</span> db.<span class="fn">connect</span>();
 
-<span class="cm">// 2. Get typed repository</span>
-<span class="kw">const</span> orders = db.<span class="fn">getRepository</span>&lt;<span class="tp">Order</span>&gt;(<span class="str">"order"</span>);
+<span class="kw">const</span> health = <span class="kw">await</span> checkDatabaseHealth(client);
+process.on(<span class="str">"SIGTERM"</span>, () =&gt; void manager.destroy());</div>
+</section>
 
-<span class="cm">// 3. Build complex query</span>
-<span class="kw">const</span> query = <span class="kw">new</span> <span class="fn">QueryBuilder</span>&lt;<span class="tp">Order</span>&gt;()
-  .<span class="fn">where</span>(<span class="fn">equals</span>(<span class="str">"status"</span>, <span class="str">"completed"</span>))
-  .<span class="fn">where</span>(<span class="fn">gte</span>(<span class="str">"total"</span>, <span class="num">50</span>))
-  .<span class="fn">orderBy</span>(<span class="str">"createdAt"</span>, <span class="str">"desc"</span>)
-  .<span class="fn">limit</span>(<span class="num">10</span>)
-  .<span class="fn">build</span>();
+<section id="connections" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONNECTIONS TO OTHER PACKAGES</h2>
+<div class="border-4 border-black overflow-x-auto"><table class="w-full text-sm"><thead class="bg-black text-white"><tr><th class="p-3 text-left">Package</th><th class="p-3 text-left">Version</th><th class="p-3 text-left">Relationship</th><th class="p-3 text-left">How</th></tr></thead><tbody><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/errors</td><td class="p-3">0.1.0</td><td class="p-3">dependency</td><td class="p-3">All failures are <code>DatabaseError</code> instances; <code>DatabaseOperation</code> and <code>ErrorCode</code> values are reused</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@prisma/client</td><td class="p-3">&gt;=7 &lt;8</td><td class="p-3">peer dependency</td><td class="p-3">Interactive transactions, raw queries, model delegates</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/logger (optional)</td><td class="p-3">—</td><td class="p-3">consumer-provided</td><td class="p-3">Any object matching <code>DatabaseLogger</code> can be passed as <code>logger</code>; nothing is imported</td></tr></tbody></table></div>
+<p class="mb-4 leading-relaxed">No other <code>@zudojs</code> package is imported by <code>@zudojs/database</code>.</p>
+</section>
 
-<span class="cm">// 4. Paginated results</span>
-<span class="kw">const</span> page = <span class="kw">await</span> orders.<span class="fn">paginate</span>({
-  page: <span class="num">1</span>,
-  limit: <span class="num">20</span>,
-  where: { status: <span class="str">"completed"</span> },
-  orderBy: [{ field: <span class="str">"createdAt"</span>, direction: <span class="str">"desc"</span> }],
-});
-console.<span class="fn">log</span>(<span class="str">`Page ${page.meta.page} of ${page.meta.totalPages}`</span>);
+<section id="limitations" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">LIMITATIONS</h2>
+<ul class="list-disc pl-6 mb-4 space-y-1"><li>PostgreSQL only. Migration, seed and lock helpers emit PostgreSQL SQL; other dialects throw <code>UnsupportedDialectError</code>.</li><li>No savepoints or nested transactions; Prisma interactive transactions are used as-is.</li><li>Connection pooling, SSL and the connection URL are configured on the Prisma driver adapter, not in this package.</li><li><code>timeoutMs</code> and <code>signal</code> are client-side only; the database statement is not cancelled server-side.</li><li>The cache is process-local and not transaction-aware.</li></ul>
+</section>
 
-<span class="cm">// 5. Health monitoring</span>
-<span class="kw">const</span> health = <span class="kw">await</span> db.<span class="fn">healthCheck</span>();
-<span class="kw">if</span> (health.status === <span class="str">"healthy"</span>) {
-  console.<span class="fn">log</span>(<span class="str">`DB healthy (${health.latency}ms)`</span>);
-}
+<section id="quick-reference" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK REFERENCE</h2>
+<div class="code-block"><span class="cmt">// Subpaths</span>
+<span class="kw">import</span> { DatabaseClient, createDatabaseClient, normalizeDatabaseError } <span class="kw">from</span> <span class="str">"@zudojs/database/client"</span>;
+<span class="kw">import</span> { BaseRepository, mapRepositoryError } <span class="kw">from</span> <span class="str">"@zudojs/database/repositories"</span>;
+<span class="kw">import</span> { TransactionManager, withTransaction, withTransactionRetry } <span class="kw">from</span> <span class="str">"@zudojs/database/transactions"</span>;
 
-<span class="cm">// 6. Graceful shutdown</span>
-process.<span class="fn">on</span>(<span class="str">"SIGTERM"</span>, <span class="kw">async</span> () =&gt; {
-  <span class="kw">await</span> db.<span class="fn">disconnect</span>();
-});</div>
-      </section>
-
-      <!-- Connections -->
-      <section id="connections" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONNECTIONS TO OTHER PACKAGES</h2>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-smw-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Package</th>
-                <th class="p-3 text-left">Version</th>
-                <th class="p-3 text-left">Relationship</th>
-                <th class="p-3 text-left">How They Connect</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">@zudojs/errors</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Dependency</td>
-                <td class="p-3">All database error types defined in @zudojs/errors</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">@zudojs/adapters</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Interface</td>
-                <td class="p-3">DatabaseClient implements the Adapter contract</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">@zudojs/config</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Consumer</td>
-                <td class="p-3">Database configuration reads from config sources</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">@zudojs/logger</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Consumer</td>
-                <td class="p-3">DatabaseLogger contract accepts @zudojs/logger</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">@zudojs/observability</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Consumer</td>
-                <td class="p-3">DatabaseMetrics contract accepts @zudojs/observability</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">@zudojs/cqrs</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Consumer</td>
-                <td class="p-3">CQRS handlers use repositories for data access</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">@zudojs/lifecycle</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Consumer</td>
-                <td class="p-3">Database lifecycle integrates with application lifecycle</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Version Compatibility -->
-      <section id="version-compatibility" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">VERSION COMPATIBILITY</h2>
-        <div class="callout callout-warning">
-          <strong class="text-zudo-yellow">Stable Versions:</strong> All packages are at v0.1.0. Use <code>workspace:*</code> in development, exact <code>0.0.1</code> when publishing.
-        </div>
-
-        <div class="border-4 border-black mt-4">
-          <table class="w-full text-smw-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Package</th>
-                <th class="p-3 text-left">database v0.1.0 works with</th>
-                <th class="p-3 text-left">Stability</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/errors</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/adapters</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/config</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/logger</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/observability</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/cqrs</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr><td class="p-3 font-mono">@zudojs/lifecycle</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Improvements -->
-      <section id="improvements" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">IMPROVEMENTS & RECOMMENDATIONS</h2>
-
-        <div class="space-y-4">
-          <div class="border-l-4 border-zudo-red p-4">
-            <h4 class="font-bold mb-1">1. Add Connection Pool Monitoring Dashboard</h4>
-            <p class="text-sm text-black/70">Expose pool metrics (active, idle, waiting) via the DatabaseMetrics interface for real-time monitoring.</p>
-          </div>
-
-          <div class="border-l-4 border-zudo-blue p-4">
-            <h4 class="font-bold mb-1">2. Add Query Logging Middleware</h4>
-            <p class="text-sm text-black/70">Automatic slow-query logging with configurable thresholds and query plan analysis.</p>
-          </div>
-
-          <div class="border-l-4 border-zudo-yellow p-4">
-            <h4 class="font-bold mb-1">3. Add Read Replica Support</h4>
-            <p class="text-sm text-black/70">Route read queries to replicas while writes go to primary, with automatic failover.</p>
-          </div>
-
-          <div class="border-l-4 border-zudo-green p-4">
-            <h4 class="font-bold mb-1">4. Add Database-level Caching Strategy</h4>
-            <p class="text-sm text-black/70">Second-level cache with repository query caching, invalidation on mutations, and cache warming on startup.</p>
-          </div>
-
-          <div class="border-l-4 border-black p-4">
-            <h4 class="font-bold mb-1">5. Add Schema Introspection Utilities</h4>
-            <p class="text-sm text-black/70">Runtime schema validation, column type checking, and automatic migration generation from entity definitions.</p>
-          </div>
-        </div>
-      </section>
-
-      <!-- Quick Reference -->
-      <section id="quick-reference" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK REFERENCE</h2>
-        <div class="code-block"><span class="cm">// Import core classes</span>
+<span class="cmt">// Everything else from the root</span>
 <span class="kw">import</span> {
-  <span class="tp">DatabaseClient</span>, <span class="tp">Database</span>, <span class="tp">DatabaseConnectionManager</span>,
-  <span class="tp">BaseRepository</span>, <span class="tp">QueryBuilder</span>,
-  <span class="tp">TransactionManager</span>, <span class="tp">DatabaseUnitOfWork</span>,
-  <span class="tp">MigrationRunner</span>, <span class="tp">SeedRunner</span>,
-  <span class="tp">DatabaseLockManager</span>, <span class="tp">MemoryDatabaseCache</span>,
-  <span class="tp">RelationRegistry</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="cm">// Import query filter functions</span>
-<span class="kw">import</span> {
-  <span class="fn">equals</span>, <span class="fn">not</span>, <span class="fn">gt</span>, <span class="fn">gte</span>, <span class="fn">lt</span>, <span class="fn">lte</span>,
-  <span class="fn">inList</span>, <span class="fn">notInList</span>, <span class="fn">between</span>,
-  <span class="fn">contains</span>, <span class="fn">startsWith</span>, <span class="fn">endsWith</span>,
-  <span class="fn">isEmpty</span>, <span class="fn">isNotEmpty</span>,
-  <span class="fn">dateRange</span>, <span class="fn">isBefore</span>, <span class="fn">isAfter</span>, <span class="fn">isBetween</span>,
-  <span class="fn">and</span>, <span class="fn">or</span>, <span class="fn">notCondition</span>, <span class="fn">relational</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="cm">// Import factory functions</span>
-<span class="kw">import</span> { <span class="fn">createDatabase</span>, <span class="fn">createDatabaseFromClient</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="cm">// Import health check functions</span>
-<span class="kw">import</span> { <span class="fn">checkDatabaseHealth</span>, <span class="fn">checkDatabaseReadiness</span> } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="cm">// Import errors</span>
-<span class="kw">import</span> {
-  <span class="tp">DatabaseError</span>, <span class="tp">ConnectionError</span>, <span class="tp">QueryError</span>,
-  <span class="tp">TransactionError</span>, <span class="tp">MigrationError</span>,
-  <span class="fn">isDatabaseError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="cm">// Import testing utilities</span>
-<span class="kw">import</span> {
-  <span class="fn">createMockDatabaseClient</span>,
-  <span class="fn">createMockPrismaClient</span>,
-  <span class="fn">createTestDatabase</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/database/testing"</span>;</div>
-      </section>
+  Database, createDatabase, getDatabase, connectDatabase, resetDatabase,
+  DatabaseConnectionManager, createConnectionManager,
+  QueryBuilder, createQueryBuilder, toPrismaWhere, toPrismaArgs,
+  equals, notEquals, inList, between, contains, matchesPattern, isNull, isNotNull,
+  dateRange, dateOnly, isBefore, isAfter, isBetween, and, or, not, allOf, anyOf, relational,
+  DatabaseUnitOfWork, createUnitOfWork, executeUnitOfWork,
+  normalizePagination, createPaginationMeta, encodeCursor, decodeCursor, createKeysetPage,
+  MigrationRunner, createMigrationRunner, SeedRunner, createSeedRunner,
+  DatabaseLockManager, createLockManager, acquireAdvisoryLock, lockRow,
+  MemoryDatabaseCache, createDatabaseCache, createCacheKey, getOrSet, invalidateByPrefix,
+  RelationRegistry, createRelationRegistry, oneToMany, includeRelation, toPrismaInclude,
+  checkDatabaseHealth, checkDatabaseReadiness, assertDatabaseHealth, isDatabaseHealthy,
+  isConflictError, isNotFoundError, isRetryableTransactionError, toDatabaseErrorInfo,
+} <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;</div>
+</section>
 
     </main>
 
@@ -1378,13 +711,13 @@ process.<span class="fn">on</span>(<span class="str">"SIGTERM"</span>, <span cla
       <a href="#base-repository" class="toc-link">Base Repository</a>
       <a href="#query-builder" class="toc-link">Query Builder</a>
       <a href="#query-filters" class="toc-link">Query Filters</a>
-      <a href="#transaction-manager" class="toc-link">Transaction Manager</a>
+      <a href="#transaction-manager" class="toc-link">Transactions</a>
       <a href="#unit-of-work" class="toc-link">Unit of Work</a>
       <a href="#pagination" class="toc-link">Pagination</a>
       <a href="#migrations" class="toc-link">Migrations</a>
       <a href="#seeds" class="toc-link">Seeds</a>
       <a href="#health-checks" class="toc-link">Health Checks</a>
-      <a href="#locks" class="toc-link">Advisory Locks</a>
+      <a href="#locks" class="toc-link">Locks</a>
       <a href="#cache" class="toc-link">Cache</a>
       <a href="#relations" class="toc-link">Relations</a>
       <a href="#errors" class="toc-link">Errors</a>
@@ -1392,8 +725,7 @@ process.<span class="fn">on</span>(<span class="str">"SIGTERM"</span>, <span cla
       <a href="#testing" class="toc-link">Testing</a>
       <a href="#full-example" class="toc-link">Full Example</a>
       <a href="#connections" class="toc-link">Connections</a>
-      <a href="#version-compatibility" class="toc-link">Version Compat</a>
-      <a href="#improvements" class="toc-link">Improvements</a>
+      <a href="#limitations" class="toc-link">Limitations</a>
       <a href="#quick-reference" class="toc-link">Quick Reference</a>
     </aside>
 

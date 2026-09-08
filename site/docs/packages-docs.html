@@ -155,7 +155,7 @@ pnpm add @zudojs/docs</div>
       <section id="architecture-position" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHERE IT SITS</h2>
         <div class="border-4 border-black p-6 space-y-3">
-          <div class="bg-zudo-red text-black p-3 font-bold text-center text-sm">GENERATORS (Markdown, JSON, HTML)</div>
+          <div class="bg-zudo-red text-black p-3 font-bold text-center text-sm">GENERATORS (Markdown, JSON)</div>
           <div class="bg-zudo-blue text-white p-3 font-bold text-center text-sm">DOCS LAYER (@zudojs/docs)</div>
           <div class="bg-black text-white p-3 font-bold text-center text-sm">CONTENT SOURCES (Files, CMS, Git)</div>
           <div class="bg-white border-2 border-black p-3 font-bold text-center text-sm">CONSUMERS (Documentation Sites, API Docs)</div>
@@ -180,8 +180,8 @@ pnpm add @zudojs/docs</div>
             <tbody>
               <tr>
                 <td class="p-3 font-mono text-sm">@zudojs/errors</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Error hierarchy for documentation validation failures</td>
+                <td class="p-3">0.1.0</td>
+                <td class="p-3">Error hierarchy for documentation validation failures (thrown by the registry and builders, re-exported here)</td>
               </tr>
             </tbody>
           </table>
@@ -348,16 +348,23 @@ console.<span class="fn">log</span>(content);              <span class="cm">// "
   <span class="kw">readonly</span> deprecated?: <span class="tp">boolean</span>;
   <span class="kw">readonly</span> deprecatedMessage?: <span class="tp">string</span>;
   <span class="kw">readonly</span> visibility?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> [key: <span class="tp">string</span>]: <span class="tp">unknown</span>;  <span class="cm">// Extensible</span>
+  <span class="kw">readonly</span> [key: <span class="tp">string</span>]: <span class="tp">FrontmatterValue</span> | <span class="num">undefined</span>;  <span class="cm">// Extensible</span>
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Type Coercion</h3>
         <ul class="space-y-1 text-sm">
-          <li><code>"true"</code> / <code>"false"</code> → boolean</li>
-          <li>Numeric strings → number</li>
-          <li>YAML arrays (lines starting with <code>-</code>) → string arrays</li>
-          <li>Everything else → string</li>
+          <li>The named fields above always keep their declared type: <code>version: 1.0</code> parses to the string <code>"1.0"</code>, <code>tags</code> items are strings</li>
+          <li><code>"true"</code> / <code>"false"</code> → boolean; <code>null</code> / <code>~</code> → null</li>
+          <li>Canonical numbers (<code>10</code>, <code>-1</code>, <code>1.5</code>) → number; <code>007</code> and out-of-range digits stay strings</li>
+          <li>Quoted values (<code>"0.0.1"</code>, <code>'it''s'</code>) → unquoted string, never coerced; <code>\n</code>, <code>\"</code>, <code>\\</code> escapes are honoured in double quotes</li>
+          <li>YAML lists (lines starting with <code>-</code>) → arrays; one level of indented <code>key: value</code> → a nested mapping</li>
+          <li><code># comments</code> outside quotes are ignored; <code>__proto__</code>, <code>constructor</code>, <code>prototype</code> and keys with invalid syntax are dropped</li>
+          <li>The opening and closing <code>---</code> must each sit on their own line, so <code>---</code> inside a value or a horizontal rule in the body is left alone</li>
         </ul>
+
+        <div class="callout callout-note mt-4">
+          <strong class="text-zudo-blue">Round trip:</strong> <code>serializeFrontmatter</code> quotes any value that could be misread (newlines, <code>:</code>, <code>#</code>, leading <code>-</code>, text that looks like a number or boolean), so <code>parseFrontmatter(serializeFrontmatter(m, c))</code> returns <code>m</code> unchanged. The same quoting is applied to the frontmatter that <code>generateMarkdown</code> emits.
+        </div>
       </section>
 
       <!-- Document Registry -->
@@ -401,7 +408,7 @@ console.<span class="fn">log</span>(content);              <span class="cm">// "
               </tr>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">get()</td>
-                <td class="p-3">get&lt;T&gt;(id): T | undefined</td>
+                <td class="p-3">get(id): DocumentationDocument | undefined</td>
                 <td class="p-3">O(1) lookup by dot-separated ID</td>
               </tr>
               <tr class="border-b-2 border-black/10">
@@ -476,8 +483,12 @@ console.<span class="fn">log</span>(registry.<span class="fn">ids</span>());   <
 <span class="cm">// Full validation pipeline</span>
 <span class="kw">import</span> { <span class="fn">validateAll</span>, <span class="fn">validateNavigation</span> } <span class="kw">from</span> <span class="str">"@zudojs/docs"</span>;
 
-<span class="kw">const</span> all = <span class="fn">validateAll</span>(registry.<span class="fn">getAll</span>());
-<span class="kw">const</span> nav = <span class="fn">validateNavigation</span>(navigationItems, registry);</div>
+<span class="kw">const</span> all = <span class="fn">validateAll</span>(registry.<span class="fn">getAll</span>(), navigationItems);
+<span class="kw">const</span> nav = <span class="fn">validateNavigation</span>(navigationItems, registry.<span class="fn">idSet</span>());</div>
+
+        <div class="callout callout-note mt-4">
+          <strong class="text-zudo-blue">Result semantics:</strong> <code>valid</code> is <code>false</code> only when an issue has severity <code>"error"</code>. Broken links, orphaned documents, duplicate navigation entries and oversized content that was not scanned (<code>LINK_VALIDATION_SKIPPED</code>) are reported as warnings.
+        </div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Validation Result</h3>
         <div class="code-block"><span class="kw">interface</span> <span class="tp">ValidationResult</span> {
@@ -554,8 +565,15 @@ console.<span class="fn">log</span>(registry.<span class="fn">ids</span>());   <
 <span class="cm">// Find specific item</span>
 <span class="kw">const</span> item = <span class="fn">findNavigationItem</span>(<span class="str">"guides.http.routing"</span>, navigation);
 
-<span class="cm">// Get siblings</span>
-<span class="kw">const</span> siblings = <span class="fn">getSiblings</span>(<span class="str">"guides.http.routing"</span>, navigation);</div>
+<span class="cm">// Get siblings (other documents at the same level; the document itself is excluded)</span>
+<span class="kw">const</span> siblings = <span class="fn">getSiblings</span>(<span class="str">"guides.http.routing"</span>, navigation);
+
+<span class="cm">// Previous / next at the same level</span>
+<span class="kw">const</span> { previous, next } = <span class="fn">getAdjacent</span>(<span class="str">"guides.http.routing"</span>, navigation);</div>
+
+        <div class="callout callout-note mt-4">
+          <strong class="text-zudo-blue">Malformed trees:</strong> every walker visits a node at most once and stops at <code>MAX_NAVIGATION_DEPTH</code> (64), so shared or cyclic nodes never overflow the stack. <code>validateNavigation</code> reports them as <code>NAVIGATION_CYCLE</code>, along with <code>NAVIGATION_DUPLICATE_DOCUMENT</code> and <code>NAVIGATION_EMPTY_ITEM</code>; <code>validateAll</code> adds <code>NAVIGATION_ORPHAN_DOCUMENT</code> for registered documents missing from the tree.
+        </div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Navigation Types</h3>
         <div class="code-block"><span class="kw">interface</span> <span class="tp">DocumentationNavigationItem</span> {
@@ -656,15 +674,27 @@ container.register("config", () => loadConfig());`</span>,
 <span class="cm">// Single document to JSON</span>
 <span class="kw">const</span> json = <span class="fn">generateJSON</span>(doc);
 
-<span class="cm">// Registry to search index</span>
+<span class="cm">// Registry to search index (SERVER-only documents are excluded by default)</span>
 <span class="kw">const</span> index = <span class="fn">generateIndex</span>(registry.<span class="fn">getAll</span>());
-<span class="cm">// [{ id: "guides.http.routing", title: "HTTP Routing", ... }]</span></div>
+<span class="cm">// [{ id: "guides.http.routing", title: "HTTP Routing", visibility: undefined, ... }]</span>
+
+<span class="cm">// Include everything, e.g. for an internal site</span>
+<span class="kw">const</span> internal = <span class="fn">generateIndex</span>(registry.<span class="fn">getAll</span>(), { visibility: <span class="str">"ALL"</span> });</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Generator Options</h3>
         <div class="code-block"><span class="kw">interface</span> <span class="tp">MarkdownGeneratorOptions</span> {
   <span class="kw">readonly</span> includeFrontmatter?: <span class="tp">boolean</span>;  <span class="cm">// default: true</span>
   <span class="kw">readonly</span> includeMeta?: <span class="tp">boolean</span>;         <span class="cm">// default: false</span>
+  <span class="kw">readonly</span> sanitizer?: <span class="tp">DocumentationSanitizer</span>;  <span class="cm">// applied to html / mdx content</span>
+}
+
+<span class="kw">interface</span> <span class="tp">IndexGeneratorOptions</span> {
+  <span class="kw">readonly</span> visibility?: <span class="str">"CLIENT"</span> | <span class="str">"SERVER"</span> | <span class="str">"ALL"</span>;  <span class="cm">// default: "CLIENT"</span>
 }</div>
+
+        <div class="callout callout-warning mt-4">
+          <strong class="text-zudo-yellow">Untrusted content:</strong> structured nodes and examples are escaped for the position they are written to (table cells, code fences, headings, links), and <code>generateJSON</code> / <code>generateMarkdown</code> emit <code>visibility</code>, <code>deprecated</code> and <code>deprecatedMessage</code>. Raw <code>html</code> / <code>mdx</code> content is passed through unchanged unless you supply a <code>sanitizer</code>. <code>DocumentRegistry.getAll({ visibility: "CLIENT" })</code> applies the same filter as the index generator.
+        </div>
       </section>
 
       <!-- Utilities -->
@@ -750,6 +780,9 @@ container.register("config", () => loadConfig());`</span>,
       <!-- API Symbols -->
       <section id="api-symbols" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">API SYMBOLS</h2>
+        <div class="callout callout-warning mb-4">
+          <strong class="text-zudo-yellow">Types only:</strong> <code>APISymbol</code>, <code>APIExample</code>, <code>APIParameter</code>, <code>SearchDocument</code>, <code>SearchResult</code>, <code>DocumentationVersion</code> and <code>DocumentationSourceLoader</code> are exported as contracts for tooling built on top of this package. The package itself ships no extractor, search indexer, version set or loader implementation for them.
+        </div>
         <p class="mb-4">
           Types for auto-generated API reference documentation from source code.
         </p>
@@ -806,12 +839,17 @@ container.register("config", () => loadConfig());`</span>,
               </tr>
             </thead>
             <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DocumentationError</td><td class="p-3">Base error for all documentation issues</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DocumentValidationError</td><td class="p-3">Document fails structural validation</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DuplicateDocumentError</td><td class="p-3">Document ID already registered</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">BrokenLinkError</td><td class="p-3">Internal link target not found</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">FrontmatterParseError</td><td class="p-3">Invalid frontmatter syntax</td></tr>
-              <tr><td class="p-3 font-mono">GenerationError</td><td class="p-3">Output generation failure</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DocumentationError</td><td class="p-3">Base error for all documentation issues (<code>isDocumentationError()</code> guard)</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DocumentValidationError</td><td class="p-3">Thrown by <code>createDocument</code> / <code>createMarkdownDocument</code> / <code>createStructuredDocument</code> for a missing or invalid id, title or content</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DuplicateDocumentError</td><td class="p-3">Thrown by <code>DocumentRegistry.register</code> when the ID is already registered</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DocumentNotFoundError</td><td class="p-3">Available for consumers that need a typed "not found" failure</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">BrokenDocumentationLinkError</td><td class="p-3">Available for consumers that escalate <code>BROKEN_LINK</code> warnings</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">InvalidFrontmatterError</td><td class="p-3">Available for consumers that reject documents with malformed frontmatter</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">InvalidNavigationError</td><td class="p-3">Available for consumers that escalate <code>NAVIGATION_*</code> issues</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ExampleValidationError</td><td class="p-3">Available for consumers that escalate <code>validateExample</code> failures</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DocumentParseError</td><td class="p-3">Available for source loaders that fail to parse a document</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DocumentationVersionError</td><td class="p-3">Available for versioned documentation sets</td></tr>
+              <tr><td class="p-3 font-mono">GenerationError</td><td class="p-3">Available for consumers wrapping generator failures</td></tr>
             </tbody>
           </table>
         </div>
@@ -820,7 +858,7 @@ container.register("config", () => loadConfig());`</span>,
       <!-- Testing -->
       <section id="testing" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TESTING UTILITIES</h2>
-        <p class="mb-4">Import from <code class="bg-black/5 px-1">@zudojs/docs/testing</code> for mock documents and test helpers.</p>
+        <p class="mb-4">The package has no separate testing entry point. Build fixtures with the ordinary builders and assert on validation results:</p>
 
         <div class="code-block"><span class="kw">import</span> { <span class="fn">describe</span>, <span class="fn">it</span>, <span class="fn">expect</span> } <span class="kw">from</span> <span class="str">"vitest"</span>;
 <span class="kw">import</span> {
@@ -942,33 +980,15 @@ container.register("config", () => loadConfig());`</span>,
             <tbody>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">@zudojs/errors</td>
-                <td class="p-3">0.0.1</td>
+                <td class="p-3">0.1.0</td>
                 <td class="p-3">Dependency</td>
-                <td class="p-3">All documentation error types defined in @zudojs/errors</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">@zudojs/http</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Consumer</td>
-                <td class="p-3">HTTP docs site uses generated markdown for API reference</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">@zudojs/cli</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Consumer</td>
-                <td class="p-3">CLI help text generated from documentation examples</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">@zudojs/config</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Consumer</td>
-                <td class="p-3">Documentation site reads config for deployment settings</td>
+                <td class="p-3">Documentation error classes are defined in @zudojs/errors, thrown by this package and re-exported from it</td>
               </tr>
               <tr>
-                <td class="p-3 font-mono">@zudojs/schema</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Consumer</td>
-                <td class="p-3">Schema docs auto-generated from schema definitions</td>
+                <td class="p-3 font-mono">zudojs-cli</td>
+                <td class="p-3">0.1.0</td>
+                <td class="p-3">Installer</td>
+                <td class="p-3"><code>zudojs add docs</code> installs the package; no framework package consumes the docs API at runtime</td>
               </tr>
             </tbody>
           </table>
@@ -979,7 +999,7 @@ container.register("config", () => loadConfig());`</span>,
       <section id="version-compatibility" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">VERSION COMPATIBILITY</h2>
         <div class="callout callout-warning">
-          <strong class="text-zudo-yellow">Stable Versions:</strong> All packages are at v0.1.0. Use <code>workspace:*</code> in development, exact <code>0.0.1</code> when publishing.
+          <strong class="text-zudo-yellow">Stable Versions:</strong> All packages are at v0.1.0 and depend on each other with exact versions (<code>"@zudojs/errors": "0.1.0"</code>).
         </div>
 
         <div class="border-4 border-black mt-4">
@@ -992,11 +1012,7 @@ container.register("config", () => loadConfig());`</span>,
               </tr>
             </thead>
             <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/errors</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/http</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/cli</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/config</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr><td class="p-3 font-mono">@zudojs/schema</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
+              <tr><td class="p-3 font-mono">@zudojs/errors</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
             </tbody>
           </table>
         </div>
@@ -1045,8 +1061,8 @@ container.register("config", () => loadConfig());`</span>,
 <span class="cm">// Import registry</span>
 <span class="kw">import</span> { <span class="fn">createDocumentRegistry</span> } <span class="kw">from</span> <span class="str">"@zudojs/docs"</span>;
 
-<span class="cm">// Import frontmatter parser</span>
-<span class="kw">import</span> { <span class="fn">parseFrontmatter</span> } <span class="kw">from</span> <span class="str">"@zudojs/docs"</span>;
+<span class="cm">// Import frontmatter parser / serializer</span>
+<span class="kw">import</span> { <span class="fn">parseFrontmatter</span>, <span class="fn">serializeFrontmatter</span> } <span class="kw">from</span> <span class="str">"@zudojs/docs"</span>;
 
 <span class="cm">// Import validators</span>
 <span class="kw">import</span> {
@@ -1057,7 +1073,7 @@ container.register("config", () => loadConfig());`</span>,
 <span class="cm">// Import navigation</span>
 <span class="kw">import</span> {
   <span class="fn">getBreadcrumbs</span>, <span class="fn">flattenNavigation</span>,
-  <span class="fn">findNavigationItem</span>, <span class="fn">getSiblings</span>,
+  <span class="fn">findNavigationItem</span>, <span class="fn">getSiblings</span>, <span class="fn">getAdjacent</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/docs"</span>;
 
 <span class="cm">// Import generators</span>
@@ -1073,9 +1089,15 @@ container.register("config", () => loadConfig());`</span>,
 
 <span class="cm">// Import utilities</span>
 <span class="kw">import</span> {
-  <span class="fn">normalizeDocumentId</span>, <span class="fn">documentIdFromPath</span>,
+  <span class="fn">isValidDocumentId</span>, <span class="fn">normalizeDocumentId</span>, <span class="fn">documentIdFromPath</span>,
   <span class="fn">resolveDocumentLink</span>, <span class="fn">extractTitleFromMarkdown</span>,
   <span class="fn">extractHeadings</span>, <span class="fn">stripMarkdown</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/docs"</span>;
+
+<span class="cm">// Import errors (re-exported from @zudojs/errors)</span>
+<span class="kw">import</span> {
+  <span class="fn">DocumentationError</span>, <span class="fn">DocumentValidationError</span>, <span class="fn">DuplicateDocumentError</span>,
+  <span class="fn">isDocumentationError</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/docs"</span>;
 
 <span class="cm">// Import types</span>

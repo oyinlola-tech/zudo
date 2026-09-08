@@ -36,7 +36,7 @@
       "name": "Zudo",
       "url": "https://zudo.dev"
     },
-    "version": "0.0.1",
+    "version": "0.1.1",
     "programmingLanguage": "TypeScript",
     "runtimePlatform": "Node.js >= 24",
     "license": "https://opensource.org/licenses/MIT"
@@ -224,7 +224,7 @@ yarn add @zudojs/errors</div>
         </div>
 
         <div class="mt-4 callout callout-warning">
-          <strong class="text-zudo-yellow">Foundation Package:</strong> All internal dependencies in the monorepo use <code>workspace:*</code> in development. When published, they use exact version <code>0.0.1</code>. Every package depends on <code>@zudojs/errors</code>.
+          <strong class="text-zudo-yellow">Foundation Package:</strong> Every package depends on <code>@zudojs/errors</code> and pins it to an exact version (<code>0.1.0</code> today). Type guards such as <code>isBaseError</code> also recognise instances from another installed copy of the package via a <code>Symbol.for</code> brand, so a version skew between packages does not break error classification.
         </div>
       </section>
 
@@ -338,12 +338,17 @@ error.isPublic();           <span class="cm">// false</span>
 error.isOperationalError(); <span class="cm">// true</span>
 error.getMetadata(<span class="str">"orderId"</span>); <span class="cm">// "ord_123"</span>
 
-<span class="cm">// Serialize for logging</span>
+<span class="cm">// Serialize for TRUSTED logging: includes `stack` and the (cycle-safe, depth-limited)</span>
+<span class="cm">// cause chain. Use serializePublicError() / ErrorHandler.toPublicResult() for clients.</span>
 console.<span class="fn">log</span>(error.<span class="fn">toJSON</span>());
 <span class="cm">// { name: "BaseError", message: "Payment processing failed",</span>
 <span class="cm">//   code: "ERR_OPERATION_FAILED", category: "operation",</span>
 <span class="cm">//   severity: "error", statusCode: 500, expose: false,</span>
-<span class="cm">//   isOperational: true, metadata: { orderId: "ord_123", amount: 99.99 } }</span></div>
+<span class="cm">//   isOperational: true, metadata: { orderId: "ord_123", amount: 99.99 }, stack: "..." }</span>
+
+<span class="cm">// Copy with extra metadata: clones the instance (works for every subclass, keeps</span>
+<span class="cm">// message, code, status, cause, stack and own fields)</span>
+<span class="kw">const</span> enriched = error.<span class="fn">withMetadata</span>({ requestId: <span class="str">"req_1"</span> });</div>
       </section>
 
       <!-- Error Codes -->
@@ -496,9 +501,10 @@ console.<span class="fn">log</span>(error.<span class="fn">toJSON</span>());
   <span class="fn">serializeErrorMetadata</span>,
   <span class="fn">isErrorMetadataValue</span>,
   <span class="fn">sanitizeErrorMetadata</span>,
+  <span class="fn">redactErrorMetadata</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
 
-<span class="cm">// Create immutable metadata</span>
+<span class="cm">// Create immutable metadata (deep-frozen copy; __proto__/constructor keys are dropped)</span>
 <span class="kw">const</span> meta = <span class="fn">createErrorMetadata</span>({ userId: <span class="str">"u_123"</span>, action: <span class="str">"login"</span> });
 
 <span class="cm">// Merge multiple sources (later overrides earlier)</span>
@@ -516,9 +522,17 @@ console.<span class="fn">log</span>(error.<span class="fn">toJSON</span>());
 <span class="cm">// Pick specific keys</span>
 <span class="kw">const</span> picked = <span class="fn">pickErrorMetadata</span>(meta, [<span class="str">"userId"</span>]);
 
-<span class="cm">// Sanitize arbitrary data</span>
-<span class="kw">const</span> clean = <span class="fn">sanitizeErrorMetadata</span>({ password: <span class="str">"secret"</span>, name: <span class="str">"John"</span> });
-<span class="cm">// { name: "John" } — password removed</span></div>
+<span class="cm">// Sanitize arbitrary data: drops functions, class instances, cycles and unsupported values.</span>
+<span class="cm">// It does NOT remove secrets.</span>
+<span class="kw">const</span> clean = <span class="fn">sanitizeErrorMetadata</span>({ password: <span class="str">"secret"</span>, name: <span class="str">"John"</span>, fn: () => {} });
+<span class="cm">// { password: "secret", name: "John" }</span>
+
+<span class="cm">// Redact secrets (recursive, case-insensitive key matching: password, token, secret, authorization, cookie, api-key, ...)</span>
+<span class="kw">const</span> redacted = <span class="fn">redactErrorMetadata</span>({ password: <span class="str">"secret"</span>, headers: { Authorization: <span class="str">"Bearer x"</span> }, name: <span class="str">"John"</span> });
+<span class="cm">// { password: "[REDACTED]", headers: { Authorization: "[REDACTED]" }, name: "John" }</span>
+
+<span class="cm">// Or both in one step</span>
+<span class="fn">sanitizeErrorMetadata</span>(data, { redact: <span class="kw">true</span> });</div>
       </section>
 
       <!-- Domain Errors -->
@@ -685,16 +699,18 @@ rateLimited.getRetryAfterMilliseconds(); <span class="cm">// 60000</span>
               <tr><th class="p-3 text-left">Error Class</th><th class="p-3 text-left">Category</th><th class="p-3 text-left">Diagnostic Fields</th></tr>
             </thead>
             <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DatabaseError</td><td class="p-3">database</td><td class="p-3">operation, provider, resource</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DatabaseError</td><td class="p-3">database</td><td class="p-3">operation, driver, databaseCode</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">StorageError</td><td class="p-3">storage</td><td class="p-3">operation, provider, resource</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">HttpError</td><td class="p-3">operation</td><td class="p-3">statusCode (required)</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">NetworkError</td><td class="p-3">network</td><td class="p-3">operation, endpoint</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ServiceError</td><td class="p-3">service</td><td class="p-3">serviceName</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ExternalServiceError</td><td class="p-3">external_service</td><td class="p-3">serviceName, endpoint</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ContainerError</td><td class="p-3">container</td><td class="p-3">token, registration</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">NetworkError</td><td class="p-3">network</td><td class="p-3">endpoint, method, responseStatus, service</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ServiceError</td><td class="p-3">service</td><td class="p-3">service, operation</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ExternalServiceError</td><td class="p-3">external_service</td><td class="p-3">service, operation, responseStatus (upstream 4xx/5xx → 502 locally, 429 passed through)</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">TimeoutError</td><td class="p-3">timeout</td><td class="p-3">operation, timeoutMs, target (only request timeouts are exposed by default)</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">HttpClientError</td><td class="p-3">network</td><td class="p-3">status, statusText, url (credentials/query stripped), request, response</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ContainerError</td><td class="p-3">container</td><td class="p-3">token</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">CacheError</td><td class="p-3">cache</td><td class="p-3">operation, key, adapter</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MiddlewareError</td><td class="p-3">middleware</td><td class="p-3">middlewareName</td></tr>
-              <tr><td class="p-3 font-mono">AdapterError</td><td class="p-3">adapter</td><td class="p-3">adapterName, operation</td></tr>
+              <tr><td class="p-3 font-mono">AdapterError</td><td class="p-3">adapter</td><td class="p-3">adapter</td></tr>
             </tbody>
           </table>
         </div>
@@ -729,11 +745,12 @@ rateLimited.getRetryAfterMilliseconds(); <span class="cm">// 60000</span>
   <span class="tp">AdapterConfigurationError</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
 
-<span class="cm">// Connection failure</span>
-<span class="kw">const</span> conn = <span class="kw">new</span> <span class="tp">AdapterConnectionError</span>(<span class="str">"Failed to connect to PostgreSQL"</span>, {
-  adapterName: <span class="str">"postgres"</span>,
-  cause: originalError,
-});</div>
+<span class="cm">// Connection failure: (adapterName, cause?)</span>
+<span class="kw">const</span> conn = <span class="kw">new</span> <span class="tp">AdapterConnectionError</span>(<span class="str">"postgres"</span>, originalError);
+conn.adapter; <span class="cm">// "postgres"</span>
+
+<span class="cm">// Registry misconfiguration is a server-side failure: 500, not exposed, non-operational</span>
+<span class="kw">new</span> <span class="tp">AdapterNotFoundError</span>(<span class="str">"redis"</span>).statusCode; <span class="cm">// 500</span></div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">HTTP Errors</h3>
         <div class="code-block"><span class="kw">import</span> { <span class="tp">HttpError</span>, <span class="fn">createHttpError</span>, <span class="fn">isHttpError</span> } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
@@ -777,9 +794,9 @@ err.severity; <span class="cm">// ErrorSeverity.WARNING for 429</span></div>
   <span class="fn">cryptoKeyError</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
 
-<span class="kw">const</span> hashErr = <span class="fn">cryptoHashError</span>(<span class="str">"Hash computation failed"</span>, {
-  algorithm: <span class="str">"sha256"</span>,
-});
+<span class="cm">// Factories take (message?, algorithm?) — cryptoSignatureError takes (message?, operation?, algorithm?)</span>
+<span class="kw">const</span> hashErr = <span class="fn">cryptoHashError</span>(<span class="str">"Hash computation failed"</span>, <span class="str">"sha256"</span>);
+hashErr.algorithm; <span class="cm">// "sha256"</span>
 
 <span class="cm">// CryptoOperation enum values:</span>
 <span class="cm">// HASH, VERIFY_HASH, ENCRYPT, DECRYPT, SIGN, VERIFY_SIGNATURE,</span>
@@ -805,7 +822,7 @@ err.severity; <span class="cm">// ErrorSeverity.WARNING for 429</span></div>
       <!-- Subsystem Errors -->
       <section id="subsystem-errors" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SUBSYSTEM ERRORS</h2>
-        <p class="mb-4">Specialized error classes for event, message, queue, serialization, schema, API, and RPC subsystems.</p>
+        <p class="mb-4">Specialized error classes for the event, message, queue, serialization, schema, API, RPC, scheduler, plugin, documentation, lifecycle, module, and HTTP-body subsystems. Each base class accepts <code>BaseErrorOptions</code> plus the extra fields listed; every extra field is also emitted by <code>toJSON()</code>. Classes that describe server-side configuration problems (missing handlers, plugin dependency cycles, scheduler state) are reported as internal 500/503 errors with <code>expose: false</code>, so component names never reach clients.</p>
 
         <div class="border-4 border-black">
           <table class="w-full text-smw-full text-sm">
@@ -813,13 +830,19 @@ err.severity; <span class="cm">// ErrorSeverity.WARNING for 429</span></div>
               <tr><th class="p-3 text-left">Error Class</th><th class="p-3 text-left">Category</th><th class="p-3 text-left">Extra Fields</th></tr>
             </thead>
             <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventError</td><td class="p-3">event</td><td class="p-3">eventType, eventId, handlerId</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MessageError</td><td class="p-3">message</td><td class="p-3">messageType, messageId, handlerId</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">QueueError</td><td class="p-3">queue</td><td class="p-3">queueName, jobId</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SerializationError</td><td class="p-3">serialization</td><td class="p-3">format, direction</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SchemaError</td><td class="p-3">schema</td><td class="p-3">schemaPath, schemaIssue</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ApiError</td><td class="p-3">api</td><td class="p-3">operation, version</td></tr>
-              <tr><td class="p-3 font-mono">RpcError</td><td class="p-3">rpc</td><td class="p-3">procedure, transport</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventError</td><td class="p-3">event</td><td class="p-3">eventType, eventId, handlerId, middlewareId</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MessageError</td><td class="p-3">message</td><td class="p-3">messageType, messageId, handlerId, middlewareId</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">QueueError</td><td class="p-3">queue</td><td class="p-3">queueName, jobId, workerId</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SerializationError</td><td class="p-3">operation</td><td class="p-3">format, depth, maxDepth, size, maxSize, transformerType, serializerName</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SchemaError</td><td class="p-3">validation</td><td class="p-3">issues (values redacted in exposed <code>toJSON()</code>)</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">APIError</td><td class="p-3">api</td><td class="p-3">endpoint, method</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCError</td><td class="p-3">rpc</td><td class="p-3">procedureName</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SchedulerError</td><td class="p-3">scheduler</td><td class="p-3">jobId, scheduleId</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">PluginError</td><td class="p-3">plugin</td><td class="p-3">pluginName</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DocumentationError</td><td class="p-3">documentation</td><td class="p-3">documentId</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">LifecycleError</td><td class="p-3">system</td><td class="p-3">componentId, phase</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ModuleError</td><td class="p-3">module</td><td class="p-3">moduleId, dependencyId</td></tr>
+              <tr ><td class="p-3 font-mono">HttpBodyError / BodyParserError / HttpFormDataError / MultipartError</td><td class="p-3">input</td><td class="p-3">(none; limit errors are 413, unsupported content type is 415)</td></tr>
             </tbody>
           </table>
         </div>
@@ -865,15 +888,22 @@ err.severity; <span class="cm">// ErrorSeverity.WARNING for 429</span></div>
 <span class="cm">// Normalize any thrown value</span>
 <span class="kw">const</span> { error, original } = handler.<span class="fn">normalize</span>(unknownThrown);
 
-<span class="cm">// Handle and get safe response</span>
+<span class="cm">// Handle: reports (reporter failures are isolated; see onReporterError) and returns</span>
+<span class="cm">// the INTERNAL result: classification fields + recursively redacted metadata, never a stack.</span>
 <span class="kw">const</span> result = <span class="kw">await</span> handler.<span class="fn">handle</span>(error, {
   requestId: <span class="str">"req_123"</span>,
   correlationId: <span class="str">"corr_456"</span>,
 });
-<span class="cm">// { code: "ERR_...", message: "Safe message", statusCode: 500, ... }</span>
+<span class="cm">// { code, message, category, severity, statusCode, isOperational, expose, requestId, metadata? }</span>
 
-<span class="cm">// Serialize for API response</span>
-<span class="kw">const</span> safe = handler.<span class="fn">serialize</span>(error, context);</div>
+<span class="cm">// Client-safe result: code, message, statusCode, ids and allow-listed `details` only.</span>
+<span class="cm">// Non-exposed errors contribute no metadata unless `publicMetadataKeys` is configured.</span>
+<span class="kw">const</span> safe = <span class="kw">await</span> handler.<span class="fn">handlePublic</span>(error, context);
+<span class="kw">const</span> safe2 = handler.<span class="fn">toPublicResult</span>(error, context); <span class="cm">// same shape, no reporting</span>
+handler.<span class="fn">serialize</span>(error, context);              <span class="cm">// alias of toPublicResult (never includes a stack)</span>
+
+<span class="cm">// Full log object (cause chain, stack when includeStack: true)</span>
+<span class="kw">const</span> log = handler.<span class="fn">toLogObject</span>(error, context);</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">ErrorSerializer Class</h3>
         <div class="code-block"><span class="kw">import</span> { <span class="tp">ErrorSerializer</span> } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
@@ -886,10 +916,12 @@ err.severity; <span class="cm">// ErrorSeverity.WARNING for 429</span></div>
   redactSensitiveData: <span class="num">true</span>,
 });
 
-<span class="cm">// Internal response (includes stack for trusted logging)</span>
+<span class="cm">// Internal response. includeStack / includeCause / redactSensitiveData apply at every</span>
+<span class="cm">// level of the cause chain; the stack is only included when includeStack is true.</span>
 <span class="kw">const</span> internal = serializer.<span class="fn">serialize</span>(error);
 
-<span class="cm">// Public response (safe for API clients)</span>
+<span class="cm">// Public response (safe for API clients): never a stack or cause; metadata only for</span>
+<span class="cm">// exposed errors (redacted) or via the `publicMetadataKeys` allow-list.</span>
 <span class="kw">const</span> public_ = serializer.<span class="fn">serializePublic</span>(error);
 <span class="cm">// { code: "ERR_...", message: "Safe message", category: "...", statusCode: 500 }</span>
 
@@ -974,15 +1006,22 @@ err.severity; <span class="cm">// ErrorSeverity.WARNING for 429</span></div>
 
 <span class="kw">const</span> registry = <span class="fn">createErrorMapperRegistry</span>();
 
-<span class="cm">// Register custom mapping rules</span>
+<span class="cm">// Register custom mapping rules (mapper: a function, or a declarative ErrorMapping)</span>
 registry.<span class="fn">register</span>({
   name: <span class="str">"postgres-mapper"</span>,
-  predicate: (err) => err.message.<span class="fn">includes</span>(<span class="str">"ECONNREFUSED"</span>),
-  mapper: (err) => <span class="kw">new</span> <span class="tp">DatabaseConnectionError</span>(err.message, { cause: err }),
+  predicate: (err) => err <span class="kw">instanceof</span> Error &amp;&amp; err.message.<span class="fn">includes</span>(<span class="str">"ECONNREFUSED"</span>),
+  mapper: (err) => <span class="fn">databaseConnectionError</span>(<span class="str">"Unable to connect to the database."</span>, { cause: err }),
 });
+registry.<span class="fn">register</span>(<span class="fn">mapErrorType</span>(<span class="str">"pg"</span>, PgDatabaseError, {
+  code: <span class="tp">ErrorCode</span>.DATABASE_QUERY, category: <span class="tp">ErrorCategory</span>.DATABASE, severity: <span class="tp">ErrorSeverity</span>.ERROR,
+  statusCode: <span class="num">500</span>, expose: <span class="kw">false</span>, isOperational: <span class="kw">true</span>,
+}));
 
-<span class="cm">// Map an error using registered rules</span>
-<span class="kw">const</span> mapped = <span class="fn">mapError</span>(registry, nativeError);</div>
+<span class="cm">// Map an error using registered rules: (error, registry?, context?)</span>
+<span class="kw">const</span> mapped = <span class="fn">mapError</span>(nativeError, registry);
+
+<span class="cm">// Without a matching rule, native TypeError/RangeError/Error become</span>
+<span class="cm">// ERR_INTERNAL_ERROR (500, not exposed, non-operational) with the original as `cause`.</span></div>
       </section>
 
       <!-- Testing -->
@@ -1200,7 +1239,7 @@ registry.<span class="fn">register</span>({
       <section id="version-compatibility" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">VERSION COMPATIBILITY</h2>
         <div class="callout callout-warning">
-          <strong class="text-zudo-yellow">Stable Versions:</strong> All packages are at v0.1.0. The <code>workspace:*</code> protocol is used in development. When publishing, use exact version <code>0.0.1</code> for all internal dependencies.
+          <strong class="text-zudo-yellow">Stable Versions:</strong> Sibling packages pin <code>@zudojs/errors</code> to an exact published version (<code>0.1.0</code>); this package is at <code>0.1.1</code>. Use exact versions for all internal dependencies when publishing.
         </div>
 
         <div class="border-4 border-black mt-4">

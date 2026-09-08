@@ -101,7 +101,6 @@
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
         <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/events</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Event bus, emitter, middleware pipeline, and registry for Zudojs. Provides typed pub/sub, namespace pattern matching, middleware interception, and a centralized event definition store.
@@ -126,7 +125,7 @@ pnpm add @zudojs/events
 yarn add @zudojs/events</div>
 
         <div class="callout callout-note">
-          <strong class="text-zudo-blue">Peer Dependencies:</strong> @zudojs/events depends on @zudojs/errors, @zudojs/constants, and @zudojs/types. All at version 0.1.0.
+          <strong class="text-zudo-blue">Dependencies:</strong> @zudojs/events depends on @zudojs/errors and @zudojs/constants, both at version 0.1.0.
         </div>
       </section>
 
@@ -145,7 +144,7 @@ yarn add @zudojs/events</div>
         </ul>
 
         <div class="callout callout-tip">
-          <strong class="text-zudo-green">Core Principle:</strong> Events are first-class citizens. Define them once in the registry, publish them through the bus, and let middleware handle cross-cutting concerns like logging, validation, and timing.
+          <strong class="text-zudo-green">Core Principle:</strong> Events are first-class citizens. Define them once with <code>defineEvent()</code>, register them on the bus, publish through the bus, and let middleware handle cross-cutting concerns like logging, validation, and timing. Handlers registered on the bus or directly on its registry are dispatched alike.
         </div>
       </section>
 
@@ -179,24 +178,19 @@ yarn add @zudojs/events</div>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono text-sm">@zudojs/errors</td>
                 <td class="p-3">0.1.0</td>
-                <td class="p-3">Event error hierarchy (EventError, EventNotRegisteredError, etc.)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono text-sm">@zudojs/constants</td>
-                <td class="p-3">0.1.0</td>
-                <td class="p-3">Branded types (EventId, CorrelationId) and constants</td>
+                <td class="p-3">Event error hierarchy (EventError, EventHandlerError, EventMiddlewareError, …)</td>
               </tr>
               <tr>
-                <td class="p-3 font-mono text-sm">@zudojs/types</td>
+                <td class="p-3 font-mono text-sm">@zudojs/constants</td>
                 <td class="p-3">0.1.0</td>
-                <td class="p-3">Type guards (isPlainObject) and utility types (Maybe, DeepReadonly)</td>
+                <td class="p-3">Branded identifier types (EventId, CorrelationId)</td>
               </tr>
             </tbody>
           </table>
         </div>
 
         <div class="mt-4 callout callout-warning">
-          <strong class="text-zudo-yellow">Version Lock:</strong> All internal dependencies use <code>workspace:*</code> in development. When published, they use exact version <code>0.1.0</code>. Always use matching versions across the ecosystem.
+          <strong class="text-zudo-yellow">Version Lock:</strong> Internal dependencies are pinned to the exact published version <code>0.1.0</code>. Always use matching versions across the ecosystem.
         </div>
       </section>
 
@@ -205,32 +199,36 @@ yarn add @zudojs/events</div>
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CORE API — EVENT</h2>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Interface: Event</h3>
-        <p class="mb-3 text-sm">The base shape for all events flowing through the bus:</p>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Event</span>&lt;<span class="tp">TName</span> <span class="kw">extends</span> <span class="tp">string</span> = <span class="tp">string</span>, <span class="tp">TPayload</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> name: <span class="tp">TName</span>;
+        <p class="mb-3 text-sm">The base shape for all events flowing through the bus. Events are frozen; the payload is deep-frozen by the emitter when <code>freezeEvents</code> is on (the default).</p>
+        <div class="code-block"><span class="kw">interface</span> <span class="tp">Event</span>&lt;<span class="tp">TPayload</span> = <span class="tp">unknown</span>&gt; {
+  <span class="kw">readonly</span> id: <span class="tp">EventId</span>;            <span class="cm">// branded string, "event:&lt;uuid&gt;" by default</span>
+  <span class="kw">readonly</span> type: <span class="tp">EventType</span>;        <span class="cm">// normalized dot-separated name, e.g. "user.created"</span>
   <span class="kw">readonly</span> payload: <span class="tp">TPayload</span>;
-  <span class="kw">readonly</span> timestamp: <span class="tp">number</span>;
-  <span class="kw">readonly</span> correlationId?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> metadata?: <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;;
+  <span class="kw">readonly</span> timestamp: <span class="tp">Date</span>;
+  <span class="kw">readonly</span> source?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> correlationId?: <span class="tp">EventCorrelationId</span>;
+  <span class="kw">readonly</span> causationId?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> metadata?: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;;
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Interface: EventInput</h3>
-        <p class="mb-3 text-sm">The input shape when creating events (timestamp is auto-generated):</p>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">EventInput</span>&lt;<span class="tp">TName</span> <span class="kw">extends</span> <span class="tp">string</span> = <span class="tp">string</span>, <span class="tp">TPayload</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> name: <span class="tp">TName</span>;
+        <p class="mb-3 text-sm">The input shape when creating events. <code>id</code> and <code>timestamp</code> are generated when omitted; plain strings are accepted for ids.</p>
+        <div class="code-block"><span class="kw">interface</span> <span class="tp">EventInput</span>&lt;<span class="tp">TPayload</span> = <span class="tp">unknown</span>&gt; {
+  <span class="kw">readonly</span> id?: <span class="tp">EventId</span> | <span class="tp">string</span>;
+  <span class="kw">readonly</span> type: <span class="tp">EventType</span>;
   <span class="kw">readonly</span> payload: <span class="tp">TPayload</span>;
-  <span class="kw">readonly</span> correlationId?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> metadata?: <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;;
+  <span class="kw">readonly</span> timestamp?: <span class="tp">Date</span> | <span class="tp">number</span>;
+  <span class="kw">readonly</span> source?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> correlationId?: <span class="tp">EventCorrelationId</span> | <span class="tp">string</span>;
+  <span class="kw">readonly</span> causationId?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> metadata?: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;;
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Interface: EventDefinition</h3>
-        <p class="mb-3 text-sm">A registered event definition with schema and handler references:</p>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">EventDefinition</span>&lt;<span class="tp">TName</span> <span class="kw">extends</span> <span class="tp">string</span> = <span class="tp">string</span>, <span class="tp">TPayload</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> name: <span class="tp">TName</span>;
-  <span class="kw">readonly</span> description?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> version?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> schema?: <span class="tp">unknown</span>;
-  <span class="kw">readonly</span> handlerCount: <span class="tp">number</span>;
+        <p class="mb-3 text-sm">A typed definition created with <code>defineEvent()</code>. It carries the normalized type and a <code>create()</code> factory; this is what <code>bus.register()</code> accepts.</p>
+        <div class="code-block"><span class="kw">interface</span> <span class="tp">EventDefinition</span>&lt;<span class="tp">TType</span> <span class="kw">extends</span> <span class="tp">string</span> = <span class="tp">string</span>, <span class="tp">TPayload</span> = <span class="tp">unknown</span>&gt; {
+  <span class="kw">readonly</span> type: <span class="tp">TType</span>;
+  <span class="kw">readonly</span> create: (payload: <span class="tp">TPayload</span>, options?: <span class="tp">Omit</span>&lt;<span class="tp">EventInput</span>&lt;<span class="tp">TPayload</span>&gt;, <span class="str">"type"</span> | <span class="str">"payload"</span>&gt;) => <span class="tp">Event</span>&lt;<span class="tp">TPayload</span>&gt;;
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Creating Events</h3>
@@ -239,46 +237,82 @@ yarn add @zudojs/events</div>
 <span class="cm">// Define a reusable event type</span>
 <span class="kw">const</span> UserCreated = <span class="fn">defineEvent</span>&lt;<span class="str">"user.created"</span>, { id: <span class="tp">string</span>; email: <span class="tp">string</span> }&gt;(<span class="str">"user.created"</span>);
 
-<span class="cm">// Create an instance</span>
-<span class="kw">const</span> event = <span class="fn">createEvent</span>(<span class="str">"user.created"</span>, {
-  id: <span class="str">"abc-123"</span>,
-  email: <span class="str">"alice@example.com"</span>,
+<span class="cm">// Create an instance from the definition …</span>
+<span class="kw">const</span> event = UserCreated.<span class="fn">create</span>({ id: <span class="str">"abc-123"</span>, email: <span class="str">"alice@example.com"</span> });
+
+<span class="cm">// … or from plain input</span>
+<span class="kw">const</span> same = <span class="fn">createEvent</span>({
+  type: <span class="str">"User.Created"</span>,          <span class="cm">// normalized to "user.created"</span>
+  payload: { id: <span class="str">"abc-123"</span>, email: <span class="str">"alice@example.com"</span> },
 });
 
-<span class="cm">// event.name === "user.created"</span>
-<span class="cm">// event.timestamp === Date.now()</span></div>
+<span class="cm">// event.type === "user.created"</span>
+<span class="cm">// event.timestamp instanceof Date</span>
+<span class="cm">// Invalid types, ids or timestamps throw InvalidEventError</span></div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Type Helpers</h3>
+        <div class="border-4 border-black">
+          <table class="w-full text-sm">
+            <thead class="bg-black text-white">
+              <tr>
+                <th class="p-3 text-left">Function</th>
+                <th class="p-3 text-left">Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">isValidEventType(value)</td><td class="p-3">Lower-case dot/dash separated names, ≤ 255 chars, no wildcards.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">isValidEventTypePattern(value)</td><td class="p-3">An event type, a trailing <code>ns.*</code>, or <code>*</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">normalizeEventType(type)</td><td class="p-3">Trims, lower-cases, collapses separators; throws on invalid input (<code>tryNormalizeEventType</code> returns <code>undefined</code>).</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">normalizeEventTypePattern(pattern)</td><td class="p-3">Same for patterns; keeps <code>*</code> and the trailing <code>.*</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">matchesEventType(type, pattern)</td><td class="p-3">Exact match, namespace match (<code>user.*</code> also matches the bare <code>user</code>), or catch-all.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createEventType(...segments) · createEventTypePattern(ns)</td><td class="p-3">Build a type from segments / a <code>ns.*</code> pattern.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">getEventNamespace · getEventAction · getEventTypeSegments</td><td class="p-3">Split a type into its parts.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">withEventMetadata · createDerivedEvent</td><td class="p-3">Copy an event with extra metadata / derive a correlated follow-up event.</td></tr>
+              <tr><td class="p-3 font-mono">deepFreeze · isJsonEventPayload · createJsonEventPayload · cloneEventPayload</td><td class="p-3">Payload helpers. Cycle-safe; <code>isJsonEventPayload</code> accepts only plain objects, arrays and JSON scalars.</td></tr>
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <!-- EventBus -->
       <section id="event-bus" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">EVENT BUS</h2>
         <p class="mb-4">
-          The <code class="bg-black/5 px-1">EventBus</code> is the central coordination point. It manages lifecycle, registration, publishing, middleware, and handler dispatch.
+          The <code class="bg-black/5 px-1">EventBus</code> is the central coordination point. It owns an <code>EventRegistry</code> (definitions and handlers) and an <code>EventEmitter</code> that dispatches through the registry, so handlers registered on either surface are dispatched.
         </p>
 
         <h3 class="text-lg font-bold mb-3">Interface: EventBusOptions</h3>
         <div class="code-block"><span class="kw">interface</span> <span class="tp">EventBusOptions</span> {
-  <span class="kw">readonly</span> name?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> errorHandler?: (error: <span class="tp">unknown</span>) => <span class="tp">void</span>;
-  <span class="kw">readonly</span> maxListeners?: <span class="tp">number</span>;
+  <span class="kw">readonly</span> emitter?: {
+    <span class="kw">readonly</span> mode?: <span class="tp">EventEmitterMode</span>;        <span class="cm">// SEQUENTIAL (default) | PARALLEL</span>
+    <span class="kw">readonly</span> errorMode?: <span class="tp">EventErrorMode</span>;     <span class="cm">// CONTINUE (bus default) | THROW</span>
+    <span class="kw">readonly</span> freezeEvents?: <span class="tp">boolean</span>;        <span class="cm">// deep-freeze events before dispatch, default true</span>
+    <span class="kw">readonly</span> maxListeners?: <span class="tp">number</span>;         <span class="cm">// leak warning threshold per pattern, default 100 (0 = off)</span>
+  };
+  <span class="kw">readonly</span> registry?: {
+    <span class="kw">readonly</span> allowDuplicateDefinitions?: <span class="tp">boolean</span>;
+    <span class="kw">readonly</span> onDuplicateHandlerId?: <span class="str">"throw"</span> | <span class="str">"replace"</span>;   <span class="cm">// default "throw"</span>
+  };
+  <span class="kw">readonly</span> requireRegistration?: <span class="tp">boolean</span>;   <span class="cm">// reject unregistered types with EventTypeNotFoundError</span>
+  <span class="kw">readonly</span> middleware?: <span class="kw">readonly</span> <span class="tp">EventBusMiddlewareItem</span>[];
+  <span class="kw">readonly</span> onWarning?: (warning: <span class="tp">EventRegistryWarning</span>) => <span class="tp">void</span>;
+  <span class="kw">readonly</span> onError?: (error: <span class="tp">unknown</span>, context: { source: <span class="str">"handler"</span> | <span class="str">"observer"</span>; event?: <span class="tp">Event</span> }) => <span class="tp">void</span>;
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Enum: EventBusState</h3>
         <div class="code-block"><span class="kw">enum</span> <span class="tp">EventBusState</span> {
-  IDLE = <span class="str">"idle"</span>,
-  STARTING = <span class="str">"starting"</span>,
-  RUNNING = <span class="str">"running"</span>,
-  STOPPING = <span class="str">"stopping"</span>,
-  STOPPED = <span class="str">"stopped"</span>,
-  ERROR = <span class="str">"error"</span>,
+  CREATED = <span class="str">"created"</span>,    <span class="cm">// starts itself on first publish/subscribe</span>
+  ACTIVE = <span class="str">"active"</span>,
+  STOPPED = <span class="str">"stopped"</span>,    <span class="cm">// publish/subscribe throw EventBusStoppedError until start()</span>
+  DISPOSED = <span class="str">"disposed"</span>,  <span class="cm">// final; every operation throws EventBusDisposedError</span>
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Factory Functions</h3>
-        <div class="code-block"><span class="cm">// Create a bus that starts in IDLE state</span>
-<span class="kw">const</span> bus = <span class="fn">createEventBus</span>({ name: <span class="str">"app-events"</span> });
+        <div class="code-block"><span class="cm">// Create a bus in CREATED state (auto-starts on first use)</span>
+<span class="kw">const</span> bus = <span class="fn">createEventBus</span>({ requireRegistration: <span class="kw">true</span> });
 
-<span class="cm">// Create a bus that starts in RUNNING state</span>
-<span class="kw">const</span> bus = <span class="fn">createStartedEventBus</span>({ name: <span class="str">"app-events"</span> });</div>
+<span class="cm">// Create a bus that is already ACTIVE</span>
+<span class="kw">const</span> started = <span class="fn">createStartedEventBus</span>();</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Methods</h3>
         <div class="border-4 border-black">
@@ -287,88 +321,45 @@ yarn add @zudojs/events</div>
               <tr>
                 <th class="p-3 text-left">Method</th>
                 <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
+                <th class="p-3 text-left">Behaviour</th>
               </tr>
             </thead>
             <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">start()</td>
-                <td class="p-3">start(): Promise&lt;void&gt;</td>
-                <td class="p-3">Transitions IDLE → RUNNING. Rejects if not IDLE.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">stop()</td>
-                <td class="p-3">stop(): Promise&lt;void&gt;</td>
-                <td class="p-3">Transitions RUNNING → STOPPED. Rejects if not RUNNING.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">register()</td>
-                <td class="p-3">register(definition: EventDefinition): void</td>
-                <td class="p-3">Registers an event definition. Throws on duplicate.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">on()</td>
-                <td class="p-3">on(name: string, handler: EventHandler): EventSubscription</td>
-                <td class="p-3">Subscribes to an event. Returns subscription for cleanup.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">once()</td>
-                <td class="p-3">once(name: string, handler: EventHandler): EventSubscription</td>
-                <td class="p-3">Subscribes for one invocation only.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">onAny()</td>
-                <td class="p-3">onAny(handler: (event: Event) => void): EventSubscription</td>
-                <td class="p-3">Subscribes to all events.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">off()</td>
-                <td class="p-3">off(subscription: EventSubscription): void</td>
-                <td class="p-3">Removes a specific subscription.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">use()</td>
-                <td class="p-3">use(middleware: EventMiddleware): void</td>
-                <td class="p-3">Registers middleware in the pipeline.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">publish()</td>
-                <td class="p-3">publish(event: EventInput): Promise&lt;void&gt;</td>
-                <td class="p-3">Publishes an event through the middleware pipeline.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">publishEvent()</td>
-                <td class="p-3">publishEvent&lt;T&gt;(name: string, payload: T): Promise&lt;void&gt;</td>
-                <td class="p-3">Shorthand for publish with auto-timestamp.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">emit()</td>
-                <td class="p-3">emit(name: string, payload: unknown): void</td>
-                <td class="p-3">Synchronous emit (bypasses middleware).</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">getDefinition()</td>
-                <td class="p-3">getDefinition(name: string): EventDefinition | undefined</td>
-                <td class="p-3">Retrieves event definition by name.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">hasEvent()</td>
-                <td class="p-3">hasEvent(name: string): boolean</td>
-                <td class="p-3">True if event is registered.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">unregister()</td>
-                <td class="p-3">unregister(name: string): void</td>
-                <td class="p-3">Removes event definition and all handlers.</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">dispose()</td>
-                <td class="p-3">dispose(): Promise&lt;void&gt;</td>
-                <td class="p-3">Releases all resources, clears handlers.</td>
-              </tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">start()</td><td class="p-3">start(): this</td><td class="p-3">CREATED/STOPPED → ACTIVE. Idempotent; notifies <code>"started"</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">stop()</td><td class="p-3">stop(): this</td><td class="p-3">ACTIVE → STOPPED. Handlers and definitions are kept; notifies <code>"stopped"</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">register()</td><td class="p-3">register(definition: EventDefinition): RegisteredEventDefinition</td><td class="p-3">Registers a <code>defineEvent()</code> result. Throws <code>DuplicateEventDefinitionError</code> unless <code>allowDuplicateDefinitions</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">on()</td><td class="p-3">on(pattern, handler, options?): EventSubscription</td><td class="p-3">Subscribes to a type, <code>ns.*</code> or <code>*</code>. Options: <code>id</code>, <code>priority</code>, <code>enabled</code>, <code>once</code>, <code>timeoutMs</code>, <code>description</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">once()</td><td class="p-3">once(pattern, handler, options?): EventSubscription</td><td class="p-3">Subscribes for one invocation; removed before the handler runs.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">onAny()</td><td class="p-3">onAny(handler, options?): EventSubscription</td><td class="p-3">Subscribes to all events.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">off()</td><td class="p-3">off(subscription): boolean</td><td class="p-3">Cancels a subscription; true when it was active.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">use()</td><td class="p-3">use(middleware, options?): () => void</td><td class="p-3">Adds middleware (validated eagerly). Returns a remover.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">publish()</td><td class="p-3">publish(event: Event, options?): Promise&lt;EventPublishResult&gt;</td><td class="p-3">Runs middleware then dispatches. Options: <code>mode</code>, <code>errorMode</code>, <code>signal</code>, <code>metadata</code>, <code>middleware</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">publishEvent()</td><td class="p-3">publishEvent(input: EventInput, options?): Promise&lt;EventPublishResult&gt;</td><td class="p-3">Creates the event from input, then publishes.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">emit()</td><td class="p-3">emit(eventOrInput, options?): Promise&lt;EventPublishResult&gt;</td><td class="p-3">Accepts an <code>Event</code> or <code>EventInput</code>; alias for the two methods above (goes through middleware).</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">getDefinition()</td><td class="p-3">getDefinition(type): RegisteredEventDefinition | undefined</td><td class="p-3">Retrieves a definition (type is normalized).</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">hasEvent()</td><td class="p-3">hasEvent(type): boolean</td><td class="p-3">True if the type is registered.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">unregister()</td><td class="p-3">unregister(type, { removeHandlers? }): boolean</td><td class="p-3">Removes the definition; with <code>removeHandlers</code> also drops handlers subscribed to exactly that type.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">getRegistry() · getEmitter()</td><td class="p-3">(): EventRegistry / EventEmitter</td><td class="p-3">Access the underlying components.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">getDefinitions() · getHandlers()</td><td class="p-3">(): readonly …[]</td><td class="p-3">Snapshot of definitions / registered handlers.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">subscribe()</td><td class="p-3">subscribe(listener: (e: EventBusEvent) => void): () => void</td><td class="p-3">Observe <code>"started"</code>, <code>"stopped"</code>, <code>"published"</code>. Observer errors go to <code>onError</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">getState() · isActive() · eventCount · handlerCount</td><td class="p-3"></td><td class="p-3">Introspection.</td></tr>
+              <tr><td class="p-3 font-mono">dispose()</td><td class="p-3">dispose(): void</td><td class="p-3">Cancels every subscription, clears definitions, final.</td></tr>
             </tbody>
           </table>
         </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Interface: EventPublishResult</h3>
+        <div class="code-block"><span class="kw">interface</span> <span class="tp">EventPublishResult</span>&lt;<span class="tp">TEvent</span> <span class="kw">extends</span> <span class="tp">Event</span> = <span class="tp">Event</span>&gt; {
+  <span class="kw">readonly</span> event: <span class="tp">TEvent</span>;
+  <span class="kw">readonly</span> handled: <span class="tp">boolean</span>;          <span class="cm">// at least one handler succeeded</span>
+  <span class="kw">readonly</span> handlerCount: <span class="tp">number</span>;      <span class="cm">// handlers invoked</span>
+  <span class="kw">readonly</span> succeeded: <span class="tp">number</span>;
+  <span class="kw">readonly</span> failed: <span class="tp">number</span>;
+  <span class="kw">readonly</span> results: <span class="kw">readonly</span> <span class="tp">unknown</span>[];
+  <span class="kw">readonly</span> errors: <span class="kw">readonly</span> <span class="tp">unknown</span>[];   <span class="cm">// EventHandlerError[] (cause = raw thrown value)</span>
+  <span class="kw">readonly</span> shortCircuited: <span class="tp">boolean</span>;   <span class="cm">// a middleware did not call next()</span>
+  <span class="kw">readonly</span> middlewareExecutions?: <span class="kw">readonly</span> { middlewareId: <span class="tp">string</span>; result: <span class="tp">unknown</span>; duration: <span class="tp">number</span> }[];
+}</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Example: Creating and Using a Bus</h3>
         <div class="code-block"><span class="kw">import</span> {
@@ -376,48 +367,55 @@ yarn add @zudojs/events</div>
   <span class="fn">defineEvent</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/events"</span>;
 
-<span class="kw">const</span> bus = <span class="fn">createStartedEventBus</span>({ name: <span class="str">"app"</span> });
+<span class="kw">const</span> bus = <span class="fn">createStartedEventBus</span>({ requireRegistration: <span class="kw">true</span> });
 
 <span class="cm">// Register an event definition</span>
-bus.<span class="fn">register</span>({
-  name: <span class="str">"user.created"</span>,
-  description: <span class="str">"Emitted when a new user signs up"</span>,
-  version: <span class="str">"1.0.0"</span>,
-});
+<span class="kw">const</span> UserCreated = <span class="fn">defineEvent</span>&lt;<span class="str">"user.created"</span>, { id: <span class="tp">string</span>; email: <span class="tp">string</span> }&gt;(<span class="str">"user.created"</span>);
+bus.<span class="fn">register</span>(UserCreated);
 
 <span class="cm">// Subscribe</span>
 bus.<span class="fn">on</span>(<span class="str">"user.created"</span>, <span class="kw">async</span> (event) => {
-  console.<span class="fn">log</span>(<span class="str">`New user: ${event.payload.email}`</span>);
+  <span class="kw">const</span> { email } = event.payload <span class="kw">as</span> { email: <span class="tp">string</span> };
+  console.<span class="fn">log</span>(<span class="str">`New user: ${email}`</span>);
 });
 
 <span class="cm">// Publish</span>
-<span class="kw">await</span> bus.<span class="fn">publish</span>({
-  name: <span class="str">"user.created"</span>,
-  payload: { id: <span class="str">"1"</span>, email: <span class="str">"alice@example.com"</span> },
-});
+<span class="kw">const</span> result = <span class="kw">await</span> bus.<span class="fn">publish</span>(UserCreated.<span class="fn">create</span>({ id: <span class="str">"1"</span>, email: <span class="str">"alice@example.com"</span> }));
+console.<span class="fn">log</span>(result.handled, result.succeeded, result.failed);
 
-<span class="cm">// Cleanup</span>
-<span class="kw">await</span> bus.<span class="fn">dispose</span>();</div>
+<span class="cm">// Pause, resume, cleanup</span>
+bus.<span class="fn">stop</span>();    <span class="cm">// publish() now throws EventBusStoppedError</span>
+bus.<span class="fn">start</span>();
+bus.<span class="fn">dispose</span>();</div>
       </section>
 
       <!-- EventEmitter -->
       <section id="event-emitter" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">EVENT EMITTER</h2>
         <p class="mb-4">
-          The <code class="bg-black/5 px-1">EventEmitter</code> handles low-level event dispatching with pattern matching support. The EventBus wraps an internal emitter.
+          The <code class="bg-black/5 px-1">EventEmitter</code> dispatches events to matching handlers. It stores handlers in an <code>EventHandlerStore</code> (a private <code>EventRegistry</code>, or the store passed via <code>options.store</code>).
         </p>
 
         <h3 class="text-lg font-bold mb-3">Enum: EventEmitterMode</h3>
         <div class="code-block"><span class="kw">enum</span> <span class="tp">EventEmitterMode</span> {
-  SYNCHRONOUS = <span class="str">"synchronous"</span>,
-  ASYNCHRONOUS = <span class="str">"asynchronous"</span>,
+  SEQUENTIAL = <span class="str">"sequential"</span>,  <span class="cm">// one handler at a time, priority order (default)</span>
+  PARALLEL = <span class="str">"parallel"</span>,      <span class="cm">// all handlers start together</span>
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Enum: EventErrorMode</h3>
         <div class="code-block"><span class="kw">enum</span> <span class="tp">EventErrorMode</span> {
-  THROW = <span class="str">"throw"</span>,
-  CATCH = <span class="str">"catch"</span>,
-  PROPAGATE = <span class="str">"propagate"</span>,
+  THROW = <span class="str">"throw"</span>,        <span class="cm">// first EventHandlerError rejects the emit (emitter default)</span>
+  CONTINUE = <span class="str">"continue"</span>,  <span class="cm">// failures are collected in result.errors (bus default)</span>
+}</div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Interface: EventEmitterOptions</h3>
+        <div class="code-block"><span class="kw">interface</span> <span class="tp">EventEmitterOptions</span> {
+  <span class="kw">readonly</span> mode?: <span class="tp">EventEmitterMode</span>;
+  <span class="kw">readonly</span> errorMode?: <span class="tp">EventErrorMode</span>;
+  <span class="kw">readonly</span> freezeEvents?: <span class="tp">boolean</span>;      <span class="cm">// default true</span>
+  <span class="kw">readonly</span> store?: <span class="tp">EventHandlerStore</span>;   <span class="cm">// share handlers with a registry</span>
+  <span class="kw">readonly</span> maxListeners?: <span class="tp">number</span>;       <span class="cm">// default 100 per pattern, 0 = off</span>
+  <span class="kw">readonly</span> onWarning?: (warning: <span class="tp">EventRegistryWarning</span>) => <span class="tp">void</span>;
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Methods</h3>
@@ -427,57 +425,33 @@ bus.<span class="fn">on</span>(<span class="str">"user.created"</span>, <span cl
               <tr>
                 <th class="p-3 text-left">Method</th>
                 <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
+                <th class="p-3 text-left">Behaviour</th>
               </tr>
             </thead>
             <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">on()</td>
-                <td class="p-3">on(pattern: string, handler: EventHandler): EventSubscription</td>
-                <td class="p-3">Subscribes to events matching the pattern.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">once()</td>
-                <td class="p-3">once(pattern: string, handler: EventHandler): EventSubscription</td>
-                <td class="p-3">Subscribes for one invocation, then auto-removes.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">onAny()</td>
-                <td class="p-3">onAny(handler: (event: Event) => void): EventSubscription</td>
-                <td class="p-3">Subscribes to all events regardless of name.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">off()</td>
-                <td class="p-3">off(subscription: EventSubscription): void</td>
-                <td class="p-3">Removes a subscription.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">emit()</td>
-                <td class="p-3">emit(name: string, payload: unknown): void</td>
-                <td class="p-3">Synchronous dispatch. Calls matching handlers.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">emitEvent()</td>
-                <td class="p-3">emitEvent(event: Event): Promise&lt;void&gt;</td>
-                <td class="p-3">Async dispatch of a full Event object.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">removeAllListeners()</td>
-                <td class="p-3">removeAllListeners(pattern?: string): void</td>
-                <td class="p-3">Removes all listeners for a pattern, or all listeners.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">createSubscriptionGroup()</td>
-                <td class="p-3">createSubscriptionGroup(): EventSubscriptionGroup</td>
-                <td class="p-3">Creates a group for batch unsubscribe.</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">dispose()</td>
-                <td class="p-3">dispose(): void</td>
-                <td class="p-3">Clears all listeners.</td>
-              </tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">on() · once() · onAny()</td><td class="p-3">(pattern, handler, options?): EventSubscription</td><td class="p-3">Register handlers. Duplicate ids throw <code>DuplicateEventHandlerError</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">off()</td><td class="p-3">off(subscription): boolean</td><td class="p-3">Cancels a subscription.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">emit()</td><td class="p-3">emit(event: Event, options?): Promise&lt;EventEmitResult&gt;</td><td class="p-3">Dispatches. Non-events throw <code>InvalidEventError</code>; an aborted signal throws <code>EventDispatchAbortedError</code> (with partial <code>results</code>).</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">emitEvent()</td><td class="p-3">emitEvent(input: EventInput, options?): Promise&lt;EventEmitResult&gt;</td><td class="p-3">Creates the event, then emits.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">listenerCount · getRegistrations() · getStore()</td><td class="p-3"></td><td class="p-3">Introspection.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">removeAllListeners()</td><td class="p-3">(): void</td><td class="p-3">Cancels every subscription.</td></tr>
+              <tr><td class="p-3 font-mono">dispose() · isDisposed()</td><td class="p-3"></td><td class="p-3">After dispose every call throws <code>EventEmitterDisposedError</code>.</td></tr>
             </tbody>
           </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Interface: EventEmitResult</h3>
+        <div class="code-block"><span class="kw">interface</span> <span class="tp">EventEmitResult</span>&lt;<span class="tp">TEvent</span> <span class="kw">extends</span> <span class="tp">Event</span> = <span class="tp">Event</span>&gt; {
+  <span class="kw">readonly</span> event: <span class="tp">TEvent</span>;
+  <span class="kw">readonly</span> handled: <span class="tp">boolean</span>;
+  <span class="kw">readonly</span> results: <span class="kw">readonly</span> <span class="tp">EventHandlerExecutionResult</span>[];   <span class="cm">// { handlerId, eventId, ok, result, duration, error? }</span>
+  <span class="kw">readonly</span> errors: <span class="kw">readonly</span> <span class="tp">unknown</span>[];
+  <span class="kw">readonly</span> succeeded: <span class="tp">number</span>;
+  <span class="kw">readonly</span> failed: <span class="tp">number</span>;
+}</div>
+
+        <div class="callout callout-note">
+          <strong class="text-zudo-blue">Once semantics:</strong> a <code>once</code> handler is removed before it runs, so a handler that throws, or two overlapping dispatches, never invoke it twice. In <code>PARALLEL</code> mode a signal aborted after handlers have started cannot stop them; handlers can observe <code>context.signal</code> to cooperate.
         </div>
       </section>
 
@@ -485,15 +459,24 @@ bus.<span class="fn">on</span>(<span class="str">"user.created"</span>, <span cl
       <section id="event-registry" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">EVENT REGISTRY</h2>
         <p class="mb-4">
-          The <code class="bg-black/5 px-1">EventRegistry</code> is a centralized store for event definitions and handler mappings. It enables event discovery, validation, and subscription management.
+          The <code class="bg-black/5 px-1">EventRegistry</code> stores event definitions and handlers and notifies observers of changes. It does not dispatch; the emitter reads handlers from it.
         </p>
 
-        <h3 class="text-lg font-bold mb-3">Enum: EventRegistryChangeType</h3>
+        <h3 class="text-lg font-bold mb-3">Interface: EventRegistryOptions</h3>
+        <div class="code-block"><span class="kw">interface</span> <span class="tp">EventRegistryOptions</span> {
+  <span class="kw">readonly</span> allowDuplicateDefinitions?: <span class="tp">boolean</span>;
+  <span class="kw">readonly</span> onDuplicateHandlerId?: <span class="str">"throw"</span> | <span class="str">"replace"</span>;   <span class="cm">// default "throw"</span>
+  <span class="kw">readonly</span> maxHandlersPerPattern?: <span class="tp">number</span>;              <span class="cm">// default 100, 0 = off</span>
+  <span class="kw">readonly</span> onWarning?: (warning: <span class="tp">EventRegistryWarning</span>) => <span class="tp">void</span>;
+  <span class="kw">readonly</span> onError?: (error: <span class="tp">unknown</span>, context: { source: <span class="str">"observer"</span> }) => <span class="tp">void</span>;
+}</div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Enum: EventRegistryChangeType</h3>
         <div class="code-block"><span class="kw">enum</span> <span class="tp">EventRegistryChangeType</span> {
-  REGISTERED = <span class="str">"registered"</span>,
-  UNREGISTERED = <span class="str">"unregistered"</span>,
-  HANDLER_ADDED = <span class="str">"handler_added"</span>,
-  HANDLER_REMOVED = <span class="str">"handler_removed"</span>,
+  EVENT_REGISTERED = <span class="str">"event.registered"</span>,
+  EVENT_UNREGISTERED = <span class="str">"event.unregistered"</span>,
+  HANDLER_REGISTERED = <span class="str">"handler.registered"</span>,
+  HANDLER_UNREGISTERED = <span class="str">"handler.unregistered"</span>,
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Methods</h3>
@@ -503,75 +486,19 @@ bus.<span class="fn">on</span>(<span class="str">"user.created"</span>, <span cl
               <tr>
                 <th class="p-3 text-left">Method</th>
                 <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
+                <th class="p-3 text-left">Behaviour</th>
               </tr>
             </thead>
             <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">register()</td>
-                <td class="p-3">register(definition: EventDefinition): void</td>
-                <td class="p-3">Stores an event definition. Throws on duplicate.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">registerHandler()</td>
-                <td class="p-3">registerHandler(name: string, handler: EventHandler): void</td>
-                <td class="p-3">Associates a handler with an event name.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">get()</td>
-                <td class="p-3">get(name: string): EventDefinition | undefined</td>
-                <td class="p-3">Retrieves a definition by name.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">require()</td>
-                <td class="p-3">require(name: string): EventDefinition</td>
-                <td class="p-3">Retrieves or throws EventNotRegisteredError.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">has()</td>
-                <td class="p-3">has(name: string): boolean</td>
-                <td class="p-3">True if event is registered.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">unregister()</td>
-                <td class="p-3">unregister(name: string): void</td>
-                <td class="p-3">Removes event definition and its handlers.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">getHandler()</td>
-                <td class="p-3">getHandler(name: string): EventHandler | undefined</td>
-                <td class="p-3">Returns the first registered handler for an event.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">getDefinitions()</td>
-                <td class="p-3">getDefinitions(): readonly EventDefinition[]</td>
-                <td class="p-3">All registered definitions.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">getHandlers()</td>
-                <td class="p-3">getHandlers(): ReadonlyMap&lt;string, EventHandler[]&gt;</td>
-                <td class="p-3">All handlers keyed by event name.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">getHandlersForEvent()</td>
-                <td class="p-3">getHandlersForEvent(name: string): EventHandler[]</td>
-                <td class="p-3">All handlers for a specific event name.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">subscribe()</td>
-                <td class="p-3">subscribe(name: string, handler: EventHandler): EventSubscription</td>
-                <td class="p-3">Registers handler and returns subscription.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">clear()</td>
-                <td class="p-3">clear(): void</td>
-                <td class="p-3">Removes all definitions and handlers.</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">dispose()</td>
-                <td class="p-3">dispose(): void</td>
-                <td class="p-3">Clears all data and subscriptions.</td>
-              </tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">register()</td><td class="p-3">register(definition): RegisteredEventDefinition</td><td class="p-3">Stores a <code>defineEvent()</code> result under its normalized type.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">get() · require() · has() · unregister()</td><td class="p-3">(type)</td><td class="p-3">Definition lookups; types are normalized. <code>require</code> throws <code>EventDefinitionNotFoundError</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">registerHandler()</td><td class="p-3">registerHandler(pattern, handler, options?): EventSubscription</td><td class="p-3">Stores a handler; the subscription is tracked and cancelled by <code>clear()</code> / <code>dispose()</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">getHandler() · requireHandler() · hasHandler() · unregisterHandler() · getHandlerSubscription()</td><td class="p-3">(handlerId)</td><td class="p-3">Handler lookups by id.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">getHandlers()</td><td class="p-3">(): readonly RegisteredEventHandler[]</td><td class="p-3">All handlers in registration order.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">getHandlersForEvent(event) · getHandlersForType(type)</td><td class="p-3">(): readonly RegisteredEventHandler[]</td><td class="p-3">Enabled handlers matching the event/type, sorted by priority — exactly what would be dispatched.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">subscribe()</td><td class="p-3">subscribe(listener: (change: EventRegistryChange) => void): () => void</td><td class="p-3">Observe registry changes.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">eventCount · handlerCount · getDefinitions()</td><td class="p-3"></td><td class="p-3">Introspection.</td></tr>
+              <tr><td class="p-3 font-mono">clear() · dispose() · isDisposed()</td><td class="p-3"></td><td class="p-3">After dispose every call throws <code>EventRegistryDisposedError</code>; cancelling a subscription afterwards is a no-op.</td></tr>
             </tbody>
           </table>
         </div>
@@ -582,77 +509,67 @@ bus.<span class="fn">on</span>(<span class="str">"user.created"</span>, <span cl
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HANDLERS</h2>
 
         <h3 class="text-lg font-bold mb-3">Type: EventHandler</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">EventHandler</span> = (
-  event: <span class="tp">Event</span>,
-  context: <span class="tp">EventHandlerContext</span>,
-) =&gt; <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt; | <span class="tp">void</span>;</div>
+        <div class="code-block"><span class="kw">type</span> <span class="tp">EventHandler</span>&lt;<span class="tp">TEvent</span> <span class="kw">extends</span> <span class="tp">Event</span> = <span class="tp">Event</span>&gt; = (
+  event: <span class="tp">TEvent</span>,
+  context: <span class="tp">EventHandlerContext</span>&lt;<span class="tp">TEvent</span>&gt;,
+) => <span class="tp">unknown</span> | <span class="tp">Promise</span>&lt;<span class="tp">unknown</span>&gt;;
+
+<span class="cm">// Object form: { handle(event, context) }</span>
+<span class="kw">type</span> <span class="tp">EventHandlerLike</span>&lt;<span class="tp">TEvent</span>&gt; = <span class="tp">EventHandler</span>&lt;<span class="tp">TEvent</span>&gt; | <span class="tp">EventHandlerObject</span>&lt;<span class="tp">TEvent</span>&gt;;</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Interface: EventHandlerContext</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">EventHandlerContext</span> {
-  <span class="kw">readonly</span> eventName: <span class="tp">string</span>;
-  <span class="kw">readonly</span> handlerName?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> timestamp: <span class="tp">number</span>;
+        <div class="code-block"><span class="kw">interface</span> <span class="tp">EventHandlerContext</span>&lt;<span class="tp">TEvent</span> <span class="kw">extends</span> <span class="tp">Event</span> = <span class="tp">Event</span>&gt; {
+  <span class="kw">readonly</span> event: <span class="tp">TEvent</span>;
+  <span class="kw">readonly</span> type: <span class="tp">EventType</span>;
+  <span class="kw">readonly</span> eventId: <span class="tp">string</span>;
   <span class="kw">readonly</span> correlationId?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> abortSignal?: <span class="tp">AbortSignal</span>;
+  <span class="kw">readonly</span> causationId?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> signal: <span class="tp">AbortSignal</span>;
+  <span class="kw">readonly</span> metadata: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;;
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Interface: EventHandlerOptions</h3>
         <div class="code-block"><span class="kw">interface</span> <span class="tp">EventHandlerOptions</span> {
-  <span class="kw">readonly</span> priority?: <span class="tp">number</span>;
+  <span class="kw">readonly</span> id?: <span class="tp">string</span>;          <span class="cm">// must be unique per store</span>
+  <span class="kw">readonly</span> description?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> eventType?: <span class="tp">EventTypePattern</span>;
+  <span class="kw">readonly</span> priority?: <span class="tp">number</span>;    <span class="cm">// finite; higher runs first, default 0</span>
+  <span class="kw">readonly</span> enabled?: <span class="tp">boolean</span>;
   <span class="kw">readonly</span> once?: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> errorHandler?: (error: <span class="tp">unknown</span>) =&gt; <span class="tp">void</span>;
+  <span class="kw">readonly</span> timeoutMs?: <span class="tp">number</span>;   <span class="cm">// positive; EventTimeoutError when exceeded</span>
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Pattern Matching</h3>
-        <p class="mb-3 text-sm">Handlers are matched against event names using three patterns:</p>
         <div class="border-4 border-black">
           <table class="w-full text-sm">
             <thead class="bg-black text-white">
               <tr>
                 <th class="p-3 text-left">Pattern</th>
-                <th class="p-3 text-left">Example</th>
                 <th class="p-3 text-left">Matches</th>
               </tr>
             </thead>
             <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">Exact</td>
-                <td class="p-3"><code>"user.created"</code></td>
-                <td class="p-3">Only <code>"user.created"</code></td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">Namespace wildcard</td>
-                <td class="p-3"><code>"user.*"</code></td>
-                <td class="p-3">All events under <code>user.</code> namespace: <code>user.created</code>, <code>user.updated</code>, <code>user.deleted</code></td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">Catch-all</td>
-                <td class="p-3"><code>"*"</code></td>
-                <td class="p-3">Every event regardless of name</td>
-              </tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">user.created</td><td class="p-3">Only <code>user.created</code> (types are normalized, so <code>User.Created</code> is the same).</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">user.*</td><td class="p-3"><code>user</code>, <code>user.created</code>, <code>user.profile.updated</code>, …</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">*</td><td class="p-3">Every event.</td></tr>
+              <tr><td class="p-3 font-mono">user.*.created · user.cre*</td><td class="p-3">Rejected with <code>TypeError</code>; wildcards are only valid as a trailing <code>.*</code>.</td></tr>
             </tbody>
           </table>
         </div>
 
+        <h3 class="text-lg font-bold mb-3 mt-6">Helper Functions</h3>
+        <p class="mb-3 text-sm"><code>createEventHandler</code>, <code>typedEventHandler</code>, <code>onceEventHandler</code>, <code>prioritizedEventHandler</code>, <code>enableEventHandler</code>, <code>disableEventHandler</code>, <code>setEventHandlerPriority</code>, <code>fireAndForgetHandler</code>, <code>sortEventHandlers</code>, <code>getMatchingEventHandlers</code>, <code>executeEventHandler</code>, <code>executeRegisteredEventHandler</code> (applies <code>timeoutMs</code>).</p>
+
         <h3 class="text-lg font-bold mb-3 mt-6">Example: Registering Handlers</h3>
-        <div class="code-block"><span class="cm">// Exact match</span>
-bus.<span class="fn">on</span>(<span class="str">"user.created"</span>, <span class="kw">async</span> (event, ctx) => {
-  console.<span class="fn">log</span>(<span class="str">"User created:"</span>, event.payload);
-});
+        <div class="code-block"><span class="cm">// High priority runs first</span>
+bus.<span class="fn">on</span>(<span class="str">"order.placed"</span>, reserveStock, { id: <span class="str">"reserve-stock"</span>, priority: <span class="num">100</span> });
+bus.<span class="fn">on</span>(<span class="str">"order.placed"</span>, sendReceipt, { id: <span class="str">"send-receipt"</span>, priority: <span class="num">10</span>, timeoutMs: <span class="num">5000</span> });
 
-<span class="cm">// Namespace wildcard</span>
-bus.<span class="fn">on</span>(<span class="str">"user.*"</span>, <span class="kw">async</span> (event, ctx) => {
-  console.<span class="fn">log</span>(<span class="str">`User event: ${event.name}`</span>);
-});
+<span class="cm">// Namespace subscription</span>
+bus.<span class="fn">on</span>(<span class="str">"order.*"</span>, (event, ctx) => audit.<span class="fn">log</span>(event.type, ctx.correlationId));
 
-<span class="cm">// Catch-all</span>
-bus.<span class="fn">on</span>(<span class="str">"*"</span>, <span class="kw">async</span> (event, ctx) => {
-  <span class="cm">// Log every event</span>
-  logger.<span class="fn">info</span>(<span class="str">"event published"</span>, {
-    name: event.name,
-    correlationId: ctx.correlationId,
-  });
-});</div>
+<span class="cm">// One-time handler</span>
+bus.<span class="fn">once</span>(<span class="str">"app.ready"</span>, () => console.<span class="fn">log</span>(<span class="str">"ready"</span>));</div>
       </section>
 
       <!-- Subscriptions -->
@@ -661,53 +578,46 @@ bus.<span class="fn">on</span>(<span class="str">"*"</span>, <span class="kw">as
 
         <h3 class="text-lg font-bold mb-3">Interface: EventSubscription</h3>
         <div class="code-block"><span class="kw">interface</span> <span class="tp">EventSubscription</span> {
-  <span class="kw">readonly</span> id: <span class="tp">string</span>;
-  <span class="kw">readonly</span> eventName: <span class="tp">string</span>;
-  <span class="kw">readonly</span> pattern: <span class="tp">string</span>;
-  <span class="fn">unsubscribe</span>(): <span class="tp">void</span>;
+  <span class="kw">readonly</span> id: <span class="tp">string</span>;              <span class="cm">// equals the handler id</span>
+  <span class="kw">readonly</span> description?: <span class="tp">string</span>;
+  <span class="kw">readonly</span> state: <span class="tp">EventSubscriptionState</span>;   <span class="cm">// ACTIVE | CANCELLED</span>
+  <span class="kw">readonly</span> active: <span class="tp">boolean</span>;
+  <span class="fn">unsubscribe</span>(): <span class="tp">void</span>;             <span class="cm">// idempotent; no-op after the registry was disposed</span>
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Class: EventSubscriptionGroup</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">EventSubscriptionGroup</span> {
-  <span class="fn">add</span>(subscription: <span class="tp">EventSubscription</span>): <span class="tp">void</span>;
-  <span class="fn">unsubscribeAll</span>(): <span class="tp">void</span>;
-  <span class="kw">readonly</span> size: <span class="tp">number</span>;
-}</div>
+        <p class="mb-3 text-sm">Collects subscriptions to dispose together. <code>unsubscribe()</code> attempts every member; failures are re-thrown as an <code>AggregateError</code> and the failed members stay in the group for a retry.</p>
+        <div class="code-block"><span class="kw">const</span> group = <span class="fn">createEventSubscriptionGroup</span>();
+group.<span class="fn">add</span>(bus.<span class="fn">on</span>(<span class="str">"user.created"</span>, onCreated));
+group.<span class="fn">add</span>(bus.<span class="fn">on</span>(<span class="str">"user.deleted"</span>, onDeleted));
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Cleanup Pattern</h3>
-        <div class="code-block"><span class="cm">// Individual unsubscribe</span>
-<span class="kw">const</span> sub = bus.<span class="fn">on</span>(<span class="str">"user.created"</span>, handler);
-<span class="cm">// Later...</span>
-sub.<span class="fn">unsubscribe</span>();
-
-<span class="cm">// Batch unsubscribe with group</span>
-<span class="kw">const</span> group = bus.<span class="fn">createSubscriptionGroup</span>();
-group.<span class="fn">add</span>(bus.<span class="fn">on</span>(<span class="str">"user.created"</span>, handler1));
-group.<span class="fn">add</span>(bus.<span class="fn">on</span>(<span class="str">"user.updated"</span>, handler2));
-
-<span class="cm">// Cleanup all at once</span>
-group.<span class="fn">unsubscribeAll</span>();</div>
+<span class="cm">// later</span>
+group.<span class="fn">unsubscribe</span>();</div>
       </section>
 
       <!-- Middleware -->
       <section id="middleware" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MIDDLEWARE</h2>
         <p class="mb-4">
-          Middleware intercepts events at three points: before dispatch, after dispatch, and around the entire pipeline. This is where you add logging, validation, metrics, and error handling.
+          Middleware wraps the dispatch of a published event. Constructor middleware, <code>bus.use()</code> middleware and per-publish middleware are merged and run in descending <code>priority</code> order.
         </p>
 
         <h3 class="text-lg font-bold mb-3">Type: EventMiddleware</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">EventMiddleware</span> = (
-  context: <span class="tp">EventMiddlewareContext</span>,
-  next: () =&gt; <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;,
-) =&gt; <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;</div>
+        <div class="code-block"><span class="kw">type</span> <span class="tp">EventMiddleware</span>&lt;<span class="tp">TEvent</span> <span class="kw">extends</span> <span class="tp">Event</span> = <span class="tp">Event</span>, <span class="tp">TResult</span> = <span class="tp">unknown</span>&gt; = (
+  context: <span class="tp">EventMiddlewareContext</span>&lt;<span class="tp">TEvent</span>&gt;,
+  next: () => <span class="tp">Promise</span>&lt;<span class="tp">TResult</span>&gt;,
+) => <span class="tp">Promise</span>&lt;<span class="tp">TResult</span>&gt;;
+
+<span class="cm">// Object form: { handle(context, next) }</span></div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Interface: EventMiddlewareContext</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">EventMiddlewareContext</span> {
-  <span class="kw">readonly</span> event: <span class="tp">Event</span>;
-  <span class="kw">readonly</span> eventName: <span class="tp">string</span>;
-  <span class="kw">readonly</span> timestamp: <span class="tp">number</span>;
-  <span class="kw">readonly</span> handlerCount: <span class="tp">number</span>;
+        <div class="code-block"><span class="kw">interface</span> <span class="tp">EventMiddlewareContext</span>&lt;<span class="tp">TEvent</span> <span class="kw">extends</span> <span class="tp">Event</span> = <span class="tp">Event</span>&gt; {
+  <span class="kw">readonly</span> event: <span class="tp">TEvent</span>;
+  <span class="kw">readonly</span> signal: <span class="tp">AbortSignal</span>;
+  <span class="kw">readonly</span> metadata: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;;
+  <span class="kw">readonly</span> executionId: <span class="tp">string</span>;
+  <span class="kw">readonly</span> startedAt: <span class="tp">Date</span>;
+  <span class="kw">readonly</span> state: <span class="tp">Map</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;;   <span class="cm">// shared scratch space for the pipeline</span>
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Built-in Middleware</h3>
@@ -715,252 +625,186 @@ group.<span class="fn">unsubscribeAll</span>();</div>
           <table class="w-full text-sm">
             <thead class="bg-black text-white">
               <tr>
-                <th class="p-3 text-left">Middleware</th>
+                <th class="p-3 text-left">Builder</th>
                 <th class="p-3 text-left">Purpose</th>
               </tr>
             </thead>
             <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">beforeEvent()</td>
-                <td class="p-3">Runs logic before event dispatch</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">afterEvent()</td>
-                <td class="p-3">Runs logic after event dispatch completes</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">aroundEvent()</td>
-                <td class="p-3">Wraps the entire dispatch (before + after)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">validateEventMiddleware()</td>
-                <td class="p-3">Validates event payload against registered schema</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">timingEventMiddleware()</td>
-                <td class="p-3">Measures handler execution time and logs it</td>
-              </tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createEventMiddleware(mw, options?)</td><td class="p-3">Wraps a function/object as a registered middleware (validates it and its priority).</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">beforeEvent(cb) · afterEvent(cb) · aroundEvent(cb)</td><td class="p-3">Run before, after (with the result), or around the downstream dispatch.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">validateEventMiddleware(validator)</td><td class="p-3">Throws <code>EventMiddlewareError</code> when the validator returns false.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">timingEventMiddleware(callback)</td><td class="p-3">Reports the downstream duration in ms.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">stateEventMiddleware(key, factory)</td><td class="p-3">Stores a value in <code>context.state</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">abortableEventMiddleware()</td><td class="p-3">Throws <code>EventDispatchAbortedError</code> when the signal is aborted.</td></tr>
+              <tr><td class="p-3 font-mono">enableEventMiddleware · disableEventMiddleware</td><td class="p-3">Toggle a registered middleware.</td></tr>
             </tbody>
           </table>
         </div>
 
+        <div class="mt-4 callout callout-tip">
+          <strong class="text-zudo-green">Error attribution:</strong> only errors thrown by a middleware itself are wrapped as <code>EventMiddlewareError</code> (with <code>middlewareId</code>). Handler failures (<code>EventHandlerError</code>) and aborts (<code>EventDispatchAbortedError</code>) pass through unwrapped. A middleware that returns without calling <code>next()</code> produces a result with <code>shortCircuited: true</code> and no handler runs. Calling <code>next()</code> twice throws.
+        </div>
+
         <h3 class="text-lg font-bold mb-3 mt-6">Example: Middleware Pipeline</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">timingEventMiddleware</span>,
-  <span class="fn">validateEventMiddleware</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/events"</span>;
+        <div class="code-block"><span class="kw">import</span> { <span class="fn">createStartedEventBus</span>, <span class="fn">timingEventMiddleware</span>, <span class="fn">validateEventMiddleware</span> } <span class="kw">from</span> <span class="str">"@zudojs/events"</span>;
 
-<span class="cm">// Timing middleware</span>
-bus.<span class="fn">use</span>(<span class="fn">timingEventMiddleware</span>());
+<span class="kw">const</span> bus = <span class="fn">createStartedEventBus</span>({
+  middleware: [
+    <span class="fn">validateEventMiddleware</span>((event) => event.payload !== <span class="kw">null</span>, { priority: <span class="num">100</span> }),
+    <span class="fn">timingEventMiddleware</span>((ms, ctx) => metrics.<span class="fn">timing</span>(ctx.event.type, ms)),
+  ],
+});
 
-<span class="cm">// Validation middleware</span>
-bus.<span class="fn">use</span>(<span class="fn">validateEventMiddleware</span>());
+<span class="cm">// Ad-hoc logging middleware</span>
+<span class="kw">const</span> remove = bus.<span class="fn">use</span>(<span class="kw">async</span> (ctx, next) => {
+  console.<span class="fn">log</span>(<span class="str">"→"</span>, ctx.event.type);
+  <span class="kw">const</span> result = <span class="kw">await</span> next();
+  console.<span class="fn">log</span>(<span class="str">"←"</span>, ctx.event.type);
+  <span class="kw">return</span> result;
+});
 
-<span class="cm">// Custom middleware</span>
-bus.<span class="fn">use</span>(<span class="kw">async</span> (ctx, next) => {
-  console.<span class="fn">log</span>(<span class="str">`→ ${ctx.event.name} (${ctx.handlerCount} handlers)`</span>);
-  <span class="kw">const</span> start = Date.<span class="fn">now</span>();
-  <span class="kw">await</span> <span class="fn">next</span>();
-  console.<span class="fn">log</span>(<span class="str">`← ${ctx.event.name} in ${Date.<span class="fn">now</span>() - start}ms`</span>);
-});</div>
+<span class="cm">// Deduplication: skip already-seen events</span>
+bus.<span class="fn">use</span>(<span class="kw">async</span> (ctx, next) => (seen.<span class="fn">has</span>(ctx.event.id) ? <span class="kw">undefined</span> : next()));
+
+remove();</div>
       </section>
 
-      <!-- Error Hierarchy -->
+      <!-- Errors -->
       <section id="errors" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERROR HIERARCHY</h2>
-        <p class="mb-4">All error types are defined in <code class="bg-black/5 px-1">@zudojs/errors</code> and re-exported by this package.</p>
-
+        <p class="mb-4">All errors extend <code>EventError</code> from <code>@zudojs/errors</code> and expose <code>eventType</code>, <code>eventId</code> and, where relevant, <code>handlerId</code> / <code>middlewareId</code>. They are re-exported from <code>@zudojs/events</code>.</p>
         <div class="border-4 border-black">
           <table class="w-full text-sm">
             <thead class="bg-black text-white">
               <tr>
                 <th class="p-3 text-left">Error</th>
-                <th class="p-3 text-left">When Thrown</th>
+                <th class="p-3 text-left">Thrown when</th>
               </tr>
             </thead>
             <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventError</td><td class="p-3">Base error for all event-related issues</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventNotRegisteredError</td><td class="p-3">Publishing an event not in the registry</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventHandlerError</td><td class="p-3">A handler threw during dispatch</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventBusNotRunningError</td><td class="p-3">Publishing on a bus not in RUNNING state</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventBusAlreadyRunningError</td><td class="p-3">Starting a bus already in RUNNING state</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventMiddlewareError</td><td class="p-3">A middleware threw during pipeline execution</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventValidationError</td><td class="p-3">Event payload failed schema validation</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventTimeoutError</td><td class="p-3">Event handler exceeded timeout</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventDuplicateError</td><td class="p-3">Duplicate event registration</td></tr>
-              <tr><td class="p-3 font-mono">EventDisposeError</td><td class="p-3">Error during bus disposal</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">InvalidEventError</td><td class="p-3">Invalid type, id or timestamp in <code>createEvent</code> / <code>defineEvent</code>; a non-event passed to <code>publish</code> / <code>emit</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventTypeNotFoundError</td><td class="p-3">Publishing an unregistered type with <code>requireRegistration</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DuplicateEventDefinitionError · EventDefinitionNotFoundError</td><td class="p-3">Registry definition conflicts / <code>require()</code> misses.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DuplicateEventHandlerError · EventHandlerNotFoundError</td><td class="p-3">Handler id conflicts / <code>requireHandler()</code> misses.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventHandlerError</td><td class="p-3">A handler threw; <code>cause</code> holds the raw value. Collected in <code>result.errors</code> (CONTINUE) or thrown (THROW).</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventTimeoutError</td><td class="p-3">A handler exceeded its <code>timeoutMs</code> (appears as the handler's error).</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventMiddlewareError</td><td class="p-3">A middleware threw, called <code>next()</code> twice, or a validation middleware rejected the event.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventDispatchAbortedError</td><td class="p-3">The <code>signal</code> was aborted; carries partial <code>results</code> / <code>errors</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventBusStoppedError · EventBusDisposedError</td><td class="p-3">Using a stopped / disposed bus.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventEmitterDisposedError · EventRegistryDisposedError</td><td class="p-3">Using a disposed emitter / registry.</td></tr>
+              <tr><td class="p-3 font-mono">EventSerializationError · EventDeserializationError · EventPublishError</td><td class="p-3">Reserved for transports built on top of the bus.</td></tr>
             </tbody>
           </table>
         </div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Error Handling Pattern</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">isEventError</span>,
-  <span class="tp">EventHandlerError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/events"</span>;
+        <div class="code-block"><span class="kw">import</span> { <span class="tp">EventHandlerError</span>, <span class="tp">EventMiddlewareError</span>, <span class="tp">EventDispatchAbortedError</span> } <span class="kw">from</span> <span class="str">"@zudojs/events"</span>;
 
 <span class="kw">try</span> {
-  <span class="kw">await</span> bus.<span class="fn">publish</span>(event);
+  <span class="kw">const</span> result = <span class="kw">await</span> bus.<span class="fn">publish</span>(event, { errorMode: <span class="tp">EventErrorMode</span>.THROW });
 } <span class="kw">catch</span> (error) {
-  <span class="kw">if</span> (<span class="fn">isEventError</span>(error)) {
-    console.<span class="fn">error</span>(<span class="str">`Event ${error.eventName}: ${error.message}`</span>);
-    <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">EventHandlerError</span>) {
-      <span class="cm">// Handler-specific error handling</span>
-    }
+  <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">EventHandlerError</span>) {
+    logger.<span class="fn">error</span>(<span class="str">`handler ${error.handlerId} failed`</span>, error.cause);
+  } <span class="kw">else if</span> (error <span class="kw">instanceof</span> <span class="tp">EventMiddlewareError</span>) {
+    logger.<span class="fn">error</span>(<span class="str">`middleware ${error.middlewareId} failed`</span>, error.cause);
+  } <span class="kw">else if</span> (error <span class="kw">instanceof</span> <span class="tp">EventDispatchAbortedError</span>) {
+    logger.<span class="fn">warn</span>(<span class="str">"aborted after"</span>, error.results.length, <span class="str">"handlers"</span>);
+  } <span class="kw">else</span> {
+    <span class="kw">throw</span> error;
   }
-}</div>
+}
+
+<span class="cm">// Fire-and-forget publishes: route failures through onError instead</span>
+<span class="kw">const</span> bus = <span class="fn">createStartedEventBus</span>({
+  onError: (error, { source, event }) => logger.<span class="fn">error</span>(source, event?.type, error),
+});
+<span class="kw">void</span> bus.<span class="fn">publish</span>(event).<span class="fn">catch</span>((error) => logger.<span class="fn">error</span>(<span class="str">"publish rejected"</span>, error));</div>
       </section>
 
       <!-- Testing -->
       <section id="testing" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TESTING</h2>
-        <p class="mb-4">Import from <code class="bg-black/5 px-1">@zudojs/events</code> for test utilities. The bus is fully synchronous-friendly for testing.</p>
+        <p class="mb-4">Buses are cheap and self-contained: create one per test, inspect the <code>EventPublishResult</code>, and dispose it afterwards. Pass <code>onWarning</code> to silence listener-leak warnings in tests that intentionally register many handlers.</p>
+        <div class="code-block"><span class="kw">import</span> { describe, it, expect, vi } <span class="kw">from</span> <span class="str">"vitest"</span>;
+<span class="kw">import</span> { <span class="fn">createStartedEventBus</span>, <span class="fn">createEvent</span>, <span class="tp">EventBusStoppedError</span> } <span class="kw">from</span> <span class="str">"@zudojs/events"</span>;
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Full Test Example</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">describe</span>, <span class="fn">it</span>, <span class="fn">expect</span> } <span class="kw">from</span> <span class="str">"vitest"</span>;
-<span class="kw">import</span> {
-  <span class="fn">createEventBus</span>,
-  <span class="fn">createStartedEventBus</span>,
-  <span class="fn">defineEvent</span>,
-  <span class="fn">createEvent</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/events"</span>;
-
-<span class="fn">describe</span>(<span class="str">"EventBus"</span>, () => {
-  <span class="fn">it</span>(<span class="str">"delivers events to subscribers"</span>, <span class="kw">async</span> () => {
+<span class="fn">describe</span>(<span class="str">"user events"</span>, () => {
+  <span class="fn">it</span>(<span class="str">"dispatches to matching handlers"</span>, <span class="kw">async</span> () => {
     <span class="kw">const</span> bus = <span class="fn">createStartedEventBus</span>();
-    <span class="kw">const</span> received: <span class="tp">unknown</span>[] = [];
+    <span class="kw">const</span> handler = vi.<span class="fn">fn</span>();
+    bus.<span class="fn">on</span>(<span class="str">"user.*"</span>, handler);
 
-    bus.<span class="fn">register</span>({ name: <span class="str">"test.event"</span> });
-    bus.<span class="fn">on</span>(<span class="str">"test.event"</span>, <span class="kw">async</span> (event) => {
-      received.<span class="fn">push</span>(event.payload);
-    });
+    <span class="kw">const</span> result = <span class="kw">await</span> bus.<span class="fn">publish</span>(<span class="fn">createEvent</span>({ type: <span class="str">"user.created"</span>, payload: { id: <span class="str">"1"</span> } }));
 
-    <span class="kw">await</span> bus.<span class="fn">publish</span>({
-      name: <span class="str">"test.event"</span>,
-      payload: { value: <span class="num">42</span> },
-    });
-
-    <span class="fn">expect</span>(received).<span class="fn">toHaveLength</span>(<span class="num">1</span>);
-    <span class="fn">expect</span>(received[<span class="num">0</span>]).<span class="fn">toEqual</span>({ value: <span class="num">42</span> });
-
-    <span class="kw">await</span> bus.<span class="fn">dispose</span>();
+    <span class="fn">expect</span>(result.handled).<span class="fn">toBe</span>(<span class="kw">true</span>);
+    <span class="fn">expect</span>(handler).<span class="fn">toHaveBeenCalledTimes</span>(<span class="num">1</span>);
+    bus.<span class="fn">dispose</span>();
   });
 
-  <span class="fn">it</span>(<span class="str">"supports namespace wildcards"</span>, <span class="kw">async</span> () => {
+  <span class="fn">it</span>(<span class="str">"collects handler failures"</span>, <span class="kw">async</span> () => {
     <span class="kw">const</span> bus = <span class="fn">createStartedEventBus</span>();
-    <span class="kw">const</span> events: <span class="tp">string</span>[] = [];
+    bus.<span class="fn">on</span>(<span class="str">"user.created"</span>, () => { <span class="kw">throw new</span> <span class="tp">Error</span>(<span class="str">"boom"</span>); });
 
-    bus.<span class="fn">on</span>(<span class="str">"user.*"</span>, <span class="kw">async</span> (event) => {
-      events.<span class="fn">push</span>(event.name);
-    });
+    <span class="kw">const</span> result = <span class="kw">await</span> bus.<span class="fn">publishEvent</span>({ type: <span class="str">"user.created"</span>, payload: {} });
 
-    <span class="kw">await</span> bus.<span class="fn">publish</span>({ name: <span class="str">"user.created"</span>, payload: {} });
-    <span class="kw">await</span> bus.<span class="fn">publish</span>({ name: <span class="str">"user.updated"</span>, payload: {} });
-    <span class="kw">await</span> bus.<span class="fn">publish</span>({ name: <span class="str">"order.created"</span>, payload: {} });
-
-    <span class="fn">expect</span>(events).<span class="fn">toEqual</span>([<span class="str">"user.created"</span>, <span class="str">"user.updated"</span>]);
-
-    <span class="kw">await</span> bus.<span class="fn">dispose</span>();
+    <span class="fn">expect</span>(result.handled).<span class="fn">toBe</span>(<span class="kw">false</span>);
+    <span class="fn">expect</span>(result.failed).<span class="fn">toBe</span>(<span class="num">1</span>);
   });
 
-  <span class="fn">it</span>(<span class="str">"executes middleware pipeline"</span>, <span class="kw">async</span> () => {
-    <span class="kw">const</span> bus = <span class="fn">createStartedEventBus</span>();
-    <span class="kw">const</span> log: <span class="tp">string</span>[] = [];
-
-    bus.<span class="fn">use</span>(<span class="kw">async</span> (ctx, next) => {
-      log.<span class="fn">push</span>(<span class="str">"before"</span>);
-      <span class="kw">await</span> <span class="fn">next</span>();
-      log.<span class="fn">push</span>(<span class="str">"after"</span>);
-    });
-
-    bus.<span class="fn">register</span>({ name: <span class="str">"test.event"</span> });
-    bus.<span class="fn">on</span>(<span class="str">"test.event"</span>, <span class="kw">async</span> () => {
-      log.<span class="fn">push</span>(<span class="str">"handler"</span>);
-    });
-
-    <span class="kw">await</span> bus.<span class="fn">publish</span>({ name: <span class="str">"test.event"</span>, payload: {} });
-
-    <span class="fn">expect</span>(log).<span class="fn">toEqual</span>([<span class="str">"before"</span>, <span class="str">"handler"</span>, <span class="str">"after"</span>]);
-
-    <span class="kw">await</span> bus.<span class="fn">dispose</span>();
-  });
-
-  <span class="fn">it</span>(<span class="str">"unsubscribes correctly"</span>, <span class="kw">async</span> () => {
-    <span class="kw">const</span> bus = <span class="fn">createStartedEventBus</span>();
-    <span class="kw">let</span> count = <span class="num">0</span>;
-
-    <span class="kw">const</span> sub = bus.<span class="fn">on</span>(<span class="str">"counter"</span>, <span class="kw">async</span> () => {
-      count++;
-    });
-
-    <span class="kw">await</span> bus.<span class="fn">publish</span>({ name: <span class="str">"counter"</span>, payload: {} });
-    <span class="fn">expect</span>(count).<span class="fn">toBe</span>(<span class="num">1</span>);
-
-    sub.<span class="fn">unsubscribe</span>();
-
-    <span class="kw">await</span> bus.<span class="fn">publish</span>({ name: <span class="str">"counter"</span>, payload: {} });
-    <span class="fn">expect</span>(count).<span class="fn">toBe</span>(<span class="num">1</span>);
-
-    <span class="kw">await</span> bus.<span class="fn">dispose</span>();
+  <span class="fn">it</span>(<span class="str">"rejects publishes while stopped"</span>, <span class="kw">async</span> () => {
+    <span class="kw">const</span> bus = <span class="fn">createStartedEventBus</span>().<span class="fn">stop</span>();
+    <span class="kw">await</span> <span class="fn">expect</span>(bus.<span class="fn">publishEvent</span>({ type: <span class="str">"x"</span>, payload: <span class="kw">null</span> })).rejects.<span class="fn">toBeInstanceOf</span>(<span class="tp">EventBusStoppedError</span>);
   });
 });</div>
       </section>
 
-      <!-- Full Integration Example -->
+      <!-- Full Example -->
       <section id="full-example" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">FULL INTEGRATION EXAMPLE</h2>
-        <p class="mb-4">Complete example: define events, register on bus, add middleware, publish, and handle.</p>
-
         <div class="code-block"><span class="kw">import</span> {
   <span class="fn">createStartedEventBus</span>,
   <span class="fn">defineEvent</span>,
-  <span class="fn">createEvent</span>,
   <span class="fn">timingEventMiddleware</span>,
+  <span class="tp">EventEmitterMode</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/events"</span>;
 
-<span class="cm">// 1. Define event types</span>
-<span class="kw">const</span> UserCreated = <span class="fn">defineEvent</span>&lt;<span class="str">"user.created"</span>, {
-  id: <span class="tp">string</span>;
-  email: <span class="tp">string</span>;
-}&gt;(<span class="str">"user.created"</span>);
+<span class="cm">// 1. Definitions</span>
+<span class="kw">const</span> UserCreated = <span class="fn">defineEvent</span>&lt;<span class="str">"user.created"</span>, { id: <span class="tp">string</span>; email: <span class="tp">string</span> }&gt;(<span class="str">"user.created"</span>);
+<span class="kw">const</span> UserDeleted = <span class="fn">defineEvent</span>&lt;<span class="str">"user.deleted"</span>, { id: <span class="tp">string</span> }&gt;(<span class="str">"user.deleted"</span>);
 
-<span class="kw">const</span> UserDeleted = <span class="fn">defineEvent</span>&lt;<span class="str">"user.deleted"</span>, {
-  id: <span class="tp">string</span>;
-}&gt;(<span class="str">"user.deleted"</span>);
-
-<span class="cm">// 2. Create bus with middleware</span>
-<span class="kw">const</span> bus = <span class="fn">createStartedEventBus</span>({ name: <span class="str">"app"</span> });
-bus.<span class="fn">use</span>(<span class="fn">timingEventMiddleware</span>());
-
-<span class="cm">// 3. Register event definitions</span>
-bus.<span class="fn">register</span>({ name: <span class="str">"user.created"</span>, version: <span class="str">"1.0.0"</span> });
-bus.<span class="fn">register</span>({ name: <span class="str">"user.deleted"</span>, version: <span class="str">"1.0.0"</span> });
-
-<span class="cm">// 4. Subscribe to specific events</span>
-bus.<span class="fn">on</span>(<span class="str">"user.created"</span>, <span class="kw">async</span> (event, ctx) => {
-  <span class="kw">await</span> <span class="fn">sendWelcomeEmail</span>(event.payload.email);
+<span class="cm">// 2. Bus with middleware and error routing</span>
+<span class="kw">const</span> bus = <span class="fn">createStartedEventBus</span>({
+  requireRegistration: <span class="kw">true</span>,
+  emitter: { mode: <span class="tp">EventEmitterMode</span>.SEQUENTIAL },
+  middleware: [<span class="fn">timingEventMiddleware</span>((ms, ctx) => metrics.<span class="fn">timing</span>(<span class="str">`event.${ctx.event.type}`</span>, ms))],
+  onError: (error, { source, event }) => logger.<span class="fn">error</span>({ source, type: event?.type }, error),
 });
 
-<span class="cm">// 5. Subscribe to namespace</span>
-bus.<span class="fn">on</span>(<span class="str">"user.*"</span>, <span class="kw">async</span> (event) => {
-  <span class="kw">await</span> <span class="fn">auditLog</span>(event.name, event.payload);
-});
+<span class="cm">// 3. Register definitions</span>
+bus.<span class="fn">register</span>(UserCreated);
+bus.<span class="fn">register</span>(UserDeleted);
 
-<span class="cm">// 6. Global catch-all for metrics</span>
-bus.<span class="fn">onAny</span>(<span class="kw">async</span> (event) => {
-  metrics.<span class="fn">increment</span>(<span class="str">`event.${event.name}`</span>);
-});
+<span class="cm">// 4. Handlers</span>
+bus.<span class="fn">on</span>(<span class="str">"user.created"</span>, <span class="kw">async</span> (event) => {
+  <span class="kw">await</span> <span class="fn">sendWelcomeEmail</span>((event.payload <span class="kw">as</span> { email: <span class="tp">string</span> }).email);
+}, { id: <span class="str">"welcome-email"</span>, timeoutMs: <span class="num">10_000</span> });
 
-<span class="cm">// 7. Publish events</span>
-<span class="kw">await</span> bus.<span class="fn">publish</span>({
-  name: <span class="str">"user.created"</span>,
-  payload: { id: <span class="str">"u-001"</span>, email: <span class="str">"alice@example.com"</span> },
-  correlationId: <span class="str">"req-abc-123"</span>,
-});
+bus.<span class="fn">on</span>(<span class="str">"user.*"</span>, <span class="kw">async</span> (event, ctx) => {
+  <span class="kw">await</span> <span class="fn">auditLog</span>(event.type, event.payload, ctx.correlationId);
+}, { id: <span class="str">"audit"</span>, priority: <span class="num">-10</span> });
 
-<span class="cm">// 8. Graceful shutdown</span>
-process.<span class="fn">on</span>(<span class="str">"SIGTERM"</span>, <span class="kw">async</span> () => {
-  <span class="kw">await</span> bus.<span class="fn">dispose</span>();
+bus.<span class="fn">onAny</span>((event) => metrics.<span class="fn">increment</span>(<span class="str">`event.${event.type}`</span>), { id: <span class="str">"metrics"</span> });
+
+<span class="cm">// 5. Publish</span>
+<span class="kw">const</span> result = <span class="kw">await</span> bus.<span class="fn">publish</span>(
+  UserCreated.<span class="fn">create</span>({ id: <span class="str">"u-001"</span>, email: <span class="str">"alice@example.com"</span> }, { correlationId: <span class="str">"req-abc-123"</span> }),
+);
+<span class="kw">if</span> (!result.handled) logger.<span class="fn">warn</span>(<span class="str">"no handler succeeded"</span>, result.errors);
+
+<span class="cm">// 6. Graceful shutdown</span>
+process.<span class="fn">on</span>(<span class="str">"SIGTERM"</span>, () => {
+  bus.<span class="fn">stop</span>();      <span class="cm">// new publishes are rejected</span>
+  bus.<span class="fn">dispose</span>();   <span class="cm">// cancel subscriptions, release definitions</span>
   process.<span class="fn">exit</span>(<span class="num">0</span>);
 });</div>
       </section>
