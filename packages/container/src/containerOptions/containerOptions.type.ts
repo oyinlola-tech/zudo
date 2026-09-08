@@ -6,30 +6,22 @@ import type { ContainerLifecycleOptions } from "../containerLifecycle/containerL
 import type { ContainerRegistryOptions } from "../containerRegistry/containerRegistry.type.js";
 import type { ResolutionOptions } from "../containerResolution/containerResolution.type.js";
 
-export enum ContainerLogLevel {
-  NONE = "none",
-  ERROR = "error",
-  WARN = "warn",
-  INFO = "info",
-  DEBUG = "debug",
-  TRACE = "trace",
-}
-
-export const DEFAULT_CONTAINER_LOG_LEVEL: ContainerLogLevel =
-  ContainerLogLevel.WARN;
-
-export interface ContainerResolutionOptions extends ResolutionOptions {
-  readonly autoRegisterClasses?: boolean;
-  readonly detectCircularDependencies?: boolean;
-  readonly maxResolutionDepth?: number;
-}
+/**
+ * The subset of {@link ResolutionOptions} a container accepts at
+ * construction time. Per-call plumbing (`cache`, `path`,
+ * `allowRegistration`, `onInstanceCreated`) is managed by the container
+ * itself and deliberately not configurable here.
+ */
+export type ContainerResolutionOptions = Pick<
+  ResolutionOptions,
+  "autoRegisterClasses" | "detectCircularDependencies" | "maxResolutionDepth"
+>;
 
 export interface ContainerOptions {
   readonly name?: string;
   readonly registry?: ContainerRegistryOptions;
   readonly lifecycle?: ContainerLifecycleOptions;
   readonly resolution?: ContainerResolutionOptions;
-  readonly logLevel?: ContainerLogLevel;
   readonly autoDispose?: boolean;
   readonly allowScopes?: boolean;
   readonly freezeRegistrations?: boolean;
@@ -41,7 +33,6 @@ export interface ResolvedContainerOptions {
   readonly registry: ContainerRegistryOptions;
   readonly lifecycle: ContainerLifecycleOptions;
   readonly resolution: ContainerResolutionOptions;
-  readonly logLevel: ContainerLogLevel;
   readonly autoDispose: boolean;
   readonly allowScopes: boolean;
   readonly freezeRegistrations: boolean;
@@ -88,7 +79,6 @@ export function resolveContainerOptions(
     registry: Object.freeze({ ...(options.registry ?? {}) }),
     lifecycle: Object.freeze({ ...(options.lifecycle ?? {}) }),
     resolution: Object.freeze({ ...resolution }),
-    logLevel: options.logLevel ?? DEFAULT_CONTAINER_LOG_LEVEL,
     autoDispose: options.autoDispose ?? DEFAULT_AUTO_DISPOSE,
     allowScopes: options.allowScopes ?? DEFAULT_ALLOW_SCOPES,
     freezeRegistrations:
@@ -109,19 +99,6 @@ export function validateResolutionOptions(
       "Container maxResolutionDepth must be a positive integer.",
     );
   }
-}
-
-export function isContainerLogLevel(
-  value: unknown,
-): value is ContainerLogLevel {
-  return (
-    value === ContainerLogLevel.NONE ||
-    value === ContainerLogLevel.ERROR ||
-    value === ContainerLogLevel.WARN ||
-    value === ContainerLogLevel.INFO ||
-    value === ContainerLogLevel.DEBUG ||
-    value === ContainerLogLevel.TRACE
-  );
 }
 
 export function allowsContainerScopes(

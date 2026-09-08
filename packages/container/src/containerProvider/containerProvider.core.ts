@@ -13,6 +13,11 @@ export type ProviderToken<T = unknown> = Token<T> | InjectionToken<T>;
 
 export interface ClassProvider<T> {
   readonly useClass: Constructor<T>;
+  /**
+   * Tokens resolved and passed to the constructor, in order.
+   * Omit (or leave empty) for zero-argument constructors.
+   */
+  readonly inject?: readonly ProviderToken[];
 }
 export interface FactoryProvider<T> {
   readonly useFactory: (...dependencies: unknown[]) => T;
@@ -38,6 +43,7 @@ export interface TokenProvider<T = unknown> {
 export interface ClassRegistration<T = unknown> {
   readonly provide: ProviderToken<T>;
   readonly useClass: Constructor<T>;
+  readonly inject?: readonly ProviderToken[];
 }
 export interface FactoryRegistration<T = unknown> {
   readonly provide: ProviderToken<T>;
@@ -88,12 +94,21 @@ export function isTokenProvider<T = unknown>(
 }
 export function hasInjectedDependencies<T = unknown>(
   provider: Provider<T>,
-): provider is FactoryProvider<T> {
-  return isFactoryProvider(provider) && Array.isArray(provider.inject);
+): provider is (FactoryProvider<T> | ClassProvider<T>) & {
+  readonly inject: readonly ProviderToken[];
+} {
+  return (
+    (isFactoryProvider(provider) || isClassProvider(provider)) &&
+    Array.isArray(provider.inject) &&
+    provider.inject.length > 0
+  );
 }
 
-export function classProvider<T>(useClass: Constructor<T>): ClassProvider<T> {
-  return Object.freeze({ useClass });
+export function classProvider<T>(
+  useClass: Constructor<T>,
+  inject: readonly ProviderToken[] = [],
+): ClassProvider<T> {
+  return Object.freeze({ useClass, inject: Object.freeze([...inject]) });
 }
 export function factoryProvider<T>(
   useFactory: (...dependencies: unknown[]) => T,
@@ -113,8 +128,13 @@ export function existingProvider<T>(
 export function provideClass<T>(
   provide: ProviderToken<T>,
   useClass: Constructor<T>,
+  inject: readonly ProviderToken[] = [],
 ): ClassRegistration<T> {
-  return Object.freeze({ provide, useClass });
+  return Object.freeze({
+    provide,
+    useClass,
+    inject: Object.freeze([...inject]),
+  });
 }
 export function provideFactory<T>(
   provide: ProviderToken<T>,

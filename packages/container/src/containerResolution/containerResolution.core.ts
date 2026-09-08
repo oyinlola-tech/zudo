@@ -1,8 +1,29 @@
 /**
  * Dependency resolver for Zudojs.
+ *
+ * Lifetime semantics:
+ * - SINGLETON instances are always looked up in and stored to the resolver's
+ *   root singleton cache, no matter where the resolution happens (root or
+ *   scope). A scope can therefore never re-create or shadow a singleton.
+ * - SCOPED instances live in the scope cache supplied via
+ *   `ResolutionOptions.cache`. Resolving a SCOPED registration without a
+ *   scope cache throws a ScopedResolutionError; a SCOPED dependency of a
+ *   SINGLETON throws a CaptiveDependencyError.
+ * - TRANSIENT instances are never cached.
+ *
+ * Every freshly created instance (any lifetime, never a cache hit) is
+ * reported through `ResolutionOptions.onInstanceCreated` in creation order,
+ * so owners can track transitively created dependencies for disposal — not
+ * just the top-level result of a `resolve()` call.
+ *
+ * Factories registered as SINGLETON or SCOPED must be synchronous: a Promise
+ * result throws an AsyncProviderError instead of being cached as the instance.
+ *
+ * The resolver subscribes to registry change events: REPLACE/REMOVE evict the
+ * affected token's cached singleton, CLEAR/RESTORE evict all cached
+ * singletons. Each eviction is reported through the `onSingletonEvicted`
+ * callback so the owning container can dispose the instance.
  */
-
-import type { ContainerProvider } from "../containerProvider/containerProvider.core.js";
 
 import {
   isClassProvider,
@@ -19,12 +40,14 @@ import type {
   RegistrationToken,
 } from "../containerRegistration/containerRegistration.core.js";
 
-import { getRegistrationToken } from "../containerRegistration/containerRegistration.core.js";
+import {
+  defineRegistration,
+  getRegistrationToken,
+} from "../containerRegistration/containerRegistration.core.js";
 
 import type { ContainerRegistry } from "../containerRegistry/containerRegistry.core.js";
-
-import { RegistrationNotFoundError } from "@zudojs/errors";
-import { describeRegistryToken } from "../containerRegistry/containerRegistry.error.js";
+import type { RegistryChangeEvent } from "../containerRegistry/containerRegistry.type.js";
+import { RegistryOperation } from "../containerRegistry/containerRegistry.type.js";
 
 import { unwrapToken } from "../containerToken/containerToken.type.js";
 
@@ -33,23 +56,82 @@ import type { Token } from "../containerToken/containerToken.type.js";
 import type {
   ResolutionCache,
   ResolutionOptions,
-  ResolutionPath,
   ResolutionResult,
 } from "./containerResolution.type.js";
 
 import {
   CircularDependencyError,
   ProviderResolutionError,
+  RegistrationNotFoundError,
 } from "@zudojs/errors";
+import {
+  AsyncProviderError,
+  CaptiveDependencyError,
+  DependencyResolutionError,
+  MaxResolutionDepthError,
+  ScopedResolutionError,
+} from "./containerResolution.error.js";
 import { describeToken } from "../containerToken/containerToken.type.js";
+
+/** Normalized per-resolution settings. */
+interface ResolutionState {
+  readonly scopeCache: ResolutionCache | undefined;
+  readonly autoRegisterClasses: boolean;
+  readonly allowRegistration: boolean;
+  readonly detectCircularDependencies: boolean;
+  readonly maxResolutionDepth: number;
+  readonly onInstanceCreated:
+    ((result: ResolutionResult<unknown>) => void) | undefined;
+  /** Mutable resolution path (also mirrored in pathSet for O(1) cycle checks). */
+  readonly path: Token<unknown>[];
+  readonly pathSet: Set<Token<unknown>>;
+}
+
+/**
+ * Scope cache that falls back to its parent scope's cache for lookups while
+ * writing only to its own map. Nested scopes therefore see SCOPED instances
+ * already created by their ancestors, while instances they create themselves
+ * stay private to (and are disposed with) the nested scope.
+ */
+class ChainedResolutionCache implements ResolutionCache {
+  readonly #own = new Map<Token<unknown>, unknown>();
+  readonly #parent: ResolutionCache | undefined;
+
+  constructor(parent?: ResolutionCache) {
+    this.#parent = parent;
+  }
+
+  has(token: Token<unknown>): boolean {
+    return this.#own.has(token) || (this.#parent?.has(token) ?? false);
+  }
+
+  get(token: Token<unknown>): unknown {
+    if (this.#own.has(token)) return this.#own.get(token);
+    return this.#parent?.get(token);
+  }
+
+  set(token: Token<unknown>, value: unknown): void {
+    this.#own.set(token, value);
+  }
+
+  clear(): void {
+    this.#own.clear();
+  }
+}
 
 export class ContainerResolver {
   private readonly registry: ContainerRegistry;
-  private readonly singletonCache: ResolutionCache;
+  private readonly singletonCache = new Map<Token<unknown>, unknown>();
+  private readonly onSingletonEvicted:
+    ((token: Token<unknown>) => void) | undefined;
 
-  constructor(registry: ContainerRegistry) {
+  constructor(
+    registry: ContainerRegistry,
+    onSingletonEvicted?: (token: Token<unknown>) => void,
+  ) {
     this.registry = registry;
-    this.singletonCache = new Map();
+    this.onSingletonEvicted = onSingletonEvicted;
+    registry.subscribe((event) => this.handleRegistryChange(event));
   }
 
   resolve<T>(token: RegistrationToken<T>, options: ResolutionOptions = {}): T {
@@ -61,47 +143,89 @@ export class ContainerResolver {
     options: ResolutionOptions = {},
   ): ResolutionResult<T> {
     const normalized = unwrapToken(token);
-    const cache = options.cache ?? this.singletonCache;
-    const path = options.path ?? [];
-    return this.resolveInternal(normalized, cache, path, options);
+    const path = [...(options.path ?? [])];
+    const state: ResolutionState = {
+      scopeCache: options.cache,
+      autoRegisterClasses: options.autoRegisterClasses ?? true,
+      allowRegistration: options.allowRegistration ?? true,
+      detectCircularDependencies: options.detectCircularDependencies ?? true,
+      maxResolutionDepth: options.maxResolutionDepth ?? 100,
+      onInstanceCreated: options.onInstanceCreated,
+      path,
+      pathSet: new Set(path),
+    };
+    return this.resolveInternal(normalized, state, undefined);
   }
 
   private resolveInternal<T>(
     token: Token<T>,
-    cache: ResolutionCache,
-    path: ResolutionPath,
-    options: ResolutionOptions,
+    state: ResolutionState,
+    singletonAncestor: Token<unknown> | undefined,
   ): ResolutionResult<T> {
-    if (path.includes(token))
-      throw new CircularDependencyError(
-        [...path, token].map((t) => describeToken(t)),
+    const depth = state.path.length + 1;
+    if (depth > state.maxResolutionDepth)
+      throw new MaxResolutionDepthError(
+        describeToken(token),
+        depth,
+        state.maxResolutionDepth,
+        [...state.path, token].map((t) => describeToken(t)),
       );
 
-    const registration = this.registry.get(token);
+    if (state.detectCircularDependencies && state.pathSet.has(token))
+      throw new CircularDependencyError(
+        [...state.path, token].map((t) => describeToken(t)),
+      );
+
+    let registration = this.registry.get(token);
     if (!registration) {
-      if (
-        options.autoRegisterClasses !== false &&
-        typeof token === "function"
-      ) {
-        this.registry.register(
-          token,
-          { useClass: token },
-          { scope: Scope.TRANSIENT },
-        );
-        return this.resolveInternal(token, cache, path, {
-          ...options,
-          autoRegisterClasses: false,
-        });
+      if (state.autoRegisterClasses && typeof token === "function") {
+        if (state.allowRegistration) {
+          registration = this.registry.register(
+            token,
+            { useClass: token },
+            { scope: Scope.TRANSIENT },
+          );
+        } else {
+          // Registrations are frozen: instantiate ephemerally, do not register.
+          registration = defineRegistration(
+            token,
+            { useClass: token },
+            { scope: Scope.TRANSIENT },
+          );
+        }
+      } else {
+        throw new RegistrationNotFoundError(describeToken(token));
       }
-      throw new RegistrationNotFoundError(describeRegistryToken(token));
     }
 
-    const currentPath: ResolutionPath = [...path, token];
-    if (registration.scope !== Scope.TRANSIENT) {
-      const cached = cache.get(token);
-      if (cached !== undefined) {
+    const currentPath = [...state.path, token];
+
+    if (registration.scope === Scope.SINGLETON) {
+      if (this.singletonCache.has(token)) {
         return {
-          value: cached as T,
+          value: this.singletonCache.get(token) as T,
+          token,
+          registration,
+          scope: registration.scope,
+          fromCache: true,
+          path: currentPath,
+        };
+      }
+    } else if (registration.scope === Scope.SCOPED) {
+      if (singletonAncestor !== undefined)
+        throw new CaptiveDependencyError(
+          describeToken(singletonAncestor),
+          describeToken(token),
+          currentPath.map((t) => describeToken(t)),
+        );
+      if (!state.scopeCache)
+        throw new ScopedResolutionError(
+          describeToken(token),
+          currentPath.map((t) => describeToken(t)),
+        );
+      if (state.scopeCache.has(token)) {
+        return {
+          value: state.scopeCache.get(token) as T,
           token,
           registration,
           scope: registration.scope,
@@ -111,17 +235,24 @@ export class ContainerResolver {
       }
     }
 
-    const value = this.createInstance(
-      registration,
-      cache,
-      currentPath,
-      options,
-    );
+    const nextAncestor =
+      registration.scope === Scope.SINGLETON ? token : singletonAncestor;
+    state.path.push(token);
+    state.pathSet.add(token);
+    let value: T;
+    try {
+      value = this.createInstance(registration, state, nextAncestor);
+    } finally {
+      state.path.pop();
+      state.pathSet.delete(token);
+    }
+
     if (registration.scope === Scope.SINGLETON)
       this.singletonCache.set(token, value);
-    else if (registration.scope === Scope.SCOPED) cache.set(token, value);
+    else if (registration.scope === Scope.SCOPED)
+      state.scopeCache?.set(token, value);
 
-    return {
+    const result: ResolutionResult<T> = {
       value,
       token,
       registration,
@@ -129,75 +260,99 @@ export class ContainerResolver {
       fromCache: false,
       path: currentPath,
     };
+    state.onInstanceCreated?.(result);
+    return result;
   }
 
   private createInstance<T>(
     registration: ContainerRegistration<T>,
-    cache: ResolutionCache,
-    path: ResolutionPath,
-    options: ResolutionOptions,
+    state: ResolutionState,
+    singletonAncestor: Token<unknown> | undefined,
   ): T {
     const provider = normalizeProvider(registration.provider);
+    const token = getRegistrationToken(registration);
     try {
       if (isValueProvider(provider)) return provider.useValue;
-      if (isExistingProvider(provider))
-        return this.resolve(provider.useExisting, { ...options, cache, path });
-      if (isFactoryProvider(provider))
-        return this.createFromFactory(provider, cache, path, options);
-      if (isClassProvider(provider))
-        return this.createFromClass(provider.useClass);
+      if (isExistingProvider(provider)) {
+        const target = unwrapToken(provider.useExisting);
+        if (
+          !this.registry.has(target) &&
+          !(state.autoRegisterClasses && typeof target === "function")
+        ) {
+          throw new Error(
+            `useExisting target "${describeToken(target)}" for token ` +
+              `"${describeToken(token)}" is not registered.`,
+          );
+        }
+        return this.resolveInternal(target, state, singletonAncestor)
+          .value as T;
+      }
+      if (isFactoryProvider(provider)) {
+        const deps = provider.inject ?? [];
+        const args = deps.map(
+          (d) =>
+            this.resolveInternal(unwrapToken(d), state, singletonAncestor)
+              .value,
+        );
+        const produced = provider.useFactory(...args);
+        if (registration.scope !== Scope.TRANSIENT && isPromiseLike(produced))
+          throw new AsyncProviderError(
+            describeToken(token),
+            registration.scope,
+          );
+        return produced;
+      }
+      if (isClassProvider(provider)) {
+        const deps = provider.inject ?? [];
+        const args = deps.map(
+          (d) =>
+            this.resolveInternal(unwrapToken(d), state, singletonAncestor)
+              .value,
+        );
+        const ctor = provider.useClass as new (...ctorArgs: unknown[]) => T;
+        return new ctor(...args);
+      }
       throw new Error("Unsupported container provider.");
     } catch (error) {
+      // Resolution errors created deeper in the chain already carry the full
+      // chain in their message/details — propagate them unchanged.
       if (
         error instanceof CircularDependencyError ||
-        error instanceof ProviderResolutionError
+        error instanceof ProviderResolutionError ||
+        error instanceof ScopedResolutionError ||
+        error instanceof CaptiveDependencyError ||
+        error instanceof MaxResolutionDepthError ||
+        error instanceof AsyncProviderError
       )
         throw error;
-      const message = error instanceof Error ? error.message : undefined;
-      throw new ProviderResolutionError(
-        describeRegistryToken(getRegistrationToken(registration)),
-        message,
+      throw new DependencyResolutionError(
+        describeToken(token),
         error,
+        state.path.map((t) => describeToken(t)),
       );
     }
   }
 
-  private createFromFactory<T>(
-    provider: Extract<
-      ContainerProvider<T>,
-      { useFactory: (...args: unknown[]) => T }
-    >,
-    cache: ResolutionCache,
-    path: ResolutionPath,
-    options: ResolutionOptions,
-  ): T {
-    const deps = provider.inject ?? [];
-    return provider.useFactory(
-      ...deps.map((d) => this.resolve(d, { ...options, cache, path })),
-    );
+  /**
+   * Creates an empty scope cache for SCOPED instances. When `parent` is
+   * given, lookups fall back to it (nested scope semantics) while writes stay
+   * local to the new cache.
+   */
+  createScope(parent?: ResolutionCache): ResolutionCache {
+    return new ChainedResolutionCache(parent);
   }
 
-  private createFromClass<T>(constructor: new (...args: unknown[]) => T): T {
-    return new constructor();
+  /** Tokens currently held in the singleton cache. */
+  getCachedSingletonTokens(): readonly Token<unknown>[] {
+    return [...this.singletonCache.keys()];
   }
 
-  createScope(): ResolutionCache {
-    return new Map();
-  }
-  clearSingletons(): void {
+  /**
+   * Clears the singleton cache WITHOUT invoking eviction callbacks.
+   * Callers are responsible for disposing the previously cached instances.
+   */
+  clearSingletonCache(): void {
     this.singletonCache.clear();
-  }
-  hasSingleton<T>(token: RegistrationToken<T>): boolean {
-    return this.singletonCache.has(unwrapToken(token));
-  }
-  getSingleton<T>(token: RegistrationToken<T>): T | undefined {
-    return this.singletonCache.get(unwrapToken(token)) as T | undefined;
-  }
-  removeSingleton<T>(token: RegistrationToken<T>): boolean {
-    return this.singletonCache.delete(unwrapToken(token));
-  }
-  clearScope(cache: ResolutionCache): void {
-    cache.clear();
   }
 
   resolveMany<T>(
@@ -207,8 +362,45 @@ export class ContainerResolver {
     return tokens.map((t) => this.resolve(t, options));
   }
 
-  canResolve<T>(token: RegistrationToken<T>): boolean {
+  canResolve<T>(
+    token: RegistrationToken<T>,
+    autoRegisterClasses = true,
+  ): boolean {
     const t = unwrapToken(token);
-    return this.registry.has(t) || typeof t === "function";
+    return (
+      this.registry.has(t) || (autoRegisterClasses && typeof t === "function")
+    );
   }
+
+  private handleRegistryChange(event: RegistryChangeEvent): void {
+    switch (event.operation) {
+      case RegistryOperation.REPLACE:
+      case RegistryOperation.REMOVE: {
+        this.evictSingleton(unwrapToken(event.token));
+        break;
+      }
+      case RegistryOperation.CLEAR:
+      case RegistryOperation.RESTORE: {
+        for (const t of [...this.singletonCache.keys()]) this.evictSingleton(t);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  private evictSingleton(token: Token<unknown>): void {
+    if (!this.singletonCache.has(token)) return;
+    this.singletonCache.delete(token);
+    this.onSingletonEvicted?.(token);
+  }
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "then" in value &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
 }

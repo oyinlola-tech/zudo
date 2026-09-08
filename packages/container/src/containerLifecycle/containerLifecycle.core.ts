@@ -1,19 +1,49 @@
 /**
  * Lifecycle management for resolved container instances.
- * Tracks instances that need cleanup and disposes them when a container or scope is destroyed.
+ *
+ * Tracks SINGLETON instances (container-owned) and SCOPED instances
+ * (scope-owned) that need cleanup and disposes them when their owner is
+ * destroyed, in reverse creation order.
+ *
+ * TRANSIENT instances are deliberately NOT tracked: the container creates a
+ * new transient per resolution, so tracking them per token would either leak
+ * (unbounded growth) or silently drop all but the last instance. Callers own
+ * the disposal of transient instances they resolve.
  */
 
 import type { Token } from "../containerToken/containerToken.type.js";
 import { describeToken } from "../containerToken/containerToken.type.js";
 import { ContainerLifecycleError } from "@zudojs/errors";
 
-export interface Disposable {
-  dispose(): void;
+/**
+ * An object disposable via a `dispose()` method (sync or async).
+ * Named `DisposableLike` to avoid shadowing the ES2023 `Disposable` built-in.
+ */
+export interface DisposableLike {
+  dispose(): void | Promise<void>;
 }
-export interface AsyncDisposable {
-  [Symbol.asyncDispose]?: () => Promise<void>;
+
+/** An object disposable via the ES2023 `Symbol.dispose` protocol. */
+export interface SymbolDisposableLike {
+  [Symbol.dispose](): void;
 }
-export type DisposableInstance = Disposable | AsyncDisposable;
+
+/**
+ * An object disposable via the ES2023 `Symbol.asyncDispose` protocol.
+ * Named `AsyncDisposableLike` to avoid shadowing the `AsyncDisposable`
+ * built-in.
+ */
+export interface AsyncDisposableLike {
+  [Symbol.asyncDispose](): Promise<void> | void;
+}
+
+/** @deprecated Use {@link DisposableLike} instead. */
+export type Disposable = DisposableLike;
+/** @deprecated Use {@link AsyncDisposableLike} instead. */
+export type AsyncDisposable = AsyncDisposableLike;
+
+export type DisposableInstance =
+  DisposableLike | SymbolDisposableLike | AsyncDisposableLike;
 
 export enum ContainerLifecycleOwner {
   CONTAINER = "container",
@@ -45,7 +75,7 @@ export class ContainerDisposalError extends ContainerLifecycleError {
   }
 }
 
-export function isDisposable(value: unknown): value is Disposable {
+export function isDisposable(value: unknown): value is DisposableLike {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -54,19 +84,34 @@ export function isDisposable(value: unknown): value is Disposable {
   );
 }
 
-export function isAsyncDisposable(value: unknown): value is AsyncDisposable {
+export function isSymbolDisposable(
+  value: unknown,
+): value is SymbolDisposableLike {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Symbol.dispose in value &&
+    typeof (value as SymbolDisposableLike)[Symbol.dispose] === "function"
+  );
+}
+
+export function isAsyncDisposable(
+  value: unknown,
+): value is AsyncDisposableLike {
   return (
     typeof value === "object" &&
     value !== null &&
     Symbol.asyncDispose in value &&
-    typeof (value as AsyncDisposable)[Symbol.asyncDispose] === "function"
+    typeof (value as AsyncDisposableLike)[Symbol.asyncDispose] === "function"
   );
 }
 
 export function isDisposableInstance(
   value: unknown,
 ): value is DisposableInstance {
-  return isDisposable(value) || isAsyncDisposable(value);
+  return (
+    isDisposable(value) || isSymbolDisposable(value) || isAsyncDisposable(value)
+  );
 }
 
 export class ContainerLifecycle {
@@ -81,16 +126,25 @@ export class ContainerLifecycle {
     this.options = { failFast: options.failFast ?? false };
   }
 
+  /**
+   * Tracks a disposable instance for later cleanup.
+   *
+   * Re-tracking a token removes the previous entry and re-inserts it at the
+   * end of the map, so reverse-creation disposal order stays sound.
+   * Non-disposable instances are ignored.
+   */
   track<T>(
     token: Token<T>,
     instance: T,
     owner: ContainerLifecycleOwner = ContainerLifecycleOwner.CONTAINER,
   ): void {
     if (this.disposed)
-      throw new Error(
+      throw new ContainerLifecycleError(
+        "track",
         "Cannot track an instance after the container lifecycle has been disposed.",
       );
     if (!isDisposableInstance(instance)) return;
+    this.instances.delete(token);
     this.instances.set(token, {
       token,
       instance,
@@ -116,19 +170,31 @@ export class ContainerLifecycle {
     return this.instances.delete(token);
   }
 
+  /**
+   * Disposes a single tracked instance and untracks it. Untracking happens
+   * even when disposal fails — a failed disposal is terminal for the entry.
+   */
   async disposeInstance<T>(token: Token<T>): Promise<void> {
-    const tracked = this.get(token);
+    const tracked = this.instances.get(token);
     if (!tracked || tracked.disposed) return;
+    tracked.disposed = true;
+    this.instances.delete(token);
     try {
       await disposeValue(tracked.instance);
-      tracked.disposed = true;
-      this.instances.delete(token);
     } catch (error) {
       if (this.options.failFast) throw error;
       throw new ContainerDisposalError([error], [token]);
     }
   }
 
+  /**
+   * Disposes tracked instances in reverse creation order.
+   *
+   * Entries are untracked even when their disposal fails (terminal). When
+   * `owner` is omitted the whole lifecycle is marked disposed — this happens
+   * even on failure — and every failure is reported in the thrown
+   * ContainerDisposalError.
+   */
   async dispose(owner?: ContainerLifecycleOwner): Promise<void> {
     if (this.disposed) return;
     const tracked = [...this.instances.values()].reverse();
@@ -139,19 +205,19 @@ export class ContainerLifecycle {
     const failedTokens: Token<unknown>[] = [];
     for (const entry of selected) {
       if (entry.disposed) continue;
+      entry.disposed = true;
+      this.instances.delete(entry.token);
       try {
         await disposeValue(entry.instance);
-        entry.disposed = true;
-        this.instances.delete(entry.token);
       } catch (error) {
         errors.push(error);
         failedTokens.push(entry.token);
         if (this.options.failFast) break;
       }
     }
+    if (owner === undefined) this.disposed = true;
     if (errors.length > 0)
       throw new ContainerDisposalError(errors, failedTokens);
-    if (owner === undefined) this.disposed = true;
   }
 
   async disposeScope(): Promise<void> {
@@ -160,12 +226,19 @@ export class ContainerLifecycle {
   async disposeContainer(): Promise<void> {
     await this.dispose(ContainerLifecycleOwner.CONTAINER);
   }
+
+  /**
+   * Releases all tracked references WITHOUT disposing them and marks the
+   * lifecycle disposed so further `track()` calls are refused. Used when a
+   * container is disposed with `autoDispose: false`.
+   */
+  shutdown(): void {
+    this.instances.clear();
+    this.disposed = true;
+  }
+
   isDisposed(): boolean {
     return this.disposed;
-  }
-  reset(): void {
-    this.instances.clear();
-    this.disposed = false;
   }
   getTrackedTokens(): readonly Token<unknown>[] {
     return [...this.instances.keys()];
@@ -174,11 +247,15 @@ export class ContainerLifecycle {
 
 async function disposeValue(value: unknown): Promise<void> {
   if (isAsyncDisposable(value)) {
-    await value[Symbol.asyncDispose]!();
+    await value[Symbol.asyncDispose]();
+    return;
+  }
+  if (isSymbolDisposable(value)) {
+    value[Symbol.dispose]();
     return;
   }
   if (isDisposable(value)) {
-    value.dispose();
+    await value.dispose();
     return;
   }
 }

@@ -28,6 +28,20 @@ import {
 
 export type RegistrationToken<T = unknown> = Token<T> | InjectionToken<T>;
 
+/** The type a registration token resolves to (`unknown` for untyped tokens). */
+export type ResolvedToken<T extends RegistrationToken> =
+  T extends RegistrationToken<infer U> ? U : never;
+
+/**
+ * Maps a tuple of registration tokens to a tuple of their resolved types, so
+ * `resolveMany([LOGGER, DB])` is typed `[Logger, Db]`.
+ */
+export type ResolvedTokens<Tokens extends readonly RegistrationToken[]> = {
+  -readonly [K in keyof Tokens]: Tokens[K] extends RegistrationToken
+    ? ResolvedToken<Tokens[K]>
+    : never;
+};
+
 export interface RegistrationMetadata {
   readonly name?: string;
   readonly description?: string;
@@ -41,7 +55,6 @@ export interface ContainerRegistration<T = unknown> {
   readonly provider: ContainerProvider<T>;
   readonly scope: ContainerScope;
   readonly metadata: RegistrationMetadata;
-  readonly initialized: boolean;
   readonly createdAt: Date;
 }
 
@@ -54,7 +67,6 @@ export interface MutableRegistrationState<T = unknown> {
   readonly provider: ContainerProvider<T>;
   scope: ContainerScope;
   metadata: RegistrationMetadata;
-  initialized: boolean;
   createdAt: Date;
 }
 
@@ -70,7 +82,6 @@ export function createRegistration<T>(
     provider: normalizedProvider,
     scope: resolveContainerScope(options.scope),
     metadata: createRegistrationMetadata(options, normalizedToken),
-    initialized: false,
     createdAt: new Date(),
   };
   return Object.freeze({
@@ -107,7 +118,6 @@ export function createMutableRegistrationState<T>(
     provider: registration.provider,
     scope: registration.scope,
     metadata: registration.metadata,
-    initialized: registration.initialized,
     createdAt: registration.createdAt,
   };
 }
@@ -125,15 +135,8 @@ export function freezeRegistration<T>(
         ? Object.freeze({ ...state.metadata.metadata })
         : undefined,
     }),
-    initialized: state.initialized,
     createdAt: state.createdAt,
   });
-}
-
-export function markRegistrationInitialized<T>(
-  registration: ContainerRegistration<T>,
-): ContainerRegistration<T> {
-  return Object.freeze({ ...registration, initialized: true });
 }
 
 export function getRegistrationToken<T>(

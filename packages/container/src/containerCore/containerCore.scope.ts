@@ -1,16 +1,38 @@
 /**
- * ContainerScopeContext — child dependency scope with
- * its own scoped-instance cache.
+ * ContainerScopeContext — a dependency scope with its own scoped-instance
+ * cache and its own lifecycle for SCOPED instances.
+ *
+ * Ownership model:
+ * - SCOPED instances created through this scope — including those created
+ *   transitively as dependencies — are owned by the scope and disposed when
+ *   the scope is disposed.
+ * - SINGLETON instances resolved through a scope stay owned by the parent
+ *   container — a scope's disposal never touches them.
+ * - TRANSIENT instances are not tracked anywhere; callers own their disposal.
+ *
+ * Nesting: `scope.createScope()` creates a true child scope. A child sees
+ * SCOPED instances already created by its ancestors (lookups chain upward),
+ * while instances it creates itself are private to the child. Disposing a
+ * scope disposes its children first, and a child refuses to resolve once any
+ * ancestor (scope or container) is disposed.
  */
 
-import type { RegistrationToken } from "../containerRegistration/containerRegistration.core.js";
+import type {
+  RegistrationToken,
+  ResolvedTokens,
+} from "../containerRegistration/containerRegistration.core.js";
 
 import {
   ContainerLifecycle,
   ContainerLifecycleOwner,
 } from "../containerLifecycle/containerLifecycle.core.js";
 
-import type { ResolutionCache } from "../containerResolution/containerResolution.type.js";
+import { ContainerScope } from "../containerScope/containerScope.type.js";
+
+import type {
+  ResolutionCache,
+  ResolutionResult,
+} from "../containerResolution/containerResolution.type.js";
 
 import type { Token } from "../containerToken/containerToken.type.js";
 
@@ -19,51 +41,59 @@ import type {
   ContainerLike,
 } from "./containerCore.type.js";
 
-/**
- * Represents a child dependency scope.
- *
- * A scope has its own scoped-instance cache while sharing
- * registrations and singleton instances with its parent.
- */
 export class ContainerScopeContext {
   private disposed = false;
   private readonly cache: ResolutionCache;
   private readonly lifecycle: ContainerLifecycle;
+  private readonly container: ContainerLike;
+  private readonly parentScope: ContainerScopeContext | undefined;
+  private readonly children = new Set<ContainerScopeContext>();
   readonly name: string;
   readonly metadata: Readonly<Record<string, unknown>>;
 
+  /**
+   * @param container The container that owns the scope tree.
+   * @param options Scope name / metadata.
+   * @param parentScope When given, the new scope is a nested child of it.
+   *   Application code should use `container.createScope()` /
+   *   `scope.createScope()` rather than constructing scopes directly.
+   */
   constructor(
-    private readonly parent: ContainerLike,
+    container: ContainerLike,
     options: ContainerScopeOptions = {},
+    parentScope?: ContainerScopeContext,
   ) {
-    this.name = options.name ?? `${parent.name}:scope`;
+    this.container = container;
+    this.parentScope = parentScope;
+    this.name = options.name ?? `${(parentScope ?? container).name}:scope`;
     this.metadata = Object.freeze({ ...(options.metadata ?? {}) });
-    this.cache = parent.resolver.createScope();
+    this.cache = container.createScopeCache(parentScope?.cache);
     this.lifecycle = new ContainerLifecycle();
   }
 
   /**
    * Resolves a dependency within this scope.
+   *
+   * SCOPED instances are cached per scope (visible to child scopes) and
+   * tracked for disposal with the scope that created them. SINGLETON
+   * instances come from (and are tracked by) the container. TRANSIENT
+   * instances are created fresh and never tracked.
    */
   resolve<T>(token: RegistrationToken<T>): T {
     this.ensureActive();
-    const result = this.parent.resolver.resolveDetailed(token, {
-      ...this.parent.resolutionOptions,
-      cache: this.cache,
-    });
-    this.lifecycle.track(
-      result.token as Token,
-      result.value,
-      ContainerLifecycleOwner.SCOPE,
+    const result = this.container.resolveInScope(token, this.cache, (created) =>
+      this.trackCreated(created),
     );
-    return result.value as T;
+    return result.value;
   }
 
   /**
-   * Resolves multiple dependencies within this scope.
+   * Resolves multiple dependencies within this scope, typed per token.
    */
-  resolveMany<T>(tokens: readonly RegistrationToken<T>[]): T[] {
-    return tokens.map((token) => this.resolve(token));
+  resolveMany<const Tokens extends readonly RegistrationToken[]>(
+    tokens: Tokens,
+  ): ResolvedTokens<Tokens> {
+    return tokens.map((token) => this.resolve(token)) as ResolvedTokens<Tokens>;
   }
 
   /**
@@ -71,7 +101,7 @@ export class ContainerScopeContext {
    */
   canResolve<T>(token: RegistrationToken<T>): boolean {
     this.ensureActive();
-    return this.parent.resolver.canResolve(token);
+    return this.container.canResolve(token);
   }
 
   /**
@@ -79,28 +109,58 @@ export class ContainerScopeContext {
    */
   has<T>(token: RegistrationToken<T>): boolean {
     this.ensureActive();
-    return this.parent.has(token);
+    return this.container.has(token);
   }
 
   /**
-   * Creates another nested scope.
+   * Creates a nested child scope.
+   *
+   * The child inherits this scope's cached SCOPED instances for lookups,
+   * caches the SCOPED instances it creates itself, and is disposed
+   * automatically when this scope is disposed.
    */
   createScope(options: ContainerScopeOptions = {}): ContainerScopeContext {
     this.ensureActive();
-    return this.parent.createScope(options);
+    const child = new ContainerScopeContext(this.container, options, this);
+    this.children.add(child);
+    return child;
   }
 
   /**
-   * Disposes all instances belonging to this scope.
+   * Disposes child scopes (most recent first), then all SCOPED instances
+   * belonging to this scope in reverse creation order, and detaches the scope
+   * from its parent. Container-owned singletons are not touched. Idempotent.
+   *
+   * Every failure is collected; the scope is marked disposed regardless and
+   * an AggregateError listing the failures is thrown afterwards.
    */
   async dispose(): Promise<void> {
     if (this.disposed) return;
-    try {
-      await this.lifecycle.disposeScope();
-    } finally {
-      this.cache.clear();
-      this.disposed = true;
+    this.disposed = true;
+    const failures: unknown[] = [];
+    for (const child of [...this.children].reverse()) {
+      try {
+        await child.dispose();
+      } catch (error) {
+        failures.push(error);
+      }
     }
+    this.children.clear();
+    try {
+      await this.lifecycle.dispose();
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      this.lifecycle.shutdown();
+      this.cache.clear();
+      if (this.parentScope) this.parentScope.releaseChild(this);
+      else this.container.releaseScope(this);
+    }
+    if (failures.length > 0)
+      throw new AggregateError(
+        failures,
+        `Container scope "${this.name}" was disposed, but ${failures.length} cleanup step(s) failed.`,
+      );
   }
 
   /**
@@ -111,19 +171,57 @@ export class ContainerScopeContext {
   }
 
   /**
-   * Returns the parent container.
+   * Returns the direct parent: the container for a top-level scope, or the
+   * parent scope for a nested one.
    */
-  getParent(): ContainerLike {
-    return this.parent;
+  getParent(): ContainerLike | ContainerScopeContext {
+    return this.parentScope ?? this.container;
   }
 
   /**
-   * Throws when the scope is no longer active.
+   * Returns the container that owns the whole scope tree.
+   */
+  getContainer(): ContainerLike {
+    return this.container;
+  }
+
+  /** @internal Detaches a disposed child scope. */
+  releaseChild(scope: ContainerScopeContext): void {
+    this.children.delete(scope);
+  }
+
+  /**
+   * Tracks SCOPED instances created during a resolution through this scope
+   * (top-level result or transitively created dependency). Instances served
+   * from an ancestor's cache are cache hits and never reach here.
+   */
+  private trackCreated(result: ResolutionResult<unknown>): void {
+    if (result.scope !== ContainerScope.SCOPED) return;
+    this.lifecycle.track(
+      result.token as Token,
+      result.value,
+      ContainerLifecycleOwner.SCOPE,
+    );
+  }
+
+  /**
+   * Throws when the scope — or any ancestor scope, or the container that
+   * owns it — is no longer active.
    */
   private ensureActive(): void {
     if (this.disposed) {
       throw new Error(
         `Container scope "${this.name}" has already been disposed.`,
+      );
+    }
+    if (this.parentScope?.isDisposed()) {
+      throw new Error(
+        `Parent scope "${this.parentScope.name}" of scope "${this.name}" has been disposed.`,
+      );
+    }
+    if (this.container.isDisposed()) {
+      throw new Error(
+        `Container "${this.container.name}" owning scope "${this.name}" has been disposed.`,
       );
     }
   }

@@ -22,6 +22,8 @@ export enum RegistryOperation {
   REPLACE = "replace",
   REMOVE = "remove",
   CLEAR = "clear",
+  /** Wholesale replacement of all registrations via `restore()`. */
+  RESTORE = "restore",
 }
 
 /**

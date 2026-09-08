@@ -3,8 +3,11 @@
  */
 
 import type { RegistrationToken } from "../containerRegistration/containerRegistration.core.js";
-
-import type { ContainerRegistration } from "../containerRegistration/containerRegistration.core.js";
+import type {
+  ResolutionCache,
+  ResolutionResult,
+} from "../containerResolution/containerResolution.type.js";
+import type { ContainerScopeContext } from "./containerCore.scope.js";
 
 /**
  * Options used when creating a child container scope.
@@ -22,26 +25,32 @@ export interface ContainerScopeOptions {
 }
 
 /**
- * Full Container interface including mixin methods.
- * Used by ContainerScopeContext to reference the parent container.
+ * The surface a ContainerScopeContext needs from its owning container.
+ * Implemented by Container; the `resolveInScope` / `createScopeCache` /
+ * `releaseScope` members are internal plumbing for scopes and should not be
+ * called by application code.
  */
 export interface ContainerLike {
   readonly name: string;
-  readonly resolver: {
-    createScope(): import("../containerResolution/containerResolution.type.js").ResolutionCache;
-    resolveDetailed(
-      token: unknown,
-      options: unknown,
-    ): { token: unknown; value: unknown };
-    canResolve(token: unknown): boolean;
-  };
-  readonly resolutionOptions: {
-    autoRegisterClasses: boolean;
-    detectCircularDependencies: boolean;
-    maxResolutionDepth: number;
-  };
   has<T>(token: RegistrationToken<T>): boolean;
-  createScope(
-    options?: ContainerScopeOptions,
-  ): import("./containerCore.scope.js").ContainerScopeContext;
+  canResolve<T>(token: RegistrationToken<T>): boolean;
+  isDisposed(): boolean;
+  createScope(options?: ContainerScopeOptions): ContainerScopeContext;
+  /**
+   * @internal Creates a fresh scoped-instance cache, optionally chained to a
+   * parent scope's cache (nested scopes).
+   */
+  createScopeCache(parent?: ResolutionCache): ResolutionCache;
+  /**
+   * @internal Resolves a token using the given scope cache. `onInstanceCreated`
+   * is invoked for every instance created during the resolution (including
+   * transitively created dependencies) so the scope can track SCOPED ones.
+   */
+  resolveInScope<T>(
+    token: RegistrationToken<T>,
+    cache: ResolutionCache,
+    onInstanceCreated?: (result: ResolutionResult<unknown>) => void,
+  ): ResolutionResult<T>;
+  /** @internal Unregisters a top-level scope from the container's live-scope set. */
+  releaseScope(scope: ContainerScopeContext): void;
 }

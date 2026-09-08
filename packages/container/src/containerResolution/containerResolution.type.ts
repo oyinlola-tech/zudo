@@ -10,8 +10,17 @@ import type { Token } from "../containerToken/containerToken.type.js";
 
 /**
  * A cache containing resolved dependency instances.
+ *
+ * A plain `Map` satisfies this interface; scope caches created by the
+ * resolver additionally fall back to their parent scope's cache for lookups
+ * (see {@link ContainerResolver.createScope}).
  */
-export type ResolutionCache = Map<Token<unknown>, unknown>;
+export interface ResolutionCache {
+  has(token: Token<unknown>): boolean;
+  get(token: Token<unknown>): unknown;
+  set(token: Token<unknown>, value: unknown): void;
+  clear(): void;
+}
 
 /**
  * Dependency resolution path.
@@ -23,12 +32,35 @@ export type ResolutionPath = readonly Token<unknown>[];
  * Options controlling dependency resolution.
  */
 export interface ResolutionOptions {
-  /** Existing cache for the current resolution scope. */
+  /**
+   * Scope cache for SCOPED instances. When absent the resolution is a root
+   * resolution and SCOPED registrations throw. SINGLETON instances always
+   * live in the resolver's own singleton cache, never in this cache.
+   */
   readonly cache?: ResolutionCache;
   /** Current dependency resolution path. Normally managed internally. */
   readonly path?: ResolutionPath;
-  /** Whether to allow resolving unregistered classes directly from their constructors. Defaults to true. */
+  /** Whether unregistered class tokens may be resolved. Defaults to true. */
   readonly autoRegisterClasses?: boolean;
+  /**
+   * Whether auto-resolved class tokens may be added to the registry.
+   * When false (e.g. registrations are frozen) unregistered classes are
+   * instantiated ephemerally without being registered. Defaults to true.
+   */
+  readonly allowRegistration?: boolean;
+  /** Whether circular dependencies are detected. Defaults to true. */
+  readonly detectCircularDependencies?: boolean;
+  /**
+   * Maximum resolution chain depth before resolution aborts with a
+   * MaxResolutionDepthError. Defaults to 100.
+   */
+  readonly maxResolutionDepth?: number;
+  /**
+   * Invoked for every instance the resolver creates during this resolution
+   * (never for cache hits), in creation order — dependencies are reported
+   * before their dependents. Owners use it to track instances for disposal.
+   */
+  readonly onInstanceCreated?: (result: ResolutionResult<unknown>) => void;
 }
 
 /**
