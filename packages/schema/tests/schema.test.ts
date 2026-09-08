@@ -7,35 +7,6 @@
 import { describe, it, expect } from "vitest";
 import {
   schema,
-  StringSchema,
-  NumberSchema,
-  BooleanSchema,
-  LiteralSchema,
-  NullSchema,
-  UndefinedSchema,
-  AnySchema,
-  UnknownSchema,
-  NeverSchema,
-  ObjectSchema,
-  ArraySchema,
-  TupleSchema,
-  RecordSchema,
-  MapSchema,
-  SetSchema,
-  UnionSchema,
-  IntersectionSchema,
-  LazySchema,
-  EnumSchema,
-  OptionalModifierSchema,
-  NullableModifierSchema,
-  DefaultSchema,
-  RefineSchema,
-  TransformModifierSchema,
-  CoerceNumberSchema,
-  CoerceBooleanSchema,
-  CoerceStringSchema,
-  CoerceBigIntSchema,
-  OptionalSchema,
   stringSchema,
   numberSchema,
   booleanSchema,
@@ -65,7 +36,7 @@ import {
   coerceStringSchema,
   coerceBigIntSchema,
 } from "../src/index.js";
-import type { Infer } from "../src/index.js";
+import type { Infer, SchemaInput } from "../src/index.js";
 
 describe("StringSchema", () => {
   it("accepts valid strings", () => {
@@ -669,7 +640,7 @@ describe("Schema namespace API", () => {
 
     type User = Infer<typeof UserSchema>;
 
-    const user = UserSchema.parse({
+    const user: User = UserSchema.parse({
       name: "John",
       email: "john@example.com",
       role: "admin",
@@ -831,4 +802,77 @@ describe("Error handling", () => {
       expect(result.issues.length).toBe(1);
     }
   });
+});
+
+/* ─── Untrusted input ─────────────────────────────────────────────────────── */
+
+describe("parsing untrusted input", () => {
+  it("accepts unknown, which is the point of validating at a boundary", () => {
+    const s = schema.object({
+      name: schema.string(),
+      age: schema.number().int().min(0),
+    });
+
+    // The value a real caller has at a trust boundary: typed `unknown`.
+    const fromTheWire: unknown = JSON.parse('{"name":"Ada","age":36}');
+
+    const parsed = s.parse(fromTheWire);
+
+    expect(parsed.name).toBe("Ada");
+    expect(parsed.age).toBe(36);
+  });
+
+  it("rejects unknown input that does not match", () => {
+    const s = schema.object({ name: schema.string() });
+    const fromTheWire: unknown = JSON.parse('{"name":42}');
+
+    expect(() => s.parse(fromTheWire)).toThrow();
+  });
+
+  it("safeParse also accepts unknown", () => {
+    const s = schema.string();
+    const fromTheWire: unknown = 42;
+
+    const result = s.safeParse(fromTheWire);
+
+    expect(result.success).toBe(false);
+  });
+
+  it("still infers the declared input type through SchemaInput", () => {
+    const s = schema.string();
+
+    // Compile-time check: SchemaInput is unaffected by parse accepting unknown.
+    const declared: SchemaInput<typeof s> = "hello";
+
+    expect(s.parse(declared)).toBe("hello");
+  });
+});
+
+describe("parse and safeParse agree", () => {
+  const cases: ReadonlyArray<readonly [string, () => unknown, unknown]> = [
+    [
+      "object field",
+      () => schema.object({ name: schema.string() }),
+      { name: 42 },
+    ],
+    [
+      "nested object field",
+      () => schema.object({ user: schema.object({ name: schema.string() }) }),
+      { user: { name: 42 } },
+    ],
+    ["array element", () => schema.array(schema.string()), [1, 2]],
+    ["record value", () => schema.record(schema.number()), { a: "no" }],
+    ["primitive", () => schema.string(), 42],
+  ];
+
+  for (const [label, build, input] of cases) {
+    it(`rejects an invalid ${label} in both entry points`, () => {
+      const s = build() as ReturnType<typeof schema.string>;
+
+      expect(s.safeParse(input).success).toBe(false);
+
+      // A value safeParse calls invalid must never be returned by parse.
+      expect(() => s.parse(input)).toThrow();
+    });
+  }
 });

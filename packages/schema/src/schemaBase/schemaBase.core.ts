@@ -36,16 +36,32 @@ export abstract class Schema<TOutput, TInput = TOutput> {
   /**
    * Parses input and returns the output value.
    * Throws SchemaError on failure.
+   *
+   * Accepts `unknown` — the whole point of a schema is to validate values
+   * that are not yet known to match `TInput`. Use `SchemaInput<T>` when the
+   * declared input type is needed for inference.
    */
-  public parse(input: TInput, options?: SchemaParseOptions): TOutput {
+  public parse(input: unknown, options?: SchemaParseOptions): TOutput {
     const ctx = createParseContext(options);
     try {
-      return this._parse(ctx, input);
+      const data = this._parse(ctx, input);
+
+      // Not every schema signals failure by throwing: composite schemas
+      // collect issues on the context and return a partial value. Without
+      // this check `parse` would hand back that partial value while
+      // `safeParse` reported the very same input as invalid.
+      if (ctx.issues.length > 0) {
+        throw new SchemaError("Validation failed", {
+          issues: [...ctx.issues],
+        });
+      }
+
+      return data;
     } catch (error) {
       if (error instanceof SchemaError) {
         throw error;
       }
-      throw new SchemaError(String(error), {
+      throw new SchemaError(describeThrown(error), {
         issues: ctx.issues.length > 0 ? ctx.issues : undefined,
         cause: error,
       });
@@ -57,7 +73,7 @@ export abstract class Schema<TOutput, TInput = TOutput> {
    * Never throws.
    */
   public safeParse(
-    input: TInput,
+    input: unknown,
     options?: SchemaParseOptions,
   ): SchemaResult<TOutput> {
     const ctx = createParseContext(options);
@@ -122,5 +138,20 @@ export abstract class Schema<TOutput, TInput = TOutput> {
   /** Returns the current metadata. */
   public getMetadata(): SchemaMetadata | undefined {
     return this._metadata;
+  }
+}
+
+/**
+ * Produces a safe message for an arbitrary thrown value. `String(value)` throws
+ * for null-prototype objects and objects whose `toString` throws, which would
+ * turn a schema failure into an unrelated TypeError.
+ */
+function describeThrown(value: unknown): string {
+  if (value instanceof Error) return value.message;
+  if (typeof value === "string") return value;
+  try {
+    return String(value);
+  } catch {
+    return "Schema parsing failed.";
   }
 }
