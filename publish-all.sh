@@ -43,8 +43,11 @@ node scripts/check-exports.js
 echo "==> Typechecking"
 pnpm -r run typecheck
 
+# Constrained concurrency: each package spawns its own vitest worker pool,
+# so an unbounded recursive run oversubscribes the CPU and slow transforms
+# trip vitest's 5s default timeout on tests that are not actually slow.
 echo "==> Running tests"
-pnpm -r run test
+pnpm -r --workspace-concurrency=2 run test
 
 echo "==> Packages to publish"
 pnpm -r --filter "./packages/**" exec node -p \

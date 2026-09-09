@@ -65,6 +65,13 @@ async function withTransportTimeout(
         ),
       );
     }, timeoutMs);
+
+    // This timer bounds a write; it is not work in its own right. Left
+    // referenced it keeps the event loop alive, so a process that has
+    // finished but logged through an async transport hangs until the
+    // timeout elapses. Every other timer in the framework is unref'd
+    // for the same reason.
+    timer.unref?.();
   });
 
   try {
