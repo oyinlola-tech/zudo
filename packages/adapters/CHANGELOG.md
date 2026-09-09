@@ -1,5 +1,13 @@
 # @zudojs/adapters
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [[`262a376`](https://github.com/oyinlola-tech/zudo/commit/262a3769459162696c5d914f0b6fc9fb4a6bbbf5), [`3bb30e4`](https://github.com/oyinlola-tech/zudo/commit/3bb30e4a278fe969c64a0c2cf31097f309ff427d)]:
+  - @zudojs/errors@0.2.0
+  - @zudojs/types@0.2.0
+
 ## 1.0.0
 
 ### Major Changes
