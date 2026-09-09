@@ -163,7 +163,7 @@ export function objectToMap<K extends string | number | symbol, V>(
  * Convert snake_case to camelCase.
  */
 export function snakeToCamel(str: string): string {
-  return str.replace(/_+([a-z0-9])/gu, (_, char: string) => char.toUpperCase());
+  return str.replace(/(?<!_)_+([a-z0-9])/gu, (_, char: string) => char.toUpperCase());
 }
 
 /**
@@ -173,7 +173,7 @@ export function snakeToCamel(str: string): string {
  * `["parse", "HTTP", "Response"]` rather than one word per letter.
  */
 function splitCamelWords(str: string): string[] {
-  return str.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+|[A-Z]|[0-9]+/gu) ?? [];
+  return str.match(/(?:[A-Z](?![a-z]))+|[A-Z]?[a-z0-9]+|[A-Z]|[0-9]+/gu) ?? [];
 }
 
 /**
@@ -193,7 +193,7 @@ export function camelToSnake(str: string): string {
  * Convert kebab-case to camelCase.
  */
 export function kebabToCamel(str: string): string {
-  return str.replace(/-+([a-z0-9])/gu, (_, char: string) => char.toUpperCase());
+  return str.replace(/(?<!-)-+([a-z0-9])/gu, (_, char: string) => char.toUpperCase());
 }
 
 /**
