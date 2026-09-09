@@ -11,6 +11,9 @@ import { join } from "node:path";
 import type { ProjectConfiguration } from "../../types/projectConfiguration.type.js";
 import type { FrontendGenerationContext } from "../../adapters/frontend/frontendAdapter.type.js";
 import { FrontendAdapterRegistry } from "../../registries/adapter/frontendAdapterRegistry.core.js";
+import { PackageManagerRegistry } from "../../registries/adapter/packageManagerRegistry.core.js";
+import { DependencyResolver } from "../../resolvers/dependency/dependencyResolver.core.js";
+import { runFrontendPipeline } from "../frontend/frontendPipeline.js";
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
 
 /**
@@ -35,9 +38,13 @@ export interface FullstackGenerationResult {
  */
 export class FullstackComposer {
   private readonly frontendRegistry: FrontendAdapterRegistry;
+  private readonly packageManagerRegistry: PackageManagerRegistry;
+  private readonly dependencyResolver: DependencyResolver;
 
   constructor() {
     this.frontendRegistry = new FrontendAdapterRegistry();
+    this.packageManagerRegistry = new PackageManagerRegistry();
+    this.dependencyResolver = new DependencyResolver();
   }
 
   /**
@@ -119,17 +126,23 @@ export class FullstackComposer {
       },
     };
 
+    // Project and framework names reach this template from user input. They
+    // are emitted as JSON string literals (valid JS) so a quote, backslash,
+    // newline or `";` sequence cannot break out of the literal and inject
+    // code into the generated zudojs.config.ts.
+    const literal = (value: string): string => JSON.stringify(value);
+
     const frontendBlock = context.project.frontend
       ? `
   frontend: {
-    framework: "${context.project.frontend.framework}",
+    framework: ${literal(context.project.frontend.framework)},
   },`
       : "";
 
     const zudojsConfig = `export default {
-  name: "${context.project.name}",
+  name: ${literal(context.project.name)},
   projectType: "fullstack",
-  architecture: "${context.project.backend?.architecture ?? "monolith"}",${frontendBlock}
+  architecture: ${literal(context.project.backend?.architecture ?? "monolith")},${frontendBlock}
 };
 `;
 
@@ -221,9 +234,22 @@ export type Timestamp = string;
       },
     };
 
-    await adapter.scaffold(frontendContext);
-    await adapter.applyZudojsStructure(frontendContext);
-    await adapter.generateIntegration(frontendContext);
+    // The same pipeline the frontend-only path uses: availability check,
+    // scaffold, structure, integration, dependency resolution + install, and
+    // adapter validation. Skipping any of it here is what let fullstack
+    // projects ship an unvalidated, dependency-less apps/web.
+    const outcome = await runFrontendPipeline(
+      adapter,
+      frontendContext,
+      this.packageManagerRegistry,
+      this.dependencyResolver,
+    );
+
+    if (outcome.errors.length > 0) {
+      throw new Error(
+        `Frontend generation failed: ${outcome.errors.join("; ")}`,
+      );
+    }
 
     return ["apps/web/"];
   }

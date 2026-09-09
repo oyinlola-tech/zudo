@@ -104,8 +104,17 @@ export class RPCServer {
 
   /**
    * Registers a procedure.
+   *
+   * Generic over the procedure's input and output so a procedure built
+   * with `createRPCProcedure<TInput, TOutput>` can be registered
+   * directly. `RPCProcedure` is contravariant in `TInput` (its handler
+   * accepts that input), so a typed procedure is NOT assignable to
+   * `RPCProcedure<unknown>` and a non-generic signature would reject
+   * every typed procedure. Decoding stays a runtime concern.
    */
-  register(procedure: RPCProcedure): this {
+  register<TInput = unknown, TOutput = unknown>(
+    procedure: RPCProcedure<TInput, TOutput>,
+  ): this {
     this.registry.register(procedure);
     return this;
   }

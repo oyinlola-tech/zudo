@@ -60,7 +60,6 @@ export {
   MAX_EXECUTION_HISTORY,
   DEFAULT_MISFIRE_POLICY,
   DEFAULT_OVERLAP_POLICY,
-  SCHEDULER_TICK_INTERVAL,
 } from "./scheduler/constants/index.js";
 
 // Errors
@@ -68,22 +67,17 @@ export type { SchedulerErrorOptions } from "./scheduler/errors/index.js";
 
 export {
   SchedulerError,
-  SchedulerNotStartedError,
   SchedulerAlreadyStartedError,
   SchedulerStoppedError,
   SchedulerJobNotFoundError,
   SchedulerJobAlreadyExistsError,
   InvalidJobError,
-  ScheduleNotFoundError,
-  ScheduleAlreadyExistsError,
   InvalidScheduleError,
   CronParseError,
   InvalidDurationError,
   SchedulerJobExecutionError,
   SchedulerJobTimeoutError,
   SchedulerJobCancelledError,
-  SchedulerStoreError,
-  SchedulerLockError,
   createSchedulerError,
   isSchedulerError,
 } from "./scheduler/errors/index.js";

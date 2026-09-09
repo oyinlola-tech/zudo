@@ -18,7 +18,9 @@ export class RPCProcedureRouter {
   /**
    * Registers a procedure in this router.
    */
-  register(procedure: RPCProcedure): this {
+  register<TInput = unknown, TOutput = unknown>(
+    procedure: RPCProcedure<TInput, TOutput>,
+  ): this {
     assertValidProcedureName(procedure.name);
 
     const existing = this.routes.get(procedure.name);
@@ -26,7 +28,10 @@ export class RPCProcedureRouter {
       throw new RPCDuplicateProcedureError(procedure.name);
     }
 
-    this.routes.set(procedure.name, Object.freeze(procedure));
+    // Stored erased. The dispatcher decodes the wire payload at runtime,
+    // so the registry holds procedures of mixed input types; the cast is
+    // the single point where that erasure is acknowledged.
+    this.routes.set(procedure.name, Object.freeze(procedure) as RPCProcedure);
     return this;
   }
 

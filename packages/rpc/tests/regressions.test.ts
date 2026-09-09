@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { RPCClient } from "../src/rpc/client/rpcClient.core.js";
 import { RPCServer } from "../src/rpc/server/rpcServer.core.js";
 import { RPCMiddlewareStack } from "../src/rpc/middleware/rpcMiddleware.core.js";

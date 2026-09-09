@@ -3,7 +3,7 @@
 
 (function() {
   var VERSION_KEY = 'zudo-docs-version';
-  var DEFAULT_VERSION = '0.1.0';
+  var DEFAULT_VERSION = '1.0.0';
 
   // Get stored version
   function getStoredVersion() {

@@ -177,7 +177,17 @@ const engine = createPermissionEngine({ roles, policies });
 
 roles.define({ name: "auditor", permissions: ["audit:read"] });
 engine.invalidateRoles(); // pick up the change
+
+roles.require("auditor"); // throws RoleNotFoundError when unregistered
 ```
+
+All three registries reject a duplicate name — re-registering a role or a
+policy is an authorization rule disappearing without a trace. Pass
+`{ allowOverride: true }` when replacement is what you mean.
+
+`validateConfiguration` (default `true`) applies to a registry as well as to
+an inline array: a role whose grant could never match is rejected when the
+engine looks it up, and the check denies.
 
 A permission registry records descriptions and implications:
 
@@ -215,8 +225,23 @@ await engine.invalidateActor("user_1");
 
 Keys include the actor, the permission and the resource id (from
 `resource.id`, or `options.resourceId`), so two resources never share one
-decision. A decision produced by a policy marked `cacheable: false` is not
-stored. A TTL of `0` or less means "do not cache".
+decision.
+
+A check is cached only when the key can describe it completely:
+
+- a resource with no `id` and no `options.resourceId` is **not cached**, since
+  the key would collapse to actor + permission and an allow for one object
+  would answer for the next;
+- a check carrying `metadata` is **not cached**, because conditions such as
+  `tenantIsolation()` read the tenant from there and it is not part of the
+  key;
+- a decision produced by a policy marked `cacheable: false` is not stored;
+- a TTL of `0` or less means "do not cache".
+
+`deniedPermissions` is evaluated before the cache is consulted, so a deny
+added to the actor takes effect immediately rather than waiting for a cached
+allow to expire. A malformed entry there can never match, so it is reported
+through `onError` instead of being dropped in silence.
 
 ## External sources
 
@@ -241,7 +266,13 @@ Every failure denies:
 | Malformed permission string | denied, `reason: "invalid_permission"`                 |
 | Condition throws            | rule does not apply                                    |
 | Policy throws or times out  | denied, `reason: "policy_error:<name>"`                |
+| Role inheritance cycle      | denied; reported to `onError`                          |
+| Role source throws          | denied; reported to `onError`                          |
 | `signal` aborted            | throws `AuthorizationAbortedError`                     |
+
+A value that is not an `Error` — a policy or resolver that throws a string —
+reaches `onError` wrapped in `PolicyError` or `PermissionResolverError`, with
+the original as `cause`.
 
 Cancellation is the one case that throws, because the caller asked for the
 work to stop.
@@ -328,7 +359,8 @@ message; the actor id, reason and policy live on `error.details` for the log,
 not in the exposed metadata.
 
 `PermissionNotFoundError` · `DuplicatePermissionError` · `RoleNotFoundError` ·
-`DuplicateRoleError` · `InvalidPermissionError` · `InvalidRoleError` ·
+`DuplicateRoleError` · `DuplicatePolicyError` · `InvalidPermissionError` ·
+`InvalidRoleError` ·
 `CircularRoleInheritanceError` · `PolicyError` · `PolicyTimeoutError` ·
 `PermissionResolverError` · `AuthorizationAbortedError`
 

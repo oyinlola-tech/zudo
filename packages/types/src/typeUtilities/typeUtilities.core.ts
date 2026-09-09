@@ -73,10 +73,24 @@ export type RequiredExcept<T, K extends keyof T> = Required<Omit<T, K>> &
   Pick<T, K>;
 
 /**
- * Create a type that makes specified keys optional.
+ * Create a type that makes the specified keys optional.
+ *
+ * Named `PartialKeys` to pair with {@link RequireKeys}. It was `OptionalKeys`,
+ * which in every other utility library means "the union of `T`'s optional key
+ * names" — the opposite kind of thing, and a two-parameter type that reads as
+ * a one-parameter one. Use {@link OptionalKeyNames} for that meaning.
  */
-export type OptionalKeys<T, K extends keyof T> = Omit<T, K> &
+export type PartialKeys<T, K extends keyof T> = Omit<T, K> &
   Partial<Pick<T, K>>;
+
+/**
+ * The union of `T`'s optional key names.
+ *
+ * This is what `OptionalKeys<T>` reads as, and there was no type that did it.
+ */
+export type OptionalKeyNames<T> = {
+  [K in keyof T]-?: object extends Pick<T, K> ? K : never;
+}[keyof T];
 
 /**
  * Create a type that makes specified keys required.
@@ -86,10 +100,15 @@ export type RequireKeys<T, K extends keyof T> = Omit<T, K> &
 
 /**
  * Extract the return type of an async function.
+ *
+ * The constraint uses `never[]` rather than `unknown[]`. Parameters are
+ * contravariant, so `(id: string) => Promise<User>` is **not** assignable to
+ * `(...args: unknown[]) => Promise<unknown>` — the previous constraint
+ * rejected almost every real async function, and nothing caught it because no
+ * test instantiated the type.
  */
-export type AsyncReturnType<
-  T extends (...args: unknown[]) => Promise<unknown>,
-> = T extends (...args: unknown[]) => Promise<infer R> ? R : never;
+export type AsyncReturnType<T extends (...args: never[]) => Promise<unknown>> =
+  T extends (...args: never[]) => Promise<infer R> ? R : never;
 
 /**
  * Make a type nullable (allows null).

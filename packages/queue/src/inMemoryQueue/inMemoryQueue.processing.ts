@@ -5,8 +5,10 @@ import type { JobId } from "../jobTypes/jobTypes.type.js";
 import type { QueueMiddleware } from "../middleware/middleware.type.js";
 import type { QueueEventEmitter } from "../queueEmitter/queueEmitter.type.js";
 import type { DeadLetterStore } from "../deadLetter/deadLetter.type.js";
+import type { QueueLogger } from "../queue/queue.type.js";
 
 import { updateJobState, incrementJobAttempt } from "../job/job.core.js";
+import { DEFAULT_JOB_OPTIONS } from "../jobOptions/jobOptions.core.js";
 import { JobState as JobStateEnum } from "../jobTypes/jobTypes.type.js";
 
 import { createJobContext } from "../jobContext/jobContext.core.js";
@@ -58,6 +60,11 @@ export interface ProcessJobDependencies<TData> {
   readonly onSettled?: (job: Job<TData>) => void;
   /** Whether the owning queue has been disposed. */
   readonly isDisposed: () => boolean;
+  /**
+   * Destination for lines a processor writes with `context.log()`. Absent
+   * when the queue was configured without a logger.
+   */
+  readonly logger?: QueueLogger;
 }
 
 /**
@@ -96,6 +103,7 @@ export async function processJob<TData>(
 
   const abortController = options.abortController ?? new AbortController();
   const context = createJobContext<TData>(updatedJob, abortController.signal, {
+    ...(deps.logger ? { logger: deps.logger } : {}),
     onProgress: async (progress) => {
       const current = jobs.get(updatedJob.id);
       if (current === undefined) {
@@ -108,7 +116,7 @@ export async function processJob<TData>(
     },
   });
 
-  const timeoutMs = options.timeoutMs ?? 30_000;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_JOB_OPTIONS.timeout ?? 30_000;
   const timeoutMiddleware = createTimeoutMiddleware(timeoutMs, () => {
     // Let a cooperative processor observe the timeout and stop working
     // instead of running on with its result discarded.

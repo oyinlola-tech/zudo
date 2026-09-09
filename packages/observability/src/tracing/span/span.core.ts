@@ -36,6 +36,15 @@ export interface SpanInternalOptions {
   /** Called once, after `end()`, with the completed span. */
   readonly onEnd?: (span: ReadableSpan) => void;
   /**
+   * Redacts one attribute before it is stored.
+   *
+   * Applied inside the span rather than at the exporter, so every processor,
+   * exporter and in-process reader sees the redacted value. A span is where
+   * an `authorization` header or a request body most often lands, and the
+   * configured redaction rules used to stop at the logger.
+   */
+  readonly redactAttribute?: (key: string, value: unknown) => unknown;
+  /**
    * A non-recording span keeps its context — so children still correlate —
    * but drops attributes and events instead of accumulating them.
    */
@@ -69,6 +78,7 @@ export class DefaultSpan implements Span {
   private readonly captureStackTraces: boolean;
   private readonly recording: boolean;
   private readonly onEnd?: (span: ReadableSpan) => void;
+  private readonly redactAttribute?: (key: string, value: unknown) => unknown;
 
   /**
    * Monotonic reference for the duration. `Date` is subject to NTP steps and
@@ -93,12 +103,21 @@ export class DefaultSpan implements Span {
     this.captureStackTraces = options?.captureStackTraces ?? true;
     this.recording = options?.recording ?? true;
     this.onEnd = options?.onEnd;
+    this.redactAttribute = options?.redactAttribute;
 
     if (options?.attributes) {
       for (const [key, value] of Object.entries(options.attributes)) {
         this.setAttribute(key, value);
       }
     }
+  }
+
+  /** Redacts, then truncates — a replacement string is never itself cut. */
+  private sanitize(key: string, value: unknown): unknown {
+    const redacted = this.redactAttribute
+      ? this.redactAttribute(key, value)
+      : value;
+    return this.truncate(redacted);
   }
 
   private truncate(value: unknown): unknown {
@@ -120,7 +139,7 @@ export class DefaultSpan implements Span {
       this.droppedAttributes++;
       return;
     }
-    this.attributes[key] = this.truncate(value);
+    this.attributes[key] = this.sanitize(key, value);
   }
 
   addEvent(name: string, attributes?: Record<string, unknown>): void {
@@ -139,7 +158,7 @@ export class DefaultSpan implements Span {
           this.droppedAttributes++;
           continue;
         }
-        eventAttributes[key] = this.truncate(value);
+        eventAttributes[key] = this.sanitize(key, value);
         kept++;
       }
     }

@@ -4,6 +4,8 @@
 
 import type { LoggerEntry } from "../../loggerEntry/loggerEntry.type.js";
 
+import { escapeLogText } from "../../loggerEntry/loggerEntryHelpers/loggerEntryHelpers.sanitize.js";
+
 /**
  * Formats logger context.
  */
@@ -19,7 +21,11 @@ export function formatContext(entry: LoggerEntry): string {
       continue;
     }
 
-    values.push(`${key}=${String(value)}`);
+    if (typeof value === "object") {
+      continue;
+    }
+
+    values.push(`${escapeLogText(key)}=${escapeLogText(String(value))}`);
   }
 
   return values.length > 0 ? `[${values.join(" ")}]` : "";
@@ -38,14 +44,16 @@ export function formatSource(entry: LoggerEntry): string {
   const location: string[] = [];
 
   if (source.file) {
-    location.push(source.file);
+    location.push(escapeLogText(source.file));
   }
 
   if (source.line !== undefined) {
     location.push(String(source.line));
   }
 
-  const functionName = source.function ? ` ${source.function}` : "";
+  const functionName = source.function
+    ? ` ${escapeLogText(source.function)}`
+    : "";
 
   return location.length > 0 ? `[${location.join(":")}${functionName}]` : "";
 }

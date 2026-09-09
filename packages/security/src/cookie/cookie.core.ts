@@ -37,6 +37,12 @@ const COOKIE_VALUE_PATTERN = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]*$/;
 const ATTRIBUTE_UNSAFE = /[;,\r\n\x00]/;
 
 /**
+ * Control characters that are never acceptable inside a parsed cookie value,
+ * however lenient the rest of the read path is.
+ */
+const COOKIE_VALUE_CONTROL_CHARS = /[\x00-\x1F\x7F]/;
+
+/**
  * Parses a raw cookie header string into individual cookies.
  *
  * @param cookieHeader - The raw Cookie header value.
@@ -83,8 +89,24 @@ export function parseCookieHeader(
     const name = part.slice(0, eqIndex).trim();
     const value = part.slice(eqIndex + 1).trim();
 
-    if (name.length === 0) {
-      errors.push(`Cookie ${i}: empty cookie name`);
+    // The read path used to check length and nothing else, so a cookie whose
+    // name the package's own `validateCookieName` rejects — one carrying a
+    // separator, whitespace or a control character — still landed in
+    // `result.cookies` with `errors: []`. Names are unambiguous: RFC 6265
+    // defines them as a token, and anything else is malformed framing.
+    const nameError = validateCookieName(name);
+    if (nameError) {
+      errors.push(`Cookie ${i}: ${nameError}`);
+      continue;
+    }
+
+    // Values are deliberately checked less strictly than `validateCookieValue`
+    // does on the write path: real-world servers emit values containing
+    // spaces, commas and quoted-string wrappers, and rejecting those here
+    // would drop legitimate traffic. Control characters have no such excuse —
+    // a CR or LF in a value reflected back into a header splits the response.
+    if (COOKIE_VALUE_CONTROL_CHARS.test(value)) {
+      errors.push(`Cookie "${name}": value contains control characters`);
       continue;
     }
 

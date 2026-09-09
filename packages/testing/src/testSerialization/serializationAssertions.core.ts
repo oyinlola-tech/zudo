@@ -6,6 +6,8 @@
 
 import { JSONSerializer } from "@zudojs/serialization";
 
+import { findDifference } from "../assertions/deepEqual.core.js";
+
 const defaultSerializer = new JSONSerializer();
 
 /**
@@ -29,9 +31,16 @@ export function assertSerializesCorrectly<T>(
     preserveTypes: options?.preserveTypes,
   });
 
-  if (JSON.stringify(restored) !== JSON.stringify(value)) {
+  /*
+   * Compared structurally, not by JSON string. `JSON.stringify` renders a Map
+   * or a Set as `{}`, so a round trip that silently dropped one compared equal
+   * to the original and this assertion passed — precisely the failure it exists
+   * to catch.
+   */
+  const difference = findDifference(restored, value, "value");
+  if (difference) {
     throw new Error(
-      `Serialization round-trip failed: expected ${JSON.stringify(value)}, got ${JSON.stringify(restored)}`,
+      `Serialization round-trip failed at ${difference.path}: ${difference.reason}.`,
     );
   }
 }
@@ -73,9 +82,10 @@ export function assertDeserializesTo<T>(
     preserveTypes: options?.preserveTypes,
   });
 
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+  const difference = findDifference(actual, expected, "value");
+  if (difference) {
     throw new Error(
-      `Expected deserialized value ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+      `Deserialized value mismatch at ${difference.path}: ${difference.reason}.`,
     );
   }
 }

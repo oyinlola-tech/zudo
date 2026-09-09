@@ -107,8 +107,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/storage</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Storage infrastructure for the Zudojs framework. Database abstraction with connection pooling, transaction support with savepoints, generic repository pattern, object storage, distributed locking, lifecycle management, and health checking.
@@ -124,715 +123,602 @@
         </div>
       </div>
 
+
+      <!-- Overview -->
+      <section id="overview" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OVERVIEW</h2>
+        <p class="mb-4 leading-relaxed">
+          Every application has to keep something somewhere: rows in a database, uploaded files on disk, a flag saying "only one worker may run this job now". This package gives you interfaces for those jobs plus a few working implementations.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          An <strong>interface</strong> is a list of method names and argument types with no code behind it. Your code talks to the interface and you decide later which real driver sits behind it. That is how the same repository runs against PostgreSQL in production and a fake in tests.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          The package ships no PostgreSQL, S3 or Redis client. It ships the shape those must fit, plus a filesystem object store, a connection pool, a repository base class, an in-process lock manager, a serializer, and lifecycle and health helpers.
+        </p>
+
+        <div class="grid md:grid-cols-2 gap-4 mb-4">
+          <div class="border-4 border-black p-5">
+            <div class="font-black mb-2">Use it when</div>
+            <ul class="space-y-2 text-sm">
+              <li class="flex gap-2"><span class="text-zudo-green font-bold">&rarr;</span> You want CRUD on a SQL table without hand-writing every statement.</li>
+              <li class="flex gap-2"><span class="text-zudo-green font-bold">&rarr;</span> You store uploads on local disk and want traversal and size protection.</li>
+              <li class="flex gap-2"><span class="text-zudo-green font-bold">&rarr;</span> You need to bound how many database connections your process opens.</li>
+              <li class="flex gap-2"><span class="text-zudo-green font-bold">&rarr;</span> You want one health check covering several storage components.</li>
+            </ul>
+          </div>
+          <div class="border-4 border-black p-5">
+            <div class="font-black mb-2">Do not use it when</div>
+            <ul class="space-y-2 text-sm">
+              <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> You want an S3, GCS or Azure client. Only a filesystem store ships.</li>
+              <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> You need signed URLs. Nothing here produces one.</li>
+              <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> You need locks shared across machines.</li>
+              <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> You need joins, migrations or a query builder.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="callout callout-note">
+          <strong class="text-sm uppercase tracking-wider">What ships versus what is only a shape</strong>
+          <p class="text-sm mt-1"><strong>Real classes:</strong> <code class="code-inline">LocalObjectStorage</code>, <code class="code-inline">ConnectionPool</code>, <code class="code-inline">BaseRepository</code>, <code class="code-inline">InMemoryLockManager</code>, <code class="code-inline">JsonSerializer</code>, <code class="code-inline">StorageLifecycleManager</code>, <code class="code-inline">HealthChecker</code>.</p>
+          <p class="text-sm mt-2"><strong>Interfaces you implement yourself:</strong> <code class="code-inline">Database</code>, <code class="code-inline">Connection</code>, <code class="code-inline">Transaction</code>. Nothing here connects to a database for you.</p>
+        </div>
+      </section>
+
       <!-- Installation -->
       <section id="installation" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-        <div class="code-block mb-4"><span class="cm">// npm</span>
-npm install @zudojs/storage
-
-<span class="cm">// pnpm</span>
-pnpm add @zudojs/storage
-
-<span class="cm">// yarn</span>
-yarn add @zudojs/storage</div>
-
+        <p class="mb-4">Install the package; its four <code class="code-inline">@zudojs</code> dependencies come with it. Add <code class="code-inline">@zudojs/errors</code> too if you want to catch <code class="code-inline">StorageError</code> by class.</p>
+        <div class="code-block mb-4">$ npm install @zudojs/storage
+$ npm install @zudojs/errors</div>
+        <p class="mb-4">Node 24 or newer, ESM only &mdash; use <code class="code-inline">import</code>, not <code class="code-inline">require</code>.</p>
         <div class="callout callout-note">
-          <strong class="text-zudo-blue">Peer Dependencies:</strong> @zudojs/storage depends on @zudojs/errors, @zudojs/constants, @zudojs/types, and @zudojs/serialization. All at version 0.1.0.
+          <p class="text-sm">These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest @zudojs release.</p>
         </div>
       </section>
 
-      <!-- What It Does -->
-      <section id="what-it-does" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHAT IT DOES</h2>
-        <p class="mb-4 leading-relaxed">
-          <code class="bg-black/5 px-1">@zudojs/storage</code> is the storage infrastructure layer for the Zudojs framework. It provides:
-        </p>
-        <ul class="space-y-2 mb-6">
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Database abstraction</strong> with connection pooling, backpressure, and health checks</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Transaction support</strong> with isolation levels and savepoints</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Generic repository pattern</strong> for CRUD operations on any entity</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Local file-based object storage</strong> with path traversal protection</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>In-memory distributed lock manager</strong> with TTL and wait queues</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Storage lifecycle management</strong> with phase transitions (uninitialized → initializing → ready → draining → drained → shutdown)</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Health checking</strong> with component registration and aggregated reports</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>JSON serialization</strong> with type preservation (BigInt, Date, Map, Set, Uint8Array)</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Pool statistics and monitoring</strong> for connection usage tracking</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Graceful drain and shutdown</strong> for all storage components</li>
-        </ul>
+      <!-- Quick Start -->
+      <section id="quick-start" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK START</h2>
+        <p class="mb-4">The file store needs nothing but a directory. This saves a text file, reads it back, and lists what is stored.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">LocalObjectStorage</span> } <span class="kw">from</span> <span class="str">"@zudojs/storage"</span>;
 
-        <div class="callout callout-tip">
-          <strong class="text-zudo-green">Core Principle:</strong> Application code depends on interfaces like <code>Database</code>, <code>ObjectStorage</code>, and <code>Repository</code>. Concrete implementations are swapped without changing business logic.
-        </div>
-      </section>
+<span class="kw">const</span> files = <span class="kw">new</span> <span class="fn">LocalObjectStorage</span>(<span class="str">"./data/uploads"</span>);
 
-      <!-- Architecture Position -->
-      <section id="architecture-position" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHERE IT SITS</h2>
-        <div class="border-4 border-black p-6 space-y-3">
-          <div class="bg-zudo-red text-black p-3 font-bold text-center text-sm">APPLICATION LAYER (CQRS, Events, Modules)</div>
-          <div class="bg-white border-2 border-black p-3 font-bold text-center text-sm">SERVICE LAYER (Business Logic, Repositories)</div>
-          <div class="bg-zudo-blue text-white p-3 font-bold text-center text-sm">STORAGE LAYER (@zudojs/storage)</div>
-          <div class="grid grid-cols-6 gap-2 text-center text-xs">
-            <div class="bg-zudo-yellow text-black p-2 font-bold border-2 border-black">Database</div>
-            <div class="bg-zudo-green text-black p-2 font-bold border-2 border-black">ObjectStorage</div>
-            <div class="bg-zudo-red text-black p-2 font-bold border-2 border-black">Repository</div>
-            <div class="bg-zudo-blue text-white p-2 font-bold border-2 border-black">Locking</div>
-            <div class="bg-black text-white p-2 font-bold border-2 border-black">Lifecycle</div>
-            <div class="bg-zudo-yellow text-black p-2 font-bold border-2 border-black">Health</div>
-          </div>
-          <div class="bg-black text-white p-3 font-bold text-center text-sm">EXTERNAL DRIVERS (PostgreSQL, S3, Redis)</div>
-        </div>
-        <p class="mt-4 text-sm text-black/60">
-          The storage layer sits between business logic and external drivers. It defines driver-independent interfaces so application code never touches platform-specific APIs.
-        </p>
-      </section>
+<span class="kw">const</span> bytes = <span class="kw">new</span> <span class="fn">TextEncoder</span>().<span class="fn">encode</span>(<span class="str">"hello world"</span>);
+<span class="kw">const</span> meta = <span class="kw">await</span> files.<span class="fn">put</span>(<span class="str">"notes/greeting.txt"</span>, bytes, {
+  contentType: <span class="str">"text/plain"</span>,
+});
+console.<span class="fn">log</span>(meta.key, meta.size);   <span class="cmt">// notes/greeting.txt 11</span>
 
-      <!-- Dependencies -->
-      <section id="dependencies" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DEPENDENCIES</h2>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Package</th>
-                <th class="p-3 text-left">Version</th>
-                <th class="p-3 text-left">Purpose</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono text-sm">@zudojs/errors</td>
-                <td class="p-3">0.1.0</td>
-                <td class="p-3">StorageError, NotFoundError, and error codes</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono text-sm">@zudojs/constants</td>
-                <td class="p-3">0.1.0</td>
-                <td class="p-3">Branded types and shared constants</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono text-sm">@zudojs/types</td>
-                <td class="p-3">0.1.0</td>
-                <td class="p-3">Type guards and utility types</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono text-sm">@zudojs/serialization</td>
-                <td class="p-3">0.1.0</td>
-                <td class="p-3">JSONSerializer for type-preserving serialization</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+<span class="kw">const</span> found = <span class="kw">await</span> files.<span class="fn">get</span>(<span class="str">"notes/greeting.txt"</span>);
+console.<span class="fn">log</span>(<span class="kw">new</span> <span class="fn">TextDecoder</span>().<span class="fn">decode</span>(<span class="kw">await</span> found!.<span class="fn">arrayBuffer</span>()));
 
-        <div class="mt-4 callout callout-warning">
-          <strong class="text-zudo-yellow">Version Lock:</strong> All internal dependencies use <code>workspace:*</code> in development. When published, they use exact version <code>0.1.0</code>. Always use matching versions across the ecosystem.
-        </div>
-      </section>
-
-      <!-- Types -->
-      <section id="types" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TYPES</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">ConnectionState</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">ConnectionState</span> =
-  | <span class="str">"idle"</span>
-  | <span class="str">"connecting"</span>
-  | <span class="str">"connected"</span>
-  | <span class="str">"disconnecting"</span>
-  | <span class="str">"disconnected"</span>
-  | <span class="str">"error"</span>;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionState</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">TransactionState</span> =
-  | <span class="str">"active"</span>
-  | <span class="str">"committed"</span>
-  | <span class="str">"rolledback"</span>
-  | <span class="str">"failed"</span>;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">IsolationLevel</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">IsolationLevel</span> =
-  | <span class="str">"read-uncommitted"</span>
-  | <span class="str">"read-committed"</span>
-  | <span class="str">"repeatable-read"</span>
-  | <span class="str">"serializable"</span>;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">QueryParameter</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">QueryParameter</span> =
-  | <span class="tp">string</span>
-  | <span class="tp">number</span>
-  | <span class="tp">boolean</span>
-  | <span class="num">null</span>
-  | <span class="tp">Date</span>
-  | <span class="tp">Buffer</span>
-  | <span class="tp">Uint8Array</span>
-  | <span class="tp">bigint</span>
-  | <span class="tp">QueryParameter</span>[];</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">SerializationFormat</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">SerializationFormat</span> = <span class="str">"json"</span> | <span class="str">"msgpack"</span> | <span class="str">"binary"</span>;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">StorageLifecyclePhase</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">StorageLifecyclePhase</span> =
-  | <span class="str">"uninitialized"</span>
-  | <span class="str">"initializing"</span>
-  | <span class="str">"ready"</span>
-  | <span class="str">"draining"</span>
-  | <span class="str">"drained"</span>
-  | <span class="str">"shutdown"</span>;</div>
-      </section>
-
-      <!-- Database -->
-      <section id="database" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DATABASE</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: Database</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Database</span> {
-  <span class="fn">connect</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">disconnect</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">query</span>&lt;<span class="tp">T</span> = <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;(query: <span class="tp">Query</span>): <span class="tp">Promise</span>&lt;<span class="tp">QueryResult</span>&lt;<span class="tp">T</span>&gt;&gt;;
-  <span class="fn">execute</span>(query: <span class="tp">Query</span>): <span class="tp">Promise</span>&lt;<span class="tp">ExecuteResult</span>&gt;;
-  <span class="fn">transaction</span>&lt;<span class="tp">T</span>&gt;(
-    callback: (tx: <span class="tp">Transaction</span>) => <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;,
-    options?: <span class="tp">TransactionOptions</span>,
-  ): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-  <span class="fn">healthCheck</span>(): <span class="tp">Promise</span>&lt;<span class="tp">StorageHealth</span>&gt;;
-  <span class="fn">getPoolStats</span>(): <span class="tp">PoolStats</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: Connection</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Connection</span> {
-  <span class="kw">readonly</span> id: <span class="tp">string</span>;
-  <span class="kw">readonly</span> state: <span class="tp">ConnectionState</span>;
-  <span class="fn">query</span>&lt;<span class="tp">T</span> = <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;(query: <span class="tp">Query</span>): <span class="tp">Promise</span>&lt;<span class="tp">QueryResult</span>&lt;<span class="tp">T</span>&gt;&gt;;
-  <span class="fn">execute</span>(query: <span class="tp">Query</span>): <span class="tp">Promise</span>&lt;<span class="tp">ExecuteResult</span>&gt;;
-  <span class="fn">ping</span>(): <span class="tp">Promise</span>&lt;<span class="tp">boolean</span>&gt;;
-  <span class="fn">close</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Class: ConnectionPool</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">ConnectionPool</span> {
-  <span class="kw">constructor</span>(
-    factory: () => <span class="tp">Promise</span>&lt;<span class="tp">Connection</span>&gt;,
-    options?: <span class="tp">Partial</span>&lt;<span class="tp">ConnectionPoolOptions</span>&gt;,
-  );
-
-  <span class="cm">/** Initialize the pool with minimum connections. */</span>
-  <span class="fn">initialize</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-
-  <span class="cm">/** Acquire a connection from the pool. */</span>
-  <span class="fn">acquire</span>(): <span class="tp">Promise</span>&lt;<span class="tp">Connection</span>&gt;;
-
-  <span class="cm">/** Release a connection back to the pool. */</span>
-  <span class="fn">release</span>(connection: <span class="tp">Connection</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-
-  <span class="cm">/** Use a connection and automatically release it. */</span>
-  <span class="fn">use</span>&lt;<span class="tp">T</span>&gt;(fn: (conn: <span class="tp">Connection</span>) => <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-
-  <span class="cm">/** Get pool statistics. */</span>
-  <span class="fn">getStats</span>(): <span class="tp">PoolStats</span>;
-
-  <span class="cm">/** Drain all connections gracefully. */</span>
-  <span class="fn">drain</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-
-  <span class="cm">/** Check if the pool is healthy. */</span>
-  <span class="fn">healthCheck</span>(): <span class="tp">Promise</span>&lt;{ healthy: <span class="tp">boolean</span>; stats: <span class="tp">PoolStats</span> }&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">ConnectionPoolOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ConnectionPoolOptions</span> {
-  <span class="kw">readonly</span> min: <span class="tp">number</span>;
-  <span class="kw">readonly</span> max: <span class="tp">number</span>;
-  <span class="kw">readonly</span> acquireTimeout: <span class="tp">number</span>;
-  <span class="kw">readonly</span> idleTimeout: <span class="tp">number</span>;
-  <span class="kw">readonly</span> connectionTimeout: <span class="tp">number</span>;
-  <span class="kw">readonly</span> maxLifetime: <span class="tp">number</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">PoolStats</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">PoolStats</span> {
-  <span class="kw">readonly</span> total: <span class="tp">number</span>;
-  <span class="kw">readonly</span> idle: <span class="tp">number</span>;
-  <span class="kw">readonly</span> active: <span class="tp">number</span>;
-  <span class="kw">readonly</span> waiting: <span class="tp">number</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: Transaction</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Transaction</span> {
-  <span class="kw">readonly</span> id: <span class="tp">string</span>;
-  <span class="kw">readonly</span> state: <span class="tp">TransactionState</span>;
-  <span class="fn">query</span>&lt;<span class="tp">T</span> = <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;(query: <span class="tp">Query</span>): <span class="tp">Promise</span>&lt;<span class="tp">QueryResult</span>&lt;<span class="tp">T</span>&gt;&gt;;
-  <span class="fn">execute</span>(query: <span class="tp">Query</span>): <span class="tp">Promise</span>&lt;<span class="tp">ExecuteResult</span>&gt;;
-  <span class="fn">savepoint</span>(name: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">rollbackToSavepoint</span>(name: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">TransactionOptions</span> {
-  <span class="kw">readonly</span> isolationLevel?: <span class="tp">IsolationLevel</span>;
-  <span class="kw">readonly</span> timeout?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> readOnly?: <span class="tp">boolean</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Query, QueryResult, ExecuteResult, FieldInfo</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Query</span> {
-  <span class="kw">readonly</span> text: <span class="tp">string</span>;
-  <span class="kw">readonly</span> parameters?: <span class="kw">readonly</span> <span class="tp">QueryParameter</span>[];
-}
-
-<span class="kw">interface</span> <span class="tp">QueryResult</span>&lt;<span class="tp">T</span> = <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt; {
-  <span class="kw">readonly</span> rows: <span class="kw">readonly</span> <span class="tp">T</span>[];
-  <span class="kw">readonly</span> rowCount: <span class="tp">number</span>;
-  <span class="kw">readonly</span> fields: <span class="kw">readonly</span> <span class="tp">FieldInfo</span>[];
-  <span class="kw">readonly</span> durationMs?: <span class="tp">number</span>;
-}
-
-<span class="kw">interface</span> <span class="tp">ExecuteResult</span> {
-  <span class="kw">readonly</span> rowCount: <span class="tp">number</span>;
-  <span class="kw">readonly</span> durationMs?: <span class="tp">number</span>;
-}
-
-<span class="kw">interface</span> <span class="tp">FieldInfo</span> {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="kw">readonly</span> oid?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> dataType?: <span class="tp">string</span>;
-}</div>
-      </section>
-
-      <!-- Repository -->
-      <section id="repository" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">REPOSITORY</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: Repository&lt;Entity, ID&gt;</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Repository</span>&lt;<span class="tp">Entity</span>, <span class="tp">ID</span>&gt; {
-  <span class="fn">findById</span>(id: <span class="tp">ID</span>): <span class="tp">Promise</span>&lt;<span class="tp">Entity</span> | <span class="num">null</span>&gt;;
-  <span class="fn">findByIds</span>(ids: <span class="kw">readonly</span> <span class="tp">ID</span>[]): <span class="tp">Promise</span>&lt;<span class="kw">readonly</span> <span class="tp">Entity</span>[]&gt;;
-  <span class="fn">create</span>(entity: <span class="tp">Entity</span>): <span class="tp">Promise</span>&lt;<span class="tp">Entity</span>&gt;;
-  <span class="fn">update</span>(id: <span class="tp">ID</span>, changes: <span class="tp">Partial</span>&lt;<span class="tp">Entity</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">Entity</span>&gt;;
-  <span class="fn">delete</span>(id: <span class="tp">ID</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">exists</span>(id: <span class="tp">ID</span>): <span class="tp">Promise</span>&lt;<span class="tp">boolean</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Class: BaseRepository&lt;Entity, ID&gt;</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">BaseRepository</span>&lt;<span class="tp">Entity</span> <span class="kw">extends</span> <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;, <span class="tp">ID</span> = <span class="tp">string</span>&gt; {
-  <span class="kw">constructor</span>(
-    database: <span class="tp">Database</span>,
-    options: <span class="tp">BaseRepositoryOptions</span>,
-  );
-
-  <span class="cm">/** Find an entity by its primary key. */</span>
-  <span class="fn">findById</span>(id: <span class="tp">ID</span>): <span class="tp">Promise</span>&lt;<span class="tp">Entity</span> | <span class="num">null</span>&gt;;
-
-  <span class="cm">/** Find multiple entities by their IDs. */</span>
-  <span class="fn">findByIds</span>(ids: <span class="kw">readonly</span> <span class="tp">ID</span>[]): <span class="tp">Promise</span>&lt;<span class="kw">readonly</span> <span class="tp">Entity</span>[]&gt;;
-
-  <span class="cm">/** Create a new entity. */</span>
-  <span class="fn">create</span>(entity: <span class="tp">Entity</span>): <span class="tp">Promise</span>&lt;<span class="tp">Entity</span>&gt;;
-
-  <span class="cm">/** Update an entity by primary key. */</span>
-  <span class="fn">update</span>(id: <span class="tp">ID</span>, changes: <span class="tp">Partial</span>&lt;<span class="tp">Entity</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">Entity</span>&gt;;
-
-  <span class="cm">/** Delete an entity by primary key. */</span>
-  <span class="fn">delete</span>(id: <span class="tp">ID</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-
-  <span class="cm">/** Check if an entity exists by primary key. */</span>
-  <span class="fn">exists</span>(id: <span class="tp">ID</span>): <span class="tp">Promise</span>&lt;<span class="tp">boolean</span>&gt;;
-
-  <span class="cm">/** Find all entities with optional limit and offset. */</span>
-  <span class="fn">findAll</span>(options?: {
-    <span class="kw">readonly</span> limit?: <span class="tp">number</span>;
-    <span class="kw">readonly</span> offset?: <span class="tp">number</span>;
-    <span class="kw">readonly</span> orderBy?: <span class="tp">string</span>;
-    <span class="kw">readonly</span> order?: <span class="str">"ASC"</span> | <span class="str">"DESC"</span>;
-  }): <span class="tp">Promise</span>&lt;<span class="kw">readonly</span> <span class="tp">Entity</span>[]&gt;;
-
-  <span class="cm">/** Count entities matching optional where conditions. */</span>
-  <span class="fn">count</span>(where?: <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">QueryParameter</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">number</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">BaseRepositoryOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">BaseRepositoryOptions</span> {
-  <span class="cm">/** The database table name. */</span>
-  <span class="kw">readonly</span> tableName: <span class="tp">string</span>;
-  <span class="cm">/** The primary key column name (default: "id"). */</span>
-  <span class="kw">readonly</span> primaryKey?: <span class="tp">string</span>;
-}</div>
+<span class="kw">const</span> page = <span class="kw">await</span> files.<span class="fn">list</span>();
+console.<span class="fn">log</span>(page.objects.<span class="fn">map</span>((o) => o.key)); <span class="cmt">// [ 'notes/greeting.txt' ]</span></div>
+        <p class="mb-4"><strong>What you should see:</strong> the key and size, then <code class="code-inline">hello world</code>, then the key list &mdash; and a real file at <code class="code-inline">./data/uploads/notes/greeting.txt</code>. Directories are created for you.</p>
       </section>
 
       <!-- Object Storage -->
       <section id="object-storage" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OBJECT STORAGE</h2>
+        <p class="mb-4 leading-relaxed">
+          <strong>Object storage</strong> keeps whole files &mdash; images, PDFs, exports &mdash; where each file is saved and fetched as one lump of bytes under a name. You never open, seek or append; you put a whole object and get a whole object.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          A <strong>bucket</strong> is the container those objects live in. Here it is a directory on disk: the <code class="code-inline">basePath</code> you pass to the constructor. One <code class="code-inline">LocalObjectStorage</code> instance is one bucket.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          A <strong>key</strong> is an object's name inside the bucket, such as <code class="code-inline">avatars/u_1.png</code>. It looks like a path, and here it is one, relative to the base directory. Slashes become real subdirectories.
+        </p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: ObjectStorage</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ObjectStorage</span> {
+        <p class="mb-4">Every store offers these six methods. This is the <code class="code-inline">ObjectStorage</code> interface as declared.</p>
+        <div class="code-block mb-4"><span class="kw">interface</span> <span class="tp">ObjectStorage</span> {
   <span class="fn">put</span>(
     key: <span class="tp">string</span>,
     data: <span class="tp">Uint8Array</span> | <span class="tp">ReadableStream</span>&lt;<span class="tp">Uint8Array</span>&gt;,
     options?: <span class="tp">ObjectPutOptions</span>,
   ): <span class="tp">Promise</span>&lt;<span class="tp">ObjectMetadata</span>&gt;;
-  <span class="fn">get</span>(key: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">ObjectData</span> | <span class="num">null</span>&gt;;
-  <span class="fn">delete</span>(key: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
+  <span class="fn">get</span>(key: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">ObjectData</span> | <span class="kw">null</span>&gt;;
+  <span class="fn">delete</span>(key: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="kw">void</span>&gt;;
   <span class="fn">exists</span>(key: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">boolean</span>&gt;;
-  <span class="fn">metadata</span>(key: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">ObjectMetadata</span> | <span class="num">null</span>&gt;;
-  <span class="fn">list</span>(
-    prefix?: <span class="tp">string</span>,
-    options?: {
-      <span class="kw">readonly</span> maxKeys?: <span class="tp">number</span>;
-      <span class="kw">readonly</span> continuationToken?: <span class="tp">string</span>;
-    },
-  ): <span class="tp">Promise</span>&lt;<span class="tp">ListObjectsResult</span>&gt;;
+  <span class="fn">metadata</span>(key: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">ObjectMetadata</span> | <span class="kw">null</span>&gt;;
+  <span class="fn">list</span>(prefix?: <span class="tp">string</span>, options?: <span class="tp">ListOptions</span>): <span class="tp">Promise</span>&lt;<span class="tp">ListObjectsResult</span>&gt;;
 }</div>
+        <p class="mb-4"><code class="code-inline">get</code> and <code class="code-inline">metadata</code> return <code class="code-inline">null</code> for a missing key instead of throwing, and <code class="code-inline">delete</code> on a missing key does nothing.</p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Class: LocalObjectStorage</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">LocalObjectStorage</span> <span class="kw">implements</span> <span class="tp">ObjectStorage</span> {
-  <span class="kw">constructor</span>(basePath: <span class="tp">string</span>);
+        <div class="callout callout-warning">
+          <strong class="text-sm uppercase tracking-wider">One backend, and no signed URLs</strong>
+          <p class="text-sm mt-1"><code class="code-inline">LocalObjectStorage</code> is the only implementation in the package, and it writes to the local filesystem. There is no S3, GCS, Azure or MinIO class, and no <code class="code-inline">signedUrl</code> or <code class="code-inline">presign</code> method anywhere in the source. A <em>signed URL</em> &mdash; a link that grants time-limited access to one object without a login &mdash; is a feature of cloud buckets, not of this package. For either, write a class implementing <code class="code-inline">ObjectStorage</code> over your provider's SDK.</p>
+        </div>
 
-  <span class="fn">put</span>(
-    key: <span class="tp">string</span>,
-    data: <span class="tp">Uint8Array</span> | <span class="tp">ReadableStream</span>&lt;<span class="tp">Uint8Array</span>&gt;,
-    options?: <span class="tp">ObjectPutOptions</span>,
-  ): <span class="tp">Promise</span>&lt;<span class="tp">ObjectMetadata</span>&gt;;
-  <span class="fn">get</span>(key: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">ObjectData</span> | <span class="num">null</span>&gt;;
-  <span class="fn">delete</span>(key: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">exists</span>(key: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">boolean</span>&gt;;
-  <span class="fn">metadata</span>(key: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">ObjectMetadata</span> | <span class="num">null</span>&gt;;
-  <span class="fn">list</span>(
-    prefix?: <span class="tp">string</span>,
-    options?: { <span class="kw">readonly</span> maxKeys?: <span class="tp">number</span>; <span class="kw">readonly</span> continuationToken?: <span class="tp">string</span> },
-  ): <span class="tp">Promise</span>&lt;<span class="tp">ListObjectsResult</span>&gt;;
+        <h3 class="text-lg font-bold mb-3 mt-6">Streams and large files</h3>
+        <p class="mb-4 leading-relaxed">
+          A <strong>stream</strong> is data delivered in pieces over time instead of all at once. A <code class="code-inline">ReadableStream&lt;Uint8Array&gt;</code> hands you one chunk of bytes, then the next, until it says it is done.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          The reason to care is memory. A 500 MB upload held as one <code class="code-inline">Uint8Array</code> is 500 MB of your process; ten at once ends the process. Streaming lets bytes arrive in chunks so nothing has to hold the whole file.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          So <code class="code-inline">put</code> accepts a stream and you can pass a request body straight through. Know what the local store then does: it reads the stream into one buffer, counting as it goes, and rejects the write the moment the total passes <code class="code-inline">maxObjectBytes</code>. The byte limit, not the stream, is what protects memory here &mdash; set it.
+        </p>
+        <p class="mb-4">This streams a body into the store under a 5 MB ceiling.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">LocalObjectStorage</span> } <span class="kw">from</span> <span class="str">"@zudojs/storage"</span>;
+<span class="kw">import</span> { <span class="tp">StorageError</span> } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+
+<span class="kw">const</span> uploads = <span class="kw">new</span> <span class="fn">LocalObjectStorage</span>(<span class="str">"./data/uploads"</span>, {
+  maxObjectBytes: <span class="num">5</span> * <span class="num">1024</span> * <span class="num">1024</span>,
+});
+
+<span class="kw">const</span> body = <span class="kw">new</span> <span class="fn">ReadableStream</span>&lt;<span class="tp">Uint8Array</span>&gt;({
+  <span class="fn">start</span>(controller) {
+    controller.<span class="fn">enqueue</span>(<span class="kw">new</span> <span class="fn">TextEncoder</span>().<span class="fn">encode</span>(<span class="str">"chunk one "</span>));
+    controller.<span class="fn">enqueue</span>(<span class="kw">new</span> <span class="fn">TextEncoder</span>().<span class="fn">encode</span>(<span class="str">"chunk two"</span>));
+    controller.<span class="fn">close</span>();
+  },
+});
+
+<span class="kw">try</span> {
+  <span class="kw">const</span> meta = <span class="kw">await</span> uploads.<span class="fn">put</span>(<span class="str">"reports/q1.txt"</span>, body);
+  console.<span class="fn">log</span>(meta.size); <span class="cmt">// 19</span>
+} <span class="kw">catch</span> (error) {
+  <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">StorageError</span>) {
+    console.<span class="fn">error</span>(error.code); <span class="cmt">// STORAGE_OBJECT_TOO_LARGE, status 413</span>
+  }
 }</div>
+        <p class="mb-4">
+          <strong>What you should see:</strong> <code class="code-inline">19</code>. Over the limit it would throw before anything appeared under that key: bytes land in a temp file and are renamed into place only once complete, so a failed write never leaves half an object. The default ceiling is <code class="code-inline">DEFAULT_MAX_OBJECT_BYTES</code>, 64 MiB.
+        </p>
+        <p class="mb-4">Reading is symmetric: <code class="code-inline">get</code> returns an <code class="code-inline">ObjectData</code> with a <code class="code-inline">body</code> stream and an <code class="code-inline">arrayBuffer()</code> shortcut. Use the shortcut only for small objects.</p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">ObjectPutOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ObjectPutOptions</span> {
-  <span class="kw">readonly</span> contentType?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> metadata?: <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">string</span>&gt;;
-  <span class="kw">readonly</span> cacheControl?: <span class="tp">string</span>;
-}</div>
+        <h3 class="text-lg font-bold mb-3 mt-6">Keys cannot escape the bucket</h3>
+        <p class="mb-4 leading-relaxed">
+          A key from a request may be hostile: <code class="code-inline">../../etc/passwd</code>. Absolute keys, keys with a null byte, and keys resolving outside the base directory all throw <code class="code-inline">STORAGE_PATH_TRAVERSAL</code> (status 400).
+        </p>
+        <p class="mb-4 leading-relaxed">
+          The check compares paths, not string prefixes, so <code class="code-inline">/data/store-secrets</code> is outside <code class="code-inline">/data/store</code>. The real path is checked too, so a symlink planted inside cannot redirect a read or write out.
+        </p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">ObjectMetadata</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ObjectMetadata</span> {
-  <span class="kw">readonly</span> key: <span class="tp">string</span>;
-  <span class="kw">readonly</span> contentType?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> size: <span class="tp">number</span>;
-  <span class="kw">readonly</span> lastModified: <span class="tp">Date</span>;
-  <span class="kw">readonly</span> etag?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> metadata?: <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">string</span>&gt;;
-}</div>
+        <h3 class="text-lg font-bold mb-3 mt-6">Listing a page at a time</h3>
+        <p class="mb-4"><code class="code-inline">list</code> returns one sorted page plus a cursor. A <strong>cursor</strong> is a bookmark: hand back the token you were given to get the next page.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">LocalObjectStorage</span> } <span class="kw">from</span> <span class="str">"@zudojs/storage"</span>;
 
-        <h3 class="text-lg font-bold mb-3 mt-6">ObjectData</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ObjectData</span> {
-  <span class="kw">readonly</span> metadata: <span class="tp">ObjectMetadata</span>;
-  <span class="kw">readonly</span> body: <span class="tp">ReadableStream</span>&lt;<span class="tp">Uint8Array</span>&gt;;
-  <span class="cm">/** Read entire content as Uint8Array (use only for small objects). */</span>
-  <span class="fn">arrayBuffer</span>(): <span class="tp">Promise</span>&lt;<span class="tp">ArrayBuffer</span>&gt;;
-}</div>
+<span class="kw">const</span> files = <span class="kw">new</span> <span class="fn">LocalObjectStorage</span>(<span class="str">"./data/uploads"</span>);
 
-        <h3 class="text-lg font-bold mb-3 mt-6">ListObjectsResult</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ListObjectsResult</span> {
-  <span class="kw">readonly</span> objects: <span class="kw">readonly</span> <span class="tp">ObjectMetadata</span>[];
-  <span class="kw">readonly</span> continuationToken?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> isTruncated: <span class="tp">boolean</span>;
-}</div>
+<span class="kw">for</span> (<span class="kw">const</span> name <span class="kw">of</span> [<span class="str">"a"</span>, <span class="str">"b"</span>, <span class="str">"c"</span>, <span class="str">"d"</span>]) {
+  <span class="kw">await</span> files.<span class="fn">put</span>(<span class="str">`docs/${name}.txt`</span>, <span class="kw">new</span> <span class="fn">TextEncoder</span>().<span class="fn">encode</span>(name));
+}
+
+<span class="kw">let</span> token: <span class="tp">string</span> | <span class="tp">undefined</span>;
+<span class="kw">do</span> {
+  <span class="kw">const</span> page = <span class="kw">await</span> files.<span class="fn">list</span>(<span class="str">"docs/"</span>, { maxKeys: <span class="num">2</span>, continuationToken: token });
+  console.<span class="fn">log</span>(page.objects.<span class="fn">map</span>((o) => o.key));
+  token = page.isTruncated ? page.continuationToken : <span class="kw">undefined</span>;
+} <span class="kw">while</span> (token);</div>
+        <p class="mb-4">
+          <strong>What you should see:</strong> <code class="code-inline">[ 'docs/a.txt', 'docs/b.txt' ]</code>, then <code class="code-inline">[ 'docs/c.txt', 'docs/d.txt' ]</code>, then the loop ends. Without <code class="code-inline">maxKeys</code> the page size is <code class="code-inline">DEFAULT_MAX_KEYS</code>, 1000. Call <code class="code-inline">list()</code> again <em>without</em> the token and you get the first page forever.
+        </p>
+      </section>
+
+      <!-- Repository -->
+      <section id="repository" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">REPOSITORY</h2>
+        <p class="mb-4 leading-relaxed">
+          A <strong>repository</strong> is one object that owns all the queries for one table. Instead of scattering SQL through your handlers you call <code class="code-inline">users.findById("u_1")</code> and the repository writes the statement.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          <code class="code-inline">BaseRepository</code> gives you eight operations: <code class="code-inline">findById</code>, <code class="code-inline">findByIds</code>, <code class="code-inline">create</code>, <code class="code-inline">update</code>, <code class="code-inline">delete</code>, <code class="code-inline">exists</code>, <code class="code-inline">findAll</code> and <code class="code-inline">count</code>. It runs them through a <code class="code-inline">Database</code> &mdash; an interface, not a class you can construct. You write the small adapter that forwards to your driver.
+        </p>
+        <p class="mb-4">This example uses a stub database so it runs on its own; swap the two method bodies for your driver's calls.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">BaseRepository</span> } <span class="kw">from</span> <span class="str">"@zudojs/storage"</span>;
+<span class="kw">import</span> <span class="kw">type</span> { <span class="tp">Database</span>, <span class="tp">Query</span> } <span class="kw">from</span> <span class="str">"@zudojs/storage"</span>;
+
+<span class="kw">const</span> database: <span class="tp">Database</span> = {
+  connect: <span class="kw">async</span> () => {},
+  disconnect: <span class="kw">async</span> () => {},
+  query: <span class="kw">async</span> (q: <span class="tp">Query</span>) => {
+    console.<span class="fn">log</span>(q.text, q.parameters);
+    <span class="kw">return</span> { rows: [], rowCount: <span class="num">0</span>, fields: [] };
+  },
+  execute: <span class="kw">async</span> () => ({ rowCount: <span class="num">0</span> }),
+  transaction: <span class="kw">async</span> () => {
+    <span class="kw">throw</span> <span class="kw">new</span> <span class="fn">Error</span>(<span class="str">"transaction is your adapter's job"</span>);
+  },
+  healthCheck: <span class="kw">async</span> () => ({ healthy: <span class="kw">true</span>, latencyMs: <span class="num">0</span>, status: <span class="str">"ok"</span> }),
+  getPoolStats: () => ({ total: <span class="num">1</span>, idle: <span class="num">1</span>, active: <span class="num">0</span>, waiting: <span class="num">0</span> }),
+};
+
+<span class="kw">interface</span> <span class="tp">User</span> <span class="kw">extends</span> <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt; {
+  id: <span class="tp">string</span>;
+  email: <span class="tp">string</span>;
+  name: <span class="tp">string</span>;
+}
+
+<span class="kw">const</span> users = <span class="kw">new</span> <span class="fn">BaseRepository</span>&lt;<span class="tp">User</span>, <span class="tp">string</span>&gt;(database, {
+  tableName: <span class="str">"users"</span>,
+  primaryKey: <span class="str">"id"</span>,
+  columns: [<span class="str">"id"</span>, <span class="str">"email"</span>, <span class="str">"name"</span>],
+});
+
+<span class="kw">await</span> users.<span class="fn">findById</span>(<span class="str">"u_1"</span>);
+<span class="cmt">// SELECT * FROM users WHERE id = $1  [ 'u_1' ]</span>
+
+<span class="kw">await</span> users.<span class="fn">findAll</span>({ orderBy: <span class="str">"email"</span>, limit: <span class="num">20</span>, offset: <span class="num">0</span> });
+<span class="cmt">// SELECT * FROM users ORDER BY email ASC LIMIT $1 OFFSET $2  [ 20, 0 ]</span></div>
+        <p class="mb-4"><strong>What you should see:</strong> the two statements above, printed by the stub. Note that <code class="code-inline">20</code> and <code class="code-inline">0</code> arrive as parameters, not pasted into the text.</p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Why column names are checked</h3>
+        <p class="mb-4 leading-relaxed">
+          Values are safe because they travel as parameters: the <code class="code-inline">$1</code> markers keep them out of the statement text. Column and table <em>names</em> cannot be parameters &mdash; no SQL driver allows it &mdash; so they are written into the text directly.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          That matters because the natural call is <code class="code-inline">repo.create(req.body)</code>, and the <em>keys</em> of that body become column names. So every identifier is checked against <code class="code-inline">^[A-Za-z_][A-Za-z0-9_]*$</code> and a 63-character cap first, and <code class="code-inline">limit</code> and <code class="code-inline">offset</code> must be non-negative safe integers.
+        </p>
+        <div class="code-block mb-4"><span class="cmt">// A request body whose key is crafted SQL</span>
+<span class="kw">await</span> users.<span class="fn">create</span>({
+  <span class="str">"x) VALUES (99, (SELECT password FROM admins)) --"</span>: <span class="str">"z"</span>,
+} <span class="kw">as</span> <span class="kw">unknown</span> <span class="kw">as</span> <span class="tp">User</span>);
+<span class="cmt">// throws StorageError: Invalid column name — only letters, digits</span>
+<span class="cmt">// and underscores are allowed (STORAGE_INVALID_IDENTIFIER, 400)</span>
+
+<span class="kw">await</span> users.<span class="fn">findAll</span>({ orderBy: <span class="str">"1; DROP TABLE users --"</span> });
+<span class="cmt">// throws StorageError: Invalid sort column (STORAGE_INVALID_IDENTIFIER)</span></div>
+        <p class="mb-4">
+          Passing <code class="code-inline">columns</code> is the stronger guard: a name that passes the character check but is not on your list is refused with <code class="code-inline">STORAGE_IDENTIFIER_NOT_ALLOWED</code>. Without it, a body carrying <code class="code-inline">is_admin</code> would be written happily. The same guards are exported for your own SQL: <code class="code-inline">assertIdentifier</code>, <code class="code-inline">assertIdentifiers</code>, <code class="code-inline">assertRowBound</code>, <code class="code-inline">assertSortDirection</code>.
+        </p>
+
+        <div class="callout callout-danger">
+          <strong class="text-sm uppercase tracking-wider">Column names outside that character set are refused</strong>
+          <p class="text-sm mt-1">A column called <code class="code-inline">"first name"</code> or <code class="code-inline">"user-id"</code> will not pass. That is deliberate. If your schema uses such names, write those statements yourself with your engine's quoting rather than routing them through <code class="code-inline">BaseRepository</code>.</p>
+        </div>
+
+      </section>
+
+      <!-- Connection Pool -->
+      <section id="connection-pool" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONNECTION POOL</h2>
+        <p class="mb-4 leading-relaxed">
+          Opening a database connection is slow, and a database accepts only so many. A <strong>connection pool</strong> opens a few, keeps them, and lends them out: you borrow one, use it, give it back.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          <code class="code-inline">ConnectionPool</code> takes a factory &mdash; a function that opens one connection &mdash; plus options. It never opens more than <code class="code-inline">max</code>. When all are lent out the next caller queues instead, and gets the first connection returned.
+        </p>
+        <p class="mb-4">This pool wraps a fake connection so it runs standalone. Replace the factory body with your driver.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">ConnectionPool</span> } <span class="kw">from</span> <span class="str">"@zudojs/storage"</span>;
+<span class="kw">import</span> <span class="kw">type</span> { <span class="tp">Connection</span> } <span class="kw">from</span> <span class="str">"@zudojs/storage"</span>;
+
+<span class="kw">let</span> made = <span class="num">0</span>;
+
+<span class="kw">const</span> pool = <span class="kw">new</span> <span class="fn">ConnectionPool</span>(
+  <span class="kw">async</span> (): <span class="tp">Promise</span>&lt;<span class="tp">Connection</span>&gt; => {
+    made += <span class="num">1</span>;
+    <span class="kw">return</span> {
+      id: <span class="str">`conn-${made}`</span>,
+      state: <span class="str">"connected"</span>,
+      query: <span class="kw">async</span> () => ({ rows: [], rowCount: <span class="num">0</span>, fields: [] }),
+      execute: <span class="kw">async</span> () => ({ rowCount: <span class="num">0</span> }),
+      ping: <span class="kw">async</span> () => <span class="kw">true</span>,
+      close: <span class="kw">async</span> () => {},
+    };
+  },
+  { min: <span class="num">2</span>, max: <span class="num">5</span>, acquireTimeout: <span class="num">5000</span> },
+);
+
+<span class="kw">await</span> pool.<span class="fn">initialize</span>();
+console.<span class="fn">log</span>(pool.<span class="fn">getStats</span>()); <span class="cmt">// { total: 2, idle: 2, active: 0, waiting: 0 }</span>
+
+<span class="kw">await</span> pool.<span class="fn">use</span>(<span class="kw">async</span> (conn) => {
+  <span class="kw">await</span> conn.<span class="fn">query</span>({ text: <span class="str">"SELECT 1"</span> });
+  console.<span class="fn">log</span>(pool.<span class="fn">getStats</span>().active); <span class="cmt">// 1</span>
+});
+
+console.<span class="fn">log</span>(pool.<span class="fn">getStats</span>().active); <span class="cmt">// 0 — use() released it</span>
+
+<span class="kw">await</span> pool.<span class="fn">drain</span>();</div>
+        <p class="mb-4"><strong>What you should see:</strong> the stats object, <code class="code-inline">1</code>, then <code class="code-inline">0</code>. Prefer <code class="code-inline">use()</code> over <code class="code-inline">acquire()</code>/<code class="code-inline">release()</code>: it returns the connection even when your callback throws.</p>
+
+        <table class="doc-table mb-6">
+          <thead><tr><th>Option</th><th>Default</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><span class="code-inline">min</span></td><td>2</td><td>Connections opened by <span class="code-inline">initialize()</span>.</td></tr>
+            <tr><td><span class="code-inline">max</span></td><td>10</td><td>Hard ceiling. Callers past it queue rather than open more.</td></tr>
+            <tr><td><span class="code-inline">acquireTimeout</span></td><td>30000</td><td>Milliseconds a queued caller waits before <span class="code-inline">acquire()</span> rejects.</td></tr>
+            <tr><td><span class="code-inline">idleTimeout</span></td><td>30000</td><td>Carried on the options object.</td></tr>
+            <tr><td><span class="code-inline">connectionTimeout</span></td><td>10000</td><td>Carried on the options object.</td></tr>
+            <tr><td><span class="code-inline">maxLifetime</span></td><td>0</td><td>Carried on the options object.</td></tr>
+          </tbody>
+        </table>
+
+        <p class="mb-4">Guarantees, each pinned by a test: twenty simultaneous acquires against <code class="code-inline">max: 3</code> open three connections; a double release, or one the pool never issued, is ignored; <code class="code-inline">initialize()</code> is idempotent; <code class="code-inline">healthCheck()</code> does not grow the pool; a caller past <code class="code-inline">acquireTimeout</code> rejects with <code class="code-inline">STORAGE_CONNECTION_ACQUIRE_TIMEOUT</code> instead of hanging.</p>
+
+        <div class="callout callout-warning">
+          <strong class="text-sm uppercase tracking-wider">The pool is not a Database and not a lifecycle component</strong>
+          <p class="text-sm mt-1">It hands out <code class="code-inline">Connection</code> objects, has no <code class="code-inline">transaction()</code>, and does not satisfy <code class="code-inline">Database</code>. It also lacks <code class="code-inline">start()</code> and <code class="code-inline">getPhase()</code>, so it cannot be registered with <code class="code-inline">StorageLifecycleManager</code> or <code class="code-inline">HealthChecker</code> &mdash; wrap it in an object implementing those six methods.</p>
+        </div>
       </section>
 
       <!-- Locking -->
       <section id="locking" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">LOCKING</h2>
+        <p class="mb-4 leading-relaxed">
+          A <strong>lock</strong> is a claim on a name. While you hold the lock on <code class="code-inline">"invoice:42"</code> nobody else who asks for that name gets it. You use one so a job runs once at a time rather than twice in parallel.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          Every lock has a <strong>TTL</strong> &mdash; a time to live. If the holder crashes the lock expires by itself instead of blocking everyone forever. That safety net has a consequence: a slow holder can lose the lock while still working.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">InMemoryLockManager</span> } <span class="kw">from</span> <span class="str">"@zudojs/storage"</span>;
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: LockManager</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">LockManager</span> {
-  <span class="fn">acquire</span>(resource: <span class="tp">string</span>, options?: <span class="tp">LockOptions</span>): <span class="tp">Promise</span>&lt;<span class="tp">Lock</span>&gt;;
-  <span class="fn">tryAcquire</span>(resource: <span class="tp">string</span>, ttlMs: <span class="tp">number</span>): <span class="tp">Promise</span>&lt;<span class="tp">Lock</span> | <span class="num">null</span>&gt;;
-  <span class="fn">isLocked</span>(resource: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">boolean</span>&gt;;
-}</div>
+<span class="kw">const</span> locks = <span class="kw">new</span> <span class="fn">InMemoryLockManager</span>();
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Class: InMemoryLockManager</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">InMemoryLockManager</span> <span class="kw">implements</span> <span class="tp">LockManager</span> {
-  <span class="fn">acquire</span>(resource: <span class="tp">string</span>, options?: <span class="tp">LockOptions</span>): <span class="tp">Promise</span>&lt;<span class="tp">Lock</span>&gt;;
-  <span class="fn">tryAcquire</span>(resource: <span class="tp">string</span>, ttlMs: <span class="tp">number</span>): <span class="tp">Promise</span>&lt;<span class="tp">Lock</span> | <span class="num">null</span>&gt;;
-  <span class="fn">isLocked</span>(resource: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">boolean</span>&gt;;
+<span class="kw">const</span> lock = <span class="kw">await</span> locks.<span class="fn">acquire</span>(<span class="str">"invoice:42"</span>, { timeout: <span class="num">5000</span>, ttl: <span class="num">30000</span> });
+console.<span class="fn">log</span>(lock.resource, lock.<span class="fn">isHeld</span>()); <span class="cmt">// invoice:42 true</span>
 
-  <span class="cm">/** Clean up expired locks. */</span>
-  <span class="fn">cleanup</span>(): <span class="tp">void</span>;
+<span class="kw">try</span> {
+  <span class="kw">if</span> (lock.<span class="fn">isHeld</span>()) {
+    console.<span class="fn">log</span>(<span class="str">"writing with fence"</span>, lock.fence); <span class="cmt">// writing with fence 1</span>
+  }
+} <span class="kw">finally</span> {
+  <span class="kw">await</span> lock.<span class="fn">release</span>();
+}
 
-  <span class="cm">/** Release all locks and clean up. */</span>
-  <span class="fn">clear</span>(): <span class="tp">void</span>;
-}</div>
+console.<span class="fn">log</span>(<span class="kw">await</span> locks.<span class="fn">isLocked</span>(<span class="str">"invoice:42"</span>)); <span class="cmt">// false</span></div>
+        <p class="mb-4"><strong>What you should see:</strong> <code class="code-inline">invoice:42 true</code>, the fence line, then <code class="code-inline">false</code>. Always release in a <code class="code-inline">finally</code> so a thrown error does not strand the lock until its TTL runs out.</p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: Lock</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Lock</span> {
-  <span class="kw">readonly</span> lockId: <span class="tp">string</span>;
-  <span class="kw">readonly</span> resource: <span class="tp">string</span>;
-  <span class="kw">readonly</span> acquiredAt: <span class="tp">Date</span>;
-  <span class="kw">readonly</span> expiresAt: <span class="tp">Date</span>;
-  <span class="fn">release</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">extend</span>(durationMs: <span class="tp">number</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-}</div>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Member</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><span class="code-inline">acquire(resource, options?)</span></td><td>Waits up to <span class="code-inline">timeout</span> ms (default 10000), then throws <span class="code-inline">STORAGE_LOCK_ACQUIRE_TIMEOUT</span>.</td></tr>
+            <tr><td><span class="code-inline">tryAcquire(resource, ttlMs)</span></td><td>Returns a lock or <span class="code-inline">null</span> immediately. Never waits.</td></tr>
+            <tr><td><span class="code-inline">isLocked(resource)</span></td><td>Whether anyone holds it right now.</td></tr>
+            <tr><td><span class="code-inline">cleanup()</span> / <span class="code-inline">clear()</span></td><td>Drop expired locks / drop every lock. <span class="code-inline">clear()</span> is handy between tests.</td></tr>
+            <tr><td><span class="code-inline">lock.isHeld()</span></td><td>Whether <em>this</em> handle still owns the lock and has not expired.</td></tr>
+            <tr><td><span class="code-inline">lock.extend(durationMs)</span></td><td>Pushes expiry out; throws <span class="code-inline">STORAGE_LOCK_LOST</span> once the lock is gone.</td></tr>
+            <tr><td><span class="code-inline">lock.release()</span></td><td>Releases only if this handle still owns it, so a stale handle cannot free the new holder's lock.</td></tr>
+            <tr><td><span class="code-inline">lock.fence</span></td><td>A number that increases with every acquisition.</td></tr>
+          </tbody>
+        </table>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">LockOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">LockOptions</span> {
-  <span class="kw">readonly</span> timeout: <span class="tp">number</span>;
-  <span class="kw">readonly</span> ttl: <span class="tp">number</span>;
-  <span class="kw">readonly</span> retryInterval?: <span class="tp">number</span>;
-}</div>
-      </section>
+        <p class="mb-4 leading-relaxed">
+          The <strong>fence</strong> is how you survive an expiry you did not notice. Send <code class="code-inline">lock.fence</code> with every write to the protected resource, have that resource remember the highest fence it has seen, and reject writes carrying a lower one. A superseded holder waking up late is then refused instead of overwriting newer work.
+        </p>
 
-      <!-- Lifecycle -->
-      <section id="lifecycle" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">LIFECYCLE</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: StorageLifecycle</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">StorageLifecycle</span> {
-  <span class="fn">initialize</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">start</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">healthCheck</span>(): <span class="tp">Promise</span>&lt;<span class="tp">StorageHealth</span>&gt;;
-  <span class="fn">drain</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">shutdown</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">getPhase</span>(): <span class="tp">StorageLifecyclePhase</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Class: StorageLifecycleManager</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">StorageLifecycleManager</span> <span class="kw">implements</span> <span class="tp">StorageLifecycle</span> {
-  <span class="cm">/** Register a storage component for lifecycle management. */</span>
-  <span class="fn">register</span>(component: <span class="tp">StorageLifecycle</span>): <span class="tp">void</span>;
-
-  <span class="fn">initialize</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">start</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">healthCheck</span>(): <span class="tp">Promise</span>&lt;<span class="tp">StorageHealth</span>&gt;;
-  <span class="fn">drain</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">shutdown</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">getPhase</span>(): <span class="tp">StorageLifecyclePhase</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">StorageLifecyclePhase</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">StorageLifecyclePhase</span> =
-  | <span class="str">"uninitialized"</span>   <span class="cm">// Initial state</span>
-  | <span class="str">"initializing"</span>    <span class="cm">// Components starting up</span>
-  | <span class="str">"ready"</span>           <span class="cm">// All components ready</span>
-  | <span class="str">"draining"</span>        <span class="cm">// Gracefully draining</span>
-  | <span class="str">"drained"</span>         <span class="cm">// All work completed</span>
-  | <span class="str">"shutdown"</span>;       <span class="cm">// Fully shut down</span></div>
-
-        <div class="callout callout-tip mt-4">
-          <strong class="text-zudo-green">Phase Transitions:</strong> The lifecycle follows a strict state machine. You cannot start from <code>initializing</code> — you must reach <code>ready</code> first. Attempting invalid transitions throws <code>STORAGE_LIFECYCLE_INVALID_PHASE</code>.
+        <div class="callout callout-danger">
+          <strong class="text-sm uppercase tracking-wider">One process only</strong>
+          <p class="text-sm mt-1"><code class="code-inline">InMemoryLockManager</code> keeps locks in a JavaScript <code class="code-inline">Map</code>. Two Node processes, containers or servers each get their own map and will both believe they hold the same lock. For real distributed locking, implement the <code class="code-inline">LockManager</code> interface against Redis or your database.</p>
         </div>
       </section>
 
-      <!-- Health -->
-      <section id="health" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HEALTH</h2>
+      <!-- Lifecycle and Health -->
+      <section id="lifecycle-and-health" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">LIFECYCLE AND HEALTH</h2>
+        <p class="mb-4 leading-relaxed">
+          A <strong>lifecycle</strong> is the ordered set of stages a component moves through: start up, serve traffic, stop taking new work, close. Components describe themselves with the <code class="code-inline">StorageLifecycle</code> interface &mdash; <code class="code-inline">initialize</code>, <code class="code-inline">start</code>, <code class="code-inline">healthCheck</code>, <code class="code-inline">drain</code>, <code class="code-inline">shutdown</code>, <code class="code-inline">getPhase</code>.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          <strong>Draining</strong> means "finish what you are doing, take nothing new". Doing it before shutdown is what turns a deploy from dropped requests into a clean handover.
+        </p>
+        <p class="mb-4"><code class="code-inline">StorageLifecycleManager</code> runs those stages across everything registered with it, and <code class="code-inline">HealthChecker</code> aggregates their health under names. Note that <code class="code-inline">register</code> on the manager returns a promise &mdash; await it.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">StorageLifecycleManager</span>, <span class="tp">HealthChecker</span> } <span class="kw">from</span> <span class="str">"@zudojs/storage"</span>;
+<span class="kw">import</span> <span class="kw">type</span> { <span class="tp">StorageLifecycle</span> } <span class="kw">from</span> <span class="str">"@zudojs/storage"</span>;
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Class: HealthChecker</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">HealthChecker</span> {
-  <span class="cm">/** Register a component for health checking. */</span>
-  <span class="fn">register</span>(name: <span class="tp">string</span>, component: <span class="tp">StorageLifecycle</span>): <span class="tp">void</span>;
+<span class="kw">const</span> cache: <span class="tp">StorageLifecycle</span> = {
+  initialize: <span class="kw">async</span> () => { console.<span class="fn">log</span>(<span class="str">"cache initialized"</span>); },
+  start: <span class="kw">async</span> () => {},
+  healthCheck: <span class="kw">async</span> () => ({ healthy: <span class="kw">true</span>, latencyMs: <span class="num">2</span>, status: <span class="str">"ok"</span> }),
+  drain: <span class="kw">async</span> () => {},
+  shutdown: <span class="kw">async</span> () => {},
+  getPhase: () => <span class="str">"ready"</span>,
+};
 
-  <span class="cm">/** Remove a component from health checking. */</span>
-  <span class="fn">unregister</span>(name: <span class="tp">string</span>): <span class="tp">void</span>;
+<span class="kw">const</span> manager = <span class="kw">new</span> <span class="fn">StorageLifecycleManager</span>();
+<span class="kw">await</span> manager.<span class="fn">register</span>(cache);
+<span class="kw">await</span> manager.<span class="fn">initialize</span>();
+console.<span class="fn">log</span>(manager.<span class="fn">getPhase</span>()); <span class="cmt">// ready</span>
+<span class="kw">await</span> manager.<span class="fn">start</span>();
 
-  <span class="cm">/** Check health of all registered components. */</span>
-  <span class="fn">checkAll</span>(): <span class="tp">Promise</span>&lt;<span class="tp">StorageHealthReport</span>&gt;;
+<span class="kw">const</span> checker = <span class="kw">new</span> <span class="fn">HealthChecker</span>();
+checker.<span class="fn">register</span>(<span class="str">"cache"</span>, cache);
+<span class="kw">const</span> report = <span class="kw">await</span> checker.<span class="fn">checkAll</span>();
+console.<span class="fn">log</span>(report.healthy, report.components[<span class="num">0</span>]!.name); <span class="cmt">// true cache</span>
 
-  <span class="cm">/** Check health of a single component. */</span>
-  <span class="fn">checkOne</span>(name: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">StorageHealth</span> | <span class="num">null</span>&gt;;
-
-  <span class="cm">/** Get names of all registered components. */</span>
-  <span class="fn">getRegisteredComponents</span>(): <span class="kw">readonly</span> <span class="tp">string</span>[];
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: StorageHealth</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">StorageHealth</span> {
-  <span class="kw">readonly</span> healthy: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> latencyMs: <span class="tp">number</span>;
-  <span class="kw">readonly</span> status: <span class="tp">string</span>;
-  <span class="kw">readonly</span> details?: <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: StorageHealthReport</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">StorageHealthReport</span> {
-  <span class="kw">readonly</span> healthy: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> components: <span class="kw">readonly</span> <span class="tp">ComponentHealth</span>[];
-  <span class="kw">readonly</span> durationMs: <span class="tp">number</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: ComponentHealth</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ComponentHealth</span> {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="kw">readonly</span> health: <span class="tp">StorageHealth</span>;
-}</div>
+<span class="kw">await</span> manager.<span class="fn">drain</span>();
+<span class="kw">await</span> manager.<span class="fn">shutdown</span>();
+console.<span class="fn">log</span>(manager.<span class="fn">getPhase</span>()); <span class="cmt">// shutdown</span></div>
+        <p class="mb-4"><strong>What you should see:</strong> <code class="code-inline">cache initialized</code>, <code class="code-inline">ready</code>, <code class="code-inline">true cache</code>, <code class="code-inline">shutdown</code>.</p>
+        <ul class="space-y-2 mb-4 text-sm">
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> Phases run <code class="code-inline">uninitialized &rarr; initializing &rarr; ready &rarr; draining &rarr; drained &rarr; shutdown</code>. <code class="code-inline">start()</code> outside <code class="code-inline">ready</code> throws <code class="code-inline">STORAGE_LIFECYCLE_INVALID_PHASE</code>.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> If a component's <code class="code-inline">initialize()</code> throws, the manager returns to <code class="code-inline">uninitialized</code> and rethrows.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <code class="code-inline">drain()</code> and <code class="code-inline">shutdown()</code> visit every component even when one fails, then throw one <code class="code-inline">StorageError</code> whose <code class="code-inline">cause</code> is an <code class="code-inline">AggregateError</code>.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> An empty manager or checker reports <code class="code-inline">healthy: false</code>. It has nothing to attest to, and green would mislead.</li>
+        </ul>
       </section>
 
       <!-- Serialization -->
       <section id="serialization" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SERIALIZATION</h2>
+        <p class="mb-4 leading-relaxed">
+          <strong>Serializing</strong> turns a value in memory into bytes you can store; deserializing turns those bytes back into a value. Plain <code class="code-inline">JSON.stringify</code> loses types on the way: a <code class="code-inline">Date</code> returns as a string, a <code class="code-inline">Map</code> as <code class="code-inline">{}</code>, a <code class="code-inline">BigInt</code> throws.
+        </p>
+        <p class="mb-4"><code class="code-inline">JsonSerializer</code> preserves them and produces a <code class="code-inline">Uint8Array</code> &mdash; exactly what <code class="code-inline">put()</code> takes, so a snapshot can go straight into object storage.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">JsonSerializer</span> } <span class="kw">from</span> <span class="str">"@zudojs/storage"</span>;
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: Serializer</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Serializer</span> {
-  <span class="fn">serialize</span>&lt;<span class="tp">T</span>&gt;(value: <span class="tp">T</span>, format?: <span class="tp">SerializationFormat</span>): <span class="tp">Uint8Array</span>;
-  <span class="fn">deserialize</span>&lt;<span class="tp">T</span>&gt;(data: <span class="tp">Uint8Array</span>, format?: <span class="tp">SerializationFormat</span>): <span class="tp">T</span>;
-}</div>
+<span class="kw">const</span> serializer = <span class="kw">new</span> <span class="fn">JsonSerializer</span>();
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Class: JsonSerializer</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">JsonSerializer</span> <span class="kw">implements</span> <span class="tp">Serializer</span> {
-  <span class="kw">constructor</span>();
+<span class="kw">const</span> snapshot = {
+  balance: <span class="num">1000000000000000000</span>n,
+  createdAt: <span class="kw">new</span> <span class="fn">Date</span>(<span class="str">"2025-01-01T00:00:00Z"</span>),
+  bytes: <span class="kw">new</span> <span class="fn">Uint8Array</span>([<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>]),
+};
 
-  <span class="cm">/** Serialize a value to Uint8Array with type preservation. */</span>
-  <span class="fn">serialize</span>&lt;<span class="tp">T</span>&gt;(value: <span class="tp">T</span>, format?: <span class="tp">SerializationFormat</span>): <span class="tp">Uint8Array</span>;
+<span class="kw">const</span> encoded = serializer.<span class="fn">serialize</span>(snapshot);
+<span class="kw">const</span> restored = serializer.<span class="fn">deserialize</span>&lt;<span class="kw">typeof</span> snapshot&gt;(encoded);
 
-  <span class="cm">/** Deserialize a Uint8Array back to the original value. */</span>
-  <span class="fn">deserialize</span>&lt;<span class="tp">T</span>&gt;(data: <span class="tp">Uint8Array</span>, format?: <span class="tp">SerializationFormat</span>): <span class="tp">T</span>;
-}</div>
-
-        <div class="callout callout-tip mt-4">
-          <strong class="text-zudo-green">Type Preservation:</strong> <code>JsonSerializer</code> delegates to <code>@zudojs/serialization</code>'s JSONSerializer with <code>preserveTypes: true</code>. This handles BigInt, Date, Map, Set, and Uint8Array correctly — values that standard <code>JSON.parse</code> loses.
+console.<span class="fn">log</span>(<span class="kw">typeof</span> restored.balance);            <span class="cmt">// bigint</span>
+console.<span class="fn">log</span>(restored.createdAt <span class="kw">instanceof</span> <span class="tp">Date</span>); <span class="cmt">// true</span>
+console.<span class="fn">log</span>(<span class="tp">Array</span>.<span class="fn">from</span>(restored.bytes));          <span class="cmt">// [ 1, 2, 3 ]</span></div>
+        <p class="mb-4"><strong>What you should see:</strong> <code class="code-inline">bigint</code>, <code class="code-inline">true</code>, <code class="code-inline">[ 1, 2, 3 ]</code>. <code class="code-inline">BigInt</code>, <code class="code-inline">Date</code>, <code class="code-inline">Map</code>, <code class="code-inline">Set</code> and <code class="code-inline">Uint8Array</code> all survive the round trip.</p>
+        <div class="callout callout-warning">
+          <strong class="text-sm uppercase tracking-wider">The format argument is ignored</strong>
+          <p class="text-sm mt-1">The <code class="code-inline">Serializer</code> interface allows <code class="code-inline">"json"</code>, <code class="code-inline">"msgpack"</code> or <code class="code-inline">"binary"</code>, but <code class="code-inline">JsonSerializer</code> always writes JSON &mdash; it accepts the argument and does nothing with it. No msgpack or binary serializer exists in this package.</p>
         </div>
       </section>
 
-      <!-- Error Hierarchy -->
-      <section id="errors" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERROR HIERARCHY</h2>
-        <p class="mb-4">All error types are defined in <code class="bg-black/5 px-1">@zudojs/errors</code>. Storage uses <code>StorageError</code> as its base error class.</p>
+      <!-- API Reference -->
+      <section id="api-reference" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">API REFERENCE</h2>
+        <p class="mb-4">Everything below is reachable from the package root: the single entry point <code class="code-inline">"@zudojs/storage"</code>.</p>
 
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Error</th>
-                <th class="p-3 text-left">Code</th>
-                <th class="p-3 text-left">When Thrown</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">StorageError</td><td class="p-3">—</td><td class="p-3">Base error for all storage issues</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">NotFoundError</td><td class="p-3">—</td><td class="p-3">Entity not found in repository</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">StorageError</td><td class="p-3 font-mono text-xs">STORAGE_CONNECTION_POOL_CLOSED</td><td class="p-3">Acquiring from a drained pool</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">NotFoundError</td><td class="p-3 font-mono text-xs">STORAGE_ENTITY_NOT_FOUND</td><td class="p-3">Update called with non-existent ID</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">StorageError</td><td class="p-3 font-mono text-xs">STORAGE_PATH_TRAVERSAL</td><td class="p-3">Key resolves outside basePath</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">StorageError</td><td class="p-3 font-mono text-xs">STORAGE_LOCK_ACQUIRE_TIMEOUT</td><td class="p-3">Lock not acquired within timeout</td></tr>
-              <tr><td class="p-3 font-mono">StorageError</td><td class="p-3 font-mono text-xs">STORAGE_LIFECYCLE_INVALID_PHASE</td><td class="p-3">Invalid lifecycle phase transition</td></tr>
-            </tbody>
-          </table>
-        </div>
+        <h3 class="text-lg font-bold mb-3 mt-6">Classes</h3>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><span class="code-inline">LocalObjectStorage</span></td><td>Filesystem object store.</td><td><span class="code-inline">(basePath, { maxObjectBytes? })</span>. The only <span class="code-inline">ObjectStorage</span> that ships.</td></tr>
+            <tr><td><span class="code-inline">BaseRepository&lt;Entity, ID&gt;</span></td><td>CRUD over one SQL table.</td><td><span class="code-inline">(database, options)</span>. Eight methods, all identifier-checked.</td></tr>
+            <tr><td><span class="code-inline">ConnectionPool</span></td><td>Bounded pool of connections.</td><td><span class="code-inline">(factory, options?)</span>. <span class="code-inline">initialize</span>, <span class="code-inline">acquire</span>, <span class="code-inline">release</span>, <span class="code-inline">use</span>, <span class="code-inline">getStats</span>, <span class="code-inline">drain</span>, <span class="code-inline">healthCheck</span>.</td></tr>
+            <tr><td><span class="code-inline">InMemoryLockManager</span></td><td>Named locks with TTL and fencing.</td><td>Single process. Adds <span class="code-inline">cleanup()</span> and <span class="code-inline">clear()</span> to <span class="code-inline">LockManager</span>.</td></tr>
+            <tr><td><span class="code-inline">JsonSerializer</span></td><td>Value to <span class="code-inline">Uint8Array</span> and back, with types kept.</td><td>Always JSON.</td></tr>
+            <tr><td><span class="code-inline">StorageLifecycleManager</span></td><td>Runs the lifecycle across components.</td><td><span class="code-inline">register()</span> is async. Is itself a <span class="code-inline">StorageLifecycle</span>.</td></tr>
+            <tr><td><span class="code-inline">HealthChecker</span></td><td>Aggregates named components' health.</td><td><span class="code-inline">register</span>, <span class="code-inline">unregister</span>, <span class="code-inline">checkAll</span>, <span class="code-inline">checkOne</span>, <span class="code-inline">getRegisteredComponents</span>.</td></tr>
+          </tbody>
+        </table>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Error Handling Pattern</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">StorageError</span>, <span class="tp">NotFoundError</span> } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+        <h3 class="text-lg font-bold mb-3 mt-6">Functions and constants</h3>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><span class="code-inline">assertIdentifier(value, role)</span></td><td>Returns the value if it is a plain SQL identifier.</td><td>Max 63 characters; throws <span class="code-inline">STORAGE_INVALID_IDENTIFIER</span>.</td></tr>
+            <tr><td><span class="code-inline">assertIdentifiers(values, role, allowed?)</span></td><td>Same for a list, with an optional allowlist.</td><td>Throws <span class="code-inline">STORAGE_IDENTIFIER_NOT_ALLOWED</span> off-list.</td></tr>
+            <tr><td><span class="code-inline">assertRowBound(value, role)</span></td><td>Validates a LIMIT or OFFSET.</td><td>Must be a non-negative safe integer.</td></tr>
+            <tr><td><span class="code-inline">assertSortDirection(value)</span></td><td>Normalizes to ASC or DESC.</td><td><span class="code-inline">undefined</span> becomes ASC.</td></tr>
+            <tr><td><span class="code-inline">DEFAULT_MAX_OBJECT_BYTES</span></td><td>67108864 (64 MiB).</td><td>Default object size ceiling.</td></tr>
+            <tr><td><span class="code-inline">DEFAULT_MAX_KEYS</span></td><td>1000.</td><td>Default <span class="code-inline">list()</span> page size.</td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Types</h3>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Group</th><th>Types</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>Contracts you implement</td><td><span class="code-inline">Database</span>, <span class="code-inline">Connection</span>, <span class="code-inline">Transaction</span>, <span class="code-inline">ObjectStorage</span>, <span class="code-inline">LockManager</span>, <span class="code-inline">Lock</span>, <span class="code-inline">Repository</span>, <span class="code-inline">Serializer</span>, <span class="code-inline">StorageLifecycle</span></td><td>No driver for any of these ships except the classes listed above.</td></tr>
+            <tr><td>Options you pass</td><td><span class="code-inline">BaseRepositoryOptions</span>, <span class="code-inline">FindAllOptions</span>, <span class="code-inline">LocalObjectStorageOptions</span>, <span class="code-inline">ListOptions</span>, <span class="code-inline">ObjectPutOptions</span>, <span class="code-inline">ConnectionPoolOptions</span>, <span class="code-inline">LockOptions</span>, <span class="code-inline">TransactionOptions</span></td><td>Pool options are passed as a <span class="code-inline">Partial</span>.</td></tr>
+            <tr><td>Results you read</td><td><span class="code-inline">QueryResult</span>, <span class="code-inline">ExecuteResult</span>, <span class="code-inline">FieldInfo</span>, <span class="code-inline">PoolStats</span>, <span class="code-inline">ObjectMetadata</span>, <span class="code-inline">ObjectData</span>, <span class="code-inline">ListObjectsResult</span>, <span class="code-inline">StorageHealth</span>, <span class="code-inline">StorageHealthReport</span>, <span class="code-inline">ComponentHealth</span></td><td><span class="code-inline">ObjectData</span> carries <span class="code-inline">body</span> and <span class="code-inline">arrayBuffer()</span>.</td></tr>
+            <tr><td>Small unions and helpers</td><td><span class="code-inline">Query</span>, <span class="code-inline">QueryParameter</span>, <span class="code-inline">ConnectionState</span>, <span class="code-inline">TransactionState</span>, <span class="code-inline">IsolationLevel</span>, <span class="code-inline">SerializationFormat</span>, <span class="code-inline">SortDirection</span>, <span class="code-inline">StorageLifecyclePhase</span>, <span class="code-inline">StorageContext</span></td><td><span class="code-inline">Query</span> is <span class="code-inline">{ text, parameters? }</span>.</td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Error codes</h3>
+        <p class="mb-4">Errors are thrown as <code class="code-inline">StorageError</code> and <code class="code-inline">NotFoundError</code> from <code class="code-inline">@zudojs/errors</code>; this package re-exports neither class. Branch on <code class="code-inline">error.code</code>.</p>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Code</th><th>Status</th><th>Thrown when</th></tr></thead>
+          <tbody>
+            <tr><td><span class="code-inline">STORAGE_INVALID_IDENTIFIER</span></td><td>400</td><td>A table, key or column name is not a plain identifier.</td></tr>
+            <tr><td><span class="code-inline">STORAGE_IDENTIFIER_NOT_ALLOWED</span></td><td>400</td><td>A valid name is not in the configured <span class="code-inline">columns</span> list.</td></tr>
+            <tr><td><span class="code-inline">STORAGE_INVALID_ROW_BOUND</span></td><td>400</td><td><span class="code-inline">limit</span> or <span class="code-inline">offset</span> is not a non-negative safe integer.</td></tr>
+            <tr><td><span class="code-inline">STORAGE_INVALID_SORT_DIRECTION</span></td><td>400</td><td><span class="code-inline">order</span> is neither ASC nor DESC.</td></tr>
+            <tr><td><span class="code-inline">STORAGE_ENTITY_NOT_FOUND</span></td><td>404</td><td><span class="code-inline">update()</span> with empty changes on a missing row. A <span class="code-inline">NotFoundError</span>.</td></tr>
+            <tr><td><span class="code-inline">STORAGE_INVALID_KEY</span></td><td>400</td><td>An object key is empty or not a string.</td></tr>
+            <tr><td><span class="code-inline">STORAGE_PATH_TRAVERSAL</span></td><td>400</td><td>A key is absolute, has a null byte, or resolves outside the bucket.</td></tr>
+            <tr><td><span class="code-inline">STORAGE_OBJECT_TOO_LARGE</span></td><td>413</td><td>A payload exceeds <span class="code-inline">maxObjectBytes</span>.</td></tr>
+            <tr><td><span class="code-inline">STORAGE_CONNECTION_POOL_CLOSED</span></td><td>503</td><td><span class="code-inline">acquire()</span> after <span class="code-inline">drain()</span>.</td></tr>
+            <tr><td><span class="code-inline">STORAGE_CONNECTION_POOL_DRAINING</span></td><td>503</td><td>A queued acquirer is rejected because draining started.</td></tr>
+            <tr><td><span class="code-inline">STORAGE_CONNECTION_ACQUIRE_TIMEOUT</span></td><td>504</td><td>No connection freed within <span class="code-inline">acquireTimeout</span>.</td></tr>
+            <tr><td><span class="code-inline">STORAGE_LOCK_ACQUIRE_TIMEOUT</span></td><td>504</td><td>A lock did not free within <span class="code-inline">timeout</span>.</td></tr>
+            <tr><td><span class="code-inline">STORAGE_LOCK_LOST</span></td><td>409</td><td><span class="code-inline">extend()</span> on a lock this handle no longer holds.</td></tr>
+            <tr><td><span class="code-inline">STORAGE_LIFECYCLE_INVALID_PHASE</span></td><td>500</td><td><span class="code-inline">start()</span> called outside the <span class="code-inline">ready</span> phase.</td></tr>
+            <tr><td><span class="code-inline">STORAGE_LIFECYCLE_OPERATION_FAILED</span></td><td>500</td><td>Components failed to drain or shut down.</td></tr>
+          </tbody>
+        </table>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">StorageError</span>, <span class="tp">NotFoundError</span> } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
 
 <span class="kw">try</span> {
-  <span class="kw">await</span> repo.<span class="fn">update</span>(<span class="str">"non-existent"</span>, { name: <span class="str">"updated"</span> });
+  <span class="kw">await</span> files.<span class="fn">get</span>(userSuppliedKey);
 } <span class="kw">catch</span> (error) {
   <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">NotFoundError</span>) {
-    console.<span class="fn">error</span>(<span class="str">"Entity not found:"</span>, error.message);
+    console.<span class="fn">error</span>(<span class="str">"missing:"</span>, error.message);
   } <span class="kw">else if</span> (error <span class="kw">instanceof</span> <span class="tp">StorageError</span>) {
-    console.<span class="fn">error</span>(<span class="str">"Storage error:"</span>, error.code, error.message);
+    console.<span class="fn">error</span>(error.code, error.statusCode); <span class="cmt">// STORAGE_PATH_TRAVERSAL 400</span>
+  } <span class="kw">else</span> {
+    <span class="kw">throw</span> error;
   }
 }</div>
       </section>
 
-      <!-- Full Integration Example -->
-      <section id="full-example" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">FULL INTEGRATION EXAMPLE</h2>
-        <p class="mb-4">Complete example: connection pool, repository, object storage, locking, lifecycle, and health checking.</p>
-
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">ConnectionPool</span>,
-  <span class="tp">BaseRepository</span>,
-  <span class="tp">LocalObjectStorage</span>,
-  <span class="tp">InMemoryLockManager</span>,
-  <span class="tp">StorageLifecycleManager</span>,
-  <span class="tp">HealthChecker</span>,
-  <span class="tp">JsonSerializer</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/storage"</span>;
-<span class="kw">import</span> <span class="kw">type</span> { <span class="tp">Database</span>, <span class="tp">ObjectStorage</span> } <span class="kw">from</span> <span class="str">"@zudojs/storage"</span>;
-
-<span class="cm">// 1. Create connection pool</span>
-<span class="kw">const</span> pool = <span class="kw">new</span> <span class="fn">ConnectionPool</span>(
-  <span class="kw">async</span> () => <span class="kw">await</span> <span class="fn">createPostgresConnection</span>(),
-  { min: <span class="num">2</span>, max: <span class="num">10</span>, acquireTimeout: <span class="num">5000</span> }
-);
-<span class="kw">await</span> pool.<span class="fn">initialize</span>();
-
-<span class="cm">// 2. Use repository pattern</span>
-<span class="kw">interface</span> <span class="tp">User</span> {
-  id: <span class="tp">string</span>;
-  name: <span class="tp">string</span>;
-  email: <span class="tp">string</span>;
-}
-
-<span class="kw">class</span> <span class="tp">UserRepository</span> <span class="kw">extends</span> <span class="tp">BaseRepository</span>&lt;<span class="tp">User</span>&gt; {
-  <span class="kw">async</span> <span class="fn">findByEmail</span>(email: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">User</span> | <span class="num">null</span>&gt; {
-    <span class="kw">const</span> result = <span class="kw">await</span> <span class="kw">this</span>.database.<span class="fn">query</span>&lt;<span class="tp">User</span>&gt;({
-      text: <span class="str">`SELECT * FROM users WHERE email = $1`</span>,
-      parameters: [email],
-    });
-    <span class="kw">return</span> result.rows[<span class="num">0</span>] ?? <span class="num">null</span>;
-  }
-}
-
-<span class="kw">const</span> userRepo = <span class="kw">new</span> <span class="fn">UserRepository</span>(database, { tableName: <span class="str">"users"</span> });
-<span class="kw">const</span> user = <span class="kw">await</span> userRepo.<span class="fn">create</span>({ id: <span class="str">"1"</span>, name: <span class="str">"Alice"</span>, email: <span class="str">"alice@example.com"</span> });
-<span class="kw">const</span> found = <span class="kw">await</span> userRepo.<span class="fn">findById</span>(<span class="str">"1"</span>);
-<span class="kw">const</span> exists = <span class="kw">await</span> userRepo.<span class="fn">exists</span>(<span class="str">"1"</span>);
-
-<span class="cm">// 3. Object storage operations</span>
-<span class="kw">const</span> storage = <span class="kw">new</span> <span class="fn">LocalObjectStorage</span>(<span class="str">"./data"</span>);
-<span class="kw">const</span> meta = <span class="kw">await</span> storage.<span class="fn">put</span>(<span class="str">"uploads/photo.jpg"</span>, imageBytes, {
-  contentType: <span class="str">"image/jpeg"</span>,
-});
-<span class="kw">const</span> obj = <span class="kw">await</span> storage.<span class="fn">get</span>(<span class="str">"uploads/photo.jpg"</span>);
-<span class="kw">const</span> buffer = <span class="kw">await</span> obj!.<span class="fn">arrayBuffer</span>();
-<span class="kw">const</span> listed = <span class="kw">await</span> storage.<span class="fn">list</span>(<span class="str">"uploads/"</span>);
-
-<span class="cm">// 4. Acquire and release locks</span>
-<span class="kw">const</span> lockManager = <span class="kw">new</span> <span class="fn">InMemoryLockManager</span>();
-<span class="kw">const</span> lock = <span class="kw">await</span> lockManager.<span class="fn">acquire</span>(<span class="str">"resource:123"</span>, {
-  timeout: <span class="num">5000</span>,
-  ttl: <span class="num">30000</span>,
-});
-<span class="kw">try</span> {
-  <span class="cm">// Do protected work</span>
-  <span class="kw">await</span> <span class="fn">processData</span>();
-} <span class="kw">finally</span> {
-  <span class="kw">await</span> lock.<span class="fn">release</span>();
-}
-
-<span class="cm">// 5. Lifecycle management</span>
-<span class="kw">const</span> lifecycle = <span class="kw">new</span> <span class="fn">StorageLifecycleManager</span>();
-lifecycle.<span class="fn">register</span>(pool);
-lifecycle.<span class="fn">register</span>(lockManager);
-<span class="kw">await</span> lifecycle.<span class="fn">initialize</span>();   <span class="cm">// uninitialized → initializing → ready</span>
-<span class="kw">await</span> lifecycle.<span class="fn">start</span>();        <span class="cm">// ready → ready (components started)</span>
-
-<span class="cm">// 6. Health checking</span>
-<span class="kw">const</span> checker = <span class="kw">new</span> <span class="fn">HealthChecker</span>();
-checker.<span class="fn">register</span>(<span class="str">"pool"</span>, pool);
-checker.<span class="fn">register</span>(<span class="str">"lifecycle"</span>, lifecycle);
-<span class="kw">const</span> report = <span class="kw">await</span> checker.<span class="fn">checkAll</span>();
-console.<span class="fn">log</span>(report.healthy); <span class="cm">// true or false</span>
-
-<span class="cm">// 7. Graceful shutdown</span>
-<span class="kw">await</span> lifecycle.<span class="fn">drain</span>();    <span class="cm">// ready → draining → drained</span>
-<span class="kw">await</span> lifecycle.<span class="fn">shutdown</span>(); <span class="cm">// drained → shutdown</span>
-<span class="kw">await</span> pool.<span class="fn">drain</span>();        <span class="cm">// Close all connections</span></div>
+      <!-- Common Mistakes -->
+      <section id="common-mistakes" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMON MISTAKES</h2>
+        <ul class="space-y-4">
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Calling <code class="code-inline">repo.create(req.body)</code> with no <code class="code-inline">columns</code> allowlist.</strong>
+            <p class="text-sm mt-1 text-black/70">A request carrying <code class="code-inline">is_admin: true</code> writes that column, because the name passes the character check. Fix: pass <code class="code-inline">columns</code> to the constructor.</p>
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Expecting a signed URL or an S3 bucket.</strong>
+            <p class="text-sm mt-1 text-black/70">Your editor reports no such method, because none exists. Fix: implement <code class="code-inline">ObjectStorage</code> over your provider's SDK, or serve files through your own authenticated route.</p>
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Registering a <code class="code-inline">ConnectionPool</code> with the lifecycle manager or health checker.</strong>
+            <p class="text-sm mt-1 text-black/70">A type error: the pool has no <code class="code-inline">start()</code> or <code class="code-inline">getPhase()</code>, and its <code class="code-inline">healthCheck()</code> returns a different shape. Fix: wrap it in an object implementing the six <code class="code-inline">StorageLifecycle</code> methods.</p>
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Using <code class="code-inline">acquire()</code> without a <code class="code-inline">finally</code> that releases.</strong>
+            <p class="text-sm mt-1 text-black/70">A thrown query error leaks the connection; enough leaks and every later acquire times out. Fix: use <code class="code-inline">pool.use()</code>, which releases for you.</p>
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Trusting a lock for a whole job without checking <code class="code-inline">isHeld()</code>.</strong>
+            <p class="text-sm mt-1 text-black/70">Work outliving the TTL continues after another holder takes over, and both write. Fix: check <code class="code-inline">isHeld()</code> before writing, <code class="code-inline">extend()</code> for long jobs, and pass <code class="code-inline">lock.fence</code>.</p>
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Reading a large object with <code class="code-inline">arrayBuffer()</code>.</strong>
+            <p class="text-sm mt-1 text-black/70">The whole object sits in memory, and concurrent reads exhaust the process. Fix: use <code class="code-inline">object.body</code>, the <code class="code-inline">ReadableStream</code>.</p>
+          </li>
+        </ul>
       </section>
 
+      <!-- Related -->
+      <section id="related" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATED PACKAGES</h2>
+        <ul class="space-y-3">
+          <li><a href="/docs/packages-errors" class="font-bold text-zudo-blue hover:underline">@zudojs/errors</a> &mdash; where <code class="code-inline">StorageError</code> and <code class="code-inline">NotFoundError</code> live. Read it before writing catch blocks.</li>
+          <li><a href="/docs/packages-serialization" class="font-bold text-zudo-blue hover:underline">@zudojs/serialization</a> &mdash; the type-preserving engine <code class="code-inline">JsonSerializer</code> wraps. Use it when you want a string rather than bytes.</li>
+          <li><a href="/docs/packages-database" class="font-bold text-zudo-blue hover:underline">@zudojs/database</a> &mdash; for more than the CRUD this repository covers.</li>
+          <li><a href="/docs/packages-transactions" class="font-bold text-zudo-blue hover:underline">@zudojs/transactions</a> &mdash; when several writes must succeed or fail together.</li>
+          <li><a href="/docs/packages-cache" class="font-bold text-zudo-blue hover:underline">@zudojs/cache</a> &mdash; for data you can afford to lose and want back fast.</li>
+        </ul>
+      </section>
+
+      <!-- EXPORT INDEX -->
+      <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/storage</code> exports from its package root at v1.0.0 &mdash; <strong>51</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <details class="border-2 border-black p-5 bg-white">
+          <summary class="font-bold cursor-pointer select-none">Show all 51 exports</summary>
+          <div class="mt-5">
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Re-exported <span class="text-black/40 font-normal">(51)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BaseRepository</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BaseRepositoryOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ComponentHealth</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Connection</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConnectionPool</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConnectionPoolOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConnectionState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_MAX_KEYS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_MAX_OBJECT_BYTES</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Database</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ExecuteResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">FieldInfo</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">FindAllOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HealthChecker</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InMemoryLockManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">IsolationLevel</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JsonSerializer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ListObjectsResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ListOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LocalObjectStorage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LocalObjectStorageOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Lock</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LockManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LockOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ObjectAttributes</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ObjectData</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ObjectMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ObjectPutOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ObjectStorage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PoolStats</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Query</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryParameter</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Repository</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SIDECAR_DIR</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SerializationFormat</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Serializer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SortDirection</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">StorageContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">StorageHealth</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">StorageHealthReport</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">StorageLifecycle</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">StorageLifecycleManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">StorageLifecyclePhase</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Transaction</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertIdentifier</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertIdentifiers</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertRowBound</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertSortDirection</code></div>
+          </div>
+          </div>
+        </details>
+      </section>
     </main>
 
     <!-- TABLE OF CONTENTS -->
     <aside class="doc-toc" aria-label="On this page">
       <div class="text-xs font-bold uppercase tracking-wider mb-4 text-black/40">On This Page</div>
+      <a href="#overview" class="toc-link">Overview</a>
       <a href="#installation" class="toc-link">Installation</a>
-      <a href="#what-it-does" class="toc-link">What It Does</a>
-      <a href="#architecture-position" class="toc-link">Where It Sits</a>
-      <a href="#dependencies" class="toc-link">Dependencies</a>
-      <a href="#types" class="toc-link">Types</a>
-      <a href="#database" class="toc-link">Database</a>
-      <a href="#repository" class="toc-link">Repository</a>
+      <a href="#quick-start" class="toc-link">Quick Start</a>
       <a href="#object-storage" class="toc-link">Object Storage</a>
+      <a href="#repository" class="toc-link">Repository</a>
+      <a href="#connection-pool" class="toc-link">Connection Pool</a>
       <a href="#locking" class="toc-link">Locking</a>
-      <a href="#lifecycle" class="toc-link">Lifecycle</a>
-      <a href="#health" class="toc-link">Health</a>
+      <a href="#lifecycle-and-health" class="toc-link">Lifecycle and Health</a>
       <a href="#serialization" class="toc-link">Serialization</a>
-      <a href="#errors" class="toc-link">Error Hierarchy</a>
-      <a href="#full-example" class="toc-link">Full Example</a>
+      <a href="#api-reference" class="toc-link">API Reference</a>
+      <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
+      <a href="#related" class="toc-link">Related Packages</a>
+          <a href="#export-index" class="toc-link">Complete Export Index</a>
     </aside>
 
   </div>
@@ -844,5 +730,6 @@ console.<span class="fn">log</span>(report.healthy); <span class="cm">// true or
   <script src="/js/docs.js"></script>
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 </body>
 </html>

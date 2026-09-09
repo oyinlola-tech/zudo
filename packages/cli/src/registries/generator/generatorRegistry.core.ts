@@ -4,7 +4,6 @@
  * Registry for project generators with capability-based lookup.
  */
 
-import type { ScaffoldOptions } from "../../types/index.js";
 import { BackendGenerator } from "../../generators/backend/backend.generator.js";
 import { FrontendGenerator } from "../../generators/frontend/frontendGenerator.core.js";
 import { FullstackComposer } from "../../generators/fullstack/fullstackComposer.core.js";

@@ -14,7 +14,10 @@ import type {
   NamedMessageHandler,
 } from "../messageHandler/messageHandlerType.type.js";
 
-import type { MessageMiddlewareLike } from "../messageMiddleware/messageMiddlewareType.type.js";
+import type {
+  MessageMiddlewareLike,
+  MessageMiddlewareOptions,
+} from "../messageMiddleware/messageMiddlewareType.type.js";
 
 import type {
   DispatchResult,
@@ -88,11 +91,22 @@ export interface MessageBus {
 
   /**
    * Adds middleware to the bus.
+   *
+   * Middleware runs in ascending `priority` order (default 100).
+   *
+   * @returns The identifier {@link MessageBus.removeMiddleware} takes.
    */
   use<TMessage extends Message = Message, TResult = unknown>(
     middleware: MessageMiddlewareLike<TMessage, TResult>,
-    options?: { priority?: number },
-  ): void;
+    options?: MessageMiddlewareOptions,
+  ): string;
+
+  /**
+   * Removes middleware by the id `use` returned.
+   *
+   * @returns Whether a registration was removed.
+   */
+  removeMiddleware(middlewareId: string): boolean;
 
   /**
    * Checks if handlers are registered for a message type.

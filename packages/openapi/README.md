@@ -60,6 +60,87 @@ const response = manager.toResponse({ format: "json" });
 `{ status, headers, body }` is framework-agnostic; hand it to whichever HTTP
 adapter you use.
 
+## Serving a documentation page
+
+`toUIResponse` returns the same `{ status, headers, body }` shape carrying a
+complete HTML page that reads the specification from `specUrl`. Pair it with
+`toResponse`, which serves the specification itself:
+
+```typescript
+app.get("/openapi.json", () => manager.toResponse());
+app.get("/docs", () => manager.toUIResponse({ specUrl: "/openapi.json" }));
+```
+
+Swagger UI is rendered by default; pass `renderer: "redoc"` for ReDoc.
+
+```typescript
+manager.toUIResponse({ specUrl: "/openapi.json", renderer: "redoc" });
+```
+
+`renderOpenAPIUI(options)` returns the HTML string on its own, without a
+manager. Both accept the same options:
+
+| Option           | Meaning                                            | Default            |
+| ---------------- | -------------------------------------------------- | ------------------ |
+| `specUrl`        | Where the page fetches the document from (required) | —                  |
+| `title`          | Page title and header text                          | `"API reference"`  |
+| `renderer`       | `"swagger"` or `"redoc"`                            | `"swagger"`        |
+| `logo`           | Header logo, or `false` for none                    | Zudo wordmark      |
+| `favicon`        | Favicon URL or data URI, or `false`                 | Zudo favicon       |
+| `customCss`      | CSS appended after the built-in theme               | —                  |
+| `assetsBaseUrl`  | Where the viewer's own JS and CSS load from         | public CDN         |
+| `swaggerOptions` | Forwarded to `SwaggerUIBundle`; ignored by ReDoc    | —                  |
+
+`assetsBaseUrl` points the viewer's assets at a self-hosted copy, which is what
+an air-gapped deployment needs — the default CDN renders a blank page with no
+egress. Swagger UI loads `swagger-ui.css` and `swagger-ui-bundle.js` from that
+base; ReDoc loads `redoc.standalone.js`.
+
+```typescript
+manager.toUIResponse({ specUrl: "/openapi.json", assetsBaseUrl: "/vendor/swagger" });
+```
+
+Caller-supplied text is escaped, and input that would break out of the page is
+refused rather than mangled: a `javascript:` or `vbscript:` URL throws, an
+empty `specUrl` throws, and `customCss` containing `</style>` throws — that
+sequence ends the style block and lets the rest be parsed as HTML.
+
+## Branding
+
+ReDoc, Scalar and several other viewers read a logo from the non-standard
+`info["x-logo"]` field. Generated documents carry the Zudo mark there by
+default, so a spec opened in one of them shows a logo rather than nothing.
+
+```typescript
+new OpenAPIManager({ info }).generate().info["x-logo"];
+// { url: "data:image/svg+xml;…", href: "https://zudo.dev", altText: "Zudo", … }
+```
+
+The `branding` option controls it, and the same value is used by
+`toUIResponse` for the page header:
+
+- omitted or `true` — the Zudo mark
+- `false` — no `x-logo`, and no logo on the page
+- an `OpenAPILogo` (`{ url, href?, altText?, backgroundColor? }`) — your own
+
+```typescript
+new OpenAPIManager({ info, branding: false });
+new OpenAPIManager({
+  info,
+  branding: { url: "https://acme.example/logo.svg", href: "https://acme.example", altText: "Acme" },
+});
+```
+
+A logo already present on `info["x-logo"]` is never overwritten, whatever
+`branding` says.
+
+The brand assets are exported as inline SVG strings and as data URIs, so a page
+can show them without a network request: `ZUDO_MARK_SVG`, `ZUDO_MARK_DARK_SVG`,
+`ZUDO_WORDMARK_SVG`, `ZUDO_WORDMARK_DARK_SVG`, `ZUDO_FAVICON_SVG`, a
+`*_DATA_URI` counterpart for each, plus `ZUDO_SITE_URL`, `zudoLogo(overrides?)`
+and `svgToDataUri(svg)`. The types are `OpenAPIUIOptions`,
+`OpenAPIUIRenderer`, `OpenAPIUIResponse` and `OpenAPILogo`.
+
 ## Schemas
 
 `addSchema` converts a `@zudojs/schema` schema into an OpenAPI component and
@@ -115,10 +196,37 @@ const manager = new OpenAPIManager({
 manager.schemaWarnings(); // Map<componentName, warnings>
 ```
 
-Nullability follows the target version: `type: ["string", "null"]` for 3.1,
-`nullable: true` for 3.0.x. Recursive schemas are detected and reported rather
-than overflowing the stack — register the recursive type as a named component
-and reference it with `$ref`.
+### Version awareness
+
+3.0 and 3.1 spell several keywords differently, and the difference is not
+cosmetic: the 3.1 spelling in a 3.0 document is either rejected by a strict
+tool or ignored by a lenient one, so the constraint silently disappears from
+the published contract. The converter emits whichever spelling the target
+version defines.
+
+| Constraint       | 3.1.x                        | 3.0.x                                |
+| ---------------- | ---------------------------- | ------------------------------------ |
+| `gt(5)`          | `exclusiveMinimum: 5`        | `minimum: 5, exclusiveMinimum: true` |
+| `lt(10)`         | `exclusiveMaximum: 10`       | `maximum: 10, exclusiveMaximum: true`|
+| `positive()`     | `exclusiveMinimum: 0`        | `minimum: 0, exclusiveMinimum: true` |
+| nullable         | `type: ["string", "null"]`   | `nullable: true`                     |
+| literal          | `const: "yes"`               | `enum: ["yes"]`                      |
+| tuple            | `prefixItems`                | `minItems` / `maxItems`              |
+
+In 3.1 `exclusiveMinimum` carries the bound itself; in 3.0 it is a boolean
+modifier on `minimum`. Emitting the number into a 3.0 document produced a
+keyword of the wrong type, which is how a `gt(5)` constraint used to vanish
+from a 3.0 spec. Both spellings are now correct, and no 3.1-only keyword
+reaches a 3.0 document.
+
+A regular expression's flags have nowhere to go: OpenAPI's `pattern` carries
+the source and nothing else. A `/^abc$/i` pattern would therefore become
+case-*sensitive* in the document — a published contract stricter than the code
+validating against it. Rather than drop the flags silently, the converter
+emits the source and raises a warning naming them.
+
+Recursive schemas are detected and reported rather than overflowing the stack —
+register the recursive type as a named component and reference it with `$ref`.
 
 Use `convertSchema` directly when you want the conversion without the
 registry:
@@ -156,7 +264,14 @@ The validator checks:
 - that every `security` requirement names a scheme declared in
   `components.securitySchemes` — a typo there yields a document that _looks_
   protected
-- that every local `$ref` resolves
+- that every local `$ref` resolves within the document
+- that every non-local `$ref` uses a scheme a resolver may reasonably be
+  pointed at — only `http` and `https`. A `$ref` is an instruction to whatever
+  dereferences the document, so `file:///etc/passwd` or
+  `http://169.254.169.254/latest/meta-data/` turns the spec into a file-read or
+  SSRF sink in the resolver downstream. Any other scheme is an **error**; an
+  http(s) or relative reference is legal OpenAPI and so is a **warning**,
+  telling you something outside the document will be fetched
 - that no path still uses `:id` instead of `{id}`
 
 `assertValid` throws an `OpenAPIValidationError` that **carries the issues**:
@@ -230,6 +345,6 @@ Each accepts `statusCode` and `expose` overrides.
 ## Use Cases
 
 - Generating API documentation from route metadata
-- Serving a spec to Swagger UI, Redoc or Postman
+- Serving a spec, and a branded Swagger UI or ReDoc page, from your own app
 - Feeding client and server code generators
 - Contract checks in CI

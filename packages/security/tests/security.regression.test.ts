@@ -5,7 +5,7 @@
  * than silently restoring the vulnerability.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 
 import {
   containsXss,
@@ -25,6 +25,7 @@ import {
   serializeCookie,
   createSecureCookie,
   validateCookieName,
+  parseCookieHeader,
   stripSensitiveCookies,
 } from "../src/cookie/index.js";
 import { createRateLimiter, extractClientIp } from "../src/rateLimit/index.js";
@@ -33,13 +34,22 @@ import {
   validateUrl,
   isSafeUrl,
   isPrivateHostname,
+  fullyDecodeUri,
 } from "../src/url/index.js";
+import {
+  resolveBodyLimit,
+  validateBodyLimitConfig,
+} from "../src/body/index.js";
+import { validateHeaders } from "../src/header/index.js";
+import { validateCspDirective } from "../src/headers/index.js";
 import {
   generateCsrfToken,
   validateCsrfToken,
   verifyDoubleSubmit,
   generateCsrfCookie,
   extractCsrfTokenFromHeaders,
+  createCsrfProtection,
+  MIN_CSRF_SECRET_LENGTH,
 } from "../src/csrf/index.js";
 import {
   isOriginAllowed,
@@ -114,13 +124,20 @@ describe("SEC-03: cookie serialization validates its inputs", () => {
     expect(serialized).toContain("a%0D%0A");
   });
 
-  it("refuses to let a value inject an attribute", () => {
+  it("neutralises an attribute injection by encoding, not by throwing", () => {
+    // The old name said "refuses"; the mechanism is acceptance plus
+    // percent-encoding, and the old first assertion required a trailing ";"
+    // the real output would never have.
     const serialized = serializeCookie({
       name: "sid",
       value: "x; Domain=evil.com",
     });
-    expect(serialized).not.toContain("; Domain=evil.com;");
-    expect(serialized).toContain("Domain%3Devil.com");
+    const [pair, ...attributes] = serialized.split("; ");
+    // The whole hostile value stays inside the name=value pair …
+    expect(pair).toBe("sid=x%3B%20Domain%3Devil.com");
+    // … and contributes no attribute of its own.
+    expect(attributes).not.toContain("Domain=evil.com");
+    expect(attributes.some((a) => a.startsWith("Domain"))).toBe(false);
   });
 
   it("refuses a CRLF in an attribute", () => {
@@ -145,10 +162,16 @@ describe("SEC-03: cookie serialization validates its inputs", () => {
     expect(validateCookieName("a(b)")).toContain("invalid characters");
   });
 
-  it("round-trips an ordinary value unchanged", () => {
-    expect(serializeCookie({ name: "test", value: "123" })).toContain(
-      "test=123",
-    );
+  it("round-trips an ordinary value through serialize and parse", () => {
+    // "Round-trips" now means what it says: serialize, then parse back.
+    const serialized = serializeCookie({ name: "test", value: "123" });
+    expect(serialized).toContain("test=123");
+
+    const pair = serialized.split(";")[0] ?? "";
+    const parsed = parseCookieHeader(pair);
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.cookies[0]?.name).toBe("test");
+    expect(parsed.cookies[0]?.value).toBe("123");
   });
 
   it("strips prefixed sensitive cookies, not just exact names", () => {
@@ -220,6 +243,39 @@ describe("SEC-05: rate limiter", () => {
     expect(rl.size).toBeLessThanOrEqual(10);
   });
 
+  it("evicts the least-recently-seen key specifically, not an arbitrary one", () => {
+    // The size-only assertion above is satisfied by a random-eviction or
+    // clear-everything policy too, so the ordering that `lastSeen` exists to
+    // provide went unobserved. A fake clock makes the ordering deterministic.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000);
+      const rl = createRateLimiter({ max: 5, windowMs: 600_000, maxKeys: 3 });
+      limiters.push(rl);
+
+      rl.check({ ip: "a" });
+      vi.setSystemTime(2_000);
+      rl.check({ ip: "b" });
+      vi.setSystemTime(3_000);
+      rl.check({ ip: "c" });
+
+      // Touch "a" again so "b" becomes the least recently seen.
+      vi.setSystemTime(4_000);
+      rl.check({ ip: "a" });
+
+      vi.setSystemTime(5_000);
+      rl.check({ ip: "d" }); // pushes size to 4 → one eviction
+
+      expect(rl.size).toBe(3);
+      expect(rl.getCount("b")).toBe(0); // evicted: least recently seen
+      expect(rl.getCount("a")).toBeGreaterThan(0);
+      expect(rl.getCount("c")).toBeGreaterThan(0);
+      expect(rl.getCount("d")).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("rejects a nonsensical configuration", () => {
     expect(() => createRateLimiter({ max: 0, windowMs: 1000 })).toThrow(
       RangeError,
@@ -233,11 +289,59 @@ describe("SEC-05: rate limiter", () => {
     const rl = createRateLimiter({ max: 1, windowMs: 60_000 });
     limiters.push(rl);
 
-    const response = { statusCode: 200, headers: {} as Record<string, string> };
+    const response = {
+      statusCode: 200,
+      headers: {} as Record<string, string>,
+      body: undefined as string | undefined,
+    };
     rl.middleware({ ip: "4.4.4.4" }, response);
     rl.middleware({ ip: "4.4.4.4" }, response);
 
+    // The old test asserted only the status code, leaving the three headers
+    // and the JSON body the handler exists to write unchecked.
     expect(response.statusCode).toBe(429);
+    expect(response.headers["X-RateLimit-Remaining"]).toBe("0");
+    expect(response.headers["X-RateLimit-Limit"]).toBe("1");
+    expect(response.headers["X-RateLimit-Reset"]).toMatch(/^\d+$/);
+    expect(JSON.parse(response.body ?? "{}")).toEqual({
+      error: { code: "RATE_LIMIT_EXCEEDED", message: "Too many requests" },
+    });
+  });
+
+  it("derives Retry-After from the window rather than emitting a fixed 60", () => {
+    const rl = createRateLimiter({ max: 1, windowMs: 3_600_000 });
+    limiters.push(rl);
+
+    const response = { statusCode: 200, headers: {} as Record<string, string> };
+    rl.middleware({ ip: "4.4.4.5" }, response);
+    rl.middleware({ ip: "4.4.4.5" }, response);
+
+    const retryAfter = Number(response.headers["Retry-After"]);
+    expect(Number.isInteger(retryAfter)).toBe(true);
+    // An hour-long window used to report "60".
+    expect(retryAfter).toBeGreaterThan(3_500);
+    expect(retryAfter).toBeLessThanOrEqual(3_600);
+  });
+
+  it("returns the configured message rather than the built-in one", () => {
+    const rl = createRateLimiter({
+      max: 1,
+      windowMs: 60_000,
+      message: "Hourly quota exhausted.",
+    });
+    limiters.push(rl);
+
+    const response = {
+      statusCode: 200,
+      headers: {} as Record<string, string>,
+      body: undefined as string | undefined,
+    };
+    rl.middleware({ ip: "4.4.4.6" }, response);
+    rl.middleware({ ip: "4.4.4.6" }, response);
+
+    expect(JSON.parse(response.body ?? "{}")).toMatchObject({
+      error: { message: "Hourly quota exhausted." },
+    });
   });
 });
 
@@ -345,37 +449,37 @@ describe("SEC-08: CSRF", () => {
   });
 
   it("binds a token to a session", () => {
-    const token = generateCsrfToken("secret", { sessionId: "user-1" });
-    expect(validateCsrfToken(token, "secret", { sessionId: "user-1" })).toBe(
+    const token = generateCsrfToken("csrf-test-secret-0123456789abcdef", { sessionId: "user-1" });
+    expect(validateCsrfToken(token, "csrf-test-secret-0123456789abcdef", { sessionId: "user-1" })).toBe(
       true,
     );
     // A token minted under one session must not validate under another.
-    expect(validateCsrfToken(token, "secret", { sessionId: "user-2" })).toBe(
+    expect(validateCsrfToken(token, "csrf-test-secret-0123456789abcdef", { sessionId: "user-2" })).toBe(
       false,
     );
   });
 
   it("uses a full-width HMAC, not a truncated hash", () => {
-    const signature = generateCsrfToken("secret").split(":")[2] ?? "";
+    const signature = generateCsrfToken("csrf-test-secret-0123456789abcdef").split(":")[2] ?? "";
     expect(signature).toHaveLength(64);
   });
 
   it("enforces the caller's maximum lifetime", () => {
-    const longLived = generateCsrfToken("secret", { expiration: 86_400 });
-    expect(validateCsrfToken(longLived, "secret", { expiration: 60 })).toBe(
+    const longLived = generateCsrfToken("csrf-test-secret-0123456789abcdef", { expiration: 86_400 });
+    expect(validateCsrfToken(longLived, "csrf-test-secret-0123456789abcdef", { expiration: 60 })).toBe(
       false,
     );
-    expect(validateCsrfToken(longLived, "secret", { expiration: 86_400 })).toBe(
+    expect(validateCsrfToken(longLived, "csrf-test-secret-0123456789abcdef", { expiration: 86_400 })).toBe(
       true,
     );
   });
 
   it("verifies a double submit only when both sides match and are valid", () => {
-    const token = generateCsrfToken("secret");
-    expect(verifyDoubleSubmit(token, token, "secret")).toBe(true);
-    expect(verifyDoubleSubmit(token, "other", "secret")).toBe(false);
-    expect(verifyDoubleSubmit(undefined, token, "secret")).toBe(false);
-    expect(verifyDoubleSubmit(token, token, "wrong-secret")).toBe(false);
+    const token = generateCsrfToken("csrf-test-secret-0123456789abcdef");
+    expect(verifyDoubleSubmit(token, token, "csrf-test-secret-0123456789abcdef")).toBe(true);
+    expect(verifyDoubleSubmit(token, "other", "csrf-test-secret-0123456789abcdef")).toBe(false);
+    expect(verifyDoubleSubmit(undefined, token, "csrf-test-secret-0123456789abcdef")).toBe(false);
+    expect(verifyDoubleSubmit(token, token, "csrf-wrong-secret-0123456789abcdef")).toBe(false);
   });
 
   it("rejects an empty secret at generation", () => {
@@ -478,7 +582,18 @@ describe("SEC-10: sanitizeObject", () => {
   it("stops at the configured depth", () => {
     let deep: Record<string, unknown> = { leaf: "end" };
     for (let i = 0; i < 100; i++) deep = { next: deep };
-    expect(() => sanitizeObject(deep, { maxDepth: 8 })).not.toThrow();
+
+    const result = sanitizeObject(deep, { maxDepth: 8 });
+
+    // The old body asserted only "does not throw", which passes with the
+    // limit ignored entirely. Walk down and check the cut-off actually lands
+    // where it was configured to.
+    let node: Record<string, unknown> | undefined = result;
+    for (let i = 0; i < 8; i++) {
+      expect(node).toBeDefined();
+      node = node?.next as Record<string, unknown> | undefined;
+    }
+    expect(node).toBeUndefined();
   });
 
   it("still strips prototype pollution keys and control characters", () => {
@@ -575,5 +690,233 @@ describe("SEC-12: header, body and default-header fixes", () => {
     expect(() =>
       generateSecurityHeaders({ contentSecurityPolicy: "a\r\nX-Evil: 1" }),
     ).toThrow(/injection risk/);
+  });
+});
+
+
+/* ─── SEC9: round-9 findings ─────────────────────────────────────────────── */
+
+const SECRET = "csrf-test-secret-0123456789abcdef";
+
+describe("SEC9-01: a trailing % no longer disables the target guards", () => {
+  it("still finds traversal when an escape is malformed", () => {
+    // decodeURIComponent throws for the WHOLE string on one bad escape, so
+    // this used to decode zero times and report valid: true.
+    const result = validateRequestTarget("/a/%2e%2e/etc/passwd%");
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(" ")).toContain("path traversal");
+    expect(result.errors.join(" ")).toContain("invalid percent encoding");
+  });
+
+  it("still finds an encoded CRLF when an escape is malformed", () => {
+    const result = validateRequestTarget("/a%0d%0aX-Evil:1%");
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(" ")).toContain("encoded control characters");
+  });
+
+  it("reports the malformed escape without losing the rest of the decode", () => {
+    const { decoded, malformed, truncated } = fullyDecodeUri("/a/%2e%2e/b%");
+    expect(malformed).toBe(true);
+    expect(truncated).toBe(false);
+    expect(decoded).toBe("/a/../b%");
+  });
+
+  it("keeps multi-byte sequences intact while decoding run by run", () => {
+    expect(fullyDecodeUri("/caf%C3%A9").decoded).toBe("/café");
+    expect(fullyDecodeUri("/caf%C3%A9%").decoded).toBe("/café%");
+  });
+
+  it("enforces maxLength on a request target", () => {
+    const result = validateRequestTarget("/" + "a".repeat(200), {
+      maxLength: 64,
+    });
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(" ")).toContain("exceeds maximum 64");
+  });
+
+  it("populates normalized from validateUrl when asked", () => {
+    const result = validateUrl("https://example.com/a/b/../c", {
+      blockTraversal: false,
+      normalizePaths: true,
+    });
+    expect(result.normalized).toBe("https://example.com/a/c");
+  });
+});
+
+describe("SEC9-02: sanitizeObject cannot reassign a prototype", () => {
+  it("keeps unsafe keys as own properties when the guard is opted out of", () => {
+    const hostile = JSON.parse(
+      '{"__proto__":{"polluted":"yes"},"ok":1}',
+    ) as Record<string, unknown>;
+
+    const out = sanitizeObject(hostile, {
+      preventPrototypePollution: false,
+    }) as Record<string, unknown>;
+
+    // Before: `out.polluted` was "yes" and the prototype had been replaced,
+    // with nothing showing in Object.keys.
+    expect(Object.keys(out).sort()).toEqual(["__proto__", "ok"]);
+    expect(Object.getPrototypeOf(out) as unknown).toBe(Object.prototype);
+    expect(out.polluted).toBeUndefined();
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("still drops them by default", () => {
+    const hostile = JSON.parse(
+      '{"__proto__":{"polluted":"yes"},"constructor":{"c":1},"ok":1}',
+    ) as Record<string, unknown>;
+    const out = sanitizeObject(hostile) as Record<string, unknown>;
+    expect(Object.keys(out)).toEqual(["ok"]);
+  });
+});
+
+describe("SEC9-03: cookie parsing validates, it does not only measure", () => {
+  it("keeps a malformed name out of cookies and names it in errors", () => {
+    const result = parseCookieHeader("a(b)=1; good=2");
+    expect(result.cookies.map((c) => c.name)).toEqual(["good"]);
+    expect(result.errors.join(" ")).toContain("invalid characters");
+  });
+
+  it("rejects a CRLF smuggled into a value", () => {
+    const result = parseCookieHeader("sid=v\r\nSet-Cookie: evil=1");
+    expect(result.cookies).toHaveLength(0);
+    expect(result.errors.join(" ")).toContain("control characters");
+  });
+
+  it("still accepts the lenient values real servers emit", () => {
+    const result = parseCookieHeader('pref=a b,c; quoted="x"');
+    expect(result.errors).toEqual([]);
+    expect(result.cookies.map((c) => c.value)).toEqual(["a b,c", '"x"']);
+  });
+});
+
+describe("SEC9-04: CSRF configuration is actually wired", () => {
+  it("reads cookieName and headerName from the configuration", () => {
+    const csrf = createCsrfProtection({
+      secret: SECRET,
+      cookieName: "app_csrf",
+      headerName: "x-app-csrf",
+    });
+
+    const { token, setCookie } = csrf.issue({ sessionId: "s1" });
+    expect(setCookie.startsWith("app_csrf=")).toBe(true);
+
+    const ok = csrf.verify(
+      {
+        method: "POST",
+        headers: { "x-app-csrf": token },
+        cookieHeader: `app_csrf=${token}`,
+      },
+      { sessionId: "s1" },
+    );
+    expect(ok).toBe(true);
+  });
+
+  it("rejects a token presented under the default names when others are configured", () => {
+    const csrf = createCsrfProtection({
+      secret: SECRET,
+      cookieName: "app_csrf",
+      headerName: "x-app-csrf",
+    });
+    const { token } = csrf.issue();
+
+    expect(
+      csrf.verify({
+        method: "POST",
+        headers: { "x-csrf-token": token },
+        cookieHeader: `_csrf=${token}`,
+      }),
+    ).toBe(false);
+  });
+
+  it("honours the configured session binding and protected methods", () => {
+    const csrf = createCsrfProtection({
+      secret: SECRET,
+      methods: ["DELETE"],
+    });
+    const { token } = csrf.issue({ sessionId: "s1" });
+    const request = {
+      method: "POST",
+      headers: { "x-csrf-token": token },
+      cookieHeader: `_csrf=${token}`,
+    };
+
+    // POST is not in the configured method list, so it is not protected.
+    expect(csrf.requiresProtection("POST")).toBe(false);
+    expect(csrf.verify(request)).toBe(true);
+
+    expect(csrf.requiresProtection("DELETE")).toBe(true);
+    expect(
+      csrf.verify({ ...request, method: "DELETE" }, { sessionId: "s2" }),
+    ).toBe(false);
+    expect(
+      csrf.verify({ ...request, method: "DELETE" }, { sessionId: "s1" }),
+    ).toBe(true);
+  });
+
+  it("refuses a secret too short to sign with", () => {
+    expect(() => generateCsrfToken("short")).toThrow(/too short/);
+    expect(() => generateCsrfToken("short")).toThrow(
+      new RegExp(String(MIN_CSRF_SECRET_LENGTH)),
+    );
+    expect(() => createCsrfProtection({ secret: "short" })).toThrow(
+      /too short/,
+    );
+    expect(() => generateCsrfToken("")).toThrow(/cannot be empty/);
+  });
+});
+
+describe("SEC9-05: body limits honour contentTypes", () => {
+  it("routes a content type to the rule that names it", () => {
+    const rules = [
+      { maxSize: 1_000 },
+      { maxSize: 50, contentTypes: ["application/json"] },
+    ];
+    // A specific rule wins over the catch-all whatever the order.
+    expect(resolveBodyLimit("application/json; charset=utf-8", rules)).toBe(50);
+    expect(resolveBodyLimit("text/plain", rules)).toBe(1_000);
+    expect(resolveBodyLimit("text/plain", [])).toBe(1_048_576);
+  });
+
+  it("reports a contentTypes entry that is not a media type", () => {
+    expect(
+      validateBodyLimitConfig({ maxSize: 10, contentTypes: ["json"] }),
+    ).toContain("not a media type");
+    expect(
+      validateBodyLimitConfig({
+        maxSize: 10,
+        contentTypes: ["application/json"],
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("SEC9-06: header validation", () => {
+  it("counts an invalid value towards the total size bound", () => {
+    // An oversized value used to be excluded from totalSize, so a header
+    // could dodge maxTotalSize by also being malformed.
+    const result = validateHeaders(
+      { "x-a": "a".repeat(500) },
+      { maxValueSize: 10, maxTotalSize: 100 },
+    );
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(" ")).toContain("Total header size");
+  });
+
+  it("rejects hop-by-hop headers only when asked", () => {
+    const headers = { "transfer-encoding": "chunked" };
+    expect(validateHeaders(headers).valid).toBe(true);
+    const blocked = validateHeaders(headers, { blockHopByHop: true });
+    expect(blocked.valid).toBe(false);
+    expect(blocked.errors.join(" ")).toContain("hop-by-hop");
+  });
+
+  it("reports every CSP weakness, not just the first", () => {
+    const warning = validateCspDirective(
+      "default-src 'unsafe-inline' 'unsafe-eval' 'unsafe-hashes'",
+    );
+    expect(warning).toContain("unsafe-inline");
+    expect(warning).toContain("unsafe-eval");
+    expect(warning).toContain("unsafe-hashes");
   });
 });

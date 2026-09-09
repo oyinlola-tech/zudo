@@ -17,10 +17,7 @@ import {
   printVersion,
   printHelp,
 } from "../src/cliApplication/cliApplication.builtins.js";
-import {
-  createCLIWriter,
-  registerCLIInterruptHandler,
-} from "../src/cliApplication/cliApplication.writer.js";
+import { createCLIWriter } from "../src/cliApplication/cliApplication.writer.js";
 import {
   getCLIVersion,
   formatCLIVersion,
@@ -30,16 +27,17 @@ import {
   parseVersion,
   isCompatibleVersion,
 } from "../src/cliVersion/cliVersion.core.js";
-import {
-  createCommand,
-  createCommand as cmd,
-} from "../src/cliCommand/cliCommand.factory.js";
+import { createCommand } from "../src/cliCommand/cliCommand.factory.js";
 import { CLI_EXIT_CODES } from "../src/cliConstant/cliConstant.value.js";
 import type { CLICommand, CLIWriter } from "../src/cliType/cliType.type.js";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-function createMockWriter(): CLIWriter & { stdout: string; stderr: string } {
+function createMockWriter(): CLIWriter & {
+  stdout: string;
+  stderr: string;
+  reset(): void;
+} {
   let stdout = "";
   let stderr = "";
   return {

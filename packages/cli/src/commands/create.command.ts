@@ -41,12 +41,7 @@ import { promptCapabilities } from "../prompts/capabilities/index.js";
 import { CLIValidationError, CLIGenerationError } from "../errors/index.js";
 import { execCommand, runStreaming } from "../utils/utils.exec.js";
 import { writeFileTree } from "../utils/utils.fileSystem.js";
-import { generateMonolithFiles } from "../templates/monolith/index.js";
-import { generateModularMonolithFiles } from "../templates/modular-monolith/index.js";
-import {
-  generateMicroserviceFiles,
-  DEFAULT_MICROSERVICE_SERVICES,
-} from "../templates/microservice/index.js";
+import { resolveMicroserviceServices } from "../templates/microservice/index.js";
 import { ManifestManager } from "../manifest/manifestManager.core.js";
 import { CLI_VERSION } from "../constants/index.js";
 
@@ -100,14 +95,67 @@ function validateProjectName(name: string): void {
   }
 }
 
+/**
+ * Returns whether the user typed a flag on the command line.
+ *
+ * All the shapes the parser accepts must be recognised here, otherwise an
+ * explicitly supplied flag is silently dropped and the interactive prompt
+ * offers its own default instead:
+ *
+ *   `--type backend`  `--type=backend`  `-t backend`  `-tbackend`  `-abt`
+ */
+/**
+ * Narrows a raw CLI string to one of a fixed set of choices.
+ *
+ * The returned value is typed as the union, which is what lets the
+ * non-interactive branch build ScaffoldOptions without `as any` casts. The
+ * cast below is guarded by the membership test immediately above it.
+ */
+function validateChoice<T extends string>(
+  value: string,
+  allowed: readonly T[],
+  label: string,
+): T {
+  if (!(allowed as readonly string[]).includes(value)) {
+    throw new CLIValidationError(
+      `Invalid ${label}: ${value}. Valid: ${allowed.join(", ")}`,
+    );
+  }
+  return value as T;
+}
+
 function hasExplicitFlag(
   args: readonly string[],
   long: string,
   short?: string,
 ): boolean {
-  return args.some(
-    (arg) => arg === long || (short !== undefined && arg === short),
-  );
+  const longName = long.startsWith("--") ? long.slice(2) : long;
+  const shortName =
+    short !== undefined && short.startsWith("-") ? short.slice(1) : short;
+
+  for (const arg of args) {
+    if (arg === "--") break;
+
+    if (arg.startsWith("--")) {
+      const body = arg.slice(2);
+      const separator = body.indexOf("=");
+      const name = separator >= 0 ? body.slice(0, separator) : body;
+      // `--no-install` negates the boolean `install`; both count as explicit.
+      if (name === longName || name === `no-${longName}`) return true;
+      continue;
+    }
+
+    if (shortName === undefined) continue;
+
+    if (arg.startsWith("-") && arg.length > 1) {
+      // Every short flag `create` defines takes a value, so it can only be
+      // the first character of the token: `-t backend` or `-tbackend`.
+      // Matching anywhere would treat the "t" in `-fnuxt` as `--type`.
+      if (arg[1] === shortName) return true;
+    }
+  }
+
+  return false;
 }
 
 export async function runCreateCommand(context: CLIContext): Promise<void> {
@@ -145,41 +193,30 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
     validateProjectName(projectName);
   }
 
-  if (
-    !VALID_PROJECT_TYPES.includes(
-      projectType as (typeof VALID_PROJECT_TYPES)[number],
-    )
-  ) {
-    throw new CLIValidationError(
-      `Invalid project type: ${projectType}. Valid: ${VALID_PROJECT_TYPES.join(", ")}`,
-    );
-  }
-
-  if (
-    !VALID_ARCHITECTURES.includes(
-      architecture as (typeof VALID_ARCHITECTURES)[number],
-    )
-  ) {
-    throw new CLIValidationError(
-      `Invalid architecture: ${architecture}. Valid: ${VALID_ARCHITECTURES.join(", ")}`,
-    );
-  }
-
-  if (!VALID_DATABASES.includes(database as (typeof VALID_DATABASES)[number])) {
-    throw new CLIValidationError(
-      `Invalid database: ${database}. Valid: ${VALID_DATABASES.join(", ")}`,
-    );
-  }
-
-  if (
-    !VALID_PACKAGE_MANAGERS.includes(
-      packageManager as (typeof VALID_PACKAGE_MANAGERS)[number],
-    )
-  ) {
-    throw new CLIValidationError(
-      `Invalid package manager: ${packageManager}. Valid: ${VALID_PACKAGE_MANAGERS.join(", ")}`,
-    );
-  }
+  const projectTypeValue = validateChoice(
+    projectType,
+    VALID_PROJECT_TYPES,
+    "project type",
+  );
+  const architectureValue = validateChoice(
+    architecture,
+    VALID_ARCHITECTURES,
+    "architecture",
+  );
+  const databaseValue = validateChoice(database, VALID_DATABASES, "database");
+  const packageManagerValue = validateChoice(
+    packageManager,
+    VALID_PACKAGE_MANAGERS,
+    "package manager",
+  );
+  const frontendValue = validateChoice(frontend, VALID_FRONTENDS, "frontend");
+  const frontendArchitectureValue = validateChoice(
+    frontendArchitecture,
+    VALID_FRONTEND_ARCHITECTURES,
+    "frontend architecture",
+  );
+  const languageValue = validateChoice(language, VALID_LANGUAGES, "language");
+  const apiValue = validateChoice(api, VALID_APIS, "API style");
 
   for (const service of services) {
     if (!SERVICE_NAME_PATTERN.test(service)) {
@@ -189,39 +226,11 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
     }
   }
 
-  if (!VALID_FRONTENDS.includes(frontend as (typeof VALID_FRONTENDS)[number])) {
-    throw new CLIValidationError(
-      `Invalid frontend: ${frontend}. Valid: ${VALID_FRONTENDS.join(", ")}`,
-    );
-  }
-
-  if (
-    !VALID_FRONTEND_ARCHITECTURES.includes(
-      frontendArchitecture as (typeof VALID_FRONTEND_ARCHITECTURES)[number],
-    )
-  ) {
-    throw new CLIValidationError(
-      `Invalid frontend architecture: ${frontendArchitecture}. Valid: ${VALID_FRONTEND_ARCHITECTURES.join(", ")}`,
-    );
-  }
-
-  if (!VALID_LANGUAGES.includes(language as (typeof VALID_LANGUAGES)[number])) {
-    throw new CLIValidationError(
-      `Invalid language: ${language}. Valid: ${VALID_LANGUAGES.join(", ")}`,
-    );
-  }
-
-  if (!VALID_APIS.includes(api as (typeof VALID_APIS)[number])) {
-    throw new CLIValidationError(
-      `Invalid API style: ${api}. Valid: ${VALID_APIS.join(", ")}`,
-    );
-  }
-
-  const resolvedFrontend =
-    projectType === "frontend" || projectType === "fullstack"
-      ? frontend === "none"
+  const resolvedFrontend: (typeof VALID_FRONTENDS)[number] | undefined =
+    projectTypeValue === "frontend" || projectTypeValue === "fullstack"
+      ? frontendValue === "none"
         ? "react"
-        : frontend
+        : frontendValue
       : undefined;
 
   const explicitOverrides: Record<string, unknown> = {
@@ -272,12 +281,19 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
       explicitOverrides.projectType as ScaffoldOptions["projectType"],
     );
 
-    const arch =
+    // `architecture` is a required ScaffoldOptions field and is written to
+    // the project manifest. For a frontend-only project no prompt runs, so
+    // without this default it was `undefined` and the generated manifest
+    // came out with no architecture at all, breaking `zudojs dev` and
+    // `zudojs generate` in the new project.
+    const arch: ScaffoldOptions["architecture"] =
       type === "backend" || type === "fullstack"
         ? await promptBackendArchitecture(
             explicitOverrides.architecture as ScaffoldOptions["architecture"],
           )
-        : (explicitOverrides.architecture as ScaffoldOptions["architecture"]);
+        : ((explicitOverrides.architecture as
+            | ScaffoldOptions["architecture"]
+            | undefined) ?? architectureValue);
 
     const interactiveServices =
       arch === "microservice"
@@ -361,15 +377,17 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
   } else {
     answers = {
       projectName: projectName ?? "",
-      projectType: projectType as any,
-      architecture: architecture as any,
-      packageManager: packageManager as any,
-      database: database as any,
-      api: api as any,
-      frontend: resolvedFrontend as any,
-      frontendArchitecture: frontendArchitecture as any,
+      projectType: projectTypeValue,
+      architecture: architectureValue,
+      packageManager: packageManagerValue,
+      database: databaseValue,
+      api: apiValue,
+      ...(resolvedFrontend !== undefined
+        ? { frontend: resolvedFrontend }
+        : {}),
+      frontendArchitecture: frontendArchitectureValue,
       frontendPath: "apps/web",
-      language: language as any,
+      language: languageValue,
       services,
       enableCQRS: true,
       enableMessaging: true,
@@ -377,7 +395,8 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
       enableOpenAPI: true,
       enableDatabase: true,
       enableQueue: false,
-      enableDocker: false,
+      // Match the interactive branch, which enables Docker for microservices.
+      enableDocker: architectureValue === "microservice",
       installDeps: !noInstall,
       initGit: !noGit,
     };
@@ -510,11 +529,12 @@ async function writeProjectManifest(
   if (options.enableDatabase) capabilities.push("database");
   if (options.enableQueue) capabilities.push("queue");
 
+  // Record the services actually generated, not the raw request: the
+  // template drops reserved names (gateway) and duplicates, and substitutes
+  // its own defaults for an empty list.
   const services =
     options.architecture === "microservice"
-      ? options.services.length > 0
-        ? options.services
-        : DEFAULT_MICROSERVICE_SERVICES
+      ? resolveMicroserviceServices(options.services)
       : undefined;
 
   const hasFrontend =
@@ -586,17 +606,12 @@ async function generateFullstackProject(
     );
   }
 
-  let backendFiles: Record<string, string>;
-  switch (options.architecture) {
-    case "modular-monolith":
-      backendFiles = generateModularMonolithFiles(options);
-      break;
-    case "microservice":
-      backendFiles = generateMicroserviceFiles(options);
-      break;
-    default:
-      backendFiles = generateMonolithFiles(options);
-  }
+  // Uses the same BackendGenerator the generator registry exposes rather
+  // than a third private copy of the architecture switch.
+  const backendFiles = await new BackendGenerator().generate(
+    options,
+    join(projectPath, "apps/api"),
+  );
 
   // The backend template may carry its own workspace definition; nested in
   // apps/api it would create a second workspace root, so strip it.

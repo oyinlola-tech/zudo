@@ -13,13 +13,48 @@ import type {
   FeatureFlagEvaluation,
   FeatureFlagEvaluationReason,
 } from "../featureFlagTypes/featureFlagEvaluation.js";
+import type { FeatureFlagRule } from "../featureFlagTypes/featureFlagRule/featureFlagRule.type.js";
 import { evaluateRule } from "./evaluatorRule.core.js";
+
+/** Options for {@link evaluateFlag}. */
+export interface EvaluateFlagOptions {
+  /**
+   * Whether the flag's declared dependencies have been resolved and are all
+   * enabled.
+   *
+   * `evaluateFlag` has no registry and cannot resolve a dependency itself, so
+   * it defaults to `false` and returns `dependency_disabled` — the safe
+   * answer for a flag whose preconditions are unknown. The caller that *can*
+   * resolve them (`createFeatureFlags`) passes `true` once it has.
+   */
+  readonly dependenciesSatisfied?: boolean;
+}
+
+/** The evaluation reason a matching rule of each type produces. */
+function reasonFor(type: FeatureFlagRule["type"]): FeatureFlagEvaluationReason {
+  switch (type) {
+    case "percentage":
+      return "percentage_rollout";
+    case "variant":
+      return "variant_assignment";
+    case "static":
+      return "static";
+    case "user":
+    case "tenant":
+      // Explicit targeting, which is what `target_match` is for — it was a
+      // declared reason nothing ever produced.
+      return "target_match";
+    default:
+      return "rule_match";
+  }
+}
 
 /**
  * Evaluate a feature flag against a context.
  *
  * @param flag - The feature flag definition.
  * @param context - The evaluation context.
+ * @param options - Facts the caller resolved that this function cannot.
  * @returns A structured evaluation result.
  */
 export function evaluateFlag<
@@ -27,6 +62,7 @@ export function evaluateFlag<
 >(
   flag: FeatureFlag,
   context: FeatureFlagContext = {},
+  options: EvaluateFlagOptions = {},
 ): FeatureFlagEvaluation<TValue> {
   if (!flag.enabled) {
     return {
@@ -55,7 +91,15 @@ export function evaluateFlag<
     };
   }
 
-  if (flag.dependencies && flag.dependencies.length > 0) {
+  if (
+    flag.dependencies &&
+    flag.dependencies.length > 0 &&
+    options.dependenciesSatisfied !== true
+  ) {
+    // Previously this returned `dependency_disabled` for *every* flag that
+    // declared a dependency, satisfied or not — so a flag with dependencies
+    // could never turn on, and the caller's own dependency resolution was
+    // computed and then discarded.
     return {
       key: flag.key,
       value: flag.defaultValue as TValue,
@@ -79,14 +123,7 @@ export function evaluateFlag<
     const result = evaluateRule(rule, context, flag.key);
 
     if (result.matched) {
-      const reason: FeatureFlagEvaluationReason =
-        rule.type === "percentage"
-          ? "percentage_rollout"
-          : rule.type === "variant"
-            ? "variant_assignment"
-            : rule.type === "static"
-              ? "static"
-              : "rule_match";
+      const reason: FeatureFlagEvaluationReason = reasonFor(rule.type);
 
       return {
         key: flag.key,

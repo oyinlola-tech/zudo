@@ -1,5 +1,3 @@
-import type { Job } from "../job/job.type.js";
-
 import type { QueueEventMap } from "../queue/queue.type.js";
 
 /**

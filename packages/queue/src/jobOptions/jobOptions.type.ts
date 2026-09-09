@@ -1,11 +1,11 @@
-import type { BackoffType } from "../jobTypes/jobTypes.type.js";
+import type { BackoffStrategy } from "../jobTypes/jobTypes.type.js";
 
 /**
  * Backoff configuration for retry attempts.
  */
 export interface BackoffOptions {
-  /** Backoff strategy type. */
-  readonly type: BackoffType;
+  /** Backoff strategy type. Accepts `BackoffType` or its string value. */
+  readonly type: BackoffStrategy;
   /** Initial delay in milliseconds. */
   readonly delay: number;
   /** Maximum delay in milliseconds (for exponential). */

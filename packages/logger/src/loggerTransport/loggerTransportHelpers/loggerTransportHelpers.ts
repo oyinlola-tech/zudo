@@ -8,6 +8,8 @@ import type { LoggerTransportLike } from "../loggerTransport.type.js";
 
 import { isLoggerTransportObject } from "../loggerTransportGuard.js";
 
+import { serializeLoggerValue } from "../../loggerEntry/loggerEntryHelpers/loggerEntryHelpers.valueSerialize.js";
+
 /**
  * Converts a LoggerEntry into a console-friendly object.
  */
@@ -29,19 +31,19 @@ export function serializeTransportEntry(
 
     ...(entry.context
       ? {
-          context: entry.context,
+          context: serializeLoggerValue(entry.context),
         }
       : {}),
 
     ...(entry.metadata
       ? {
-          metadata: entry.metadata,
+          metadata: serializeLoggerValue(entry.metadata),
         }
       : {}),
 
     ...(entry.source
       ? {
-          source: entry.source,
+          source: serializeLoggerValue(entry.source),
         }
       : {}),
 

@@ -6,6 +6,7 @@
 
 export {
   type TransactionState,
+  type TransactionKind,
   type TransactionPropagation,
   type TransactionIsolationLevel,
 } from "./transactionState.js";
@@ -14,13 +15,13 @@ export {
   type Transaction,
   type TransactionOptions,
   type TransactionRetryOptions,
+  type TransactionRetryPredicate,
 } from "./transaction.interface.js";
 
 export {
   type TransactionHandle,
   type TransactionAdapterCapabilities,
   type TransactionAdapter,
-  type Savepoint,
   type TransactionContext,
 } from "./transactionAdapter.js";
 
@@ -29,7 +30,6 @@ export {
   type TransactionErrorContext,
   type TransactionHooks,
   type TransactionRegistry,
-  type TransactionResult,
   TRANSACTION_EVENTS,
   type TransactionEvent,
   type TransactionEventHandler,

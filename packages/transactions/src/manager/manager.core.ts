@@ -13,6 +13,7 @@ import type {
   TransactionContext,
 } from "../transactionTypes/transactionAdapter.js";
 import type {
+  TransactionEventHandler,
   TransactionHooks,
   TransactionRegistry,
 } from "../transactionTypes/transactionHooks.js";
@@ -25,6 +26,7 @@ import {
   suspendsTransaction,
 } from "./manager.propagation.js";
 import { withRetry } from "./manager.retry.js";
+import { createEmitter, TRANSACTION_EVENTS } from "./manager.events.js";
 
 /** Options for creating a transaction manager. */
 export interface TransactionManagerOptions {
@@ -33,6 +35,13 @@ export interface TransactionManagerOptions {
   readonly hooks?: TransactionHooks;
   /** Optional registry notified as transactions start and finish. */
   readonly registry?: TransactionRegistry;
+  /**
+   * Optional observer for transaction lifecycle events.
+   *
+   * Receives a {@link TransactionEvent} for each of `TRANSACTION_EVENTS`.
+   * A throwing observer is ignored rather than failing the transaction.
+   */
+  readonly onEvent?: TransactionEventHandler;
 }
 
 /**
@@ -41,6 +50,7 @@ export interface TransactionManagerOptions {
 export function createTransactionManager(options: TransactionManagerOptions) {
   const { adapter, hooks, registry } = options;
   const context = options.context ?? getDefaultContext();
+  const emit = createEmitter(options.onEvent);
 
   /** Arms the timeout, returning a disposer that always clears the timer. */
   function armTimeout(transaction: Transaction): () => void {
@@ -50,6 +60,7 @@ export function createTransactionManager(options: TransactionManagerOptions) {
     const timer = setTimeout(() => {
       internals(transaction)._markTimedOut();
       transaction.markRollbackOnly("timeout");
+      emit(TRANSACTION_EVENTS.TIMED_OUT, transaction);
     }, timeout);
 
     return () => clearTimeout(timer);
@@ -74,6 +85,7 @@ export function createTransactionManager(options: TransactionManagerOptions) {
         opts,
         adapter,
         hooks,
+        emit,
       });
 
       if (transaction.kind === "root" || transaction.kind === "savepoint") {
@@ -131,12 +143,12 @@ export function createTransactionManager(options: TransactionManagerOptions) {
 
     /** Commit a transaction. Participants and committed transactions are no-ops. */
     async commit(transaction: Transaction): Promise<void> {
-      return commitTransaction(transaction, adapter, hooks);
+      return commitTransaction(transaction, adapter, hooks, emit);
     },
 
     /** Roll back a transaction, or mark the joined transaction rollback-only. */
     async rollback(transaction: Transaction, reason?: unknown): Promise<void> {
-      return rollbackTransaction(transaction, adapter, reason, hooks);
+      return rollbackTransaction(transaction, adapter, reason, hooks, emit);
     },
 
     /** The transaction in scope for the current async execution, if any. */

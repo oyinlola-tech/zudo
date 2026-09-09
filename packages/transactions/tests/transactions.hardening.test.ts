@@ -12,6 +12,9 @@ import {
   createTransactionContext,
   createTransactionRegistry,
   createInMemoryAdapter,
+  TransactionCapabilityError,
+  TransactionIsolationError,
+  TransactionTimeoutError,
 } from "../src/index.js";
 import type {
   Transaction,
@@ -87,6 +90,10 @@ describe("rollback-only", () => {
   it("rolls back a timed-out transaction instead of committing it", async () => {
     const { manager, calls } = makeManager();
 
+    // Rewritten in round 9: this used to assert only /rollback/i, which the
+    // generic TransactionRollbackError satisfied. A timeout is now reported
+    // as TransactionTimeoutError, so a caller can tell it apart from a
+    // deliberate markRollbackOnly. The rollback itself is still asserted.
     await expect(
       manager.run(
         async () => {
@@ -94,7 +101,7 @@ describe("rollback-only", () => {
         },
         { timeout: 10 },
       ),
-    ).rejects.toThrow(/rollback/i);
+    ).rejects.toBeInstanceOf(TransactionTimeoutError);
 
     expect(calls).toEqual(["BEGIN", "ROLLBACK"]);
   });
@@ -429,7 +436,7 @@ describe("manager bookkeeping", () => {
     const { manager } = makeManager();
     await expect(
       manager.begin({ isolation: "repeatable_read" }),
-    ).rejects.toThrow(/does not support isolation level/);
+    ).rejects.toBeInstanceOf(TransactionIsolationError);
   });
 
   it("rejects a timeout when the adapter cannot honour one", async () => {
@@ -443,8 +450,8 @@ describe("manager bookkeeping", () => {
       context: createTransactionContext(),
     });
 
-    await expect(manager.begin({ timeout: 1000 })).rejects.toThrow(
-      /does not support transaction timeouts/,
+    await expect(manager.begin({ timeout: 1000 })).rejects.toBeInstanceOf(
+      TransactionCapabilityError,
     );
   });
 

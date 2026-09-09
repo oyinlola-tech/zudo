@@ -22,7 +22,9 @@ export class RPCProcedureRegistry {
    *
    * @throws {RPCDuplicateProcedureError} if a procedure with the same name is already registered.
    */
-  register(procedure: RPCProcedure): void {
+  register<TInput = unknown, TOutput = unknown>(
+    procedure: RPCProcedure<TInput, TOutput>,
+  ): void {
     if (this.procedures.size >= MAX_PROCEDURES) {
       throw new RangeError(
         `Maximum number of procedures (${MAX_PROCEDURES}) exceeded.`,
@@ -36,7 +38,13 @@ export class RPCProcedureRegistry {
       throw new RPCDuplicateProcedureError(procedure.name);
     }
 
-    this.procedures.set(procedure.name, Object.freeze(procedure));
+    // Stored erased. The dispatcher decodes the wire payload at runtime,
+    // so the registry holds procedures of mixed input types; the cast is
+    // the single point where that erasure is acknowledged.
+    this.procedures.set(
+      procedure.name,
+      Object.freeze(procedure) as RPCProcedure,
+    );
   }
 
   /**

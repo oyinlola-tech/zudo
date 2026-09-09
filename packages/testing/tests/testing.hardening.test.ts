@@ -12,6 +12,8 @@ import {
   assertEventNotPublished,
   assertResponseBody,
   assertResponseBodyContains,
+  assertSerializesCorrectly,
+  assertDeserializesTo,
   createCleanupManager,
   createMockFn,
   createSpyFn,
@@ -438,5 +440,34 @@ describe("test application and storage", () => {
     expect(storage.keys()).toEqual(["b"]);
     expect(storage.size).toBe(1);
     expect(storage.has("a")).toBe(false);
+  });
+});
+
+describe("serialization assertions compare structurally, not by JSON string", () => {
+  it("fails when a Map is silently dropped by the round trip", () => {
+    // Without preserveTypes a Map serialises to {}. Both sides then stringify
+    // to "{}", so the old JSON.stringify comparison passed and the assertion
+    // reported success on a round trip that had destroyed the value.
+    const value = { entries: new Map([["a", 1]]) };
+    expect(() => assertSerializesCorrectly(value)).toThrow(
+      /Serialization round-trip failed/,
+    );
+  });
+
+  it("fails when a Set is silently dropped by the round trip", () => {
+    const value = { tags: new Set(["x"]) };
+    expect(() => assertSerializesCorrectly(value)).toThrow(
+      /Serialization round-trip failed/,
+    );
+  });
+
+  it("still passes for a value that genuinely round-trips", () => {
+    expect(() => assertSerializesCorrectly({ a: 1, b: ["x"] })).not.toThrow();
+  });
+
+  it("reports the path of the first difference", () => {
+    expect(() =>
+      assertDeserializesTo(JSON.stringify({ a: { b: 1 } }), { a: { b: 2 } }),
+    ).toThrow(/Deserialized value mismatch at value\.a\.b/);
   });
 });

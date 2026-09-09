@@ -4,7 +4,6 @@ import { createQueue, isQueue } from "../src/queue/queue.core.js";
 
 import {
   createQueueName,
-  createJobName,
   JobState,
 } from "../src/jobTypes/jobTypes.type.js";
 

@@ -1,5 +1,3 @@
-import type { RPCProcedureName } from "./rpcProcedureName.type.js";
-
 /**
  * Metadata attached to RPC requests and responses.
  */

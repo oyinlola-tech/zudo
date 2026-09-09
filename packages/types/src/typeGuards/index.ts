@@ -5,6 +5,7 @@
  */
 
 export {
+  MAX_EMAIL_LENGTH,
   isPlainObject,
   isNonNullObject,
   isNonEmptyString,

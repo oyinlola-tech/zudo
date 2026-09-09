@@ -2,8 +2,57 @@ import type { Plugin } from "../pluginTypes/plugin.type.js";
 
 import { PluginDependencyError } from "@zudojs/errors";
 
-/** A parsed semantic version. */
-interface SemVer {
+/**
+ * A dependency that is registered but whose version does not satisfy the
+ * declared constraint.
+ *
+ * `PluginDependencyError` hardcodes the message "...which is not
+ * registered" and replaces any `metadata` it is handed, so the reason a
+ * version check failed could never reach the operator: every version
+ * mismatch was reported as a missing plugin. This subclass keeps the
+ * type — existing `instanceof PluginDependencyError` handlers still
+ * match — and replaces the message with one that names the requirement,
+ * what is actually registered, and what to do about it.
+ */
+export class PluginDependencyVersionError extends PluginDependencyError {
+  /** The plugin that declared the constraint. */
+  public readonly requiredBy: string;
+
+  /** The dependency whose version was checked. */
+  public readonly dependencyName: string;
+
+  /** The declared range, e.g. `^2.0.0`. */
+  public readonly required: string;
+
+  /** The version actually registered, if it declared one. */
+  public readonly actual: string | undefined;
+
+  public constructor(
+    requiredBy: string,
+    dependencyName: string,
+    required: string,
+    actual: string | undefined,
+    reason: string,
+  ) {
+    super(requiredBy, dependencyName);
+
+    this.name = "PluginDependencyVersionError";
+    this.message = reason;
+    this.requiredBy = requiredBy;
+    this.dependencyName = dependencyName;
+    this.required = required;
+    this.actual = actual;
+  }
+}
+
+/**
+ * A parsed semantic version.
+ *
+ * Exported because {@link parseVersion} returns one and
+ * {@link compareVersions} accepts two: a consumer that cannot name the
+ * type cannot use either function from TypeScript.
+ */
+export interface SemVer {
   readonly major: number;
   readonly minor: number;
   readonly patch: number;
@@ -151,29 +200,35 @@ export function assertDependencyVersions(
       const actual = target.metadata.version;
 
       if (actual === undefined) {
-        throw new PluginDependencyError(name, dependency.name, {
-          metadata: {
-            reason: `Plugin "${name}" requires "${dependency.name}@${dependency.version}", but that plugin declares no version.`,
-          },
-        });
+        throw new PluginDependencyVersionError(
+          name,
+          dependency.name,
+          dependency.version,
+          undefined,
+          `Plugin "${name}" requires "${dependency.name}@${dependency.version}", but "${dependency.name}" declares no version. Add a "version" to that plugin's metadata, or drop the constraint from "${name}".`,
+        );
       }
 
       const satisfied = satisfiesVersion(actual, dependency.version);
 
       if (satisfied === undefined) {
-        throw new PluginDependencyError(name, dependency.name, {
-          metadata: {
-            reason: `Plugin "${name}" declares an unsupported version range "${dependency.version}" for "${dependency.name}".`,
-          },
-        });
+        throw new PluginDependencyVersionError(
+          name,
+          dependency.name,
+          dependency.version,
+          actual,
+          `Plugin "${name}" declares an unsupported version range "${dependency.version}" for "${dependency.name}". Supported forms are an exact version (1.2.3), a caret or tilde range (^1.2.3, ~1.2.3), a comparator (>=1.2.3, >, <=, <) or "*".`,
+        );
       }
 
       if (!satisfied) {
-        throw new PluginDependencyError(name, dependency.name, {
-          metadata: {
-            reason: `Plugin "${name}" requires "${dependency.name}@${dependency.version}", but version ${actual} is registered.`,
-          },
-        });
+        throw new PluginDependencyVersionError(
+          name,
+          dependency.name,
+          dependency.version,
+          actual,
+          `Plugin "${name}" requires "${dependency.name}@${dependency.version}", but version ${actual} is registered. Register a "${dependency.name}" that satisfies ${dependency.version}, relax the constraint on "${name}", or construct the manager with { checkVersions: false }.`,
+        );
       }
     }
   }

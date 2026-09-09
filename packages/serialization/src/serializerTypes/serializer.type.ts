@@ -95,20 +95,6 @@ export interface Serializer<TValue = unknown, TSerialized = SerializedValue> {
   deserialize<T = TValue>(value: TSerialized, options?: DeserializeOptions): T;
 }
 
-/** Asynchronous serializer contract (for streaming / large payloads). */
-export interface AsyncSerializer<
-  TValue = unknown,
-  TSerialized = SerializedValue,
-> {
-  readonly name: string;
-  readonly contentType: string;
-  serialize(value: TValue, options?: SerializeOptions): Promise<TSerialized>;
-  deserialize<T = TValue>(
-    value: TSerialized,
-    options?: DeserializeOptions,
-  ): Promise<T>;
-}
-
 /** Transforms a specific JS type during serialization. */
 export interface TypeTransformer<TValue = unknown> {
   /** Tag name used in tagged representations (e.g., "Date"). */
@@ -120,6 +106,3 @@ export interface TypeTransformer<TValue = unknown> {
   /** Reconstruct the original value from the serialized form. */
   deserialize(value: unknown, options?: DeserializeOptions): TValue;
 }
-
-/** Strategy for handling `undefined` values. */
-export type UndefinedStrategy = "omit" | "null" | "preserve";

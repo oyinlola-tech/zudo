@@ -3,6 +3,7 @@ import type { ConfigValue } from "../configValue/configValue.core.js";
 import {
   cloneConfigValue,
   configValuesEqual,
+  defineConfigProperty,
   freezeConfigValue,
 } from "../configValue/configValue.core.js";
 
@@ -311,9 +312,14 @@ export class ConfigStore {
     const result: Record<string, ConfigValue> = {};
 
     for (const entry of this.entries.values()) {
-      result[entry.key] = this.shouldFreeze
-        ? entry.value
-        : cloneConfigValue(entry.value);
+      // Keys come from configuration sources and may be hostile
+      // ("__proto__"): define them instead of assigning so they can
+      // never reach an inherited setter.
+      defineConfigProperty(
+        result,
+        entry.key,
+        this.shouldFreeze ? entry.value : cloneConfigValue(entry.value),
+      );
     }
 
     if (this.shouldFreeze) {
@@ -337,9 +343,13 @@ export class ConfigStore {
     for (const entry of this.entries.values()) {
       const safeEntry = toSafeConfigEntry(entry);
 
-      result[safeEntry.key] = safeEntry.sensitive
-        ? safeEntry.value
-        : cloneConfigValue(safeEntry.value);
+      defineConfigProperty(
+        result,
+        safeEntry.key,
+        safeEntry.sensitive
+          ? safeEntry.value
+          : cloneConfigValue(safeEntry.value),
+      );
     }
 
     return Object.freeze(result);
@@ -377,7 +387,7 @@ export class ConfigStore {
           : entry.key.slice(normalizedPrefix.length + 1);
 
       if (key.length > 0) {
-        result[key] = entry.value;
+        defineConfigProperty(result, key, entry.value);
       }
     }
 

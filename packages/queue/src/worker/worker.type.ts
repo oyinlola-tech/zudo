@@ -1,5 +1,3 @@
-import type { Processor } from "../processor/processor.type.js";
-
 import type { Queue } from "../queue/queue.type.js";
 
 import type { QueueMiddleware } from "../middleware/middleware.type.js";

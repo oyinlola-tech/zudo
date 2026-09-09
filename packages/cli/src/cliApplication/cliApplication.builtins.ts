@@ -4,11 +4,7 @@
  * Help and version request detection and output.
  */
 
-import type {
-  CLIArguments,
-  CLIContext,
-  CLIWriter,
-} from "../cliType/cliType.type.js";
+import type { CLIArguments, CLIWriter } from "../cliType/cliType.type.js";
 import {
   CLI_COMMANDS,
   CLI_DEFAULTS,

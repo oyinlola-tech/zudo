@@ -20,6 +20,39 @@ export const DEFAULT_BUCKET_BOUNDARIES: readonly number[] = [
 ];
 
 /**
+ * Validates and canonicalises bucket boundaries.
+ *
+ * A `NaN` boundary makes `sort` leave the list in an arbitrary order, and
+ * every quantile computed from it comes back `NaN` — a latency histogram that
+ * reports nothing while looking like it works. Duplicates create zero-width
+ * buckets that skew interpolation, and an empty list leaves a single overflow
+ * bucket that cannot answer a percentile at all.
+ */
+function normalizeBoundaries(
+  name: string,
+  boundaries: readonly number[],
+): readonly number[] {
+  for (const boundary of boundaries) {
+    if (!Number.isFinite(boundary)) {
+      throw new MetricValueError(
+        name,
+        boundary,
+        "histogram bucket boundaries must all be finite numbers",
+      );
+    }
+  }
+  const sorted = [...new Set(boundaries)].sort((a, b) => a - b);
+  if (sorted.length === 0) {
+    throw new MetricValueError(
+      name,
+      0,
+      "a histogram needs at least one bucket boundary",
+    );
+  }
+  return sorted;
+}
+
+/**
  * In-memory histogram with cumulative buckets and interpolated quantiles.
  */
 export class DefaultHistogram implements Histogram {
@@ -41,7 +74,7 @@ export class DefaultHistogram implements Histogram {
   ) {
     this.name = name;
     this.labels = labels;
-    this.boundaries = [...boundaries].sort((a, b) => a - b);
+    this.boundaries = normalizeBoundaries(name, boundaries);
     this.counts = new Array<number>(this.boundaries.length + 1).fill(0);
   }
 

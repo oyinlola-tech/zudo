@@ -21,6 +21,7 @@ import {
   STARTUP_PHASES,
   SHUTDOWN_PHASES,
   installSignalHandlers,
+  DEFAULT_SHUTDOWN_SIGNALS,
 } from "../src/index.js";
 import { LifecycleState, LifecyclePhase } from "@zudojs/constants";
 import type { LifecycleComponent } from "../src/index.js";
@@ -479,5 +480,375 @@ describe("Phase constants", () => {
 
   it("has correct shutdown phases", () => {
     expect(SHUTDOWN_PHASES).toEqual(["stop", "dispose"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round 8 audit
+// ---------------------------------------------------------------------------
+
+describe("LIFECYCLE-01: startup failure is surfaced to the caller", () => {
+  it("rejects start() when a critical component fails to start", async () => {
+    const manager = new LifecycleManager({ handleSignals: false });
+    const stopped: string[] = [];
+
+    manager.register({
+      name: "db",
+      start: async () => {},
+      stop: async () => {
+        stopped.push("db");
+      },
+    });
+    manager.register(
+      {
+        name: "server",
+        start: async () => {
+          throw new Error("port in use");
+        },
+      },
+      { dependsOn: ["db"] },
+    );
+
+    await expect(manager.start()).rejects.toThrow();
+    expect(manager.state).toBe(LifecycleState.DISPOSED);
+    expect(stopped).toEqual(["db"]);
+    manager.dispose();
+  });
+
+  it("rejects start() when a critical initialize hook fails", async () => {
+    const manager = new LifecycleManager({ handleSignals: false });
+    manager.register({
+      name: "broken",
+      initialize: async () => {
+        throw new Error("bad config");
+      },
+    });
+
+    await expect(manager.start()).rejects.toThrow();
+    manager.dispose();
+  });
+
+  it("rejects start() when a critical ready hook fails", async () => {
+    const manager = new LifecycleManager({ handleSignals: false });
+    manager.register({
+      name: "warmup",
+      start: async () => {},
+      ready: async () => {
+        throw new Error("health check failed");
+      },
+    });
+
+    await expect(manager.start()).rejects.toThrow();
+    expect(manager.state).toBe(LifecycleState.DISPOSED);
+    manager.dispose();
+  });
+
+  it("still starts when a NON-critical component fails", async () => {
+    const manager = new LifecycleManager({ handleSignals: false });
+    manager.register(
+      {
+        name: "optional",
+        start: async () => {
+          throw new Error("nope");
+        },
+      },
+      { critical: false },
+    );
+    manager.register({ name: "core", start: async () => {} });
+
+    await manager.start();
+
+    expect(manager.state).toBe(LifecycleState.READY);
+    expect(manager.getStatus().get("optional")?.state).toBe(
+      LifecycleState.FAILED,
+    );
+    manager.dispose();
+  });
+});
+
+describe("LIFECYCLE-02: shutdown results are inspected", () => {
+  it("records a failing stop() instead of reporting it as stopped", async () => {
+    const manager = new LifecycleManager({ handleSignals: false });
+    const failures: unknown[] = [];
+
+    manager.events.on("component:failed", (event) => {
+      failures.push(event.component?.componentId);
+    });
+
+    manager.register({
+      name: "leaky",
+      start: async () => {},
+      stop: async () => {
+        throw new Error("could not drain");
+      },
+    });
+
+    await manager.start();
+    await manager.shutdown();
+
+    const status = manager.getStatus().get("leaky");
+
+    expect(failures).toContain("leaky");
+    expect(status?.results.some((r) => !r.success)).toBe(true);
+    manager.dispose();
+  });
+
+  it("emits component:stopped for a clean teardown", async () => {
+    const manager = new LifecycleManager({ handleSignals: false });
+    const stopped: (string | undefined)[] = [];
+
+    manager.events.on("component:stopped", (event) => {
+      stopped.push(event.component?.componentId);
+    });
+
+    manager.register({
+      name: "clean",
+      start: async () => {},
+      stop: async () => {},
+    });
+
+    await manager.start();
+    await manager.shutdown();
+
+    expect(stopped).toContain("clean");
+    manager.dispose();
+  });
+});
+
+describe("LIFECYCLE-03: the shutdown deadline is enforced", () => {
+  it("does not hang on a stop() hook that never settles", async () => {
+    const manager = new LifecycleManager({
+      handleSignals: false,
+      shutdownTimeout: 50,
+    });
+
+    manager.register({
+      name: "hung",
+      start: async () => {},
+      // Never resolves and never observes the signal.
+      stop: () => new Promise<void>(() => {}),
+    });
+
+    await manager.start();
+
+    const started = Date.now();
+    await manager.shutdown();
+
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(manager.state).toBe(LifecycleState.DISPOSED);
+    manager.dispose();
+  });
+});
+
+describe("LIFECYCLE-04: the lifecycle context signal is wired", () => {
+  it("aborts component signals when the shutdown deadline expires", async () => {
+    const manager = new LifecycleManager({
+      handleSignals: false,
+      shutdownTimeout: 50,
+    });
+
+    let aborted = false;
+
+    manager.register({
+      name: "cancellable",
+      start: async () => {},
+      stop: (context) =>
+        new Promise<void>((resolve) => {
+          context.signal.addEventListener("abort", () => {
+            aborted = true;
+            resolve();
+          });
+        }),
+    });
+
+    await manager.start();
+    await manager.shutdown();
+
+    expect(aborted).toBe(true);
+    manager.dispose();
+  });
+
+  it("hands the same signal to every hook", async () => {
+    const manager = new LifecycleManager({ handleSignals: false });
+    const signals: AbortSignal[] = [];
+
+    manager.register({
+      name: "probe",
+      start: async (context) => {
+        signals.push(context.signal);
+      },
+      ready: async (context) => {
+        signals.push(context.signal);
+      },
+    });
+
+    await manager.start();
+
+    expect(signals).toHaveLength(2);
+    expect(signals[0]).toBe(signals[1]);
+    expect(signals[0]?.aborted).toBe(false);
+    manager.dispose();
+  });
+});
+
+describe("LIFECYCLE-05: withConcurrency settles every task", () => {
+  it("does not abandon remaining work when one task rejects", async () => {
+    const seen: number[] = [];
+
+    await expect(
+      withConcurrency([1, 2, 3, 4], 2, async (item) => {
+        seen.push(item);
+        if (item === 2) {
+          throw new Error("boom");
+        }
+      }),
+    ).rejects.toThrow("boom");
+
+    expect(seen.sort()).toEqual([1, 2, 3, 4]);
+  });
+
+  it("treats a non-positive concurrency as serial", async () => {
+    const seen: number[] = [];
+
+    await withConcurrency([1, 2, 3], 0, async (item) => {
+      seen.push(item);
+    });
+
+    expect(seen).toEqual([1, 2, 3]);
+  });
+});
+
+describe("LIFECYCLE-06: withTimeout always clears its timer", () => {
+  it("rejects without leaving an armed timer for a sync throw", async () => {
+    await expect(
+      withTimeout(
+        () => {
+          throw new Error("sync failure");
+        },
+        60_000,
+        "c",
+        "start",
+      ),
+    ).rejects.toThrow("sync failure");
+  });
+});
+
+describe("LIFECYCLE-07: failures carry component attribution", () => {
+  it("wraps a hook error in a LifecycleComponentError", async () => {
+    const executor = new LifecycleExecutor();
+
+    const result = await executor.execute(
+      {
+        id: "worker",
+        component: {
+          name: "worker",
+          start: async () => {
+            throw new Error("underlying");
+          },
+        },
+        dependsOn: [],
+        priority: 0,
+        critical: true,
+        timeout: 1000,
+        retry: { attempts: 0 },
+      },
+      LifecyclePhase.START,
+      {
+        signal: new AbortController().signal,
+        phase: LifecyclePhase.START,
+        startedAt: Date.now(),
+        metadata: new Map(),
+      },
+    );
+
+    expect(result.success).toBe(false);
+    expect(String((result.error as Error).message)).toContain("worker");
+  });
+});
+
+describe("LIFECYCLE-08: per-phase events are emitted", () => {
+  it("emits initializing/initialized/ready with real component ids", async () => {
+    const manager = new LifecycleManager({ handleSignals: false });
+    const seen: string[] = [];
+
+    for (const type of [
+      "component:initializing",
+      "component:initialized",
+      "component:ready",
+      "application:initialized",
+      "application:disposed",
+    ] as const) {
+      manager.events.on(type, (event) => {
+        seen.push(`${type}:${event.component?.componentId ?? "-"}`);
+      });
+    }
+
+    manager.register({
+      name: "svc",
+      initialize: async () => {},
+      start: async () => {},
+      ready: async () => {},
+    });
+
+    await manager.start();
+    await manager.shutdown();
+
+    expect(seen).toContain("component:initializing:svc");
+    expect(seen).toContain("component:initialized:svc");
+    expect(seen).toContain("component:ready:svc");
+    expect(seen).toContain("application:initialized:-");
+    expect(seen).toContain("application:disposed:-");
+    manager.dispose();
+  });
+});
+
+describe("LIFECYCLE-09: shutdown is single-flight across callers", () => {
+  it("runs teardown once when startup rollback and shutdown() overlap", async () => {
+    const manager = new LifecycleManager({ handleSignals: false });
+    let stops = 0;
+
+    manager.register({
+      name: "db",
+      start: async () => {},
+      stop: async () => {
+        stops += 1;
+      },
+    });
+    manager.register(
+      {
+        name: "server",
+        start: async () => {
+          throw new Error("fail");
+        },
+      },
+      { dependsOn: ["db"] },
+    );
+
+    const start = manager.start().catch(() => undefined);
+    const shutdown = manager.shutdown();
+
+    await Promise.all([start, shutdown]);
+
+    expect(stops).toBe(1);
+    manager.dispose();
+  });
+});
+
+describe("LIFECYCLE-10: signal handlers", () => {
+  it("defaults to DEFAULT_SHUTDOWN_SIGNALS and can be removed", () => {
+    const handler = vi.fn();
+    const before = process.listenerCount("SIGINT");
+
+    const remove = installSignalHandlers({ handler });
+
+    expect(process.listenerCount("SIGINT")).toBe(before + 1);
+    for (const signal of DEFAULT_SHUTDOWN_SIGNALS) {
+      expect(process.listenerCount(signal)).toBeGreaterThan(0);
+    }
+
+    remove();
+
+    expect(process.listenerCount("SIGINT")).toBe(before);
+    expect(handler).not.toHaveBeenCalled();
   });
 });

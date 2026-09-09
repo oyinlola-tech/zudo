@@ -81,6 +81,24 @@ const STRING_FORMATS: Readonly<Record<string, string>> = {
   ipv6: "ipv6",
 };
 
+/**
+ * Assigns a property that may be named `__proto__`.
+ *
+ * `properties["__proto__"] = schema` on a plain object literal sets the
+ * object's prototype instead of adding a member: the property vanishes from
+ * the generated document with no error anywhere. A schema field genuinely
+ * called `__proto__` is unusual; one supplied by an attacker to make a
+ * constraint disappear from the published contract is exactly the point.
+ */
+function defineProperty<T>(target: Record<string, T>, key: string, value: T): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
 function isSchemaLike(value: unknown): value is SchemaLike {
   return (
     typeof value === "object" &&
@@ -143,11 +161,39 @@ function applyNullable(schema: OpenAPISchema, version: string): OpenAPISchema {
   return { ...schema, type: [...types, "null"] };
 }
 
-function convertString(schema: SchemaLike): OpenAPISchema {
+function convertString(
+  schema: SchemaLike,
+  state: ConversionState,
+): OpenAPISchema {
   const c = config(schema);
   const format = typeof c["format"] === "string" ? c["format"] : undefined;
   const pattern = c["pattern"];
   const exact = num(c["length"]);
+
+  if (format !== undefined && STRING_FORMATS[format] === undefined) {
+    state.warnings.push(
+      `String format "${format}" has no OpenAPI equivalent; the constraint ` +
+        `was dropped from the schema.`,
+    );
+  }
+
+  if (pattern instanceof RegExp) {
+    // `pattern` in JSON Schema carries no flags. An `i` regex silently
+    // becomes case-sensitive in the document, so the published contract is
+    // stricter than the code that validates against it — the kind of drift
+    // that only shows up as a rejected request in production.
+    const meaningful = pattern.flags.replace(/[gy]/g, "");
+    if (meaningful.length > 0) {
+      state.warnings.push(
+        `Pattern /${pattern.source}/${pattern.flags} has flags OpenAPI ` +
+          `cannot express; the emitted pattern is case- and mode-sensitive.`,
+      );
+    }
+  } else if (pattern !== undefined && typeof pattern !== "string") {
+    state.warnings.push(
+      "A `pattern` constraint was not a RegExp and could not be emitted.",
+    );
+  }
 
   return {
     type: "string",
@@ -160,29 +206,72 @@ function convertString(schema: SchemaLike): OpenAPISchema {
           ...(num(c["min"]) !== undefined ? { minLength: num(c["min"]) } : {}),
           ...(num(c["max"]) !== undefined ? { maxLength: num(c["max"]) } : {}),
         }),
-    ...(pattern instanceof RegExp ? { pattern: pattern.source } : {}),
+    ...(pattern instanceof RegExp
+      ? { pattern: pattern.source }
+      : typeof pattern === "string"
+        ? { pattern }
+        : {}),
   };
 }
 
-function convertNumber(schema: SchemaLike): OpenAPISchema {
+/**
+ * Renders an exclusive bound the way the target version spells it.
+ *
+ * 3.1 (JSON Schema 2020-12) gives `exclusiveMinimum` the numeric bound. 3.0
+ * defines it as a *boolean* modifier on `minimum`, so emitting the number
+ * into a 3.0 document produces a keyword of the wrong type: a strict
+ * validator rejects the document and a lenient one ignores the bound — either
+ * way the constraint is gone.
+ */
+function exclusiveBound(
+  kind: "minimum" | "maximum",
+  value: number,
+  version: string,
+): OpenAPISchema {
+  if (isVersion31(version)) {
+    return kind === "minimum"
+      ? { exclusiveMinimum: value }
+      : { exclusiveMaximum: value };
+  }
+  return kind === "minimum"
+    ? { minimum: value, exclusiveMinimum: true }
+    : { maximum: value, exclusiveMaximum: true };
+}
+
+function convertNumber(
+  schema: SchemaLike,
+  state: ConversionState,
+): OpenAPISchema {
   const c = config(schema);
   const gt = num(c["gt"]);
   const lt = num(c["lt"]);
+  const version = state.version;
+
+  const exclusiveMin =
+    gt !== undefined
+      ? gt
+      : c["positive"] === true && num(c["min"]) === undefined
+        ? 0
+        : undefined;
+  const exclusiveMax =
+    lt !== undefined
+      ? lt
+      : c["negative"] === true && num(c["max"]) === undefined
+        ? 0
+        : undefined;
 
   return {
     type: c["int"] === true ? "integer" : "number",
     ...(num(c["min"]) !== undefined ? { minimum: num(c["min"]) } : {}),
     ...(num(c["max"]) !== undefined ? { maximum: num(c["max"]) } : {}),
-    ...(gt !== undefined ? { exclusiveMinimum: gt } : {}),
-    ...(lt !== undefined ? { exclusiveMaximum: lt } : {}),
     ...(num(c["multipleOf"]) !== undefined
       ? { multipleOf: num(c["multipleOf"]) }
       : {}),
-    ...(c["positive"] === true && num(c["min"]) === undefined
-      ? { exclusiveMinimum: 0 }
+    ...(exclusiveMin !== undefined
+      ? exclusiveBound("minimum", exclusiveMin, version)
       : {}),
-    ...(c["negative"] === true && num(c["max"]) === undefined
-      ? { exclusiveMaximum: 0 }
+    ...(exclusiveMax !== undefined
+      ? exclusiveBound("maximum", exclusiveMax, version)
       : {}),
   };
 }
@@ -197,11 +286,19 @@ function typeOfValue(value: unknown): string | undefined {
   return undefined;
 }
 
-function enumSchema(values: readonly unknown[]): OpenAPISchema {
+function enumSchema(
+  values: readonly unknown[],
+  version?: string,
+): OpenAPISchema {
   const types = new Set(values.map(typeOfValue));
   const type = types.size === 1 ? [...types][0] : undefined;
+  // `"null"` is not a type in 3.0; leaving the enum untyped is correct there.
+  const usable =
+    type === "null" && version !== undefined && !isVersion31(version)
+      ? undefined
+      : type;
   return {
-    ...(type ? { type } : {}),
+    ...(usable ? { type: usable } : {}),
     enum: [...values],
   };
 }
@@ -248,11 +345,11 @@ function convertSchemaNode(
   switch (schema._type) {
     case "string":
     case "coerce.string":
-      return convertString(schema);
+      return convertString(schema, state);
 
     case "number":
     case "coerce.number":
-      return convertNumber(schema);
+      return convertNumber(schema, state);
 
     case "boolean":
     case "coerce.boolean":
@@ -262,7 +359,11 @@ function convertSchemaNode(
       return { type: "string", format: "int64" };
 
     case "null":
-      return { type: "null" };
+      // 3.0 has no `null` type; `nullable` on an untyped schema is the
+      // closest it can express.
+      return isVersion31(state.version)
+        ? { type: "null" }
+        : { nullable: true };
 
     case "any":
     case "unknown":
@@ -284,7 +385,7 @@ function convertSchemaNode(
       const required: string[] = [];
 
       for (const [key, value] of Object.entries(shape)) {
-        properties[key] = convertNode(value, state);
+        defineProperty(properties, key, convertNode(value, state));
         // A field is required unless it is wrapped in `optional`. An explicit
         // `requiredKeys` set (from `.required()`) forces it back on.
         const forced = requiredKeys instanceof Set && requiredKeys.has(key);
@@ -358,6 +459,22 @@ function convertSchemaNode(
       const schemas = schema["_schemas"];
       if (!Array.isArray(schemas)) return { type: "array" };
       const items = schemas.map((entry) => convertNode(entry, state));
+      if (!isVersion31(state.version)) {
+        // 3.0 has no positional items. `anyOf` over the member schemas keeps
+        // the length constraint honest without claiming a per-position type
+        // the version cannot express; emitting `prefixItems` instead produces
+        // a keyword every 3.0 validator ignores.
+        state.warnings.push(
+          "A `tuple` schema cannot express positional item types in " +
+            "OpenAPI 3.0; emitted a length-constrained array instead.",
+        );
+        return {
+          type: "array",
+          ...(items.length > 0 ? { items: { anyOf: items } } : {}),
+          minItems: items.length,
+          maxItems: items.length,
+        };
+      }
       return {
         type: "array",
         prefixItems: items,
@@ -374,7 +491,7 @@ function convertSchemaNode(
         );
         return {};
       }
-      return enumSchema(values);
+      return enumSchema(values, state.version);
     }
 
     case "literal": {
@@ -383,7 +500,11 @@ function convertSchemaNode(
         state.warnings.push("A `literal` schema had no value.");
         return {};
       }
-      return { ...enumSchema([value]), const: value };
+      // `const` arrived with JSON Schema 2020-12; a 3.0 document expresses a
+      // single permitted value as a one-member enum.
+      return isVersion31(state.version)
+        ? { ...enumSchema([value], state.version), const: value }
+        : enumSchema([value], state.version);
     }
 
     case "union": {
@@ -511,7 +632,9 @@ function convertLiteralValue(
     return { type: Number.isInteger(input) ? "integer" : "number" };
   }
   if (typeof input === "boolean") return { type: "boolean" };
-  if (input === null) return { type: "null" };
+  if (input === null) {
+    return isVersion31(state.version) ? { type: "null" } : { nullable: true };
+  }
 
   state.warnings.push("Unable to convert unknown schema input.");
   return {};

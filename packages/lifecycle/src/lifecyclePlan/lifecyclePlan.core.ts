@@ -11,7 +11,6 @@ import {
   topologicalSort,
   reverseTopologicalSort,
 } from "../lifecycleInternal/index.js";
-import type { TopologicalStage } from "../lifecycleInternal/index.js";
 
 /** A single execution stage — component IDs that can run in parallel. */
 export interface ExecutionStage {
@@ -41,7 +40,7 @@ export function buildExecutionPlan(
     priorities.set(reg.id, reg.priority);
   }
 
-  const graph = buildGraphForPhase(registrations, phase);
+  const graph = buildGraphForPhase(registrations);
   const isShutdown = phase === "stop" || phase === "dispose";
 
   const sorted = isShutdown
@@ -57,11 +56,14 @@ export function buildExecutionPlan(
 }
 
 /**
- * Builds a dependency graph for a specific phase.
+ * Builds the component dependency graph.
+ *
+ * The graph is phase-independent: startup and shutdown share the same
+ * edges and differ only in traversal direction, which
+ * buildExecutionPlan applies.
  */
 function buildGraphForPhase(
   registrations: readonly LifecycleRegistration[],
-  phase: LifecyclePhase,
 ): DependencyGraph {
   const graph = new DependencyGraph();
 

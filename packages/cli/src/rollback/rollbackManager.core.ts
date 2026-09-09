@@ -6,7 +6,6 @@
 
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
 
 export interface RollbackEntry {
   readonly type: "file" | "directory" | "command";

@@ -7,25 +7,27 @@
   var searchInput = document.getElementById('pkgSearch');
   var versionSelect = document.getElementById('versionSelect');
   var visibleCountEl = document.getElementById('visibleCount');
-  var currentVersion = versionSelect ? versionSelect.value : '0.1.0';
+  var currentVersion = versionSelect ? versionSelect.value : '1.0.0';
   var currentCategory = 'all';
   var currentSearch = '';
 
-  // Update visible count
+  // Update visible count — unique packages, not cards (some appear in two
+  // categories as cross-references, and would otherwise be counted twice).
   function updateVisibleCount() {
-    var visible = 0;
+    var names = {};
+    var count = 0;
     sections.forEach(function(section) {
-      if (section.style.display !== 'none') {
-        var cards = section.querySelectorAll('.pkg-card');
-        cards.forEach(function(card) {
-          if (card.style.display !== 'none') {
-            visible++;
-          }
-        });
-      }
+      if (section.style.display === 'none') return;
+      section.querySelectorAll('.pkg-card').forEach(function(card) {
+        if (card.style.display === 'none') return;
+        var name = card.getAttribute('data-name') || card.textContent;
+        if (names[name]) return;
+        names[name] = true;
+        count++;
+      });
     });
     if (visibleCountEl) {
-      visibleCountEl.textContent = visible;
+      visibleCountEl.textContent = count;
     }
   }
 
@@ -33,7 +35,7 @@
   function applyFilters() {
     // Filter by version
     pkgCards.forEach(function(card) {
-      var cardVersion = card.getAttribute('data-version') || '0.0.1';
+      var cardVersion = card.getAttribute('data-version') || '1.0.0';
       var matchesVersion = cardVersion === currentVersion;
       var matchesSearch = true;
       

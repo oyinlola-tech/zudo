@@ -4,12 +4,19 @@
 
 import type { LoggerEntry } from "./loggerEntryHelpers.interfaces.js";
 
-import { serializeLoggerError } from "./loggerEntryHelpers.valueSerialize.js";
+import {
+  serializeLoggerError,
+  serializeLoggerValue,
+} from "./loggerEntryHelpers.valueSerialize.js";
 
 /**
  * Returns a plain serializable representation of an entry.
  *
- * This intentionally does not call JSON.stringify itself.
+ * This intentionally does not call JSON.stringify itself, but every
+ * caller-supplied value IS normalized first. Metadata and context used
+ * to be embedded by reference, so a circular object or a BigInt made
+ * the JSON formatter throw — and because dispatch swallows formatter
+ * errors by default, the whole log line vanished silently.
  */
 export function serializeLoggerEntry(
   entry: LoggerEntry,
@@ -23,11 +30,11 @@ export function serializeLoggerEntry(
 
     message: entry.message,
 
-    metadata: entry.metadata,
+    metadata: serializeLoggerValue(entry.metadata),
 
-    context: entry.context,
+    context: serializeLoggerValue(entry.context),
 
-    source: entry.source,
+    source: serializeLoggerValue(entry.source),
 
     error: entry.error ? serializeLoggerError(entry.error) : undefined,
 

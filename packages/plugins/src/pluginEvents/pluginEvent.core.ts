@@ -1,4 +1,3 @@
-import type { Plugin } from "../pluginTypes/plugin.type.js";
 import type { PluginMetadata } from "../pluginTypes/pluginMetadata.type.js";
 import type { PluginState } from "../pluginTypes/pluginState.type.js";
 

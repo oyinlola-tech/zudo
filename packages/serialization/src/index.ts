@@ -34,9 +34,7 @@ export type {
   SerializationMetadata,
   SerializedEnvelope,
   Serializer,
-  AsyncSerializer,
   TypeTransformer,
-  UndefinedStrategy,
 } from "./serializerTypes/index.js";
 
 // ─── JSON Serializer ──────────────────────────────────────────
@@ -75,3 +73,4 @@ export {
   createSerializer,
   createDefaultRegistry,
 } from "./serializerRegistry/index.js";
+export type { CreateSerializerOptions } from "./serializerRegistry/index.js";

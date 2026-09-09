@@ -103,6 +103,17 @@ Ordering is stable, so middleware sharing a priority keeps its declared order.
 Every failure is also collected in `outcome.errors`, each tagged with the name
 of the middleware that threw (or `"handler"`).
 
+> **`"continue"` is not for security middleware.** Stepping past a middleware
+> that threw means an authentication or authorization step that failed is
+> stepped past too, and the handler still runs. A run can come back
+> `success: true` with entries in `outcome.errors`, so under this mode check
+> `outcome.errors` as well as `outcome.success`. Use `"capture"` (the default)
+> or `"throw"` for any chain where a failing step must stop the request.
+
+A middleware that catches a downstream failure and throws its own error in its
+place ends the run: there is no downstream result left to keep, so the
+pipeline reports the failure rather than a result that never existed.
+
 ```typescript
 const pipeline = createPipeline(list, handler, { errorMode: "continue" });
 const outcome = await pipeline(context);
@@ -130,7 +141,9 @@ const pipeline = createPipeline(list, handler, { signal: controller.signal });
   rethrows them. A reporter that throws cannot replace the original error.
 - **`timeoutMiddleware(timeoutMs, options?)`** — fails with
   `MiddlewareTimeoutError`. The timer is always cleared, so a fast request
-  leaves nothing pending on the event loop.
+  leaves nothing pending on the event loop. `options.name` names the
+  middleware itself, so two timeouts in one pipeline are distinguishable in
+  `executedMiddleware` and in `outcome.errors`.
 - **`rateLimitMiddleware(maxRequests, windowMs, options?)`** — a true sliding
   window keyed on `context.key`, with key eviction and a configurable cap.
   Rejections throw `MiddlewareRateLimitError`, which carries `retryAfterMs`

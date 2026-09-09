@@ -23,9 +23,12 @@ export async function generateQuery(
   const nameCamel = name
     .replace(/-([a-z])/g, (_m: string, c: string) => c.toUpperCase())
     .replace(/^./, (c: string) => c.toUpperCase());
-  const service = options.service ?? "default";
+  const service = options.service;
   const basePath = options.basePath ?? "services";
-  const servicePath = `${basePath}/${service}`;
+  // When no service grouping is given the schematic is written directly under
+  // basePath. Callers that resolved the owning app into basePath (the
+  // microservice layout) pass no service, so the path is not nested twice.
+  const servicePath = service ? `${basePath}/${service}` : basePath;
 
   const files: Record<string, string> = {
     [`${servicePath}/queries/${name}/${name}.query.ts`]: `import type { BaseQuery } from "@zudojs/cqrs";
@@ -73,7 +76,7 @@ export { ${nameCamel}QueryHandler } from "./${name}.handler.js";
     return Object.keys(files);
   } catch (error) {
     throw new CLIGenerationError(
-      `Failed to generate query: ${name} for service: ${service}`,
+      `Failed to generate query: ${name} in ${servicePath}`,
       error,
     );
   }

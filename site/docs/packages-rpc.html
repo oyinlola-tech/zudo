@@ -52,6 +52,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -107,10 +108,10 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/rpc</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
-          Transport-agnostic remote procedure call infrastructure. Typed handlers, middleware pipelines, request/response lifecycle, metadata propagation, streaming, retry, timeout, and cancellation — all in one package.
+          Call a function that runs on another machine as if it were local — typed procedures, a transport you choose, middleware, validation, timeouts, retries and errors that survive the trip.
         </p>
         <div class="flex flex-wrap gap-2 mt-4">
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">RPC</span>
@@ -121,832 +122,728 @@
         </div>
       </div>
 
+      <!-- Overview -->
+      <section id="overview" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OVERVIEW</h2>
+
+        <p class="mb-4 leading-relaxed">
+          A <strong>remote procedure call</strong> (RPC) is a function call that runs somewhere else. Your code writes <code class="bg-black/5 px-1">await client.call("users.getUser", { id: "123" })</code> and gets an answer back. The work happens in another process, on another machine, or behind a network connection.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          Two things make that work. A <strong>procedure</strong> is the function on the far side: a name, a handler, and some options. A <strong>transport</strong> is the pipe that carries a request over and a response back.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          This package gives you both halves plus everything in between — validation, middleware, timeouts, retries, typed errors. It never opens a socket itself. You supply the transport, so the same procedures can be served over HTTP today and a WebSocket tomorrow without touching a handler.
+        </p>
+
+        <div class="grid md:grid-cols-2 gap-4 mt-6">
+          <div class="border-4 border-black p-5">
+            <div class="font-black mb-3 text-sm uppercase tracking-wider">When you need it</div>
+            <ul class="space-y-2 text-sm list-disc pl-4">
+              <li>One service calls another service's functions.</li>
+              <li>The same call must work over HTTP, a socket, or in tests.</li>
+              <li>Auth, tracing or rate limits belong on every call, in one place.</li>
+              <li>Failures must arrive as typed errors, not strings.</li>
+            </ul>
+          </div>
+          <div class="border-4 border-black p-5">
+            <div class="font-black mb-3 text-sm uppercase tracking-wider">When you don't</div>
+            <ul class="space-y-2 text-sm list-disc pl-4">
+              <li>Both sides are in one process — use <a href="/docs/packages-api" class="underline">@zudojs/api</a>.</li>
+              <li>You are building a public REST API — use <a href="/docs/packages-http" class="underline">@zudojs/http</a>.</li>
+              <li>The work should happen later — use <a href="/docs/packages-queue" class="underline">@zudojs/queue</a>.</li>
+              <li>You need a stream of results. Streaming cannot be dispatched yet.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
       <!-- Installation -->
       <section id="installation" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-        <div class="code-block mb-4"><span class="cm">// npm</span>
-npm install @zudojs/rpc
 
-<span class="cm">// pnpm</span>
-pnpm add @zudojs/rpc
+        <div class="code-block mb-4">$ npm install @zudojs/rpc</div>
 
-<span class="cm">// yarn</span>
-yarn add @zudojs/rpc</div>
+        <p class="mb-4 leading-relaxed">
+          It pulls in <code class="bg-black/5 px-1">@zudojs/errors</code>, <code class="bg-black/5 px-1">@zudojs/schema</code>, <code class="bg-black/5 px-1">@zudojs/constants</code> and <code class="bg-black/5 px-1">@zudojs/types</code> on its own. Install <code class="bg-black/5 px-1">@zudojs/schema</code> yourself only if you write schemas in your own code.
+        </p>
 
         <div class="callout callout-note">
-          <strong class="text-zudo-blue">Peer Dependencies:</strong> @zudojs/rpc depends on @zudojs/errors, @zudojs/constants, @zudojs/types, and @zudojs/schema. All at version 0.0.1.
+          These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest @zudojs release.
+        </div>
+
+        <div class="callout callout-warning mt-4">
+          <strong class="text-zudo-yellow">Node 24+.</strong> The client uses <code>node:crypto</code> for request ids, so it runs on a server, not in a browser.
         </div>
       </section>
 
-      <!-- What It Does -->
-      <section id="what-it-does" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHAT IT DOES</h2>
+      <!-- Quick Start -->
+      <section id="quick-start" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK START</h2>
+
         <p class="mb-4 leading-relaxed">
-          <code class="bg-black/5 px-1">@zudojs/rpc</code> provides a complete RPC abstraction layer:
+          The smallest complete setup is a server holding one procedure, a transport, and a client. This transport hands the request straight to the server in the same process, which is how the package's own tests run.
         </p>
-        <ul class="space-y-2 mb-6">
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Procedure-based RPC</strong> with typed handlers and input/output generics</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Request/response lifecycle</strong> — typed request and response messages with unique IDs</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Metadata propagation</strong> — requestId, correlationId, traceId, tenantId, userId, deadline</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Middleware pipeline</strong> — composable middleware stack for auth, logging, validation</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Transport abstraction</strong> — swap underlying transport without changing handler code</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Streaming procedures</strong> — async iterable handlers for real-time data</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Retry with backoff</strong> — fixed, linear, and exponential backoff strategies</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Timeout and deadline support</strong> — configurable per-call and per-procedure</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Cancellation</strong> — AbortSignal-based cancellation throughout the pipeline</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>16 error classes</strong> — comprehensive RPC error hierarchy from @zudojs/errors</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Testing utilities</strong> — mock transport and test helpers</li>
-        </ul>
-      </section>
 
-      <!-- Architecture Position -->
-      <section id="architecture-position" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHERE IT SITS</h2>
-        <div class="border-4 border-black p-6 space-y-3">
-          <div class="bg-zudo-red text-black p-3 font-bold text-center text-sm">APPLICATION CODE (CQRS, Services, Handlers)</div>
-          <div class="bg-white border-2 border-black p-3 font-bold text-center text-sm">@zudojs/rpc — Procedures, Middleware, Dispatcher</div>
-          <div class="bg-zudo-blue text-white p-3 font-bold text-center text-sm">TRANSPORT LAYER (HTTP, WebSocket, IPC)</div>
-          <div class="bg-black text-white p-3 font-bold text-center text-sm">EXTERNAL PLATFORM (Node.js, Edge, Serverless)</div>
-        </div>
-        <p class="mt-4 text-sm text-black/60">
-          RPC sits between your application logic and the transport layer. Client sends requests through a transport, server receives and dispatches through middleware to registered procedures.
+        <div class="code-block"><span class="kw">import</span> { <span class="tp">RPCServer</span>, <span class="tp">RPCClient</span>, <span class="fn">createRPCProcedure</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
+<span class="kw">import type</span> { <span class="tp">RPCTransport</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
+
+<span class="cm">// 1. The far side: a server holding one named procedure.</span>
+<span class="kw">const</span> server = <span class="kw">new</span> <span class="fn">RPCServer</span>();
+
+server.<span class="fn">register</span>(
+  <span class="fn">createRPCProcedure</span>&lt;{ id: <span class="tp">string</span> }, { id: <span class="tp">string</span>; name: <span class="tp">string</span> }&gt;(
+    <span class="str">"users.getUser"</span>,
+    <span class="kw">async</span> (input) =&gt; {
+      <span class="kw">return</span> { id: input.id, name: <span class="str">"Alice"</span> };
+    },
+  ),
+);
+
+<span class="cm">// 2. The pipe. A real one would send bytes over a network.</span>
+<span class="kw">const</span> transport: <span class="tp">RPCTransport</span> = {
+  <span class="kw">async</span> <span class="fn">send</span>(request) {
+    <span class="kw">return</span> server.<span class="fn">handle</span>(request);
+  },
+};
+
+<span class="cm">// 3. The near side: call it like a local function.</span>
+<span class="kw">const</span> client = <span class="kw">new</span> <span class="fn">RPCClient</span>(transport);
+
+<span class="kw">const</span> user = <span class="kw">await</span> client.<span class="fn">call</span>&lt;{ id: <span class="tp">string</span> }, { id: <span class="tp">string</span>; name: <span class="tp">string</span> }&gt;(
+  <span class="str">"users.getUser"</span>,
+  { id: <span class="str">"123"</span> },
+);
+
+console.<span class="fn">log</span>(user);
+<span class="cm">// { id: "123", name: "Alice" }</span></div>
+
+        <p class="mt-4 leading-relaxed">
+          <strong>What you should see:</strong> <code class="bg-black/5 px-1">{ id: "123", name: "Alice" }</code>. The client built a request with a fresh id, the transport carried it, the server found the procedure, ran the handler, and the client unwrapped the result.
         </p>
-      </section>
 
-      <!-- Dependencies -->
-      <section id="dependencies" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DEPENDENCIES</h2>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Package</th>
-                <th class="p-3 text-left">Version</th>
-                <th class="p-3 text-left">Purpose</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono text-sm">@zudojs/errors</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">16 RPC error classes (RPCError, RPCProcedureNotFoundError, etc.)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono text-sm">@zudojs/constants</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Branded types and shared constants</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono text-sm">@zudojs/types</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Type guards and utility types</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono text-sm">@zudojs/schema</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Schema validation for procedure inputs</td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="callout callout-tip mt-4">
+          <strong class="text-zudo-green">Tip:</strong> swap step 2 for a transport that does a <code>fetch()</code> and nothing else changes.
         </div>
-
-        <div class="mt-4 callout callout-warning">
-          <strong class="text-zudo-yellow">Version Lock:</strong> All internal dependencies use <code>workspace:*</code> in development. When published, they use exact version <code>0.0.1</code>. Always use matching versions across the ecosystem.
-        </div>
-      </section>
-
-      <!-- Types -->
-      <section id="types" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TYPES</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCProcedureName</h3>
-        <div class="code-block"><span class="cm">/** A valid RPC procedure name. Dot-separated lowercase identifiers. */</span>
-<span class="kw">type</span> <span class="tp">RPCProcedureName</span> = <span class="tp">string</span>;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCMetadata</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RPCMetadata</span> {
-  <span class="kw">readonly</span> requestId?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> correlationId?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> traceId?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> spanId?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> tenantId?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> userId?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> deadline?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> [key: <span class="tp">string</span>]: <span class="tp">string</span> | <span class="tp">number</span> | <span class="tp">boolean</span> | <span class="tp">undefined</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCMetadataOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RPCMetadataOptions</span> {
-  <span class="kw">readonly</span> requestId?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> correlationId?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> traceId?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> spanId?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> tenantId?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> userId?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> deadline?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> [key: <span class="tp">string</span>]: <span class="tp">string</span> | <span class="tp">number</span> | <span class="tp">boolean</span> | <span class="tp">undefined</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">createRPCMetadata()</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">createRPCMetadata</span>(options: <span class="tp">RPCMetadataOptions</span> = {}): <span class="tp">RPCMetadata</span>;</div>
-        <p class="mt-2 text-sm text-black/70">Freezes and returns the metadata object. Defaults to empty object.</p>
-      </section>
-
-      <!-- Request & Response -->
-      <section id="request-response" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">REQUEST &amp; RESPONSE</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCRequest</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RPCRequest</span>&lt;<span class="tp">TPayload</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> id: <span class="tp">string</span>;
-  <span class="kw">readonly</span> procedure: <span class="tp">RPCProcedureName</span>;
-  <span class="kw">readonly</span> payload: <span class="tp">TPayload</span>;
-  <span class="kw">readonly</span> metadata: <span class="tp">RPCMetadata</span>;
-  <span class="kw">readonly</span> timestamp: <span class="tp">number</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCRequestOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RPCRequestOptions</span>&lt;<span class="tp">TPayload</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> id: <span class="tp">string</span>;
-  <span class="kw">readonly</span> procedure: <span class="tp">RPCProcedureName</span>;
-  <span class="kw">readonly</span> payload: <span class="tp">TPayload</span>;
-  <span class="kw">readonly</span> metadata?: <span class="tp">RPCMetadata</span>;
-  <span class="kw">readonly</span> timestamp?: <span class="tp">number</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">createRPCRequest()</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">createRPCRequest</span>&lt;<span class="tp">TPayload</span> = <span class="tp">unknown</span>&gt;(
-  options: <span class="tp">RPCRequestOptions</span>&lt;<span class="tp">TPayload</span>&gt;,
-): <span class="tp">RPCRequest</span>&lt;<span class="tp">TPayload</span>&gt;;</div>
-        <p class="mt-2 text-sm text-black/70">Creates and freezes a request. Defaults metadata to <code>{}</code> and timestamp to <code>Date.now()</code>.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCErrorPayload</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RPCErrorPayload</span> {
-  <span class="kw">readonly</span> code: <span class="tp">string</span>;
-  <span class="kw">readonly</span> message: <span class="tp">string</span>;
-  <span class="kw">readonly</span> details?: <span class="tp">unknown</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">createRPCErrorPayload()</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">createRPCErrorPayload</span>(
-  code: <span class="tp">string</span>,
-  message: <span class="tp">string</span>,
-  details?: <span class="tp">unknown</span>,
-): <span class="tp">RPCErrorPayload</span>;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCResponse</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RPCResponse</span>&lt;<span class="tp">TResult</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> id: <span class="tp">string</span>;
-  <span class="kw">readonly</span> success: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> result?: <span class="tp">TResult</span>;
-  <span class="kw">readonly</span> error?: <span class="tp">RPCErrorPayload</span>;
-  <span class="kw">readonly</span> metadata?: <span class="tp">RPCMetadata</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">createRPCResponse() / createRPCErrorResponse()</h3>
-        <div class="code-block"><span class="cm">// Success response</span>
-<span class="kw">function</span> <span class="fn">createRPCResponse</span>&lt;<span class="tp">TResult</span> = <span class="tp">unknown</span>&gt;(
-  id: <span class="tp">string</span>,
-  result: <span class="tp">TResult</span>,
-  metadata?: <span class="tp">RPCMetadata</span>,
-): <span class="tp">RPCResponse</span>&lt;<span class="tp">TResult</span>&gt;;
-
-<span class="cm">// Error response</span>
-<span class="kw">function</span> <span class="fn">createRPCErrorResponse</span>(
-  id: <span class="tp">string</span>,
-  error: <span class="tp">RPCErrorPayload</span>,
-  metadata?: <span class="tp">RPCMetadata</span>,
-): <span class="tp">RPCResponse</span>&lt;<span class="tp">never</span>&gt;;</div>
       </section>
 
       <!-- Procedures -->
       <section id="procedures" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">PROCEDURES</h2>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCHandler</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">RPCHandler</span>&lt;<span class="tp">TInput</span> = <span class="tp">unknown</span>, <span class="tp">TOutput</span> = <span class="tp">unknown</span>&gt; = (
-  input: <span class="tp">TInput</span>,
-  context: <span class="tp">RPCContext</span>,
-) => <span class="tp">Promise</span>&lt;<span class="tp">TOutput</span>&gt; | <span class="tp">TOutput</span>;</div>
+        <p class="mb-4 leading-relaxed">
+          A <strong>procedure</strong> is one callable function on the server, wrapped with a name and some settings. <code class="bg-black/5 px-1">createRPCProcedure(name, handler, options?)</code> builds one and freezes it.
+        </p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCProcedureOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RPCProcedureOptions</span> {
-  <span class="kw">readonly</span> idempotent?: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> timeout?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> description?: <span class="tp">string</span>;
-}</div>
+        <p class="mb-4 leading-relaxed">
+          Names are checked the moment you create the procedure, not when a call arrives. A name must be dot-separated segments that each start with a lowercase letter: <code class="bg-black/5 px-1">"users.getUser"</code> is fine, <code class="bg-black/5 px-1">"getUser"</code> and <code class="bg-black/5 px-1">"Users.get"</code> are not. A typo becomes a startup crash instead of a call that can never be routed.
+        </p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCProcedure</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RPCProcedure</span>&lt;<span class="tp">TInput</span> = <span class="tp">unknown</span>, <span class="tp">TOutput</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> name: <span class="tp">RPCProcedureName</span>;
-  <span class="kw">readonly</span> handler: <span class="tp">RPCHandler</span>&lt;<span class="tp">TInput</span>, <span class="tp">TOutput</span>&gt;;
-  <span class="kw">readonly</span> options?: <span class="tp">RPCProcedureOptions</span>;
-}</div>
+        <p class="mb-4 leading-relaxed">
+          A <strong>registry</strong> is the lookup table of procedures. <code class="bg-black/5 px-1">RPCServer</code> makes one for you, or you can build your own and pass it in.
+        </p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">createRPCProcedure()</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">createRPCProcedure</span>&lt;<span class="tp">TInput</span> = <span class="tp">unknown</span>, <span class="tp">TOutput</span> = <span class="tp">unknown</span>&gt;(
-  name: <span class="tp">RPCProcedureName</span>,
-  handler: <span class="tp">RPCHandler</span>&lt;<span class="tp">TInput</span>, <span class="tp">TOutput</span>&gt;,
-  options?: <span class="tp">RPCProcedureOptions</span>,
-): <span class="tp">RPCProcedure</span>&lt;<span class="tp">TInput</span>, <span class="tp">TOutput</span>&gt;;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCProcedureRegistry</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Method</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">register()</td>
-                <td class="p-3">register(procedure: RPCProcedure): void</td>
-                <td class="p-3">void. Throws <code>RPCDuplicateProcedureError</code> on duplicate.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">get()</td>
-                <td class="p-3">get(name: string): RPCProcedure | undefined</td>
-                <td class="p-3">Procedure or undefined</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">has()</td>
-                <td class="p-3">has(name: string): boolean</td>
-                <td class="p-3">true if registered</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">require()</td>
-                <td class="p-3">require(name: string): RPCProcedure</td>
-                <td class="p-3">Procedure. Throws <code>RPCProcedureNotFoundError</code> if missing.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">list()</td>
-                <td class="p-3">list(): readonly string[]</td>
-                <td class="p-3">Array of registered procedure names</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">unregister()</td>
-                <td class="p-3">unregister(name: string): boolean</td>
-                <td class="p-3">true if removed, false if not found</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">clear()</td>
-                <td class="p-3">clear(): void</td>
-                <td class="p-3">Removes all procedures</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCProcedureRouter</h3>
-        <p class="mb-3 text-sm">Groups procedures by namespace. Same API as <code>RPCProcedureRegistry</code> plus returns <code>RPCProcedure[]</code> from <code>list()</code>.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
         <div class="code-block"><span class="kw">import</span> { <span class="fn">createRPCProcedure</span>, <span class="tp">RPCProcedureRegistry</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
 
-<span class="kw">interface</span> <span class="tp">GetUserInput</span> { <span class="kw">readonly</span> id: <span class="tp">string</span>; }
-<span class="kw">interface</span> <span class="tp">GetUserOutput</span> { <span class="kw">readonly</span> id: <span class="tp">string</span>; <span class="kw">readonly</span> name: <span class="tp">string</span>; }
-
-<span class="kw">const</span> getUser = <span class="fn">createRPCProcedure</span>&lt;<span class="tp">GetUserInput</span>, <span class="tp">GetUserOutput</span>&gt;(
+<span class="kw">const</span> getUser = <span class="fn">createRPCProcedure</span>&lt;{ id: <span class="tp">string</span> }, { id: <span class="tp">string</span>; name: <span class="tp">string</span> }&gt;(
   <span class="str">"users.getUser"</span>,
-  <span class="kw">async</span> (input, context) => {
-    <span class="kw">const</span> user = <span class="kw">await</span> db.<span class="fn">findUser</span>(input.id);
-    <span class="kw">if</span> (!user) <span class="kw">throw new</span> <span class="fn">Error</span>(<span class="str">"User not found"</span>);
-    <span class="kw">return</span> { id: user.id, name: user.name };
+  <span class="kw">async</span> (input) =&gt; {
+    <span class="kw">return</span> { id: input.id, name: <span class="str">"Alice"</span> };
   },
-  { idempotent: <span class="num">true</span>, timeout: <span class="num">5000</span> },
+  { description: <span class="str">"Look up one user."</span>, idempotent: <span class="kw">true</span>, timeout: <span class="num">5000</span> },
 );
 
 <span class="kw">const</span> registry = <span class="kw">new</span> <span class="fn">RPCProcedureRegistry</span>();
 registry.<span class="fn">register</span>(getUser);
-console.<span class="fn">log</span>(registry.<span class="fn">list</span>()); <span class="cm">// ["users.getUser"]</span></div>
+
+console.<span class="fn">log</span>(registry.<span class="fn">describe</span>());
+<span class="cm">// [ { name: "users.getUser", description: "Look up one user.",</span>
+<span class="cm">//     idempotent: true, timeout: 5000 } ]</span></div>
+
+        <p class="mt-4 mb-4 leading-relaxed">The five options, in plain terms:</p>
+        <ul class="space-y-2 mb-4 text-sm">
+          <li class="flex gap-2"><span class="font-bold">&rarr;</span> <code class="bg-black/5 px-1">description</code> — a human-readable line, readable only through <code class="bg-black/5 px-1">describe()</code>.</li>
+          <li class="flex gap-2"><span class="font-bold">&rarr;</span> <code class="bg-black/5 px-1">idempotent</code> — says calling twice is safe. Advisory: nothing retries or de-duplicates for you, but your retry policy can read it from <code class="bg-black/5 px-1">describe()</code>.</li>
+          <li class="flex gap-2"><span class="font-bold">&rarr;</span> <code class="bg-black/5 px-1">timeout</code> — milliseconds the handler may run. Enforced: the context signal is aborted and the caller gets <code class="bg-black/5 px-1">RPC_TIMEOUT</code>. Must be positive.</li>
+          <li class="flex gap-2"><span class="font-bold">&rarr;</span> <code class="bg-black/5 px-1">input</code> — a schema the payload is parsed against before the handler runs.</li>
+          <li class="flex gap-2"><span class="font-bold">&rarr;</span> <code class="bg-black/5 px-1">output</code> — a schema the result is checked against before it is sent.</li>
+        </ul>
+
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out:</strong> registering the same name twice throws <code>RPCDuplicateProcedureError</code>. Registration is not an upsert — call <code>registry.unregister(name)</code> first if you mean to replace one.
+        </div>
+      </section>
+
+      <!-- Transports -->
+      <section id="transports" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TRANSPORTS</h2>
+
+        <p class="mb-4 leading-relaxed">
+          A <strong>transport</strong> is an object with one required method: <code class="bg-black/5 px-1">send(request, options?)</code>. It takes an <code class="bg-black/5 px-1">RPCRequest</code>, gets it to the server however it likes, and resolves with the <code class="bg-black/5 px-1">RPCResponse</code> that comes back. An optional <code class="bg-black/5 px-1">close()</code> releases the connection.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          The package ships no transport implementations, deliberately: writing one is a dozen lines, and it keeps the RPC layer free of any network dependency. This one posts each request as JSON.
+        </p>
+
+        <div class="code-block"><span class="kw">import type</span> {
+  <span class="tp">RPCTransport</span>,
+  <span class="tp">RPCRequest</span>,
+  <span class="tp">RPCResponse</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
+
+<span class="kw">function</span> <span class="fn">createHttpTransport</span>(url: <span class="tp">string</span>): <span class="tp">RPCTransport</span> {
+  <span class="kw">return</span> {
+    <span class="kw">async</span> <span class="fn">send</span>(request: <span class="tp">RPCRequest</span>, options): <span class="tp">Promise</span>&lt;<span class="tp">RPCResponse</span>&gt; {
+      <span class="kw">const</span> httpResponse = <span class="kw">await</span> <span class="fn">fetch</span>(url, {
+        method: <span class="str">"POST"</span>,
+        headers: { <span class="str">"content-type"</span>: <span class="str">"application/json"</span> },
+        body: <span class="tp">JSON</span>.<span class="fn">stringify</span>(request),
+        <span class="cm">// Honouring the signal is what frees the socket when</span>
+        <span class="cm">// the caller cancels or the call times out.</span>
+        signal: options?.signal,
+      });
+
+      <span class="kw">return</span> (<span class="kw">await</span> httpResponse.<span class="fn">json</span>()) <span class="kw">as</span> <span class="tp">RPCResponse</span>;
+    },
+  };
+}</div>
+
+        <p class="mt-4 leading-relaxed">
+          <strong>What you should see:</strong> nothing yet — this only builds the pipe. Pass it to <code class="bg-black/5 px-1">new RPCClient(createHttpTransport("https://example.com/rpc"))</code> and every call goes over HTTP.
+        </p>
+
+        <div class="callout callout-note mt-4">
+          <strong class="text-zudo-blue">In plain words:</strong> the client still protects itself if your transport ignores <code>options.signal</code> — it races the signal on its own. But the connection stays open until the transport lets it go.
+        </div>
       </section>
 
       <!-- Context -->
       <section id="context" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONTEXT</h2>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCContext</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RPCContext</span> {
-  <span class="kw">readonly</span> request: <span class="tp">RPCRequest</span>;
-  <span class="kw">readonly</span> metadata: <span class="tp">RPCMetadata</span>;
-  <span class="kw">readonly</span> signal: <span class="tp">AbortSignal</span>;
-  <span class="kw">readonly</span> state: <span class="tp">Map</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;;
-  <span class="fn">get</span>&lt;<span class="tp">T</span>&gt;(key: <span class="tp">string</span>): <span class="tp">T</span> | <span class="tp">undefined</span>;
-  <span class="fn">set</span>&lt;<span class="tp">T</span>&gt;(key: <span class="tp">string</span>, value: <span class="tp">T</span>): <span class="tp">void</span>;
-}</div>
+        <p class="mb-4 leading-relaxed">
+          Every handler gets two arguments: the parsed input, and a <strong>context</strong>. The context is the per-call scratchpad. It holds the original request, the <strong>metadata</strong> (small labelled values like <code class="bg-black/5 px-1">requestId</code>, <code class="bg-black/5 px-1">userId</code> or <code class="bg-black/5 px-1">traceId</code> that travel alongside the payload), an <code class="bg-black/5 px-1">AbortSignal</code>, and a key/value store.
+        </p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">createRPCContext()</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">createRPCContext</span>(
-  request: <span class="tp">RPCRequest</span>,
-  signal: <span class="tp">AbortSignal</span>,
-): <span class="tp">RPCContext</span>;</div>
-        <p class="mt-2 text-sm text-black/70">Creates a frozen context with a state map for middleware-to-handler communication.</p>
+        <p class="mb-4 leading-relaxed">
+          The store is how middleware talks to a handler: middleware writes with <code class="bg-black/5 px-1">context.set()</code>, the handler reads with <code class="bg-black/5 px-1">context.get()</code>.
+        </p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">const</span> handler = <span class="kw">async</span> (input, context) => {
-  <span class="cm">// Access metadata</span>
-  console.<span class="fn">log</span>(context.metadata.requestId);
-  console.<span class="fn">log</span>(context.metadata.tenantId);
+        <p class="mb-4 leading-relaxed">
+          The signal is how a call is cancelled. Nothing forces a handler to stop, so check the signal wherever giving up makes sense.
+        </p>
 
-  <span class="cm">// Use state to share data between middleware</span>
-  context.<span class="fn">set</span>(<span class="str">"user"</span>, { id: <span class="str">"123"</span>, role: <span class="str">"admin"</span> });
-  <span class="kw">const</span> user = context.<span class="fn">get</span>&lt;{ id: <span class="tp">string</span> }&gt;(<span class="str">"user"</span>);
+        <div class="code-block"><span class="kw">import</span> { <span class="fn">createRPCProcedure</span>, <span class="fn">throwIfCancelled</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
 
-  <span class="cm">// Check cancellation</span>
-  <span class="kw">if</span> (context.signal.aborted) {
-    <span class="kw">throw new</span> <span class="fn">Error</span>(<span class="str">"Request cancelled"</span>);
-  }
+<span class="kw">const</span> report = <span class="fn">createRPCProcedure</span>&lt;{ rows: <span class="tp">number</span> }, <span class="tp">number</span>&gt;(
+  <span class="str">"reports.build"</span>,
+  <span class="kw">async</span> (input, context) =&gt; {
+    console.<span class="fn">log</span>(context.metadata.requestId);
+    console.<span class="fn">log</span>(context.<span class="fn">get</span>&lt;<span class="tp">string</span>&gt;(<span class="str">"actor"</span>));
 
-  <span class="kw">return</span> { result: <span class="str">"ok"</span> };
-};</div>
+    <span class="kw">let</span> total = <span class="num">0</span>;
+    <span class="kw">for</span> (<span class="kw">let</span> row = <span class="num">0</span>; row &lt; input.rows; row += <span class="num">1</span>) {
+      <span class="cm">// Throws RPCCancelledError once the call is cancelled.</span>
+      <span class="fn">throwIfCancelled</span>(context.signal, <span class="str">"reports.build"</span>);
+      total += row;
+    }
+
+    <span class="kw">return</span> total;
+  },
+  { timeout: <span class="num">2000</span> },
+);</div>
+
+        <p class="mt-4 leading-relaxed">
+          <strong>What happens:</strong> finish inside two seconds and the caller gets the number. Otherwise the dispatcher aborts the signal, the next <code class="bg-black/5 px-1">throwIfCancelled</code> throws, and the caller receives <code class="bg-black/5 px-1">RPC_TIMEOUT</code> rather than a half-built result.
+        </p>
       </section>
 
       <!-- Middleware -->
       <section id="middleware" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MIDDLEWARE</h2>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCMiddleware</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">RPCMiddleware</span> = (
-  context: <span class="tp">RPCContext</span>,
-  next: () => <span class="tp">Promise</span>&lt;<span class="tp">unknown</span>&gt;,
-) => <span class="tp">Promise</span>&lt;<span class="tp">unknown</span>&gt;;</div>
+        <p class="mb-4 leading-relaxed">
+          <strong>Middleware</strong> is a function that wraps every call. It receives the context and a <code class="bg-black/5 px-1">next()</code> function. Work before <code class="bg-black/5 px-1">next()</code> happens on the way in, work after it on the way out, and not calling it at all short-circuits the call.
+        </p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCMiddlewareStack</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">RPCMiddlewareStack</span> {
-  <span class="kw">constructor</span>(middleware?: <span class="tp">RPCMiddleware</span>[]);
-  <span class="kw">async</span> <span class="fn">execute</span>(context: <span class="tp">RPCContext</span>, handler: () => <span class="tp">Promise</span>&lt;<span class="tp">unknown</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">unknown</span>&gt;;
-}</div>
+        <p class="mb-4 leading-relaxed">
+          Middleware lives in an <code class="bg-black/5 px-1">RPCMiddlewareStack</code>, which is immutable — <code class="bg-black/5 px-1">stack.with(...)</code> returns a new stack. A stack holds at most 32 entries.
+        </p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Auth Middleware</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">RPCMiddlewareStack</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
+        <div class="code-block"><span class="kw">import</span> {
+  <span class="tp">RPCServer</span>,
+  <span class="tp">RPCMiddlewareStack</span>,
+  <span class="fn">createRPCProcedure</span>,
+  <span class="fn">createRPCRequest</span>,
+  <span class="tp">RPCAuthenticationError</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
 <span class="kw">import type</span> { <span class="tp">RPCMiddleware</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
 
-<span class="kw">const</span> authMiddleware: <span class="tp">RPCMiddleware</span> = <span class="kw">async</span> (context, next) => {
-  <span class="kw">const</span> token = context.metadata.userId;
-  <span class="kw">if</span> (!token) {
-    <span class="kw">throw new</span> <span class="fn">Error</span>(<span class="str">"Unauthorized"</span>);
+<span class="kw">const</span> requireUser: <span class="tp">RPCMiddleware</span> = <span class="kw">async</span> (context, next) =&gt; {
+  <span class="kw">if</span> (context.metadata.userId === <span class="kw">undefined</span>) {
+    <span class="kw">throw new</span> <span class="fn">RPCAuthenticationError</span>(<span class="str">"Sign in first."</span>);
   }
+  context.<span class="fn">set</span>(<span class="str">"actor"</span>, context.metadata.userId);
   <span class="kw">return</span> <span class="fn">next</span>();
 };
 
-<span class="kw">const</span> loggingMiddleware: <span class="tp">RPCMiddleware</span> = <span class="kw">async</span> (context, next) => {
-  <span class="kw">const</span> start = Date.<span class="fn">now</span>();
-  <span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">next</span>();
-  console.<span class="fn">log</span>(<span class="str">`[RPC] ${context.request.procedure} took ${Date.<span class="fn">now</span>() - start}ms`</span>);
-  <span class="kw">return</span> result;
-};
+<span class="kw">const</span> server = <span class="kw">new</span> <span class="fn">RPCServer</span>(
+  <span class="kw">undefined</span>,
+  <span class="kw">new</span> <span class="fn">RPCMiddlewareStack</span>([requireUser]),
+);
 
-<span class="kw">const</span> stack = <span class="kw">new</span> <span class="fn">RPCMiddlewareStack</span>([authMiddleware, loggingMiddleware]);</div>
+server.<span class="fn">register</span>(
+  <span class="fn">createRPCProcedure</span>(<span class="str">"users.list"</span>, <span class="kw">async</span> () =&gt; [{ id: <span class="str">"1"</span> }]),
+);
+
+<span class="kw">const</span> response = <span class="kw">await</span> server.<span class="fn">handle</span>(
+  <span class="fn">createRPCRequest</span>({ id: <span class="str">"req-1"</span>, procedure: <span class="str">"users.list"</span>, payload: {} }),
+);
+
+console.<span class="fn">log</span>(response.success, response.error?.code);
+<span class="cm">// false "RPC_UNAUTHENTICATED"</span></div>
+
+        <p class="mt-4 leading-relaxed">
+          Add <code class="bg-black/5 px-1">metadata: { userId: "u1" }</code> to the request and the same call prints <code class="bg-black/5 px-1">true undefined</code>. Order matters too: the first middleware in the array is the outermost, so it also sees calls the ones below it reject.
+        </p>
+
+        <div class="callout callout-danger mt-4">
+          <strong class="text-zudo-red">Danger:</strong> call <code>next()</code> exactly once. A second call throws, because re-entering the chain would run the handler — and every middleware below it — twice.
+        </div>
+
+        <p class="mt-6 mb-4 leading-relaxed">
+          An <strong>interceptor</strong> is the same idea with an object shape, <code class="bg-black/5 px-1">{ intercept(context, next) }</code>, registered through the server's <code class="bg-black/5 px-1">dispatch.interceptors</code> option. Interceptors wrap the middleware stack <em>and</em> input validation, so they observe the whole dispatch — the right place for tracing spans and metrics. <code class="bg-black/5 px-1">createNoopRPCInterceptor()</code> gives you one that only calls <code class="bg-black/5 px-1">next()</code>.
+        </p>
       </section>
 
-      <!-- Dispatcher -->
-      <section id="dispatcher" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DISPATCHER</h2>
+      <!-- Validation -->
+      <section id="validation" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">VALIDATING INPUT</h2>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCDispatcher</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">RPCDispatcher</span> {
-  <span class="kw">constructor</span>(
-    registry: { <span class="fn">require</span>(name: <span class="tp">string</span>): <span class="tp">RPCProcedure</span> },
-    middleware: <span class="tp">RPCMiddlewareStack</span>,
-  );
-  <span class="kw">async</span> <span class="fn">dispatch</span>(request: <span class="tp">RPCRequest</span>): <span class="tp">Promise</span>&lt;<span class="tp">RPCResponse</span>&gt;;
-}</div>
-        <p class="mt-2 text-sm text-black/70">Looks up the procedure from the registry, creates context, runs middleware, and returns the response. Used internally by <code>RPCServer</code>.</p>
-      </section>
+        <p class="mb-4 leading-relaxed">
+          A request arrives from somewhere you do not control, so its payload is untrusted data — not the TypeScript type you wrote. Types disappear at runtime; a caller can send anything.
+        </p>
 
-      <!-- Server -->
-      <section id="server" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SERVER</h2>
+        <p class="mb-4 leading-relaxed">
+          Give a procedure an <code class="bg-black/5 px-1">input</code> schema and the dispatcher parses the payload before your handler sees it. A bad payload never reaches your code.
+        </p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCServer</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">RPCServer</span> {
-  <span class="kw">constructor</span>(registry?: <span class="tp">RPCProcedureRegistry</span>, middleware?: <span class="tp">RPCMiddlewareStack</span>);
-  <span class="fn">register</span>(procedure: <span class="tp">RPCProcedure</span>): <span class="kw">this</span>;
-  <span class="kw">async</span> <span class="fn">handle</span>(request: <span class="tp">RPCRequest</span>): <span class="tp">Promise</span>&lt;<span class="tp">RPCResponse</span>&gt;;
-  <span class="fn">getRegistry</span>(): <span class="tp">RPCProcedureRegistry</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">RPCServer</span>, <span class="fn">createRPCProcedure</span>, <span class="tp">RPCMiddlewareStack</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
+        <div class="code-block"><span class="kw">import</span> {
+  <span class="tp">RPCServer</span>,
+  <span class="fn">createRPCProcedure</span>,
+  <span class="fn">createRPCRequest</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
+<span class="kw">import</span> { <span class="fn">objectSchema</span>, <span class="fn">stringSchema</span> } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
 
 <span class="kw">const</span> server = <span class="kw">new</span> <span class="fn">RPCServer</span>();
 
-server.<span class="fn">register</span>(<span class="fn">createRPCProcedure</span>(<span class="str">"users.list"</span>, <span class="kw">async</span> () => {
-  <span class="kw">return</span> [{ id: <span class="str">"1"</span>, name: <span class="str">"Alice"</span> }];
-}));
-
-<span class="kw">const</span> response = <span class="kw">await</span> server.<span class="fn">handle</span>({
-  id: <span class="str">"req-1"</span>,
-  procedure: <span class="str">"users.list"</span>,
-  payload: {},
-  metadata: {},
-  timestamp: Date.<span class="fn">now</span>(),
-});
-
-console.<span class="fn">log</span>(response.success); <span class="cm">// true</span>
-console.<span class="fn">log</span>(response.result);    <span class="cm">// [{ id: "1", name: "Alice" }]</span></div>
-      </section>
-
-      <!-- Client -->
-      <section id="client" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CLIENT</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCCallOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RPCCallOptions</span> {
-  <span class="kw">readonly</span> timeout?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> signal?: <span class="tp">AbortSignal</span>;
-  <span class="kw">readonly</span> metadata?: <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">string</span> | <span class="tp">number</span> | <span class="tp">boolean</span> | <span class="tp">undefined</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCClient</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">RPCClient</span> {
-  <span class="kw">constructor</span>(transport: <span class="tp">RPCTransport</span>);
-  <span class="kw">async</span> <span class="fn">call</span>&lt;<span class="tp">TInput</span>, <span class="tp">TOutput</span>&gt;(
-    procedure: <span class="tp">string</span>,
-    input: <span class="tp">TInput</span>,
-    options?: <span class="tp">RPCCallOptions</span>,
-  ): <span class="tp">Promise</span>&lt;<span class="tp">TOutput</span>&gt;;
-}</div>
-        <p class="mt-2 text-sm text-black/70">Sends a request via the transport, races against timeout, and resolves with the result or throws on error.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">RPCClient</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
-
-<span class="kw">const</span> client = <span class="kw">new</span> <span class="fn">RPCClient</span>(myTransport);
-
-<span class="kw">try</span> {
-  <span class="kw">const</span> user = <span class="kw">await</span> client.<span class="fn">call</span>&lt;<span class="tp">GetUserInput</span>, <span class="tp">GetUserOutput</span>&gt;(
+server.<span class="fn">register</span>(
+  <span class="fn">createRPCProcedure</span>(
     <span class="str">"users.getUser"</span>,
-    { id: <span class="str">"123"</span> },
-    { timeout: <span class="num">5000</span> },
-  );
-  console.<span class="fn">log</span>(user.name);
-} <span class="kw">catch</span> (error) {
-  console.<span class="fn">error</span>(error.message);
-}</div>
+    <span class="kw">async</span> (input: { id: <span class="tp">string</span> }) =&gt; ({ id: input.id, name: <span class="str">"Alice"</span> }),
+    { input: <span class="fn">objectSchema</span>({ id: <span class="fn">stringSchema</span>() }) },
+  ),
+);
+
+<span class="kw">const</span> response = <span class="kw">await</span> server.<span class="fn">handle</span>(
+  <span class="fn">createRPCRequest</span>({
+    id: <span class="str">"req-1"</span>,
+    procedure: <span class="str">"users.getUser"</span>,
+    payload: { id: <span class="num">42</span> },
+  }),
+);
+
+console.<span class="fn">log</span>(response.success, response.error?.code);
+<span class="cm">// false "RPC_VALIDATION_ERROR"</span></div>
+
+        <p class="mt-4 leading-relaxed">
+          <code class="bg-black/5 px-1">response.error.details</code> holds one entry per problem, each with <code class="bg-black/5 px-1">path</code>, <code class="bg-black/5 px-1">code</code> and <code class="bg-black/5 px-1">message</code>. The value the caller sent is left out on purpose, so a validation reply never echoes their data back. An <code class="bg-black/5 px-1">output</code> schema works the same way on the result, but sends no details at all: a wrong result is your bug, not theirs.
+        </p>
+
+        <p class="mt-4 leading-relaxed">
+          Before any of that, <code class="bg-black/5 px-1">server.handle()</code> checks the envelope — the request must be an object, <code class="bg-black/5 px-1">id</code> a non-empty string, <code class="bg-black/5 px-1">procedure</code> a valid name, <code class="bg-black/5 px-1">metadata</code> an object, and the encoded payload no larger than 1 MB. Anything else is <code class="bg-black/5 px-1">RPC_INVALID_REQUEST</code>. Change the size cap with the server's <code class="bg-black/5 px-1">limits.maxPayloadBytes</code> option.
+        </p>
       </section>
 
-      <!-- Transport -->
-      <section id="transport" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TRANSPORT</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCTransportRequestOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RPCTransportRequestOptions</span> {
-  <span class="kw">readonly</span> signal?: <span class="tp">AbortSignal</span>;
-  <span class="kw">readonly</span> timeout?: <span class="tp">number</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCTransport</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RPCTransport</span> {
-  <span class="fn">send</span>(request: <span class="tp">RPCRequest</span>): <span class="tp">Promise</span>&lt;<span class="tp">RPCResponse</span>&gt;;
-  <span class="fn">close</span>?(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Memory Transport (for testing)</h3>
-        <div class="code-block"><span class="kw">import type</span> { <span class="tp">RPCTransport</span>, <span class="tp">RPCRequest</span>, <span class="tp">RPCResponse</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
-
-<span class="kw">function</span> <span class="fn">createMemoryTransport</span>(
-  handler: (req: <span class="tp">RPCRequest</span>) => <span class="tp">Promise</span>&lt;<span class="tp">RPCResponse</span>&gt;,
-): <span class="tp">RPCTransport</span> {
-  <span class="kw">return</span> {
-    <span class="kw">async</span> <span class="fn">send</span>(request) {
-      <span class="kw">return</span> <span class="fn">handler</span>(request);
-    },
-  };
-}
-
-<span class="cm">// Wire client → server via memory transport</span>
-<span class="kw">const</span> transport = <span class="fn">createMemoryTransport</span>((req) => server.<span class="fn">handle</span>(req));
-<span class="kw">const</span> client = <span class="kw">new</span> <span class="fn">RPCClient</span>(transport);</div>
-      </section>
-
-      <!-- Interceptors -->
-      <section id="interceptors" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INTERCEPTORS</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCInterceptor</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RPCInterceptor</span> {
-  <span class="fn">intercept</span>(
-    context: <span class="tp">RPCContext</span>,
-    next: () => <span class="tp">Promise</span>&lt;<span class="tp">unknown</span>&gt;,
-  ): <span class="tp">Promise</span>&lt;<span class="tp">unknown</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">createNoopRPCInterceptor()</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">createNoopRPCInterceptor</span>(): <span class="tp">RPCInterceptor</span>;</div>
-        <p class="mt-2 text-sm text-black/70">Returns an interceptor that simply calls <code>next()</code>. Useful as a default or placeholder.</p>
-      </section>
-
-      <!-- Streaming -->
-      <section id="streaming" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">STREAMING</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCStreamingHandler</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">RPCStreamingHandler</span>&lt;<span class="tp">TInput</span> = <span class="tp">unknown</span>, <span class="tp">TOutput</span> = <span class="tp">unknown</span>&gt; = (
-  input: <span class="tp">TInput</span>,
-  context: <span class="tp">RPCContext</span>,
-) => <span class="tp">AsyncIterable</span>&lt;<span class="tp">TOutput</span>&gt;;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">RPCStreamingProcedure</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RPCStreamingProcedure</span>&lt;<span class="tp">TInput</span> = <span class="tp">unknown</span>, <span class="tp">TOutput</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="kw">readonly</span> handler: <span class="tp">RPCStreamingHandler</span>&lt;<span class="tp">TInput</span>, <span class="tp">TOutput</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">createRPCStreamingProcedure()</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">createRPCStreamingProcedure</span>&lt;<span class="tp">TInput</span>, <span class="tp">TOutput</span>&gt;(
-  name: <span class="tp">string</span>,
-  handler: <span class="tp">RPCStreamingHandler</span>&lt;<span class="tp">TInput</span>, <span class="tp">TOutput</span>&gt;,
-): <span class="tp">RPCStreamingProcedure</span>&lt;<span class="tp">TInput</span>, <span class="tp">TOutput</span>&gt;;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">createRPCStreamingProcedure</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
-
-<span class="kw">const</span> events = <span class="fn">createRPCStreamingProcedure</span>&lt;<span class="tp">void</span>, { type: <span class="tp">string</span>; data: <span class="tp">unknown</span> }&gt;(
-  <span class="str">"events.stream"</span>,
-  <span class="kw">async function</span>* (_input, context) {
-    <span class="kw">for</span> (<span class="kw">let</span> i = <span class="num">0</span>; i &lt; <span class="num">10</span>; i++) {
-      <span class="kw">if</span> (context.signal.aborted) <span class="kw">break</span>;
-      <span class="kw">yield</span> { type: <span class="str">"tick"</span>, data: { count: i } };
-      <span class="kw">await new</span> <span class="fn">Promise</span>(r => <span class="fn">setTimeout</span>(r, <span class="num">1000</span>));
-    }
-  },
-);</div>
-      </section>
-
-      <!-- Reliability -->
-      <section id="reliability" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELIABILITY</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Timeout</h3>
-        <div class="code-block"><span class="cm">// Creates a promise that rejects after duration (ms)</span>
-<span class="kw">function</span> <span class="fn">createTimeout</span>(duration: <span class="tp">number</span>): <span class="tp">Promise</span>&lt;<span class="tp">never</span>&gt;;
-
-<span class="cm">// Races a promise against a timeout</span>
-<span class="kw">async function</span> <span class="fn">withTimeout</span>&lt;<span class="tp">T</span>&gt;(promise: <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;, duration: <span class="tp">number</span>): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Deadline</h3>
-        <div class="code-block"><span class="cm">// Returns ms remaining until deadline (0 if exceeded)</span>
-<span class="kw">function</span> <span class="fn">getRemainingTime</span>(deadline: <span class="tp">number</span>): <span class="tp">number</span>;
-
-<span class="cm">// Returns true if deadline has passed</span>
-<span class="kw">function</span> <span class="fn">isDeadlineExceeded</span>(deadline: <span class="tp">number</span>): <span class="tp">boolean</span>;
-
-<span class="cm">// Throws Error("Deadline exceeded.") if deadline has passed</span>
-<span class="kw">function</span> <span class="fn">throwIfDeadlineExceeded</span>(deadline: <span class="tp">number</span>): <span class="tp">void</span>;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Cancellation</h3>
-        <div class="code-block"><span class="cm">// Creates a manually-cancellable AbortSignal</span>
-<span class="kw">function</span> <span class="fn">createCancellableSignal</span>(): <span class="tp">AbortSignal</span>;
-
-<span class="cm">// Aborts a signal</span>
-<span class="kw">function</span> <span class="fn">cancelSignal</span>(signal: <span class="tp">AbortSignal</span>): <span class="tp">void</span>;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Retry</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">RPCBackoff</span> = <span class="str">"fixed"</span> | <span class="str">"linear"</span> | <span class="str">"exponential"</span>;
-
-<span class="kw">interface</span> <span class="tp">RPCRetryOptions</span> {
-  <span class="kw">readonly</span> attempts: <span class="tp">number</span>;
-  <span class="kw">readonly</span> delay: <span class="tp">number</span>;
-  <span class="kw">readonly</span> maxDelay?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> backoff?: <span class="tp">RPCBackoff</span>;
-  <span class="kw">readonly</span> retryIf?: (error: <span class="tp">unknown</span>) => <span class="tp">boolean</span>;
-}
-
-<span class="kw">const</span> DEFAULT_RETRY_OPTIONS: <span class="tp">RPCRetryOptions</span> = { attempts: <span class="num">1</span>, delay: <span class="num">0</span> };
-
-<span class="kw">function</span> <span class="fn">calculateRetryDelay</span>(attempt: <span class="tp">number</span>, options: <span class="tp">RPCRetryOptions</span>): <span class="tp">number</span>;
-<span class="kw">async function</span> <span class="fn">retry</span>&lt;<span class="tp">T</span>&gt;(operation: () => <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;, options: <span class="tp">RPCRetryOptions</span>): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Retry with Exponential Backoff</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">retry</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
-
-<span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">retry</span>(
-  () => client.<span class="fn">call</span>(<span class="str">"users.getUser"</span>, { id: <span class="str">"123"</span> }),
-  {
-    attempts: <span class="num">3</span>,
-    delay: <span class="num">1000</span>,
-    backoff: <span class="str">"exponential"</span>,
-    maxDelay: <span class="num">10_000</span>,
-    retryIf: (err) => err <span class="kw">instanceof</span> <span class="tp">RPCTimeoutError</span>,
-  },
-);</div>
-      </section>
-
-      <!-- Constants -->
-      <section id="constants" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONSTANTS</h2>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Constant</th>
-                <th class="p-3 text-left">Value</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">DEFAULT_RPC_TIMEOUT</td>
-                <td class="p-3">30,000</td>
-                <td class="p-3">Default timeout for RPC operations (30 seconds)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">MAX_RPC_PAYLOAD_SIZE</td>
-                <td class="p-3">1,048,576</td>
-                <td class="p-3">Maximum payload size (1 MB)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">MAX_PENDING_REQUESTS</td>
-                <td class="p-3">1,024</td>
-                <td class="p-3">Maximum pending requests in client</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">MAX_MIDDLEWARE</td>
-                <td class="p-3">32</td>
-                <td class="p-3">Maximum middleware entries in a stack</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">MAX_PROCEDURES</td>
-                <td class="p-3">4,096</td>
-                <td class="p-3">Maximum procedures in a registry</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">PROCEDURE_NAME_PATTERN</td>
-                <td class="p-3">/^[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*)+$/</td>
-                <td class="p-3">Validates dot-separated lowercase procedure names</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Error Hierarchy -->
+      <!-- Errors -->
       <section id="errors" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERROR HIERARCHY</h2>
-        <p class="mb-4">All 16 error types are defined in <code class="bg-black/5 px-1">@zudojs/errors</code> and re-exported by this package.</p>
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERRORS ACROSS THE BOUNDARY</h2>
+
+        <p class="mb-4 leading-relaxed">
+          A thrown error cannot travel over a network. Only data can. So the boundary works in three steps: your handler throws a typed error; the server turns it into a small JSON payload with a <code class="bg-black/5 px-1">code</code>, a <code class="bg-black/5 px-1">message</code> and sometimes <code class="bg-black/5 px-1">details</code>; the client reads the code and throws a matching error on your side.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          The code is the contract. It is why a caller can tell a rejected session from a timeout without matching on message text.
+        </p>
 
         <div class="border-4 border-black">
-          <table class="w-full text-sm">
+          <table class="doc-table w-full text-sm">
             <thead class="bg-black text-white">
               <tr>
-                <th class="p-3 text-left">Error</th>
-                <th class="p-3 text-left">When Thrown</th>
+                <th class="p-3 text-left">Thrown on the server</th>
+                <th class="p-3 text-left">Wire code</th>
               </tr>
             </thead>
             <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCError</td><td class="p-3">Base error for all RPC issues</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCProcedureNotFoundError</td><td class="p-3">Requested procedure not in registry</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCInvalidRequestError</td><td class="p-3">Malformed or invalid request</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCValidationError</td><td class="p-3">Input validation failed</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCAuthenticationError</td><td class="p-3">Authentication required or failed</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCForbiddenError</td><td class="p-3">Insufficient permissions</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCTimeoutError</td><td class="p-3">Operation timed out</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCCancelledError</td><td class="p-3">Request was cancelled</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCInternalError</td><td class="p-3">Internal server error</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCTransportError</td><td class="p-3">Transport layer failure</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCSerializationError</td><td class="p-3">Failed to serialize request</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCDeserializationError</td><td class="p-3">Failed to deserialize response</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCUnavailableError</td><td class="p-3">Service temporarily unavailable</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCRateLimitedError</td><td class="p-3">Rate limit exceeded</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCDeadlineExceededError</td><td class="p-3">Deadline exceeded</td></tr>
-              <tr><td class="p-3 font-mono">RPCDuplicateProcedureError</td><td class="p-3">Procedure already registered</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCProcedureNotFoundError</td><td class="p-3 font-mono">RPC_PROCEDURE_NOT_FOUND</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCValidationError</td><td class="p-3 font-mono">RPC_VALIDATION_ERROR</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCInvalidRequestError</td><td class="p-3 font-mono">RPC_INVALID_REQUEST</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCAuthenticationError</td><td class="p-3 font-mono">RPC_UNAUTHENTICATED</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCForbiddenError</td><td class="p-3 font-mono">RPC_FORBIDDEN</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCRateLimitedError</td><td class="p-3 font-mono">RPC_RATE_LIMITED</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCDeadlineExceededError</td><td class="p-3 font-mono">RPC_DEADLINE_EXCEEDED</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCTimeoutError</td><td class="p-3 font-mono">RPC_TIMEOUT</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCCancelledError</td><td class="p-3 font-mono">RPC_CANCELLED</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCUnavailableError</td><td class="p-3 font-mono">RPC_UNAVAILABLE</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCSerializationError</td><td class="p-3 font-mono">RPC_SERIALIZATION_ERROR</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCDeserializationError</td><td class="p-3 font-mono">RPC_DESERIALIZATION_ERROR</td></tr>
+              <tr><td class="p-3">anything else</td><td class="p-3 font-mono">RPC_INTERNAL_ERROR</td></tr>
             </tbody>
           </table>
         </div>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Error Handling Pattern</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">isRPCError</span>,
-  <span class="tp">RPCTimeoutError</span>,
-  <span class="tp">RPCProcedureNotFoundError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
+        <div class="callout callout-danger mt-4">
+          <strong class="text-zudo-red">Danger:</strong> an unrecognised error never sends its own message. Exception text can name hosts, paths, credentials or queries, and the caller is a stranger. They get one fixed sentence plus the request id. Pass the server's <code>onInternalError</code> hook if you want the real error — that hook is the only place it is recorded.
+        </div>
 
-<span class="kw">try</span> {
-  <span class="kw">const</span> result = <span class="kw">await</span> client.<span class="fn">call</span>(<span class="str">"users.getUser"</span>, { id: <span class="str">"123"</span> });
-} <span class="kw">catch</span> (error) {
-  <span class="kw">if</span> (<span class="fn">isRPCError</span>(error)) {
-    <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">RPCTimeoutError</span>) {
-      <span class="cm">// Retry or fail gracefully</span>
-    } <span class="kw">else if</span> (error <span class="kw">instanceof</span> <span class="tp">RPCProcedureNotFoundError</span>) {
-      <span class="cm">// Procedure doesn't exist</span>
-    }
-  }
-}</div>
-      </section>
-
-      <!-- Full Integration Example -->
-      <section id="full-example" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">FULL INTEGRATION EXAMPLE</h2>
-        <p class="mb-4">Complete working example: create procedures, server, middleware, transport, and client.</p>
+        <p class="mb-4 mt-6 leading-relaxed">
+          On the caller's side, catch and branch on the type. <code class="bg-black/5 px-1">RPC_TIMEOUT</code>, <code class="bg-black/5 px-1">RPC_CANCELLED</code> and <code class="bg-black/5 px-1">RPC_UNAVAILABLE</code> become their matching classes; every other code becomes an <code class="bg-black/5 px-1">RPCError</code> carrying the server's code.
+        </p>
 
         <div class="code-block"><span class="kw">import</span> {
   <span class="tp">RPCServer</span>,
   <span class="tp">RPCClient</span>,
-  <span class="tp">RPCMiddlewareStack</span>,
   <span class="fn">createRPCProcedure</span>,
-  <span class="fn">createRPCMetadata</span>,
-  <span class="fn">retry</span>,
-  <span class="tp">RPCTimeoutError</span>,
+  <span class="fn">isRPCError</span>,
+  <span class="tp">RPCForbiddenError</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
-<span class="kw">import type</span> {
-  <span class="tp">RPCMiddleware</span>,
-  <span class="tp">RPCTransport</span>,
-  <span class="tp">RPCRequest</span>,
-  <span class="tp">RPCResponse</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
+<span class="kw">import type</span> { <span class="tp">RPCTransport</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
 
-<span class="cm">// 1. Define typed procedures</span>
-<span class="kw">interface</span> <span class="tp">CreateUserInput</span> { <span class="kw">readonly</span> name: <span class="tp">string</span>; <span class="kw">readonly</span> email: <span class="tp">string</span>; }
-<span class="kw">interface</span> <span class="tp">CreateUserOutput</span> { <span class="kw">readonly</span> id: <span class="tp">string</span>; <span class="kw">readonly</span> name: <span class="tp">string</span>; }
-
-<span class="kw">const</span> createUser = <span class="fn">createRPCProcedure</span>&lt;<span class="tp">CreateUserInput</span>, <span class="tp">CreateUserOutput</span>&gt;(
-  <span class="str">"users.createUser"</span>,
-  <span class="kw">async</span> (input, context) => {
-    console.<span class="fn">log</span>(<span class="str">`Creating user: ${input.name}`</span>);
-    <span class="kw">return</span> { id: <span class="str">"usr_123"</span>, name: input.name };
+<span class="kw">const</span> server = <span class="kw">new</span> <span class="fn">RPCServer</span>(<span class="kw">undefined</span>, <span class="kw">undefined</span>, {
+  <span class="fn">onInternalError</span>(error, requestId) {
+    console.<span class="fn">error</span>(<span class="str">"internal failure"</span>, requestId, error);
   },
-  { idempotent: <span class="num">false</span>, description: <span class="str">"Create a new user"</span> },
+});
+
+server.<span class="fn">register</span>(
+  <span class="fn">createRPCProcedure</span>(<span class="str">"admin.purge"</span>, <span class="kw">async</span> () =&gt; {
+    <span class="kw">throw new</span> <span class="fn">RPCForbiddenError</span>(<span class="str">"Admins only."</span>);
+  }),
 );
 
-<span class="cm">// 2. Create middleware</span>
-<span class="kw">const</span> authMiddleware: <span class="tp">RPCMiddleware</span> = <span class="kw">async</span> (context, next) => {
-  <span class="kw">if</span> (!context.metadata.userId) {
-    <span class="kw">throw new</span> <span class="fn">Error</span>(<span class="str">"Unauthorized"</span>);
-  }
-  <span class="kw">return</span> <span class="fn">next</span>();
-};
-
-<span class="kw">const</span> loggingMiddleware: <span class="tp">RPCMiddleware</span> = <span class="kw">async</span> (context, next) => {
-  <span class="kw">const</span> start = Date.<span class="fn">now</span>();
-  <span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">next</span>();
-  <span class="kw">const</span> duration = Date.<span class="fn">now</span>() - start;
-  console.<span class="fn">log</span>(<span class="str">`[RPC] ${context.request.procedure} — ${duration}ms`</span>);
-  <span class="kw">return</span> result;
-};
-
-<span class="cm">// 3. Create server with middleware</span>
-<span class="kw">const</span> stack = <span class="kw">new</span> <span class="fn">RPCMiddlewareStack</span>([loggingMiddleware, authMiddleware]);
-<span class="kw">const</span> server = <span class="kw">new</span> <span class="fn">RPCServer</span>(<span class="kw">undefined</span>, stack);
-server.<span class="fn">register</span>(createUser);
-
-<span class="cm">// 4. Create transport (memory for example)</span>
-<span class="kw">const</span> memoryTransport: <span class="tp">RPCTransport</span> = {
-  <span class="kw">async</span> <span class="fn">send</span>(request: <span class="tp">RPCRequest</span>): <span class="tp">Promise</span>&lt;<span class="tp">RPCResponse</span>&gt; {
+<span class="kw">const</span> transport: <span class="tp">RPCTransport</span> = {
+  <span class="kw">async</span> <span class="fn">send</span>(request) {
     <span class="kw">return</span> server.<span class="fn">handle</span>(request);
   },
 };
 
-<span class="cm">// 5. Create client</span>
-<span class="kw">const</span> client = <span class="kw">new</span> <span class="fn">RPCClient</span>(memoryTransport);
+<span class="kw">try</span> {
+  <span class="kw">await new</span> <span class="fn">RPCClient</span>(transport).<span class="fn">call</span>(<span class="str">"admin.purge"</span>, {});
+} <span class="kw">catch</span> (error) {
+  <span class="kw">if</span> (<span class="fn">isRPCError</span>(error)) {
+    console.<span class="fn">log</span>(error.code, <span class="str">"|"</span>, error.message);
+  }
+}</div>
 
-<span class="cm">// 6. Call with metadata and retry</span>
-<span class="kw">const</span> user = <span class="kw">await</span> <span class="fn">retry</span>(
-  () => client.<span class="fn">call</span>&lt;<span class="tp">CreateUserInput</span>, <span class="tp">CreateUserOutput</span>&gt;(
-    <span class="str">"users.createUser"</span>,
-    { name: <span class="str">"Alice"</span>, email: <span class="str">"alice@example.com"</span> },
-    {
-      timeout: <span class="num">5000</span>,
-      metadata: <span class="fn">createRPCMetadata</span>({
-        requestId: <span class="str">"req_001"</span>,
-        userId: <span class="str">"usr_admin"</span>,
-        tenantId: <span class="str">"tenant_acme"</span>,
-      }),
-    },
-  ),
-  { attempts: <span class="num">3</span>, delay: <span class="num">500</span>, backoff: <span class="str">"exponential"</span> },
-);
-
-console.<span class="fn">log</span>(user); <span class="cm">// { id: "usr_123", name: "Alice" }</span></div>
+        <p class="mt-4 leading-relaxed">
+          <strong>What you should see:</strong> <code class="bg-black/5 px-1">RPC_FORBIDDEN | Admins only.</code> The <code class="bg-black/5 px-1">RPCForbiddenError</code> class does not survive the trip — the code does.
+        </p>
       </section>
 
+      <!-- Reliability -->
+      <section id="reliability" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TIMEOUTS, RETRIES &amp; CANCELLATION</h2>
+
+        <p class="mb-4 leading-relaxed">
+          Networks fail in ways local calls do not: a call can hang forever, or fail once and work on the next try. A <strong>timeout</strong> is a duration in milliseconds, and both sides have one. On the server it is the procedure's <code class="bg-black/5 px-1">timeout</code> option, falling back to 30 seconds. On the client it is <code class="bg-black/5 px-1">RPCCallOptions.timeout</code>, falling back to the client's default and then to 30 seconds.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          A <strong>deadline</strong> is different: a wall-clock instant in epoch milliseconds, placed in <code class="bg-black/5 px-1">metadata.deadline</code>. It can only shorten a timeout, never extend it, and a deadline already in the past is rejected before any work runs.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          <code class="bg-black/5 px-1">retry()</code> runs an operation again after a failure. <code class="bg-black/5 px-1">attempts</code> counts total tries, so <code class="bg-black/5 px-1">attempts: 3</code> means one call and up to two retries. <strong>Jitter</strong> — deliberate randomness in each wait — is on by default, because otherwise every client that failed at the same instant retries at the same instant and knocks the dependency over again.
+        </p>
+
+        <div class="code-block"><span class="kw">import</span> { <span class="fn">retry</span>, <span class="tp">RPCUnavailableError</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
+
+<span class="kw">let</span> tries = <span class="num">0</span>;
+
+<span class="kw">const</span> value = <span class="kw">await</span> <span class="fn">retry</span>(
+  <span class="kw">async</span> () =&gt; {
+    tries += <span class="num">1</span>;
+    <span class="kw">if</span> (tries &lt; <span class="num">3</span>) {
+      <span class="kw">throw new</span> <span class="fn">RPCUnavailableError</span>(<span class="str">"Service warming up."</span>);
+    }
+    <span class="kw">return</span> <span class="str">"ready"</span>;
+  },
+  {
+    attempts: <span class="num">3</span>,
+    delay: <span class="num">100</span>,
+    backoff: <span class="str">"exponential"</span>,
+    maxDelay: <span class="num">10_000</span>,
+    <span class="cm">// Only retry failures a retry could plausibly fix.</span>
+    <span class="fn">retryIf</span>: (error) =&gt; error <span class="kw">instanceof</span> <span class="tp">RPCUnavailableError</span>,
+    <span class="fn">onRetry</span>: (error, attempt, wait) =&gt; {
+      console.<span class="fn">log</span>(<span class="str">"retry"</span>, attempt, <span class="str">"in"</span>, wait, <span class="str">"ms"</span>);
+    },
+  },
+);
+
+console.<span class="fn">log</span>(value, tries);
+<span class="cm">// ready 3</span></div>
+
+        <p class="mt-4 leading-relaxed">
+          <strong>What you should see:</strong> two <code class="bg-black/5 px-1">retry</code> lines with randomised waits, then <code class="bg-black/5 px-1">ready 3</code>.
+        </p>
+
+        <p class="mt-4 leading-relaxed">
+          To cancel a call yourself, pass a signal in <code class="bg-black/5 px-1">RPCCallOptions.signal</code>. An <code class="bg-black/5 px-1">AbortSignal</code> alone cannot be aborted — only its controller can — so <code class="bg-black/5 px-1">createCancellableSignal()</code> hands you both as <code class="bg-black/5 px-1">{ signal, cancel }</code>. Whatever reason the abort carries, the client always throws an <code class="bg-black/5 px-1">RPCCancelledError</code>, keeping the original as <code class="bg-black/5 px-1">cause</code>.
+        </p>
+
+        <div class="callout callout-warning mt-4">
+          <strong class="text-zudo-yellow">Watch out:</strong> a client allows 1024 calls in flight at once (<code>maxPending</code>). Past that, <code>call()</code> fails immediately with <code>RPCUnavailableError</code> rather than queueing without bound. <code>client.pendingCount</code> and <code>client.inspectPending()</code> show what is running.
+        </div>
+      </section>
+
+      <!-- vs api and http -->
+      <section id="vs-api-http" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RPC vs API vs HTTP</h2>
+
+        <p class="mb-4 leading-relaxed">
+          Three Zudo packages run "something the caller asked for". They differ in where the caller is and what the wire looks like.
+        </p>
+
+        <div class="border-4 border-black">
+          <table class="doc-table w-full text-sm">
+            <thead class="bg-black text-white">
+              <tr>
+                <th class="p-3 text-left">Package</th>
+                <th class="p-3 text-left">Caller is</th>
+                <th class="p-3 text-left">You work with</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono"><a href="/docs/packages-api" class="underline">@zudojs/api</a></td>
+                <td class="p-3">In the same process</td>
+                <td class="p-3">Operations run by <code>APIExecutor</code>. No wire, transport or serialization.</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">@zudojs/rpc</td>
+                <td class="p-3">Another process or machine</td>
+                <td class="p-3">Procedures, a request/response envelope, and a transport you choose.</td>
+              </tr>
+              <tr>
+                <td class="p-3 font-mono"><a href="/docs/packages-http" class="underline">@zudojs/http</a></td>
+                <td class="p-3">Any HTTP client</td>
+                <td class="p-3">Methods, paths, status codes, headers, CORS — the protocol itself.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="mt-4 leading-relaxed">
+          They stack rather than compete. A typical service exposes one HTTP route with <code class="bg-black/5 px-1">@zudojs/http</code>, feeds the parsed body into <code class="bg-black/5 px-1">server.handle()</code> from this package, and lets the handler call in-process operations from <code class="bg-black/5 px-1">@zudojs/api</code>.
+        </p>
+
+        <div class="callout callout-note mt-4">
+          <strong class="text-zudo-blue">In plain words:</strong> pick <code>api</code> when nothing leaves the process, <code>rpc</code> when your own services talk to each other, and <code>http</code> when the caller is a browser or a third party expecting REST.
+        </div>
+      </section>
+
+      <!-- API Reference -->
+      <section id="api-reference" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">API REFERENCE</h2>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Classes</h3>
+        <div class="border-4 border-black mb-8">
+          <table class="doc-table w-full text-sm">
+            <thead class="bg-black text-white">
+              <tr><th class="p-3 text-left">Name</th><th class="p-3 text-left">What it does</th><th class="p-3 text-left">Notes</th></tr>
+            </thead>
+            <tbody>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">RPCServer</td>
+                <td class="p-3">Validates a request, dispatches it, maps errors to wire codes.</td>
+                <td class="p-3"><code>(registry?, middleware?, options?)</code>; <code>register</code>, <code>handle</code>, <code>getRegistry</code>.</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">RPCClient</td>
+                <td class="p-3">Builds requests, sends them through a transport, unwraps results.</td>
+                <td class="p-3"><code>(transport, options?)</code>; <code>call</code>, <code>close</code>, <code>inspectPending</code>, <code>pendingCount</code>.</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">RPCDispatcher</td>
+                <td class="p-3">Runs one request: schemas, middleware, interceptors, timeout, deadline.</td>
+                <td class="p-3"><code>(registry, middleware, options?)</code>. <code>RPCServer</code> builds one for you.</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">RPCProcedureRegistry</td>
+                <td class="p-3">Name-to-procedure table with uniqueness enforced.</td>
+                <td class="p-3"><code>register</code>, <code>get</code>, <code>has</code>, <code>require</code>, <code>list</code>, <code>describe</code>, <code>unregister</code>, <code>clear</code>.</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">RPCProcedureRouter</td>
+                <td class="p-3">Groups procedures before you hand them to a registry.</td>
+                <td class="p-3">Same methods; <code>register</code> chains, and <code>list()</code> returns procedures, not names.</td>
+              </tr>
+              <tr>
+                <td class="p-3 font-mono">RPCMiddlewareStack</td>
+                <td class="p-3">Immutable ordered list of middleware.</td>
+                <td class="p-3"><code>with(...)</code> returns a new stack; <code>size</code>, <code>execute</code>.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Functions</h3>
+        <div class="border-4 border-black mb-8">
+          <table class="doc-table w-full text-sm">
+            <thead class="bg-black text-white">
+              <tr><th class="p-3 text-left">Name</th><th class="p-3 text-left">What it does</th><th class="p-3 text-left">Notes</th></tr>
+            </thead>
+            <tbody>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createRPCProcedure</td><td class="p-3">Builds a frozen procedure.</td><td class="p-3"><code>(name, handler, options?)</code>; validates the name immediately.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createRPCRequest</td><td class="p-3">Builds a request envelope.</td><td class="p-3">Defaults <code>metadata</code> to <code>{}</code>, <code>timestamp</code> to now.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createRPCResponse<br>createRPCErrorResponse</td><td class="p-3">Build success and failure responses.</td><td class="p-3"><code>(id, result | errorPayload, metadata?)</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createRPCMetadata<br>createRPCContext</td><td class="p-3">Build a frozen metadata object, and a context from a request plus a signal.</td><td class="p-3">Both are conveniences; the dispatcher makes contexts for you.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createNoopRPCInterceptor</td><td class="p-3">An interceptor that only calls <code>next()</code>.</td><td class="p-3">Placeholder or default.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">retry<br>calculateRetryDelay</td><td class="p-3">Re-run an operation after failure; compute one wait.</td><td class="p-3">Jitter defaults to <code>"full"</code> in <code>retry</code>, <code>"none"</code> in the calculation.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createTimeout<br>withTimeout<br>runWithTimeout</td><td class="p-3">Time-box a promise or an operation.</td><td class="p-3"><code>createTimeout</code> returns <code>{ promise, cancel }</code> — always <code>cancel()</code>. <code>runWithTimeout</code> also hands the operation a signal.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createCancellableSignal<br>cancelSignal<br>combineSignals<br>throwIfCancelled</td><td class="p-3">Make, trigger, merge and check abort signals.</td><td class="p-3">The first returns <code>{ signal, cancel }</code>; <code>combineSignals</code> returns <code>{ signal, dispose }</code> and you must <code>dispose()</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">getRemainingTime<br>isDeadlineExceeded<br>throwIfDeadlineExceeded<br>readDeadline</td><td class="p-3">Work with a <code>metadata.deadline</code>.</td><td class="p-3"><code>readDeadline</code> returns <code>undefined</code> for a malformed value rather than treating it as expired.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">assertValidProcedureName<br>assertValidRequest<br>measurePayloadBytes<br>parseInput<br>parseOutput<br>toValidationIssues</td><td class="p-3">The validation the server and dispatcher already run for you.</td><td class="p-3">Call them directly only in a custom pipeline.</td></tr>
+              <tr><td class="p-3 font-mono">isRPCError<br>createRPCError</td><td class="p-3">Type guard and factory for RPC errors.</td><td class="p-3">Re-exported from <a href="/docs/packages-errors" class="underline">@zudojs/errors</a>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Types</h3>
+        <div class="border-4 border-black mb-8">
+          <table class="doc-table w-full text-sm">
+            <thead class="bg-black text-white">
+              <tr><th class="p-3 text-left">Name</th><th class="p-3 text-left">What it does</th><th class="p-3 text-left">Notes</th></tr>
+            </thead>
+            <tbody>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCProcedure<br>RPCHandler<br>RPCProcedureOptions</td><td class="p-3">A procedure and its handler.</td><td class="p-3">Generic over input and output.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCRequest<br>RPCResponse<br>RPCErrorPayload<br>RPCMetadata</td><td class="p-3">The messages on the wire.</td><td class="p-3">Check <code>success</code> before reading <code>result</code>. Each has an Options variant for its factory.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCContext</td><td class="p-3">Per-call request, metadata, signal and state.</td><td class="p-3">Second argument to every handler and middleware.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCTransport<br>RPCMiddleware<br>RPCInterceptor</td><td class="p-3">The pieces you implement yourself.</td><td class="p-3">Middleware is a function; a transport and an interceptor are objects.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCServerOptions<br>RPCDispatcherOptions<br>RPCClientOptions<br>RPCCallOptions<br>RPCRequestLimits</td><td class="p-3">Everything you can configure.</td><td class="p-3">Server: <code>limits</code>, <code>dispatch</code>, <code>onInternalError</code>. Dispatch: <code>defaultTimeout</code>, <code>honourDeadline</code>, <code>interceptors</code>. Client and call: <code>timeout</code>, <code>maxPending</code>, <code>signal</code>, <code>metadata</code>.</td></tr>
+              <tr><td class="p-3 font-mono">RPCSchema<br>RPCRetryOptions<br>RPCBackoff<br>RPCJitter<br>CancellableSignal</td><td class="p-3">Validation and reliability settings.</td><td class="p-3"><code>RPCSchema</code> needs only <code>safeParse</code>. Backoff: fixed, linear, exponential. Jitter: none, full, equal.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Constants</h3>
+        <div class="border-4 border-black mb-8">
+          <table class="doc-table w-full text-sm">
+            <thead class="bg-black text-white">
+              <tr><th class="p-3 text-left">Name</th><th class="p-3 text-left">Value</th><th class="p-3 text-left">Notes</th></tr>
+            </thead>
+            <tbody>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DEFAULT_RPC_TIMEOUT</td><td class="p-3">30000</td><td class="p-3">When neither procedure nor call sets one.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MAX_RPC_PAYLOAD_SIZE</td><td class="p-3">1048576</td><td class="p-3">1 MB encoded; see <code>limits.maxPayloadBytes</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MAX_PENDING_REQUESTS</td><td class="p-3">1024</td><td class="p-3">Default client concurrency cap.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MAX_MIDDLEWARE</td><td class="p-3">32</td><td class="p-3">Per stack.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MAX_PROCEDURES</td><td class="p-3">4096</td><td class="p-3">Per registry.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MAX_PROCEDURE_NAME_LENGTH</td><td class="p-3">256</td><td class="p-3">Checked before the pattern, so a huge name cannot stall the regex.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MAX_TIMER_DELAY</td><td class="p-3">2147483647</td><td class="p-3">Retry delays clamp to it, so a big backoff cannot overflow into an instant retry.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">PROCEDURE_NAME_PATTERN</td><td class="p-3 font-mono">/^[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*)+$/</td><td class="p-3">At least two dot-separated segments.</td></tr>
+              <tr><td class="p-3 font-mono">INTERNAL_ERROR_MESSAGE</td><td class="p-3">Fixed sentence</td><td class="p-3">What a caller sees instead of an unexpected exception.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Errors</h3>
+        <p class="mb-4 leading-relaxed">
+          Sixteen classes are defined in <a href="/docs/packages-errors" class="underline">@zudojs/errors</a> and re-exported here, so either import works: RPCError, RPCProcedureNotFoundError, RPCInvalidRequestError, RPCValidationError, RPCAuthenticationError, RPCForbiddenError, RPCTimeoutError, RPCCancelledError, RPCInternalError, RPCTransportError, RPCSerializationError, RPCDeserializationError, RPCUnavailableError, RPCRateLimitedError, RPCDeadlineExceededError and RPCDuplicateProcedureError. The type <code class="bg-black/5 px-1">RPCErrorOptions</code> comes with them.
+        </p>
+
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Not implemented yet:</strong> streaming. <code>RPCStreamingHandler</code>, <code>RPCStreamingProcedure</code> and <code>createRPCStreamingProcedure</code> exist, but a registry accepts only <code>RPCProcedure</code> and <code>RPCTransport.send</code> resolves a single response. A streaming procedure cannot be registered or called today.
+        </div>
+      </section>
+
+      <!-- Common Mistakes -->
+      <section id="common-mistakes" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMON MISTAKES</h2>
+
+        <ul class="space-y-4">
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Naming a procedure <code class="bg-black/5 px-1">"getUser"</code>.</strong> It throws <code class="bg-black/5 px-1">RPCInvalidRequestError</code> the moment you create it, because the pattern needs at least two dot-separated segments. Use <code class="bg-black/5 px-1">"users.getUser"</code>.
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Trusting the handler's input type.</strong> Writing <code class="bg-black/5 px-1">(input: { id: string })</code> proves nothing at runtime, and your handler will happily run on <code class="bg-black/5 px-1">{ id: 42 }</code>. Give the procedure an <code class="bg-black/5 px-1">input</code> schema.
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Reading <code class="bg-black/5 px-1">response.result</code> without checking <code class="bg-black/5 px-1">response.success</code>.</strong> On a failure it is absent, so you get <code class="bg-black/5 px-1">undefined</code> instead of an error. Branch on <code class="bg-black/5 px-1">success</code>, or use <code class="bg-black/5 px-1">RPCClient</code>, which throws for you.
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Running a server with no <code class="bg-black/5 px-1">onInternalError</code>.</strong> Unexpected failures answer with a fixed sentence and are recorded nowhere else, so the bug is invisible. Pass the hook and log the error with its request id.
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Retrying everything.</strong> Replaying a forbidden or invalid call burns attempts and can duplicate side effects. Use <code class="bg-black/5 px-1">retryIf</code>, and check <code class="bg-black/5 px-1">idempotent</code> from <code class="bg-black/5 px-1">registry.describe()</code>.
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Ignoring <code class="bg-black/5 px-1">options.signal</code> in a custom transport.</strong> The client still rejects on time, but the socket stays open. Pass the signal to <code class="bg-black/5 px-1">fetch</code> or your socket library.
+          </li>
+        </ul>
+      </section>
+
+      <!-- Related -->
+      <section id="related" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATED PACKAGES</h2>
+
+        <ul class="space-y-3">
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <a href="/docs/packages-api" class="font-bold underline">@zudojs/api</a> — the same shape for calls that never leave the process.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <a href="/docs/packages-http" class="font-bold underline">@zudojs/http</a> — the HTTP layer you put in front of an RPC server.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <a href="/docs/packages-schema" class="font-bold underline">@zudojs/schema</a> — builds the <code>input</code> and <code>output</code> schemas.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <a href="/docs/packages-errors" class="font-bold underline">@zudojs/errors</a> — where every RPC error class is defined.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <a href="/docs/packages-queue" class="font-bold underline">@zudojs/queue</a> — for work the caller should not wait on.</li>
+        </ul>
+      </section>
+
+      <!-- EXPORT INDEX -->
+      <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/rpc</code> exports from its package root at v1.0.0 &mdash; <strong>89</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <details class="border-2 border-black p-5 bg-white">
+          <summary class="font-bold cursor-pointer select-none">Show all 89 exports</summary>
+          <div class="mt-5">
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Re-exported <span class="text-black/40 font-normal">(89)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CancellableSignal</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_RETRY_OPTIONS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_RPC_TIMEOUT</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">INTERNAL_ERROR_MESSAGE</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_MIDDLEWARE</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_PENDING_REQUESTS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_PROCEDURES</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_PROCEDURE_NAME_LENGTH</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_RPC_PAYLOAD_SIZE</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_TIMER_DELAY</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PROCEDURE_NAME_PATTERN</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCAuthenticationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCBackoff</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCCallOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCCancelledError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCClient</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCClientOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCDeadlineExceededError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCDeserializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCDispatcher</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCDispatcherOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCDuplicateProcedureError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCErrorPayload</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCForbiddenError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCInterceptor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCInternalError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCInvalidRequestError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCJitter</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCMetadataOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCMiddlewareStack</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCProcedure</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCProcedureName</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCProcedureNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCProcedureOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCProcedureRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCProcedureRouter</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCRateLimitedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCRequest</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCRequestLimits</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCRequestOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCResponse</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCRetryOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCSerializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCServer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCServerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCStreamingHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCStreamingProcedure</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCTransport</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCTransportError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCTransportRequestOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCUnavailableError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertValidProcedureName</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertValidRequest</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">calculateRetryDelay</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cancelSignal</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">combineSignals</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCancellableSignal</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createNoopRPCInterceptor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRPCContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRPCError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRPCErrorResponse</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRPCMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRPCProcedure</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRPCRequest</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRPCResponse</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRPCStreamingProcedure</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createTimeout</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getRemainingTime</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isDeadlineExceeded</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isRPCError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">measurePayloadBytes</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseInput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseOutput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">readDeadline</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">retry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">runWithTimeout</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">throwIfCancelled</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">throwIfDeadlineExceeded</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toValidationIssues</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withTimeout</code></div>
+          </div>
+          </div>
+        </details>
+      </section>
     </main>
 
     <!-- TABLE OF CONTENTS -->
     <aside class="doc-toc" aria-label="On this page">
       <div class="text-xs font-bold uppercase tracking-wider mb-4 text-black/40">On This Page</div>
+      <a href="#overview" class="toc-link">Overview</a>
       <a href="#installation" class="toc-link">Installation</a>
-      <a href="#what-it-does" class="toc-link">What It Does</a>
-      <a href="#architecture-position" class="toc-link">Where It Sits</a>
-      <a href="#dependencies" class="toc-link">Dependencies</a>
-      <a href="#types" class="toc-link">Types</a>
-      <a href="#request-response" class="toc-link">Request &amp; Response</a>
+      <a href="#quick-start" class="toc-link">Quick Start</a>
       <a href="#procedures" class="toc-link">Procedures</a>
+      <a href="#transports" class="toc-link">Transports</a>
       <a href="#context" class="toc-link">Context</a>
       <a href="#middleware" class="toc-link">Middleware</a>
-      <a href="#dispatcher" class="toc-link">Dispatcher</a>
-      <a href="#server" class="toc-link">Server</a>
-      <a href="#client" class="toc-link">Client</a>
-      <a href="#transport" class="toc-link">Transport</a>
-      <a href="#interceptors" class="toc-link">Interceptors</a>
-      <a href="#streaming" class="toc-link">Streaming</a>
-      <a href="#reliability" class="toc-link">Reliability</a>
-      <a href="#constants" class="toc-link">Constants</a>
+      <a href="#validation" class="toc-link">Validating Input</a>
       <a href="#errors" class="toc-link">Errors</a>
-      <a href="#full-example" class="toc-link">Full Example</a>
+      <a href="#reliability" class="toc-link">Timeouts &amp; Retries</a>
+      <a href="#vs-api-http" class="toc-link">RPC vs API vs HTTP</a>
+      <a href="#api-reference" class="toc-link">API Reference</a>
+      <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
+      <a href="#related" class="toc-link">Related Packages</a>
+          <a href="#export-index" class="toc-link">Complete Export Index</a>
     </aside>
 
   </div>
@@ -958,5 +855,6 @@ console.<span class="fn">log</span>(user); <span class="cm">// { id: "usr_123", 
   <script src="/js/docs.js"></script>
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 </body>
 </html>

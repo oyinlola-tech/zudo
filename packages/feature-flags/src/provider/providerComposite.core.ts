@@ -7,7 +7,10 @@
  */
 
 import type { FeatureFlag } from "../featureFlagTypes/featureFlag.interface.js";
-import type { FeatureFlagProvider } from "../featureFlagTypes/featureFlagProvider.js";
+import type {
+  FeatureFlagProvider,
+  RefreshableFeatureFlagProvider,
+} from "../featureFlagTypes/featureFlagProvider.js";
 
 /**
  * Create a composite provider that queries providers in order.
@@ -20,7 +23,7 @@ import type { FeatureFlagProvider } from "../featureFlagTypes/featureFlagProvide
  */
 export function createCompositeProvider(
   providers: readonly FeatureFlagProvider[],
-): FeatureFlagProvider {
+): RefreshableFeatureFlagProvider {
   return {
     async get(key: string): Promise<FeatureFlag | undefined> {
       for (const provider of providers) {

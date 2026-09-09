@@ -4,11 +4,7 @@
  * Messaging adapter contracts — bridges Zudojs messaging to external providers.
  */
 
-import type {
-  Adapter,
-  AdapterCapabilities,
-  AdapterOperationOptions,
-} from "../index.js";
+import type { Adapter, AdapterOperationOptions } from "../index.js";
 
 /**
  * Messaging adapter — connects Zudojs message bus to external providers.

@@ -11,6 +11,7 @@ import type { JobId, QueueName } from "../jobTypes/jobTypes.type.js";
 import type { Job } from "../job/job.type.js";
 import type { Queue, QueueOptions, QueueStats } from "../queue/queue.type.js";
 import type { Processor } from "../processor/processor.type.js";
+import { assertProcessor } from "../processor/processor.type.js";
 import type { JobOptions } from "../jobOptions/jobOptions.type.js";
 import type { Serializer } from "../serializer/serializer.type.js";
 import type { QueueMiddleware } from "../middleware/middleware.type.js";
@@ -165,6 +166,7 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
 
   process(name: string, processor: Processor<TData>): void {
     if (this.disposed) throw new QueueDisposedError(this.name);
+    assertProcessor(processor, name);
     this.processors.set(name, processor);
     if (!this.pollTimer) this.startPolling();
   }
@@ -528,6 +530,7 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
           },
           onSettled: (settled) => this.recordSettled(settled),
           isDisposed: () => this.disposed,
+          ...(this.options.logger ? { logger: this.options.logger } : {}),
         },
       );
     } catch (error) {

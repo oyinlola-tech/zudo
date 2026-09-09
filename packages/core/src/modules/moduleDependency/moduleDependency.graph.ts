@@ -380,7 +380,9 @@ export function satisfiesModuleVersionConstraint(
 ): boolean {
   const trimmedConstraint = constraint.trim();
 
-  const operatorMatch = /^(\^|~|>=|<=|>|<)?\s*(.+)$/.exec(trimmedConstraint);
+  // `(\S.*)` rather than `(.+)`: `.` matches spaces too, so `\s*(.+)` lets the
+  // engine split a whitespace run at every position before giving up.
+  const operatorMatch = /^(\^|~|>=|<=|>|<)?\s*(\S.*)$/.exec(trimmedConstraint);
   if (!operatorMatch) return false;
 
   const operator = operatorMatch[1] ?? "";

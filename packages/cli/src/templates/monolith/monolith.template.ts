@@ -24,6 +24,7 @@
  * │   ├── loggers/
  * │   ├── middlewares/
  * │   ├── models/
+ * │   ├── modules/
  * │   ├── repositories/
  * │   ├── routes/
  * │   ├── services/
@@ -40,6 +41,16 @@
 
 import type { ScaffoldOptions } from "../../types/index.js";
 import { ZUDOJS_PACKAGES_VERSION } from "../../constants/index.js";
+import { normalizeName, toPascalCase } from "../../utils/utils.name.js";
+import {
+  RUNTIME_APP_DEPENDENCIES,
+  moduleSpec,
+  renderAppFile,
+  renderModuleFile,
+  renderServerFile,
+  renderServiceFile,
+  renderZudojsConfig,
+} from "../shared/index.js";
 
 export function generateMonolithFiles(
   options: ScaffoldOptions,
@@ -48,13 +59,9 @@ export function generateMonolithFiles(
   const nameSlug = name.replace(/[^a-z0-9-]+/gi, "-").toLowerCase();
 
   const deps = [
-    "@zudojs/core",
-    "@zudojs/runtime",
-    "@zudojs/container",
+    ...RUNTIME_APP_DEPENDENCIES,
     "@zudojs/config",
-    "@zudojs/logger",
     "@zudojs/errors",
-    "@zudojs/constants",
     "@zudojs/types",
     "@zudojs/validation",
     "@zudojs/schema",
@@ -141,6 +148,12 @@ export function generateMonolithFiles(
 }
 `;
 
+  files["zudojs.config.ts"] = renderZudojsConfig({
+    projectName: nameSlug,
+    projectType: "backend",
+    architecture: "monolith",
+  });
+
   // Environment
   files[".env.example"] = `NODE_ENV=development
 PORT=3000
@@ -186,6 +199,7 @@ src/
 ├── loggers/         # Logger configuration
 ├── middlewares/     # HTTP middleware
 ├── models/          # Data models
+├── modules/         # Runtime modules
 ├── repositories/    # Data repositories
 ├── routes/          # HTTP routes
 ├── services/        # Application services
@@ -203,46 +217,28 @@ MIT
   files["src/index.ts"] = `export { createApp } from "./app.js";
 `;
 
-  files["src/server.ts"] = `import { createApp } from "./app.js";
-import { createRuntime } from "@zudojs/runtime";
+  files["src/server.ts"] = renderServerFile();
 
-const app = await createApp();
+  // Normalized: the name becomes a file path segment and a class name.
+  const moduleName = normalizeName(options.services[0] ?? "app") || "app";
+  const serviceClassName = `${toPascalCase(moduleName)}Service`;
+  const appModule = moduleSpec(moduleName, "./modules/index.js");
 
-const runtime = createRuntime({
-  onShutdown: async () => {
-    await app.stop();
-  },
-});
+  files["src/app.ts"] = renderAppFile({
+    applicationName: nameSlug,
+    modules: [appModule],
+  });
 
-await runtime.start();
-await app.listen();
-
-process.on("SIGTERM", async () => {
-  await runtime.stop();
-  process.exit(0);
-});
-`;
-
-  files["src/app.ts"] = `import { logger } from "@zudojs/logger";
-import { createContainer } from "@zudojs/container";
-
-export async function createApp() {
-  const log = logger.child({ service: "app" });
-  const container = createContainer();
-
-  log.info("${nameSlug} v0.1.0 starting...");
-
-  return {
-    container,
-    listen: async () => {
-      log.info("Server started");
+  files[`src/modules/${moduleName}.module.ts`] = renderModuleFile({
+    module: appModule,
+    service: {
+      className: serviceClassName,
+      importPath: "../services/index.js",
     },
-    stop: async () => {
-      log.info("Shutting down...");
-    },
-  };
-}
-`;
+  });
+
+  files["src/modules/index.ts"] =
+    `export { ${appModule.className} } from "./${moduleName}.module.js";\n`;
 
   // Shared directories with empty index.ts
   const sharedDirs = [
@@ -272,25 +268,10 @@ export async function createApp() {
   }
 
   // Services
-  const serviceName = options.services[0] ?? "app";
-  const serviceNamePascal = serviceName
-    .replace(/-([a-z])/g, (_m: string, c: string) => c.toUpperCase())
-    .replace(/^./, (c: string) => c.toUpperCase());
-
-  files[`src/services/${serviceName}.service.ts`] = `import { createLogger } from "@zudojs/logger";
-
-export class ${serviceNamePascal}Service {
-  private readonly logger = createLogger({ service: "${serviceName}" });
-
-  async initialize(): Promise<void> {
-    this.logger.info("${serviceName} service initialized");
-  }
-}
-`;
+  files[`src/services/${moduleName}.service.ts`] = renderServiceFile(moduleName);
 
   files["src/services/index.ts"] =
-    `export { ${serviceNamePascal}Service } from "./${serviceName}.service.js";
-`;
+    `export { ${serviceClassName} } from "./${moduleName}.service.js";\n`;
 
   // Controllers
   files["src/controllers/health.controller.ts"] =

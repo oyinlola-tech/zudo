@@ -89,22 +89,33 @@ export async function runMessagePipeline<TResult>(
 
   const executions: MessageMiddlewareExecution[] = [];
 
-  const resolvedMiddleware = middlewareList.map((mw) => {
+  const resolvedMiddleware = middlewareList.map((mw, index) => {
     const resolved = resolveMiddlewareLike(mw);
+    // Each record now names the middleware it belongs to and carries what
+    // that middleware returned. Both used to be wrong: every record was
+    // labelled with the pipeline's own execution id, and `result` was pushed
+    // from a `finally` block that could only ever see `undefined`.
+    const middlewareId = options.middlewareIds?.[index] ?? `${executionId}#${index}`;
     return async (
       ctx: MessageMiddlewareContext<Message>,
       next: MessageMiddlewareNext<TResult>,
     ): Promise<TResult> => {
       const mwStart = performance.now();
       try {
-        return await resolved(ctx, next);
-      } finally {
-        const duration = performance.now() - mwStart;
+        const result = await resolved(ctx, next);
         executions.push({
-          middlewareId: executionId,
-          result: undefined as unknown,
-          duration,
+          middlewareId,
+          result,
+          duration: performance.now() - mwStart,
         });
+        return result;
+      } catch (error) {
+        executions.push({
+          middlewareId,
+          result: undefined as unknown,
+          duration: performance.now() - mwStart,
+        });
+        throw error;
       }
     };
   });

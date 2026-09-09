@@ -11,12 +11,7 @@ import { runStreaming } from "../utils/utils.exec.js";
 import type { CLIContext } from "../cliType/cliType.type.js";
 import { CLIValidationError, CLIGenerationError } from "../errors/index.js";
 import { ManifestManager } from "../manifest/manifestManager.core.js";
-
-interface DevOptions {
-  readonly frontendOnly: boolean;
-  readonly backendOnly: boolean;
-  readonly port?: number;
-}
+import { SAFE_PATH_SEGMENT } from "../utils/utils.name.js";
 
 export async function runDevCommand(context: CLIContext): Promise<void> {
   const frontendOnly = context.values["frontend-only"] === true;
@@ -50,7 +45,16 @@ export async function runDevCommand(context: CLIContext): Promise<void> {
     context.logger.info(`Frontend: ${config.frontend.framework}`);
   }
 
-  const services = manifest?.services ?? [];
+  // Service names come from a manifest file on disk and are joined into
+  // filesystem paths below; a crafted entry such as "../../.." would make the
+  // dev command probe and run outside the project.
+  const services = (manifest?.services ?? []).filter((service) => {
+    if (SAFE_PATH_SEGMENT.test(service)) return true;
+    context.logger.warn(
+      `Ignoring invalid service name in .zudojs/manifest.json: "${service}"`,
+    );
+    return false;
+  });
 
   const processes: Promise<void>[] = [];
 
@@ -202,13 +206,20 @@ async function startBackendDev(
   config: { readonly backend?: { readonly architecture: string } },
   port?: number,
 ): Promise<void> {
-  const portFlag = port ? [`--port=${port}`] : [];
+  // `--port=N` was appended to the tsx argv, where it became an argument of
+  // the watched script and was ignored. Generated servers read PORT from the
+  // environment, so that is where the option has to land.
+  const options =
+    port !== undefined
+      ? { env: { ...process.env, PORT: String(port) } }
+      : undefined;
 
-  if (config.backend?.architecture === "microservice") {
-    await runStreaming("tsx", ["watch", "apps/gateway/src", ...portFlag], cwd);
-  } else {
-    await runStreaming("tsx", ["watch", "src", ...portFlag], cwd);
-  }
+  const entry =
+    config.backend?.architecture === "microservice"
+      ? "apps/gateway/src"
+      : "src";
+
+  await runStreaming("tsx", ["watch", entry], cwd, options);
 }
 
 function startMicroserviceDev(

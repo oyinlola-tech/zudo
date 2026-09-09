@@ -8,6 +8,7 @@ export { createQueue, isQueue } from "./queue.core.js";
 
 export type {
   Queue,
+  QueueLogger,
   QueueOptions,
   QueueStats,
   QueueEventMap,

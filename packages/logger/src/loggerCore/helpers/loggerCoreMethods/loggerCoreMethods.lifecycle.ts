@@ -71,6 +71,11 @@ export function disableLogger(ctx: ZudojsLoggerContext): void {
 export async function flushLogger(ctx: ZudojsLoggerContext): Promise<void> {
   ctx.assertActive();
 
+  // In-flight dispatches must land in the transports before those
+  // transports are asked to flush, otherwise flush() is a no-op for
+  // everything logged in the same tick.
+  await ctx.drainDispatches();
+
   for (const transport of ctx.configuration.transports) {
     if (!isLoggerTransport(transport)) {
       continue;
@@ -96,12 +101,18 @@ export async function closeLogger(ctx: ZudojsLoggerContext): Promise<void> {
     return;
   }
 
+  await ctx.drainDispatches();
+
   for (const transport of ctx.configuration.transports) {
     if (!isLoggerTransport(transport)) {
       continue;
     }
 
     const registered = createLoggerTransport(transport);
+
+    if (registered.flush) {
+      await registered.flush();
+    }
 
     if (registered.close) {
       await registered.close();

@@ -64,7 +64,15 @@ export function serializeLoggerValue(
 
   const result: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value)) {
-    result[key] = serializeLoggerValue(item, seen);
+    // defineProperty, never assignment: a "__proto__" key from an
+    // untrusted payload would otherwise reach the inherited setter and
+    // replace the serialized object's prototype.
+    Object.defineProperty(result, key, {
+      value: serializeLoggerValue(item, seen),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
   }
   return result;
 }

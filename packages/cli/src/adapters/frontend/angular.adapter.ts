@@ -5,6 +5,7 @@
  */
 
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
+import { normalizeName } from "../../utils/utils.name.js";
 import { scaffoldWithFallback } from "../../scaffolders/scaffolder.helper.js";
 import type {
   FrontendAdapter,
@@ -32,11 +33,7 @@ export class AngularAdapter implements FrontendAdapter {
     const files = this.getBaseFiles(context);
     // Angular CLI requires a valid project name; "." is not one. Pass the
     // real name and scaffold into the current directory via --directory.
-    const projectName =
-      context.project.name
-        .toLowerCase()
-        .replace(/[^a-z0-9-]+/g, "-")
-        .replace(/^-+|-+$/g, "") || "zudojs-app";
+    const projectName = normalizeName(context.project.name) || "zudojs-app";
     await scaffoldWithFallback({
       command: "npx",
       args: [

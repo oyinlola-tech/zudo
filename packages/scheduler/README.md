@@ -106,14 +106,62 @@ what happens when a fire time arrives while the previous run is still going:
 
 ```typescript
 scheduler.every("10s", "report", { overlap: "skip" });
-// "allow" (default) | "skip" | "replace"
 ```
+
+| `overlap`           | Behaviour when the previous run is still going  |
+| ------------------- | ----------------------------------------------- |
+| `"allow"` (default) | starts the new run alongside it                 |
+| `"skip"`            | drops the fire time                             |
+| `"queue"`           | holds it and runs it when the current one ends  |
+| `"replace"`         | aborts the running execution and starts a new one |
+
+`JobOptions.overlap` sets the default for every schedule of a job;
+`ScheduleOptions.overlap` overrides it per schedule.
+
+`JobOptions.concurrency` caps how many executions of one job run at once
+across every schedule that fires it. A fire time arriving at the ceiling is
+held and dispatched when an execution finishes, not dropped:
+
+```typescript
+scheduler.define({
+  id: "reindex",
+  name: "Reindex a tenant",
+  options: { concurrency: 2 },
+  handler: reindex,
+});
+```
+
+`ScheduleOptions.priority` breaks ties between schedules due at the same
+instant — higher runs first. It never lets a schedule jump ahead of one due
+earlier.
 
 ## Misfires
 
-A fire time already in the past follows the schedule's `misfire` policy —
-`"run-once"` (default) runs immediately, `"skip"` refuses the schedule. This is
-the case for `at(pastDate)` and for schedules restored after a restart.
+A fire time already in the past follows the schedule's `misfire` policy. This
+is the case for `at(pastDate)`, for a schedule restored after a restart, and
+for a recurring schedule whose process was blocked past its fire time.
+
+| `misfire`              | Behaviour                                            |
+| ---------------------- | ---------------------------------------------------- |
+| `"run-once"` (default) | runs once immediately, then resumes from now         |
+| `"skip"`               | refuses the schedule                                 |
+| `"catch-up"`           | replays every missed occurrence until it is current  |
+
+```typescript
+scheduler.every("1h", "hourly-rollup", { misfire: "catch-up" });
+```
+
+## Execution history
+
+The scheduler keeps the last 100 executions (`MAX_EXECUTION_HISTORY`), each a
+`JobExecution` with its status, timings and error:
+
+```typescript
+scheduler.getExecutions("cleanup");
+// [{ id, jobId, scheduleId, status: "completed" | "failed" | "timed_out" |
+//    "cancelled" | "running", scheduledAt, startedAt, completedAt,
+//    duration, attempt, error? }]
+```
 
 ## Features
 
@@ -122,7 +170,9 @@ the case for `at(pastDate)` and for schedules restored after a restart.
 - Bound schedule handles: pause, resume, cancel, next-run
 - Retry policies with fixed, linear and exponential backoff, capping and jitter
 - Per-job timeouts that abort the handler through `AbortSignal`
-- Concurrency ceiling and per-schedule overlap policy
+- Global concurrency ceiling, per-job concurrency limits, and per-schedule
+  overlap and misfire policies
+- Bounded execution history
 - Graceful shutdown with abort or drain
 - Min-heap priority queue, O(log n) insert and remove
 
@@ -132,6 +182,10 @@ This package schedules work inside one process. It has no persistence, no
 cross-process locking and no worker pool — a restart loses the schedule, and two
 instances will each run the same job. Pair it with `@zudojs/queue` when you need
 durability or distribution.
+
+Because there is no store and no lock, the store, lock, not-started and
+schedule-lookup error classes are not re-exported here; they live in
+`@zudojs/errors` for a durable scheduler built on top.
 
 ## Use Cases
 

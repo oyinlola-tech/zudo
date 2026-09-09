@@ -61,6 +61,18 @@ export class LifecycleExecutor {
     const maxAttempts = 1 + (retryConfig.attempts ?? 0);
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // A hook must not be retried (or even started) once the run has
+      // been cancelled — the context signal is aborted by the shutdown
+      // deadline and by startup rollback.
+      if (context.signal.aborted) {
+        lastError ??= new LifecycleComponentError(
+          registration.id,
+          phase,
+          context.signal.reason,
+        );
+        break;
+      }
+
       try {
         await withTimeout(
           async () => {
@@ -87,7 +99,7 @@ export class LifecycleExecutor {
 
         if (attempt < maxAttempts - 1) {
           const delay = calculateDelay(retryConfig, attempt);
-          await sleep(delay);
+          await sleep(delay, context.signal);
         }
       }
     }
@@ -96,7 +108,13 @@ export class LifecycleExecutor {
       id: registration.id,
       phase,
       duration: Date.now() - startTime,
-      error: lastError,
+      // LifecycleComponentError was imported but never constructed, so
+      // callers received a bare hook error with no indication of which
+      // component or phase produced it.
+      error:
+        lastError instanceof LifecycleComponentError
+          ? lastError
+          : new LifecycleComponentError(registration.id, phase, lastError),
       success: false,
     };
   }
@@ -136,7 +154,29 @@ function calculateDelay(
   return base;
 }
 
-/** Sleeps for the given duration. */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * Sleeps for the given duration, waking early when the run is aborted.
+ *
+ * An unconditional timer would keep the process alive for a full retry
+ * backoff after shutdown had already been requested.
+ */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    function onAbort(): void {
+      clearTimeout(timer);
+      resolve();
+    }
+
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }

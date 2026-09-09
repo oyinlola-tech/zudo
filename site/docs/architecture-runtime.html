@@ -115,6 +115,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -168,15 +169,15 @@
       </div>
       <!-- HERO -->
             <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">Runtime</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
-          Application lifecycle orchestrator with dependency ordering and graceful shutdown.
+          The part that actually runs your modules: a small state machine, an ordered start, and a shutdown that waits for work to finish.
         </p>
         <div class="flex flex-wrap gap-2 mt-4">
-          <span class="px-3 py-1 border-2 border-black text-xs font-bold">RUNTIME</span>
-          <span class="px-3 py-1 border-2 border-black text-xs font-bold">LIFECYCLE</span>
-          <span class="px-3 py-1 border-2 border-black text-xs font-bold">ORCHESTRATION</span>
+          <span class="px-3 py-1 border-2 border-black text-xs font-bold">STATE MACHINE</span>
+          <span class="px-3 py-1 border-2 border-black text-xs font-bold">GRACEFUL STOP</span>
+          <span class="px-3 py-1 border-2 border-black text-xs font-bold">SIGNALS</span>
         </div>
       </div>
 
@@ -184,180 +185,307 @@
       <section id="overview" class="mb-16">
         <h2 class="text-2xl font-bold mb-4 border-b-4 border-black pb-2 uppercase">Overview</h2>
         <p class="mb-4 leading-relaxed">
-          The Zudo runtime is responsible for bringing your application to life. It manages the complete lifecycle from initialization through graceful shutdown, handling signal trapping, dependency ordering, and error recovery.
+          The <strong>runtime</strong> is the object that owns your application while it is alive. It loads modules, runs their hooks in order, listens for termination signals, and unwinds everything when it is time to stop.
         </p>
         <p class="mb-4 leading-relaxed">
-          The runtime uses a <strong>state machine</strong> to track the application's current phase and enforces valid transitions between states.
+          You rarely build one by hand. <code>createApplication</code> from <code>@zudojs/core</code> creates a runtime for you and hands you an <code>Application</code> wrapped around it.
         </p>
+
+        <div class="callout callout-warning mb-6">
+          <p class="text-sm font-bold mb-1">TWO RUNTIMES, TWO PACKAGES</p>
+          <p class="text-sm">Zudo ships two runtimes and they are not the same object. <code>@zudojs/core</code> has the one <code>createApplication</code> uses. <code>@zudojs/runtime</code> is a separate, standalone package with its own state names and extra readiness and health features. Everything up to the "Standalone Runtime" section below describes the <code>@zudojs/core</code> one.</p>
+        </div>
+
+        <p class="mb-2 leading-relaxed">For everything in the next four sections:</p>
+        <div class="code-block mb-4">
+$ npm install @zudojs/core
+        </div>
+        <div class="callout callout-note mb-6">
+          <p class="text-sm">These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest <code>@zudojs</code> release.</p>
+        </div>
       </section>
 
-      <!-- STATE MACHINE -->
-      <section id="state-machine" class="mb-16">
-        <h2 class="text-2xl font-bold mb-4 border-b-4 border-black pb-2 uppercase">Lifecycle States</h2>
+      <!-- STATES -->
+      <section id="states" class="mb-16">
+        <h2 class="text-2xl font-bold mb-4 border-b-4 border-black pb-2 uppercase">Runtime States</h2>
         <p class="mb-4 leading-relaxed">
-          The runtime transitions through five states during the application lifecycle:
+          A <strong>state machine</strong> is a rule about which step may follow which. The runtime has six states, and moving to a state that is not allowed from the current one throws <code>InvalidRuntimeTransitionError</code> instead of quietly doing something strange.
         </p>
 
         <div class="border-2 border-black p-6 bg-gray-50 mb-6 font-mono text-sm leading-loose">
 <pre class="whitespace-pre-wrap">
-  <span class="num">CREATED</span>
-     │
+  <span class="const">created</span>
+     │  start()
      ▼
-  <span class="fn">INITIALIZING</span>    <span class="cm">← modules.resolve(), modules.initialize()</span>
-     │
-     ▼
-  <span class="tp">READY</span>           <span class="cm">← modules.start(), accepting requests</span>
-     │
-     ▼
-  <span class="kw">SHUTTING_DOWN</span>   <span class="cm">← signal received, modules.stop() in reverse order</span>
-     │
-     ▼
-  <span class="str">DISPOSED</span>        <span class="cm">← modules.destroy(), all resources released</span>
+  <span class="fn">bootstrapping</span>  ──── error ────▶  <span class="num">failed</span>
+     │                                │
+     ▼                                │
+  <span class="tp">ready</span>                                │
+     │  stop()                        │  stop()
+     ▼                                ▼
+  <span class="kw">stopping</span> ─────────────────────▶ <span class="kw">stopped</span>
 </pre>
         </div>
 
-        <div class="overflow-x-auto mb-6">
-          <table class="w-full text-smw-full border-2 border-black text-sm">
-            <thead class="bg-zudo-black text-white">
-              <tr>
-                <th class="border border-black px-4 py-2 text-left font-bold">State</th>
-                <th class="border border-black px-4 py-2 text-left font-bold">Description</th>
-                <th class="border border-black px-4 py-2 text-left font-bold">Allowed Transitions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">CREATED</td><td class="border border-black px-4 py-2">Runtime instantiated, not yet started</td><td class="border border-black px-4 py-2">→ INITIALIZING</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">INITIALIZING</td><td class="border border-black px-4 py-2">Resolving dependencies, calling module.initialize()</td><td class="border border-black px-4 py-2">→ READY, → SHUTTING_DOWN (on error)</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">READY</td><td class="border border-black px-4 py-2">All modules started, application accepting work</td><td class="border border-black px-4 py-2">→ SHUTTING_DOWN</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">SHUTTING_DOWN</td><td class="border border-black px-4 py-2">Graceful shutdown in progress, modules stopping</td><td class="border border-black px-4 py-2">→ DISPOSED</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">DISPOSED</td><td class="border border-black px-4 py-2">All resources released, runtime unusable</td><td class="border border-black px-4 py-2">— (terminal state)</td></tr>
-            </tbody>
-          </table>
+        <table class="doc-table mb-6">
+          <thead>
+            <tr><th>State</th><th>What it means</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>created</code></td><td>Built, nothing has run. This is the only state you can start from.</td></tr>
+            <tr><td><code>bootstrapping</code></td><td>Loading modules and running <code>onInitialize</code> then <code>onReady</code>.</td></tr>
+            <tr><td><code>ready</code></td><td>Every module is up. The application is serving.</td></tr>
+            <tr><td><code>stopping</code></td><td>Running <code>onShutdown</code> then <code>onDestroy</code>, in reverse order.</td></tr>
+            <tr><td><code>stopped</code></td><td>Finished. Terminal — this runtime cannot start again.</td></tr>
+            <tr><td><code>failed</code></td><td>Something threw. Terminal, but you can still call <code>stop()</code> to clean up.</td></tr>
+          </tbody>
+        </table>
+
+        <p class="mb-4 leading-relaxed">
+          The names come from the <code>RuntimeState</code> enum, which is exported so you can compare against it rather than typing strings.
+        </p>
+
+        <div class="code-block mb-6">
+<span class="kw">import</span> { <span class="fn">createApplication</span>, <span class="tp">RuntimeState</span> } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">const</span> app = <span class="kw">await</span> <span class="fn">createApplication</span>();
+<span class="kw">await</span> app.<span class="fn">start</span>();
+
+console.<span class="fn">log</span>(app.applicationRuntime?.state === <span class="tp">RuntimeState</span>.<span class="const">READY</span>);
+<span class="cm">// true</span>
+
+<span class="kw">await</span> app.<span class="fn">stop</span>();
+        </div>
+
+        <div class="callout callout-note mb-6">
+          <p class="text-sm font-bold mb-1">APPLICATION STATE IS SEPARATE</p>
+          <p class="text-sm"><code>app.state</code> is not the same value. It is one of <code>created</code>, <code>initializing</code>, <code>initialized</code>, <code>starting</code>, <code>running</code>, <code>stopping</code>, <code>stopped</code>, <code>failed</code>. The application wraps the runtime, so <code>running</code> on the outside corresponds to <code>ready</code> on the inside.</p>
         </div>
       </section>
 
-      <!-- INITIALIZATION -->
-      <section id="initialization" class="mb-16">
-        <h2 class="text-2xl font-bold mb-4 border-b-4 border-black pb-2 uppercase">Runtime Initialization</h2>
+      <!-- STARTUP -->
+      <section id="startup" class="mb-16">
+        <h2 class="text-2xl font-bold mb-4 border-b-4 border-black pb-2 uppercase">Startup</h2>
         <p class="mb-4 leading-relaxed">
-          Creating and starting a Zudo runtime:
+          Startup is four steps: work out the module order, build each module from its factory, run every <code>onInitialize</code>, then run every <code>onReady</code>. Only after the last <code>onReady</code> does the runtime become <code>ready</code>.
+        </p>
+
+        <p class="mb-2 leading-relaxed">A complete program that starts, reports, and stops:</p>
+        <div class="code-block mb-4">
+<span class="kw">import</span> { <span class="fn">createApplication</span>, <span class="fn">defineModule</span> } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+<span class="kw">import type</span> { <span class="tp">Module</span> } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">const</span> database = <span class="fn">defineModule</span>({
+  <span class="prop">id</span>: <span class="str">"database"</span>,
+  <span class="prop">name</span>: <span class="str">"Database"</span>,
+  <span class="prop">factory</span>: (): <span class="tp">Module</span> =&gt; ({
+    <span class="prop">id</span>: <span class="str">"database"</span>,
+    <span class="prop">name</span>: <span class="str">"Database"</span>,
+    <span class="fn">onInitialize</span>: () =&gt; console.<span class="fn">log</span>(<span class="str">"database connected"</span>),
+    <span class="fn">onDestroy</span>: () =&gt; console.<span class="fn">log</span>(<span class="str">"database closed"</span>),
+  }),
+});
+
+<span class="kw">const</span> api = <span class="fn">defineModule</span>({
+  <span class="prop">id</span>: <span class="str">"api"</span>,
+  <span class="prop">name</span>: <span class="str">"API"</span>,
+  <span class="prop">dependencies</span>: [<span class="str">"database"</span>],
+  <span class="prop">factory</span>: (): <span class="tp">Module</span> =&gt; ({
+    <span class="prop">id</span>: <span class="str">"api"</span>,
+    <span class="prop">name</span>: <span class="str">"API"</span>,
+    <span class="fn">onReady</span>: () =&gt; console.<span class="fn">log</span>(<span class="str">"api listening"</span>),
+    <span class="fn">onShutdown</span>: () =&gt; console.<span class="fn">log</span>(<span class="str">"api draining"</span>),
+  }),
+});
+
+<span class="kw">const</span> app = <span class="kw">await</span> <span class="fn">createApplication</span>({
+  <span class="prop">modules</span>: [api, database],
+  <span class="prop">autoStart</span>: <span class="kw">true</span>,
+});
+
+console.<span class="fn">log</span>(<span class="str">"state:"</span>, app.state);
+
+<span class="kw">await</span> app.<span class="fn">stop</span>();
+        </div>
+
+        <p class="mb-4 leading-relaxed">What you should see:</p>
+        <div class="code-block mb-6">
+database connected
+api listening
+state: running
+api draining
+database closed
+        </div>
+
+        <p class="mb-4 leading-relaxed">
+          Notice that <code>api</code> was listed first but <code>database</code> ran first. Declaration order does not matter; the <code>dependencies</code> field does.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          Startup behaviour is tunable through <code>runtime.startup</code>:
+        </p>
+
+        <table class="doc-table mb-6">
+          <thead>
+            <tr><th>Option</th><th>What it does</th><th>Default</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>autoLoadModules</code></td><td>Build module instances from their factories</td><td><code>true</code></td></tr>
+            <tr><td><code>autoInitializeModules</code></td><td>Run <code>onInitialize</code> during bootstrap</td><td><code>true</code></td></tr>
+            <tr><td><code>autoStartModules</code></td><td>Run <code>onReady</code> during bootstrap</td><td><code>true</code></td></tr>
+            <tr><td><code>continueOnInitializeError</code></td><td>Keep going when a module fails to initialize</td><td><code>false</code></td></tr>
+            <tr><td><code>continueOnStartError</code></td><td>Keep going when a module fails in <code>onReady</code></td><td><code>false</code></td></tr>
+            <tr><td><code>timeoutMs</code></td><td>Give up on bootstrap after this long; <code>0</code> means never</td><td><code>0</code></td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout callout-warning mb-6">
+          <p class="text-sm font-bold mb-1">WATCH OUT</p>
+          <p class="text-sm">With <code>continueOnInitializeError: true</code> the runtime still reaches <code>ready</code>, but the bootstrap result reports <code>success: false</code> and lists the failures. A half-started application that looks healthy is worse than one that refuses to start, so leave this off unless you check the result.</p>
+        </div>
+      </section>
+
+      <!-- SHUTDOWN -->
+      <section id="shutdown" class="mb-16">
+        <h2 class="text-2xl font-bold mb-4 border-b-4 border-black pb-2 uppercase">Graceful Shutdown</h2>
+        <p class="mb-4 leading-relaxed">
+          <strong>Graceful</strong> means the application stops accepting new work, finishes what it already accepted, and only then lets go of its resources. The opposite is being killed mid-request.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          Shutdown walks the modules in the exact reverse of startup order. Every module gets <code>onShutdown</code> first; once they are all done, every module gets <code>onDestroy</code>.
+        </p>
+
+        <table class="doc-table mb-6">
+          <thead>
+            <tr><th>Option</th><th>What it does</th><th>Default</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>autoStopModules</code></td><td>Run <code>onShutdown</code></td><td><code>true</code></td></tr>
+            <tr><td><code>autoDestroyModules</code></td><td>Run <code>onDestroy</code></td><td><code>true</code></td></tr>
+            <tr><td><code>continueOnStopError</code></td><td>Keep stopping the rest when one module throws</td><td><code>true</code></td></tr>
+            <tr><td><code>continueOnDestroyError</code></td><td>Keep destroying the rest when one module throws</td><td><code>true</code></td></tr>
+            <tr><td><code>timeoutMs</code></td><td>Abandon shutdown after this long; <code>0</code> means never</td><td><code>30000</code></td></tr>
+          </tbody>
+        </table>
+
+        <p class="mb-4 leading-relaxed">
+          The two <code>continueOn</code> defaults are <code>true</code> on purpose. During shutdown, one broken module must not strand every other module's cleanup.
+        </p>
+
+        <p class="mb-2 leading-relaxed">Shortening the shutdown budget to five seconds:</p>
+        <div class="code-block mb-6">
+<span class="kw">const</span> app = <span class="kw">await</span> <span class="fn">createApplication</span>({
+  <span class="prop">modules</span>: [api, database],
+  <span class="prop">runtime</span>: {
+    <span class="prop">shutdown</span>: { <span class="prop">timeoutMs</span>: <span class="num">5_000</span> },
+  },
+});
+        </div>
+
+        <p class="mb-4 leading-relaxed">
+          <code>app.stop()</code> stops the runtime but leaves the application able to start again. <code>app.shutdown()</code> stops it and releases the lifecycle for good — after that, a restart is not possible.
+        </p>
+      </section>
+
+      <!-- SIGNALS -->
+      <section id="signals" class="mb-16">
+        <h2 class="text-2xl font-bold mb-4 border-b-4 border-black pb-2 uppercase">Signal Handling</h2>
+        <p class="mb-4 leading-relaxed">
+          A <strong>signal</strong> is how an operating system asks a process to stop. Pressing Ctrl-C sends <code>SIGINT</code>. Docker and Kubernetes send <code>SIGTERM</code> before they eventually force a kill.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          The runtime installs handlers when it starts and removes them when it stops, so a signal turns into a graceful shutdown instead of an abrupt exit.
+        </p>
+
+        <table class="doc-table mb-6">
+          <thead>
+            <tr><th>Option</th><th>What it does</th><th>Default</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>handleSigint</code></td><td>Stop gracefully on Ctrl-C</td><td><code>true</code></td></tr>
+            <tr><td><code>handleSigterm</code></td><td>Stop gracefully on <code>SIGTERM</code></td><td><code>true</code></td></tr>
+            <tr><td><code>handleSighup</code></td><td>Stop gracefully on <code>SIGHUP</code></td><td><code>false</code></td></tr>
+            <tr><td><code>handleUncaughtException</code></td><td>Mark failed and stop on an uncaught error</td><td><code>true</code></td></tr>
+            <tr><td><code>handleUnhandledRejection</code></td><td>Mark failed and stop on an unhandled rejection</td><td><code>true</code></td></tr>
+            <tr><td><code>forceExitOnSecondSignal</code></td><td>Exit immediately if a second signal arrives mid-stop</td><td><code>false</code></td></tr>
+            <tr><td><code>forceExitCode</code></td><td>Exit code used by the force exit above</td><td><code>1</code></td></tr>
+          </tbody>
+        </table>
+
+        <p class="mb-2 leading-relaxed">A container-friendly setup — impatient operators get a hard exit on the second Ctrl-C:</p>
+        <div class="code-block mb-6">
+<span class="kw">const</span> app = <span class="kw">await</span> <span class="fn">createApplication</span>({
+  <span class="prop">modules</span>: [api, database],
+  <span class="prop">autoStart</span>: <span class="kw">true</span>,
+  <span class="prop">runtime</span>: {
+    <span class="prop">name</span>: <span class="str">"orders-service"</span>,
+    <span class="prop">mode</span>: <span class="str">"production"</span>,
+    <span class="prop">signals</span>: {
+      <span class="prop">handleSigterm</span>: <span class="kw">true</span>,
+      <span class="prop">handleSigint</span>: <span class="kw">true</span>,
+      <span class="prop">forceExitOnSecondSignal</span>: <span class="kw">true</span>,
+      <span class="prop">forceExitCode</span>: <span class="num">130</span>,
+    },
+    <span class="prop">shutdown</span>: { <span class="prop">timeoutMs</span>: <span class="num">15_000</span> },
+  },
+});
+        </div>
+
+        <div class="callout callout-danger mb-6">
+          <p class="text-sm font-bold mb-1">DANGER</p>
+          <p class="text-sm">The runtime never calls <code>process.exit()</code> unless <code>forceExitOnSecondSignal</code> is switched on. That is deliberate: exiting the process is the host application's decision, not the framework's. If your process lingers after a signal, something else is still holding an open handle.</p>
+        </div>
+      </section>
+
+      <!-- STANDALONE -->
+      <section id="standalone" class="mb-16">
+        <h2 class="text-2xl font-bold mb-4 border-b-4 border-black pb-2 uppercase">The Standalone Runtime</h2>
+        <p class="mb-4 leading-relaxed">
+          <code>@zudojs/runtime</code> is a different package with a different runtime. It exists for hosts that assemble the pieces themselves rather than going through <code>createApplication</code>.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          Its <code>createRuntime</code> takes explicit dependencies — a map of modules, a logger, a container and an event bus — and returns a <code>Runtime</code>.
         </p>
 
         <div class="code-block mb-6">
 <span class="kw">import</span> { <span class="fn">createRuntime</span> } <span class="kw">from</span> <span class="str">"@zudojs/runtime"</span>;
 
-<span class="kw">const</span> runtime = <span class="fn">createRuntime</span>({
-  <span class="fn">modules</span>: [
-    <span class="fn">configModule</span>,
-    <span class="fn">loggerModule</span>,
-    <span class="fn">databaseModule</span>,
-    <span class="fn">authModule</span>,
-    <span class="fn">httpModule</span>,
-  ],
-  <span class="fn">config</span>: {
-    <span class="fn">shutdownTimeout</span>: <span class="num">30000</span>,  <span class="cm">// 30s grace period</span>
-    <span class="fn">enableSignals</span>: <span class="num">true</span>,     <span class="cm">// Trap SIGTERM, SIGINT</span>
-  }
-});
+<span class="kw">const</span> runtime = <span class="fn">createRuntime</span>(
+  { modules, logger, container, eventBus },
+  { <span class="prop">name</span>: <span class="str">"worker"</span> },
+);
 
-<span class="cm">// Start the application</span>
 <span class="kw">await</span> runtime.<span class="fn">start</span>();
-console.<span class="fn">log</span>(<span class="str">`Runtime state: ${runtime.state}`</span>); <span class="cm">// "ready"</span>
         </div>
+
+        <p class="mb-4 leading-relaxed">
+          Two things it adds over the core runtime:
+        </p>
+        <ul class="list-disc pl-6 space-y-2 mb-4 text-sm">
+          <li><strong>Readiness checks.</strong> <code>registerReadinessCheck(name, check)</code> adds a named check; <code>runReadinessChecks()</code> re-runs them all; <code>runtime.readiness</code> reports each result. A newly registered check starts out failing until it is first evaluated, so registering one on a live runtime moves it to degraded until it passes.</li>
+          <li><strong>Health.</strong> <code>runtime.health</code> and <code>runtime.status</code> give a structured report suitable for a health endpoint.</li>
+        </ul>
+
+        <div class="callout callout-warning mb-6">
+          <p class="text-sm font-bold mb-1">DIFFERENT STATE NAMES</p>
+          <p class="text-sm">This runtime's states are <code>created</code>, <code>initializing</code>, <code>initialized</code>, <code>starting</code>, <code>running</code>, <code>stopping</code>, <code>stopped</code> and <code>failed</code> — plain strings, not the core <code>RuntimeState</code> enum. Do not compare values from one runtime against the other.</p>
+        </div>
+
+        <p class="mb-4 leading-relaxed">
+          The testing helper <code>testRuntime</code> is deliberately not exported from the package root. Import it from <code>@zudojs/runtime/testing</code>.
+        </p>
       </section>
 
-      <!-- GRACEFUL SHUTDOWN -->
-      <section id="shutdown" class="mb-16">
-        <h2 class="text-2xl font-bold mb-4 border-b-4 border-black pb-2 uppercase">Graceful Shutdown</h2>
-        <p class="mb-4 leading-relaxed">
-          The runtime automatically traps <code>SIGTERM</code> and <code>SIGINT</code> signals and initiates a graceful shutdown. Modules are stopped in <strong>reverse dependency order</strong> (the opposite of initialization order).
-        </p>
-
-        <div class="code-block mb-6">
-<span class="cm">// Manual shutdown trigger</span>
-<span class="kw">await</span> runtime.<span class="fn">shutdown</span>();
-
-<span class="cm">// Shutdown sequence:</span>
-<span class="cm">// 1. Transition to SHUTTING_DOWN</span>
-<span class="cm">// 2. Stop modules in reverse order</span>
-<span class="cm">//    - httpModule.stop()   (stops accepting connections)</span>
-<span class="cm">//    - authModule.stop()   (closes auth connections)</span>
-<span class="cm">//    - databaseModule.stop() (drains connection pool)</span>
-<span class="cm">//    - loggerModule.stop()  (flushes pending logs)</span>
-<span class="cm">//    - configModule.stop()  (cleanup)</span>
-<span class="cm">// 3. Destroy modules in reverse order</span>
-<span class="cm">// 4. Transition to DISPOSED</span>
-        </div>
-
-        <div class="callout callout-note mb-6">
-          <p class="text-sm font-bold mb-1">SHUTDOWN TIMEOUT</p>
-          <p class="text-sm">If a module's <code>stop()</code> exceeds the configured <code>shutdownTimeout</code>, the runtime logs a warning and continues shutting down remaining modules. This prevents a single misbehaving module from blocking the entire shutdown process.</p>
-        </div>
-      </section>
-
-      <!-- SIGNAL HANDLING -->
-      <section id="signals" class="mb-16">
-        <h2 class="text-2xl font-bold mb-4 border-b-4 border-black pb-2 uppercase">Signal Handling</h2>
-        <p class="mb-4 leading-relaxed">
-          By default, the runtime traps POSIX signals and converts them into graceful shutdown:
-        </p>
-
-        <div class="overflow-x-auto mb-6">
-          <table class="w-full text-smw-full border-2 border-black text-sm">
-            <thead class="bg-zudo-black text-white">
-              <tr>
-                <th class="border border-black px-4 py-2 text-left font-bold">Signal</th>
-                <th class="border border-black px-4 py-2 text-left font-bold">Behavior</th>
-                <th class="border border-black px-4 py-2 text-left font-bold">Typical Use</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">SIGTERM</td><td class="border border-black px-4 py-2">Graceful shutdown</td><td class="border border-black px-4 py-2">Container orchestration (Docker, K8s)</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">SIGINT</td><td class="border border-black px-4 py-2">Graceful shutdown</td><td class="border border-black px-4 py-2">Ctrl+C in terminal</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">SIGHUP</td><td class="border border-black px-4 py-2">Configuration reload</td><td class="border border-black px-4 py-2">Reload config without restart</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="code-block mb-6">
-<span class="cm">// Disable automatic signal handling</span>
-<span class="kw">const</span> runtime = <span class="fn">createRuntime</span>({
-  <span class="fn">modules</span>: [...],
-  <span class="fn">config</span>: {
-    <span class="fn">enableSignals</span>: <span class="num">false</span>  <span class="cm">// Handle signals yourself</span>
-  }
-});
-
-<span class="cm">// Custom signal handling</span>
-process.<span class="fn">on</span>(<span class="str">"SIGTERM"</span>, <span class="kw">async</span> () => {
-  console.<span class="fn">log</span>(<span class="str">"Custom shutdown logic..."</span>);
-  <span class="kw">await</span> runtime.<span class="fn">shutdown</span>();
-});
-        </div>
-      </section>
-
-      <!-- ERROR RECOVERY -->
-      <section id="errors" class="mb-16">
-        <h2 class="text-2xl font-bold mb-4 border-b-4 border-black pb-2 uppercase">Error Recovery</h2>
-        <p class="mb-4 leading-relaxed">
-          If a module fails during initialization or startup, the runtime:
-        </p>
-
-        <ol class="list-decimal list-inside mb-4 space-y-2 text-sm leading-relaxed">
-          <li>Logs the error with the module name and stack trace</li>
-          <li>Stops all already-initialized modules in reverse order</li>
-          <li>Transitions to SHUTTING_DOWN → DISPOSED</li>
-          <li>Rejects the <code>start()</code> promise with the original error</li>
-        </ol>
-
-        <div class="code-block mb-6">
-<span class="kw">try</span> {
-  <span class="kw">await</span> runtime.<span class="fn">start</span>();
-} <span class="kw">catch</span> (error) {
-  console.<span class="fn">error</span>(<span class="str">"Failed to start application:"</span>, error);
-  process.<span class="fn">exit</span>(<span class="num">1</span>);
-}
-        </div>
+      <!-- RELATED -->
+      <section id="related" class="mb-16">
+        <h2 class="text-2xl font-bold mb-4 border-b-4 border-black pb-2 uppercase">Related</h2>
+        <ul class="list-disc pl-6 space-y-2 text-sm">
+          <li><a href="/docs/packages-core" class="text-zudo-blue hover:underline">@zudojs/core</a> — <code>createApplication</code>, <code>RuntimeState</code>, and the runtime most applications use.</li>
+          <li><a href="/docs/packages-runtime" class="text-zudo-blue hover:underline">@zudojs/runtime</a> — the standalone runtime, with readiness and health.</li>
+          <li><a href="/docs/architecture-module-system" class="text-zudo-blue hover:underline">Module System</a> — what the runtime is actually starting and stopping.</li>
+          <li><a href="/docs/packages-lifecycle" class="text-zudo-blue hover:underline">@zudojs/lifecycle</a> — ordering, timeouts and signal handling for components that are not modules.</li>
+          <li><a href="/docs/architecture-adapters" class="text-zudo-blue hover:underline">Adapters</a> — the servers and connections a runtime brings up and tears down.</li>
+        </ul>
       </section>
 
       <!-- PREV / NEXT -->
@@ -370,18 +498,19 @@ process.<span class="fn">on</span>(<span class="str">"SIGTERM"</span>, <span cla
         </a>
       </nav>
 
-    </main>
+</main>
 
     <!-- TABLE OF CONTENTS (RIGHT) -->
     <aside class="doc-toc" aria-label="On this page">
       <div>
         <div class="text-xs font-bold uppercase tracking-wider mb-4 text-black/40">On This Page</div>
         <a href="#overview" class="toc-link toc-link-active">Overview</a>
-        <a href="#state-machine" class="toc-link">Lifecycle States</a>
-        <a href="#initialization" class="toc-link">Runtime Initialization</a>
+        <a href="#states" class="toc-link">Runtime States</a>
+        <a href="#startup" class="toc-link">Startup</a>
         <a href="#shutdown" class="toc-link">Graceful Shutdown</a>
         <a href="#signals" class="toc-link">Signal Handling</a>
-        <a href="#errors" class="toc-link">Error Recovery</a>
+        <a href="#standalone" class="toc-link">Standalone Runtime</a>
+        <a href="#related" class="toc-link">Related</a>
       </div>
     </aside>
 
@@ -391,6 +520,7 @@ process.<span class="fn">on</span>(<span class="str">"SIGTERM"</span>, <span cla
 
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 
   <!-- FOOTER -->
   <div id="zudo-footer"></div>

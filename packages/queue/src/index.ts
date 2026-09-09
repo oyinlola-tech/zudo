@@ -35,9 +35,6 @@ export * from "./queueManager/index.js";
 // Queue registry
 export * from "./queueRegistry/index.js";
 
-// Queue events
-export * from "./queueEvents/index.js";
-
 // Queue emitter
 export * from "./queueEmitter/index.js";
 

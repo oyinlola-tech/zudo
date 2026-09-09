@@ -52,6 +52,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -108,7 +109,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/database</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           PostgreSQL data-access layer for Zudo applications, built on Prisma 7 — a lifecycle-aware client, generic repositories with soft delete, a query builder that translates to Prisma <code>where</code> clauses, managed transactions, keyset pagination with signed cursors, migration and seed runners guarded by advisory locks, health checks with reconnect, and a bounded in-memory cache.
@@ -122,618 +123,462 @@
         </div>
       </div>
 
+<section id="overview" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OVERVIEW</h2>
+<p class="mb-4 leading-relaxed">Most applications need to store data in a database and read it back. Prisma already generates a typed client for that. What it does not give you is a shared way to open and close the connection, run the same "find by id, create, update, soft delete" code for every table, keep pagination consistent, or turn database failures into errors your HTTP layer understands.</p>
+<p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">@zudojs/database</code> adds that layer on top of Prisma 7 for PostgreSQL. It wraps your Prisma client in a <em>DatabaseClient</em> that manages the connection, gives you a <em>BaseRepository</em> class you extend once per table, and ships helpers for transactions, query building, pagination, migrations, seeds, locks, caching and health checks.</p>
+<p class="mb-4 leading-relaxed">Prisma stays visible. Repositories wrap a Prisma model (for example <code>prisma.user</code>), and transaction callbacks receive Prisma's own transaction client. The package normalises lifecycle, errors and pagination; it does not hide Prisma from you.</p>
+<div class="grid md:grid-cols-2 gap-4 mb-4">
+<div class="border-4 border-black p-4"><div class="font-black mb-2">When you need it</div><ul class="list-disc pl-5 space-y-1 text-sm"><li>You use Prisma 7 with PostgreSQL and want one place that connects, checks health and disconnects.</li><li>Several tables need the same CRUD, soft-delete and pagination behaviour.</li><li>You want database errors mapped to 404 / 409 / 503 without hand-written <code>switch</code> statements.</li><li>You need migrations, seeds or locks that are safe when two app instances start at once.</li></ul></div>
+<div class="border-4 border-black p-4"><div class="font-black mb-2">When you don't</div><ul class="list-disc pl-5 space-y-1 text-sm"><li>You use MySQL, SQLite or MongoDB. The client works with any Prisma client, but the migration, seed and lock helpers emit PostgreSQL SQL only.</li><li>You are happy calling <code>prisma.user.findMany()</code> directly and have one or two tables.</li><li>You need nested transactions or savepoints. Prisma interactive transactions are used as-is.</li></ul></div>
+</div>
+</section>
+
 <section id="installation" class="mb-12">
 <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-<div class="code-block"><span class="cmt">// npm</span>
-npm install @zudojs/database @prisma/client @prisma/adapter-pg
-
-<span class="cmt">// pnpm</span>
-pnpm add @zudojs/database @prisma/client @prisma/adapter-pg</div>
-<div class="callout callout-note mb-4"><strong class="text-zudo-blue">Peer dependency:</strong> <code class="bg-black/5 px-1">@prisma/client</code> (<code>&gt;=7.0.0 &lt;8</code>) is a peer dependency. Prisma 7 connects through a driver adapter, so you also need one for PostgreSQL (<code class="bg-black/5 px-1">@prisma/adapter-pg</code>). <code class="bg-black/5 px-1">@zudojs/errors</code> 0.1.0 is a regular dependency.</div>
-<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">PostgreSQL only.</strong> The migration, seed and lock helpers emit PostgreSQL SQL (advisory locks, <code>$1</code> placeholders, <code>BIGSERIAL</code>). Requesting another dialect throws <code>UnsupportedDialectError</code>.</div>
+<p class="mb-4 leading-relaxed">Install the package together with Prisma and the PostgreSQL driver adapter. Prisma 7 talks to the database through an <em>adapter</em>, a small package that owns the connection string, pool size and SSL settings.</p>
+<div class="code-block">$ npm install @zudojs/database @prisma/client @prisma/adapter-pg
+$ npx prisma generate</div>
+<div class="callout callout-note mb-4">These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest @zudojs release.</div>
+<div class="callout callout-note mb-4"><strong class="text-zudo-blue">Peer dependency.</strong> <code class="bg-black/5 px-1">@prisma/client</code> <code>&gt;=7.0.0 &lt;8</code> is a peer dependency, so you install it yourself. <code class="bg-black/5 px-1">@zudojs/errors</code> is a regular dependency and comes along automatically.</div>
+<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">PostgreSQL only.</strong> <code>MigrationRunner</code>, <code>SeedRunner</code> and <code>DatabaseLockManager</code> emit PostgreSQL SQL. Passing <code>dialect: "mysql"</code> or <code>"sqlite"</code> throws <code>UnsupportedDialectError</code>; those dialects are typed but not implemented.</div>
+<p class="mb-4 leading-relaxed">Everything is exported from the package root. Three smaller entry points exist if you prefer narrower imports.</p>
+<table class="doc-table mb-4"><thead><tr><th>Import path</th><th>Contents</th></tr></thead><tbody><tr><td><code>@zudojs/database</code></td><td>Everything on this page</td></tr><tr><td><code>@zudojs/database/client</code></td><td><code>DatabaseClient</code>, <code>createDatabaseClient</code>, error helpers</td></tr><tr><td><code>@zudojs/database/repositories</code></td><td><code>BaseRepository</code>, <code>mapRepositoryError</code></td></tr><tr><td><code>@zudojs/database/transactions</code></td><td><code>TransactionManager</code>, <code>withTransaction</code>, <code>withTransactionRetry</code></td></tr></tbody></table>
 </section>
 
-<section id="what-it-does" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHAT IT DOES</h2>
-<p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">@zudojs/database</code> provides the data-access layer for Zudo applications:</p>
-<ul class="list-disc pl-6 mb-4 space-y-1"><li><strong>DatabaseClient</strong> — wraps a Prisma client with a connection lifecycle (de-duplicated <code>connect()</code>), raw queries, transactions and typed error normalisation</li><li><strong>Database facade</strong> — a lazily created shared instance (<code class="bg-black/5 px-1">getDatabase</code>, <code class="bg-black/5 px-1">connectDatabase</code>, <code class="bg-black/5 px-1">resetDatabase</code>)</li><li><strong>DatabaseConnectionManager</strong> — lifecycle events, scheduled health checks with timeout and overlap guard, reconnect with exponential back-off</li><li><strong>BaseRepository</strong> — CRUD, bulk operations, soft delete, offset and keyset pagination, query-builder execution and transaction rebinding</li><li><strong>QueryBuilder</strong> and 40 filter helpers — database-neutral filters translated to Prisma <code>where</code> / <code>orderBy</code> / <code>select</code> / <code>include</code></li><li><strong>TransactionManager</strong>, <code class="bg-black/5 px-1">withTransaction</code>, <code class="bg-black/5 px-1">withTransactionRetry</code> — managed transactions with context, error enrichment and retry of serialization failures</li><li><strong>DatabaseUnitOfWork</strong> — one transaction for several repository operations</li><li><strong>Pagination</strong> — offset helpers plus keyset helpers with HMAC-signed, shape-validated cursors</li><li><strong>MigrationRunner</strong> / <strong>SeedRunner</strong> — versioned, tracked execution under PostgreSQL advisory locks, one transaction per item by default</li><li><strong>DatabaseLockManager</strong> — advisory and row locks with <code>lock_timeout</code>, <code>SKIP LOCKED</code> / <code>NOWAIT</code></li><li><strong>MemoryDatabaseCache</strong> — LRU cache with TTL, background pruning and loader coalescing</li><li><strong>Relations</strong> — typed relation definitions, a registry keyed by parent model, and <code class="bg-black/5 px-1">toPrismaInclude</code></li><li><strong>Health</strong> — <code class="bg-black/5 px-1">checkDatabaseHealth</code>, <code class="bg-black/5 px-1">checkDatabaseReadiness</code>, <code class="bg-black/5 px-1">assertDatabaseHealth</code></li></ul>
-<div class="callout callout-note mb-4"><strong class="text-zudo-blue">Prisma stays visible.</strong> Repositories wrap a Prisma model delegate (<code>prisma.user</code>) and transaction callbacks receive Prisma's interactive transaction client. The package normalises errors, lifecycle and pagination; it does not hide Prisma.</div>
-</section>
+<section id="quick-start" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK START</h2>
+<p class="mb-4 leading-relaxed">This example assumes your Prisma schema has a <code>User</code> model with <code>id</code>, <code>email</code>, <code>name</code> and a nullable <code>deletedAt</code> column. It builds the Prisma client, wraps it, defines one repository and creates a row.</p>
+<div class="code-block"><span class="kw">import</span> { PrismaClient } <span class="kw">from</span> <span class="str">"@prisma/client"</span>;
+<span class="kw">import</span> { PrismaPg } <span class="kw">from</span> <span class="str">"@prisma/adapter-pg"</span>;
+<span class="kw">import</span> { BaseRepository, createDatabaseClient } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
 
-<section id="architecture-position" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHERE IT SITS</h2>
-<div class="code-block">APPLICATION LAYER (services, handlers, CQRS)
-        │  repositories, query builder, transactions
-        ▼
-DATABASE LAYER (@zudojs/database)
-        │  PrismaClientLike (structural), interactive $transaction, $queryRawUnsafe
-        ▼
-PRISMA CLIENT 7 (@prisma/client) + DRIVER ADAPTER (@prisma/adapter-pg)
-        │
-        ▼
-POSTGRESQL</div>
-<p class="mb-4 leading-relaxed">The package depends on Prisma structurally: any object exposing <code>$connect</code>, <code>$disconnect</code>, <code>$transaction</code>, <code>$queryRawUnsafe</code> and <code>$executeRawUnsafe</code> satisfies <code>PrismaClientLike</code>. Nothing is read from the generated <code>Prisma</code> namespace at runtime, so a generated client living outside <code>@prisma/client</code> (the Prisma 7 default) works.</p>
-</section>
+<span class="kw">interface</span> <span class="tp">User</span> {
+  id: <span class="tp">string</span>;
+  email: <span class="tp">string</span>;
+  name: <span class="tp">string</span>;
+  deletedAt: <span class="tp">Date</span> | <span class="kw">null</span>;
+}
 
-<section id="dependencies" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DEPENDENCIES</h2>
-<div class="border-4 border-black overflow-x-auto"><table class="w-full text-sm"><thead class="bg-black text-white"><tr><th class="p-3 text-left">Package</th><th class="p-3 text-left">Version</th><th class="p-3 text-left">Kind</th><th class="p-3 text-left">Purpose</th></tr></thead><tbody><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/errors</td><td class="p-3">0.1.0</td><td class="p-3">dependency</td><td class="p-3"><code>DatabaseError</code>, <code>DatabaseOperation</code>, <code>ErrorCode</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@prisma/client</td><td class="p-3">&gt;=7.0.0 &lt;8</td><td class="p-3">peer dependency</td><td class="p-3">Prisma client and interactive transactions</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@prisma/adapter-pg</td><td class="p-3">any Prisma 7 adapter</td><td class="p-3">provided by the consumer</td><td class="p-3">Driver adapter that owns the connection URL, pool size and SSL settings</td></tr></tbody></table></div>
+<span class="cmt">// One repository per model. The delegate is the Prisma model (prisma.user).</span>
+<span class="kw">class</span> <span class="tp">UserRepository</span> <span class="kw">extends</span> <span class="tp">BaseRepository</span>&lt;<span class="tp">User</span>&gt; {
+  <span class="kw">constructor</span>(delegate: <span class="tp">ConstructorParameters</span>&lt;<span class="kw">typeof</span> <span class="tp">BaseRepository</span>&lt;<span class="tp">User</span>&gt;&gt;[<span class="num">0</span>]) {
+    <span class="kw">super</span>(delegate, { modelName: <span class="str">"User"</span>, softDelete: <span class="kw">true</span> });
+  }
+}
+
+<span class="kw">const</span> prisma = <span class="kw">new</span> <span class="tp">PrismaClient</span>({
+  adapter: <span class="kw">new</span> <span class="tp">PrismaPg</span>({ connectionString: process.env.<span class="const">DATABASE_URL</span> }),
+});
+<span class="kw">const</span> client = <span class="fn">createDatabaseClient</span>({ prisma });
+<span class="kw">await</span> client.<span class="fn">connect</span>();
+
+<span class="kw">const</span> users = <span class="kw">new</span> <span class="tp">UserRepository</span>(prisma.user);
+<span class="kw">const</span> alice = <span class="kw">await</span> users.<span class="fn">create</span>({ email: <span class="str">"alice@example.com"</span>, name: <span class="str">"Alice"</span> });
+console.<span class="fn">log</span>(alice.name, <span class="kw">await</span> users.<span class="fn">count</span>());
+<span class="cmt">// Alice 1</span>
+
+<span class="kw">await</span> client.<span class="fn">disconnect</span>();</div>
+<p class="mb-4 leading-relaxed">Run it with <code>DATABASE_URL</code> set. The console prints <code>Alice 1</code>: the created row's name and the number of live rows in the table. The client also logs <code>Database connected.</code> and <code>Database disconnected.</code> through its default logger.</p>
+<div class="callout callout-tip mb-4"><strong>Tip:</strong> the long <code>ConstructorParameters&lt;...&gt;[0]</code> type just means "whatever the base class accepts as its first argument". It keeps your repository independent from Prisma's generated types.</div>
 </section>
 
 <section id="database-client" class="mb-12">
 <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DATABASE CLIENT</h2>
-<p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">DatabaseClient</code> wraps a Prisma client with a connection lifecycle, raw query helpers, transactions and error normalisation.</p>
-<div class="code-block"><span class="kw">interface</span> DatabaseClientOptions {
-  <span class="kw">readonly</span> prisma?: PrismaClientLike;          <span class="cmt">// pre-built client (takes precedence)</span>
-  <span class="kw">readonly</span> adapter?: PrismaDriverAdapterLike;  <span class="cmt">// used to construct a PrismaClient when prisma is absent</span>
-  <span class="kw">readonly</span> logger?: DatabaseLogger;
-  <span class="kw">readonly</span> connectionTimeoutMs?: number;       <span class="cmt">// client-side deadline for $connect (default 10 000)</span>
-  <span class="kw">readonly</span> logging?: boolean;                  <span class="cmt">// emit query duration/target to the logger</span>
-}
-
-<span class="kw">class</span> DatabaseClient {
-  constructor(options?: DatabaseClientOptions); <span class="cmt">// throws DatabaseError when neither prisma nor adapter is given</span>
-
-  connect(): Promise&lt;void&gt;;        <span class="cmt">// concurrent calls share one in-flight attempt</span>
-  disconnect(): Promise&lt;void&gt;;     <span class="cmt">// waits for an in-flight connect first</span>
-  ensureConnected(): Promise&lt;void&gt;;
-  destroy(): Promise&lt;void&gt;;
-
-  ping(options?: RawQueryOptions): Promise&lt;void&gt;;
-  healthCheck(options?: RawQueryOptions): Promise&lt;DatabaseClientHealth&gt;;
-  getStatus(): DatabaseStatus;     <span class="cmt">// "disconnected" | "connecting" | "connected" | "disconnecting" | "error"</span>
-  getConnectedAt(): Date | undefined;
-  getPrisma(): PrismaClientLike;
-
-  transaction&lt;T&gt;(callback: (tx: DatabaseTransactionContext) =&gt; Promise&lt;T&gt;, options?: TransactionOptions): Promise&lt;T&gt;;
-  queryRawUnsafe&lt;T&gt;(sql: string, values?: <span class="kw">readonly</span> unknown[], options?: RawQueryOptions): Promise&lt;T&gt;;
-  executeRawUnsafe(sql: string, values?: <span class="kw">readonly</span> unknown[], options?: RawQueryOptions): Promise&lt;number&gt;;
-  queryRaw&lt;T&gt;(query: Prisma.Sql, options?: RawQueryOptions): Promise&lt;T&gt;;
-  executeRaw(query: Prisma.Sql, options?: RawQueryOptions): Promise&lt;number&gt;;
-}</div>
-<h3 class="text-lg font-bold mb-3 mt-6">Operation options</h3>
-<div class="border-4 border-black overflow-x-auto"><table class="w-full text-sm"><thead class="bg-black text-white"><tr><th class="p-3 text-left">Option</th><th class="p-3 text-left">Type</th><th class="p-3 text-left">Effect</th></tr></thead><tbody><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">signal</td><td class="p-3">AbortSignal</td><td class="p-3">Rejects with <code>DatabaseAbortError</code> (code <code>ERR_ABORTED</code>) as soon as the signal aborts, even mid-query.</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">timeoutMs</td><td class="p-3">number</td><td class="p-3">Client-side deadline (<code>ERR_DATABASE_TIMEOUT</code>, 503). The statement is not cancelled server-side; use <code>statement_timeout</code> for that.</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">metadata</td><td class="p-3">Record&lt;string, unknown&gt;</td><td class="p-3">Merged into the metadata of any <code>DatabaseError</code> raised.</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">isolationLevel / timeoutMs / maxWaitMs</td><td class="p-3">TransactionOptions</td><td class="p-3">Forwarded to Prisma's interactive <code>$transaction</code>. Isolation levels are validated against <code>SUPPORTED_ISOLATION_LEVELS</code>.</td></tr></tbody></table></div>
-<h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
+<p class="mb-4 leading-relaxed">A <em>DatabaseClient</em> is a thin wrapper around a Prisma client. It tracks whether you are connected, de-duplicates concurrent <code>connect()</code> calls, adds timeouts and cancellation to raw queries, and converts every failure into a <code>DatabaseError</code>.</p>
+<p class="mb-4 leading-relaxed">You create it with <code>createDatabaseClient</code> and either a pre-built <code>prisma</code> instance or an <code>adapter</code>. With only an adapter the client constructs the <code>PrismaClient</code> for you. Passing neither throws immediately.</p>
+<table class="doc-table mb-4"><thead><tr><th>Option</th><th>What it does</th><th>Default</th></tr></thead><tbody><tr><td><code>prisma</code></td><td>A Prisma client to wrap. Takes precedence over <code>adapter</code>.</td><td>—</td></tr><tr><td><code>adapter</code></td><td>A Prisma driver adapter (for example <code>new PrismaPg(...)</code>) used to build a client when <code>prisma</code> is absent.</td><td>—</td></tr><tr><td><code>connectionTimeoutMs</code></td><td>How long <code>connect()</code> waits before failing with <code>ERR_DATABASE_TIMEOUT</code>.</td><td><code>10000</code></td></tr><tr><td><code>logging</code></td><td>Log each query's duration through the logger.</td><td><code>false</code></td></tr><tr><td><code>logger</code></td><td>Any object with <code>debug / info / warn / error</code>. Use <code>noopDatabaseLogger</code> to silence output.</td><td>console</td></tr></tbody></table>
+<p class="mb-4 leading-relaxed">This example connects, runs a raw parameterised query with a 2-second deadline, and prints a health check.</p>
 <div class="code-block"><span class="kw">import</span> { PrismaClient } <span class="kw">from</span> <span class="str">"@prisma/client"</span>;
 <span class="kw">import</span> { PrismaPg } <span class="kw">from</span> <span class="str">"@prisma/adapter-pg"</span>;
 <span class="kw">import</span> { createDatabaseClient } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
 
-<span class="kw">const</span> prisma = <span class="kw">new</span> PrismaClient({
-  adapter: <span class="kw">new</span> PrismaPg({ connectionString: process.env.DATABASE_URL }),
+<span class="kw">const</span> prisma = <span class="kw">new</span> <span class="tp">PrismaClient</span>({
+  adapter: <span class="kw">new</span> <span class="tp">PrismaPg</span>({ connectionString: process.env.<span class="const">DATABASE_URL</span> }),
 });
-<span class="kw">const</span> client = createDatabaseClient({ prisma, connectionTimeoutMs: 5_000 });
+<span class="kw">const</span> client = <span class="fn">createDatabaseClient</span>({ prisma, connectionTimeoutMs: <span class="num">5_000</span> });
+<span class="kw">await</span> client.<span class="fn">connect</span>();
 
-<span class="kw">await</span> client.connect();
-
-<span class="kw">const</span> rows = <span class="kw">await</span> client.queryRawUnsafe&lt;{ id: string }[]&gt;(
-  'SELECT <span class="str">"id"</span> FROM <span class="str">"users"</span> WHERE <span class="str">"email"</span> = $1',
-  [<span class="str">"alice@example.com"</span>],
-  { timeoutMs: 2_000 },
+<span class="kw">const</span> rows = <span class="kw">await</span> client.<span class="fn">queryRawUnsafe</span>&lt;{ count: <span class="tp">bigint</span> }[]&gt;(
+  <span class="str">'SELECT COUNT(*) AS "count" FROM "User" WHERE "email" LIKE $1'</span>,
+  [<span class="str">"%@example.com"</span>],
+  { timeoutMs: <span class="num">2_000</span> },
 );
+console.<span class="fn">log</span>(rows[<span class="num">0</span>]?.count);
+<span class="cmt">// 1n</span>
 
-<span class="kw">await</span> client.transaction(<span class="kw">async</span> (tx) =&gt; {
-  <span class="kw">await</span> tx.user.update({ where: { id }, data: { balance: { decrement: 100 } } });
-  <span class="kw">await</span> tx.ledger.create({ data: { userId: id, amount: 100 } });
-}, { isolationLevel: <span class="str">"Serializable"</span>, timeoutMs: 10_000 });
+console.<span class="fn">log</span>(<span class="kw">await</span> client.<span class="fn">healthCheck</span>());
+<span class="cmt">// { status: "connected", latencyMs: 3, checkedAt: 2026-09-09T10:00:00.000Z }</span>
 
-<span class="kw">await</span> client.disconnect();</div>
+<span class="kw">await</span> client.<span class="fn">disconnect</span>();</div>
+<p class="mb-4 leading-relaxed">Every raw method accepts the same options object: <code>signal</code> (an <code>AbortSignal</code> that rejects with <code>DatabaseAbortError</code>), <code>timeoutMs</code> and <code>metadata</code> (merged into any error raised). <code>queryRawUnsafe</code> / <code>executeRawUnsafe</code> take a SQL string plus a values array; <code>queryRaw</code> / <code>executeRaw</code> take a <code>Prisma.sql</code> tagged template.</p>
+<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">Watch out:</strong> <code>timeoutMs</code> is client-side. The client stops waiting, but PostgreSQL keeps running the statement. Set <code>statement_timeout</code> on the database for real cancellation.</div>
+<p class="mb-4 leading-relaxed">If you want one client shared across your whole app, use the facade functions instead of passing the client around: <code>connectDatabase(options)</code> creates and connects a shared <code>Database</code> once, <code>getDatabase()</code> returns it anywhere else, and <code>resetDatabase()</code> disconnects and clears it. Calling <code>getDatabase()</code> with options after it exists throws a <code>TypeError</code>, so you never silently reconfigure it.</p>
 </section>
 
-<section id="database-facade" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DATABASE FACADE</h2>
-<p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">Database</code> is a thin facade over one <code class="bg-black/5 px-1">DatabaseClient</code>. A shared instance is created lazily by <code class="bg-black/5 px-1">getDatabase()</code>; nothing connects at import time.</p>
-<div class="code-block"><span class="kw">class</span> Database {
-  constructor(options?: DatabaseClientOptions | DatabaseClient);
-  connect(): Promise&lt;void&gt;;
-  disconnect(): Promise&lt;void&gt;;
-  ensureConnected(): Promise&lt;void&gt;;
-  ping(): Promise&lt;void&gt;;
-  getStatus(): DatabaseStatus;
-  healthCheck(): Promise&lt;DatabaseClientHealth&gt;;
-  transaction&lt;T&gt;(callback, options?): Promise&lt;T&gt;;
-  getClient(): DatabaseClient;
-  getPrisma(): PrismaClientLike;
-  destroy(): Promise&lt;void&gt;;
-}
+<section id="repositories" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">REPOSITORIES</h2>
+<p class="mb-4 leading-relaxed">A <em>repository</em> is a class that owns all database access for one table. Instead of scattering <code>prisma.user.findFirst(...)</code> across your code, you write <code>users.findById(id)</code>. <code>BaseRepository</code> gives you the common methods; you add the ones specific to your model.</p>
+<p class="mb-4 leading-relaxed">The constructor takes a <em>delegate</em> (a Prisma model such as <code>prisma.user</code>, or any object with the same <code>findUnique / findMany / create / update / delete / count</code> methods) and an options object.</p>
+<table class="doc-table mb-4"><thead><tr><th>Option</th><th>What it does</th><th>Default</th></tr></thead><tbody><tr><td><code>modelName</code></td><td>Used in error messages and to find the model on a transaction client.</td><td><code>"DatabaseEntity"</code></td></tr><tr><td><code>idField</code></td><td>Primary-key column used by <code>findById</code>, <code>update</code>, <code>delete</code>.</td><td><code>"id"</code></td></tr><tr><td><code>softDelete</code></td><td><code>true</code> or <code>{ field }</code>. Reads then skip rows whose field is set.</td><td>off; field <code>"deletedAt"</code></td></tr><tr><td><code>cursorSecret</code></td><td>Secret used to sign cursors from <code>paginateCursor</code>.</td><td>unsigned</td></tr><tr><td><code>delegateKey</code></td><td>Property to read from a transaction client in <code>withTransaction</code>.</td><td><code>modelName</code> lower-cased</td></tr></tbody></table>
+<p class="mb-4 leading-relaxed"><em>Soft delete</em> means marking a row as deleted by writing a timestamp instead of removing it. With <code>softDelete: true</code>, <code>softDelete(id)</code> sets <code>deletedAt</code>, normal reads skip that row, <code>restore(id)</code> clears it, and <code>withDeleted()</code> returns a copy of the repository that can still see it.</p>
+<p class="mb-4 leading-relaxed">This example continues from the Quick Start and shows the soft-delete cycle.</p>
+<div class="code-block"><span class="kw">import</span> { PrismaClient } <span class="kw">from</span> <span class="str">"@prisma/client"</span>;
+<span class="kw">import</span> { PrismaPg } <span class="kw">from</span> <span class="str">"@prisma/adapter-pg"</span>;
+<span class="kw">import</span> { BaseRepository, createDatabaseClient } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
 
-<span class="kw">function</span> createDatabase(options?): Database;
-<span class="kw">function</span> getDatabase(options?): Database;        <span class="cmt">// shared instance; throws TypeError if options are passed once it exists</span>
-<span class="kw">function</span> connectDatabase(options?): Promise&lt;Database&gt;;
-<span class="kw">function</span> disconnectDatabase(): Promise&lt;void&gt;;
-<span class="kw">function</span> resetDatabase(): Promise&lt;void&gt;;         <span class="cmt">// clears the singleton first, then destroys it</span></div>
-<div class="code-block"><span class="kw">import</span> { connectDatabase, getDatabase, resetDatabase } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
+<span class="kw">interface</span> <span class="tp">User</span> { id: <span class="tp">string</span>; email: <span class="tp">string</span>; name: <span class="tp">string</span>; deletedAt: <span class="tp">Date</span> | <span class="kw">null</span> }
 
-<span class="kw">const</span> db = <span class="kw">await</span> connectDatabase({ prisma });   <span class="cmt">// bootstrap</span>
-<span class="kw">const</span> sameDb = getDatabase();                    <span class="cmt">// anywhere else</span>
-
-process.on(<span class="str">"SIGTERM"</span>, () =&gt; void resetDatabase());</div>
-</section>
-
-<section id="connection-manager" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONNECTION MANAGER</h2>
-<p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">DatabaseConnectionManager</code> adds lifecycle events, scheduled health checks and reconnect policy on top of a client. Pass an existing client so one Prisma instance is never tracked by two state machines.</p>
-<div class="code-block"><span class="kw">interface</span> DatabaseConnectionManagerOptions <span class="kw">extends</span> DatabaseClientOptions {
-  <span class="kw">readonly</span> client?: DatabaseClient;         <span class="cmt">// wrap an existing client</span>
-  <span class="kw">readonly</span> autoConnect?: boolean;           <span class="cmt">// connect() during initialize() (default false)</span>
-  <span class="kw">readonly</span> healthCheckIntervalMs?: number;  <span class="cmt">// scheduled checks; disabled when omitted</span>
-  <span class="kw">readonly</span> healthCheckTimeoutMs?: number;   <span class="cmt">// default min(interval, 5000)</span>
-  <span class="kw">readonly</span> reconnect?: DatabaseReconnectOptions | false;
-}
-
-<span class="kw">interface</span> DatabaseReconnectOptions {
-  <span class="kw">readonly</span> failureThreshold?: number;  <span class="cmt">// consecutive failures before reconnecting (default 1)</span>
-  <span class="kw">readonly</span> maxAttempts?: number;       <span class="cmt">// default 5</span>
-  <span class="kw">readonly</span> baseDelayMs?: number;       <span class="cmt">// default 500, doubles per attempt</span>
-  <span class="kw">readonly</span> maxDelayMs?: number;        <span class="cmt">// default 30 000</span>
-}
-
-<span class="kw">class</span> DatabaseConnectionManager {
-  initialize(): Promise&lt;void&gt;;
-  connect(): Promise&lt;void&gt;;
-  disconnect(): Promise&lt;void&gt;;
-  ensureConnected(): Promise&lt;void&gt;;
-  getStatus(): DatabaseStatus;
-  healthCheck(): Promise&lt;DatabaseClientHealth&gt;;
-  getLastHealth(): DatabaseHealth | undefined;     <span class="cmt">// result of the last scheduled check</span>
-  runScheduledHealthCheck(): Promise&lt;void&gt;;         <span class="cmt">// one tick; overlapping ticks are skipped</span>
-  startHealthChecks(): void;
-  stopHealthChecks(): void;
-  on(listener): () =&gt; void;
-  off(listener): boolean;
-  removeAllListeners(): void;
-  getClient(): DatabaseClient;
-  destroy(): Promise&lt;void&gt;;
-}</div>
-<h3 class="text-lg font-bold mb-3 mt-6">Events</h3>
-<div class="border-4 border-black overflow-x-auto"><table class="w-full text-sm"><thead class="bg-black text-white"><tr><th class="p-3 text-left">Event</th><th class="p-3 text-left">Details</th><th class="p-3 text-left">When</th></tr></thead><tbody><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">connecting / connected</td><td class="p-3">status, timestamp</td><td class="p-3">Around <code>connect()</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">disconnecting / disconnected</td><td class="p-3">status, timestamp</td><td class="p-3">Around <code>disconnect()</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">error</td><td class="p-3">error</td><td class="p-3">Connect/disconnect failure, or a failed scheduled health check (with the real cause)</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">reconnecting</td><td class="p-3">attempt</td><td class="p-3">Each reconnect attempt after <code>failureThreshold</code> consecutive failures</td></tr></tbody></table></div>
-<div class="code-block"><span class="kw">import</span> { createConnectionManager } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> manager = createConnectionManager({
-  client,
-  healthCheckIntervalMs: 15_000,
-  reconnect: { failureThreshold: 2, maxAttempts: 10 },
-});
-
-manager.on((event, details) =&gt; {
-  <span class="kw">if</span> (event === <span class="str">"error"</span>) alertOps(<span class="str">"Database error"</span>, details.error);
-  <span class="kw">if</span> (event === <span class="str">"reconnecting"</span>) log.warn(`Reconnect attempt ${details.attempt}`);
-});
-
-<span class="kw">await</span> manager.connect(); <span class="cmt">// starts the scheduled checks</span></div>
-</section>
-
-<section id="base-repository" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">BASE REPOSITORY</h2>
-<p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">BaseRepository</code> is an abstract class over a Prisma model delegate. Extend it per model.</p>
-<div class="code-block"><span class="kw">interface</span> BaseRepositoryOptions {
-  <span class="kw">readonly</span> modelName?: string;            <span class="cmt">// used in error messages (default "DatabaseEntity")</span>
-  <span class="kw">readonly</span> idField?: string;              <span class="cmt">// primary key field (default "id")</span>
-  <span class="kw">readonly</span> softDelete?: boolean | { field?: string };  <span class="cmt">// default field "deletedAt"</span>
-  <span class="kw">readonly</span> cursorSecret?: string;         <span class="cmt">// HMAC secret for paginateCursor cursors</span>
-  <span class="kw">readonly</span> delegateKey?: string;          <span class="cmt">// property on a transaction client (default lower-cased modelName)</span>
-  <span class="kw">readonly</span> relations?: RelationRegistry;  <span class="cmt">// validates include definitions in findByQuery</span>
-  <span class="kw">readonly</span> relationParent?: unknown;      <span class="cmt">// model key in the registry (default modelName)</span>
-}
-
-abstract <span class="kw">class</span> BaseRepository&lt;TEntity, TId = string, TCreate = Partial&lt;TEntity&gt;, TUpdate = Partial&lt;TEntity&gt;, TWhere = Record&lt;string, unknown&gt;&gt; {
-  constructor(delegate: RepositoryDelegate&lt;...&gt;, options?: BaseRepositoryOptions);
-}</div>
-<h3 class="text-lg font-bold mb-3 mt-6">Methods</h3>
-<div class="border-4 border-black overflow-x-auto"><table class="w-full text-sm"><thead class="bg-black text-white"><tr><th class="p-3 text-left">Method</th><th class="p-3 text-left">Returns</th><th class="p-3 text-left">Notes</th></tr></thead><tbody><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">findById(id, options?)</td><td class="p-3">TEntity | null</td><td class="p-3">Uses <code>findUnique</code>, or <code>findFirst</code> with the soft-delete scope</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">findOne(filter, options?)</td><td class="p-3">TEntity | null</td><td class="p-3"></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">findMany(filter?, options?)</td><td class="p-3">readonly TEntity[]</td><td class="p-3"></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">findPaginated(filter?, { pagination, sort }) / paginate</td><td class="p-3">PaginatedResult</td><td class="p-3">NaN / Infinity page and limit are normalised (limit capped at 100)</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">paginateCursor(filter?, { cursor, limit, sort })</td><td class="p-3">CursorPaginatedResult</td><td class="p-3">Keyset pagination: fetches <code>limit + 1</code>, appends the id field as tiebreaker, validates and (with <code>cursorSecret</code>) signs cursors</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">findByQuery(builder | state, options?)</td><td class="p-3">readonly TEntity[]</td><td class="p-3">Applies filter, sort, select, include and pagination from a <code>QueryBuilder</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">create(input) / createMany(inputs)</td><td class="p-3">TEntity / number</td><td class="p-3"></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">update(id, input)</td><td class="p-3">TEntity</td><td class="p-3">Scoped to live rows when soft delete is on</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">delete(id) / deleteMany(filter)</td><td class="p-3">void / number</td><td class="p-3">Hard delete</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">softDelete(id) / restore(id) / findDeleted(filter?)</td><td class="p-3">TEntity / TEntity / TEntity[]</td><td class="p-3">Require the <code>softDelete</code> option</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">withDeleted()</td><td class="p-3">this</td><td class="p-3">Copy whose reads include soft-deleted rows</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">exists(filter) / count(filter?)</td><td class="p-3">boolean / number</td><td class="p-3"><code>exists</code> uses <code>count</code>, never fetches a row</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">upsert(where, create, update)</td><td class="p-3">TEntity</td><td class="p-3"></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">withTransaction(tx) / withDelegate(delegate)</td><td class="p-3">this</td><td class="p-3">Rebinds the repository to a transaction client's delegate</td></tr></tbody></table></div>
-<p class="mb-4 leading-relaxed">Every method accepts <code>DatabaseOperationOptions</code> (<code>signal</code>, <code>timeoutMs</code>, <code>metadata</code>). Failures are mapped by <code>mapRepositoryError</code>: <code>P2002</code> → 409 <code>ERR_CONFLICT</code>, <code>P2025</code> → 404 <code>ERR_NOT_FOUND</code>, <code>P2003</code> → 409, <code>P2034</code> → retryable, <code>P1xxx</code> → 503 connection.</p>
-<h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-<div class="code-block"><span class="kw">import</span> { BaseRepository, withTransaction } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">interface</span> User { id: string; email: string; name: string; deletedAt: Date | null }
-
-<span class="kw">class</span> UserRepository <span class="kw">extends</span> BaseRepository&lt;User&gt; {
-  constructor(delegate: ConstructorParameters&lt;typeof BaseRepository&lt;User&gt;&gt;[0]) {
-    super(delegate, { modelName: <span class="str">"User"</span>, softDelete: true, cursorSecret: process.env.CURSOR_SECRET });
+<span class="kw">class</span> <span class="tp">UserRepository</span> <span class="kw">extends</span> <span class="tp">BaseRepository</span>&lt;<span class="tp">User</span>&gt; {
+  <span class="kw">constructor</span>(delegate: <span class="tp">ConstructorParameters</span>&lt;<span class="kw">typeof</span> <span class="tp">BaseRepository</span>&lt;<span class="tp">User</span>&gt;&gt;[<span class="num">0</span>]) {
+    <span class="kw">super</span>(delegate, { modelName: <span class="str">"User"</span>, softDelete: <span class="kw">true</span> });
   }
 
-  findByEmail(email: string) {
-    <span class="kw">return</span> this.findOne({ email });
+  <span class="fn">findByEmail</span>(email: <span class="tp">string</span>) {
+    <span class="kw">return</span> <span class="kw">this</span>.<span class="fn">findOne</span>({ email });
   }
 }
 
-<span class="kw">const</span> users = <span class="kw">new</span> UserRepository(prisma.user);
-<span class="kw">const</span> alice = <span class="kw">await</span> users.create({ email: <span class="str">"alice@example.com"</span>, name: <span class="str">"Alice"</span> });
-<span class="kw">await</span> users.softDelete(alice.id);           <span class="cmt">// reads now skip the row</span>
-<span class="kw">await</span> users.withDeleted().findById(alice.id); <span class="cmt">// still visible here</span>
+<span class="kw">const</span> prisma = <span class="kw">new</span> <span class="tp">PrismaClient</span>({
+  adapter: <span class="kw">new</span> <span class="tp">PrismaPg</span>({ connectionString: process.env.<span class="const">DATABASE_URL</span> }),
+});
+<span class="kw">const</span> client = <span class="fn">createDatabaseClient</span>({ prisma });
+<span class="kw">await</span> client.<span class="fn">connect</span>();
 
-<span class="kw">await</span> withTransaction(client, <span class="kw">async</span> (tx) =&gt; {
-  <span class="kw">const</span> txUsers = users.withTransaction(tx);  <span class="cmt">// runs inside the transaction</span>
-  <span class="kw">await</span> txUsers.restore(alice.id);
-  <span class="kw">await</span> txUsers.update(alice.id, { name: <span class="str">"Alice Doe"</span> });
-});</div>
+<span class="kw">const</span> users = <span class="kw">new</span> <span class="tp">UserRepository</span>(prisma.user);
+<span class="kw">const</span> alice = <span class="kw">await</span> users.<span class="fn">create</span>({ email: <span class="str">"alice@example.com"</span>, name: <span class="str">"Alice"</span> });
+
+<span class="kw">await</span> users.<span class="fn">softDelete</span>(alice.id);
+console.<span class="fn">log</span>(<span class="kw">await</span> users.<span class="fn">findByEmail</span>(<span class="str">"alice@example.com"</span>));
+<span class="cmt">// null  (normal reads skip soft-deleted rows)</span>
+
+console.<span class="fn">log</span>((<span class="kw">await</span> users.<span class="fn">withDeleted</span>().<span class="fn">findById</span>(alice.id))?.name);
+<span class="cmt">// Alice</span>
+
+<span class="kw">await</span> users.<span class="fn">restore</span>(alice.id);
+console.<span class="fn">log</span>(<span class="kw">await</span> users.<span class="fn">exists</span>({ email: <span class="str">"alice@example.com"</span> }));
+<span class="cmt">// true</span>
+
+<span class="kw">await</span> client.<span class="fn">disconnect</span>();</div>
+<table class="doc-table mb-4"><thead><tr><th>Method</th><th>Returns</th><th>Notes</th></tr></thead><tbody><tr><td><code>findById(id)</code>, <code>findOne(filter)</code></td><td><code>Entity | null</code></td><td><code>filter</code> is a Prisma <code>where</code> object.</td></tr><tr><td><code>findMany(filter?)</code></td><td><code>Entity[]</code></td><td>No pagination; use with care on big tables.</td></tr><tr><td><code>findPaginated(filter?, { pagination, sort })</code></td><td><code>PaginatedResult</code></td><td>Page / limit style. <code>paginate</code> is an alias.</td></tr><tr><td><code>paginateCursor(filter?, { cursor, limit, sort })</code></td><td><code>CursorPaginatedResult</code></td><td>Keyset style; see Pagination.</td></tr><tr><td><code>findByQuery(builder)</code></td><td><code>Entity[]</code></td><td>Runs a <code>QueryBuilder</code>; see Query Builder.</td></tr><tr><td><code>create(input)</code>, <code>createMany(inputs)</code></td><td><code>Entity</code>, <code>number</code></td><td></td></tr><tr><td><code>update(id, input)</code>, <code>upsert(where, create, update)</code></td><td><code>Entity</code></td><td>Missing row throws a 404 <code>DatabaseError</code>.</td></tr><tr><td><code>delete(id)</code>, <code>deleteMany(filter)</code></td><td><code>void</code>, <code>number</code></td><td>Hard delete, ignores soft-delete scope.</td></tr><tr><td><code>softDelete(id)</code>, <code>restore(id)</code>, <code>findDeleted(filter?)</code>, <code>withDeleted()</code></td><td>varies</td><td>Throw unless <code>softDelete</code> is on.</td></tr><tr><td><code>exists(filter)</code>, <code>count(filter?)</code></td><td><code>boolean</code>, <code>number</code></td><td><code>exists</code> uses <code>count</code>, never loads a row.</td></tr><tr><td><code>withTransaction(tx)</code></td><td>copy of the repository</td><td>Runs later calls inside the transaction.</td></tr></tbody></table>
+<p class="mb-4 leading-relaxed">Every method takes an optional last argument <code>{ signal, timeoutMs, metadata }</code>, the same options the client accepts.</p>
+<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">Common mistake:</strong> calling <code>softDelete()</code> on a repository built without <code>softDelete: true</code>. It throws <code>DatabaseError: User softDelete requires the softDelete option.</code> Turn the option on, or use <code>delete()</code> for a hard delete.</div>
+</section>
+
+<section id="transactions" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TRANSACTIONS</h2>
+<p class="mb-4 leading-relaxed">A <em>transaction</em> groups several writes so they either all succeed or all roll back. If the second write fails, the first is undone too. Use one whenever two rows must change together, such as moving money between accounts.</p>
+<p class="mb-4 leading-relaxed"><code>withTransaction(client, callback)</code> opens a Prisma interactive transaction and passes you <code>tx</code>, a transaction-bound Prisma client. Repositories created from the root <code>prisma</code> object do <em>not</em> know about <code>tx</code>. Call <code>repo.withTransaction(tx)</code> to get a copy that does.</p>
+<div class="code-block"><span class="kw">import</span> { PrismaClient } <span class="kw">from</span> <span class="str">"@prisma/client"</span>;
+<span class="kw">import</span> { PrismaPg } <span class="kw">from</span> <span class="str">"@prisma/adapter-pg"</span>;
+<span class="kw">import</span> { BaseRepository, createDatabaseClient, withTransaction } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
+
+<span class="kw">interface</span> <span class="tp">User</span> { id: <span class="tp">string</span>; email: <span class="tp">string</span>; name: <span class="tp">string</span>; deletedAt: <span class="tp">Date</span> | <span class="kw">null</span> }
+
+<span class="kw">class</span> <span class="tp">UserRepository</span> <span class="kw">extends</span> <span class="tp">BaseRepository</span>&lt;<span class="tp">User</span>&gt; {
+  <span class="kw">constructor</span>(delegate: <span class="tp">ConstructorParameters</span>&lt;<span class="kw">typeof</span> <span class="tp">BaseRepository</span>&lt;<span class="tp">User</span>&gt;&gt;[<span class="num">0</span>]) {
+    <span class="kw">super</span>(delegate, { modelName: <span class="str">"User"</span>, softDelete: <span class="kw">true</span> });
+  }
+}
+
+<span class="kw">const</span> prisma = <span class="kw">new</span> <span class="tp">PrismaClient</span>({
+  adapter: <span class="kw">new</span> <span class="tp">PrismaPg</span>({ connectionString: process.env.<span class="const">DATABASE_URL</span> }),
+});
+<span class="kw">const</span> client = <span class="fn">createDatabaseClient</span>({ prisma });
+<span class="kw">await</span> client.<span class="fn">connect</span>();
+
+<span class="kw">const</span> users = <span class="kw">new</span> <span class="tp">UserRepository</span>(prisma.user);
+<span class="kw">const</span> alice = <span class="kw">await</span> users.<span class="fn">create</span>({ email: <span class="str">"alice@example.com"</span>, name: <span class="str">"Alice"</span> });
+
+<span class="kw">const</span> renamed = <span class="kw">await</span> <span class="fn">withTransaction</span>(client, <span class="kw">async</span> (tx, context) =&gt; {
+  <span class="kw">const</span> txUsers = users.<span class="fn">withTransaction</span>(tx);   <span class="cmt">// reads tx.user</span>
+  <span class="kw">await</span> txUsers.<span class="fn">update</span>(alice.id, { name: <span class="str">"Alice Doe"</span> });
+  <span class="kw">return</span> { name: (<span class="kw">await</span> txUsers.<span class="fn">findById</span>(alice.id))?.name, id: context.transactionId };
+}, { isolationLevel: <span class="str">"Serializable"</span>, timeoutMs: <span class="num">10_000</span> });
+
+console.<span class="fn">log</span>(renamed);
+<span class="cmt">// { name: "Alice Doe", id: "6b1f0c2e-9a41-4f5b-b0c3-7e2d1a3f8b90" }  (a UUID per transaction)</span>
+
+<span class="kw">await</span> client.<span class="fn">disconnect</span>();</div>
+<p class="mb-4 leading-relaxed">If the callback throws, Prisma rolls the transaction back and <code>withTransaction</code> rethrows a <code>DatabaseError</code> that carries <code>transactionId</code> and <code>transactionStatus: "failed"</code>. <code>getTransactionContextFromError(error)</code> recovers that context.</p>
+<table class="doc-table mb-4"><thead><tr><th>Option</th><th>What it does</th></tr></thead><tbody><tr><td><code>isolationLevel</code></td><td><code>"ReadUncommitted"</code>, <code>"ReadCommitted"</code>, <code>"RepeatableRead"</code> or <code>"Serializable"</code>.</td></tr><tr><td><code>timeoutMs</code>, <code>maxWaitMs</code></td><td>Forwarded to Prisma: how long the transaction may run, and how long to wait for a connection.</td></tr><tr><td><code>transactionId</code>, <code>metadata</code></td><td>Attached to the context and to any error thrown.</td></tr><tr><td><code>signal</code></td><td>Abort the transaction from outside.</td></tr></tbody></table>
+<p class="mb-4 leading-relaxed">PostgreSQL sometimes aborts a <code>Serializable</code> transaction because another one touched the same rows. <code>withTransactionRetry</code> has the same signature and re-runs the callback (default 3 retries, doubling delay from 100 ms) when <code>isRetryableTransactionError</code> says the failure is temporary.</p>
+<div class="callout callout-danger mb-4"><strong>Danger:</strong> retries re-run the <em>whole</em> callback. Anything you do inside it that is not a database write, such as sending an email, can happen more than once.</div>
+<p class="mb-4 leading-relaxed"><code>createUnitOfWork(client)</code> is a small wrapper with the same idea: <code>uow.execute(callback, options)</code> runs one transaction and tags failures with <code>unitOfWork: true</code>.</p>
 </section>
 
 <section id="query-builder" class="mb-12">
 <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUERY BUILDER</h2>
-<p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">QueryBuilder</code> accumulates a database-neutral definition (filter, sort, select, include, pagination) and translates it to Prisma arguments. <code class="bg-black/5 px-1">build()</code> returns a deeply frozen snapshot; mutating it cannot affect later builds.</p>
-<div class="code-block"><span class="kw">const</span> query = createQueryBuilder&lt;<span class="str">"email"</span> | <span class="str">"role"</span> | <span class="str">"createdAt"</span>&gt;()
-  .where(<span class="str">"role"</span>, <span class="str">"admin"</span>)                  <span class="cmt">// equals</span>
-  .whereContains(<span class="str">"email"</span>, <span class="str">"@example.com"</span>)  <span class="cmt">// whereOperator, whereNot, whereIn, whereNotIn, whereLessThan, ...</span>
-  .whereNotNull(<span class="str">"createdAt"</span>)
-  .or(equals(<span class="str">"role"</span>, <span class="str">"owner"</span>), equals(<span class="str">"role"</span>, <span class="str">"admin"</span>))   <span class="cmt">// and() / or() / not() groups</span>
-  .orderByDesc(<span class="str">"createdAt"</span>)                <span class="cmt">// orderBy, orderByAsc, sort([...])</span>
-  .select(<span class="str">"email"</span>, <span class="str">"role"</span>)
-  .include(<span class="str">"profile"</span>)                      <span class="cmt">// relation names or includeRelation(...)</span>
-  .paginate({ page: 2, limit: 20 })        <span class="cmt">// page(), limit(), offset()</span>
-  ;
+<p class="mb-4 leading-relaxed">A <em>query builder</em> lets you describe a query step by step, in plain method calls, instead of hand-writing a nested Prisma <code>where</code> object. It does not run anything. <code>build()</code> returns a frozen description, <code>toPrismaArgs()</code> turns it into Prisma <code>findMany</code> arguments, and <code>repo.findByQuery(builder)</code> executes it.</p>
+<p class="mb-4 leading-relaxed">The type parameter lists the field names you are allowed to use, so a typo is a compile error.</p>
+<div class="code-block"><span class="kw">import</span> { createQueryBuilder, equals } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
 
-<span class="kw">const</span> state = query.build();               <span class="cmt">// QueryBuilderState (frozen)</span>
-<span class="kw">const</span> args  = query.toPrismaArgs();        <span class="cmt">// { where, orderBy, skip, take, select }</span>
-<span class="kw">const</span> admins = <span class="kw">await</span> users.findByQuery(query);
+<span class="kw">const</span> query = <span class="fn">createQueryBuilder</span>&lt;<span class="str">"email"</span> | <span class="str">"role"</span> | <span class="str">"createdAt"</span>&gt;()
+  .<span class="fn">where</span>(<span class="str">"role"</span>, <span class="str">"admin"</span>)
+  .<span class="fn">whereContains</span>(<span class="str">"email"</span>, <span class="str">"@example.com"</span>)
+  .<span class="fn">or</span>(<span class="fn">equals</span>(<span class="str">"role"</span>, <span class="str">"owner"</span>), <span class="fn">equals</span>(<span class="str">"role"</span>, <span class="str">"admin"</span>))
+  .<span class="fn">orderByDesc</span>(<span class="str">"createdAt"</span>)
+  .<span class="fn">select</span>(<span class="str">"email"</span>, <span class="str">"role"</span>)
+  .<span class="fn">paginate</span>({ page: <span class="num">2</span>, limit: <span class="num">20</span> });
 
-query.clearFilters().clearSort().clearSelect().clearInclude().clearPagination().reset();
-<span class="kw">const</span> copy = query.clone();</div>
-<h3 class="text-lg font-bold mb-3 mt-6">Translation helpers</h3>
-<div class="border-4 border-black overflow-x-auto"><table class="w-full text-sm"><thead class="bg-black text-white"><tr><th class="p-3 text-left">Function</th><th class="p-3 text-left">Produces</th></tr></thead><tbody><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">toPrismaWhere(filter)</td><td class="p-3">Prisma <code>where</code>; <code>undefined</code> for an empty filter. Repeated operators on one field are moved into <code>AND</code>; unsafe field names throw.</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">toPrismaArgs(state, options?)</td><td class="p-3"><code>{ where, orderBy, skip, take, select, include }</code>. When both <code>select</code> and <code>include</code> are present the relations are folded into <code>select</code>.</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">toPrismaOrderBy(sort) / toPrismaSelect(fields) / toPrismaSkipTake(pagination, offset)</td><td class="p-3">The individual pieces</td></tr></tbody></table></div>
-</section>
-
-<section id="query-filters" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUERY FILTERS</h2>
-<p class="mb-4 leading-relaxed">Filter helpers return <code>QueryFilter</code> values (<code>{ conditions, and, or, not }</code>). Field names are validated; <code>__proto__</code> / <code>constructor</code> / <code>prototype</code> are rejected and values are deep-cloned.</p>
-<div class="border-4 border-black overflow-x-auto"><table class="w-full text-sm"><thead class="bg-black text-white"><tr><th class="p-3 text-left">Group</th><th class="p-3 text-left">Helpers</th></tr></thead><tbody><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Comparison</td><td class="p-3"><code>equals</code>, <code>notEquals</code>, <code>lessThan</code>, <code>lessThanOrEqual</code>, <code>greaterThan</code>, <code>greaterThanOrEqual</code>, <code>between</code>, <code>inList</code> / <code>oneOf</code>, <code>notInList</code> / <code>noneOf</code>, <code>isNull</code>, <code>isNotNull</code>, <code>isEmpty</code>, <code>isNotEmpty</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">String</td><td class="p-3"><code>contains</code>, <code>startsWith</code>, <code>endsWith</code>, <code>matchesPattern</code> (leading/trailing <code>%</code> only), <code>optionalContains</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Date</td><td class="p-3"><code>dateRange</code>, <code>dateOnly</code>, <code>isBefore</code>, <code>isAfter</code>, <code>isBetween</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Logical</td><td class="p-3"><code>and</code>, <code>or</code>, <code>not</code>, <code>allOf</code>, <code>anyOf</code> (empty filters collapse), <code>notCondition</code>, <code>condition</code>, <code>fromObject</code>, <code>optionalEquals</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Relations</td><td class="p-3"><code>relational(relation, filter, "some" | "every" | "none" | "is" | "isNot")</code></td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Utilities</td><td class="p-3"><code>hasConditions</code>, <code>flattenAnd</code> (throws on OR/NOT branches), <code>cloneFilter</code></td></tr></tbody></table></div>
-<div class="code-block"><span class="kw">import</span> { and, or, equals, isAfter, relational, toPrismaWhere } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> where = toPrismaWhere(
-  and(
-    equals(<span class="str">"tenantId"</span>, tenantId),
-    or(equals(<span class="str">"role"</span>, <span class="str">"admin"</span>), equals(<span class="str">"role"</span>, <span class="str">"owner"</span>)),
-    isAfter(<span class="str">"createdAt"</span>, <span class="kw">new</span> Date(<span class="str">"2026-01-01"</span>)),
-    relational(<span class="str">"posts"</span>, equals(<span class="str">"published"</span>, true), <span class="str">"some"</span>),
-  ),
-);
-<span class="cmt">// { tenantId: { equals: ... }, createdAt: { gt: ... }, posts: { some: { published: { equals: true } } }, OR: [...] }</span></div>
-</section>
-
-<section id="transaction-manager" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TRANSACTIONS</h2>
-<div class="code-block"><span class="kw">interface</span> ManagedTransactionOptions <span class="kw">extends</span> TransactionOptions {
-  <span class="kw">readonly</span> transactionId?: string;
-  <span class="kw">readonly</span> metadata?: Record&lt;string, unknown&gt;;
-}
-
-<span class="kw">class</span> TransactionManager {
-  constructor(client: DatabaseClient);
-  execute&lt;T&gt;(callback: (tx, context) =&gt; Promise&lt;T&gt;, options?): Promise&lt;T&gt;;
-  run&lt;T&gt;(callback, options?): Promise&lt;{ result: T; context: TransactionContext }&gt;;  <span class="cmt">// context.status === "committed"</span>
-}
-
-<span class="kw">function</span> withTransaction&lt;T&gt;(client, callback, options?): Promise&lt;T&gt;;
-<span class="kw">function</span> withTransactionRetry&lt;T&gt;(client, callback, options?: TransactionRetryOptions): Promise&lt;T&gt;;
-<span class="kw">function</span> getTransactionContextFromError(error): TransactionContext | undefined;   <span class="cmt">// status "failed"</span>
-<span class="kw">function</span> isTransactionActive(ctx) / isTransactionCommitted(ctx) / isTransactionFailed(ctx): boolean;</div>
-<p class="mb-4 leading-relaxed">Failures are normalised to <code>DatabaseError</code> and enriched with <code>transactionId</code>, <code>transactionStatus: "failed"</code> and the supplied metadata. <code>withTransactionRetry</code> retries up to <code>retries</code> (default 3) with exponential back-off when <code>isRetryableTransactionError</code> matches (<code>P2034</code>, <code>P2028</code>, <code>P1017</code>, PostgreSQL <code>40001</code> / <code>40P01</code>) or a custom <code>shouldRetry</code> returns true.</p>
-<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">Retries re-run the whole callback.</strong> Side effects performed outside the transaction client (emails, queues) must be idempotent.</div>
-<div class="code-block"><span class="kw">import</span> { withTransactionRetry } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> order = <span class="kw">await</span> withTransactionRetry(client, <span class="kw">async</span> (tx, context) =&gt; {
-  <span class="kw">const</span> stock = <span class="kw">await</span> tx.product.update({ where: { id }, data: { stock: { decrement: 1 } } });
-  <span class="kw">return</span> tx.order.create({ data: { productId: id, transactionId: context.transactionId } });
-}, { isolationLevel: <span class="str">"Serializable"</span>, retries: 5, metadata: { userId } });</div>
-</section>
-
-<section id="unit-of-work" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">UNIT OF WORK</h2>
-<p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">DatabaseUnitOfWork</code> runs a callback in one transaction and tags failures with <code class="bg-black/5 px-1">unitOfWork: true</code>. Rebind repositories with <code class="bg-black/5 px-1">withTransaction(tx)</code> inside the callback; repositories built from the root client run outside the transaction.</p>
-<div class="code-block"><span class="kw">import</span> { createUnitOfWork } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> uow = createUnitOfWork(client);
-<span class="kw">await</span> uow.execute(<span class="kw">async</span> (tx) =&gt; {
-  <span class="kw">await</span> users.withTransaction(tx).update(userId, { balance: 0 });
-  <span class="kw">await</span> ledger.withTransaction(tx).create({ userId, amount: -balance });
-}, { timeoutMs: 15_000 });</div>
+console.<span class="fn">log</span>(query.<span class="fn">toPrismaArgs</span>());
+<span class="cmt">// {</span>
+<span class="cmt">//   where: { AND: [ { role: { equals: "admin" }, email: { contains: "@example.com" } },</span>
+<span class="cmt">//                   { OR: [ { role: { equals: "owner" } }, { role: { equals: "admin" } } ] } ] },</span>
+<span class="cmt">//   orderBy: [ { createdAt: "desc" } ],</span>
+<span class="cmt">//   skip: 20, take: 20,</span>
+<span class="cmt">//   select: { email: true, role: true }</span>
+<span class="cmt">// }</span></div>
+<p class="mb-4 leading-relaxed">Pass the builder to a repository to run it: <code>const admins = await users.findByQuery(query)</code>. The repository adds its own soft-delete scope on top.</p>
+<table class="doc-table mb-4"><thead><tr><th>Builder methods</th><th>Purpose</th></tr></thead><tbody><tr><td><code>where</code>, <code>whereNot</code>, <code>whereIn</code>, <code>whereNotIn</code>, <code>whereLessThan</code>, <code>whereGreaterThan</code>, <code>whereContains</code>, <code>whereStartsWith</code>, <code>whereEndsWith</code>, <code>whereNull</code>, <code>whereNotNull</code>, <code>whereOperator</code></td><td>Add one condition on a field. All conditions are combined with AND.</td></tr><tr><td><code>and(...)</code>, <code>or(...)</code>, <code>not(filter)</code></td><td>Group standalone filters made with the helper functions below.</td></tr><tr><td><code>orderBy</code>, <code>orderByAsc</code>, <code>orderByDesc</code>, <code>sort([...])</code></td><td>Sort order.</td></tr><tr><td><code>select(...fields)</code>, <code>include(...relations)</code></td><td>Columns to return; relations to load.</td></tr><tr><td><code>page</code>, <code>limit</code>, <code>paginate({ page, limit })</code>, <code>offset</code></td><td>Pagination.</td></tr><tr><td><code>build()</code>, <code>toPrismaArgs()</code>, <code>clone()</code>, <code>reset()</code></td><td>Finish, translate, copy or clear.</td></tr></tbody></table>
+<p class="mb-4 leading-relaxed">The standalone helper functions build filter objects you can store, combine and reuse. <code>toPrismaWhere(filter)</code> translates one into a Prisma <code>where</code>.</p>
+<table class="doc-table mb-4"><thead><tr><th>Group</th><th>Helpers</th></tr></thead><tbody><tr><td>Comparison</td><td><code>equals</code>, <code>notEquals</code>, <code>lessThan</code>, <code>lessThanOrEqual</code>, <code>greaterThan</code>, <code>greaterThanOrEqual</code>, <code>between</code>, <code>inList</code>, <code>notInList</code>, <code>isNull</code>, <code>isNotNull</code>, <code>isEmpty</code>, <code>isNotEmpty</code></td></tr><tr><td>Text</td><td><code>contains</code>, <code>startsWith</code>, <code>endsWith</code>, <code>matchesPattern</code></td></tr><tr><td>Dates</td><td><code>isBefore</code>, <code>isAfter</code>, <code>isBetween</code>, <code>dateRange</code>, <code>dateOnly</code></td></tr><tr><td>Combining</td><td><code>and</code>, <code>or</code>, <code>not</code>, <code>allOf</code>, <code>anyOf</code>, <code>fromObject</code>, <code>optionalEquals</code>, <code>optionalContains</code></td></tr><tr><td>Relations</td><td><code>relational(relation, filter, "some" | "every" | "none" | "is" | "isNot")</code></td></tr></tbody></table>
+<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">Common mistake:</strong> expecting <code>build()</code> to run the query. It only returns a description. Call <code>users.findByQuery(query)</code>, or pass <code>query.toPrismaArgs()</code> to Prisma yourself.</div>
 </section>
 
 <section id="pagination" class="mb-12">
 <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">PAGINATION</h2>
-<h3 class="text-lg font-bold mb-3 mt-6">Offset</h3>
-<div class="code-block">normalizePage(page) / normalizeLimit(limit) / normalizePagination({ page, limit })  <span class="cmt">// NaN, Infinity, 0 → defaults; limit capped at MAX_LIMIT (100)</span>
-createPaginationMeta(page, limit, total)  <span class="cmt">// { page, limit, total, totalPages, hasNextPage, hasPreviousPage, hasNext, hasPrev }</span>
-createPaginatedResult(data, page, limit, total)
-paginateCollection(items, { page, limit })
-getNextPage(meta) / getPreviousPage(meta) / isValidPage(page, totalPages) / getItemRange(page, limit, total)</div>
-<h3 class="text-lg font-bold mb-3 mt-6">Keyset (cursor)</h3>
-<div class="code-block">encodeCursor(payload, { secret? })                 <span class="cmt">// base64url JSON, HMAC-SHA256 signed when a secret is given</span>
-decodeCursor(cursor, { secret?, allowedFields? })  <span class="cmt">// verifies the signature; allowedFields rejects any other key or non-primitive value</span>
-decodeKeysetCursor(cursor, sort, secret?)          <span class="cmt">// requires every sort field</span>
-buildKeysetWhere(payload, sort)                    <span class="cmt">// rows strictly after the cursor: OR: [{a: {gt}}, {AND: [{a}, {b: {lt}}]}]</span>
-createKeysetCursor(row, sort, secret?)
-createKeysetPage(rows, { sort, limit, cursor, secret })  <span class="cmt">// pass limit + 1 rows; the extra row sets hasNextPage</span></div>
-<div class="code-block"><span class="kw">const</span> first = <span class="kw">await</span> users.paginateCursor(undefined, { limit: 25, sort: [{ field: <span class="str">"createdAt"</span>, direction: <span class="str">"desc"</span> }] });
-<span class="kw">const</span> next = <span class="kw">await</span> users.paginateCursor(undefined, {
-  cursor: first.meta.nextCursor,
-  limit: 25,
+<p class="mb-4 leading-relaxed"><em>Pagination</em> means returning a list in chunks instead of all at once. There are two styles. <em>Offset</em> pagination uses page numbers ("page 3 of 12") and is easy to display. <em>Cursor</em> (keyset) pagination hands the client an opaque token pointing at the last row seen and stays fast and stable even when rows are inserted while someone is browsing.</p>
+<p class="mb-4 leading-relaxed">Both are methods on the repository. This fragment assumes the <code>users</code> repository from the Repositories section.</p>
+<div class="code-block"><span class="cmt">// Offset: page 2, 25 rows, newest first</span>
+<span class="kw">const</span> page = <span class="kw">await</span> users.<span class="fn">findPaginated</span>(<span class="kw">undefined</span>, {
+  pagination: { page: <span class="num">2</span>, limit: <span class="num">25</span> },
   sort: [{ field: <span class="str">"createdAt"</span>, direction: <span class="str">"desc"</span> }],
-});</div>
-<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">Unsigned cursors are client-controlled input.</strong> Set <code>cursorSecret</code> on repositories exposed to the public, or always pass <code>allowedFields</code> to <code>decodeCursor</code>.</div>
+});
+console.<span class="fn">log</span>(page.meta);
+<span class="cmt">// { page: 2, limit: 25, total: 60, totalPages: 3, hasNextPage: true, hasPreviousPage: true, hasNext: true, hasPrev: true }</span>
+
+<span class="cmt">// Cursor: first page, then the next one using the returned cursor</span>
+<span class="kw">const</span> sort = [{ field: <span class="str">"createdAt"</span>, direction: <span class="str">"desc"</span> <span class="kw">as const</span> }];
+<span class="kw">const</span> first = <span class="kw">await</span> users.<span class="fn">paginateCursor</span>(<span class="kw">undefined</span>, { limit: <span class="num">25</span>, sort });
+<span class="kw">const</span> second = <span class="kw">await</span> users.<span class="fn">paginateCursor</span>(<span class="kw">undefined</span>, { cursor: first.meta.nextCursor, limit: <span class="num">25</span>, sort });
+console.<span class="fn">log</span>(first.data.length, first.meta.hasNextPage, second.data.length);
+<span class="cmt">// 25 true 25</span></div>
+<p class="mb-4 leading-relaxed">Page and limit are normalised for you: <code>NaN</code>, negative or missing values fall back to page 1 and limit 20, and the limit is capped at 100 (<code>MAX_LIMIT</code>). The repository always adds the id column as a tiebreaker to cursor sorts so the order is stable.</p>
+<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">Watch out:</strong> a cursor is a base64 string the browser sends back. Without a <code>cursorSecret</code> on the repository anyone can forge one. Set the secret on any repository whose cursors leave your server; they are then HMAC-signed and rejected if edited.</div>
 </section>
 
-<section id="migrations" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MIGRATIONS</h2>
-<div class="code-block"><span class="kw">interface</span> Migration {
-  <span class="kw">readonly</span> version: number;   <span class="cmt">// positive integer up to Number.MAX_SAFE_INTEGER (BIGINT column; timestamps like 20260908120000 are fine)</span>
-  <span class="kw">readonly</span> name: string;
-  <span class="kw">readonly</span> up: (tx: DatabaseTransactionContext) =&gt; Promise&lt;void&gt;;
-  <span class="kw">readonly</span> down?: (tx: DatabaseTransactionContext) =&gt; Promise&lt;void&gt;;
-}
+<section id="migrations-and-seeds" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MIGRATIONS AND SEEDS</h2>
+<p class="mb-4 leading-relaxed">A <em>migration</em> is a numbered script that changes the database structure, such as adding a table. The runner remembers which versions have run in a <code>_migrations</code> table and applies only the new ones. A <em>seed</em> is a named script that inserts starting data, tracked the same way in <code>_seeds</code>.</p>
+<p class="mb-4 leading-relaxed">Both runners take a PostgreSQL <em>advisory lock</em> (a database-wide named lock) before working, so two app instances booting at the same time never run the same script twice. Each script runs in its own transaction by default.</p>
+<div class="code-block"><span class="kw">import</span> { PrismaClient } <span class="kw">from</span> <span class="str">"@prisma/client"</span>;
+<span class="kw">import</span> { PrismaPg } <span class="kw">from</span> <span class="str">"@prisma/adapter-pg"</span>;
+<span class="kw">import</span> { createDatabaseClient, createMigrationRunner, createSeedRunner } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
 
-<span class="kw">interface</span> MigrationRunnerOptions {
-  <span class="kw">readonly</span> tableName?: string;          <span class="cmt">// default "_migrations"</span>
-  <span class="kw">readonly</span> lockKey?: string;            <span class="cmt">// default "database:migrations"</span>
-  <span class="kw">readonly</span> dialect?: <span class="str">"postgresql"</span>;      // <span class="str">"mysql"</span> / <span class="str">"sqlite"</span> <span class="kw">throw</span> UnsupportedDialectError
-  <span class="kw">readonly</span> transaction?: { timeoutMs?, maxWaitMs?, isolationLevel? };
-  <span class="kw">readonly</span> perItemTransaction?: boolean; <span class="cmt">// default true: one transaction per migration</span>
-}
+<span class="kw">const</span> prisma = <span class="kw">new</span> <span class="tp">PrismaClient</span>({
+  adapter: <span class="kw">new</span> <span class="tp">PrismaPg</span>({ connectionString: process.env.<span class="const">DATABASE_URL</span> }),
+});
+<span class="kw">const</span> client = <span class="fn">createDatabaseClient</span>({ prisma });
+<span class="kw">await</span> client.<span class="fn">connect</span>();
 
-<span class="kw">class</span> MigrationRunner {
-  status(): Promise&lt;MigrationStatus&gt;;                  <span class="cmt">// { currentVersion, latestVersion, pending, applied }</span>
-  migrate() / run(): Promise&lt;MigrationResult&gt;;         <span class="cmt">// { applied, skipped }</span>
-  rollback(): Promise&lt;MigrationRecord | null&gt;;
-  rollback(steps: number): Promise&lt;<span class="kw">readonly</span> MigrationRecord[]&gt;;
-  rollbackAll(): Promise&lt;<span class="kw">readonly</span> MigrationRecord[]&gt;;
-  ensureMigrationTable(): Promise&lt;void&gt;;
-  getAppliedMigrations(tx?) / getHistory(): Promise&lt;<span class="kw">readonly</span> MigrationRecord[]&gt;;
-}</div>
-<p class="mb-4 leading-relaxed">Every entry point re-reads the applied history <em>inside</em> the advisory lock (<code>pg_advisory_xact_lock</code> with an FNV-1a 64 key), so two runners started together never apply or revert the same migration twice. With <code>perItemTransaction: false</code> the whole batch is one all-or-nothing transaction.</p>
-<div class="code-block"><span class="kw">import</span> { createMigrationRunner } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
+<span class="kw">const</span> migrations = <span class="fn">createMigrationRunner</span>(client, [
+  {
+    version: <span class="num">1</span>,
+    name: <span class="str">"create-roles"</span>,
+    up: <span class="kw">async</span> (tx) =&gt; {
+      <span class="kw">await</span> tx.<span class="fn">$executeRawUnsafe</span>(<span class="str">'CREATE TABLE "roles" ("name" TEXT PRIMARY KEY)'</span>);
+    },
+    down: <span class="kw">async</span> (tx) =&gt; {
+      <span class="kw">await</span> tx.<span class="fn">$executeRawUnsafe</span>(<span class="str">'DROP TABLE "roles"'</span>);
+    },
+  },
+], { transaction: { timeoutMs: <span class="num">60_000</span> } });
 
-<span class="kw">const</span> runner = createMigrationRunner(client, migrations, { transaction: { timeoutMs: 60_000 } });
-<span class="kw">const</span> { applied } = <span class="kw">await</span> runner.migrate();
-<span class="kw">const</span> status = <span class="kw">await</span> runner.status();</div>
+<span class="kw">const</span> result = <span class="kw">await</span> migrations.<span class="fn">migrate</span>();
+console.<span class="fn">log</span>(result.applied.<span class="fn">map</span>((m) =&gt; m.name), (<span class="kw">await</span> migrations.<span class="fn">status</span>()).currentVersion);
+<span class="cmt">// [ "create-roles" ] 1</span>
+
+<span class="kw">const</span> seeds = <span class="fn">createSeedRunner</span>(client, [
+  {
+    name: <span class="str">"default-roles"</span>,
+    order: <span class="num">0</span>,
+    run: <span class="kw">async</span> (tx) =&gt; {
+      <span class="kw">await</span> tx.<span class="fn">$executeRawUnsafe</span>(<span class="str">'INSERT INTO "roles" ("name") VALUES ($1)'</span>, <span class="str">"admin"</span>);
+    },
+  },
+]);
+console.<span class="fn">log</span>((<span class="kw">await</span> seeds.<span class="fn">run</span>()).applied.length);
+<span class="cmt">// 1</span>
+
+<span class="kw">await</span> client.<span class="fn">disconnect</span>();</div>
+<p class="mb-4 leading-relaxed">Run the script a second time and both print <code>0</code> applied: the runners see the recorded versions and skip them. <code>migrations.rollback()</code> reverts the newest migration using its <code>down</code>; <code>rollback(3)</code> reverts three; <code>rollbackAll()</code> reverts everything.</p>
+<table class="doc-table mb-4"><thead><tr><th>Runner option</th><th>What it does</th><th>Default</th></tr></thead><tbody><tr><td><code>tableName</code></td><td>Tracking table.</td><td><code>"_migrations"</code> / <code>"_seeds"</code></td></tr><tr><td><code>lockKey</code></td><td>Advisory lock name.</td><td><code>"database:migrations"</code> / <code>"database:seeds"</code></td></tr><tr><td><code>transaction</code></td><td><code>{ timeoutMs, maxWaitMs, isolationLevel }</code> for every transaction the runner opens.</td><td>Prisma defaults (5 s)</td></tr><tr><td><code>perItemTransaction</code></td><td><code>true</code>: one transaction per script. <code>false</code>: the whole batch is all-or-nothing.</td><td><code>true</code></td></tr><tr><td><code>dialect</code></td><td>Only <code>"postgresql"</code> works; others throw <code>UnsupportedDialectError</code>.</td><td><code>"postgresql"</code></td></tr></tbody></table>
+<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">Common mistake:</strong> a big migration hits Prisma's 5-second transaction timeout. Pass <code>transaction: { timeoutMs: 60_000 }</code> (or more) to the runner.</div>
 </section>
 
-<section id="seeds" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SEEDS</h2>
-<div class="code-block"><span class="kw">interface</span> Seed {
-  <span class="kw">readonly</span> name: string;
-  <span class="kw">readonly</span> order?: number;   <span class="cmt">// stable sort; equal orders keep declaration order</span>
-  <span class="kw">readonly</span> run: (tx: DatabaseTransactionContext) =&gt; Promise&lt;void&gt;;
-  <span class="kw">readonly</span> rollback?: (tx: DatabaseTransactionContext) =&gt; Promise&lt;void&gt;;
-}
+<section id="health-and-locks" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HEALTH CHECKS AND LOCKS</h2>
+<p class="mb-4 leading-relaxed">A <em>health check</em> is a quick "is the database reachable?" probe, usually exposed on a <code>/health</code> route so a load balancer can stop sending traffic to a broken instance. It runs <code>SELECT 1</code> with a timeout (default 5 s) and reports <code>degraded</code> when latency is above 75% of that timeout.</p>
+<div class="code-block"><span class="kw">import</span> { PrismaClient } <span class="kw">from</span> <span class="str">"@prisma/client"</span>;
+<span class="kw">import</span> { PrismaPg } <span class="kw">from</span> <span class="str">"@prisma/adapter-pg"</span>;
+<span class="kw">import</span> {
+  assertDatabaseHealth,
+  checkDatabaseHealth,
+  createDatabaseClient,
+  createLockManager,
+} <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
 
-<span class="kw">class</span> SeedRunner {                        <span class="cmt">// options mirror MigrationRunnerOptions (table "_seeds", lock "database:seeds")</span>
-  status(): Promise&lt;SeedStatus&gt;;
-  run(): Promise&lt;SeedResult&gt;;
-  runOne(name: string): Promise&lt;SeedRecord&gt;;   <span class="cmt">// idempotent</span>
-  rollback(): Promise&lt;SeedRecord | null&gt;;      <span class="cmt">// most recently executed seed</span>
-  rollbackAll(): Promise&lt;<span class="kw">readonly</span> SeedRecord[]&gt;;
-  ensureSeedTable(): Promise&lt;void&gt;;
-  getAppliedSeeds(tx?) / getHistory(): Promise&lt;<span class="kw">readonly</span> SeedRecord[]&gt;;
-}</div>
-<p class="mb-4 leading-relaxed">Seed records carry an execution <code>sequence</code> (<code>BIGSERIAL</code>), so rollbacks walk in reverse execution order even when every seed in a batch shares the same <code>applied_at</code>.</p>
-</section>
+<span class="kw">const</span> prisma = <span class="kw">new</span> <span class="tp">PrismaClient</span>({
+  adapter: <span class="kw">new</span> <span class="tp">PrismaPg</span>({ connectionString: process.env.<span class="const">DATABASE_URL</span> }),
+});
+<span class="kw">const</span> client = <span class="fn">createDatabaseClient</span>({ prisma });
+<span class="kw">await</span> client.<span class="fn">connect</span>();
 
-<section id="health-checks" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HEALTH CHECKS</h2>
-<div class="code-block">checkDatabaseHealth(client, { timeoutMs? })     <span class="cmt">// { status: "healthy" | "degraded" | "unhealthy", healthy, latencyMs, checkedAt, message, error? }</span>
-checkDatabaseReadiness(client, { timeoutMs? })  <span class="cmt">// { ready, latencyMs, checkedAt, message }</span>
-assertDatabaseHealth(client, options?)          <span class="cmt">// throws DatabaseUnhealthyError (503) with the real failure as cause</span>
-isDatabaseHealthy(client, options?)             <span class="cmt">// boolean</span>
-getHealthCheckCause(health)                     <span class="cmt">// original error of an unhealthy result (non-enumerable)</span></div>
-<p class="mb-4 leading-relaxed">The default timeout is 5 000 ms (<code>DEFAULT_HEALTH_TIMEOUT_MS</code>); latency above 75% of it reports <code>degraded</code>. Connection failures are reported with a fixed message, so host names from Prisma's messages never reach health output.</p>
-</section>
+console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">checkDatabaseHealth</span>(client, { timeoutMs: <span class="num">2_000</span> }));
+<span class="cmt">// { status: "healthy", healthy: true, latencyMs: 4,</span>
+<span class="cmt">//   checkedAt: 2026-09-09T10:00:00.000Z, message: "Database connection is healthy." }</span>
 
-<section id="locks" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">LOCKS</h2>
-<div class="code-block"><span class="kw">interface</span> DatabaseLockOptions {
-  <span class="kw">readonly</span> mode?: <span class="str">"for-update"</span> | <span class="str">"for-no-key-update"</span> | <span class="str">"for-share"</span> | <span class="str">"for-key-share"</span>;  <span class="cmt">// row locks</span>
-  <span class="kw">readonly</span> timeoutMs?: number;      <span class="cmt">// SET LOCAL lock_timeout; the transaction timeout is raised to cover it</span>
-  <span class="kw">readonly</span> skipLocked?: boolean;    <span class="cmt">// row locks: acquired: false instead of waiting</span>
-  <span class="kw">readonly</span> noWait?: boolean;        <span class="cmt">// fail immediately when held</span>
-  <span class="kw">readonly</span> namespace?: string;      <span class="cmt">// advisory locks: two-int form pg_advisory_xact_lock(int, int)</span>
-  <span class="kw">readonly</span> transaction?: TransactionOptions;
-}
+<span class="kw">await</span> <span class="fn">assertDatabaseHealth</span>(client);   <span class="cmt">// throws DatabaseUnhealthyError (503) when it is not</span>
 
-<span class="kw">class</span> DatabaseLockManager {
-  withAdvisoryLock&lt;T&gt;(lockKey, callback: (tx) =&gt; Promise&lt;T&gt;, options?): Promise&lt;T&gt;;
-  withRowLock&lt;T&gt;(tableName, id, callback, options?): Promise&lt;T&gt;;   <span class="cmt">// 404 when the row is missing, 409 when skipped</span>
-}
+<span class="cmt">// Advisory lock: only one process at a time runs this block</span>
+<span class="kw">const</span> locks = <span class="fn">createLockManager</span>(client);
+<span class="kw">await</span> locks.<span class="fn">withAdvisoryLock</span>(<span class="str">"reports:nightly"</span>, <span class="kw">async</span> (tx) =&gt; {
+  <span class="kw">await</span> tx.<span class="fn">$executeRawUnsafe</span>(<span class="str">"REFRESH MATERIALIZED VIEW nightly_report"</span>);
+}, { timeoutMs: <span class="num">10_000</span> });
 
-acquireAdvisoryLock(tx, lockKey, options?): Promise&lt;DatabaseLockResult&gt;
-lockRow(tx, tableName, id, options?): Promise&lt;DatabaseLockResult&gt;   <span class="cmt">// { acquired, lockKey, mode }</span>
-normalizeAdvisoryKey(key): bigint          <span class="cmt">// FNV-1a 64, signed</span>
-normalizeAdvisoryKeyPair(namespace, key)   <span class="cmt">// [int32, int32]</span>
-resolveLockTransactionOptions(options)</div>
-<div class="code-block"><span class="kw">const</span> locks = createLockManager(client);
-
-<span class="kw">await</span> locks.withAdvisoryLock(<span class="str">"reports:nightly"</span>, <span class="kw">async</span> (tx) =&gt; {
-  <span class="kw">await</span> tx.$executeRawUnsafe(<span class="str">"REFRESH MATERIALIZED VIEW nightly_report"</span>);
-}, { timeoutMs: 10_000 });</div>
-</section>
-
-<section id="cache" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">IN-MEMORY CACHE</h2>
-<div class="code-block"><span class="kw">interface</span> MemoryCacheOptions {
-  <span class="kw">readonly</span> ttlMs?: number;          <span class="cmt">// default TTL; entries live forever when omitted</span>
-  <span class="kw">readonly</span> maxEntries?: number;     <span class="cmt">// LRU eviction when exceeded</span>
-  <span class="kw">readonly</span> pruneIntervalMs?: number; <span class="cmt">// background prune (unref'd timer); call dispose() to stop it</span>
-}
-
-<span class="kw">class</span> MemoryDatabaseCache&lt;T&gt; {
-  get / set / has / delete / clear / keys / prune / dispose / getStats / resetStats; size
-}
-
-createCacheKey(namespace, ...parts)   <span class="cmt">// deterministic nested serialisation, escaped ":" in string parts</span>
-getOrSet(cache, key, loader, options?) <span class="cmt">// concurrent misses share one loader call</span>
-invalidateByPrefix(cache, prefix)     <span class="cmt">// separator-aware: "user" matches "user" and "user:*", not "users:*"</span></div>
-<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">Not transaction-aware.</strong> Never populate the cache from inside a transaction that may roll back; other callers would observe the uncommitted value.</div>
-</section>
-
-<section id="relations" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATIONS</h2>
-<div class="code-block">oneToOne / oneToMany / manyToOne / manyToMany({ name, parent, child, foreignKey, referencedKey, nullable? })  <span class="cmt">// validated, frozen</span>
-<span class="kw">const</span> registry = createRelationRegistry([...]);   <span class="cmt">// keyed by parent + name</span>
-registry.register / registerMany / get(name, parent?) / has / remove / all() / forParent(parent) / forChild(child) / clear()
-
-includeRelation(<span class="str">"profile"</span>, { select: [<span class="str">"bio"</span>], include: [includeRelation(<span class="str">"avatar"</span>)] })
-toPrismaInclude(includes, { registry, parent, depth = 5, includeDeleted, softDeleteField })  <span class="cmt">// rejects cycles and excessive depth</span></div>
+<span class="kw">await</span> client.<span class="fn">disconnect</span>();</div>
+<p class="mb-4 leading-relaxed">Other health helpers: <code>isDatabaseHealthy(client)</code> returns a boolean and <code>checkDatabaseReadiness(client)</code> returns <code>{ ready, latencyMs, checkedAt }</code> for a readiness route. For scheduled checks with automatic reconnect, wrap the client in <code>createConnectionManager({ client, healthCheckIntervalMs: 15_000 })</code> and call <code>manager.connect()</code>; it emits <code>error</code> and <code>reconnecting</code> events through <code>manager.on(listener)</code>.</p>
+<p class="mb-4 leading-relaxed">A <em>lock</em> stops two processes from doing the same work at once. <code>withAdvisoryLock(key, callback)</code> holds a named PostgreSQL lock for the length of a transaction. <code>withRowLock(table, id, callback)</code> locks one row with <code>SELECT ... FOR UPDATE</code> instead. <code>timeoutMs</code> becomes <code>SET LOCAL lock_timeout</code>, and <code>skipLocked</code> / <code>noWait</code> control what happens when someone else holds the lock.</p>
 </section>
 
 <section id="errors" class="mb-12">
 <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERRORS</h2>
-<p class="mb-4 leading-relaxed">Every failure is a <code>DatabaseError</code> from <code>@zudojs/errors</code> carrying <code>databaseCode</code> (the Prisma code), <code>operation</code>, <code>ErrorCode</code> and an HTTP status. Detection is structural (<code>isDatabaseErrorLike</code>), so errors raised by a second copy of <code>@zudojs/errors</code> are passed through instead of double-wrapped.</p>
-<div class="border-4 border-black overflow-x-auto"><table class="w-full text-sm"><thead class="bg-black text-white"><tr><th class="p-3 text-left">Prisma code</th><th class="p-3 text-left">Kind</th><th class="p-3 text-left">Status</th><th class="p-3 text-left">ErrorCode</th></tr></thead><tbody><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">P2002</td><td class="p-3">conflict</td><td class="p-3">409</td><td class="p-3">ERR_CONFLICT</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">P2003 / P2004 / P2014</td><td class="p-3">constraint</td><td class="p-3">409</td><td class="p-3">ERR_CONFLICT</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">P2025 / P2015 / P2018</td><td class="p-3">not-found</td><td class="p-3">404</td><td class="p-3">ERR_NOT_FOUND</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">P2034</td><td class="p-3">serialization (retryable)</td><td class="p-3">409</td><td class="p-3">ERR_DATABASE_TRANSACTION</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">P2024 / P2028 / P1002 / P1008</td><td class="p-3">timeout</td><td class="p-3">503</td><td class="p-3">ERR_DATABASE_TIMEOUT / ERR_DATABASE_TRANSACTION</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">P1000 / P1001 / P1003 / P1010 / P1011 / P1017</td><td class="p-3">connection</td><td class="p-3">503</td><td class="p-3">ERR_DATABASE_CONNECTION (fixed message)</td></tr></tbody></table></div>
-<div class="code-block"><span class="kw">import</span> {
-  normalizeDatabaseError, mapRepositoryError, toDatabaseErrorInfo,
-  isConflictError, isNotFoundError, isRetryableTransactionError,
-  getDatabaseErrorCode, getDatabaseErrorKind, isDatabaseErrorLike,
-  DatabaseAbortError, DatabaseUnhealthyError, UnsupportedDialectError,
-} <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
+<p class="mb-4 leading-relaxed">Every failure from this package is a <code>DatabaseError</code> from <code>@zudojs/errors</code>. Prisma's cryptic codes such as <code>P2002</code> are mapped to an HTTP status and an error code, and messages for connection failures are fixed strings so a host name never leaks into a response.</p>
+<table class="doc-table mb-4"><thead><tr><th>Prisma code</th><th>Meaning</th><th>Status</th><th>Detect with</th></tr></thead><tbody><tr><td><code>P2002</code>, <code>P2003</code>, <code>P2004</code>, <code>P2014</code></td><td>Unique or foreign-key violation</td><td>409</td><td><code>isConflictError</code></td></tr><tr><td><code>P2025</code>, <code>P2015</code>, <code>P2018</code></td><td>Row not found</td><td>404</td><td><code>isNotFoundError</code></td></tr><tr><td><code>P2034</code>, <code>P2028</code>, <code>P1017</code>, SQL <code>40001</code> / <code>40P01</code></td><td>Temporary; safe to retry</td><td>409 / 503</td><td><code>isRetryableTransactionError</code></td></tr><tr><td><code>P2024</code>, <code>P1002</code>, <code>P1008</code></td><td>Timeout</td><td>503</td><td><code>getDatabaseErrorKind(e) === "timeout"</code></td></tr><tr><td><code>P1000</code>, <code>P1001</code>, <code>P1003</code>, <code>P1010</code>, <code>P1011</code></td><td>Cannot connect</td><td>503</td><td><code>getDatabaseErrorKind(e) === "connection"</code></td></tr></tbody></table>
+<p class="mb-4 leading-relaxed">This fragment shows the usual pattern in a request handler, using the <code>users</code> repository from the Repositories section.</p>
+<div class="code-block"><span class="kw">import</span> { isConflictError, isNotFoundError, toDatabaseErrorInfo } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
 
 <span class="kw">try</span> {
-  <span class="kw">await</span> users.create(input);
+  <span class="kw">await</span> users.<span class="fn">create</span>({ email: <span class="str">"alice@example.com"</span>, name: <span class="str">"Alice"</span> });
 } <span class="kw">catch</span> (error) {
-  <span class="kw">if</span> (isConflictError(error)) <span class="kw">return</span> reply.status(409);
-  log.error(toDatabaseErrorInfo(error));   <span class="cmt">// { code: "P2002", message, operation, model, constraint, metadata }</span>
-  <span class="kw">throw</span> error;
+  <span class="kw">if</span> (<span class="fn">isConflictError</span>(error)) {
+    console.<span class="fn">log</span>(<span class="str">"That email is already taken"</span>);          <span class="cmt">// respond 409</span>
+  } <span class="kw">else if</span> (<span class="fn">isNotFoundError</span>(error)) {
+    console.<span class="fn">log</span>(<span class="str">"No such row"</span>);                          <span class="cmt">// respond 404</span>
+  } <span class="kw">else</span> {
+    console.<span class="fn">error</span>(<span class="fn">toDatabaseErrorInfo</span>(error));
+    <span class="cmt">// { code: "P2002", message: "User already exists.", operation: "insert",</span>
+    <span class="cmt">//   model: "User", constraint: "email" }   (plus cause and metadata)</span>
+    <span class="kw">throw</span> error;
+  }
 }</div>
 </section>
 
-<section id="types" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TYPES</h2>
-<div class="code-block"><span class="kw">interface</span> DatabaseEntity&lt;TId = string&gt; { id: TId; createdAt: Date; updatedAt: Date }
-<span class="kw">interface</span> SoftDeletableEntity <span class="kw">extends</span> DatabaseEntity { deletedAt: Date | null }
-<span class="kw">interface</span> AuditableEntity <span class="kw">extends</span> DatabaseEntity { createdBy?: string; updatedBy?: string }
-
-<span class="kw">interface</span> DatabaseLogger { debug(msg, meta?); info(msg, meta?); warn(msg, meta?); error(msg, error?, meta?) }
-<span class="kw">const</span> noopDatabaseLogger: DatabaseLogger;
-
-<span class="kw">interface</span> DatabaseConnectionOptions { connectionTimeoutMs?: number; logging?: boolean }
-<span class="kw">interface</span> DatabaseClientHealth { status: DatabaseStatus; latencyMs?: number; checkedAt: Date; error?: string }
-<span class="kw">interface</span> DatabaseErrorInfo { code?: string; message: string; operation?: string; model?; field?; constraint?; cause?; metadata? }
-<span class="kw">interface</span> PaginationMeta { page; limit; total; totalPages; hasNextPage; hasPreviousPage; hasNext; hasPrev }</div>
+<section id="api-reference" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">API REFERENCE</h2>
+<p class="mb-4 leading-relaxed">Everything below is exported from <code>@zudojs/database</code>. Internal helpers (cursor encoding, key hashing, error normalisation) are also exported but omitted here.</p>
+<h3 class="text-lg font-bold mb-3 mt-6">Functions</h3>
+<table class="doc-table mb-4"><thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>createDatabaseClient(options)</code></td><td>Builds a <code>DatabaseClient</code>.</td><td>Needs <code>prisma</code> or <code>adapter</code>.</td></tr>
+<tr><td><code>createDatabase</code>, <code>getDatabase</code>, <code>connectDatabase</code>, <code>disconnectDatabase</code>, <code>resetDatabase</code></td><td>Manage one shared <code>Database</code> facade.</td><td><code>getDatabase</code> throws if given options after creation.</td></tr>
+<tr><td><code>createConnectionManager(options)</code></td><td>Scheduled health checks and reconnect around a client.</td><td>Pass <code>client</code> to wrap an existing one.</td></tr>
+<tr><td><code>withTransaction(client, cb, options?)</code></td><td>Runs <code>cb(tx, context)</code> in one transaction.</td><td></td></tr>
+<tr><td><code>withTransactionRetry(client, cb, options?)</code></td><td>Same, retrying temporary failures.</td><td><code>retries</code>, <code>retryDelayMs</code>, <code>shouldRetry</code>.</td></tr>
+<tr><td><code>createTransactionManager(client)</code>, <code>createUnitOfWork(client)</code>, <code>executeUnitOfWork(client, cb)</code></td><td>Object-style transaction helpers.</td><td><code>manager.run()</code> also returns the context.</td></tr>
+<tr><td><code>getTransactionContextFromError(error)</code></td><td>Reads the failed transaction's context from an error.</td><td></td></tr>
+<tr><td><code>createQueryBuilder&lt;Fields&gt;()</code></td><td>New empty builder.</td><td></td></tr>
+<tr><td><code>toPrismaWhere(filter)</code>, <code>toPrismaArgs(state)</code>, <code>toPrismaOrderBy</code>, <code>toPrismaSelect</code>, <code>toPrismaSkipTake</code></td><td>Translate filters and builder state into Prisma arguments.</td><td></td></tr>
+<tr><td>Filter helpers (<code>equals</code>, <code>and</code>, <code>or</code>, ...)</td><td>Build <code>QueryFilter</code> values.</td><td>Full list in Query Builder.</td></tr>
+<tr><td><code>normalizePagination</code>, <code>createPaginationMeta</code>, <code>createPaginatedResult</code>, <code>paginateCollection</code></td><td>Offset pagination helpers for data you already have in memory.</td><td></td></tr>
+<tr><td><code>encodeCursor</code>, <code>decodeCursor</code>, <code>createKeysetPage</code>, <code>buildKeysetWhere</code></td><td>Cursor pagination building blocks used by <code>paginateCursor</code>.</td><td>Pass <code>allowedFields</code> to <code>decodeCursor</code> for untrusted input.</td></tr>
+<tr><td><code>createMigrationRunner(client, migrations, options?)</code></td><td>Builds a <code>MigrationRunner</code>.</td><td>PostgreSQL only.</td></tr>
+<tr><td><code>createSeedRunner(client, seeds, options?)</code></td><td>Builds a <code>SeedRunner</code>.</td><td>PostgreSQL only.</td></tr>
+<tr><td><code>createLockManager(client)</code>, <code>acquireAdvisoryLock(tx, key)</code>, <code>lockRow(tx, table, id)</code></td><td>Advisory and row locks.</td><td>PostgreSQL only.</td></tr>
+<tr><td><code>checkDatabaseHealth</code>, <code>checkDatabaseReadiness</code>, <code>assertDatabaseHealth</code>, <code>isDatabaseHealthy</code></td><td>Health probes with a timeout.</td><td>Default 5000 ms.</td></tr>
+<tr><td><code>createDatabaseCache(options?)</code>, <code>createCacheKey(ns, ...parts)</code>, <code>getOrSet(cache, key, loader)</code>, <code>invalidateByPrefix(cache, prefix)</code></td><td>Process-local LRU cache with TTL.</td><td>Not transaction-aware.</td></tr>
+<tr><td><code>oneToOne</code>, <code>oneToMany</code>, <code>manyToOne</code>, <code>manyToMany</code>, <code>createRelationRegistry</code>, <code>includeRelation</code>, <code>toPrismaInclude</code></td><td>Describe relations and validate <code>include</code> trees.</td><td>Depth-limited (default 5).</td></tr>
+<tr><td><code>isConflictError</code>, <code>isNotFoundError</code>, <code>isRetryableTransactionError</code>, <code>getDatabaseErrorKind</code>, <code>getDatabaseErrorCode</code>, <code>toDatabaseErrorInfo</code>, <code>normalizeDatabaseError</code></td><td>Inspect and convert errors.</td><td></td></tr>
+</tbody></table>
+<h3 class="text-lg font-bold mb-3 mt-6">Classes</h3>
+<table class="doc-table mb-4"><thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>DatabaseClient</code></td><td>Connection lifecycle, raw queries, transactions.</td><td><code>connect</code>, <code>disconnect</code>, <code>ping</code>, <code>healthCheck</code>, <code>getStatus</code>, <code>transaction</code>, <code>queryRawUnsafe</code>, <code>executeRawUnsafe</code>, <code>queryRaw</code>, <code>executeRaw</code>, <code>getPrisma</code>.</td></tr>
+<tr><td><code>Database</code></td><td>Facade over one client.</td><td>Same lifecycle methods plus <code>getClient()</code>.</td></tr>
+<tr><td><code>DatabaseConnectionManager</code></td><td>Events, scheduled checks, reconnect.</td><td><code>on</code>, <code>off</code>, <code>startHealthChecks</code>, <code>stopHealthChecks</code>, <code>getLastHealth</code>, <code>destroy</code>.</td></tr>
+<tr><td><code>BaseRepository</code></td><td>Abstract CRUD base class.</td><td>Extend it; see Repositories.</td></tr>
+<tr><td><code>TransactionManager</code>, <code>DatabaseUnitOfWork</code></td><td>Transaction runners.</td><td><code>execute</code>, <code>run</code>.</td></tr>
+<tr><td><code>QueryBuilder</code></td><td>Fluent query description.</td><td>Prefer <code>createQueryBuilder()</code>.</td></tr>
+<tr><td><code>MigrationRunner</code>, <code>SeedRunner</code></td><td>Tracked script runners.</td><td><code>status</code>, <code>migrate</code>/<code>run</code>, <code>runOne</code> (seeds), <code>rollback</code>, <code>rollbackAll</code>, <code>getHistory</code>.</td></tr>
+<tr><td><code>DatabaseLockManager</code></td><td><code>withAdvisoryLock</code>, <code>withRowLock</code>.</td><td></td></tr>
+<tr><td><code>MemoryDatabaseCache</code></td><td><code>get</code>, <code>set</code>, <code>has</code>, <code>delete</code>, <code>clear</code>, <code>prune</code>, <code>dispose</code>, <code>getStats</code>.</td><td>Call <code>dispose()</code> when using <code>pruneIntervalMs</code>.</td></tr>
+<tr><td><code>RelationRegistry</code></td><td><code>register</code>, <code>get</code>, <code>forParent</code>, <code>forChild</code>.</td><td></td></tr>
+</tbody></table>
+<h3 class="text-lg font-bold mb-3 mt-6">Errors</h3>
+<table class="doc-table mb-4"><thead><tr><th>Name</th><th>When</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>DatabaseAbortError</code></td><td>An <code>AbortSignal</code> fired.</td><td>Code <code>ERR_ABORTED</code>, status 499.</td></tr>
+<tr><td><code>DatabaseUnhealthyError</code></td><td><code>assertDatabaseHealth</code> failed.</td><td>Status 503; <code>.health</code> holds the report.</td></tr>
+<tr><td><code>UnsupportedDialectError</code></td><td>A runner was given <code>mysql</code> or <code>sqlite</code>.</td><td></td></tr>
+</tbody></table>
+<h3 class="text-lg font-bold mb-3 mt-6">Types and constants</h3>
+<table class="doc-table mb-4"><thead><tr><th>Name</th><th>What it is</th></tr></thead><tbody>
+<tr><td><code>DatabaseClientOptions</code>, <code>BaseRepositoryOptions</code>, <code>TransactionOptions</code>, <code>ManagedTransactionOptions</code>, <code>TransactionRetryOptions</code>, <code>MigrationRunnerOptions</code>, <code>SeedRunnerOptions</code>, <code>DatabaseLockOptions</code>, <code>MemoryCacheOptions</code></td><td>Option objects for the matching factories.</td></tr>
+<tr><td><code>DatabaseOperationOptions</code></td><td><code>{ signal?, timeoutMs?, metadata? }</code> accepted by every operation.</td></tr>
+<tr><td><code>PaginatedResult</code>, <code>PaginationMeta</code>, <code>CursorPaginatedResult</code>, <code>CursorPaginationMeta</code>, <code>SortInput</code>, <code>QueryOptions</code></td><td>Pagination shapes.</td></tr>
+<tr><td><code>Migration</code>, <code>MigrationRecord</code>, <code>MigrationStatus</code>, <code>Seed</code>, <code>SeedRecord</code></td><td>Runner inputs and outputs.</td></tr>
+<tr><td><code>DatabaseEntity</code>, <code>SoftDeletableEntity</code>, <code>AuditableEntity</code></td><td>Optional base shapes for your entity interfaces.</td></tr>
+<tr><td><code>PrismaClientLike</code>, <code>RepositoryDelegate</code>, <code>DatabaseTransactionContext</code></td><td>Structural types; a stub object satisfying them works in tests.</td></tr>
+<tr><td><code>DatabaseLogger</code>, <code>noopDatabaseLogger</code></td><td>Logger interface and a silent implementation.</td></tr>
+<tr><td><code>DEFAULT_PAGE</code> (1), <code>DEFAULT_LIMIT</code> (20), <code>MAX_LIMIT</code> (100), <code>DEFAULT_HEALTH_TIMEOUT_MS</code> (5000), <code>DEFAULT_MIGRATION_TABLE</code>, <code>DEFAULT_SEED_TABLE</code>, <code>SUPPORTED_ISOLATION_LEVELS</code></td><td>Constants.</td></tr>
+</tbody></table>
 </section>
 
-<section id="testing" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TESTING</h2>
-<p class="mb-4 leading-relaxed">There is no testing subpath. Because the client depends on Prisma structurally, a stub implementing <code>PrismaClientLike</code> is enough to exercise the lifecycle, runners, locks and repositories without a database. Repositories take any object implementing <code>RepositoryDelegate</code>.</p>
-<div class="code-block"><span class="kw">import</span> { DatabaseClient, MigrationRunner, noopDatabaseLogger, <span class="kw">type</span> PrismaClientLike } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> queries: string[] = [];
-<span class="kw">const</span> prisma: PrismaClientLike = {
-  <span class="kw">async</span> $connect() {},
-  <span class="kw">async</span> $disconnect() {},
-  <span class="kw">async</span> $transaction(callback) { <span class="kw">return</span> callback(prisma as never); },
-  <span class="kw">async</span> $queryRawUnsafe(sql) { queries.push(sql); <span class="kw">return</span> []; },
-  <span class="kw">async</span> $executeRawUnsafe(sql) { queries.push(sql); <span class="kw">return</span> 1; },
-};
-
-<span class="kw">const</span> client = <span class="kw">new</span> DatabaseClient({ prisma, logger: noopDatabaseLogger });
-<span class="kw">await</span> <span class="kw">new</span> MigrationRunner(client, migrations).migrate();
-expect(queries[0]).toContain('CREATE TABLE IF NOT EXISTS <span class="str">"_migrations"</span>');</div>
+<section id="common-mistakes" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMON MISTAKES</h2>
+<ul class="list-disc pl-6 mb-4 space-y-3">
+<li><strong>Creating a client with no <code>prisma</code> and no <code>adapter</code>.</strong> <code>createDatabaseClient({})</code> throws <code>DatabaseError: DatabaseClient requires either a pre-built prisma client or a Prisma driver adapter</code>. Pass one of them.</li>
+<li><strong>Using the root repository inside a transaction.</strong> <code>users.update(...)</code> inside <code>withTransaction</code> runs on the normal connection and is not rolled back with the rest. Call <code>users.withTransaction(tx)</code> and use that copy.</li>
+<li><strong>Wrong <code>modelName</code> for the Prisma model.</strong> <code>withTransaction(tx)</code> looks up <code>tx.user</code> from <code>modelName: "User"</code>. If your model is <code>UserAccount</code>, set <code>modelName: "UserAccount"</code> or pass <code>delegateKey: "userAccount"</code>, otherwise it throws <code>Transaction client has no "user" delegate</code>.</li>
+<li><strong>Passing <code>getDatabase(options)</code> twice.</strong> The second call throws a <code>TypeError</code> because the shared instance already exists. Configure it once at startup with <code>connectDatabase(options)</code>; everywhere else call <code>getDatabase()</code> with no arguments.</li>
+<li><strong>Expecting <code>timeoutMs</code> to cancel the SQL.</strong> The promise rejects, but the statement keeps running on PostgreSQL. Configure <code>statement_timeout</code> on the connection for server-side cancellation.</li>
+<li><strong>Filling the cache inside a transaction.</strong> If the transaction rolls back, other callers read a value that never existed. Populate <code>MemoryDatabaseCache</code> only after the transaction commits.</li>
+</ul>
 </section>
 
-<section id="full-example" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">FULL EXAMPLE</h2>
-<div class="code-block"><span class="kw">import</span> { PrismaClient } <span class="kw">from</span> <span class="str">"@prisma/client"</span>;
-<span class="kw">import</span> { PrismaPg } <span class="kw">from</span> <span class="str">"@prisma/adapter-pg"</span>;
-<span class="kw">import</span> {
-  BaseRepository, createConnectionManager, createDatabaseClient, createQueryBuilder,
-  createMigrationRunner, withTransactionRetry, checkDatabaseHealth,
-} <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
-
-<span class="kw">const</span> prisma = <span class="kw">new</span> PrismaClient({ adapter: <span class="kw">new</span> PrismaPg({ connectionString: process.env.DATABASE_URL }) });
-<span class="kw">const</span> client = createDatabaseClient({ prisma });
-<span class="kw">const</span> manager = createConnectionManager({ client, healthCheckIntervalMs: 30_000 });
-<span class="kw">await</span> manager.connect();
-
-<span class="kw">await</span> createMigrationRunner(client, migrations).migrate();
-
-<span class="kw">class</span> OrderRepository <span class="kw">extends</span> BaseRepository&lt;Order&gt; {
-  constructor(delegate: ConstructorParameters&lt;typeof BaseRepository&lt;Order&gt;&gt;[0]) {
-    super(delegate, { modelName: <span class="str">"Order"</span>, softDelete: true });
-  }
-}
-<span class="kw">const</span> orders = <span class="kw">new</span> OrderRepository(prisma.order);
-
-<span class="kw">const</span> recent = <span class="kw">await</span> orders.findByQuery(
-  createQueryBuilder&lt;<span class="str">"status"</span> | <span class="str">"total"</span> | <span class="str">"createdAt"</span>&gt;()
-    .where(<span class="str">"status"</span>, <span class="str">"completed"</span>)
-    .whereGreaterThanOrEqual(<span class="str">"total"</span>, 50)
-    .orderByDesc(<span class="str">"createdAt"</span>)
-    .paginate({ page: 1, limit: 10 }),
-);
-
-<span class="kw">await</span> withTransactionRetry(client, <span class="kw">async</span> (tx) =&gt; {
-  <span class="kw">const</span> txOrders = orders.withTransaction(tx);
-  <span class="kw">await</span> txOrders.update(recent[0]!.id, { status: <span class="str">"archived"</span> });
-});
-
-<span class="kw">const</span> health = <span class="kw">await</span> checkDatabaseHealth(client);
-process.on(<span class="str">"SIGTERM"</span>, () =&gt; void manager.destroy());</div>
+<section id="related" class="mb-12">
+<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATED PACKAGES</h2>
+<ul class="list-disc pl-6 mb-4 space-y-2">
+<li><a href="/docs/packages-errors" class="text-zudo-blue font-bold hover:underline">@zudojs/errors</a> — every error this package throws is a <code>DatabaseError</code> from here; read it to see the full <code>ErrorCode</code> list and HTTP mapping.</li>
+<li><a href="/docs/packages-cache" class="text-zudo-blue font-bold hover:underline">@zudojs/cache</a> — when the process-local <code>MemoryDatabaseCache</code> is not enough and you need a shared or Redis-backed cache.</li>
+<li><a href="/docs/packages-transactions" class="text-zudo-blue font-bold hover:underline">@zudojs/transactions</a> — coordinating work across more than one resource, not just this database.</li>
+<li><a href="/docs/packages-lifecycle" class="text-zudo-blue font-bold hover:underline">@zudojs/lifecycle</a> — a place to hook <code>client.connect()</code> at startup and <code>client.disconnect()</code> on shutdown.</li>
+<li><a href="/docs/packages-http" class="text-zudo-blue font-bold hover:underline">@zudojs/http</a> — where <code>checkDatabaseHealth</code> usually ends up, behind a <code>/health</code> route.</li>
+</ul>
 </section>
 
-<section id="connections" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONNECTIONS TO OTHER PACKAGES</h2>
-<div class="border-4 border-black overflow-x-auto"><table class="w-full text-sm"><thead class="bg-black text-white"><tr><th class="p-3 text-left">Package</th><th class="p-3 text-left">Version</th><th class="p-3 text-left">Relationship</th><th class="p-3 text-left">How</th></tr></thead><tbody><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/errors</td><td class="p-3">0.1.0</td><td class="p-3">dependency</td><td class="p-3">All failures are <code>DatabaseError</code> instances; <code>DatabaseOperation</code> and <code>ErrorCode</code> values are reused</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@prisma/client</td><td class="p-3">&gt;=7 &lt;8</td><td class="p-3">peer dependency</td><td class="p-3">Interactive transactions, raw queries, model delegates</td></tr><tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/logger (optional)</td><td class="p-3">—</td><td class="p-3">consumer-provided</td><td class="p-3">Any object matching <code>DatabaseLogger</code> can be passed as <code>logger</code>; nothing is imported</td></tr></tbody></table></div>
-<p class="mb-4 leading-relaxed">No other <code>@zudojs</code> package is imported by <code>@zudojs/database</code>.</p>
-</section>
-
-<section id="limitations" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">LIMITATIONS</h2>
-<ul class="list-disc pl-6 mb-4 space-y-1"><li>PostgreSQL only. Migration, seed and lock helpers emit PostgreSQL SQL; other dialects throw <code>UnsupportedDialectError</code>.</li><li>No savepoints or nested transactions; Prisma interactive transactions are used as-is.</li><li>Connection pooling, SSL and the connection URL are configured on the Prisma driver adapter, not in this package.</li><li><code>timeoutMs</code> and <code>signal</code> are client-side only; the database statement is not cancelled server-side.</li><li>The cache is process-local and not transaction-aware.</li></ul>
-</section>
-
-<section id="quick-reference" class="mb-12">
-<h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK REFERENCE</h2>
-<div class="code-block"><span class="cmt">// Subpaths</span>
-<span class="kw">import</span> { DatabaseClient, createDatabaseClient, normalizeDatabaseError } <span class="kw">from</span> <span class="str">"@zudojs/database/client"</span>;
-<span class="kw">import</span> { BaseRepository, mapRepositoryError } <span class="kw">from</span> <span class="str">"@zudojs/database/repositories"</span>;
-<span class="kw">import</span> { TransactionManager, withTransaction, withTransactionRetry } <span class="kw">from</span> <span class="str">"@zudojs/database/transactions"</span>;
-
-<span class="cmt">// Everything else from the root</span>
-<span class="kw">import</span> {
-  Database, createDatabase, getDatabase, connectDatabase, resetDatabase,
-  DatabaseConnectionManager, createConnectionManager,
-  QueryBuilder, createQueryBuilder, toPrismaWhere, toPrismaArgs,
-  equals, notEquals, inList, between, contains, matchesPattern, isNull, isNotNull,
-  dateRange, dateOnly, isBefore, isAfter, isBetween, and, or, not, allOf, anyOf, relational,
-  DatabaseUnitOfWork, createUnitOfWork, executeUnitOfWork,
-  normalizePagination, createPaginationMeta, encodeCursor, decodeCursor, createKeysetPage,
-  MigrationRunner, createMigrationRunner, SeedRunner, createSeedRunner,
-  DatabaseLockManager, createLockManager, acquireAdvisoryLock, lockRow,
-  MemoryDatabaseCache, createDatabaseCache, createCacheKey, getOrSet, invalidateByPrefix,
-  RelationRegistry, createRelationRegistry, oneToMany, includeRelation, toPrismaInclude,
-  checkDatabaseHealth, checkDatabaseReadiness, assertDatabaseHealth, isDatabaseHealthy,
-  isConflictError, isNotFoundError, isRetryableTransactionError, toDatabaseErrorInfo,
-} <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;</div>
-</section>
-
+      <!-- EXPORT INDEX -->
+      <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/database</code> exports from its package root at v1.0.0 &mdash; <strong>275</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <details class="border-2 border-black p-5 bg-white">
+          <summary class="font-bold cursor-pointer select-none">Show all 275 exports</summary>
+          <div class="mt-5">
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Re-exported <span class="text-black/40 font-normal">(275)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AuditableEntity</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BaseRepository</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BaseRepositoryOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CACHE_KEY_SEPARATOR</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheStats</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CursorPaginatedResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CursorPaginationInput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CursorPaginationMeta</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CursorPayload</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CursorQueryOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_HEALTH_TIMEOUT_MS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_INCLUDE_DEPTH</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_LIMIT</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_MIGRATION_LOCK</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_MIGRATION_TABLE</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_PAGE</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_SEED_LOCK</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_SEED_TABLE</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_SQL_DIALECT</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Database</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseAbortError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseCache</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseClient</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseClientHealth</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseClientOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseConnectionEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseConnectionEventDetails</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseConnectionListener</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseConnectionManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseConnectionManagerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseConnectionOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseEntity</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseErrorInfo</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseErrorKind</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseHealth</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseHealthInfo</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseHealthOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseHealthStatus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseLockManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseLockMode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseLockOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseLockResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseLogger</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseOperationOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseReadiness</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseReconnectOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseStatus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseTransactionContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseUnhealthyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseUnitOfWork</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DecodeCursorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EncodeCursorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">KeysetPageOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">KeysetWhere</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_LIMIT</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ManagedTransactionOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MemoryCacheOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MemoryDatabaseCache</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Migration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MigrationRecord</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MigrationResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MigrationRunner</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MigrationRunnerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MigrationStatus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">NormalizeDatabaseErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">NormalizedPagination</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PaginatedResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PaginationInput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PaginationMeta</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PrismaClientLike</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PrismaDriverAdapterLike</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PrismaErrorLike</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PrismaQueryArgs</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PrismaQueryEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PrismaTransactionOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PrismaWhere</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryBuilder</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryBuilderState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryCondition</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryFilter</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryOperator</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RETRYABLE_DATABASE_CODES</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RawQueryOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RelationDefinition</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RelationInclude</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RelationLoadOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RelationOperator</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RelationRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RelationType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Repository</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RepositoryDelegate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RepositoryErrorContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RepositoryOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RunnerTransactionOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SQL_IDENTIFIER_PATTERN</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SUPPORTED_ISOLATION_LEVELS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Seed</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SeedRecord</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SeedResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SeedRunner</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SeedRunnerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SeedStatus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SoftDeletableEntity</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SoftDeletableRepository</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SoftDeleteOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SortDirection</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SortInput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SqlDialect</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SqlDialectName</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ToPrismaArgsOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ToPrismaIncludeOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionCallback</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionClientLike</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionIsolationLevel</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionOutcome</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionRetryOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionStatus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UnitOfWork</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UnitOfWorkOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UnsupportedDialectError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">acquireAdvisoryLock</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">allOf</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">and</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">anyOf</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertDatabaseHealth</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">between</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">buildKeysetWhere</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">buildLockClause</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">buildPrismaTransactionOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">calculateOffset</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">calculateTotalPages</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">checkDatabaseHealth</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">checkDatabaseReadiness</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cloneFilter</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">condition</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">connectDatabase</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">contains</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createAbortError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCacheKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConnectionManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCursorPaginatedResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCursorPaginationMeta</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createDatabase</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createDatabaseCache</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createDatabaseClient</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createKeysetCursor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createKeysetPage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createLockManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createMigrationRunner</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createPaginatedResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createPaginationMeta</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createQueryBuilder</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRelationRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createSeedRunner</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createTransactionContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createTransactionId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createTransactionManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createUnitOfWork</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">dateOnly</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">dateRange</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">decodeCursor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">decodeKeysetCursor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">disconnectDatabase</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">encodeCursor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">endsWith</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">equals</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">escapeCachePart</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">executeUnitOfWork</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">flattenAnd</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">fnv1a64</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">fromObject</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getCurrentVersion</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getDatabase</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getDatabaseErrorCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getDatabaseErrorKind</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getHealthCheckCause</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getItemRange</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getLatestVersion</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getNextPage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getOrSet</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getPreviousPage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getSqlDialect</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getTransactionContextFromError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">greaterThan</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">greaterThanOrEqual</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasConditions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hashLockKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">inList</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">includeRelation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">includeRelations</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">invalidateByPrefix</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isAfter</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isBefore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isBetween</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isCollectionRelation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isConflictError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isDatabaseErrorLike</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isDatabaseHealthy</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isEmpty</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isNotEmpty</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isNotNull</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isNull</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isPrismaError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isPrismaErrorLike</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isRelationType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isRetryableTransactionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSingleRelation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSqlDialectName</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isTransactionActive</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isTransactionCommitted</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isTransactionFailed</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isValidPage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">lessThan</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">lessThanOrEqual</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">lockRow</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">manyToMany</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">manyToOne</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">mapRepositoryError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">matchesPattern</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">noneOf</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">noopDatabaseLogger</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeAdvisoryKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeAdvisoryKeyPair</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeCursorPagination</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeDatabaseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeLimit</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeMigrations</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizePage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizePagination</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeSeeds</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">not</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">notCondition</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">notEquals</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">notInList</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">oneOf</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">oneToMany</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">oneToOne</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">optionalContains</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">optionalEquals</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">or</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">paginateCollection</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">quoteIdentifier</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">raceAbort</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">relational</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">resetDatabase</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">resolveLockTransactionOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">serializeCachePart</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">startsWith</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">throwIfAborted</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toDatabaseErrorInfo</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toDatabaseOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toPrismaArgs</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toPrismaInclude</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toPrismaOrderBy</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toPrismaSelect</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toPrismaSkipTake</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toPrismaWhere</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateCursorPayload</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateIdentifier</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateInclude</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateLockKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateMigration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateRelation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateSeed</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withDatabaseErrorMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withTransaction</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withTransactionRetry</code></div>
+          </div>
+          </div>
+        </details>
+      </section>
     </main>
 
     <!-- TABLE OF CONTENTS -->
     <aside class="doc-toc" aria-label="On this page">
       <div class="text-xs font-bold uppercase tracking-wider mb-4 text-black/40">On This Page</div>
+      <a href="#overview" class="toc-link">Overview</a>
       <a href="#installation" class="toc-link">Installation</a>
-      <a href="#what-it-does" class="toc-link">What It Does</a>
-      <a href="#architecture-position" class="toc-link">Where It Sits</a>
-      <a href="#dependencies" class="toc-link">Dependencies</a>
+      <a href="#quick-start" class="toc-link">Quick Start</a>
       <a href="#database-client" class="toc-link">Database Client</a>
-      <a href="#database-facade" class="toc-link">Database Facade</a>
-      <a href="#connection-manager" class="toc-link">Connection Manager</a>
-      <a href="#base-repository" class="toc-link">Base Repository</a>
+      <a href="#repositories" class="toc-link">Repositories</a>
+      <a href="#transactions" class="toc-link">Transactions</a>
       <a href="#query-builder" class="toc-link">Query Builder</a>
-      <a href="#query-filters" class="toc-link">Query Filters</a>
-      <a href="#transaction-manager" class="toc-link">Transactions</a>
-      <a href="#unit-of-work" class="toc-link">Unit of Work</a>
       <a href="#pagination" class="toc-link">Pagination</a>
-      <a href="#migrations" class="toc-link">Migrations</a>
-      <a href="#seeds" class="toc-link">Seeds</a>
-      <a href="#health-checks" class="toc-link">Health Checks</a>
-      <a href="#locks" class="toc-link">Locks</a>
-      <a href="#cache" class="toc-link">Cache</a>
-      <a href="#relations" class="toc-link">Relations</a>
+      <a href="#migrations-and-seeds" class="toc-link">Migrations & Seeds</a>
+      <a href="#health-and-locks" class="toc-link">Health & Locks</a>
       <a href="#errors" class="toc-link">Errors</a>
-      <a href="#types" class="toc-link">Types</a>
-      <a href="#testing" class="toc-link">Testing</a>
-      <a href="#full-example" class="toc-link">Full Example</a>
-      <a href="#connections" class="toc-link">Connections</a>
-      <a href="#limitations" class="toc-link">Limitations</a>
-      <a href="#quick-reference" class="toc-link">Quick Reference</a>
+      <a href="#api-reference" class="toc-link">API Reference</a>
+      <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
+      <a href="#related" class="toc-link">Related Packages</a>
+          <a href="#export-index" class="toc-link">Complete Export Index</a>
     </aside>
 
   </div>
@@ -747,5 +592,6 @@ process.on(<span class="str">"SIGTERM"</span>, () =&gt; void manager.destroy());
   <script src="/js/docs.js"></script>
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 </body>
 </html>

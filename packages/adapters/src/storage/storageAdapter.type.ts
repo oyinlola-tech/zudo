@@ -6,11 +6,7 @@
  * Examples: Local filesystem, AWS S3, Cloudflare R2, Google Cloud Storage, Azure Blob.
  */
 
-import type {
-  Adapter,
-  AdapterCapabilities,
-  AdapterOperationOptions,
-} from "../index.js";
+import type { Adapter, AdapterOperationOptions } from "../index.js";
 
 /**
  * Storage adapter — connects Zudojs storage abstractions to external providers.

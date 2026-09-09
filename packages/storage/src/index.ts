@@ -80,7 +80,12 @@ export type {
   ListOptions,
   LocalObjectStorageOptions,
 } from "./objectStorage/index.js";
-export { DEFAULT_MAX_KEYS, DEFAULT_MAX_OBJECT_BYTES } from "./objectStorage/index.js";
+export {
+  DEFAULT_MAX_KEYS,
+  DEFAULT_MAX_OBJECT_BYTES,
+  SIDECAR_DIR,
+} from "./objectStorage/index.js";
+export type { ObjectAttributes } from "./objectStorage/index.js";
 
 export { JsonSerializer } from "./serialization/index.js";
 

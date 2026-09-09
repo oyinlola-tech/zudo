@@ -13,7 +13,7 @@ import { LoggerConfigurationError } from "../../../loggerErrors/loggerError.base
 
 import { createEntry } from "./loggerCoreMethods.entry.js";
 
-import { dispatchEntry } from "./loggerCoreMethods.dispatch.js";
+import { dispatchEntrySync } from "./loggerCoreMethods.dispatch.js";
 
 import type { ZudojsLoggerContext } from "../../core/loggerCore.core.js";
 
@@ -47,7 +47,15 @@ export function logAtLevel(
     options,
   );
 
-  void dispatchEntry(ctx.configuration, entry, (error: Error) =>
+  // Dispatch is asynchronous. It used to be fired and forgotten, so
+  // flush() and close() could return while entries were still in
+  // flight — messages were lost on process exit. Registering the
+  // promise lets the lifecycle methods drain it.
+  const dispatch = dispatchEntrySync(ctx.configuration, entry, (error: Error) =>
     ctx.handleInfrastructureError(error),
   );
+
+  if (dispatch) {
+    ctx.trackDispatch(dispatch);
+  }
 }

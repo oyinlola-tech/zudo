@@ -7,6 +7,7 @@
 import {
   defaultKeyGenerator,
   defaultHandler,
+  retryAfterSeconds,
   createRateLimiter,
   extractClientIp,
 } from "./rateLimit.core.js";
@@ -14,6 +15,7 @@ import {
 export const rateLimit = {
   defaultKeyGenerator,
   defaultHandler,
+  retryAfterSeconds,
   createRateLimiter,
   extractClientIp,
 };

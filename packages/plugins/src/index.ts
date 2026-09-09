@@ -3,27 +3,43 @@
  *
  * Controlled extension system for the Zudojs framework.
  *
- * Provides plugin registration, dependency resolution, lifecycle management,
- * and orchestration for Zudojs applications.
+ * Provides plugin registration, dependency resolution, lifecycle
+ * management, and orchestration for Zudojs applications.
+ *
+ * Plugins move through `install` -> `initialize` -> `start` on the way up
+ * and `stop` -> `dispose` on the way down. The manager runs each phase
+ * across every plugin in dependency order, and rolls back everything it
+ * brought up if any phase fails.
  *
  * @example
  * ```ts
  * import { PluginManager, createPluginContext } from "@zudojs/plugins";
  *
- * const manager = new PluginManager();
+ * const manager = new PluginManager({ hookTimeout: 5_000 });
  *
  * manager.register({
- *   metadata: { name: "@zudojs/http" },
- *   dependencies: [{ name: "@zudojs/events" }],
- *   async install(context) {
- *     // register services
- *   },
+ *   metadata: { name: "@acme/db", version: "1.0.0" },
  *   async start(context) {
- *     // begin active work
+ *     const pool = openPool();
+ *     context.registerDisposable({ dispose: () => pool.end() });
  *   },
  * });
  *
- * await manager.start(createPluginContext({ metadata: { name: "@zudojs/http" } }));
+ * manager.register({
+ *   metadata: { name: "@acme/api" },
+ *   dependencies: [{ name: "@acme/db", version: "^1.0.0" }],
+ *   async start(context) {
+ *     context.logger?.info("api started");
+ *   },
+ * });
+ *
+ * // `createPluginContext` takes the host's own metadata plus the
+ * // services plugins are allowed to reach. Each plugin is handed its
+ * // own view of it, naming that plugin.
+ * const context = createPluginContext({ name: "@acme/host" });
+ *
+ * await manager.start(context); // @acme/db, then @acme/api
+ * await manager.stop(context);  // reverse order; disposables released
  * ```
  */
 
@@ -52,8 +68,11 @@ export {
   satisfiesVersion,
   assertDependencyVersions,
 } from "./pluginDependencies/versionCheck.core.js";
+export type { SemVer } from "./pluginDependencies/versionCheck.core.js";
+export { PluginDependencyVersionError } from "./pluginDependencies/versionCheck.core.js";
 
 export { LifecycleController } from "./pluginLifecycle/pluginLifecycle.core.js";
+export type { LifecycleControllerOptions } from "./pluginLifecycle/pluginLifecycle.core.js";
 
 export {
   PLUGIN_EVENTS,

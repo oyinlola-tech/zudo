@@ -10,6 +10,8 @@ import type {
   SerializedEnvelope,
   SerializationMetadata,
   SerializedValue,
+  SerializeOptions,
+  DeserializeOptions,
 } from "../serializerTypes/index.js";
 import {
   SerializationFormat,
@@ -146,14 +148,22 @@ export function unwrapEnvelope(
  * @param value - The value to serialize.
  * @param serializer - The serializer to use.
  * @param format - The format identifier for metadata.
+ * @param options - Serialize options forwarded to the serializer. Without this
+ *   the helper could only ever call `serialize(value)`, so `preserveTypes`,
+ *   `pretty` and the size/depth limits were unreachable through an envelope
+ *   unless they happened to be baked into the serializer instance.
  * @returns A SerializedEnvelope containing the serialized data.
  */
 export function serializeToEnvelope<T>(
   value: T,
-  serializer: { serialize: (v: T) => string; contentType?: string },
+  serializer: {
+    serialize: (v: T, options?: SerializeOptions) => string;
+    contentType?: string;
+  },
   format: string = SerializationFormat.JSON,
+  options?: SerializeOptions,
 ): SerializedEnvelope {
-  const data = serializer.serialize(value);
+  const data = serializer.serialize(value, options);
   return createEnvelope(data, format, {
     contentType: serializer.contentType,
   });
@@ -165,17 +175,24 @@ export function serializeToEnvelope<T>(
  * @param envelope - The envelope to unwrap.
  * @param deserializer - The deserializer to use.
  * @param expectedFormat - Optional format to validate against.
+ * @param options - Deserialize options forwarded to the deserializer, so that
+ *   `preserveTypes`, `strict`, `maxSize` and `maxDepth` are reachable through
+ *   an envelope. Envelope payloads arrive from the wire, which is exactly
+ *   where those limits matter.
  * @returns The deserialized value.
  */
 export function deserializeFromEnvelope<T>(
   envelope: SerializedEnvelope,
-  deserializer: { deserialize: <U>(v: string) => U },
+  deserializer: {
+    deserialize: <U>(v: string, options?: DeserializeOptions) => U;
+  },
   expectedFormat?: string,
+  options?: DeserializeOptions,
 ): T {
   const data = unwrapEnvelope(envelope, expectedFormat);
 
   if (typeof data === "string") {
-    return deserializer.deserialize<T>(data);
+    return deserializer.deserialize<T>(data, options);
   }
 
   const encoding = (envelope.metadata.encoding ?? "utf-8").toLowerCase();
@@ -185,5 +202,5 @@ export function deserializeFromEnvelope<T>(
     );
   }
 
-  return deserializer.deserialize<T>(decodeUtf8(data));
+  return deserializer.deserialize<T>(decodeUtf8(data), options);
 }

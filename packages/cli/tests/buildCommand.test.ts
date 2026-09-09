@@ -30,9 +30,13 @@ function createContext(overrides?: Partial<CLIContext>): CLIContext {
 }
 
 describe("runBuildCommand", () => {
-  it("logs error when no project root is found", async () => {
+  // This used to assert that the command merely logged and returned, which
+  // gave `zudojs build` exit code 0 for a project it could not build. The
+  // command now throws so the process exits non-zero.
+  it("fails when no project root is found", async () => {
     const context = createContext({ cwd: "/nonexistent" });
-    await runBuildCommand(context);
-    expect(context.logger.error).toHaveBeenCalled();
+    await expect(runBuildCommand(context)).rejects.toThrow(
+      /must be run inside a Zudojs project/i,
+    );
   });
 });

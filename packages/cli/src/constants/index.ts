@@ -4,10 +4,10 @@
  * Constants used by the CLI scaffolding system.
  */
 
-export const CLI_VERSION = "0.1.2" as const;
+export { CLI_VERSION } from "../cliConstant/cliVersion.js";
 
 /** Published version of all @zudojs/* framework packages. */
-export const ZUDOJS_PACKAGES_VERSION = "0.1.0" as const;
+export const ZUDOJS_PACKAGES_VERSION = "1.0.0" as const;
 
 export const ARCHITECTURE_CHOICES = [
   { value: "monolith", label: "Monolith" },

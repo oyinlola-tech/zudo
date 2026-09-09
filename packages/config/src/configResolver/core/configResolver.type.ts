@@ -1,9 +1,5 @@
 import type { ConfigValue } from "../../configValue/configValue.core.js";
 
-import type { ConfigSchema } from "../../configSchema/index.js";
-
-import type { ConfigStore } from "../../configStore/configStore.core.js";
-
 /**
  * Options for resolving configuration values.
  */

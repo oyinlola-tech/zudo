@@ -18,9 +18,25 @@ import type {
 } from "../deadLetter/deadLetter.type.js";
 
 /**
+ * Somewhere for a job to write a log line.
+ *
+ * Structurally compatible with `@zudojs/logger` and with `console`.
+ */
+export interface QueueLogger {
+  info(message: string, data?: Record<string, unknown>): void;
+}
+
+/**
  * Options for creating a queue.
  */
 export interface QueueOptions {
+  /**
+   * Receives lines a processor writes with `context.log()`.
+   *
+   * Without one, `JobContext.log` is a documented method that discards
+   * everything handed to it.
+   */
+  readonly logger?: QueueLogger;
   /** Queue concurrency limit. */
   readonly concurrency?: number;
   /** Default job options. */

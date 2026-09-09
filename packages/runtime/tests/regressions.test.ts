@@ -13,21 +13,29 @@ import { ReadinessTracker } from "../src/readiness/readiness.core.js";
 import { resolveRuntimeOptions } from "../src/runtimeOptions/runtimeOptions.core.js";
 import { RuntimeRegistry } from "../src/registry/registry.core.js";
 import { createLogger } from "@zudojs/logger";
+import type { Module } from "@zudojs/core";
+import type { Runtime } from "../src/runtime/runtime.core.js";
+import type { ResolvedRuntimeOptions } from "../src/runtimeOptions/runtimeOptions.type.js";
+
+const getActiveResourcesInfo = (
+  process as NodeJS.Process & {
+    getActiveResourcesInfo?: () => readonly string[];
+  }
+).getActiveResourcesInfo;
 
 const timers = () =>
-  (process as any)
-    .getActiveResourcesInfo()
-    .filter((r: string) => r === "Timeout").length;
+  (getActiveResourcesInfo?.() ?? []).filter((r) => r === "Timeout").length;
 
 describe("regressions: audit round 7", () => {
   it("T-01 a failed runtime can be stopped", async () => {
-    const bad = {
+    const bad: Module = {
       id: "bad",
       name: "bad",
+      dependencies: [],
       onInitialize() {
         throw new Error("boom");
       },
-    } as any;
+    };
     const rt = createTestRuntime([bad]);
     await expect(rt.start()).rejects.toThrow();
     expect(rt.state).toBe("failed");
@@ -37,22 +45,23 @@ describe("regressions: audit round 7", () => {
 
   it("T-01 failed startup destroys modules that only initialized", async () => {
     let destroyed = false;
-    const good = {
+    const good: Module = {
       id: "a",
       name: "a",
+      dependencies: [],
       onInitialize() {},
       onDestroy() {
         destroyed = true;
       },
-    } as any;
-    const bad = {
+    };
+    const bad: Module = {
       id: "z",
       name: "z",
       dependencies: ["a"],
       onInitialize() {
         throw new Error("boom");
       },
-    } as any;
+    };
     const rt = createTestRuntime([good, bad]);
     await expect(rt.start()).rejects.toThrow();
     expect(destroyed).toBe(true);
@@ -96,15 +105,16 @@ describe("regressions: audit round 7", () => {
   });
 
   it("T-05 module shutdown failures are surfaced on status", async () => {
-    const m = {
+    const m: Module = {
       id: "m",
       name: "m",
+      dependencies: [],
       onInitialize() {},
       onReady() {},
       onShutdown() {
         throw new Error("stuck");
       },
-    } as any;
+    };
     const rt = createTestRuntime([m]);
     await rt.start();
     await rt.stop();
@@ -121,9 +131,9 @@ describe("regressions: audit round 7", () => {
       exit: (c) => codes.push(c),
     });
     h.register(() => new Promise(() => {})); // shutdown that never finishes
-    process.emit("SIGTERM" as any);
+    process.emit("SIGTERM");
     expect(h.shuttingDown).toBe(true);
-    process.emit("SIGTERM" as any);
+    process.emit("SIGTERM");
     expect(codes).toEqual([1]);
     h.unregister();
   });
@@ -176,17 +186,21 @@ describe("regressions: audit round 7", () => {
   });
 
   it("T-07 explicit undefined does not erase a default", () => {
-    const r = resolveRuntimeOptions({
+    // Deliberately models an untyped caller that spreads an optional
+    // field through as an explicit `undefined`.
+    const partial: Partial<ResolvedRuntimeOptions> = {
       environment: "test",
       applicationName: "a",
       shutdownTimeout: undefined,
-    } as any);
+    };
+    const r = resolveRuntimeOptions(partial as ResolvedRuntimeOptions);
     expect(r.shutdownTimeout).toBeGreaterThan(0);
   });
 
   it("registry getStatus resists a __proto__ id", () => {
     const reg = new RuntimeRegistry();
-    reg.register("__proto__", { state: "running", ready: true } as any);
+    const stub = { state: "running", ready: true } as unknown as Runtime;
+    reg.register("__proto__", stub);
     const status = reg.getStatus();
     expect(status["__proto__"]).toEqual({ state: "running", ready: true });
     expect(Object.getPrototypeOf({})).toBe(Object.prototype);

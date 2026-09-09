@@ -10,8 +10,6 @@ import { FrontendGenerator } from "../src/generators/frontend/frontendGenerator.
 import type {
   ProjectConfiguration,
   FrontendFramework,
-  FrontendArchitecture,
-  PackageManager,
 } from "../src/types/index.js";
 
 vi.mock("../src/utils/utils.fileSystem.js", () => ({
@@ -19,10 +17,15 @@ vi.mock("../src/utils/utils.fileSystem.js", () => ({
   mergeBarrelExport: vi.fn(() => ""),
 }));
 
-// Never spawn real scaffolder processes in tests: execCommand rejects so
-// adapters fall back to their built-in templates (writeFileTree is mocked).
+// Never spawn real scaffolder processes in tests. Version probes (used by
+// FrontendAdapter.isAvailable) resolve so the availability gate behaves as it
+// does on a real machine; scaffolder invocations reject so adapters fall back
+// to their built-in templates (writeFileTree is mocked).
 vi.mock("../src/utils/utils.exec.js", () => ({
-  execCommand: vi.fn(async () => {
+  execCommand: vi.fn(async (_file: string, args: readonly string[] = []) => {
+    if (args.includes("--version")) {
+      return { stdout: "1.0.0", stderr: "" };
+    }
     throw new Error("process execution disabled in tests");
   }),
   runStreaming: vi.fn(async () => {}),
@@ -30,9 +33,10 @@ vi.mock("../src/utils/utils.exec.js", () => ({
 
 vi.mock("../src/registries/adapter/packageManagerRegistry.core.js", () => ({
   PackageManagerRegistry: class {
-    get(name: string) {
+    get(_name: string) {
       return {
         install: vi.fn(async () => {}),
+        add: vi.fn(async () => {}),
         addDev: vi.fn(async () => {}),
       };
     }

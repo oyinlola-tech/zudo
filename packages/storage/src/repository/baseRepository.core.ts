@@ -6,7 +6,11 @@
  */
 
 import { NotFoundError } from "@zudojs/errors";
-import type { Database, QueryParameter } from "../types/storage.type.js";
+import type {
+  Database,
+  QueryParameter,
+  Repository,
+} from "../types/storage.type.js";
 import type { FindAllOptions, TableRef } from "./baseRepository.query.js";
 import {
   buildCount,
@@ -45,7 +49,8 @@ export interface BaseRepositoryOptions {
 export class BaseRepository<
   Entity extends Record<string, unknown>,
   ID = string,
-> {
+> implements Repository<Entity, ID>
+{
   protected readonly table: TableRef;
 
   constructor(

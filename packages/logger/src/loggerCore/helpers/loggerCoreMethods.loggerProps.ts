@@ -4,8 +4,6 @@
 
 import { LoggerLevel } from "../../loggerLevel/loggerLevel.type.js";
 
-import type { LoggerConfiguration } from "../../loggerOptions/loggerOptions.type.js";
-
 import type { ZudojsLoggerContext } from "../core/loggerCore.core.js";
 
 /**

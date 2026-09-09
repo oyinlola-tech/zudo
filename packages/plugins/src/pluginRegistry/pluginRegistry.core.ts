@@ -1,6 +1,4 @@
 import type { Plugin } from "../pluginTypes/plugin.type.js";
-import type { PluginMetadata } from "../pluginTypes/pluginMetadata.type.js";
-import type { PluginDependency } from "../pluginTypes/pluginDependency.type.js";
 import type { PluginState } from "../pluginTypes/pluginState.type.js";
 import type { PluginDisposable } from "../pluginTypes/pluginContext.type.js";
 import { PluginAlreadyRegisteredError, PluginStateError } from "@zudojs/errors";

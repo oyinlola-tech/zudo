@@ -4,11 +4,7 @@
  * HTTP adapter contracts — request/response translation and server lifecycle.
  */
 
-import type {
-  Adapter,
-  AdapterCapabilities,
-  AdapterOperationOptions,
-} from "../index.js";
+import type { Adapter, AdapterCapabilities } from "../index.js";
 
 /**
  * Minimal HTTP request shape.

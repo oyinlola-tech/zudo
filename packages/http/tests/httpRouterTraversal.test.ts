@@ -23,6 +23,7 @@ import type {
   HttpMiddlewareResult,
 } from "../src/httpMiddleware/httpMiddleware.type.js";
 import type { HttpResponseContext } from "../src/httpResponse/httpResponse.context.js";
+import { createResponseContext } from "../src/httpResponse/httpResponse.context.js";
 
 describe("router path traversal", () => {
   function matcherFor(path: string) {
@@ -153,7 +154,12 @@ describe("static file middleware containment", () => {
   function contextFor(url: string): HttpMiddlewareContext {
     return {
       request: { url, method: "GET", headers: {} },
-      response: { headers: {} },
+      /*
+       * A real response context: the static middleware clones it, which a
+       * plain object literal cannot do. Spreading the context here was the
+       * defect that dropped status and body downstream.
+       */
+      response: createResponseContext(),
       state: new Map(),
       signal: new AbortController().signal,
       metadata: {},
@@ -177,6 +183,13 @@ describe("static file middleware containment", () => {
     const result = await run("http://localhost/index.html", { root });
 
     expect(result).not.toBe(NEXT);
+
+    /* The served response is a real context carrying status and body. */
+    const served = result as HttpResponseContext;
+
+    expect(served.status).toBe(200);
+    expect(served.headers["content-type"]).toContain("text/html");
+    expect(String(served.body)).toBe("<h1>ok</h1>");
   });
 
   it.each([true, false])(

@@ -22,4 +22,5 @@ export type {
   QueueName,
   JobName,
   JobPriority,
+  BackoffStrategy,
 } from "./jobTypes.type.js";

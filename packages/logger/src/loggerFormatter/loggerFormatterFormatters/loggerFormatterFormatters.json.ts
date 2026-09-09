@@ -14,12 +14,27 @@ import { createLoggerFormatter } from "../loggerFormatter.core.js";
 /**
  * Removes undefined values recursively.
  */
-function removeUndefinedValues(value: unknown): unknown {
+function removeUndefinedValues(
+  value: unknown,
+  seen: WeakSet<object> = new WeakSet<object>(),
+): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => removeUndefinedValues(item));
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+    seen.add(value);
+    return value.map((item) => removeUndefinedValues(item, seen));
   }
 
   if (value && typeof value === "object" && !(value instanceof Date)) {
+    // Without a cycle guard this walk recursed until the stack blew,
+    // and the resulting RangeError was swallowed by dispatch — losing
+    // the log line rather than reporting the offending value.
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+    seen.add(value);
+
     const result: Record<string, unknown> = {};
 
     for (const [key, item] of Object.entries(value)) {
@@ -27,7 +42,12 @@ function removeUndefinedValues(value: unknown): unknown {
         continue;
       }
 
-      result[key] = removeUndefinedValues(item);
+      Object.defineProperty(result, key, {
+        value: removeUndefinedValues(item, seen),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
 
     return result;

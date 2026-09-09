@@ -345,7 +345,9 @@ function translatePattern(field: string, value: unknown): PrismaWhere {
 
   const trailing = value.endsWith("%");
 
-  const inner = value.replace(/^%+/, "").replace(/%+$/, "");
+  // The lookbehind pins the trailing match to the start of a `%` run; plain
+  // `%+$` retries from every `%` in an interior run, which is quadratic.
+  const inner = value.replace(/^%+/, "").replace(/(?<!%)%+$/, "");
 
   if (inner.length === 0 || inner.includes("%") || inner.includes("_")) {
     throw new TypeError(

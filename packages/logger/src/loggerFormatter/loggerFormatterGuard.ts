@@ -3,7 +3,6 @@
  */
 
 import type {
-  LoggerFormattedOutput,
   LoggerFormatter,
   LoggerFormatterFunction,
   LoggerFormatterLike,

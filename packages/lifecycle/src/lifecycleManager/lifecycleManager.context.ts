@@ -23,6 +23,35 @@ export interface LifecycleManagerContext {
   readonly componentStates: Map<string, LifecycleStateMachine>;
   readonly results: Map<string, ExecutionResult[]>;
   startTime: number;
+
+  /**
+   * Cancellation source for the current run.
+   *
+   * Its signal is the one handed to every component hook through
+   * LifecycleContext. It is aborted when the global shutdown deadline
+   * expires, so a hook that honours the signal can bail out instead of
+   * hanging the process.
+   */
+  readonly controller: AbortController;
+
+  /**
+   * The in-flight shutdown, shared by every caller.
+   *
+   * Startup rollback and LifecycleManager.shutdown() both go through
+   * this field, so a signal arriving during a failing startup joins the
+   * rollback already running instead of starting a second, overlapping
+   * teardown.
+   */
+  shutdownPromise?: Promise<void>;
+}
+
+/** Records an execution result against its component. */
+export function recordResult(
+  ctx: LifecycleManagerContext,
+  result: ExecutionResult,
+): void {
+  const existing = ctx.results.get(result.id) ?? [];
+  ctx.results.set(result.id, [...existing, result]);
 }
 
 /**

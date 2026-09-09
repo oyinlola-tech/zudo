@@ -14,9 +14,7 @@ import {
 /**
  * Factory options for creating a configuration manager.
  */
-export interface ConfigFactoryOptions extends ConfigManagerOptions {
-  readonly name?: string;
-}
+export type ConfigFactoryOptions = ConfigManagerOptions;
 
 /**
  * Creates a configuration manager without loading it.

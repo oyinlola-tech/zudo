@@ -37,6 +37,32 @@ const SAFE_METHODS = ["GET", "HEAD", "OPTIONS", "TRACE"];
 /** Default methods that require CSRF protection. */
 const DEFAULT_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
 
+/**
+ * Minimum accepted secret length, in characters.
+ *
+ * The signature is HMAC-SHA256, so a secret shorter than the 32-byte output
+ * adds no strength beyond its own length. `"CSRF secret cannot be empty"` was
+ * the only check, which accepted a one-character secret in silence.
+ */
+export const MIN_CSRF_SECRET_LENGTH = 32;
+
+/** Rejects a secret too short to be worth signing with. */
+function assertUsableSecret(secret: string): void {
+  if (secret.length === 0) {
+    throw new Error(
+      "CSRF secret cannot be empty: pass a random string of at least " +
+        `${MIN_CSRF_SECRET_LENGTH} characters, e.g. randomBytes(32).toString("hex")`,
+    );
+  }
+  if (secret.length < MIN_CSRF_SECRET_LENGTH) {
+    throw new Error(
+      `CSRF secret is too short: got ${secret.length} characters, expected at least ` +
+        `${MIN_CSRF_SECRET_LENGTH}. The signature is HMAC-SHA256, so a shorter ` +
+        'secret adds no strength. Generate one with randomBytes(32).toString("hex").',
+    );
+  }
+}
+
 /** Options accepted by token generation and validation. */
 export interface CsrfTokenOptions {
   /** Token lifetime in seconds (default: 3600). */
@@ -94,9 +120,7 @@ export function generateCsrfToken(
   secret: string,
   options?: number | CsrfTokenOptions,
 ): string {
-  if (secret.length === 0) {
-    throw new Error("CSRF secret cannot be empty");
-  }
+  assertUsableSecret(secret);
 
   const opts: CsrfTokenOptions =
     typeof options === "number" ? { expiration: options } : (options ?? {});
@@ -289,8 +313,14 @@ export function extractCsrfTokenFromCookies(
   return cookie?.value || undefined;
 }
 
-/** Options for the CSRF cookie. */
-export interface CsrfCookieOptions extends CsrfConfig {
+/**
+ * Options for the CSRF cookie.
+ *
+ * `secret` is deliberately omitted: this function never reads one, and
+ * inheriting the whole of {@link CsrfConfig} made a *required* secret part of
+ * the declared shape of a call that has no use for it.
+ */
+export interface CsrfCookieOptions extends Omit<CsrfConfig, "secret"> {
   /**
    * Whether to set `HttpOnly` (default: true).
    *
@@ -340,4 +370,125 @@ export function generateCsrfCookie(
   parts.push("SameSite=Strict", `Max-Age=${ttl}`);
 
   return parts.join("; ");
+}
+
+
+/* ─── Bound CSRF protection ──────────────────────────────────────────────── */
+
+/** Cookie-shaping options for {@link createCsrfProtection}. */
+export interface CsrfProtectionOptions extends CsrfConfig {
+  /** Whether to set `HttpOnly` on the cookie (default: true). */
+  readonly httpOnly?: boolean;
+  /** Whether to set `Secure` on the cookie (default: true). */
+  readonly secure?: boolean;
+  /** Cookie path (default: "/"). */
+  readonly path?: string;
+}
+
+/** A CSRF token together with the `Set-Cookie` header that carries it. */
+export interface IssuedCsrfToken {
+  /** The token to render into the page or return to the client. */
+  readonly token: string;
+  /** The `Set-Cookie` header value. */
+  readonly setCookie: string;
+}
+
+/** The request fields {@link CsrfProtection.verify} needs. */
+export interface CsrfVerifiableRequest {
+  readonly method: string;
+  readonly headers?: Record<string, string | string[] | undefined>;
+  /** The raw `Cookie` header value. */
+  readonly cookieHeader?: string;
+}
+
+/** CSRF protection bound to one configuration. */
+export interface CsrfProtection {
+  /** Mint a token and the cookie that carries it. */
+  issue(options?: { readonly sessionId?: string }): IssuedCsrfToken;
+  /**
+   * Verify a request under the double-submit pattern.
+   *
+   * Returns `true` for a method that does not require protection, so it can be
+   * called unconditionally.
+   */
+  verify(
+    request: CsrfVerifiableRequest,
+    options?: { readonly sessionId?: string },
+  ): boolean;
+  /** Whether this method requires protection under the configured methods. */
+  requiresProtection(method: string): boolean;
+}
+
+/**
+ * Binds a {@link CsrfConfig} to the CSRF primitives.
+ *
+ * Every field of `CsrfConfig` was previously inert. `secret` — the one
+ * *required* field — was never read by anything: each function took the secret
+ * as a positional argument instead. `headerName` was likewise never read, so a
+ * caller who configured it still had `x-csrf-token` looked up. Reaching the
+ * configured names meant passing them again, by hand, at four separate call
+ * sites.
+ *
+ * This composes the existing functions; it introduces no new token format.
+ *
+ * @param config - Secret, lifetime, cookie/header names, protected methods.
+ * @returns Protection bound to that configuration.
+ * @throws {Error} when the secret is missing or shorter than
+ *   {@link MIN_CSRF_SECRET_LENGTH}.
+ */
+export function createCsrfProtection(
+  config: CsrfProtectionOptions,
+): CsrfProtection {
+  assertUsableSecret(config.secret);
+
+  const expiration = config.expiration ?? DEFAULT_EXPIRATION;
+  const cookieName = config.cookieName ?? DEFAULT_COOKIE_NAME;
+  const headerName = config.headerName ?? DEFAULT_HEADER_NAME;
+
+  return {
+    issue(options) {
+      const token = generateCsrfToken(config.secret, {
+        expiration,
+        ...(options?.sessionId !== undefined
+          ? { sessionId: options.sessionId }
+          : {}),
+      });
+      return {
+        token,
+        setCookie: generateCsrfCookie(token, {
+          cookieName,
+          expiration,
+          ...(config.httpOnly !== undefined
+            ? { httpOnly: config.httpOnly }
+            : {}),
+          ...(config.secure !== undefined ? { secure: config.secure } : {}),
+          ...(config.path !== undefined ? { path: config.path } : {}),
+        }),
+      };
+    },
+
+    verify(request, options) {
+      if (!requiresCsrfProtection(request.method, config)) {
+        return true;
+      }
+      const cookieToken = extractCsrfTokenFromCookies(
+        request.cookieHeader ?? "",
+        cookieName,
+      );
+      const requestToken = extractCsrfTokenFromHeaders(
+        request.headers ?? {},
+        headerName,
+      );
+      return verifyDoubleSubmit(cookieToken, requestToken, config.secret, {
+        expiration,
+        ...(options?.sessionId !== undefined
+          ? { sessionId: options.sessionId }
+          : {}),
+      });
+    },
+
+    requiresProtection(method) {
+      return requiresCsrfProtection(method, config);
+    },
+  };
 }

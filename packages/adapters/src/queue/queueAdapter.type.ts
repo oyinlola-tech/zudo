@@ -6,11 +6,7 @@
  * Examples: BullMQ, RabbitMQ, AWS SQS, Redis, Kafka.
  */
 
-import type {
-  Adapter,
-  AdapterCapabilities,
-  AdapterOperationOptions,
-} from "../index.js";
+import type { Adapter, AdapterOperationOptions } from "../index.js";
 
 /**
  * Queue adapter — connects Zudojs queue abstractions to external providers.

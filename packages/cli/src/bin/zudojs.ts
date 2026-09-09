@@ -136,11 +136,14 @@ app.register(
         defaultValue: false,
       },
       {
+        // No default: the flag default used to be "gateway,api", which made a
+        // non-interactive `--architecture microservice` generate
+        // apps/services/gateway alongside the always-generated apps/gateway.
+        // With no default the microservice template picks its own service set.
         name: "services",
         description:
           "Comma-separated service names (microservice architecture only)",
         type: "string",
-        defaultValue: "gateway,api",
       },
     ],
     execute: async (context: CLIContext): Promise<void> => {

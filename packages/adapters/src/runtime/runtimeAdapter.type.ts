@@ -6,7 +6,7 @@
  * Examples: Node.js, Bun, Deno, AWS Lambda, Cloudflare Workers.
  */
 
-import type { Adapter, AdapterCapabilities } from "../index.js";
+import type { Adapter } from "../index.js";
 
 /**
  * Runtime adapter — provides platform-specific runtime services.

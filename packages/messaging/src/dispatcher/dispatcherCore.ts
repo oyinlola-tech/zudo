@@ -6,7 +6,13 @@
 
 import type { Message } from "../message/messageType.type.js";
 
-import type { MessageMiddlewareLike } from "../messageMiddleware/messageMiddlewareType.type.js";
+import type {
+  MessageMiddlewareLike,
+  MessageMiddlewareOptions,
+  RegisteredMessageMiddleware,
+} from "../messageMiddleware/messageMiddlewareType.type.js";
+
+import type { NamedMessageHandler } from "../messageHandler/messageHandlerType.type.js";
 
 import type {
   Dispatcher,
@@ -21,15 +27,32 @@ import { runMessagePipeline } from "../messageMiddleware/messageMiddlewarePipeli
 import {
   MessageDispatchAbortedError,
   MessageHandlerError,
+  MessageMiddlewareError,
+  MessageTimeoutError,
   MessageBusDisposedError,
 } from "@zudojs/errors";
+
+/** Default priority for middleware that does not declare one. */
+const DEFAULT_MIDDLEWARE_PRIORITY = 100;
 
 /**
  * Default dispatcher implementation.
  */
 export class DefaultDispatcher implements Dispatcher {
   private readonly registry: HandlerRegistryStore;
-  private readonly globalMiddleware: MessageMiddlewareLike[] = [];
+
+  /**
+   * Registered global middleware, in registration order.
+   *
+   * Held as {@link RegisteredMessageMiddleware} rather than bare functions:
+   * without an identity, `removeMiddleware` had nothing to match on and
+   * unconditionally returned false, and the `priority` the interface accepts
+   * had nowhere to live.
+   */
+  private readonly globalMiddleware: RegisteredMessageMiddleware[] = [];
+
+  private middlewareSequence = 0;
+
   private disposed = false;
 
   constructor(registry?: HandlerRegistryStore) {
@@ -42,20 +65,30 @@ export class DefaultDispatcher implements Dispatcher {
   ): Promise<DispatchResult<TResult>> {
     const dispatchStart = performance.now();
     this.validateNotDisposed(message);
-    const signal = this.resolveSignal(options.signal);
+    const timeout = options.timeout ?? 0;
+    const controller = new AbortController();
+    const signal = this.resolveSignal(options.signal, controller);
     const context = createMessageContext(message, {
       ...options.context,
       signal,
     });
+    const ordered = this.orderedMiddleware();
+    const perDispatch = options.middleware ?? [];
     const allMiddleware = [
-      ...this.globalMiddleware,
-      ...(options.middleware ?? []),
+      ...ordered.map((entry) => entry.middleware),
+      ...perDispatch,
+    ];
+    const middlewareIds = [
+      ...ordered.map((entry) => entry.id),
+      ...perDispatch.map((_mw, index) => `dispatch:${index}`),
     ];
     const handlers = this.registry.resolve(message.type);
     const handlerResults: HandlerExecutionResult[] = [];
 
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
     try {
-      const pipelineResult = await runMessagePipeline(
+      const run = runMessagePipeline(
         allMiddleware,
         async (msg, mwCtx) =>
           this.executeHandlers(msg, handlers, handlerResults, mwCtx.signal),
@@ -64,8 +97,22 @@ export class DefaultDispatcher implements Dispatcher {
           signal: context.signal,
           metadata: options.context?.headers as Record<string, unknown>,
           state: options.context?.state,
+          middlewareIds,
         },
       );
+
+      // `DispatchOptions.timeout` was documented on the dispatcher but only
+      // ever honoured by the bus wrapper, so anyone holding a dispatcher
+      // directly got no timeout at all.
+      const pipelineResult =
+        timeout > 0
+          ? await Promise.race([
+              run,
+              this.timeoutRejection(message, timeout, controller, (t) => {
+                timer = t;
+              }),
+            ])
+          : await run;
 
       return {
         success: true,
@@ -85,41 +132,101 @@ export class DefaultDispatcher implements Dispatcher {
         handlerResults,
         duration: performance.now() - dispatchStart,
       };
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
     }
+  }
+
+  /** A promise that rejects with {@link MessageTimeoutError} and aborts. */
+  private timeoutRejection(
+    message: Message,
+    timeout: number,
+    controller: AbortController,
+    keepTimer: (timer: ReturnType<typeof setTimeout>) => void,
+  ): Promise<never> {
+    return new Promise<never>((_resolve, reject) => {
+      const timer = setTimeout(() => {
+        const error = new MessageTimeoutError(timeout, {
+          messageType: message.type,
+          messageId: message.id,
+        });
+        // Abort first so a handler watching its signal can wind down rather
+        // than running on past the dispatch that gave up on it.
+        controller.abort(error);
+        reject(error);
+      }, timeout);
+      if (timer.unref) timer.unref();
+      keepTimer(timer);
+    });
+  }
+
+  /** Global middleware ordered by priority, with disabled entries dropped. */
+  private orderedMiddleware(): readonly RegisteredMessageMiddleware[] {
+    return this.globalMiddleware
+      .filter((entry) => entry.enabled)
+      .map((entry, index) => ({ entry, index }))
+      .sort((a, b) => a.entry.priority - b.entry.priority || a.index - b.index)
+      .map(({ entry }) => entry);
   }
 
   private validateNotDisposed(_message: Message): void {
     if (this.disposed) throw new MessageBusDisposedError();
   }
 
-  private resolveSignal(signal?: AbortSignal): AbortSignal {
-    const resolved = signal ?? new AbortController().signal;
-    if (resolved.aborted) throw new MessageDispatchAbortedError();
-    return resolved;
+  /**
+   * Resolves the signal handlers observe.
+   *
+   * The dispatcher's own controller is chained to the caller's signal so a
+   * timeout can abort the work without the caller losing its own cancellation.
+   */
+  private resolveSignal(
+    signal: AbortSignal | undefined,
+    controller: AbortController,
+  ): AbortSignal {
+    if (signal?.aborted) throw new MessageDispatchAbortedError();
+    if (signal) {
+      signal.addEventListener("abort", () => controller.abort(signal.reason), {
+        once: true,
+      });
+    }
+    return controller.signal;
   }
 
   private async executeHandlers<TResult>(
     message: Message,
-    handlers: ReturnType<HandlerRegistryStore["resolve"]>,
+    handlers: readonly NamedMessageHandler<Message, unknown>[],
     handlerResults: HandlerExecutionResult[],
     signal: AbortSignal,
   ): Promise<TResult> {
     const results: TResult[] = [];
     for (const handler of handlers) {
-      const result = await this.executeHandler(handler, message, signal);
-      results.push(result as TResult);
-      handlerResults.push({
-        handlerId: handler.id,
-        success: true,
-        value: result,
-        duration: 0,
-      });
+      const start = performance.now();
+      try {
+        const result = await this.executeHandler(handler, message, signal);
+        results.push(result as TResult);
+        handlerResults.push({
+          handlerId: handler.id,
+          success: true,
+          value: result,
+          duration: performance.now() - start,
+        });
+      } catch (error) {
+        // A failing handler used to leave no trace at all in handlerResults,
+        // so a caller inspecting them could not tell which handler broke.
+        handlerResults.push({
+          handlerId: handler.id,
+          success: false,
+          error: error instanceof Error ? error : new Error(String(error)),
+          duration: performance.now() - start,
+        });
+        throw error;
+      }
     }
     return results.length === 1 ? results[0]! : (results as unknown as TResult);
   }
 
   private async executeHandler(
-    handler: ReturnType<HandlerRegistryStore["resolve"]>[number],
+    handler: NamedMessageHandler<Message, unknown>,
     message: Message,
     signal: AbortSignal,
   ): Promise<unknown> {
@@ -140,14 +247,61 @@ export class DefaultDispatcher implements Dispatcher {
     }
   }
 
+  /**
+   * Registers global middleware.
+   *
+   * @param middleware - The middleware to register.
+   * @param options - Identity, priority and enablement.
+   * @returns The identifier {@link DefaultDispatcher.removeMiddleware} takes.
+   * @throws {MessageMiddlewareError} when the requested id is already taken.
+   */
   use<TMessage extends Message = Message, TResult = unknown>(
     middleware: MessageMiddlewareLike<TMessage, TResult>,
-  ): void {
-    this.globalMiddleware.push(middleware as MessageMiddlewareLike);
+    options: MessageMiddlewareOptions = {},
+  ): string {
+    const id = options.id ?? `middleware:${++this.middlewareSequence}`;
+
+    if (this.globalMiddleware.some((entry) => entry.id === id)) {
+      throw new MessageMiddlewareError(
+        `Middleware "${id}" is already registered.`,
+        { middlewareId: id },
+      );
+    }
+
+    const entry: RegisteredMessageMiddleware = {
+      id,
+      priority: options.priority ?? DEFAULT_MIDDLEWARE_PRIORITY,
+      enabled: options.enabled ?? true,
+      middleware: middleware as MessageMiddlewareLike,
+      ...(options.description !== undefined
+        ? { description: options.description }
+        : {}),
+    };
+    this.globalMiddleware.push(entry);
+    return id;
   }
 
-  removeMiddleware(_middlewareId: string): boolean {
-    return false;
+  /**
+   * Removes previously registered global middleware.
+   *
+   * @param middlewareId - The id returned by {@link DefaultDispatcher.use}.
+   * @returns Whether a registration was removed.
+   */
+  removeMiddleware(middlewareId: string): boolean {
+    const index = this.globalMiddleware.findIndex(
+      (entry) => entry.id === middlewareId,
+    );
+    if (index === -1) return false;
+    this.globalMiddleware.splice(index, 1);
+    return true;
+  }
+
+  /** The ids of every registered global middleware, in priority order. */
+  listMiddleware(): readonly string[] {
+    return this.globalMiddleware
+      .map((entry, index) => ({ entry, index }))
+      .sort((a, b) => a.entry.priority - b.entry.priority || a.index - b.index)
+      .map(({ entry }) => entry.id);
   }
 
   getRegistry(): HandlerRegistryStore {
@@ -156,6 +310,7 @@ export class DefaultDispatcher implements Dispatcher {
 
   dispose(): void {
     this.disposed = true;
+    this.globalMiddleware.length = 0;
   }
 }
 

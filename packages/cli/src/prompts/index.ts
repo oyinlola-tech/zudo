@@ -2,12 +2,6 @@
  * zudojs-cli — Prompts Index
  */
 
-export {
-  promptCreateProject,
-  type CreateProjectPrompts,
-  type PromptChoice,
-} from "./prompts.createProject.js";
-
 export { promptProjectName } from "./project/project-name.prompt.js";
 export { promptProjectType } from "./project/project-type.prompt.js";
 export { promptConfirmation } from "./project/confirmation.prompt.js";

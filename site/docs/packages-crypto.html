@@ -73,6 +73,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -128,10 +129,10 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/crypto</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
-          Cryptographic primitives for the Zudojs framework. Provides symmetric encryption (AES-256-GCM), hashing (SHA-256, SHA-512, SHA3), password hashing (scrypt), digital signatures (Ed25519, RSA, ECDSA), key derivation (PBKDF2, scrypt), secure random generation, token management, and encoding utilities.
+          Safe defaults for hashing, AES-256-GCM encryption, scrypt password storage, Ed25519 signatures, opaque tokens and secure random values, all backed by <code class="bg-black/10 px-1">node:crypto</code>.
         </p>
         <div class="flex flex-wrap gap-2 mt-4">
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">CRYPTOGRAPHY</span>
@@ -143,916 +144,533 @@
         </div>
       </div>
 
+      <!-- Overview -->
+      <section id="overview" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OVERVIEW</h2>
+        <p class="text-black/70 mb-4">Node.js already ships a crypto module, but it lets you pick weak algorithms, short keys and bad parameters without complaint. <code class="bg-black/10 px-1">@zudojs/crypto</code> wraps it with one good choice per job and rejects the rest at runtime. You call <code class="bg-black/10 px-1">hashPassword</code> and get scrypt with OWASP parameters; you call <code class="bg-black/10 px-1">encrypt</code> and get AES-256-GCM with a fresh random IV.</p>
+
+        <p class="text-black/70 mb-4">Three words come up constantly on this page. <em>Hashing</em> turns data into a fixed-size fingerprint that cannot be turned back into the data. <em>Encryption</em> scrambles data with a key so that only someone holding the same key can read it again. <em>Signing</em> proves that a message came from the holder of a private key and was not changed on the way.</p>
+
+        <p class="text-black/70 mb-4">Every function is <code class="bg-black/10 px-1">async</code> and talks to <code class="bg-black/10 px-1">node:crypto</code> through a <em>provider</em>. A provider is just an object that implements the raw operations; the default one is created for you, and you can swap it in tests.</p>
+
+        <div class="grid md:grid-cols-2 gap-4 mb-4">
+          <div class="border-2 border-black p-4">
+            <div class="font-black text-sm mb-2">When you need it</div>
+            <ul class="text-sm text-black/70 list-disc pl-5 space-y-1">
+              <li>Storing user passwords and checking them at login</li>
+              <li>Issuing API keys, session or reset tokens and storing only their hash</li>
+              <li>Encrypting a secret before it goes into a database</li>
+              <li>Signing a payload so another service can verify it</li>
+              <li>Random codes, IDs or bytes that must be unpredictable</li>
+            </ul>
+          </div>
+          <div class="border-2 border-black p-4">
+            <div class="font-black text-sm mb-2">When you don't</div>
+            <ul class="text-sm text-black/70 list-disc pl-5 space-y-1">
+              <li>You need JWTs or a login flow: use <a href="/docs/packages-auth" class="text-zudo-blue underline">@zudojs/auth</a>, which builds on this package</li>
+              <li>You need bcrypt, Argon2, ChaCha20 or AES-CBC: they are deliberately not implemented</li>
+              <li>You need <code class="bg-black/10 px-1">Math.random()</code>-style values for a game or a shuffle: plain JavaScript is fine</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
       <!-- Installation -->
       <section id="installation" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-        <div class="code-block mb-4"><span class="cm">// npm</span>
-npm install @zudojs/crypto
-
-<span class="cm">// pnpm</span>
-pnpm add @zudojs/crypto
-
-<span class="cm">// yarn</span>
-yarn add @zudojs/crypto</div>
+        <p class="text-black/70 mb-4">Install the package. Its two dependencies, <code class="bg-black/10 px-1">@zudojs/constants</code> and <code class="bg-black/10 px-1">@zudojs/errors</code>, come along automatically. Node.js 24 or newer is required.</p>
+        <div class="code-block mb-4">$ npm install @zudojs/crypto</div>
 
         <div class="callout callout-note">
-          <strong class="text-zudo-blue">Peer Dependencies:</strong> @zudojs/crypto depends on @zudojs/constants and @zudojs/errors (both workspace packages). Uses Node.js built-in <code class="bg-black/10 px-1">node:crypto</code> under the hood via a pluggable provider abstraction.
+          <strong class="text-zudo-blue">Note:</strong> These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest @zudojs release.
         </div>
       </section>
 
       <!-- Quick Start -->
       <section id="quick-start" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK START</h2>
+        <p class="text-black/70 mb-4">This is the package's own smoke test: hash a string, store and check a password, encrypt and decrypt a secret, then mint a session token. Save it as <code class="bg-black/10 px-1">quick.ts</code> and run it.</p>
         <div class="code-block mb-4"><span class="kw">import</span> {
-  hash, sha256, sha512,
-  encrypt, decrypt,
-  encryptString, decryptString,
-  encryptEnvelope, decryptEnvelope,
-  hashPassword, verifyPassword,
-  generateToken, generateApiKey, generateOtp,
-  hashToken, verifyTokenHash,
-  sign, verify,
-  randomBytesSecure, randomHex, randomUuid,
-  createCryptoService, createCryptoFactory,
+  <span class="fn">hash</span>,
+  <span class="fn">hashPassword</span>, <span class="fn">verifyPassword</span>,
+  <span class="fn">randomBytesSecure</span>, <span class="fn">encryptEnvelope</span>, <span class="fn">decryptEnvelope</span>,
+  <span class="fn">generateToken</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
 
-<span class="cm">// Hash data with SHA-256</span>
-<span class="kw">const</span> digest = <span class="kw">await</span> <span class="fn">sha256</span>(<span class="str">"hello world"</span>);
-<span class="cm">// "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"</span>
+<span class="cmt">// 1. Hash: same input always gives the same fingerprint.</span>
+<span class="kw">const</span> digest = <span class="kw">await</span> <span class="fn">hash</span>(<span class="str">"hello"</span>, { algorithm: <span class="str">"sha256"</span>, encoding: <span class="str">"hex"</span> });
+console.<span class="fn">log</span>(digest.encoded);
+<span class="cmt">// 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824</span>
 
-<span class="cm">// Encrypt and decrypt a string</span>
-<span class="kw">const</span> key = <span class="kw">new</span> <span class="tp">Uint8Array</span>(<span class="num">32</span>);
-<span class="kw">const</span> { ciphertext, iv, authTag } = <span class="kw">await</span> <span class="fn">encryptString</span>(<span class="str">"secret"</span>, key);
-<span class="kw">const</span> plain = <span class="kw">await</span> <span class="fn">decryptString</span>(ciphertext, key, iv, authTag);
+<span class="cmt">// 2. Password: store `encoded`, never the password itself.</span>
+<span class="kw">const</span> stored = <span class="kw">await</span> <span class="fn">hashPassword</span>(<span class="str">"correct horse battery staple"</span>);
+<span class="kw">const</span> ok = <span class="kw">await</span> <span class="fn">verifyPassword</span>(<span class="str">"correct horse battery staple"</span>, stored.encoded);
+console.<span class="fn">log</span>(ok);                          <span class="cmt">// true</span>
 
-<span class="cm">// Hash a password</span>
-<span class="kw">const</span> { encoded } = <span class="kw">await</span> <span class="fn">hashPassword</span>(<span class="str">"user-password"</span>);
-<span class="kw">const</span> valid = <span class="kw">await</span> <span class="fn">verifyPassword</span>(<span class="str">"user-password"</span>, encoded);
+<span class="cmt">// 3. Encrypt: a 32-byte key, a portable string in, the bytes back out.</span>
+<span class="kw">const</span> key = <span class="kw">await</span> <span class="fn">randomBytesSecure</span>(<span class="num">32</span>);
+<span class="kw">const</span> envelope = <span class="kw">await</span> <span class="fn">encryptEnvelope</span>(<span class="kw">new</span> <span class="tp">TextEncoder</span>().<span class="fn">encode</span>(<span class="str">"secret"</span>), key);
+<span class="kw">const</span> plaintext = <span class="kw">await</span> <span class="fn">decryptEnvelope</span>(envelope, key);
+console.<span class="fn">log</span>(<span class="kw">new</span> <span class="tp">TextDecoder</span>().<span class="fn">decode</span>(plaintext)); <span class="cmt">// secret</span>
 
-<span class="cm">// Generate a prefixed token</span>
-<span class="kw">const</span> apiKey = <span class="kw">await</span> <span class="fn">generateApiKey</span>(); <span class="cm">// "lat_..."</span></div>
-      </section>
+<span class="cmt">// 4. Token: 32 random bytes, base64url, with a prefix.</span>
+<span class="kw">const</span> sessionToken = <span class="kw">await</span> <span class="fn">generateToken</span>({ bytes: <span class="num">32</span>, prefix: <span class="str">"sess_"</span> });
+console.<span class="fn">log</span>(sessionToken);                <span class="cmt">// sess_ followed by 43 random characters</span></div>
+        <p class="text-black/70 mb-4">The hex digest is always the same for <code class="bg-black/10 px-1">"hello"</code>. Everything else (the password hash, the envelope, the token) is different on every run because each one starts from fresh random bytes.</p>
 
-      <!-- Module Architecture -->
-      <section id="architecture" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MODULE ARCHITECTURE</h2>
-        <p class="text-black/70 mb-4">The crypto package is split into 14 focused modules, each handling a specific cryptographic concern. All modules use a shared provider abstraction so the underlying implementation (Node.js crypto) can be swapped for testing or alternative runtimes.</p>
-
-        <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
-          <div class="border-2 border-black p-3">
-            <div class="font-black text-sm mb-1">cryptoHash</div>
-            <div class="text-xs text-black/60">SHA-256, SHA-512, SHA3, HMAC</div>
-          </div>
-          <div class="border-2 border-black p-3">
-            <div class="font-black text-sm mb-1">cryptoCipher</div>
-            <div class="text-xs text-black/60">AES-256-GCM encryption</div>
-          </div>
-          <div class="border-2 border-black p-3">
-            <div class="font-black text-sm mb-1">cryptoRandom</div>
-            <div class="text-xs text-black/60">Secure bytes, strings, UUIDs</div>
-          </div>
-          <div class="border-2 border-black p-3">
-            <div class="font-black text-sm mb-1">cryptoToken</div>
-            <div class="text-xs text-black/60">API keys, sessions, OTPs</div>
-          </div>
-          <div class="border-2 border-black p-3">
-            <div class="font-black text-sm mb-1">cryptoPassword</div>
-            <div class="text-xs text-black/60">Scrypt password hashing</div>
-          </div>
-          <div class="border-2 border-black p-3">
-            <div class="font-black text-sm mb-1">cryptoSignature</div>
-            <div class="text-xs text-black/60">Ed25519, RSA, ECDSA signing</div>
-          </div>
-          <div class="border-2 border-black p-3">
-            <div class="font-black text-sm mb-1">cryptoKey</div>
-            <div class="text-xs text-black/60">Key types, factory, export</div>
-          </div>
-          <div class="border-2 border-black p-3">
-            <div class="font-black text-sm mb-1">cryptoKeyDerivation</div>
-            <div class="text-xs text-black/60">PBKDF2, scrypt derivation</div>
-          </div>
-          <div class="border-2 border-black p-3">
-            <div class="font-black text-sm mb-1">cryptoService</div>
-            <div class="text-xs text-black/60">High-level service facade</div>
-          </div>
-          <div class="border-2 border-black p-3">
-            <div class="font-black text-sm mb-1">cryptoFactory</div>
-            <div class="text-xs text-black/60">Configured crypto factory</div>
-          </div>
-          <div class="border-2 border-black p-3">
-            <div class="font-black text-sm mb-1">cryptoProvider</div>
-            <div class="text-xs text-black/60">Provider interfaces</div>
-          </div>
-          <div class="border-2 border-black p-3">
-            <div class="font-black text-sm mb-1">cryptoConstants</div>
-            <div class="text-xs text-black/60">Algorithms, defaults, policies</div>
-          </div>
-          <div class="border-2 border-black p-3">
-            <div class="font-black text-sm mb-1">cryptoEncoding</div>
-            <div class="text-xs text-black/60">Hex, base64, base64url</div>
-          </div>
-          <div class="border-2 border-black p-3">
-            <div class="font-black text-sm mb-1">cryptoUtils</div>
-            <div class="text-xs text-black/60">Validation, comparison, conversion</div>
-          </div>
-        </div>
-
-        <div class="callout callout-tip">
-          <strong class="text-zudo-green">Provider Abstraction:</strong> Every module delegates cryptographic operations to a <code class="bg-black/10 px-1">CryptoProvider</code> interface. The default <code class="bg-black/10 px-1">NodeCryptoProvider</code> wraps <code class="bg-black/10 px-1">node:crypto</code>. You can implement your own provider for browsers, Cloudflare Workers, or test environments.
+        <div class="callout callout-danger">
+          <strong class="text-zudo-red">Danger:</strong> Three things this package will not let you do, on purpose.
+          <ul class="list-disc pl-5 mt-2 space-y-1 text-sm">
+            <li><strong>Do not invent your own scheme.</strong> Only SHA-2, SHA-3, HMAC, AES-256-GCM, scrypt, PBKDF2 and Ed25519/RSA/ECDSA signatures exist here. Ask <code class="bg-black/10 px-1">hash</code> for <code class="bg-black/10 px-1">"md5"</code> or <code class="bg-black/10 px-1">"sha1"</code> and it throws <code class="bg-black/10 px-1">TypeError: Unsupported hash algorithm</code>.</li>
+            <li><strong>Do not reuse an IV.</strong> An <em>IV</em> (also called a nonce) is the random 12-byte value that makes each encryption unique. Leave it out and <code class="bg-black/10 px-1">encrypt</code> draws a fresh one every call. Reusing one under the same key leaks your plaintexts; a wrong-sized one is rejected with <code class="bg-black/10 px-1">ERR_CRYPTO_CIPHER</code>.</li>
+            <li><strong>Do not store plain passwords.</strong> Store the <code class="bg-black/10 px-1">encoded</code> string that <code class="bg-black/10 px-1">hashPassword</code> returns and check with <code class="bg-black/10 px-1">verifyPassword</code>. A plain <code class="bg-black/10 px-1">sha256</code> of a password is <em>not</em> a password hash: it is fast enough to brute-force.</li>
+          </ul>
         </div>
       </section>
 
       <!-- Hashing -->
       <section id="hashing" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HASHING</h2>
-        <p class="text-black/70 mb-4">The <code class="bg-black/10 px-1">cryptoHash</code> module provides SHA-256, SHA-384, SHA-512, SHA3-256, SHA3-384, SHA3-512 hashing, keyed HMAC, and constant-time digest comparison.</p>
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HASHING AND HMAC</h2>
+        <p class="text-black/70 mb-4">A <em>hash</em> is a fixed-size fingerprint of some data. The same input always produces the same output, and you cannot recover the input from it. Use it to fingerprint files, deduplicate content, or store a lookup key for a token.</p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">hash()</h3>
-        <p class="text-sm text-black/70 mb-3">Hashes arbitrary data with a configurable algorithm and encoding. Returns a frozen <code class="bg-black/10 px-1">HashResult</code> object.</p>
-        <div class="code-block mb-4"><span class="kw">import</span> { hash } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+        <p class="text-black/70 mb-4">Call <code class="bg-black/10 px-1">hash</code> for the full result, or a shorthand such as <code class="bg-black/10 px-1">sha256</code> when you only want the encoded string. Both accept a string, a <code class="bg-black/10 px-1">Uint8Array</code> or an <code class="bg-black/10 px-1">ArrayBuffer</code>.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">hash</span>, <span class="fn">sha256</span>, <span class="fn">sha512</span> } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
 
-<span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">hash</span>(<span class="str">"data to hash"</span>, {
-  algorithm: <span class="str">"sha256"</span>,    <span class="cm">// default</span>
-  encoding: <span class="str">"hex"</span>,       <span class="cm">// "hex" | "base64" | "base64url"</span>
-});
+<span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">hash</span>(<span class="str">"hello world"</span>, { algorithm: <span class="str">"sha256"</span>, encoding: <span class="str">"hex"</span> });
+console.<span class="fn">log</span>(result.algorithm);      <span class="cmt">// sha256</span>
+console.<span class="fn">log</span>(result.digest.length);  <span class="cmt">// 32  (raw bytes)</span>
+console.<span class="fn">log</span>(result.encoded);
+<span class="cmt">// b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9</span>
 
-result.algorithm;  <span class="cm">// "sha256"</span>
-result.digest;     <span class="cm">// Uint8Array raw bytes</span>
-result.encoded;    <span class="cm">// hex-encoded string</span></div>
+<span class="kw">const</span> short = <span class="kw">await</span> <span class="fn">sha256</span>(<span class="str">"hello world"</span>);           <span class="cmt">// same hex string as above</span>
+<span class="kw">const</span> b64   = <span class="kw">await</span> <span class="fn">sha512</span>(<span class="str">"hello world"</span>, <span class="str">"base64"</span>); <span class="cmt">// 88-character base64 string</span></div>
+        <p class="text-black/70 mb-4">Supported algorithms are <code class="bg-black/10 px-1">sha256</code>, <code class="bg-black/10 px-1">sha384</code>, <code class="bg-black/10 px-1">sha512</code>, <code class="bg-black/10 px-1">sha3-256</code>, <code class="bg-black/10 px-1">sha3-384</code> and <code class="bg-black/10 px-1">sha3-512</code>. Encodings are <code class="bg-black/10 px-1">hex</code> (default), <code class="bg-black/10 px-1">base64</code> and <code class="bg-black/10 px-1">base64url</code>.</p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Convenience Functions</h3>
-        <p class="text-sm text-black/70 mb-3">Shorthand functions for specific algorithms that return the encoded string directly.</p>
-        <div class="code-block mb-4"><span class="kw">import</span> { sha256, sha384, sha512, sha3_256, sha3_384, sha3_512 } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+        <h3 class="text-lg font-bold mb-3 mt-6">HMAC: a hash with a secret</h3>
+        <p class="text-black/70 mb-4">An <em>HMAC</em> is a hash mixed with a secret key. Anyone can compute a plain hash, but only someone holding the key can compute the matching HMAC, so it proves a message was not tampered with. The key must be at least 16 bytes.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">hmacSha256</span>, <span class="fn">randomBytesSecure</span>, <span class="fn">timingSafeEqualString</span> } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
 
-<span class="kw">const</span> digest = <span class="kw">await</span> <span class="fn">sha256</span>(<span class="str">"hello"</span>);           <span class="cm">// hex string</span>
-<span class="kw">const</span> b64    = <span class="kw">await</span> <span class="fn">sha256</span>(<span class="str">"hello"</span>, <span class="str">"base64"</span>);  <span class="cm">// base64 string</span>
-<span class="kw">const</span> sha3d  = <span class="kw">await</span> <span class="fn">sha3_256</span>(<span class="str">"hello"</span>);           <span class="cm">// SHA3-256</span></div>
+<span class="kw">const</span> key = <span class="kw">await</span> <span class="fn">randomBytesSecure</span>(<span class="num">32</span>);   <span class="cmt">// keep this secret; 16 bytes minimum</span>
+<span class="kw">const</span> tag = <span class="kw">await</span> <span class="fn">hmacSha256</span>(<span class="str">"order:42:paid"</span>, key);
+console.<span class="fn">log</span>(tag.length);                   <span class="cmt">// 64 (hex)</span>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">HMAC</h3>
-        <p class="text-sm text-black/70 mb-3">Keyed Hash-based Message Authentication Code for verifying data integrity with a shared secret.</p>
-        <div class="code-block mb-4"><span class="kw">import</span> { hmac, hmacSha256, hmacSha512 } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+<span class="cmt">// Later, on the receiving side, recompute and compare in constant time.</span>
+<span class="kw">const</span> again = <span class="kw">await</span> <span class="fn">hmacSha256</span>(<span class="str">"order:42:paid"</span>, key);
+console.<span class="fn">log</span>(<span class="fn">timingSafeEqualString</span>(tag, again)); <span class="cmt">// true</span></div>
 
-<span class="kw">const</span> key = <span class="kw">new</span> <span class="tp">Uint8Array</span>([<span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>, <span class="num">4</span>]);
-<span class="kw">const</span> mac = <span class="kw">await</span> <span class="fn">hmacSha256</span>(<span class="str">"message"</span>, key);
-<span class="kw">const</span> mac512 = <span class="kw">await</span> <span class="fn">hmac</span>(<span class="str">"message"</span>, key, <span class="str">"sha512"</span>, <span class="str">"hex"</span>);</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Constant-Time Comparison</h3>
-        <p class="text-sm text-black/70 mb-3">Prevent timing side-channel attacks when comparing digests.</p>
-        <div class="code-block mb-4"><span class="kw">import</span> { equalDigests } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="kw">const</span> a = <span class="kw">await</span> <span class="fn">sha256</span>(<span class="str">"data"</span>);
-<span class="kw">const</span> b = <span class="kw">await</span> <span class="fn">sha256</span>(<span class="str">"data"</span>);
-<span class="kw">const</span> match = <span class="fn">equalDigests</span>(a, b); <span class="cm">// true</span></div>
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out:</strong> Compare hashes and tags with <code class="bg-black/10 px-1">timingSafeEqualString</code> (strings) or <code class="bg-black/10 px-1">timingSafeEqual</code> (bytes), never with <code class="bg-black/10 px-1">===</code>. A normal comparison stops at the first different character, and that timing difference can be measured by an attacker.
+        </div>
       </section>
 
       <!-- Encryption -->
       <section id="encryption" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ENCRYPTION</h2>
-        <p class="text-black/70 mb-4">The <code class="bg-black/10 px-1">cryptoCipher</code> module provides authenticated encryption using AES-256-GCM. Includes string helpers, envelope format for storage/transport, and IV management.</p>
+        <p class="text-black/70 mb-4"><em>Encryption</em> scrambles data with a key so it can be unscrambled later by anyone holding the same key. This package uses AES-256-GCM, which also detects tampering: if one byte of the ciphertext is changed, decryption fails instead of returning garbage.</p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">encrypt() / decrypt()</h3>
-        <p class="text-sm text-black/70 mb-3">Low-level byte-level encryption. Returns a frozen <code class="bg-black/10 px-1">CipherResult</code> with algorithm, ciphertext, IV, and auth tag.</p>
-        <div class="code-block mb-4"><span class="kw">import</span> { encrypt, decrypt } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+        <p class="text-black/70 mb-4">The key must be exactly 32 bytes. Generate one with <code class="bg-black/10 px-1">randomBytesSecure(32)</code> and keep it outside your code, for example in an environment variable encoded as hex.</p>
 
-<span class="kw">const</span> key = <span class="kw">new</span> <span class="tp">Uint8Array</span>(<span class="num">32</span>); <span class="cm">// 256-bit key</span>
-<span class="kw">const</span> plaintext = <span class="kw">new</span> <span class="tp">TextEncoder</span>().<span class="fn">encode</span>(<span class="str">"secret data"</span>);
+        <h3 class="text-lg font-bold mb-3 mt-6">Envelopes: the easy path</h3>
+        <p class="text-black/70 mb-4">An <em>envelope</em> is one string that bundles the IV, the authentication tag and the ciphertext, so you can store it in a single database column. This example encrypts a string and gets it back.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">encryptEnvelope</span>, <span class="fn">decryptEnvelope</span>, <span class="fn">randomBytesSecure</span> } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
 
-<span class="cm">// Encrypt</span>
-<span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">encrypt</span>(plaintext, key);
-result.algorithm;   <span class="cm">// "aes-256-gcm"</span>
-result.ciphertext;  <span class="cm">// Uint8Array</span>
-result.iv;          <span class="cm">// Uint8Array (12 bytes)</span>
-result.authTag;     <span class="cm">// Uint8Array (16 bytes)</span>
+<span class="kw">const</span> key = <span class="kw">await</span> <span class="fn">randomBytesSecure</span>(<span class="num">32</span>);
+<span class="kw">const</span> bytes = <span class="kw">new</span> <span class="tp">TextEncoder</span>().<span class="fn">encode</span>(<span class="str">"secret"</span>);
 
-<span class="cm">// Decrypt</span>
-<span class="kw">const</span> decrypted = <span class="kw">await</span> <span class="fn">decrypt</span>(
-  result.ciphertext, key, result.iv, result.authTag
-);</div>
+<span class="kw">const</span> envelope = <span class="kw">await</span> <span class="fn">encryptEnvelope</span>(bytes, key);
+console.<span class="fn">log</span>(envelope);
+<span class="cmt">// v1.aes-256-gcm.nd6CpdgPlb62b7gQ.YvsWCo8Wh5N5O63sAO00dg.KfQcUkfn</span>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">encryptString() / decryptString()</h3>
-        <p class="text-sm text-black/70 mb-3">String-specific helpers that handle UTF-8 encoding/decoding automatically.</p>
-        <div class="code-block mb-4"><span class="kw">import</span> { encryptString, decryptString } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+<span class="kw">const</span> plaintext = <span class="kw">await</span> <span class="fn">decryptEnvelope</span>(envelope, key);
+console.<span class="fn">log</span>(<span class="kw">new</span> <span class="tp">TextDecoder</span>().<span class="fn">decode</span>(plaintext)); <span class="cmt">// secret</span></div>
+        <p class="text-black/70 mb-4">The envelope format is <code class="bg-black/10 px-1">v1.aes-256-gcm.iv.authTag.ciphertext</code>, each binary part in base64url. Your envelope will differ from the one shown because the IV is random every time.</p>
 
-<span class="kw">const</span> key = <span class="kw">new</span> <span class="tp">Uint8Array</span>(<span class="num">32</span>);
-<span class="kw">const</span> { ciphertext, iv, authTag } = <span class="kw">await</span> <span class="fn">encryptString</span>(<span class="str">"hello world"</span>, key);
-<span class="kw">const</span> plain = <span class="kw">await</span> <span class="fn">decryptString</span>(ciphertext, key, iv, authTag);
-<span class="cm">// plain === "hello world"</span></div>
+        <h3 class="text-lg font-bold mb-3 mt-6">Pieces: when you store fields separately</h3>
+        <p class="text-black/70 mb-4"><code class="bg-black/10 px-1">encryptString</code> returns the three parts as bytes so you can store them in separate columns. <code class="bg-black/10 px-1">decryptString</code> takes them back in the same order.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">encryptString</span>, <span class="fn">decryptString</span>, <span class="fn">randomBytesSecure</span> } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Encrypted Envelope</h3>
-        <p class="text-sm text-black/70 mb-3">Self-describing format for storage or transport: <code class="bg-black/10 px-1">v1.aes-256-gcm.{iv}.{authTag}.{ciphertext}</code> — all binary fields Base64URL-encoded.</p>
-        <div class="code-block mb-4"><span class="kw">import</span> { encryptEnvelope, decryptEnvelope } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+<span class="kw">const</span> key = <span class="kw">await</span> <span class="fn">randomBytesSecure</span>(<span class="num">32</span>);
+<span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">encryptString</span>(<span class="str">"hello world"</span>, key);
+console.<span class="fn">log</span>(result.algorithm, result.iv.length, result.authTag.length);
+<span class="cmt">// aes-256-gcm 12 16</span>
 
-<span class="kw">const</span> key = <span class="kw">new</span> <span class="tp">Uint8Array</span>(<span class="num">32</span>);
-
-<span class="cm">// Create portable encrypted blob</span>
-<span class="kw">const</span> envelope = <span class="kw">await</span> <span class="fn">encryptEnvelope</span>(
-  <span class="kw">new</span> <span class="tp">TextEncoder</span>().<span class="fn">encode</span>(<span class="str">"secret"</span>), key
-);
-<span class="cm">// "v1.aes-256-gcm.Base64UrlIv.Base64UrlTag.Base64UrlCiphertext"</span>
-
-<span class="cm">// Decrypt from envelope</span>
-<span class="kw">const</span> decrypted = <span class="kw">await</span> <span class="fn">decryptEnvelope</span>(envelope, key);</div>
-
-        <div class="callout callout-warning">
-          <strong class="text-zudo-yellow">Security:</strong> Never reuse an IV with the same key. The encrypt functions generate a random IV automatically. Only reuse the IV returned from encrypt when decrypting that specific ciphertext.
-        </div>
-      </section>
-
-      <!-- Secure Random -->
-      <section id="random" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SECURE RANDOM</h2>
-        <p class="text-black/70 mb-4">The <code class="bg-black/10 px-1">cryptoRandom</code> module generates cryptographically secure random bytes, strings, integers, UUIDs, tokens, and OTPs using Node.js <code class="bg-black/10 px-1">crypto.randomBytes</code> internally.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Byte Generation</h3>
-        <div class="code-block mb-4"><span class="kw">import</span> { randomBytesSecure, randomHex, randomBase64, randomBase64Url } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="kw">const</span> bytes  = <span class="kw">await</span> <span class="fn">randomBytesSecure</span>(<span class="num">32</span>);   <span class="cm">// Uint8Array(32)</span>
-<span class="kw">const</span> hex    = <span class="kw">await</span> <span class="fn">randomHex</span>(<span class="num">64</span>);            <span class="cm">// "a1b2c3..." (64 chars)</span>
-<span class="kw">const</span> b64    = <span class="kw">await</span> <span class="fn">randomBase64</span>(<span class="num">32</span>);         <span class="cm">// base64 string</span>
-<span class="kw">const</span> b64url = <span class="kw">await</span> <span class="fn">randomBase64Url</span>(<span class="num">32</span>);      <span class="cm">// URL-safe base64</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Integers and UUIDs</h3>
-        <div class="code-block mb-4"><span class="kw">import</span> { randomInteger, randomIntegerBelow, randomUuid } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="kw">const</span> n   = <span class="kw">await</span> <span class="fn">randomInteger</span>(<span class="num">1</span>, <span class="num">100</span>);   <span class="cm">// 1 &lt;= n &lt; 100</span>
-<span class="kw">const</span> n2  = <span class="kw">await</span> <span class="fn">randomIntegerBelow</span>(<span class="num">100</span>);  <span class="cm">// 0 &lt;= n &lt; 100</span>
-<span class="kw">const</span> id  = <span class="kw">await</span> <span class="fn">randomUuid</span>();             <span class="cm">// "550e8400-e29b-41d4-a716-446655440000"</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">String Tokens and OTPs</h3>
-        <div class="code-block mb-4"><span class="kw">import</span> {
-  randomToken, randomNumericCode, randomAlphanumeric, randomFromAlphabet,
-} <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="kw">const</span> token     = <span class="kw">await</span> <span class="fn">randomToken</span>();                  <span class="cm">// URL-safe 32-byte token</span>
-<span class="kw">const</span> code      = <span class="kw">await</span> <span class="fn">randomNumericCode</span>(<span class="num">6</span>);          <span class="cm">// "839201"</span>
-<span class="kw">const</span> alphaNum  = <span class="kw">await</span> <span class="fn">randomAlphanumeric</span>(<span class="num">16</span>);        <span class="cm">// "aB3xK9..."</span>
-<span class="kw">const</span> custom    = <span class="kw">await</span> <span class="fn">randomFromAlphabet</span>(<span class="num">8</span>, <span class="str">"ABCDEF0123456789"</span>);</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Choices and Buffers</h3>
-        <div class="code-block mb-4"><span class="kw">import</span> { randomBoolean, randomChoice, fillRandomBytes } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="kw">const</span> coin   = <span class="kw">await</span> <span class="fn">randomBoolean</span>();              <span class="cm">// true or false</span>
-<span class="kw">const</span> pick   = <span class="kw">await</span> <span class="fn">randomChoice</span>([<span class="str">"a"</span>, <span class="str">"b"</span>, <span class="str">"c"</span>]);  <span class="cm">// "b"</span>
-<span class="kw">const</span> buf    = <span class="kw">new</span> <span class="tp">Uint8Array</span>(<span class="num">16</span>);
-<span class="kw">await</span> <span class="fn">fillRandomBytes</span>(buf);                       <span class="cm">// fills buf in-place</span></div>
-      </section>
-
-      <!-- Token Management -->
-      <section id="tokens" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TOKEN MANAGEMENT</h2>
-        <p class="text-black/70 mb-4">The <code class="bg-black/10 px-1">cryptoToken</code> module generates typed, prefixed tokens for API keys, sessions, refresh tokens, OTPs, CSRF, email verification, and password resets. Includes token hashing for safe database storage.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Token Generators</h3>
-        <div class="code-block mb-4"><span class="kw">import</span> {
-  generateToken,
-  generateApiKey,
-  generateSessionToken,
-  generateRefreshToken,
-  generateVerificationToken,
-  generatePasswordResetToken,
-  generateCsrfToken,
-  generateOtp,
-} <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="cm">// Generic token with options</span>
-<span class="kw">const</span> t = <span class="kw">await</span> <span class="fn">generateToken</span>({
-  bytes: <span class="num">32</span>,              <span class="cm">// default: 32 (minimum 16)</span>
-  encoding: <span class="str">"base64url"</span>,  <span class="cm">// "hex" | "base64" | "base64url"</span>
-  prefix: <span class="str">"my_"</span>,          <span class="cm">// optional prefix</span>
-});
-
-<span class="cm">// Typed generators with prefixes</span>
-<span class="kw">const</span> apiKey      = <span class="kw">await</span> <span class="fn">generateApiKey</span>();           <span class="cm">// "lat_..."</span>
-<span class="kw">const</span> session     = <span class="kw">await</span> <span class="fn">generateSessionToken</span>();     <span class="cm">// "sess_..."</span>
-<span class="kw">const</span> refresh     = <span class="kw">await</span> <span class="fn">generateRefreshToken</span>();     <span class="cm">// "ref_..."</span>
-<span class="kw">const</span> verify      = <span class="kw">await</span> <span class="fn">generateVerificationToken</span>(); <span class="cm">// "verify_..."</span>
-<span class="kw">const</span> reset       = <span class="kw">await</span> <span class="fn">generatePasswordResetToken</span>();<span class="cm">// "reset_..."</span>
-<span class="kw">const</span> csrf        = <span class="kw">await</span> <span class="fn">generateCsrfToken</span>();        <span class="cm">// "csrf_..."</span>
-<span class="kw">const</span> otp         = <span class="kw">await</span> <span class="fn">generateOtp</span>(<span class="num">6</span>);              <span class="cm">// "839201"</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Token Hashing and Verification</h3>
-        <p class="text-sm text-black/70 mb-3">Hash tokens before storing in a database. Never store raw bearer tokens.</p>
-        <div class="code-block mb-4"><span class="kw">import</span> { hashToken, verifyTokenHash } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="cm">// Hash for storage</span>
-<span class="kw">const</span> raw  = <span class="kw">await</span> <span class="fn">generateToken</span>();
-<span class="kw">const</span> hash = <span class="kw">await</span> <span class="fn">hashToken</span>(raw);  <span class="cm">// SHA-256 hex</span>
-
-<span class="cm">// Verify against stored hash</span>
-<span class="kw">const</span> match = <span class="kw">await</span> <span class="fn">verifyTokenHash</span>(raw, hash);  <span class="cm">// true</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Token Utilities</h3>
-        <div class="code-block mb-4"><span class="kw">import</span> { removeTokenPrefix, hasTokenPrefix, isValidToken } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="fn">hasTokenPrefix</span>(<span class="str">"lat_abc123"</span>, <span class="str">"lat_"</span>);    <span class="cm">// true</span>
-<span class="fn">removeTokenPrefix</span>(<span class="str">"sess_abc"</span>, <span class="str">"sess_"</span>); <span class="cm">// "abc"</span>
-<span class="fn">isValidToken</span>(<span class="str">"short"</span>);                   <span class="cm">// false (min 16 chars)</span>
-<span class="fn">isValidToken</span>(<span class="str">"a".repeat(32)</span>);            <span class="cm">// true</span></div>
-      </section>
-
-      <!-- Password Hashing -->
-      <section id="passwords" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">PASSWORD HASHING</h2>
-        <p class="text-black/70 mb-4">The <code class="bg-black/10 px-1">cryptoPassword</code> module hashes and verifies passwords using scrypt with configurable cost, salt, and key parameters. Includes a portable encoded format for database storage.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">hashPassword() / verifyPassword()</h3>
-        <div class="code-block mb-4"><span class="kw">import</span> { hashPassword, verifyPassword } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="cm">// Hash a password</span>
-<span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">hashPassword</span>(<span class="str">"user-password"</span>);
-result.encoded;  <span class="cm">// "v1$scrypt$16384$8$1$..." — store this</span>
-result.salt;     <span class="cm">// Uint8Array(16)</span>
-result.hash;     <span class="cm">// Uint8Array(32)</span>
-result.cost;     <span class="cm">// 16384</span>
-
-<span class="cm">// Verify a password</span>
-<span class="kw">const</span> valid = <span class="kw">await</span> <span class="fn">verifyPassword</span>(<span class="str">"user-password"</span>, result.encoded);
-<span class="cm">// true</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Options</h3>
-        <div class="code-block mb-4"><span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">hashPassword</span>(<span class="str">"password"</span>, {
-  saltBytes: <span class="num">16</span>,           <span class="cm">// default: 16 (minimum 16)</span>
-  keyBytes: <span class="num">32</span>,            <span class="cm">// default: 32 (minimum 16)</span>
-  cost: <span class="num">16384</span>,             <span class="cm">// scrypt N parameter (power of 2, default: 16384)</span>
-  blockSize: <span class="num">8</span>,            <span class="cm">// scrypt r parameter (default: 8)</span>
-  parallelization: <span class="num">1</span>,     <span class="cm">// scrypt p parameter (default: 1)</span>
-});</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Password Helpers</h3>
-        <div class="code-block mb-4"><span class="kw">import</span> {
-  isPasswordHash, isValidPassword, getDefaultPasswordHashOptions,
-  decodePasswordHash, encodePasswordHash,
-} <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="fn">isPasswordHash</span>(<span class="str">"v1$scrypt$..."</span>);         <span class="cm">// true</span>
-<span class="fn">isValidPassword</span>(<span class="str">"short"</span>);                 <span class="cm">// false (min 8 chars)</span>
-<span class="fn">getDefaultPasswordHashOptions</span>();            <span class="cm">// default scrypt parameters</span></div>
-
-        <div class="callout callout-note">
-          <strong class="text-zudo-blue">Encoding Format:</strong> Password hashes use the format <code class="bg-black/10 px-1">v1$scrypt${cost}${blockSize}${parallelization}${salt.base64url}.${hash.base64url}</code>. This format is self-describing and portable across environments.
-        </div>
-      </section>
-
-      <!-- Digital Signatures -->
-      <section id="signatures" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DIGITAL SIGNATURES</h2>
-        <p class="text-black/70 mb-4">The <code class="bg-black/10 px-1">cryptoSignature</code> module signs and verifies data using Ed25519, RSA (SHA-256/384/512), and ECDSA (SHA-256/384/512).</p>
-
-        <div class="code-block mb-4"><span class="kw">import</span> { sign, verify, signString, verifyString } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="kw">const</span> data = <span class="kw">new</span> <span class="tp">TextEncoder</span>().<span class="fn">encode</span>(<span class="str">"message to sign"</span>);
-<span class="kw">const</span> privateKey = <span class="cm">// 32-byte Ed25519 private key</span>
-<span class="kw">const</span> publicKey  = <span class="cm">// 32-byte Ed25519 public key</span>
-
-<span class="cm">// Sign with Ed25519 (default)</span>
-<span class="kw">const</span> signature = <span class="kw">await</span> <span class="fn">sign</span>(data, privateKey);
-<span class="cm">// Uint8Array(64)</span>
-
-<span class="cm">// Verify</span>
-<span class="kw">const</span> valid = <span class="kw">await</span> <span class="fn">verify</span>(data, signature, publicKey);
-<span class="cm">// true</span>
-
-<span class="cm">// String helpers</span>
-<span class="kw">const</span> sig = <span class="kw">await</span> <span class="fn">signString</span>(<span class="str">"hello"</span>, privateKey);
-<span class="kw">const</span> ok  = <span class="kw">await</span> <span class="fn">verifyString</span>(<span class="str">"hello"</span>, sig, publicKey);</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Supported Algorithms</h3>
-        <table class="w-full text-smw-full text-sm border-2 border-black mb-4">
-          <thead class="bg-black text-white">
-            <tr><th class="p-2 text-left">Algorithm</th><th class="p-2 text-left">Type</th><th class="p-2 text-left">Key Size</th></tr>
-          </thead>
-          <tbody>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono">ed25519</td><td class="p-2">EdDSA</td><td class="p-2">32 bytes (private), 32 bytes (public)</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono">rsa-sha256</td><td class="p-2">RSA-PSS</td><td class="p-2">2048+ bit RSA key</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono">ecdsa-sha256</td><td class="p-2">ECDSA</td><td class="p-2">P-256 curve key</td></tr>
-          </tbody>
-        </table>
-      </section>
-
-      <!-- Key Management -->
-      <section id="keys" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">KEY MANAGEMENT</h2>
-        <p class="text-black/70 mb-4">The <code class="bg-black/10 px-1">cryptoKey</code> module creates, generates, and manages immutable cryptographic keys with fingerprints, usage restrictions, and extractability controls.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">CryptoKey Type</h3>
-        <div class="code-block mb-4"><span class="kw">interface</span> <span class="tp">CryptoKey</span> {
-  <span class="kw">readonly</span> algorithm: <span class="tp">CryptoAlgorithm</span>;
-  <span class="kw">readonly</span> keyId: <span class="tp">string</span>;
-  <span class="kw">readonly</span> usages: <span class="kw">readonly</span> <span class="tp">CryptoKeyUsage</span>[];
-  <span class="kw">readonly</span> extractable: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> createdAt: <span class="tp">number</span>;
-  <span class="kw">readonly</span> length: <span class="tp">number</span>;          <span class="cm">// bits</span>
-  <span class="kw">readonly</span> fingerprint: <span class="tp">string</span>;     <span class="cm">// SHA-256 hex</span>
-  <span class="kw">readonly</span> bytes: () =&gt; <span class="tp">Uint8Array</span>; <span class="cm">// defensive copy</span>
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Creating and Generating Keys</h3>
-        <div class="code-block mb-4"><span class="kw">import</span> {
-  createCryptoKey, generateCryptoKey, exportCryptoKey,
-  isCryptoKey, getCryptoKeyFingerprint, cryptoKeysEqual,
-} <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="cm">// Create from existing bytes</span>
-<span class="kw">const</span> key = <span class="kw">await</span> <span class="fn">createCryptoKey</span>(rawBytes, {
-  algorithm: <span class="str">"aes-256-gcm"</span>,
-  keyId: <span class="str">"my-key-1"</span>,       <span class="cm">// auto-generated if omitted</span>
-  usages: [<span class="str">"encrypt"</span>, <span class="str">"decrypt"</span>],
-  extractable: <span class="kw">true</span>,
-});
-
-<span class="cm">// Generate random key</span>
-<span class="kw">const</span> randomKey = <span class="kw">await</span> <span class="fn">generateCryptoKey</span>(<span class="num">32</span>, {
-  algorithm: <span class="str">"aes-256-gcm"</span>,
-});
-
-<span class="cm">// Export (only for extractable keys)</span>
-<span class="kw">const</span> bytes = <span class="fn">exportCryptoKey</span>(key);
-
-<span class="cm">// Utilities</span>
-<span class="fn">isCryptoKey</span>(value);                        <span class="cm">// type guard</span>
-<span class="fn">getCryptoKeyFingerprint</span>(key);              <span class="cm">// SHA-256 hex</span>
-<span class="fn">cryptoKeysEqual</span>(key1, key2);               <span class="cm">// identity check</span></div>
-      </section>
-
-      <!-- Key Derivation -->
-      <section id="key-derivation" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">KEY DERIVATION</h2>
-        <p class="text-black/70 mb-4">The <code class="bg-black/10 px-1">cryptoKeyDerivation</code> module derives cryptographic keys from passwords using PBKDF2 or scrypt.</p>
-
-        <div class="code-block mb-4"><span class="kw">import</span> { deriveKey, derivePbkdf2, deriveScrypt } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="cm">// Unified API</span>
-<span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">deriveKey</span>(<span class="str">"password"</span>, <span class="str">"pbkdf2-sha256"</span>, {
-  iterations: <span class="num">310_000</span>,
-  keyLength: <span class="num">32</span>,
-});
-result.key;  <span class="cm">// Uint8Array(32)</span>
-result.salt; <span class="cm">// Uint8Array(16) — random if not provided</span>
-
-<span class="cm">// PBKDF2 directly</span>
-<span class="kw">const</span> pbkdf2 = <span class="kw">await</span> <span class="fn">derivePbkdf2</span>(<span class="str">"password"</span>, {
-  iterations: <span class="num">310_000</span>,
-  digest: <span class="str">"sha256"</span>,
-  keyLength: <span class="num">32</span>,
-});
-
-<span class="cm">// scrypt directly</span>
-<span class="kw">const</span> scr = <span class="kw">await</span> <span class="fn">deriveScrypt</span>(<span class="str">"password"</span>, {
-  cost: <span class="num">16384</span>,
-  blockSize: <span class="num">8</span>,
-  parallelization: <span class="num">1</span>,
-  keyLength: <span class="num">32</span>,
-});</div>
-      </section>
-
-      <!-- CryptoService -->
-      <section id="service" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CRYPTO SERVICE</h2>
-        <p class="text-black/70 mb-4">The <code class="bg-black/10 px-1">CryptoService</code> class provides a high-level facade that wraps all crypto operations in a single injectable service. Errors are wrapped in <code class="bg-black/10 px-1">CryptoError</code> for consistent error handling.</p>
-
-        <div class="code-block mb-4"><span class="kw">import</span> { createCryptoService, cryptoService } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="cm">// Use the singleton</span>
-<span class="kw">const</span> hash = <span class="kw">await</span> cryptoService.<span class="fn">hashHex</span>(<span class="str">"data"</span>);
-<span class="kw">const</span> token = <span class="kw">await</span> cryptoService.<span class="fn">generateToken</span>();
-
-<span class="cm">// Or create an instance</span>
-<span class="kw">const</span> svc = <span class="fn">createCryptoService</span>();
-<span class="kw">const</span> key = <span class="kw">await</span> svc.<span class="fn">generateKey</span>();
-<span class="kw">const</span> { ciphertext, iv, authTag } = <span class="kw">await</span> svc.<span class="fn">encrypt</span>(data, keyBytes);
-<span class="kw">const</span> otp = <span class="kw">await</span> svc.<span class="fn">generateOtp</span>(<span class="num">6</span>);
-<span class="kw">const</span> encoded = svc.<span class="fn">encode</span>(bytes, <span class="str">"hex"</span>);
-<span class="kw">const</span> decoded = svc.<span class="fn">decode</span>(hexStr, <span class="str">"hex"</span>);</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">CryptoService API</h3>
-        <table class="w-full text-smw-full text-sm border-2 border-black mb-4">
-          <thead class="bg-black text-white">
-            <tr><th class="p-2 text-left">Method</th><th class="p-2 text-left">Returns</th><th class="p-2 text-left">Description</th></tr>
-          </thead>
-          <tbody>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">generateKey(algorithm?)</td><td class="p-2">CryptoKey</td><td class="p-2">Generate a random key for the given algorithm</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">randomBytes(length?)</td><td class="p-2">Uint8Array</td><td class="p-2">Generate secure random bytes</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">encrypt(plaintext, key, opts?)</td><td class="p-2">CipherResult</td><td class="p-2">AES-256-GCM encrypt</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">decrypt(ct, key, iv, tag, aad?)</td><td class="p-2">Uint8Array</td><td class="p-2">AES-256-GCM decrypt</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">hash(value)</td><td class="p-2">Uint8Array</td><td class="p-2">SHA-256 hash bytes</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">hashHex(value)</td><td class="p-2">string</td><td class="p-2">SHA-256 hash hex</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">hashPassword(password, opts?)</td><td class="p-2">PasswordHashResult</td><td class="p-2">Scrypt password hash</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">verifyPassword(pwd, hash)</td><td class="p-2">boolean</td><td class="p-2">Verify password against hash</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">deriveKey(pwd, algo, opts?)</td><td class="p-2">DerivedKeyResult</td><td class="p-2">PBKDF2 or scrypt key derivation</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">generateToken(opts?)</td><td class="p-2">string</td><td class="p-2">Opaque token</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">generateOtp(digits?)</td><td class="p-2">string</td><td class="p-2">Numeric OTP</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">hashToken(token)</td><td class="p-2">string</td><td class="p-2">SHA-256 hash for storage</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">verifyToken(token, hash)</td><td class="p-2">boolean</td><td class="p-2">Constant-time token verification</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">encode(bytes, encoding?)</td><td class="p-2">string</td><td class="p-2">Encode bytes to string</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">decode(value, encoding?)</td><td class="p-2">Uint8Array</td><td class="p-2">Decode string to bytes</td></tr>
-          </tbody>
-        </table>
-      </section>
-
-      <!-- CryptoFactory -->
-      <section id="factory" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CRYPTO FACTORY</h2>
-        <p class="text-black/70 mb-4">The <code class="bg-black/10 px-1">CryptoFactory</code> class creates pre-configured crypto services with default algorithms, encodings, and password options. Useful for application-wide configuration.</p>
-
-        <div class="code-block mb-4"><span class="kw">import</span> { createCryptoFactory, cryptoFactory } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="cm">// Use the default factory</span>
-<span class="kw">const</span> apiKey = <span class="kw">await</span> cryptoFactory.<span class="fn">createApiKey</span>();
-<span class="kw">const</span> key    = <span class="kw">await</span> cryptoFactory.<span class="fn">createKey</span>();
-<span class="kw">const</span> hash   = <span class="kw">await</span> cryptoFactory.<span class="fn">createPasswordHash</span>(<span class="str">"pwd"</span>);
-
-<span class="cm">// Create a configured factory</span>
-<span class="kw">const</span> factory = <span class="fn">createCryptoFactory</span>({
-  defaultKeyAlgorithm: <span class="str">"aes-256-gcm"</span>,
-  encoding: <span class="str">"base64url"</span>,
-  password: {
-    cost: <span class="num">32768</span>,
-    blockSize: <span class="num">8</span>,
-  },
-});
-
-<span class="cm">// Factory methods</span>
-<span class="kw">await</span> factory.<span class="fn">createKey</span>();
-<span class="kw">await</span> factory.<span class="fn">createToken</span>(<span class="num">32</span>, <span class="str">"prefix_"</span>);
-<span class="kw">await</span> factory.<span class="fn">createApiKey</span>();
-<span class="kw">await</span> factory.<span class="fn">createSessionToken</span>();
-<span class="kw">await</span> factory.<span class="fn">createRefreshToken</span>();
-<span class="kw">await</span> factory.<span class="fn">createOtp</span>(<span class="num">6</span>);
-<span class="kw">await</span> factory.<span class="fn">createPasswordHash</span>(<span class="str">"pwd"</span>);
-<span class="kw">await</span> factory.<span class="fn">verifyPassword</span>(<span class="str">"pwd"</span>, hash);
-factory.<span class="fn">encode</span>(bytes, <span class="str">"hex"</span>);
-factory.<span class="fn">decode</span>(hex, <span class="str">"hex"</span>);</div>
-      </section>
-
-      <!-- Provider Abstraction -->
-      <section id="provider" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">PROVIDER ABSTRACTION</h2>
-        <p class="text-black/70 mb-4">The <code class="bg-black/10 px-1">CryptoProvider</code> interface defines the contract for all cryptographic operations. The default <code class="bg-black/10 px-1">NodeCryptoProvider</code> wraps <code class="bg-black/10 px-1">node:crypto</code>.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Provider Interfaces</h3>
-        <div class="code-block mb-4"><span class="cm">// All providers implement this interface</span>
-<span class="kw">interface</span> <span class="tp">CryptoProvider</span> {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="kw">readonly</span> capabilities: <span class="tp">CryptoCapabilities</span>;
-
-  <span class="fn">randomBytes</span>(length: <span class="tp">number</span>): <span class="tp">Promise</span>&lt;<span class="tp">Uint8Array</span>&gt;;
-  <span class="fn">randomInt</span>(min: <span class="tp">number</span>, max: <span class="tp">number</span>): <span class="tp">Promise</span>&lt;<span class="tp">number</span>&gt;;
-  <span class="fn">randomUUID</span>(): <span class="tp">Promise</span>&lt;<span class="tp">string</span>&gt;;
-  <span class="fn">hash</span>(algo: <span class="tp">HashAlgorithm</span>, data: <span class="tp">CryptoInput</span>): <span class="tp">Promise</span>&lt;<span class="tp">Uint8Array</span>&gt;;
-  <span class="fn">hmac</span>(algo: <span class="tp">HmacAlgorithm</span>, key: <span class="tp">CryptoInput</span>, data: <span class="tp">CryptoInput</span>): <span class="tp">Promise</span>&lt;<span class="tp">Uint8Array</span>&gt;;
-  <span class="fn">encrypt</span>(opts): <span class="tp">Promise</span>&lt;<span class="tp">EncryptedData</span>&gt;;
-  <span class="fn">decrypt</span>(opts): <span class="tp">Promise</span>&lt;<span class="tp">Uint8Array</span>&gt;;
-  <span class="fn">sign</span>(opts): <span class="tp">Promise</span>&lt;<span class="tp">Uint8Array</span>&gt;;
-  <span class="fn">verify</span>(opts): <span class="tp">Promise</span>&lt;<span class="tp">boolean</span>&gt;;
-  <span class="fn">deriveKey</span>(opts): <span class="tp">Promise</span>&lt;<span class="tp">Uint8Array</span>&gt;;
-  <span class="fn">hashPassword</span>(pwd, opts?): <span class="tp">Promise</span>&lt;<span class="tp">string</span>&gt;;
-  <span class="fn">verifyPassword</span>(pwd, hash): <span class="tp">Promise</span>&lt;<span class="tp">boolean</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Creating a Provider</h3>
-        <div class="code-block mb-4"><span class="kw">import</span> { createNodeCryptoProvider } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="kw">const</span> provider = <span class="fn">createNodeCryptoProvider</span>();
-provider.name;          <span class="cm">// "node-crypto"</span>
-provider.capabilities;  <span class="cm">// { hash: true, hmac: true, encryption: true, ... }</span></div>
+<span class="kw">const</span> plain = <span class="kw">await</span> <span class="fn">decryptString</span>(result.ciphertext, key, result.iv, result.authTag);
+console.<span class="fn">log</span>(plain); <span class="cmt">// hello world</span></div>
+        <p class="text-black/70 mb-4">Use <code class="bg-black/10 px-1">encrypt</code> and <code class="bg-black/10 px-1">decrypt</code> for raw <code class="bg-black/10 px-1">Uint8Array</code> data; they have the same shape. The optional <code class="bg-black/10 px-1">aad</code> option binds extra unencrypted context (such as a user ID) to the ciphertext, so it will not decrypt under a different context.</p>
 
         <div class="callout callout-tip">
-          <strong class="text-zudo-green">Custom Providers:</strong> Implement the <code class="bg-black/10 px-1">CryptoProvider</interface> interface for Web Crypto API (browsers), Cloudflare Workers, or mock providers in tests.
+          <strong class="text-zudo-green">Common mistake:</strong> decrypting with the wrong key, a wrong IV or a tampered envelope all throw a <code class="bg-black/10 px-1">CryptoError</code> with code <code class="bg-black/10 px-1">ERR_CRYPTO_CIPHER</code> and message <code class="bg-black/10 px-1">Decryption failed</code>. Catch it and treat it as "this data is not for this key", not as a bug.
         </div>
       </section>
 
-      <!-- Constants -->
-      <section id="constants" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONSTANTS</h2>
-        <p class="text-black/70 mb-4">The <code class="bg-black/10 px-1">cryptoConstants</code> module exports algorithm identifiers, security defaults, token prefixes, and guard functions.</p>
+      <!-- Passwords -->
+      <section id="passwords" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">PASSWORD HASHING</h2>
+        <p class="text-black/70 mb-4">A <em>password hash</em> is a deliberately slow hash with a random <em>salt</em> mixed in. Slow means an attacker who steals your database can only try a few guesses per second. The salt means two users with the same password get different hashes.</p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Algorithm Enum</h3>
-        <div class="code-block mb-4"><span class="kw">import</span> { CryptoAlgorithm } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+        <p class="text-black/70 mb-4">This package uses scrypt with OWASP defaults (cost 16384, block size 8, parallelization 1, 16-byte salt, 32-byte output). The result is one self-describing string that starts with <code class="bg-black/10 px-1">v1$scrypt$</code>, so you can raise the cost later and old hashes still verify.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">hashPassword</span>, <span class="fn">verifyPassword</span> } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
 
-<span class="cm">// All supported algorithms</span>
-CryptoAlgorithm.AES_256_GCM       <span class="cm">// "aes-256-gcm"</span>
-CryptoAlgorithm.SHA_256           <span class="cm">// "sha256"</span>
-CryptoAlgorithm.SHA_512           <span class="cm">// "sha512"</span>
-CryptoAlgorithm.SHA3_256          <span class="cm">// "sha3-256"</span>
-CryptoAlgorithm.SCRYPT            <span class="cm">// "scrypt"</span>
-CryptoAlgorithm.PBKDF2_SHA256     <span class="cm">// "pbkdf2-sha256"</span>
-CryptoAlgorithm.PBKDF2_SHA384     <span class="cm">// "pbkdf2-sha384"</span>
-CryptoAlgorithm.PBKDF2_SHA512     <span class="cm">// "pbkdf2-sha512"</span>
-CryptoAlgorithm.HMAC_SHA256       <span class="cm">// "hmac-sha256"</span>
-CryptoAlgorithm.ED25519           <span class="cm">// "ed25519"</span></div>
+<span class="cmt">// At sign-up: hash and store `encoded`.</span>
+<span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">hashPassword</span>(<span class="str">"correct horse battery staple"</span>);
+console.<span class="fn">log</span>(result.encoded);
+<span class="cmt">// v1$scrypt$16384$8$1$4P7WMta8PUwwfejUzMN_6w.SL0oONhRA2hbSwz4nKfcb1i4MbDy6mYyKy4KaDAbni0</span>
+console.<span class="fn">log</span>(result.cost, result.blockSize, result.parallelization);
+<span class="cmt">// 16384 8 1</span>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Security Defaults</h3>
-        <div class="code-block mb-4"><span class="kw">import</span> {
-  PASSWORD_HASH, PASSWORD_POLICY, TOKEN_TTL, TOKEN, TOKEN_PREFIX,
-} <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+<span class="cmt">// At login: verify against the stored string.</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">verifyPassword</span>(<span class="str">"correct horse battery staple"</span>, result.encoded)); <span class="cmt">// true</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">verifyPassword</span>(<span class="str">"wrong password"</span>, result.encoded));               <span class="cmt">// false</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">verifyPassword</span>(<span class="str">"anything"</span>, <span class="str">"not-a-hash"</span>));                      <span class="cmt">// false</span></div>
+        <p class="text-black/70 mb-4"><code class="bg-black/10 px-1">verifyPassword</code> never throws. A wrong password, a malformed stored string, or a hash with out-of-range parameters all return <code class="bg-black/10 px-1">false</code>. Passwords longer than 1024 characters are also rejected so an attacker cannot make your server grind on huge input.</p>
 
-PASSWORD_HASH.SALT_BYTES;          <span class="cm">// 16</span>
-PASSWORD_HASH.KEY_BYTES;           <span class="cm">// 32</span>
-PASSWORD_HASH.SCRYPT.COST;         <span class="cm">// 16384</span>
-PASSWORD_HASH.SCRYPT.BLOCK_SIZE;   <span class="cm">// 8</span>
-PASSWORD_HASH.PBKDF2.ITERATIONS;   <span class="cm">// 600000</span>
+        <p class="text-black/70 mb-4">To make hashing slower, pass options. <code class="bg-black/10 px-1">cost</code> must be a power of two.</p>
+        <div class="code-block mb-4"><span class="kw">const</span> stronger = <span class="kw">await</span> <span class="fn">hashPassword</span>(<span class="str">"correct horse battery staple"</span>, { cost: <span class="num">32768</span> });
+console.<span class="fn">log</span>(stronger.encoded.<span class="fn">startsWith</span>(<span class="str">"v1$scrypt$32768$"</span>)); <span class="cmt">// true</span></div>
 
-PASSWORD_POLICY.MIN_LENGTH;        <span class="cm">// 8</span>
-PASSWORD_POLICY.RECOMMENDED_MIN_LENGTH; <span class="cm">// 12</span>
-
-TOKEN.DEFAULT_BYTES;               <span class="cm">// 32</span>
-TOKEN.OTP_DIGITS;                  <span class="cm">// 6</span>
-TOKEN_PREFIX.API_KEY;              <span class="cm">// "lat_"</span>
-TOKEN_PREFIX.SESSION;              <span class="cm">// "sess_"</span>
-TOKEN_PREFIX.REFRESH;              <span class="cm">// "ref_"</span>
-
-TOKEN_TTL.SESSION_MS;              <span class="cm">// 24 hours</span>
-TOKEN_TTL.REFRESH_TOKEN_MS;        <span class="cm">// 30 days</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Guard Functions</h3>
-        <div class="code-block mb-4"><span class="kw">import</span> {
-  isAeadAlgorithm, isHashAlgorithm, isKeyDerivationAlgorithm,
-  isMacAlgorithm, isCryptoAlgorithm, parseCryptoAlgorithm,
-} <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="fn">isAeadAlgorithm</span>(<span class="str">"aes-256-gcm"</span>);             <span class="cm">// true</span>
-<span class="fn">isHashAlgorithm</span>(<span class="str">"sha256"</span>);                  <span class="cm">// true</span>
-<span class="fn">isCryptoAlgorithm</span>(<span class="str">"unknown"</span>);               <span class="cm">// false</span>
-<span class="fn">parseCryptoAlgorithm</span>(<span class="str">"SHA256"</span>);              <span class="cm">// "sha256"</span></div>
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out:</strong> <code class="bg-black/10 px-1">isValidPassword(password)</code> only checks length (8 characters by default). It is a convenience for form validation, not a strength meter.
+        </div>
       </section>
 
-      <!-- Encoding -->
-      <section id="encoding" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ENCODING</h2>
-        <p class="text-black/70 mb-4">The <code class="bg-black/10 px-1">cryptoEncoding</code> module converts between bytes and strings using hex, base64, base64url, and UTF-8 encodings.</p>
+      <!-- Signatures -->
+      <section id="signatures" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DIGITAL SIGNATURES</h2>
+        <p class="text-black/70 mb-4">A <em>signature</em> proves that a message came from whoever holds a <em>private key</em> and was not altered. Anyone with the matching <em>public key</em> can check it, but nobody can forge it. Use it for webhooks, signed URLs, or any payload that crosses a trust boundary.</p>
 
+        <p class="text-black/70 mb-4">The default algorithm is Ed25519. Generate a key pair once, export both halves as PEM text, and keep the private one secret. PEM is the familiar <code class="bg-black/10 px-1">-----BEGIN PRIVATE KEY-----</code> text format.</p>
         <div class="code-block mb-4"><span class="kw">import</span> {
-  encode, decode, utf8Encode, utf8Decode,
-  timingSafeEqualEncoded,
+  <span class="fn">generateEd25519KeyPair</span>, <span class="fn">exportPrivateKeyPem</span>, <span class="fn">exportPublicKeyPem</span>,
+  <span class="fn">signString</span>, <span class="fn">verifyString</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
 
-<span class="kw">const</span> bytes = <span class="kw">new</span> <span class="tp">Uint8Array</span>([<span class="num">0</span>, <span class="num">1</span>, <span class="num">2</span>, <span class="num">3</span>]);
+<span class="cmt">// One-time setup. Store privatePem somewhere secret; publish publicPem.</span>
+<span class="kw">const</span> { privateKey, publicKey } = <span class="fn">generateEd25519KeyPair</span>();
+<span class="kw">const</span> privatePem = <span class="fn">exportPrivateKeyPem</span>(privateKey);
+<span class="kw">const</span> publicPem  = <span class="fn">exportPublicKeyPem</span>(publicKey);
+console.<span class="fn">log</span>(publicPem);
+<span class="cmt">// -----BEGIN PUBLIC KEY-----</span>
+<span class="cmt">// MCowBQYDK2VwAyEAXEBPyK/UOMLZ9MJfwuCVQ5ZRtx5UMJUqG728xdCKXS8=</span>
+<span class="cmt">// -----END PUBLIC KEY-----</span>
 
-<span class="fn">encode</span>(bytes, <span class="str">"hex"</span>);        <span class="cm">// "00010203"</span>
-<span class="fn">encode</span>(bytes, <span class="str">"base64url"</span>); <span class="cm">// "AAEC"</span>
+<span class="cmt">// Sender: sign the message.</span>
+<span class="kw">const</span> signature = <span class="kw">await</span> <span class="fn">signString</span>(<span class="str">"hello"</span>, privatePem);
+console.<span class="fn">log</span>(signature.length);                                   <span class="cmt">// 64</span>
 
-<span class="fn">decode</span>(<span class="str">"00010203"</span>, <span class="str">"hex"</span>);  <span class="cm">// Uint8Array [0, 1, 2, 3]</span>
+<span class="cmt">// Receiver: verify with the public key.</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">verifyString</span>(<span class="str">"hello"</span>, signature, publicPem));   <span class="cmt">// true</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">verifyString</span>(<span class="str">"hell0"</span>, signature, publicPem));   <span class="cmt">// false</span></div>
+        <p class="text-black/70 mb-4"><code class="bg-black/10 px-1">sign</code> and <code class="bg-black/10 px-1">verify</code> do the same for <code class="bg-black/10 px-1">Uint8Array</code> data. Keys may be PEM text, DER bytes, or a Node <code class="bg-black/10 px-1">KeyObject</code>. RSA (<code class="bg-black/10 px-1">rsa-sha256/384/512</code>) and ECDSA (<code class="bg-black/10 px-1">ecdsa-sha256/384/512</code>) are available through the <code class="bg-black/10 px-1">algorithm</code> option when you already hold such keys; random bytes are never a valid signing key.</p>
 
-<span class="cm">// Constant-time comparison of encoded values</span>
-<span class="fn">timingSafeEqualEncoded</span>(<span class="str">"aGVsbG8"</span>, <span class="str">"aGVsbG8"</span>); <span class="cm">// true</span></div>
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out:</strong> the algorithm must match the key type. Passing an Ed25519 key with <code class="bg-black/10 px-1">algorithm: "rsa-sha256"</code> throws. A malformed key or signature makes <code class="bg-black/10 px-1">verify</code> return <code class="bg-black/10 px-1">false</code> rather than throw.
+        </div>
       </section>
 
-      <!-- Utilities -->
-      <section id="utils" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">UTILITIES</h2>
-        <p class="text-black/70 mb-4">The <code class="bg-black/10 px-1">cryptoUtils</code> module provides validation, comparison, conversion, text normalization, and number encoding helpers.</p>
+      <!-- Tokens -->
+      <section id="tokens" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OPAQUE TOKENS</h2>
+        <p class="text-black/70 mb-4">An <em>opaque token</em> is a long random string that means nothing by itself; your database maps it to a user or session. API keys, session cookies, password-reset links and CSRF tokens are all opaque tokens. The minimum is 16 random bytes (128 bits); the default is 32.</p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Validation</h3>
-        <div class="code-block mb-4"><span class="kw">import</span> { isBytes, isArrayBuffer, isHexString, isBase64UrlString } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="fn">isBytes</span>(<span class="kw">new</span> <span class="tp">Uint8Array</span>(<span class="num">0</span>));        <span class="cm">// true</span>
-<span class="fn">isHexString</span>(<span class="str">"deadbeef"</span>);          <span class="cm">// true</span>
-<span class="fn">isBase64UrlString</span>(<span class="str">"aGVsbG8"</span>);     <span class="cm">// true</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Constant-Time Comparison</h3>
-        <div class="code-block mb-4"><span class="kw">import</span> { secureEqual, secureStringEqual } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="fn">secureEqual</span>(bytesA, bytesB);     <span class="cm">// constant-time Uint8Array comparison</span>
-<span class="fn">secureStringEqual</span>(<span class="str">"abc"</span>, <span class="str">"abc"</span>); <span class="cm">// constant-time string comparison</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Byte Conversion</h3>
+        <p class="text-black/70 mb-4">The typed generators add a recognisable prefix so tokens are easy to spot in logs and secret scanners. Store only the SHA-256 hash of a token; if the database leaks, the attacker still cannot use it.</p>
         <div class="code-block mb-4"><span class="kw">import</span> {
-  toBytes, cloneBytes, concatBytes, sliceBytes, wipe,
-  numberToBytes, bytesToNumber,
+  <span class="fn">generateApiKey</span>, <span class="fn">generateSessionToken</span>, <span class="fn">generateOtp</span>,
+  <span class="fn">hashToken</span>, <span class="fn">verifyTokenHash</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
 
-<span class="fn">toBytes</span>(<span class="str">"hello"</span>);              <span class="cm">// Uint8Array from string</span>
-<span class="fn">toBytes</span>(arrayBuffer);           <span class="cm">// Uint8Array from ArrayBuffer</span>
-<span class="fn">cloneBytes</span>(bytes);              <span class="cm">// defensive copy</span>
-<span class="fn">concatBytes</span>(a, b, c);           <span class="cm">// concatenate byte arrays</span>
-<span class="fn">sliceBytes</span>(bytes, <span class="num">0</span>, <span class="num">10</span>);        <span class="cm">// defensive slice</span>
-<span class="fn">wipe</span>(bytes);                    <span class="cm">// zero-fill for cleanup</span>
+<span class="kw">const</span> apiKey = <span class="kw">await</span> <span class="fn">generateApiKey</span>();
+console.<span class="fn">log</span>(apiKey);
+<span class="cmt">// lat_n8bvekncI8qxzm4iOavHpMzdp5QC2OKJ9uzNcKu5048</span>
 
-<span class="fn">numberToBytes</span>(<span class="num">255</span>, <span class="num">2</span>);         <span class="cm">// Uint8Array [0, 255]</span>
-<span class="fn">bytesToNumber</span>(<span class="kw">new</span> <span class="tp">Uint8Array</span>([<span class="num">0</span>, <span class="num">255</span>])); <span class="cm">// 255</span></div>
+<span class="cmt">// Give the raw key to the user once; store only its hash.</span>
+<span class="kw">const</span> storedHash = <span class="kw">await</span> <span class="fn">hashToken</span>(apiKey);
+console.<span class="fn">log</span>(storedHash.length);                           <span class="cmt">// 64 (hex SHA-256)</span>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Text Helpers</h3>
-        <div class="code-block mb-4"><span class="kw">import</span> { normalizeText, utf8ByteLength } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+<span class="cmt">// On each request, look up by hash and compare in constant time.</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">verifyTokenHash</span>(apiKey, storedHash));      <span class="cmt">// true</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">verifyTokenHash</span>(<span class="str">"lat_wrong"</span>, storedHash)); <span class="cmt">// false</span>
 
-<span class="fn">normalizeText</span>(<span class="str">"café"</span>);         <span class="cm">// NFC normalization</span>
-<span class="fn">utf8ByteLength</span>(<span class="str">"hello"</span>);       <span class="cm">// 5</span></div>
+console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">generateSessionToken</span>());   <span class="cmt">// sess_ followed by 43 random characters</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">generateOtp</span>());            <span class="cmt">// 114575  (6 digits, leading zeros kept)</span></div>
+        <p class="text-black/70 mb-4">Other generators follow the same pattern: <code class="bg-black/10 px-1">generateRefreshToken</code> (<code class="bg-black/10 px-1">ref_</code>), <code class="bg-black/10 px-1">generateVerificationToken</code> (<code class="bg-black/10 px-1">verify_</code>), <code class="bg-black/10 px-1">generatePasswordResetToken</code> (<code class="bg-black/10 px-1">reset_</code>) and <code class="bg-black/10 px-1">generateCsrfToken</code> (<code class="bg-black/10 px-1">csrf_</code>). <code class="bg-black/10 px-1">generateToken({ bytes, encoding, prefix })</code> is the general form.</p>
+
+        <div class="callout callout-tip">
+          <strong class="text-zudo-green">Tip:</strong> <code class="bg-black/10 px-1">TOKEN_TTL</code> exports sensible lifetimes in milliseconds (for example <code class="bg-black/10 px-1">TOKEN_TTL.PASSWORD_RESET_MS</code> is 15 minutes). The package does not track expiry for you; store an <code class="bg-black/10 px-1">expiresAt</code> column next to the hash.
+        </div>
+      </section>
+
+      <!-- Random -->
+      <section id="random" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SECURE RANDOM</h2>
+        <p class="text-black/70 mb-4"><code class="bg-black/10 px-1">Math.random()</code> is predictable and must never be used for anything secret. These helpers draw from the operating system's cryptographic random source and are safe for keys, salts, codes and IDs.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  <span class="fn">randomBytesSecure</span>, <span class="fn">randomHex</span>, <span class="fn">randomInteger</span>, <span class="fn">randomUuid</span>,
+  <span class="fn">randomNumericCode</span>, <span class="fn">randomAlphanumeric</span>, <span class="fn">randomChoice</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+
+<span class="kw">const</span> bytes = <span class="kw">await</span> <span class="fn">randomBytesSecure</span>(<span class="num">32</span>);
+console.<span class="fn">log</span>(bytes.length);                        <span class="cmt">// 32</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">randomHex</span>(<span class="num">16</span>));               <span class="cmt">// 16 hex characters</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">randomInteger</span>(<span class="num">1</span>, <span class="num">7</span>));         <span class="cmt">// 1, 2, 3, 4, 5 or 6 (max is excluded)</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">randomUuid</span>());                 <span class="cmt">// a UUID v4 such as 550e8400-e29b-41d4-a716-446655440000</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">randomNumericCode</span>(<span class="num">6</span>));         <span class="cmt">// 6 digits, leading zeros kept</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">randomAlphanumeric</span>(<span class="num">8</span>));        <span class="cmt">// 8 letters or digits</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">randomChoice</span>([<span class="str">"red"</span>, <span class="str">"green"</span>, <span class="str">"blue"</span>])); <span class="cmt">// one of the three</span></div>
+        <p class="text-black/70 mb-4"><code class="bg-black/10 px-1">randomInteger(min, max)</code> is uniform (no bias toward low numbers) for ranges up to 2<sup>48</sup>. Character helpers draw each character independently, so leading zeros in numeric codes are kept.</p>
+      </section>
+
+      <!-- Key derivation -->
+      <section id="key-derivation" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">KEY DERIVATION</h2>
+        <p class="text-black/70 mb-4"><em>Key derivation</em> stretches a human-typed passphrase into a fixed-length key you can use for encryption. It is the same slow-hash idea as password hashing, but the output is the key bytes rather than a stored string. If you only need to check a password, use <code class="bg-black/10 px-1">hashPassword</code> instead.</p>
+
+        <p class="text-black/70 mb-4">This derives a 32-byte AES key from a passphrase with PBKDF2-SHA256 (600 000 iterations by default). Keep the returned <code class="bg-black/10 px-1">salt</code>: you need the same salt to derive the same key again.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">derivePbkdf2</span>, <span class="fn">encryptEnvelope</span>, <span class="fn">timingSafeEqual</span> } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+
+<span class="kw">const</span> first = <span class="kw">await</span> <span class="fn">derivePbkdf2</span>(<span class="str">"my passphrase"</span>, { keyLength: <span class="num">32</span> });
+console.<span class="fn">log</span>(first.algorithm, first.key.length, first.salt.length);
+<span class="cmt">// pbkdf2-sha256 32 16</span>
+
+<span class="kw">const</span> envelope = <span class="kw">await</span> <span class="fn">encryptEnvelope</span>(<span class="kw">new</span> <span class="tp">TextEncoder</span>().<span class="fn">encode</span>(<span class="str">"secret"</span>), first.key);
+
+<span class="cmt">// Later: same passphrase + same salt = same key.</span>
+<span class="kw">const</span> again = <span class="kw">await</span> <span class="fn">derivePbkdf2</span>(<span class="str">"my passphrase"</span>, { keyLength: <span class="num">32</span>, salt: first.salt });
+console.<span class="fn">log</span>(<span class="fn">timingSafeEqual</span>(first.key, again.key)); <span class="cmt">// true</span></div>
+        <p class="text-black/70 mb-4"><code class="bg-black/10 px-1">deriveScrypt(password, options)</code> does the same with scrypt, and <code class="bg-black/10 px-1">deriveKey(password, CryptoAlgorithm.SCRYPT, options)</code> picks by enum. Salts must be at least 16 bytes; <code class="bg-black/10 px-1">generateSalt()</code> makes one.</p>
+      </section>
+
+      <!-- Service and provider -->
+      <section id="service-and-provider" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SERVICE AND PROVIDER</h2>
+        <p class="text-black/70 mb-4">The loose functions above are all you need most of the time. Two wrappers exist for apps that prefer one object to pass around.</p>
+
+        <p class="text-black/70 mb-4"><code class="bg-black/10 px-1">CryptoService</code> bundles the common operations as methods and turns every failure into a <code class="bg-black/10 px-1">CryptoError</code>. <code class="bg-black/10 px-1">CryptoFactory</code> adds app-wide defaults (password cost, token encoding) on top of a service.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createCryptoService</span>, <span class="fn">createCryptoFactory</span>, <span class="tp">CryptoAlgorithm</span> } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+
+<span class="kw">const</span> service = <span class="fn">createCryptoService</span>();
+<span class="kw">const</span> key = <span class="kw">await</span> service.<span class="fn">generateKey</span>(<span class="tp">CryptoAlgorithm</span>.AES_256_GCM);
+console.<span class="fn">log</span>(key.keyId, key.length);      <span class="cmt">// key_ plus 32 hex characters, then 256</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> service.<span class="fn">hashHex</span>(<span class="str">"hello world"</span>));
+<span class="cmt">// b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9</span>
+
+<span class="kw">const</span> factory = <span class="fn">createCryptoFactory</span>({ password: { cost: <span class="num">32768</span> }, encoding: <span class="str">"hex"</span> });
+<span class="kw">const</span> stored = <span class="kw">await</span> factory.<span class="fn">createPasswordHash</span>(<span class="str">"correct horse battery staple"</span>);
+console.<span class="fn">log</span>(stored.cost);                <span class="cmt">// 32768</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> factory.<span class="fn">createToken</span>(<span class="num">16</span>, <span class="str">"tmp_"</span>)); <span class="cmt">// tmp_ + 32 hex characters</span></div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Swapping the provider in tests</h3>
+        <p class="text-black/70 mb-4">A <em>provider</em> is the object that actually does the work; the default is <code class="bg-black/10 px-1">createNodeCryptoProvider()</code>. Every function accepts a <code class="bg-black/10 px-1">provider</code> option, or you can replace the process-wide default. This subclasses the real provider to count hash calls, then restores the default.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  <span class="tp">NodeCryptoProvider</span>, <span class="fn">setDefaultCryptoProvider</span>, <span class="fn">resetDefaultCryptoProvider</span>, <span class="fn">sha256</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+<span class="kw">import type</span> { <span class="tp">HashAlgorithm</span>, <span class="tp">CryptoInput</span> } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+
+<span class="kw">let</span> hashCalls = <span class="num">0</span>;
+
+<span class="kw">class</span> <span class="tp">CountingProvider</span> <span class="kw">extends</span> <span class="tp">NodeCryptoProvider</span> {
+  <span class="kw">override async</span> <span class="fn">hash</span>(algorithm: <span class="tp">HashAlgorithm</span>, data: <span class="tp">CryptoInput</span>): <span class="tp">Promise</span>&lt;<span class="tp">Uint8Array</span>&gt; {
+    hashCalls += <span class="num">1</span>;
+    <span class="kw">return</span> <span class="kw">super</span>.<span class="fn">hash</span>(algorithm, data);
+  }
+}
+
+<span class="fn">setDefaultCryptoProvider</span>(<span class="kw">new</span> <span class="tp">CountingProvider</span>());
+
+<span class="kw">await</span> <span class="fn">sha256</span>(<span class="str">"a"</span>);
+<span class="kw">await</span> <span class="fn">sha256</span>(<span class="str">"b"</span>);
+console.<span class="fn">log</span>(hashCalls);   <span class="cmt">// 2</span>
+
+<span class="fn">resetDefaultCryptoProvider</span>();</div>
       </section>
 
       <!-- Errors -->
       <section id="errors" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERRORS</h2>
-        <p class="text-black/70 mb-4">The <code class="bg-black/10 px-1">cryptoErrors</code> module re-exports error types from <code class="bg-black/10 px-1">@zudojs/errors</code> for consistent error handling across the framework.</p>
+        <p class="text-black/70 mb-4">Cryptographic failures throw <code class="bg-black/10 px-1">CryptoError</code> from <code class="bg-black/10 px-1">@zudojs/errors</code>, re-exported here. It carries a stable <code class="bg-black/10 px-1">code</code> such as <code class="bg-black/10 px-1">ERR_CRYPTO_CIPHER</code>, an <code class="bg-black/10 px-1">operation</code>, and the original Node error as <code class="bg-black/10 px-1">cause</code>. Bad arguments (wrong algorithm name, short HMAC key) throw plain <code class="bg-black/10 px-1">TypeError</code> or <code class="bg-black/10 px-1">RangeError</code> instead.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">decryptEnvelope</span>, <span class="fn">isCryptoError</span> } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
 
-        <div class="code-block mb-4"><span class="kw">import</span> {
-  CryptoError, CryptoOperation, createCryptoError, isCryptoError,
-  cryptoHashError, cryptoCipherError, cryptoSignatureError,
-  cryptoKeyDerivationError, cryptoKeyError,
-} <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+<span class="kw">const</span> wrongKey = <span class="kw">new</span> <span class="tp">Uint8Array</span>(<span class="num">32</span>);
+<span class="kw">const</span> envelope = <span class="str">"v1.aes-256-gcm.nd6CpdgPlb62b7gQ.YvsWCo8Wh5N5O63sAO00dg.KfQcUkfn"</span>;
 
-<span class="cm">// Create a crypto error</span>
-<span class="kw">const</span> err = <span class="fn">createCryptoError</span>(<span class="str">"Operation failed"</span>, {
-  operation: CryptoOperation.ENCRYPT,
-});
-
-<span class="cm">// Type guard</span>
-<span class="fn">isCryptoError</span>(err); <span class="cm">// true</span>
-
-<span class="cm">// Factory functions for specific operations</span>
-<span class="kw">const</span> hashErr = <span class="fn">cryptoHashError</span>(<span class="str">"Hash failed"</span>, <span class="str">"sha256"</span>);
-<span class="kw">const</span> cipherErr = <span class="fn">cryptoCipherError</span>(<span class="str">"Decrypt failed"</span>, CryptoOperation.DECRYPT);</div>
+<span class="kw">try</span> {
+  <span class="kw">await</span> <span class="fn">decryptEnvelope</span>(envelope, wrongKey);
+} <span class="kw">catch</span> (error) {
+  <span class="kw">if</span> (<span class="fn">isCryptoError</span>(error)) {
+    console.<span class="fn">log</span>(error.code, error.operation); <span class="cmt">// ERR_CRYPTO_CIPHER decrypt</span>
+  }
+}</div>
+        <p class="text-black/70 mb-4">The verify-style helpers are the exception: <code class="bg-black/10 px-1">verifyPassword</code>, <code class="bg-black/10 px-1">verifyTokenHash</code> and <code class="bg-black/10 px-1">verify</code> return <code class="bg-black/10 px-1">false</code> for bad input instead of throwing, so login code stays simple.</p>
       </section>
 
-      <!-- Testing -->
-      <section id="testing" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TESTING</h2>
-        <p class="text-black/70 mb-4">All crypto functions are async and work with Vitest. Use <code class="bg-black/10 px-1">createNodeCryptoProvider()</code> or <code class="bg-black/10 px-1">createCryptoFactory()</code> for testable code.</p>
+      <!-- API Reference -->
+      <section id="api-reference" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">API REFERENCE</h2>
+        <p class="text-black/70 mb-4">Everything below is exported from <code class="bg-black/10 px-1">@zudojs/crypto</code>. All functions that touch <code class="bg-black/10 px-1">node:crypto</code> return a <code class="bg-black/10 px-1">Promise</code>.</p>
 
-        <div class="code-block mb-4"><span class="kw">import</span> { describe, it, expect } <span class="kw">from</span> <span class="str">"vitest"</span>;
-<span class="kw">import</span> {
-  sha256, hashPassword, verifyPassword, generateToken,
-  encryptString, decryptString, signString, verifyString,
-} <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
-
-<span class="fn">describe</span>(<span class="str">"crypto"</span>, () =&gt; {
-  <span class="fn">it</span>(<span class="str">"hashes data"</span>, <span class="kw">async</span> () =&gt; {
-    <span class="kw">const</span> digest = <span class="kw">await</span> <span class="fn">sha256</span>(<span class="str">"test"</span>);
-    <span class="fn">expect</span>(digest).<span class="fn">toHaveLength</span>(<span class="num">64</span>);
-  });
-
-  <span class="fn">it</span>(<span class="str">"hashes and verifies passwords"</span>, <span class="kw">async</span> () =&gt; {
-    <span class="kw">const</span> { encoded } = <span class="kw">await</span> <span class="fn">hashPassword</span>(<span class="str">"secret"</span>);
-    <span class="fn">expect</span>(<span class="kw">await</span> <span class="fn">verifyPassword</span>(<span class="str">"secret"</span>, encoded)).<span class="fn">toBe</span>(<span class="kw">true</span>);
-    <span class="fn">expect</span>(<span class="kw">await</span> <span class="fn">verifyPassword</span>(<span class="str">"wrong"</span>, encoded)).<span class="fn">toBe</span>(<span class="kw">false</span>);
-  });
-
-  <span class="fn">it</span>(<span class="str">"encrypts and decrypts strings"</span>, <span class="kw">async</span> () =&gt; {
-    <span class="kw">const</span> key = <span class="kw">new</span> <span class="tp">Uint8Array</span>(<span class="num">32</span>);
-    <span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">encryptString</span>(<span class="str">"hello"</span>, key);
-    <span class="kw">const</span> plain = <span class="kw">await</span> <span class="fn">decryptString</span>(
-      result.ciphertext, key, result.iv, result.authTag
-    );
-    <span class="fn">expect</span>(plain).<span class="fn">toBe</span>(<span class="str">"hello"</span>);
-  });
-
-  <span class="fn">it</span>(<span class="str">"signs and verifies"</span>, <span class="kw">async</span> () =&gt; {
-    <span class="kw">const</span> priv = <span class="kw">new</span> <span class="tp">Uint8Array</span>(<span class="num">32</span>);
-    <span class="kw">const</span> pub  = <span class="kw">new</span> <span class="tp">Uint8Array</span>(<span class="num">32</span>);
-    <span class="kw">const</span> sig = <span class="kw">await</span> <span class="fn">signString</span>(<span class="str">"msg"</span>, priv);
-    <span class="fn">expect</span>(<span class="kw">await</span> <span class="fn">verifyString</span>(<span class="str">"msg"</span>, sig, pub)).<span class="fn">toBe</span>(<span class="kw">true</span>);
-  });
-});</div>
-
-        <div class="callout callout-tip">
-          <strong class="text-zudo-green">Test Isolation:</strong> Each test gets fresh random bytes. For deterministic tests, inject a custom <code class="bg-black/10 px-1">CryptoProvider</code> with fixed random output.
-        </div>
-      </section>
-
-      <!-- Connections -->
-      <section id="connections" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONNECTIONS</h2>
-        <p class="text-black/70 mb-4">The <code class="bg-black/10 px-1">@zudojs/crypto</code> package is used across the framework by packages that need cryptographic operations.</p>
-
-        <table class="w-full text-smw-full text-sm border-2 border-black mb-4">
-          <thead class="bg-black text-white">
-            <tr><th class="p-2 text-left">Package</th><th class="p-2 text-left">Usage</th></tr>
-          </thead>
+        <h3 class="text-lg font-bold mb-3 mt-6">Hashing</h3>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">@zudojs/auth</td><td class="p-2">JWT signing, password hashing, session tokens, API key generation</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">@zudojs/security</td><td class="p-2">CSRF tokens, rate limiting keys, secure session identifiers</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">@zudojs/permissions</td><td class="p-2">Token hashing for permission lookups</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">@zudojs/tenancy</td><td class="p-2">Tenant-scoped encryption keys, tenant ID hashing</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">@zudojs/transactions</td><td class="p-2">Transaction ID generation, audit trail signatures</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">@zudojs/cache</td><td class="p-2">Cache key generation, invalidation tokens</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">@zudojs/database</td><td class="p-2">Connection string encryption, credential hashing</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">@zudojs/messaging</td><td class="p-2">Message signing, correlation ID generation</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">@zudojs/http</td><td class="p-2">Cookie signing, header HMAC verification</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">@zudojs/schema</td><td class="p-2">Schema fingerprinting, deduplication hashes</td></tr>
+            <tr><td><span class="code-inline">hash(input, { algorithm?, encoding?, provider? })</span></td><td>Hashes data; returns <span class="code-inline">{ algorithm, digest, encoded }</span></td><td>Default sha256 / hex. md5 and sha1 throw.</td></tr>
+            <tr><td><span class="code-inline">sha256 / sha384 / sha512 / sha3_256 / sha3_384 / sha3_512(input, encoding?)</span></td><td>Returns the encoded digest string</td><td>Encoding defaults to hex.</td></tr>
+            <tr><td><span class="code-inline">hmac(input, key, algorithm?, encoding?)</span></td><td>Keyed hash</td><td>Key is a <span class="code-inline">Uint8Array</span> of 16+ bytes.</td></tr>
+            <tr><td><span class="code-inline">hmacSha256 / hmacSha384 / hmacSha512(input, key, encoding?)</span></td><td>HMAC shorthands</td><td>Same key rule.</td></tr>
+            <tr><td><span class="code-inline">timingSafeEqual(a, b)</span>, <span class="code-inline">timingSafeEqualString(a, b)</span></td><td>Constant-time comparison of bytes or strings</td><td>Use instead of <span class="code-inline">===</span>.</td></tr>
           </tbody>
         </table>
 
-        <div class="callout callout-note">
-          <strong class="text-zudo-blue">Dependency Rule:</strong> @zudojs/crypto depends only on @zudojs/constants and @zudojs/errors (leaf packages). All other packages that need crypto operations import from @zudojs/crypto directly — never from node:crypto.
-        </div>
-      </section>
-
-      <!-- Quick Reference -->
-      <section id="quick-reference" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK REFERENCE</h2>
-
-        <h3 class="text-lg font-bold mb-3">Hashing</h3>
-        <table class="w-full text-smw-full text-sm border-2 border-black mb-6">
+        <h3 class="text-lg font-bold mb-3 mt-6">Encryption</h3>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">sha256(data, encoding?)</td><td class="p-2">SHA-256 digest string</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">sha512(data, encoding?)</td><td class="p-2">SHA-512 digest string</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">sha3_256(data, encoding?)</td><td class="p-2">SHA3-256 digest string</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">hash(data, opts?)</td><td class="p-2">HashResult { algorithm, digest, encoded }</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">hmac(data, key, algo?, enc?)</td><td class="p-2">HMAC digest string</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">equalDigests(a, b)</td><td class="p-2">Constant-time comparison</td></tr>
+            <tr><td><span class="code-inline">encrypt(plaintext, key, { iv?, aad?, provider? })</span></td><td>AES-256-GCM; returns <span class="code-inline">{ algorithm, ciphertext, iv, authTag }</span></td><td>Key 32 bytes. IV 12 bytes, random if omitted.</td></tr>
+            <tr><td><span class="code-inline">decrypt(ciphertext, key, iv, authTag, aad?)</span></td><td>Reverses <span class="code-inline">encrypt</span></td><td>Throws <span class="code-inline">ERR_CRYPTO_CIPHER</span> on tampering.</td></tr>
+            <tr><td><span class="code-inline">encryptString / decryptString</span></td><td>Same, for UTF-8 strings</td><td></td></tr>
+            <tr><td><span class="code-inline">encryptEnvelope(plaintext, key, options?)</span></td><td>Returns one <span class="code-inline">v1.aes-256-gcm.iv.tag.ct</span> string</td><td>Best choice for storage.</td></tr>
+            <tr><td><span class="code-inline">decryptEnvelope(envelope, key, aad?)</span></td><td>Returns plaintext bytes</td><td>Validates every field first.</td></tr>
           </tbody>
         </table>
 
-        <h3 class="text-lg font-bold mb-3">Encryption</h3>
-        <table class="w-full text-smw-full text-sm border-2 border-black mb-6">
+        <h3 class="text-lg font-bold mb-3 mt-6">Passwords and key derivation</h3>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">encrypt(data, key, opts?)</td><td class="p-2">CipherResult { ciphertext, iv, authTag }</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">decrypt(ct, key, iv, tag, aad?)</td><td class="p-2">Uint8Array plaintext</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">encryptString(str, key, opts?)</td><td class="p-2">CipherResult from string</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">decryptString(ct, key, iv, tag)</td><td class="p-2">UTF-8 string</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">encryptEnvelope(data, key)</td><td class="p-2">Self-describing string</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">decryptEnvelope(env, key)</td><td class="p-2">Uint8Array plaintext</td></tr>
+            <tr><td><span class="code-inline">hashPassword(password, options?)</span></td><td>scrypt hash; returns <span class="code-inline">{ encoded, salt, hash, cost, blockSize, parallelization }</span></td><td>Options: <span class="code-inline">saltBytes, keyBytes, cost, blockSize, parallelization</span>.</td></tr>
+            <tr><td><span class="code-inline">verifyPassword(password, encoded)</span></td><td>Checks a password</td><td>Never throws; returns <span class="code-inline">false</span>.</td></tr>
+            <tr><td><span class="code-inline">isPasswordHash(value)</span>, <span class="code-inline">isValidPassword(value, min?)</span></td><td>Shape checks</td><td><span class="code-inline">isValidPassword</span> is length only.</td></tr>
+            <tr><td><span class="code-inline">derivePbkdf2(password, options?)</span>, <span class="code-inline">deriveScrypt(password, options?)</span></td><td>Turn a passphrase into key bytes; returns <span class="code-inline">{ key, salt, algorithm }</span></td><td>Pass <span class="code-inline">salt</span> to reproduce a key.</td></tr>
+            <tr><td><span class="code-inline">deriveKey(password, CryptoAlgorithm, options?)</span></td><td>Picks PBKDF2 or scrypt by enum</td><td></td></tr>
+            <tr><td><span class="code-inline">generateSalt(length?)</span></td><td>Random salt bytes</td><td>Minimum 16.</td></tr>
           </tbody>
         </table>
 
-        <h3 class="text-lg font-bold mb-3">Random</h3>
-        <table class="w-full text-smw-full text-sm border-2 border-black mb-6">
+        <h3 class="text-lg font-bold mb-3 mt-6">Signatures and keys</h3>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">randomBytesSecure(n)</td><td class="p-2">Uint8Array(n)</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">randomHex(len)</td><td class="p-2">Hex string</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">randomUuid()</td><td class="p-2">UUID v4 string</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">randomToken(bytes?)</td><td class="p-2">URL-safe token</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">randomNumericCode(len?)</td><td class="p-2">Numeric string</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">randomChoice(arr)</td><td class="p-2">Random element</td></tr>
+            <tr><td><span class="code-inline">sign(data, privateKey, { algorithm? })</span></td><td>Returns a signature <span class="code-inline">Uint8Array</span></td><td>Default <span class="code-inline">ed25519</span>; also rsa-* and ecdsa-*.</td></tr>
+            <tr><td><span class="code-inline">verify(data, signature, publicKey, { algorithm? })</span></td><td>Returns <span class="code-inline">boolean</span></td><td>Malformed input gives <span class="code-inline">false</span>.</td></tr>
+            <tr><td><span class="code-inline">signString / verifyString</span></td><td>Same for UTF-8 strings</td><td></td></tr>
+            <tr><td><span class="code-inline">generateEd25519KeyPair()</span></td><td>Returns <span class="code-inline">{ privateKey, publicKey }</span> KeyObjects</td><td>Synchronous.</td></tr>
+            <tr><td><span class="code-inline">exportPrivateKeyPem(key)</span>, <span class="code-inline">exportPublicKeyPem(key)</span>, <span class="code-inline">derivePublicKey(privateKey)</span></td><td>PEM export and public-key recovery</td><td></td></tr>
+            <tr><td><span class="code-inline">generateCryptoKey(length, { algorithm, usages?, extractable? })</span></td><td>Random symmetric key as a <span class="code-inline">CryptoKey</span> object</td><td>Symmetric algorithms only.</td></tr>
+            <tr><td><span class="code-inline">createCryptoKey(bytes, options)</span>, <span class="code-inline">exportCryptoKey(key)</span></td><td>Wrap existing bytes; read them back</td><td>Export requires <span class="code-inline">extractable: true</span>.</td></tr>
           </tbody>
         </table>
 
-        <h3 class="text-lg font-bold mb-3">Tokens</h3>
-        <table class="w-full text-smw-full text-sm border-2 border-black mb-6">
+        <h3 class="text-lg font-bold mb-3 mt-6">Tokens and random</h3>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">generateToken(opts?)</td><td class="p-2">Opaque token string</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">generateApiKey()</td><td class="p-2">"lat_..."</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">generateSessionToken()</td><td class="p-2">"sess_..."</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">generateOtp(digits?)</td><td class="p-2">Numeric OTP</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">hashToken(token)</td><td class="p-2">SHA-256 hash</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">verifyTokenToken(token, hash)</td><td class="p-2">boolean</td></tr>
+            <tr><td><span class="code-inline">generateToken({ bytes?, encoding?, prefix? })</span></td><td>Random opaque token string</td><td>Default 32 bytes base64url; minimum 16.</td></tr>
+            <tr><td><span class="code-inline">generateApiKey / generateSessionToken / generateRefreshToken / generateVerificationToken / generatePasswordResetToken / generateCsrfToken()</span></td><td>Prefixed tokens</td><td>Prefixes in <span class="code-inline">TOKEN_PREFIX</span>.</td></tr>
+            <tr><td><span class="code-inline">generateOtp(digits?)</span></td><td>Numeric one-time code</td><td>4 to 12 digits, default 6.</td></tr>
+            <tr><td><span class="code-inline">hashToken(token)</span>, <span class="code-inline">verifyTokenHash(token, storedHash)</span></td><td>SHA-256 hex for storage and constant-time check</td><td><span class="code-inline">hashTokenForStorage</span> is an alias.</td></tr>
+            <tr><td><span class="code-inline">hasTokenPrefix / removeTokenPrefix(token, prefix)</span>, <span class="code-inline">isValidToken(token, min?)</span></td><td>String helpers</td><td></td></tr>
+            <tr><td><span class="code-inline">randomBytesSecure(n)</span>, <span class="code-inline">randomHex(chars)</span>, <span class="code-inline">randomBase64Url(bytes)</span></td><td>Random bytes and strings</td><td></td></tr>
+            <tr><td><span class="code-inline">randomInteger(min, max)</span>, <span class="code-inline">randomIntegerBelow(max)</span>, <span class="code-inline">randomUuid()</span></td><td>Uniform integers and UUID v4</td><td><span class="code-inline">max</span> is excluded.</td></tr>
+            <tr><td><span class="code-inline">randomNumericCode(len?)</span>, <span class="code-inline">randomAlphanumeric(len)</span>, <span class="code-inline">randomFromAlphabet(len, alphabet)</span>, <span class="code-inline">randomChoice(array)</span>, <span class="code-inline">randomBoolean()</span></td><td>Random characters and picks</td><td></td></tr>
           </tbody>
         </table>
 
-        <h3 class="text-lg font-bold mb-3">Passwords</h3>
-        <table class="w-full text-smw-full text-sm border-2 border-black mb-6">
+        <h3 class="text-lg font-bold mb-3 mt-6">Encoding, service, provider, errors, constants</h3>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">hashPassword(pwd, opts?)</td><td class="p-2">PasswordHashResult { encoded }</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">verifyPassword(pwd, encoded)</td><td class="p-2">boolean</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">isPasswordHash(value)</td><td class="p-2">boolean</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">isValidPassword(pwd, min?)</td><td class="p-2">boolean</td></tr>
-          </tbody>
-        </table>
-
-        <h3 class="text-lg font-bold mb-3">Signatures</h3>
-        <table class="w-full text-smw-full text-sm border-2 border-black mb-6">
-          <tbody>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">sign(data, privateKey, opts?)</td><td class="p-2">Uint8Array signature</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">verify(data, sig, publicKey)</td><td class="p-2">boolean</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">signString(str, privateKey)</td><td class="p-2">Uint8Array signature</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">verifyString(str, sig, pub)</td><td class="p-2">boolean</td></tr>
-          </tbody>
-        </table>
-
-        <h3 class="text-lg font-bold mb-3">Keys</h3>
-        <table class="w-full text-smw-full text-sm border-2 border-black mb-6">
-          <tbody>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">createCryptoKey(bytes, opts)</td><td class="p-2">CryptoKey</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">generateCryptoKey(len, opts)</td><td class="p-2">CryptoKey</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">exportCryptoKey(key)</td><td class="p-2">Uint8Array (extractable only)</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">isCryptoKey(value)</td><td class="p-2">type guard</td></tr>
-          </tbody>
-        </table>
-
-        <h3 class="text-lg font-bold mb-3">Key Derivation</h3>
-        <table class="w-full text-smw-full text-sm border-2 border-black mb-6">
-          <tbody>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">deriveKey(pwd, algo, opts?)</td><td class="p-2">DerivedKeyResult { key, salt }</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">derivePbkdf2(pwd, opts?)</td><td class="p-2">DerivedKeyResult</td></tr>
-            <tr class="border-b border-black/10"><td class="p-2 font-mono text-xs">deriveScrypt(pwd, opts?)</td><td class="p-2">DerivedKeyResult</td></tr>
+            <tr><td><span class="code-inline">encode(bytes, encoding)</span>, <span class="code-inline">decode(string, encoding)</span></td><td>Convert between bytes and hex / base64 / base64url / utf8</td><td>Also <span class="code-inline">toHex, fromHex, toBase64Url, fromBase64Url, utf8Encode, utf8Decode</span>.</td></tr>
+            <tr><td><span class="code-inline">createCryptoService({ provider? })</span>, <span class="code-inline">cryptoService</span></td><td>Method-style facade; wraps failures in <span class="code-inline">CryptoError</span></td><td>Methods: generateKey, randomBytes, encrypt, decrypt, hash, hashHex, hashPassword, verifyPassword, deriveKey, generateToken, generateOtp, hashToken, verifyToken, encode, decode.</td></tr>
+            <tr><td><span class="code-inline">createCryptoFactory({ defaultKeyAlgorithm?, password?, encoding?, provider? })</span>, <span class="code-inline">cryptoFactory</span></td><td>Service with app-wide defaults</td><td>Methods: createKey, createToken, createApiKey, createSessionToken, createRefreshToken, createVerificationToken, createPasswordResetToken, createCsrfToken, createOtp, createPasswordHash, verifyPassword, encode, decode.</td></tr>
+            <tr><td><span class="code-inline">createNodeCryptoProvider()</span>, <span class="code-inline">getDefaultCryptoProvider()</span>, <span class="code-inline">setDefaultCryptoProvider(p)</span>, <span class="code-inline">resetDefaultCryptoProvider()</span></td><td>Create or swap the backing provider</td><td>Implement <span class="code-inline">CryptoProvider</span> for a custom one.</td></tr>
+            <tr><td><span class="code-inline">CryptoError</span>, <span class="code-inline">isCryptoError(value)</span>, <span class="code-inline">CryptoOperation</span></td><td>Error class, guard and operation enum</td><td>Re-exported from <span class="code-inline">@zudojs/errors</span>.</td></tr>
+            <tr><td><span class="code-inline">CryptoAlgorithm</span>, <span class="code-inline">CryptoKeyUsage</span></td><td>Enums for algorithm and key-usage names</td><td>Use these, not string literals, where an enum is expected.</td></tr>
+            <tr><td><span class="code-inline">AES_GCM</span>, <span class="code-inline">PASSWORD_HASH</span>, <span class="code-inline">PASSWORD_POLICY</span>, <span class="code-inline">TOKEN</span>, <span class="code-inline">TOKEN_PREFIX</span>, <span class="code-inline">TOKEN_TTL</span></td><td>Frozen default parameters</td><td>e.g. <span class="code-inline">PASSWORD_HASH.SCRYPT.COST</span> is 16384.</td></tr>
           </tbody>
         </table>
       </section>
 
+      <!-- Common Mistakes -->
+      <section id="common-mistakes" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMON MISTAKES</h2>
+        <ul class="space-y-3 text-black/70">
+          <li><strong>Hashing a password with <code class="bg-black/10 px-1">sha256</code>.</strong> It runs millions of times per second, so a leaked table is cracked in minutes. Fix: <code class="bg-black/10 px-1">hashPassword</code> and <code class="bg-black/10 px-1">verifyPassword</code>.</li>
+          <li><strong>Using <code class="bg-black/10 px-1">new Uint8Array(32)</code> as a real key.</strong> That is 32 zero bytes; everyone has that key. Fix: <code class="bg-black/10 px-1">await randomBytesSecure(32)</code> once, then load it from configuration.</li>
+          <li><strong>Passing a 4-byte HMAC key.</strong> <code class="bg-black/10 px-1">hmac</code> throws <code class="bg-black/10 px-1">RangeError: HMAC key must be at least 16 bytes</code>. Fix: use 16 to 64 random bytes.</li>
+          <li><strong>Storing the raw API key.</strong> A database leak then hands out working credentials. Fix: store <code class="bg-black/10 px-1">hashToken(key)</code> and look up with <code class="bg-black/10 px-1">verifyTokenHash</code>.</li>
+          <li><strong>Passing <code class="bg-black/10 px-1">"aes-256-gcm"</code> where an enum is expected.</strong> <code class="bg-black/10 px-1">generateCryptoKey</code>, <code class="bg-black/10 px-1">deriveKey</code> and <code class="bg-black/10 px-1">createCryptoFactory</code> take <code class="bg-black/10 px-1">CryptoAlgorithm</code>; TypeScript rejects the string. Fix: <code class="bg-black/10 px-1">CryptoAlgorithm.AES_256_GCM</code>.</li>
+          <li><strong>Feeding raw 32 bytes to <code class="bg-black/10 px-1">sign</code>.</strong> Signing keys are PEM, DER or <code class="bg-black/10 px-1">KeyObject</code>, not random bytes. Fix: <code class="bg-black/10 px-1">generateEd25519KeyPair()</code> and <code class="bg-black/10 px-1">exportPrivateKeyPem</code>.</li>
+        </ul>
+      </section>
+
+      <!-- Related -->
+      <section id="related" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATED PACKAGES</h2>
+        <ul class="space-y-2 text-black/70">
+          <li><a href="/docs/packages-auth" class="text-zudo-blue font-bold underline">@zudojs/auth</a> — sessions, JWTs and login flows built on these primitives; start here if you are building sign-in.</li>
+          <li><a href="/docs/packages-security" class="text-zudo-blue font-bold underline">@zudojs/security</a> — CSRF protection, rate limiting and security headers for HTTP apps.</li>
+          <li><a href="/docs/packages-errors" class="text-zudo-blue font-bold underline">@zudojs/errors</a> — the <code class="bg-black/10 px-1">CryptoError</code> class and error codes this package throws.</li>
+          <li><a href="/docs/packages-constants" class="text-zudo-blue font-bold underline">@zudojs/constants</a> — <code class="bg-black/10 px-1">TimeMs</code> and other shared values used by <code class="bg-black/10 px-1">TOKEN_TTL</code>.</li>
+        </ul>
+      </section>
+
+      <!-- EXPORT INDEX -->
+      <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/crypto</code> exports from its package root at v1.0.0 &mdash; <strong>249</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <details class="border-2 border-black p-5 bg-white">
+          <summary class="font-bold cursor-pointer select-none">Show all 249 exports</summary>
+          <div class="mt-5">
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Classes <span class="text-black/40 font-normal">(1)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoFactory</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Functions <span class="text-black/40 font-normal">(141)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">arrayBufferToBytes</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertBinaryEncoding</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertKeyObject</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertPassword</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">bytesToArrayBuffer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">bytesToNumber</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cloneBytes</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">concatBytes</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCryptoFactory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCryptoKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cryptoKeyToPrivateKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cryptoKeysEqual</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">decode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">decodeBase64Url</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">decodeDigest</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">decodePasswordHash</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">decrypt</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">decryptEnvelope</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">decryptString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">defaultKeyLength</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">deriveKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">derivePbkdf2</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">derivePublicKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">deriveScrypt</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">encode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">encodeDigest</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">encodePasswordHash</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">encrypt</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">encryptEnvelope</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">encryptString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">equalDigests</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">expectedAsymmetricKeyType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">expectedKeyLength</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">exportCryptoKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">exportPrivateKeyPem</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">exportPublicKeyPem</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">fillRandomBytes</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">fromBase64</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">fromBase64Url</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">fromHex</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">generateApiKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">generateCryptoKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">generateCsrfToken</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">generateEd25519KeyPair</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">generateEmailVerificationCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">generateLoginCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">generateOtp</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">generatePasswordResetToken</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">generateRefreshToken</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">generateSalt</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">generateSessionToken</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">generateToken</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">generateVerificationToken</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getCryptoFactory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getCryptoKeyFingerprint</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getDefaultAesGcmConfig</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getDefaultPasswordHashConfig</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getDefaultPasswordHashOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasTokenPrefix</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hash</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hashPassword</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hashToken</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hashTokenBase64Url</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hashTokenForStorage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hmac</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hmacSha256</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hmacSha384</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hmacSha512</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isAeadAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isArrayBuffer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isBase64</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isBase64Url</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isBase64UrlString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isBinaryEncoding</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isBytes</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isCryptoAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isCryptoEncoding</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isCryptoKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHashAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHex</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHexString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isKeyDerivationAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isKeyObject</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isMacAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isPasswordHash</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSignatureAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSymmetricKeyAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isValidPassword</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isValidToken</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">nodeSignatureAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeText</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">numberToBytes</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseCryptoAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parsePositiveInteger</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">pbkdf2PasswordAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">randomAlphanumeric</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">randomBase64</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">randomBase64Url</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">randomBoolean</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">randomBytesSecure</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">randomChoice</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">randomFromAlphabet</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">randomHex</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">randomInteger</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">randomIntegerBelow</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">randomNumericCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">randomToken</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">randomUuid</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">removeTokenPrefix</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">secureEqual</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">secureStringEqual</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sha256</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sha384</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sha3_256</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sha3_384</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sha3_512</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sha512</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sign</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">signString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sliceBytes</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">timingSafeEqual</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">timingSafeEqualEncoded</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">timingSafeEqualString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toBase64</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toBase64Url</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toBytes</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toHex</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toPrivateKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toPublicKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">utf8ByteLength</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">utf8Decode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">utf8Encode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateParameters</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validatePbkdf2Options</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validatePbkdf2Parameters</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateScryptOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">verify</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">verifyPassword</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">verifyString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">verifyTokenHash</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">wipe</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Interfaces <span class="text-black/40 font-normal">(14)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CipherOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CipherResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoFactoryOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoKeyOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HashOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HashPasswordOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PasswordHashOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PasswordHashResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Pbkdf2Options</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Pbkdf2PasswordHashParameters</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ScryptOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ScryptPasswordHashParameters</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TokenOptions</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Type aliases <span class="text-black/40 font-normal">(12)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BinaryEncoding</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BinaryInput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoAlgorithmName</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoEncoding</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoEncodingName</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HashInput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">KeyMaterial</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PasswordHashParameters</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Pbkdf2PasswordAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SignatureOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TokenEncoding</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TokenPrefix</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Enums <span class="text-black/40 font-normal">(2)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoKeyUsage</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Constants <span class="text-black/40 font-normal">(26)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AEAD_ALGORITHMS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AES_GCM</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CRYPTO_ALGORITHM</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CRYPTO_KEY_FINGERPRINT_LABEL</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CRYPTO_VERSION</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ENCODING</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HASH</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HASH_ALGORITHMS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">KEY_DERIVATION_ALGORITHMS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">KEY_SIZE</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAC_ALGORITHMS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PASSWORD_FORMAT_VERSION</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PASSWORD_HASH</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PASSWORD_POLICY</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RANDOM</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SIGNATURE_ALGORITHMS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TOKEN</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TOKEN_PREFIX</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TOKEN_TTL</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">base64ToBytes</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">base64UrlToBytes</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">bytesToBase64</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">bytesToBase64Url</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">bytesToHex</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cryptoFactory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hexToBytes</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Re-exported <span class="text-black/40 font-normal">(53)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoCapabilities</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoInput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoService</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoServiceOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DecryptOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DeriveKeyOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DerivedKeyAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DerivedKeyResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EncodingFormat</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EncryptOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EncryptedData</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EncryptionAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EncryptionProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HashAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HashEncoding</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HashProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HashResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HmacAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HmacProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">KeyDerivationAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">KeyDerivationProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">NodeCryptoProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PasswordHashProviderOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PasswordProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Pbkdf2Digest</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RandomProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RandomTokenOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SignOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SignatureAlgorithm</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SigningProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">VerifyOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCryptoError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCryptoService</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createNodeCryptoProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cryptoCipherError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cryptoHashError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cryptoKeyDerivationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cryptoKeyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cryptoService</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cryptoSignatureError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getCryptoService</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getDefaultCryptoProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isCryptoError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHashAlgorithmName</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHmacAlgorithmName</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isPbkdf2Digest</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSignatureAlgorithmName</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">resetDefaultCryptoProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">setDefaultCryptoProvider</code></div>
+          </div>
+          </div>
+        </details>
+      </section>
     </main>
 
     <!-- TABLE OF CONTENTS -->
     <aside class="doc-toc" aria-label="On this page">
       <div class="text-xs font-bold uppercase tracking-wider mb-4 text-black/40">On This Page</div>
+      <a href="#overview" class="toc-link">Overview</a>
       <a href="#installation" class="toc-link">Installation</a>
       <a href="#quick-start" class="toc-link">Quick Start</a>
-      <a href="#architecture" class="toc-link">Module Architecture</a>
-      <a href="#hashing" class="toc-link">Hashing</a>
+      <a href="#hashing" class="toc-link">Hashing and HMAC</a>
       <a href="#encryption" class="toc-link">Encryption</a>
-      <a href="#random" class="toc-link">Secure Random</a>
-      <a href="#tokens" class="toc-link">Token Management</a>
       <a href="#passwords" class="toc-link">Password Hashing</a>
       <a href="#signatures" class="toc-link">Digital Signatures</a>
-      <a href="#keys" class="toc-link">Key Management</a>
+      <a href="#tokens" class="toc-link">Opaque Tokens</a>
+      <a href="#random" class="toc-link">Secure Random</a>
       <a href="#key-derivation" class="toc-link">Key Derivation</a>
-      <a href="#service" class="toc-link">CryptoService</a>
-      <a href="#factory" class="toc-link">CryptoFactory</a>
-      <a href="#provider" class="toc-link">Provider Abstraction</a>
-      <a href="#constants" class="toc-link">Constants</a>
-      <a href="#encoding" class="toc-link">Encoding</a>
-      <a href="#utils" class="toc-link">Utilities</a>
+      <a href="#service-and-provider" class="toc-link">Service and Provider</a>
       <a href="#errors" class="toc-link">Errors</a>
-      <a href="#testing" class="toc-link">Testing</a>
-      <a href="#connections" class="toc-link">Connections</a>
-      <a href="#quick-reference" class="toc-link">Quick Reference</a>
+      <a href="#api-reference" class="toc-link">API Reference</a>
+      <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
+      <a href="#related" class="toc-link">Related Packages</a>
+          <a href="#export-index" class="toc-link">Complete Export Index</a>
     </aside>
 
   </div>
@@ -1064,5 +682,6 @@ TOKEN_TTL.REFRESH_TOKEN_MS;        <span class="cm">// 30 days</span></div>
 
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 </body>
 </html>

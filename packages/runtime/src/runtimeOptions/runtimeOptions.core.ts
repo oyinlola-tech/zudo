@@ -40,6 +40,12 @@ export function validateRuntimeOptions(options: ResolvedRuntimeOptions): void {
   if (options.startupTimeout <= 0) {
     throw new Error("Startup timeout must be positive.");
   }
+
+  if (options.readinessCheckTimeout < 0) {
+    throw new Error(
+      `Readiness check timeout must be zero or positive, got ${options.readinessCheckTimeout}. Use 0 to run checks without a bound.`,
+    );
+  }
 }
 
 /**

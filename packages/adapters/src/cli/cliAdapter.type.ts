@@ -4,7 +4,7 @@
  * CLI adapter contracts — bridges Zudojs to command-line interfaces.
  */
 
-import type { Adapter, AdapterCapabilities } from "../index.js";
+import type { Adapter } from "../index.js";
 
 /**
  * CLI adapter — manages command-line interface interactions.

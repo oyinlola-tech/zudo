@@ -90,3 +90,18 @@ export class DuplicateRoleError extends PermissionError {
     });
   }
 }
+
+/**
+ * A duplicate policy was registered.
+ *
+ * Silently replacing a policy is how an authorization rule disappears without
+ * anyone noticing, so the registry rejects it unless override is asked for.
+ */
+export class DuplicatePolicyError extends PermissionError {
+  constructor(policy: string) {
+    super(`Duplicate policy: ${policy}`, {
+      code: ErrorCode.CONFLICT,
+      metadata: { policy },
+    });
+  }
+}

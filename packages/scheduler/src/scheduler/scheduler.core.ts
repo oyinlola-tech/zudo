@@ -1,4 +1,8 @@
-import type { ScheduleType } from "./types/schedulerTypes.core.js";
+import type {
+  JobExecution,
+  JobState,
+  ScheduleType,
+} from "./types/schedulerTypes.core.js";
 
 import type { JobDefinition } from "./job/jobDefinition.type.js";
 
@@ -14,9 +18,13 @@ import type { Clock } from "./clock/schedulerClock.type.js";
 
 import { ScheduleHandleImpl } from "./scheduleHandle/scheduleHandle.type.js";
 
+import { createSchedule } from "./schedule/schedule.type.js";
+
 import {
   SchedulerAlreadyStartedError,
   SchedulerStoppedError,
+  SchedulerJobCancelledError,
+  SchedulerJobTimeoutError,
   InvalidScheduleError,
   InvalidJobError,
 } from "./errors/scheduler.errors.js";
@@ -41,10 +49,18 @@ import { parseDuration } from "./duration/duration.parser.js";
 import {
   MAX_SCHEDULES,
   MAX_TIMER_DELAY,
+  MAX_EXECUTION_HISTORY,
   DEFAULT_MAX_CONCURRENCY,
   DEFAULT_MISFIRE_POLICY,
   DEFAULT_OVERLAP_POLICY,
 } from "./constants/schedulerConstants.core.js";
+
+/**
+ * Ceiling on fire times held back by `overlap: "queue"` or a job concurrency
+ * limit. Without one, a schedule whose job never keeps up would grow an
+ * unbounded backlog of runs nobody wants any more.
+ */
+const MAX_PENDING_RUNS = 1024;
 
 /** Internal record for a live schedule. */
 interface ScheduleRecord {
@@ -53,6 +69,11 @@ interface ScheduleRecord {
   readonly options: ScheduleOptions;
   /** Controllers for executions currently in flight for this schedule. */
   readonly running: Set<AbortController>;
+  /**
+   * Fire times held back by `overlap: "queue"` or a job concurrency ceiling,
+   * to be dispatched as executions finish.
+   */
+  pendingRuns: number;
 }
 
 /** Details reported to an error listener when a job fails. */
@@ -115,6 +136,15 @@ export class Scheduler {
    * to abort.
    */
   private readonly runningControllers = new Set<AbortController>();
+
+  /** Executions in flight per job id, for the per-job concurrency ceiling. */
+  private readonly runningByJob = new Map<string, number>();
+
+  /** Records with `pendingRuns > 0`, drained as executions finish. */
+  private readonly pending = new Set<ScheduleRecord>();
+
+  /** Bounded ring of execution records, newest last. */
+  private readonly executionHistory: JobExecution[] = [];
 
   private running = false;
 
@@ -193,6 +223,10 @@ export class Scheduler {
       for (const controller of this.runningControllers) {
         controller.abort(new Error("Scheduler stopped"));
       }
+      // Runs held back by overlap or a concurrency ceiling are discarded with
+      // them; keeping them would fire on a later start for a time long past.
+      for (const record of this.pending) record.pendingRuns = 0;
+      this.pending.clear();
     }
 
     await this.settle(options?.timeoutMs);
@@ -350,21 +384,21 @@ export class Scheduler {
       );
     }
 
-    const schedule: Schedule = {
-      id: scheduleId,
+    const schedule = createSchedule(
+      scheduleId,
       jobId,
       type,
-      expression,
       nextRunAt,
-      state: "active",
-      options,
-    };
+      options ?? {},
+      expression,
+    );
 
     const record: ScheduleRecord = {
       schedule,
       trigger,
       options: options ?? {},
       running: new Set(),
+      pendingRuns: 0,
     };
 
     this.schedules.set(scheduleId, record);
@@ -388,6 +422,9 @@ export class Scheduler {
     record.schedule = { ...record.schedule, state };
 
     if (state === "cancelled" || state === "completed") {
+      // Held-back runs belong to a schedule that no longer exists.
+      record.pendingRuns = 0;
+      this.pending.delete(record);
       this.queue.remove(scheduleId);
       this.schedules.delete(scheduleId);
     } else if (state === "paused") {
@@ -483,7 +520,13 @@ export class Scheduler {
       return;
     }
 
-    const from = this.clock.now();
+    // "catch-up" advances from the fire time that just ran, so a schedule
+    // that fell behind replays each missed occurrence instead of silently
+    // skipping to the next future one. Every other policy resumes from now.
+    const misfire = record.options.misfire ?? DEFAULT_MISFIRE_POLICY;
+    const now = this.clock.now();
+    const from =
+      misfire === "catch-up" ? record.schedule.nextRunAt : now;
     const next = record.trigger.next(from);
 
     if (!next || Number.isNaN(next.getTime())) {
@@ -496,7 +539,7 @@ export class Scheduler {
     record.schedule = {
       ...record.schedule,
       nextRunAt: next,
-      lastRunAt: from,
+      lastRunAt: now,
     };
     this.queue.enqueue(record.schedule);
   }
@@ -506,23 +549,65 @@ export class Scheduler {
     const job = this.jobs.get(record.schedule.jobId);
     if (!job) return;
 
-    const overlap = record.options.overlap ?? DEFAULT_OVERLAP_POLICY;
-    if (overlap === "skip" && record.running.size > 0) {
+    // A schedule cancelled or paused while a run was held back must not fire.
+    if (
+      record.schedule.state === "cancelled" ||
+      record.schedule.state === "paused"
+    ) {
       return;
     }
-    if (overlap === "replace" && record.running.size > 0) {
-      for (const controller of record.running) {
-        controller.abort(new Error("Superseded by a newer execution"));
+
+    // A schedule's own policy wins over the job's default.
+    const overlap =
+      record.options.overlap ?? job.options?.overlap ?? DEFAULT_OVERLAP_POLICY;
+
+    if (record.running.size > 0) {
+      if (overlap === "skip") return;
+      if (overlap === "queue") {
+        // Hold the fire time rather than dropping it; it is dispatched when
+        // the running execution finishes. "queue" used to fall through to
+        // "allow" and start a concurrent run.
+        this.defer(record);
+        return;
       }
+      if (overlap === "replace") {
+        for (const controller of record.running) {
+          controller.abort(new Error("Superseded by a newer execution"));
+        }
+      }
+    }
+
+    // Per-job concurrency ceiling. `JobOptions.concurrency` was accepted and
+    // read by nothing, so a job declaring `concurrency: 1` still ran as many
+    // executions at once as it had due schedules.
+    const concurrency = job.options?.concurrency;
+    if (
+      concurrency !== undefined &&
+      (this.runningByJob.get(job.id) ?? 0) >= Math.max(1, concurrency)
+    ) {
+      this.defer(record);
+      return;
     }
 
     const executionId = crypto.randomUUID();
     const controller = new AbortController();
     record.running.add(controller);
     this.runningControllers.add(controller);
+    this.runningByJob.set(job.id, (this.runningByJob.get(job.id) ?? 0) + 1);
 
     const scheduleId = record.schedule.id;
     const scheduledAt = record.schedule.nextRunAt;
+    const startedAt = this.clock.now();
+
+    this.beginExecution({
+      id: executionId,
+      jobId: job.id,
+      scheduleId,
+      status: "running",
+      scheduledAt,
+      startedAt,
+      attempt: 1,
+    });
 
     const execution = this.executor
       .execute(
@@ -533,8 +618,11 @@ export class Scheduler {
         controller.signal,
         record.options.data,
       )
-      .then(() => undefined)
+      .then(() => {
+        this.finishExecution(executionId, "completed", startedAt);
+      })
       .catch((error: unknown) => {
+        this.finishExecution(executionId, statusFor(error), startedAt, error);
         // A failure used to vanish into an empty catch block with a "retry
         // logic would go here" comment. Retries now live in the executor, and
         // whatever survives them is reported.
@@ -549,9 +637,92 @@ export class Scheduler {
         record.running.delete(controller);
         this.runningControllers.delete(controller);
         this.inFlight.delete(execution);
+
+        const remaining = (this.runningByJob.get(job.id) ?? 1) - 1;
+        if (remaining <= 0) this.runningByJob.delete(job.id);
+        else this.runningByJob.set(job.id, remaining);
+
+        this.drainPending();
       });
 
     this.inFlight.add(execution);
+  }
+
+  /** Holds a fire time back until capacity frees up. */
+  private defer(record: ScheduleRecord): void {
+    if (record.pendingRuns >= MAX_PENDING_RUNS) return;
+    record.pendingRuns += 1;
+    this.pending.add(record);
+  }
+
+  /**
+   * Dispatches held-back runs that can now proceed.
+   *
+   * A record that is still blocked re-defers itself, which shows up as its
+   * counter returning to where it started; that is the loop's exit condition,
+   * so a blocked record cannot spin.
+   */
+  private drainPending(): void {
+    if (!this.running || this.pending.size === 0) return;
+
+    for (const record of [...this.pending]) {
+      while (record.pendingRuns > 0) {
+        if (this.inFlight.size >= this.maxConcurrency) return;
+
+        const before = record.pendingRuns;
+        record.pendingRuns -= 1;
+        this.dispatch(record);
+        if (record.pendingRuns >= before) break;
+      }
+
+      if (record.pendingRuns === 0) this.pending.delete(record);
+    }
+  }
+
+  /** Records a started execution, evicting the oldest beyond the cap. */
+  private beginExecution(execution: JobExecution): void {
+    this.executionHistory.push(execution);
+    while (this.executionHistory.length > MAX_EXECUTION_HISTORY) {
+      this.executionHistory.shift();
+    }
+  }
+
+  /** Completes the record for an execution, if it is still in the history. */
+  private finishExecution(
+    executionId: string,
+    status: JobState,
+    startedAt: Date,
+    error?: unknown,
+  ): void {
+    const index = this.executionHistory.findIndex(
+      (entry) => entry.id === executionId,
+    );
+    if (index === -1) return;
+
+    const completedAt = this.clock.now();
+    this.executionHistory[index] = {
+      ...this.executionHistory[index]!,
+      status,
+      completedAt,
+      duration: completedAt.getTime() - startedAt.getTime(),
+      ...(error === undefined ? {} : { error }),
+    };
+  }
+
+  /**
+   * Returns the recorded executions, oldest first.
+   *
+   * At most {@link MAX_EXECUTION_HISTORY} are kept. `JobExecution` and that
+   * constant were both exported from the beginning and nothing produced or
+   * read either.
+   *
+   * @param jobId - Restrict to one job's executions.
+   */
+  getExecutions(jobId?: string): readonly JobExecution[] {
+    const all = [...this.executionHistory];
+    return jobId === undefined
+      ? all
+      : all.filter((execution) => execution.jobId === jobId);
   }
 
   /** Hands an execution failure to the error listener. */
@@ -580,4 +751,11 @@ export class Scheduler {
     const delay = next.nextRunAt.getTime() - this.clock.nowMs();
     return Math.max(0, Math.min(delay, MAX_TIMER_DELAY));
   }
+}
+
+/** Maps a failed execution onto the job state that describes it. */
+function statusFor(error: unknown): JobState {
+  if (error instanceof SchedulerJobTimeoutError) return "timed_out";
+  if (error instanceof SchedulerJobCancelledError) return "cancelled";
+  return "failed";
 }

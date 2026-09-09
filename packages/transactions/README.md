@@ -53,6 +53,37 @@ await manager.run(handler, {
 | `mandatory`     | joins it as a participant    | throws                   |
 | `never`         | throws                       | runs non-transactionally |
 
+## Lifecycle events
+
+Pass `onEvent` to observe the lifecycle. Each event names a member of
+`TRANSACTION_EVENTS` and carries the transaction id, a timestamp and the
+elapsed duration:
+
+```typescript
+const manager = createTransactionManager({
+  adapter,
+  onEvent: (event) => metrics.increment(event.type, { id: event.transactionId }),
+});
+```
+
+Emitted: `started`, `committing`, `committed`, `rolling_back`, `rolled_back`,
+`failed` and `timed_out`. A throwing observer is ignored rather than failing
+the transaction.
+
+## Errors
+
+| Condition                              | Error                          |
+| -------------------------------------- | ------------------------------ |
+| Transaction outlived its `timeout`      | `TransactionTimeoutError`      |
+| Marked rollback-only, then committed    | `TransactionRollbackError`     |
+| Adapter lacks the requested isolation   | `TransactionIsolationError`    |
+| Adapter lacks another requested feature | `TransactionCapabilityError`   |
+| Savepoint create/rollback/release fails | `SavepointError`               |
+| Propagation precondition violated       | `TransactionPropagationError`  |
+| Operation invalid for the current state | `TransactionStateError`        |
+| Adapter refused the commit              | `TransactionCommitError`       |
+| Adapter itself failed                   | `TransactionAdapterError`      |
+
 ## Features
 
 - Transaction state machine with enforced transitions
@@ -62,6 +93,7 @@ await manager.run(handler, {
 - Adapter abstraction with capability enforcement
 - Retry with fixed or exponential backoff
 - Rollback-only and timeout semantics
+- Lifecycle events for observability
 
 ## Safety Notes
 

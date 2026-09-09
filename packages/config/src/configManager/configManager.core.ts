@@ -49,6 +49,13 @@ import { ConfigManagerValidationError } from "./configManager.error.js";
  * keeping their responsibilities separate.
  */
 export class ConfigManager {
+  /**
+   * Human-readable name for this manager, surfaced in status
+   * snapshots so applications running several managers can tell
+   * their diagnostics apart.
+   */
+  readonly name: string;
+
   private readonly store: ConfigStore;
 
   private readonly loader: ConfigLoader;
@@ -73,13 +80,25 @@ export class ConfigManager {
     // writes to.
     const providedLoader = options.loader;
 
+    const suppliedStore = options.store ?? providedLoader?.getStore();
+
     this.store =
-      options.store ??
-      providedLoader?.getStore() ??
+      suppliedStore ??
       createConfigStore({
         initialValues: options.initialValues,
         freeze: options.freeze ?? true,
       });
+
+    // initialValues used to be wired ONLY into a store the manager
+    // created itself: passing `store` or `loader` silently discarded
+    // them. Seed a supplied store explicitly instead.
+    if (suppliedStore && options.initialValues) {
+      for (const [key, value] of Object.entries(options.initialValues)) {
+        suppliedStore.set(key, value, { source: "initialValues" });
+      }
+    }
+
+    this.name = options.name ?? "config";
 
     this.loader =
       providedLoader ??
@@ -468,6 +487,7 @@ export class ConfigManager {
    */
   getStatus(): ConfigManagerStatus {
     return {
+      name: this.name,
       state: this.state,
       loaded: this.isReady,
       loading: this.isLoading,

@@ -4,6 +4,8 @@
  * Default values, limits, and magic strings used across the CLI package.
  */
 
+import { CLI_VERSION } from "./cliVersion.js";
+
 /* -------------------------------------------------------------------------- */
 /* Application Defaults                                                       */
 /* -------------------------------------------------------------------------- */
@@ -14,7 +16,7 @@ export const CLI_NAME = "zudojs";
 /** Default application configuration. */
 export const CLI_DEFAULTS = {
   NAME: "zudojs",
-  VERSION: "0.1.2",
+  VERSION: CLI_VERSION,
   DESCRIPTION: "Command-line interface for the Zudojs framework.",
   COMMAND_PREFIX: "zudojs",
   DEFAULT_CWD: process.cwd(),

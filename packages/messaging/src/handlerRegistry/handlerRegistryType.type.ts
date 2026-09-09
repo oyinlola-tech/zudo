@@ -19,11 +19,13 @@ export interface HandlerRegistryOptions {
   /** Allow duplicate handler IDs. Default: false. */
   readonly allowDuplicateHandlerIds?: boolean;
 
-  /** Allow multiple handlers per message type. Default: true. */
+  /**
+   * Allow multiple handlers per message type. Default: true.
+   *
+   * Set false for a command/query registry, where a second handler for the
+   * same type is a wiring mistake rather than a fan-out.
+   */
   readonly allowMultipleHandlers?: boolean;
-
-  /** Require message type registration before handler. Default: false. */
-  readonly requireTypeRegistration?: boolean;
 }
 
 /**

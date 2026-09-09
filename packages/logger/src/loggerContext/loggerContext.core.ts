@@ -2,16 +2,6 @@
  * Logger context for Zudojs.
  */
 
-import type { LogMetadata } from "../loggerEntry/loggerEntry.type.js";
-
-import type {
-  LoggerContext,
-  LoggerContextData,
-  LoggerContextIdentifiers,
-  LoggerContextOptions,
-  LoggerContextStorage,
-} from "./loggerContext.type.js";
-
 export type {
   LoggerContextValue,
   LoggerContextData,

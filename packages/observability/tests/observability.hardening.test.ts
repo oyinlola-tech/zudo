@@ -68,7 +68,10 @@ import {
   createBatchLogProcessor,
 } from "../src/processor/index.js";
 import { safeStringify } from "../src/exporter/index.js";
-import { MetricValueError } from "../src/errors/index.js";
+import {
+  MetricValueError,
+  ObservabilityConfigError,
+} from "../src/errors/index.js";
 
 /** A span exporter that records what it was given. */
 function recordingSpanExporter(): {
@@ -909,12 +912,24 @@ describe("metrics", () => {
     );
   });
 
+  // Rewritten: this test asserted the opposite of its own name. It checked
+  // that `gauge("dual")` did NOT throw and that both series existed, which is
+  // the bug — a document carrying one metric name as two different types is
+  // rejected wholesale by OTLP and Prometheus, so every metric is lost, not
+  // just the clashing one.
   it("refuses to reuse a name across metric types", () => {
     const registry = createMetricsRegistry();
     registry.counter("dual");
-    expect(() => registry.gauge("dual")).not.toThrow();
+    expect(() => registry.gauge("dual")).toThrow(ObservabilityConfigError);
+    expect(() => registry.histogram("dual")).toThrow(ObservabilityConfigError);
     expect(registry.getCounter("dual")).toBeDefined();
-    expect(registry.getGauge("dual")).toBeDefined();
+    expect(registry.getGauge("dual")).toBeUndefined();
+    // The same name with different labels is a different series, not a
+    // conflict.
+    expect(() => registry.counter("dual", { region: "eu" })).not.toThrow();
+    // Once cleared, the name is free again.
+    registry.clear();
+    expect(() => registry.gauge("dual")).not.toThrow();
   });
 });
 

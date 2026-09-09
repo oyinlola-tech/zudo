@@ -18,8 +18,23 @@ import type {
   HttpMiddleware,
 } from "../src/httpMiddleware/httpMiddleware.type.js";
 import type { HttpResponseContext } from "../src/httpResponse/httpResponse.context.js";
-import { createResponseContext } from "../src/httpResponse/httpResponse.context.js";
+import {
+  createResponseContext,
+  HttpResponseContext as HttpResponseContextClass,
+} from "../src/httpResponse/httpResponse.context.js";
 import { createRequestContext } from "../src/httpRequest/httpRequest.context.js";
+
+/**
+ * Narrows a middleware result to a response context.
+ *
+ * `HttpMiddlewareResult` is a union; the built-in middleware under test must
+ * return a real `HttpResponseContext`, and this fails loudly if one does not.
+ */
+function asResponseContext(result: unknown): HttpResponseContext {
+  expect(result).toBeInstanceOf(HttpResponseContextClass);
+
+  return result as HttpResponseContext;
+}
 
 function request(init: Record<string, unknown> = {}) {
   return createRequestContext({
@@ -230,19 +245,28 @@ describe("built-in CORS middleware", () => {
     } as unknown as HttpMiddlewareContext;
   }
 
-  const passthrough = async () =>
-    ({ status: 200, headers: {} }) as unknown as HttpResponseContext;
+  /*
+   * A real response context, not a plain object literal. The whole defect
+   * class under repair is that a built-in middleware used to spread the
+   * context and hand on an object whose status and body were gone, so the
+   * fixture has to be the real class for the assertions to mean anything.
+   */
+  const passthrough = async (): Promise<HttpResponseContext> =>
+    createResponseContext({ status: 201, body: "downstream-body" });
 
   it("does nothing on a request with no Origin (HTTPB-08)", async () => {
     const middleware = createCorsMiddleware({ allowOrigin: "*" });
 
-    const result = (await middleware(
-      contextFor({}),
-      passthrough,
-    )) as unknown as { headers?: unknown };
+    const result = asResponseContext(
+      await middleware(contextFor({}), passthrough),
+    );
 
     /* The downstream response is returned untouched: no Headers rewrite. */
     expect(result.headers).not.toBeInstanceOf(Headers);
+
+    /* And its status and body survive the trip. */
+    expect(result.status).toBe(201);
+    expect(result.body).toBe("downstream-body");
   });
 
   it("does not allow an unlisted origin", async () => {
@@ -250,13 +274,18 @@ describe("built-in CORS middleware", () => {
       allowOrigin: ["https://good.example"],
     });
 
-    const result = (await middleware(
-      contextFor({ origin: "https://evil.example" }),
-      passthrough,
-    )) as unknown as { headers: Headers };
+    const result = asResponseContext(
+      await middleware(
+        contextFor({ origin: "https://evil.example" }),
+        passthrough,
+      ),
+    );
 
-    expect(result.headers.get("access-control-allow-origin")).toBeNull();
-    expect(result.headers.get("vary")).toContain("Origin");
+    expect(result.headers["access-control-allow-origin"]).toBeUndefined();
+    expect(result.headers["vary"]).toContain("Origin");
+
+    expect(result.status).toBe(201);
+    expect(result.body).toBe("downstream-body");
   });
 
   it("always emits Vary: Origin (HTTPB-08)", async () => {
@@ -264,15 +293,20 @@ describe("built-in CORS middleware", () => {
       allowOrigin: ["https://good.example"],
     });
 
-    const result = (await middleware(
-      contextFor({ origin: "https://good.example" }),
-      passthrough,
-    )) as unknown as { headers: Headers };
+    const result = asResponseContext(
+      await middleware(
+        contextFor({ origin: "https://good.example" }),
+        passthrough,
+      ),
+    );
 
-    expect(result.headers.get("access-control-allow-origin")).toBe(
+    expect(result.headers["access-control-allow-origin"]).toBe(
       "https://good.example",
     );
-    expect(result.headers.get("vary")).toContain("Origin");
+    expect(result.headers["vary"]).toContain("Origin");
+
+    expect(result.status).toBe(201);
+    expect(result.body).toBe("downstream-body");
   });
 
   it("refuses a wildcard origin combined with credentials", async () => {
@@ -294,26 +328,26 @@ describe("built-in CORS middleware", () => {
       allowMethods: "GET, POST",
     });
 
-    const result = (await middleware(
-      contextFor(
-        {
-          origin: "https://good.example",
-          "access-control-request-method": "POST",
-        },
-        "OPTIONS",
-      ),
-      async () => {
-        called = true;
+    const result = asResponseContext(
+      await middleware(
+        contextFor(
+          {
+            origin: "https://good.example",
+            "access-control-request-method": "POST",
+          },
+          "OPTIONS",
+        ),
+        async () => {
+          called = true;
 
-        return passthrough();
-      },
-    )) as unknown as { status: number; headers: Headers };
+          return passthrough();
+        },
+      ),
+    );
 
     expect(called).toBe(false);
     expect(result.status).toBe(204);
-    expect(result.headers.get("access-control-allow-methods")).toBe(
-      "GET, POST",
-    );
+    expect(result.headers["access-control-allow-methods"]).toBe("GET, POST");
   });
 });
 
@@ -326,20 +360,23 @@ describe("built-in security middleware", () => {
     metadata: {},
   } as unknown as HttpMiddlewareContext;
 
-  const passthrough = async () =>
-    ({ status: 200, headers: {} }) as unknown as HttpResponseContext;
+  const passthrough = async (): Promise<HttpResponseContext> =>
+    createResponseContext({ status: 201, body: "downstream-body" });
 
   it("emits sensible defaults with no options (HTTPB-30)", async () => {
-    const result = (await createSecurityMiddleware()(
-      context,
-      passthrough,
-    )) as unknown as { headers: Headers };
+    const result = asResponseContext(
+      await createSecurityMiddleware()(context, passthrough),
+    );
 
-    expect(result.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(result.headers.get("x-frame-options")).toBe("DENY");
-    expect(result.headers.get("referrer-policy")).toBe(
+    expect(result.headers["x-content-type-options"]).toBe("nosniff");
+    expect(result.headers["x-frame-options"]).toBe("DENY");
+    expect(result.headers["referrer-policy"]).toBe(
       "strict-origin-when-cross-origin",
     );
+
+    /* The downstream status and body are not dropped by the header pass. */
+    expect(result.status).toBe(201);
+    expect(result.body).toBe("downstream-body");
   });
 
   it("rejects a header value carrying a CRLF payload (HTTPB-30)", () => {

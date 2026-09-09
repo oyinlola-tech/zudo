@@ -98,6 +98,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -151,7 +152,7 @@
 
       <!-- PAGE HEADER -->
             <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">Modules</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Primary building blocks with explicit boundaries and dependency contracts.
@@ -166,147 +167,228 @@
       <!-- CONTENT -->
       <div class="flex">
         <div class="content-area flex-1 px-6 py-10">
-
           <!-- OVERVIEW -->
           <section aria-labelledby="overview">
             <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="overview">Overview</h2>
             <p class="text-body text-black/80 mb-4">
-              Modules are the primary organizational unit in Zudo. Each module encapsulates a feature boundary — its own providers, services, routes, and lifecycle hooks. Modules declare their dependencies and are composed at the application level.
+              A <em>module</em> is one feature of your application packaged as a plain object. It has an <span class="code-inline">id</span>, a <span class="code-inline">name</span>, and optional hooks the framework calls when the application starts and stops.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              Modules exist so a growing codebase stays navigable. Billing code lives in the billing module, users code in the users module, and each one says out loud which other modules it needs before it can work.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              You never construct a module yourself. You write a <em>definition</em> with <span class="code-inline">defineModule</span>, hand it to the application, and the framework builds the module from your <span class="code-inline">factory</span> at start time.
             </p>
             <div class="callout callout-note mb-6">
-              <strong class="text-sm uppercase tracking-wider text-zudo-blue">Architecture Position</strong>
-              <p class="text-sm mt-1">Modules live in <span class="code-inline">@zudojs/core</span> and are orchestrated by <span class="code-inline">@zudojs/runtime</span>.</p>
+              <strong class="text-sm uppercase tracking-wider text-zudo-blue">Source of truth</strong>
+              <p class="text-sm mt-1">These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest <span class="code-inline">@zudojs</span> release. Modules live in <span class="code-inline">@zudojs/core</span>.</p>
             </div>
           </section>
 
-          <!-- MODULE DEFINITION -->
-          <section class="mt-12" aria-labelledby="definition">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="definition">Module Definition</h2>
+          <!-- DEFINING -->
+          <section class="mt-12" aria-labelledby="defining">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="defining">Defining a Module</h2>
             <p class="text-body text-black/80 mb-4">
-              A module is defined by implementing the <span class="code-inline">Module</span> interface. It declares its name, dependencies, and a setup function.
+              <span class="code-inline">defineModule</span> takes an <span class="code-inline">id</span>, a <span class="code-inline">name</span>, and a <span class="code-inline">factory</span> function that returns the module object. The definition is registered once; the factory runs on every start, so a restart always gets a fresh instance.
             </p>
-            <div class="code-block p-4 mb-4"><span class="kw">import</span> { <span class="tp">Module</span> } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+            <p class="text-body text-black/80 mb-4">
+              This is a complete program. It defines one module that opens and closes a pretend connection, then runs the application through a full start and shutdown.
+            </p>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> { createApplication, defineModule } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+<span class="kw">import type</span> { <span class="tp">Module</span> } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
 
-<span class="kw">const</span> <span class="tp">AuthModule</span>: <span class="tp">Module</span> = {
-  <span class="op">name:</span> <span class="str">"auth"</span>,
-  <span class="op">dependencies:</span> [<span class="str">"config"</span>, <span class="str">"database"</span>],
+<span class="kw">const</span> database = <span class="fn">defineModule</span>({
+  id: <span class="str">"database"</span>,
+  name: <span class="str">"Database"</span>,
+  factory: (): <span class="tp">Module</span> =&gt; {
+    <span class="kw">let</span> connected = <span class="kw">false</span>;
 
-  <span class="kw">async</span> <span class="fn">setup</span>(<span class="op">container</span>) {
-    <span class="cmt">// Register services in the DI container</span>
-    container.<span class="fn">register</span>(<span class="tp">AuthServiceToken</span>, {
-      <span class="op">useClass:</span> <span class="tp">AuthService</span>,
-      <span class="op">lifetime:</span> <span class="str">"singleton"</span>,
-    });
-
-    <span class="cmt">// Return lifecycle hooks</span>
     <span class="kw">return</span> {
-      <span class="kw">async</span> <span class="fn">onStart</span>() {
-        <span class="kw">await</span> container.<span class="fn">resolve</span>(<span class="tp">AuthServiceToken</span>).<span class="fn">initialize</span>();
-      },
+      id: <span class="str">"database"</span>,
+      name: <span class="str">"Database"</span>,
+      onInitialize: () =&gt; { connected = <span class="kw">true</span>; console.<span class="fn">log</span>(<span class="str">"database open"</span>); },
+      onDestroy: () =&gt; { connected = <span class="kw">false</span>; console.<span class="fn">log</span>(<span class="str">"database closed"</span>); },
     };
   },
-};</div>
-          </section>
-
-          <!-- MODULE DEPENDENCIES -->
-          <section class="mt-12" aria-labelledby="dependencies">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="dependencies">Module Dependencies</h2>
-            <p class="text-body text-black/80 mb-4">
-              Modules declare their dependencies explicitly. The framework resolves the correct initialization order using topological sort.
-            </p>
-            <div class="code-block p-4 mb-4"><span class="cmt">// Dependency graph</span>
-<span class="cmt">//</span>
-<span class="cmt">//   config ──→ database ──→ auth ──→ api</span>
-<span class="cmt">//                ↓</span>
-<span class="cmt">//              cache ──→ api</span>
-
-<span class="kw">const</span> <span class="tp">ApiModule</span>: <span class="tp">Module</span> = {
-  <span class="op">name:</span> <span class="str">"api"</span>,
-  <span class="op">dependencies:</span> [<span class="str">"auth"</span>, <span class="str">"cache"</span>],
-  <span class="cmt">// Starts AFTER auth and cache are ready</span>
-};</div>
-          </section>
-
-          <!-- MODULE REGISTRATION -->
-          <section class="mt-12" aria-labelledby="registration">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="registration">Module Registration</h2>
-            <p class="text-body text-black/80 mb-4">
-              Modules are registered with the application before startup. The runtime orchestrator handles initialization.
-            </p>
-            <div class="code-block p-4 mb-4"><span class="kw">import</span> { <span class="fn">createApp</span> } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
-
-<span class="kw">const</span> app = <span class="fn">createApp</span>({
-  <span class="op">modules:</span> [
-    <span class="tp">ConfigModule</span>,
-    <span class="tp">DatabaseModule</span>,
-    <span class="tp">CacheModule</span>,
-    <span class="tp">AuthModule</span>,
-    <span class="tp">ApiModule</span>,
-  ],
 });
 
+<span class="kw">const</span> app = <span class="kw">await</span> <span class="fn">createApplication</span>({ modules: [database], logger: { level: <span class="str">"warn"</span> } });
 <span class="kw">await</span> app.<span class="fn">start</span>();
-<span class="cmt">// Modules start in dependency order</span>
-<span class="cmt">// config → database → cache → auth → api</span></div>
+<span class="kw">await</span> app.<span class="fn">shutdown</span>();</div>
+            <p class="text-body text-black/80 mb-4">
+              <strong>What you should see.</strong> Two lines: <span class="code-inline">database open</span> at start, then <span class="code-inline">database closed</span> at shutdown.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              Prefer classes? Extend <span class="code-inline">BaseModule</span> and pass <span class="code-inline">factory: () =&gt; new MyModule()</span>. The definition options are the same either way.
+            </p>
+            <div class="overflow-x-auto mb-4">
+            <table class="doc-table">
+              <thead><tr><th>Option</th><th>What it does</th><th>Required</th></tr></thead>
+              <tbody>
+                <tr><td><code>id</code></td><td>Unique key other modules depend on. No leading or trailing spaces.</td><td>Yes</td></tr>
+                <tr><td><code>name</code></td><td>Human-readable label used in logs and errors</td><td>Yes</td></tr>
+                <tr><td><code>factory</code></td><td>Function returning the module object</td><td>Yes</td></tr>
+                <tr><td><code>dependencies</code></td><td>Ids that must be ready first, as strings or <code>{ id, optional }</code></td><td>No</td></tr>
+                <tr><td><code>options</code></td><td>Frozen settings handed to the factory and readable as <code>context.options</code></td><td>No</td></tr>
+                <tr><td><code>version</code>, <code>metadata</code></td><td>Descriptive only; not used for ordering</td><td>No</td></tr>
+                <tr><td><code>autoLoad</code></td><td>Set <code>false</code> to load only when another module requires it</td><td>No</td></tr>
+              </tbody>
+            </table>
+            </div>
           </section>
 
-          <!-- MODULE LIFECYCLE -->
-          <section class="mt-12" aria-labelledby="lifecycle">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="lifecycle">Module Lifecycle</h2>
+          <!-- HOOKS -->
+          <section class="mt-12" aria-labelledby="hooks">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="hooks">The Four Hooks</h2>
             <p class="text-body text-black/80 mb-4">
-              Each module can define lifecycle hooks that run at specific points in the application lifecycle.
+              A <em>hook</em> is a method the framework calls for you at a known moment. A module may implement any of these four, or none. These are the only names that are ever called.
             </p>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-              <div class="border-2 border-black p-4">
-                <div class="text-xs font-bold uppercase tracking-wider text-zudo-green mb-2">onStart</div>
-                <p class="text-sm text-black/60">Runs when the application starts. Initialize connections, warm caches, start background tasks.</p>
-              </div>
-              <div class="border-2 border-black p-4">
-                <div class="text-xs font-bold uppercase tracking-wider text-zudo-red mb-2">onStop</div>
-                <p class="text-sm text-black/60">Runs during graceful shutdown. Drain connections, flush buffers, stop background tasks.</p>
-              </div>
+            <div class="overflow-x-auto mb-4">
+            <table class="doc-table">
+              <thead><tr><th>Hook</th><th>When it runs</th><th>Typical work</th></tr></thead>
+              <tbody>
+                <tr><td><code>onInitialize(context)</code></td><td>On start, dependencies first</td><td>Open connections, read config</td></tr>
+                <tr><td><code>onReady(context)</code></td><td>After every module has initialized</td><td>Begin listening or polling</td></tr>
+                <tr><td><code>onShutdown(context)</code></td><td>On stop, dependents first</td><td>Stop accepting new work</td></tr>
+                <tr><td><code>onDestroy(context)</code></td><td>After every module has shut down</td><td>Close connections, clear timers</td></tr>
+              </tbody>
+            </table>
+            </div>
+            <p class="text-body text-black/80 mb-4">
+              Each hook may return a promise, and the framework waits for it. Use <span class="code-inline">onInitialize</span> for anything a dependent module needs, and <span class="code-inline">onReady</span> for anything that should only happen once the whole app is up.
+            </p>
+            <div class="callout callout-warning mb-6">
+              <strong class="text-sm uppercase tracking-wider text-zudo-red">Watch out</strong>
+              <p class="text-sm mt-1">Methods named <span class="code-inline">setup</span>, <span class="code-inline">initialize</span>, <span class="code-inline">start</span> or <span class="code-inline">stop</span> on a module are silently ignored. Nothing errors — your code just never runs.</p>
+            </div>
+          </section>
+
+          <!-- DEPENDENCIES -->
+          <section class="mt-12" aria-labelledby="dependencies">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="dependencies">Dependencies and Order</h2>
+            <p class="text-body text-black/80 mb-4">
+              List the ids a module needs in <span class="code-inline">dependencies</span>. The framework sorts modules so those ids are initialized first, no matter what order you passed them in.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              Declaring a dependency also grants access: a module may only reach modules it declared, through <span class="code-inline">context.getModuleContext(id)</span>. Here <span class="code-inline">orders</span> depends on <span class="code-inline">users</span> and reads its name.
+            </p>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> { createApplication, defineModule } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+<span class="kw">import type</span> { <span class="tp">Module</span> } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">const</span> users = <span class="fn">defineModule</span>({
+  id: <span class="str">"users"</span>,
+  name: <span class="str">"Users"</span>,
+  factory: (): <span class="tp">Module</span> =&gt; ({ id: <span class="str">"users"</span>, name: <span class="str">"Users"</span> }),
+});
+
+<span class="kw">const</span> orders = <span class="fn">defineModule</span>({
+  id: <span class="str">"orders"</span>,
+  name: <span class="str">"Orders"</span>,
+  dependencies: [<span class="str">"users"</span>],
+  factory: (): <span class="tp">Module</span> =&gt; ({
+    id: <span class="str">"orders"</span>,
+    name: <span class="str">"Orders"</span>,
+    dependencies: [<span class="str">"users"</span>],
+    onInitialize: (context) =&gt; {
+      console.<span class="fn">log</span>(context.<span class="fn">getModuleContext</span>(<span class="str">"users"</span>)?.name);   <span class="cmt">// "Users"</span>
+      console.<span class="fn">log</span>(context.<span class="fn">hasModule</span>(<span class="str">"billing"</span>));            <span class="cmt">// false (not declared)</span>
+    },
+  }),
+});
+
+<span class="cmt">// Listing order does not matter; users still initializes first.</span>
+<span class="kw">const</span> app = <span class="kw">await</span> <span class="fn">createApplication</span>({
+  modules: [orders, users],
+  logger: { level: <span class="str">"warn"</span> },
+});
+<span class="kw">await</span> app.<span class="fn">start</span>();
+<span class="kw">await</span> app.<span class="fn">shutdown</span>();</div>
+            <p class="text-body text-black/80 mb-4">
+              <strong>What you should see.</strong> <span class="code-inline">Users</span>, then <span class="code-inline">false</span>.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              Two failures are worth knowing. A dependency you never registered makes <span class="code-inline">start()</span> throw <span class="code-inline">MissingModuleDependencyError</span>. Two modules depending on each other throw <span class="code-inline">CircularModuleDependencyError</span>.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              Shutdown runs the other way round: dependents stop before the modules they rely on, so nothing is torn down while something still needs it.
+            </p>
+          </section>
+
+          <!-- CONTEXT -->
+          <section class="mt-12" aria-labelledby="module-context">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="module-context">The Module Context</h2>
+            <p class="text-body text-black/80 mb-4">
+              Every hook receives a <span class="code-inline">ModuleContext</span>. It is the module's controlled window onto the rest of the application — deliberately narrow, so a module cannot reach anything it did not ask for.
+            </p>
+            <div class="overflow-x-auto mb-4">
+            <table class="doc-table">
+              <thead><tr><th>Member</th><th>What it gives you</th></tr></thead>
+              <tbody>
+                <tr><td><code>id</code>, <code>name</code>, <code>options</code></td><td>This module's identity and the frozen <code>options</code> from its definition</td></tr>
+                <tr><td><code>logger</code></td><td>A logger that tags every line with this module's id</td></tr>
+                <tr><td><code>getConfig(path)</code></td><td>A configuration value by dotted path, or <code>undefined</code></td></tr>
+                <tr><td><code>requireConfig(path)</code></td><td>The same, but throws <code>ConfigurationMissingError</code> when absent</td></tr>
+                <tr><td><code>getModuleContext(id)</code></td><td>A declared dependency's context; undeclared ids throw</td></tr>
+                <tr><td><code>hasModule(id)</code></td><td>Whether a declared dependency is loaded; undeclared ids give <code>false</code></td></tr>
+                <tr><td><code>application</code></td><td>The shared <code>ApplicationContext</code>: container, configuration, module registry, logger</td></tr>
+              </tbody>
+            </table>
             </div>
             <div class="callout callout-tip mb-6">
-              <strong class="text-sm uppercase tracking-wider text-zudo-green">Best Practice</strong>
-              <p class="text-sm mt-1">Keep modules small and focused. One module = one feature boundary. If a module exceeds 5 files, consider splitting it.</p>
+              <strong class="text-sm uppercase tracking-wider text-zudo-green">Tip</strong>
+              <p class="text-sm mt-1">Keep modules small. One module, one feature boundary. If two modules constantly reach into each other, they are probably one module.</p>
             </div>
           </section>
 
-          <!-- WHY IT MATTERS -->
-          <section class="mt-12" aria-labelledby="why">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="why">Why Modules Matter</h2>
+          <!-- MISTAKES -->
+          <section class="mt-12" aria-labelledby="common-mistakes">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="common-mistakes">Common Mistakes</h2>
             <div class="border-2 border-black p-6 bg-white">
               <ul class="space-y-3 text-body text-black/80">
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-pink font-black mt-1">01</span>
-                  <span><strong>Feature boundaries</strong> — each module owns its domain, making the codebase navigable.</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-pink font-black mt-1">02</span>
-                  <span><strong>Incremental adoption</strong> — start with one module, add more as your app grows.</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-pink font-black mt-1">03</span>
-                  <span><strong>Team scaling</strong> — different teams can own different modules with clear boundaries.</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-pink font-black mt-1">04</span>
-                  <span><strong>Testability</strong> — test modules in isolation by providing mock dependencies.</span>
-                </li>
+                <li><strong>Writing a <span class="code-inline">setup(container)</span> method.</strong> Nothing calls it, so your registrations never happen. Move the work into <span class="code-inline">onInitialize(context)</span>.</li>
+                <li><strong>Returning the module object directly instead of a factory.</strong> <span class="code-inline">defineModule</span> throws <span class="code-inline">InvalidModuleDefinitionError</span> without a <span class="code-inline">factory</span> function. Wrap it: <span class="code-inline">factory: () =&gt; myModule</span>.</li>
+                <li><strong>Reaching an undeclared module.</strong> <span class="code-inline">getModuleContext("billing")</span> throws <span class="code-inline">MissingModuleDependencyError</span> unless <span class="code-inline">"billing"</span> is in <span class="code-inline">dependencies</span>. Add it.</li>
+                <li><strong>Opening connections in the factory.</strong> The factory runs during wiring, before ordering is applied. Do that work in <span class="code-inline">onInitialize</span> instead.</li>
+                <li><strong>Giving two modules the same <span class="code-inline">id</span>.</strong> Registration throws <span class="code-inline">DuplicateModuleError</span>. Ids are the identity — make them unique.</li>
               </ul>
             </div>
           </section>
 
+          <!-- RELATED -->
+          <section class="mt-12" aria-labelledby="related">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="related">Related</h2>
+            <div class="border-2 border-black p-6 bg-white">
+              <ul class="space-y-3 text-body text-black/80">
+                <li><a href="/docs/packages-core" class="underline font-bold">@zudojs/core</a> — the full reference for <span class="code-inline">defineModule</span>, the module registry, loader and every module error.</li>
+                <li><a href="/docs/concepts-lifecycle" class="underline font-bold">Lifecycle</a> — the exact order hooks run in, and what happens when one throws.</li>
+                <li><a href="/docs/concepts-configuration" class="underline font-bold">Configuration</a> — where <span class="code-inline">context.getConfig</span> reads from.</li>
+                <li><a href="/docs/concepts" class="underline font-bold">Application</a> — how modules are handed to <span class="code-inline">createApplication</span>.</li>
+              </ul>
+            </div>
+          </section>
         </div>
       </div>
 
     </main>
+
+    <!-- TABLE OF CONTENTS -->
+    <aside class="doc-toc" aria-label="On this page">
+      <div class="p-4 text-xs font-bold uppercase text-black/40 tracking-wider">On this page</div>
+      <a href="#overview" class="toc-link">Overview</a>
+      <a href="#defining" class="toc-link">Defining a Module</a>
+      <a href="#hooks" class="toc-link">The Four Hooks</a>
+      <a href="#dependencies" class="toc-link">Dependencies and Order</a>
+      <a href="#module-context" class="toc-link">The Module Context</a>
+      <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
+      <a href="#related" class="toc-link">Related</a>
+    </aside>
   </div>
 
   <script src="/js/docs.js"></script>
 
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 
   <!-- FOOTER -->
   <div id="zudo-footer"></div>

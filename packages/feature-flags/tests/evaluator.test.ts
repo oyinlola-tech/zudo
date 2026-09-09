@@ -250,14 +250,33 @@ describe("evaluateFlag", () => {
     expect(result.reason).toBe("disabled");
   });
 
-  it("returns dependency_disabled when deps not met", () => {
+  it("returns dependency_disabled when dependencies are unresolved", () => {
+    // evaluateFlag has no registry, so it cannot resolve a dependency itself
+    // and must assume the worst. The test used to be named as if it proved
+    // "deps not met", which it never did — it passed for every flag with
+    // dependencies, met or not.
     const flag: FeatureFlag = {
       key: "f",
       enabled: true,
       defaultValue: false,
       dependencies: ["other-flag"],
     };
-    const result = evaluateFlag(flag);
-    expect(result.reason).toBe("dependency_disabled");
+    expect(evaluateFlag(flag).reason).toBe("dependency_disabled");
+    expect(
+      evaluateFlag(flag, {}, { dependenciesSatisfied: false }).reason,
+    ).toBe("dependency_disabled");
+  });
+
+  it("evaluates a flag whose dependencies the caller resolved", () => {
+    const flag: FeatureFlag = {
+      key: "f",
+      enabled: true,
+      defaultValue: false,
+      dependencies: ["other-flag"],
+      rules: [{ type: "static", value: true }],
+    };
+    const result = evaluateFlag(flag, {}, { dependenciesSatisfied: true });
+    expect(result.reason).toBe("static");
+    expect(result.value).toBe(true);
   });
 });

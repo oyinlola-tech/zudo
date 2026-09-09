@@ -98,6 +98,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -151,7 +152,7 @@
 
       <!-- PAGE HEADER -->
             <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">Dependency Injection</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Token-based DI container with scoped lifecycles and module awareness.
@@ -166,162 +167,230 @@
       <!-- CONTENT -->
       <div class="flex">
         <div class="content-area flex-1 px-6 py-10">
-
           <!-- OVERVIEW -->
           <section aria-labelledby="overview">
             <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="overview">Overview</h2>
             <p class="text-body text-black/80 mb-4">
-              <span class="code-inline">@zudojs/container</span> provides a token-based DI container that manages application dependencies. Services are registered with tokens and resolved at runtime, enabling loose coupling, testability, and flexible composition.
+              <em>Dependency injection</em> means a piece of code is handed the things it needs instead of creating them itself. The thing that does the handing is a <em>container</em>.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              You register a value in the container under a <em>token</em> — a named key. Later, any code with the same token asks the container for it and gets it back. Nobody has to know how it was built.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              That matters most in tests. Swap what is registered under a token and every caller quietly uses the replacement, with no changes to the code being tested.
             </p>
             <div class="callout callout-note mb-6">
-              <strong class="text-sm uppercase tracking-wider text-zudo-blue">Architecture Position</strong>
-              <p class="text-sm mt-1">Sits in <strong>Layer 1 (Foundation)</strong>. Only depends on <span class="code-inline">@zudojs/errors</span>.</p>
+              <strong class="text-sm uppercase tracking-wider text-zudo-blue">Source of truth</strong>
+              <p class="text-sm mt-1">These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest <span class="code-inline">@zudojs</span> release. The container shown here is the one built into <span class="code-inline">@zudojs/core</span>.</p>
             </div>
           </section>
 
-          <!-- CONTAINER REGISTRATION -->
-          <section class="mt-12" aria-labelledby="registration">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="registration">Container Registration</h2>
+          <!-- TOKENS -->
+          <section class="mt-12" aria-labelledby="tokens">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="tokens">Tokens</h2>
             <p class="text-body text-black/80 mb-4">
-              Services are registered using tokens (strings, symbols, or class references) and providers (factories or classes).
+              A token is just a key. The container accepts a string, a symbol, or a class as one. <span class="code-inline">createToken&lt;T&gt;(description)</span> makes a fresh symbol for you and carries the type <span class="code-inline">T</span>, so <span class="code-inline">resolve()</span> hands back a properly typed value.
             </p>
-            <div class="code-block p-4 mb-4"><span class="kw">import</span> { <span class="fn">createContainer</span>, <span class="fn">token</span> } <span class="kw">from</span> <span class="str">"@zudojs/container"</span>;
+            <p class="text-body text-black/80 mb-4">
+              Prefer <span class="code-inline">createToken</span> over a bare string. Two different parts of your app can accidentally pick the same string; two calls to <span class="code-inline">createToken</span> can never collide.
+            </p>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> { createToken } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
 
-<span class="cmt">// Define tokens</span>
-<span class="kw">const</span> <span class="tp">LoggerToken</span> = <span class="fn">token</span>&lt;<span class="tp">Logger</span>&gt;(<span class="str">"Logger"</span>);
-<span class="kw">const</span> <span class="tp">DatabaseToken</span> = <span class="fn">token</span>&lt;<span class="tp">Database</span>&gt;(<span class="str">"Database"</span>);
+<span class="kw">interface</span> <span class="tp">Clock</span> { <span class="fn">now</span>(): <span class="tp">number</span>; }
 
-<span class="cmt">// Create container and register</span>
-<span class="kw">const</span> container = <span class="fn">createContainer</span>();
+<span class="kw">const</span> ClockToken = <span class="fn">createToken</span>&lt;<span class="tp">Clock</span>&gt;(<span class="str">"Clock"</span>);
 
-container.<span class="fn">register</span>(<span class="tp">LoggerToken</span>, {
-  <span class="op">useFactory:</span> () => <span class="kw">new</span> <span class="tp">ConsoleLogger</span>(),
-});
-
-container.<span class="fn">register</span>(<span class="tp">DatabaseToken</span>, {
-  <span class="op">useClass:</span> <span class="tp">PostgresDatabase</span>,
-});</div>
+console.<span class="fn">log</span>(<span class="kw">typeof</span> ClockToken);           <span class="cmt">// "symbol"</span>
+console.<span class="fn">log</span>(ClockToken.<span class="fn">toString</span>());       <span class="cmt">// "Symbol(Clock)"</span></div>
           </section>
 
-          <!-- RESOLUTION STRATEGIES -->
-          <section class="mt-12" aria-labelledby="resolution">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="resolution">Resolution Strategies</h2>
-            <table class="w-full text-smdoc-table mb-6">
-              <thead>
-                <tr>
-                  <th>Strategy</th>
-                  <th>Description</th>
-                  <th>Use Case</th>
-                </tr>
-              </thead>
+          <!-- REGISTER AND RESOLVE -->
+          <section class="mt-12" aria-labelledby="register-resolve">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="register-resolve">Registering and Resolving</h2>
+            <p class="text-body text-black/80 mb-4">
+              A <em>provider</em> tells the container how to produce the value for a token. There are three kinds, and each is a small object.
+            </p>
+            <div class="overflow-x-auto mb-4">
+            <table class="doc-table">
+              <thead><tr><th>Provider</th><th>What it means</th><th>Use it when</th></tr></thead>
               <tbody>
-                <tr>
-                  <td><span class="code-inline">singleton</span></td>
-                  <td>One instance shared across the entire application</td>
-                  <td>Database connections, loggers, config</td>
-                </tr>
-                <tr>
-                  <td><span class="code-inline">transient</span></td>
-                  <td>New instance created on every resolution</td>
-                  <td>Request handlers, validators</td>
-                </tr>
-                <tr>
-                  <td><span class="code-inline">scoped</span></td>
-                  <td>One instance per scope (e.g., per request)</td>
-                  <td>Repositories, services with request state</td>
-                </tr>
+                <tr><td><code>{ useValue: v }</code></td><td>Hand back <code>v</code> exactly as given</td><td>Config objects, already-built instances, test doubles</td></tr>
+                <tr><td><code>{ useClass: C }</code></td><td>Call <code>new C()</code> with no arguments</td><td>Classes that need nothing to construct</td></tr>
+                <tr><td><code>{ useFactory: (c) =&gt; … }</code></td><td>Run your function, passing the container itself</td><td>Anything that needs other tokens first</td></tr>
               </tbody>
             </table>
-            <div class="code-block p-4 mb-4"><span class="cmt">// Singleton — same instance everywhere</span>
-container.<span class="fn">register</span>(<span class="tp">LoggerToken</span>, {
-  <span class="op">useFactory:</span> () => <span class="kw">new</span> <span class="tp">ConsoleLogger</span>(),
-  <span class="op">lifetime:</span> <span class="str">"singleton"</span>,
-});
-
-<span class="cmt">// Transient — new instance each time</span>
-container.<span class="fn">register</span>(<span class="tp">HandlerToken</span>, {
-  <span class="op">useClass:</span> <span class="tp">RequestHandler</span>,
-  <span class="op">lifetime:</span> <span class="str">"transient"</span>,
-});
-
-<span class="cmt">// Scoped — one instance per scope</span>
-container.<span class="fn">register</span>(<span class="tp">RepoToken</span>, {
-  <span class="op">useFactory:</span> (<span class="op">c</span>) => <span class="kw">new</span> <span class="tp">UserRepository</span>(c.<span class="fn">resolve</span>(<span class="tp">DatabaseToken</span>)),
-  <span class="op">lifetime:</span> <span class="str">"scoped"</span>,
-});</div>
-          </section>
-
-          <!-- CIRCULAR DEPENDENCY DETECTION -->
-          <section class="mt-12" aria-labelledby="circular">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="circular">Circular Dependency Detection</h2>
+            </div>
             <p class="text-body text-black/80 mb-4">
-              The container detects circular dependencies at resolution time and throws a clear error with the dependency chain, preventing infinite loops.
+              This complete program registers a port number and builds a connection string from it. Note that the factory receives the container, so it can resolve other tokens.
             </p>
-            <div class="callout callout-danger mb-6">
-              <strong class="text-sm uppercase tracking-wider text-zudo-red">ContainerError: Circular Dependency</strong>
-              <p class="text-sm mt-1">Token A → Token B → Token A detected. Break the cycle by introducing an interface token or restructuring.</p>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> { <span class="tp">Container</span>, createToken } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">const</span> PortToken = <span class="fn">createToken</span>&lt;<span class="tp">number</span>&gt;(<span class="str">"Port"</span>);
+<span class="kw">const</span> UrlToken = <span class="fn">createToken</span>&lt;<span class="tp">string</span>&gt;(<span class="str">"Url"</span>);
+
+<span class="kw">const</span> container = <span class="kw">new</span> <span class="tp">Container</span>();
+
+container.<span class="fn">register</span>(PortToken, { useValue: <span class="num">5432</span> });
+container.<span class="fn">register</span>(UrlToken, {
+  useFactory: (c) =&gt; <span class="str">`postgres://localhost:${c.resolve(PortToken)}`</span>,
+});
+
+console.<span class="fn">log</span>(container.<span class="fn">resolve</span>(UrlToken));   <span class="cmt">// "postgres://localhost:5432"</span>
+console.<span class="fn">log</span>(container.<span class="fn">has</span>(PortToken));       <span class="cmt">// true</span></div>
+            <p class="text-body text-black/80 mb-4">
+              <strong>What you should see.</strong> <span class="code-inline">postgres://localhost:5432</span>, then <span class="code-inline">true</span>.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              Other methods: <span class="code-inline">unregister(token)</span> removes one entry, <span class="code-inline">clear()</span> empties the container, and <span class="code-inline">createScope()</span> is covered below.
+            </p>
+            <div class="callout callout-warning mb-6">
+              <strong class="text-sm uppercase tracking-wider text-zudo-red">Watch out</strong>
+              <p class="text-sm mt-1"><span class="code-inline">useClass</span> in the core container constructs with no arguments. If your class needs its collaborators passed in, use <span class="code-inline">useFactory</span>, or reach for <a href="/docs/packages-container" class="underline">@zudojs/container</a>, which supports an <span class="code-inline">inject</span> list.</p>
             </div>
           </section>
 
-          <!-- TESTING WITH DI -->
-          <section class="mt-12" aria-labelledby="testing">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="testing">Testing with DI</h2>
+          <!-- SCOPES -->
+          <section class="mt-12" aria-labelledby="scopes">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="scopes">Lifetimes</h2>
             <p class="text-body text-black/80 mb-4">
-              DI makes testing trivial — swap real implementations for mocks by overriding registrations in test containers.
+              The third argument to <span class="code-inline">register</span> says how long an instance lives. It defaults to <span class="code-inline">"singleton"</span>.
             </p>
-            <div class="code-block p-4 mb-4"><span class="kw">import</span> { <span class="fn">createContainer</span>, <span class="fn">token</span> } <span class="kw">from</span> <span class="str">"@zudojs/container"</span>;
+            <div class="overflow-x-auto mb-4">
+            <table class="doc-table">
+              <thead><tr><th>Lifetime</th><th>How many instances</th><th>Good for</th></tr></thead>
+              <tbody>
+                <tr><td><code>"singleton"</code></td><td>One, built on first resolve and reused forever</td><td>Connection pools, caches, loggers</td></tr>
+                <tr><td><code>"transient"</code></td><td>A new one on every <code>resolve()</code></td><td>Cheap, stateful helpers</td></tr>
+                <tr><td><code>"scoped"</code></td><td>One per scope — usually one per request</td><td>Per-request state such as the current user</td></tr>
+              </tbody>
+            </table>
+            </div>
+            <p class="text-body text-black/80 mb-4">
+              A <em>scope</em> is a boundary you create with <span class="code-inline">container.createScope()</span>. Resolve through that object and scoped providers are cached for its lifetime. This program shows all three lifetimes at once.
+            </p>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> { <span class="tp">Container</span>, createToken } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
 
-<span class="kw">const</span> <span class="tp">DatabaseToken</span> = <span class="fn">token</span>&lt;<span class="tp">Database</span>&gt;(<span class="str">"Database"</span>);
+<span class="kw">let</span> made = <span class="num">0</span>;
+<span class="kw">const</span> IdToken = <span class="fn">createToken</span>&lt;<span class="tp">number</span>&gt;(<span class="str">"Id"</span>);
 
-<span class="fn">describe</span>(<span class="str">"UserService"</span>, () => {
-  <span class="fn">it</span>(<span class="str">"creates user"</span>, <span class="kw">async</span> () => {
-    <span class="kw">const</span> container = <span class="fn">createContainer</span>();
-    container.<span class="fn">register</span>(<span class="tp">DatabaseToken</span>, {
-      <span class="op">useFactory:</span> () => <span class="fn">createMockDatabase</span>(),
-    });
+<span class="kw">const</span> container = <span class="kw">new</span> <span class="tp">Container</span>();
+container.<span class="fn">register</span>(IdToken, { useFactory: () =&gt; ++made }, <span class="str">"scoped"</span>);
 
-    <span class="kw">const</span> service = <span class="kw">new</span> <span class="tp">UserService</span>(container.<span class="fn">resolve</span>(<span class="tp">DatabaseToken</span>));
-    <span class="kw">const</span> user = <span class="kw">await</span> service.<span class="fn">create</span>({ <span class="op">name:</span> <span class="str">"Test"</span> });
-    <span class="fn">expect</span>(user.name).<span class="fn">toBe</span>(<span class="str">"Test"</span>);
-  });
-});</div>
+<span class="kw">const</span> requestA = container.<span class="fn">createScope</span>();
+<span class="kw">const</span> requestB = container.<span class="fn">createScope</span>();
+
+console.<span class="fn">log</span>(requestA.<span class="fn">resolve</span>(IdToken));   <span class="cmt">// 1</span>
+console.<span class="fn">log</span>(requestA.<span class="fn">resolve</span>(IdToken));   <span class="cmt">// 1 (same scope, same instance)</span>
+console.<span class="fn">log</span>(requestB.<span class="fn">resolve</span>(IdToken));   <span class="cmt">// 2 (different scope)</span></div>
+            <p class="text-body text-black/80 mb-4">
+              <strong>What you should see.</strong> <span class="code-inline">1</span>, <span class="code-inline">1</span>, <span class="code-inline">2</span>.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              Inside an application you rarely call <span class="code-inline">createScope</span> yourself. <span class="code-inline">createApplication</span> builds its container so the current <a href="/docs/concepts-contexts" class="underline">execution context</a> is the scope, which means one instance per request, job or message. With no scope active, scoped providers behave like transient ones.
+            </p>
           </section>
 
-          <!-- WHY IT MATTERS -->
-          <section class="mt-12" aria-labelledby="why">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="why">Why DI Matters</h2>
+          <!-- ERRORS -->
+          <section class="mt-12" aria-labelledby="errors">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="errors">When It Goes Wrong</h2>
+            <p class="text-body text-black/80 mb-4">
+              The container fails loudly rather than handing back <span class="code-inline">undefined</span>. Three errors cover almost everything.
+            </p>
+            <div class="overflow-x-auto mb-4">
+            <table class="doc-table">
+              <thead><tr><th>Error</th><th>Cause</th><th>Fix</th></tr></thead>
+              <tbody>
+                <tr><td><code>ProviderNotFoundError</code></td><td>Resolving a token nothing was registered under</td><td>Register it, or check you imported the same token object</td></tr>
+                <tr><td><code>ProviderAlreadyRegisteredError</code></td><td>Registering the same token twice</td><td><code>unregister(token)</code> first, or register once at startup</td></tr>
+                <tr><td><code>DependencyResolutionError</code></td><td>A cycle (A needs B, B needs A), or a factory that threw</td><td>Break the cycle, or read the wrapped <code>cause</code></td></tr>
+              </tbody>
+            </table>
+            </div>
+            <p class="text-body text-black/80 mb-4">
+              A cycle is caught immediately with the full resolution chain attached, rather than crashing with a stack overflow.
+            </p>
+          </section>
+
+          <!-- TESTING -->
+          <section class="mt-12" aria-labelledby="testing">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="testing">Swapping Things in Tests</h2>
+            <p class="text-body text-black/80 mb-4">
+              This is the payoff. Register a fake under the same token and the code under test never notices.
+            </p>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> { <span class="tp">Container</span>, createToken } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">interface</span> <span class="tp">Mailer</span> { <span class="fn">send</span>(to: <span class="tp">string</span>): <span class="kw">void</span>; }
+
+<span class="kw">const</span> MailerToken = <span class="fn">createToken</span>&lt;<span class="tp">Mailer</span>&gt;(<span class="str">"Mailer"</span>);
+
+<span class="kw">function</span> <span class="fn">welcome</span>(container: <span class="tp">Container</span>, to: <span class="tp">string</span>): <span class="kw">void</span> {
+  container.<span class="fn">resolve</span>(MailerToken).<span class="fn">send</span>(to);
+}
+
+<span class="kw">const</span> sent: <span class="tp">string</span>[] = [];
+<span class="kw">const</span> container = <span class="kw">new</span> <span class="tp">Container</span>();
+container.<span class="fn">register</span>(MailerToken, { useValue: { send: (to) =&gt; { sent.<span class="fn">push</span>(to); } } });
+
+<span class="fn">welcome</span>(container, <span class="str">"ada@example.com"</span>);
+console.<span class="fn">log</span>(sent);   <span class="cmt">// [ "ada@example.com" ]</span></div>
+            <p class="text-body text-black/80 mb-4">
+              <strong>What you should see.</strong> <span class="code-inline">[ 'ada@example.com' ]</span>. No real mail server, no network, and <span class="code-inline">welcome</span> was not modified.
+            </p>
+            <div class="callout callout-tip mb-6">
+              <strong class="text-sm uppercase tracking-wider text-zudo-green">Tip</strong>
+              <p class="text-sm mt-1">Pass your own container to <span class="code-inline">createApplication({ container })</span> when you want registrations in place before any module starts.</p>
+            </div>
+          </section>
+
+          <!-- MISTAKES -->
+          <section class="mt-12" aria-labelledby="common-mistakes">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="common-mistakes">Common Mistakes</h2>
             <div class="border-2 border-black p-6 bg-white">
               <ul class="space-y-3 text-body text-black/80">
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-red font-black mt-1">01</span>
-                  <span><strong>Loose coupling</strong> — services depend on interfaces, not concrete implementations.</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-red font-black mt-1">02</span>
-                  <span><strong>Testability</strong> — swap any dependency with a mock in tests.</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-red font-black mt-1">03</span>
-                  <span><strong>Lifecycle control</strong> — singletons, transients, and scoped instances managed automatically.</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-red font-black mt-1">04</span>
-                  <span><strong>Composition root</strong> — all wiring happens in one place, making architecture visible.</span>
-                </li>
+                <li><strong>Calling <span class="code-inline">createToken</span> twice for the same thing.</strong> You get two different symbols, so the second <span class="code-inline">resolve</span> throws <span class="code-inline">ProviderNotFoundError</span>. Create each token once and export it.</li>
+                <li><strong>Expecting <span class="code-inline">useClass</span> to inject constructor arguments.</strong> The core container calls <span class="code-inline">new C()</span> with none. Use <span class="code-inline">useFactory</span>.</li>
+                <li><strong>Registering inside a hot path.</strong> The second call throws <span class="code-inline">ProviderAlreadyRegisteredError</span>. Register during startup only.</li>
+                <li><strong>Using <span class="code-inline">"scoped"</span> with no scope active.</strong> It silently behaves like <span class="code-inline">"transient"</span>, so per-request state is not shared. Resolve through a scope, or through an execution context.</li>
               </ul>
             </div>
           </section>
 
+          <!-- RELATED -->
+          <section class="mt-12" aria-labelledby="related">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="related">Related</h2>
+            <div class="border-2 border-black p-6 bg-white">
+              <ul class="space-y-3 text-body text-black/80">
+                <li><a href="/docs/packages-container" class="underline font-bold">@zudojs/container</a> — the standalone container: constructor injection via <span class="code-inline">inject</span>, disposal, snapshots, child scopes.</li>
+                <li><a href="/docs/packages-core" class="underline font-bold">@zudojs/core</a> — the full reference for <span class="code-inline">Container</span>, <span class="code-inline">createToken</span> and the provider types.</li>
+                <li><a href="/docs/concepts-contexts" class="underline font-bold">Contexts</a> — what defines a scope inside a running application.</li>
+                <li><a href="/docs/concepts-modules" class="underline font-bold">Modules</a> — where registrations usually belong.</li>
+              </ul>
+            </div>
+          </section>
         </div>
       </div>
 
     </main>
+
+    <!-- TABLE OF CONTENTS -->
+    <aside class="doc-toc" aria-label="On this page">
+      <div class="p-4 text-xs font-bold uppercase text-black/40 tracking-wider">On this page</div>
+      <a href="#overview" class="toc-link">Overview</a>
+      <a href="#tokens" class="toc-link">Tokens</a>
+      <a href="#register-resolve" class="toc-link">Registering and Resolving</a>
+      <a href="#scopes" class="toc-link">Lifetimes</a>
+      <a href="#errors" class="toc-link">When It Goes Wrong</a>
+      <a href="#testing" class="toc-link">Swapping in Tests</a>
+      <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
+      <a href="#related" class="toc-link">Related</a>
+    </aside>
   </div>
 
   <script src="/js/docs.js"></script>
 
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 
   <!-- FOOTER -->
   <div id="zudo-footer"></div>

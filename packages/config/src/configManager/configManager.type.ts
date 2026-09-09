@@ -24,6 +24,12 @@ export enum ConfigManagerState {
  * Configuration manager options.
  */
 export interface ConfigManagerOptions extends ConfigResolverOptions {
+  /**
+   * Human-readable name for the manager. Surfaced by
+   * `manager.name` and in `getStatus()`.
+   */
+  readonly name?: string;
+
   readonly sources?: readonly ConfigSource[];
 
   readonly initialValues?: Readonly<Record<string, ConfigValue>>;
@@ -53,6 +59,7 @@ export interface ConfigManagerOptions extends ConfigResolverOptions {
  * Configuration manager status.
  */
 export interface ConfigManagerStatus {
+  readonly name: string;
   readonly state: ConfigManagerState;
   readonly loaded: boolean;
   readonly loading: boolean;

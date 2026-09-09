@@ -41,10 +41,14 @@
     var h1 = document.querySelector('main h1');
     var bar = document.createElement('div');
     bar.className = 'doc-mobilebar';
+    // Static markup only; the heading text is assigned as text so a heading
+    // containing markup characters can never be reinterpreted as HTML.
     bar.innerHTML =
       '<button type="button" id="docMenuToggle" aria-controls="docSidebar" aria-expanded="false">' +
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>Menu</button>' +
-      '<span class="crumb">' + (h1 ? h1.textContent.replace(/#$/, '').trim() : 'Documentation') + '</span>';
+      '<span class="crumb"></span>';
+    bar.querySelector('.crumb').textContent =
+      h1 ? h1.textContent.replace(/#$/, '').trim() : 'Documentation';
     var backdrop = document.createElement('div');
     backdrop.className = 'doc-backdrop';
 
@@ -72,21 +76,43 @@
     var main = document.querySelector('main');
     if (!main || !document.querySelector('.doc-sidebar')) return;
     var toc = document.querySelector('.doc-toc');
-    // Entries come from <section id> blocks (their first h2/h3 is the label) and from any headings with ids.
+    // Entries come from <section id> blocks (their first h2/h3 is the label),
+    // from headings that already carry an id, and — so that every page gets a
+    // usable table of contents — from headings we give an id to here.
+    function slug(text) {
+      return text.toLowerCase().trim()
+        .replace(/[^\w\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .slice(0, 60);
+    }
+
     var entries = [];
     var seen = {};
-    Array.prototype.slice.call(main.querySelectorAll('section[id], h2[id], h3[id]')).forEach(function (el) {
-      var id = el.id, text, level = 2;
+    var used = {};
+    Array.prototype.slice.call(main.querySelectorAll('section[id], h2, h3')).forEach(function (el) {
+      var text, level = 2, id;
       if (el.tagName === 'SECTION') {
         var h = el.querySelector('h2, h3');
         if (!h) return;
-        text = h.textContent; level = h.tagName === 'H3' ? 3 : 2;
+        text = h.textContent; level = h.tagName === 'H3' ? 3 : 2; id = el.id;
       } else {
-        if (el.closest('section[id]') && seen[el.closest('section[id]').id]) return;
+        if (el.closest('.pg')) return;
+        var owner = el.closest('section[id]');
+        if (owner && seen[owner.id]) return;      // already represented by its section
         text = el.textContent; level = el.tagName === 'H3' ? 3 : 2;
+        id = el.id;
+        if (!id) {
+          var base = slug(text.replace(/#$/, ''));
+          if (!base) return;
+          id = base;
+          while (document.getElementById(id) || used[id]) id = base + '-' + (used[base] = (used[base] || 1) + 1);
+          el.id = id;
+        }
       }
       text = text.replace(/#$/, '').trim();
-      if (!text || seen[id]) return;
+      if (!text || !id || seen[id]) return;
+      used[id] = 1;
       seen[id] = true;
       entries.push({ id: id, text: text, level: level });
     });
@@ -100,22 +126,43 @@
       main.parentNode.insertBefore(toc, main.nextSibling);
     }
 
-    if (!toc.querySelector('.toc-link, .toc-item')) {
-      var host = toc.querySelector('div:not([class*="text-xs"])') || toc;
-      if (!toc.querySelector('.text-xs')) {
-        var label = document.createElement('div');
-        label.className = 'text-xs font-bold uppercase tracking-wider mb-4 text-black/40';
-        label.textContent = 'On this page';
-        host.appendChild(label);
-      }
-      headings.forEach(function (h) {
-        var a = document.createElement('a');
-        a.href = '#' + h.id;
-        a.className = 'toc-link' + (h.level === 3 ? ' toc-link-nested' : '');
-        a.textContent = h.text;
-        host.appendChild(a);
-      });
+    // Fill the table of contents: keep any hand-written links, then append one
+    // for every section that is missing, in document order.
+    var host = toc.querySelector('div:not([class*="text-xs"])') || toc;
+    var linked = {};
+    toc.querySelectorAll('.toc-link, .toc-item').forEach(function (a) {
+      linked[(a.getAttribute('href') || '').slice(1)] = true;
+    });
+
+    if (!toc.querySelector('.text-xs') && !Object.keys(linked).length) {
+      var label = document.createElement('div');
+      label.className = 'text-xs font-bold uppercase tracking-wider mb-4 text-black/40';
+      label.textContent = 'On this page';
+      host.appendChild(label);
     }
+
+    headings.forEach(function (h) {
+      if (linked[h.id]) return;
+      var a = document.createElement('a');
+      a.href = '#' + h.id;
+      a.className = 'toc-link' + (h.level === 3 ? ' toc-link-nested' : '');
+      a.textContent = h.text;
+      // Insert in document order relative to the links already there.
+      var existing = Array.prototype.slice.call(toc.querySelectorAll('.toc-link, .toc-item'));
+      var before = null;
+      for (var i = 0; i < existing.length; i++) {
+        var id = (existing[i].getAttribute('href') || '').slice(1);
+        var target = document.getElementById(id);
+        var mine = document.getElementById(h.id);
+        if (target && mine && (target.compareDocumentPosition(mine) & Node.DOCUMENT_POSITION_PRECEDING)) {
+          before = existing[i];
+          break;
+        }
+      }
+      if (before) before.parentNode.insertBefore(a, before);
+      else host.appendChild(a);
+      linked[h.id] = true;
+    });
 
     // Scroll spy over whatever the links point at (sections or headings).
     var links = Array.prototype.slice.call(toc.querySelectorAll('.toc-link, .toc-item'));

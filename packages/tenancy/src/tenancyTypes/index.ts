@@ -11,8 +11,6 @@ export {
   tryCreateTenantId,
   isValidTenantId,
   type TenantStatus,
-  type TenantIsolationStrategy,
-  type TenancyMode,
 } from "./tenantIdentity.js";
 
 export {
@@ -37,14 +35,6 @@ export {
 export {
   type TenantRepository,
   type TenantCache,
-  type TenantManager,
-  type TenantProvisioner,
-  type TenantIsolationConfig,
-  type TenantConfigurationProvider,
 } from "./repositoryTypes.js";
 
-export {
-  type TenancyOptions,
-  type TenantDomain,
-  type TenantScopeOptions,
-} from "./tenancyOptions.js";
+export { type TenantDomain } from "./repositoryTypes.js";

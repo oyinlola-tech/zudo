@@ -440,18 +440,68 @@ describe("ReadinessTracker", () => {
 /* ─── Signal Handler ──────────────────────────────────────────────────────── */
 
 describe("SignalHandler", () => {
-  it("registers and unregisters handlers", () => {
+  // This previously asserted `expect(true).toBe(true)` under the name
+  // "registers and unregisters handlers", which passed whether or not a
+  // single listener was ever attached or released.
+  const listenerCount = (): number =>
+    process.listenerCount("SIGTERM") +
+    process.listenerCount("SIGINT") +
+    process.listenerCount("uncaughtException") +
+    process.listenerCount("unhandledRejection");
+
+  it("attaches process listeners on register and releases them on unregister", () => {
     const logger = createLogger({ name: "test" });
+    const before = listenerCount();
+
+    const handler = new SignalHandler(logger, {
+      handleSignals: true,
+      handleFatalErrors: true,
+    });
+
+    handler.register(vi.fn());
+
+    expect(listenerCount()).toBeGreaterThan(before);
+    expect(process.listenerCount("SIGTERM")).toBeGreaterThan(0);
+
+    handler.unregister();
+
+    expect(listenerCount()).toBe(before);
+  });
+
+  it("attaches nothing when both options are off", () => {
+    const logger = createLogger({ name: "test" });
+    const before = listenerCount();
+
     const handler = new SignalHandler(logger, {
       handleSignals: false,
       handleFatalErrors: false,
     });
 
-    const shutdownFn = vi.fn();
-    handler.register(shutdownFn);
-    handler.unregister();
+    handler.register(vi.fn());
 
-    // No error thrown
-    expect(true).toBe(true);
+    expect(listenerCount()).toBe(before);
+
+    handler.unregister();
+    expect(listenerCount()).toBe(before);
+  });
+
+  it("runs the registered shutdown function when SIGTERM arrives", async () => {
+    const logger = createLogger({ name: "test" });
+    const handler = new SignalHandler(logger, {
+      handleSignals: true,
+      handleFatalErrors: false,
+    });
+
+    let called = 0;
+    handler.register(async () => {
+      called += 1;
+    });
+
+    process.emit("SIGTERM");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(called).toBe(1);
+
+    handler.unregister();
   });
 });

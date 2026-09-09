@@ -361,7 +361,18 @@ describe("DOCS-13 visibility", () => {
     const doc = createDocument({ id: "h", title: "H", content: { type: "html", value: "<b>x</b>" } });
     const md = generateMarkdown(doc, {
       includeFrontmatter: false,
-      sanitizer: { sanitize: (c) => c.replace(/<[^>]+>/g, "") },
+      // Strips until stable, so a nested tag cannot re-form after one pass.
+      sanitizer: {
+        sanitize: (c) => {
+          let out = c;
+          let previous: string;
+          do {
+            previous = out;
+            out = out.replace(/<[^<>]*>/g, "");
+          } while (out !== previous);
+          return out;
+        },
+      },
     });
     expect(md).toBe("x");
   });

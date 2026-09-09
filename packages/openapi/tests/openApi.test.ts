@@ -26,6 +26,12 @@ import {
   OpenAPIOperationError,
   formatIssuePath,
   MAX_OPERATION_ID_LENGTH,
+  renderOpenAPIUI,
+  zudoLogo,
+  svgToDataUri,
+  ZUDO_MARK_DATA_URI,
+  ZUDO_WORDMARK_DARK_DATA_URI,
+  ZUDO_FAVICON_DATA_URI,
 } from "../src/index.js";
 import type { OpenAPIDocument, OpenAPIInfo } from "../src/index.js";
 
@@ -845,7 +851,7 @@ describe("OpenAPIManager", () => {
 
   it("uses the configured info (OA-08)", () => {
     const document = managerWithRoute().generate();
-    expect(document.info).toEqual(INFO);
+    expect(document.info).toMatchObject(INFO);
 
     const renamed = managerWithRoute().setInfo({
       title: "Renamed",
@@ -1034,5 +1040,105 @@ describe("toOpenAPIYAML", () => {
       paths: {},
     } as OpenAPIDocument);
     expect(yaml).toContain("paths: {}");
+  });
+});
+
+describe("branding", () => {
+  const info = { title: "Orders API", version: "1.0.0" };
+
+  it("stamps the Zudo logo into info[\"x-logo\"] by default", () => {
+    const document = new OpenAPIManager({ info }).generate();
+    expect(document.info["x-logo"]).toEqual(zudoLogo());
+    expect(document.info["x-logo"]?.url).toBe(ZUDO_MARK_DATA_URI);
+    expect(document.info["x-logo"]?.href).toBe("https://zudo.dev");
+  });
+
+  it("keeps a logo the caller supplied", () => {
+    const custom = { url: "https://example.com/logo.png", altText: "Acme" };
+    const document = new OpenAPIManager({
+      info: { ...info, "x-logo": custom },
+    }).generate();
+    expect(document.info["x-logo"]).toEqual(custom);
+
+    const viaOption = new OpenAPIManager({ info, branding: custom }).generate();
+    expect(viaOption.info["x-logo"]).toEqual(custom);
+  });
+
+  it("emits no logo when branding is off", () => {
+    const document = new OpenAPIManager({ info, branding: false }).generate();
+    expect(document.info["x-logo"]).toBeUndefined();
+    expect(toOpenAPIJSON(document)).not.toContain("x-logo");
+  });
+
+  it("survives serialisation to JSON and YAML", () => {
+    const manager = new OpenAPIManager({ info });
+    expect(JSON.parse(manager.toJSON()).info["x-logo"].altText).toBe("Zudo");
+    expect(manager.toYAML()).toContain("x-logo:");
+  });
+
+  it("renders a Swagger UI page carrying the mark, favicon and spec url", () => {
+    const html = renderOpenAPIUI({ specUrl: "/openapi.json", title: "Orders" });
+    expect(html.startsWith("<!doctype html>")).toBe(true);
+    expect(html).toContain(ZUDO_WORDMARK_DARK_DATA_URI);
+    expect(html).toContain(`<link rel="icon" href="${ZUDO_FAVICON_DATA_URI}">`);
+    expect(html).toContain("swagger-ui-bundle.js");
+    expect(html).toContain('"url":"/openapi.json"');
+    expect(html).toContain("<title>Orders</title>");
+    expect(html).toContain('href="https://zudo.dev"');
+  });
+
+  it("renders a ReDoc page on request", () => {
+    const html = renderOpenAPIUI({ specUrl: "/openapi.yaml", renderer: "redoc" });
+    expect(html).toContain('<redoc spec-url="/openapi.yaml"');
+    expect(html).toContain("redoc.standalone.js");
+    expect(html).not.toContain("swagger-ui-bundle");
+  });
+
+  it("escapes untrusted text and refuses script urls", () => {
+    const html = renderOpenAPIUI({
+      specUrl: "/spec?a=1&b=<x>",
+      title: '<script>alert("x")</script>',
+      swaggerOptions: { note: "</script><img src=x>" },
+    });
+    expect(html).not.toContain('<script>alert("x")</script>');
+    expect(html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
+    expect(html).toContain('href="/spec?a=1&amp;b=&lt;x&gt;"');
+    expect(html).toContain("\\u003c/script>");
+    expect(() => renderOpenAPIUI({ specUrl: "javascript:alert(1)" })).toThrow(TypeError);
+    expect(() => renderOpenAPIUI({ specUrl: "" })).toThrow(TypeError);
+  });
+
+  it("lets callers drop or replace the header logo and favicon", () => {
+    const bare = renderOpenAPIUI({ specUrl: "/s", logo: false, favicon: false });
+    expect(bare).not.toContain('class="zudo-logo"');
+    expect(bare).not.toContain('rel="icon"');
+
+    const own = renderOpenAPIUI({
+      specUrl: "/s",
+      logo: { url: "https://example.com/l.svg", href: "https://example.com", altText: "Acme" },
+      assetsBaseUrl: "/vendor/swagger/",
+    });
+    expect(own).toContain('src="https://example.com/l.svg"');
+    expect(own).toContain('alt="Acme"');
+    expect(own).toContain('href="/vendor/swagger/swagger-ui.css"');
+  });
+
+  it("serves the page through the manager with an html content type", () => {
+    const manager = new OpenAPIManager({ info });
+    const response = manager.toUIResponse({ specUrl: "/openapi.json" });
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toBe("text/html; charset=utf-8");
+    expect(response.body).toContain("<title>Orders API · API reference</title>");
+    expect(response.body).toContain(ZUDO_WORDMARK_DARK_DATA_URI);
+
+    const unbranded = new OpenAPIManager({ info, branding: false });
+    expect(unbranded.toUIResponse({ specUrl: "/openapi.json" }).body).not.toContain('class="zudo-logo"');
+  });
+
+  it("encodes svg as a compact data uri", () => {
+    const uri = svgToDataUri('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+    expect(uri.startsWith("data:image/svg+xml;charset=utf-8,")).toBe(true);
+    expect(uri).not.toContain('"');
+    expect(decodeURIComponent(uri.split(",")[1] ?? "").replace(/'/g, '"')).toContain("<svg");
   });
 });

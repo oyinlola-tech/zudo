@@ -9,5 +9,4 @@ export {
   MAX_EXECUTION_HISTORY,
   DEFAULT_MISFIRE_POLICY,
   DEFAULT_OVERLAP_POLICY,
-  SCHEDULER_TICK_INTERVAL,
 } from "./schedulerConstants.core.js";

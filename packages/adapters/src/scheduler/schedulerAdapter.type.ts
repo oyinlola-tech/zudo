@@ -4,11 +4,7 @@
  * Scheduler adapter contracts — bridges Zudojs to scheduling providers.
  */
 
-import type {
-  Adapter,
-  AdapterCapabilities,
-  AdapterOperationOptions,
-} from "../index.js";
+import type { Adapter, AdapterOperationOptions } from "../index.js";
 
 /**
  * Scheduler adapter — manages scheduled tasks.

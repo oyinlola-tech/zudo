@@ -225,10 +225,11 @@ after the password has been proven correct.
 
 ## What this package does *not* do
 
-- **No OAuth2 / social login.** `OAuthConfig`, `OAuthResult`, `AuthStrategy`
-  and friends are exported as a *contract only* — there is no authorize-URL
-  builder, code exchange, PKCE handling or user-info fetch here, and no
-  strategy registry. Implement `AuthStrategy` yourself.
+- **No OAuth2 / social login.** OAuth2 lives in
+  [`@zudojs/auth-oauth`](../auth-oauth), which implements the
+  authorization-code flow with PKCE, mandatory `state`, and provider presets
+  for Google, GitHub, Microsoft, Apple and Discord. Nothing OAuth-related is
+  exported from this package any more.
 - **No password-reset flow.** `generateRandomToken()` gives you a random
   token; storage, expiry, single-use enforcement and constant-time comparison
   are yours to build.

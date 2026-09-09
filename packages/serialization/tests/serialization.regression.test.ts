@@ -270,3 +270,70 @@ describe("SER-05: envelope metadata is enforced", () => {
     expect(pretty.serialize({ a: 1 }, { pretty: false })).not.toContain("\n");
   });
 });
+
+/* ─── SER-09: prototype pollution at depth ───────────────────────────────── */
+
+describe("SER-09: unsafe keys are dropped at every depth and shape", () => {
+  it("drops __proto__, constructor and prototype nested five levels deep", () => {
+    const payload = JSON.stringify({
+      a: {
+        b: {
+          c: {
+            d: JSON.parse(
+              '{"__proto__":{"polluted":"yes"},"constructor":{"c":1},"prototype":{"p":1},"ok":1}',
+            ) as unknown,
+          },
+        },
+      },
+    });
+
+    const back = serializer.deserialize<{
+      a: { b: { c: { d: Record<string, unknown> } } };
+    }>(payload, { preserveTypes: true });
+
+    const leaf = back.a.b.c.d;
+    expect(Object.keys(leaf)).toEqual(["ok"]);
+    expect(Object.getPrototypeOf(leaf) as unknown).toBe(Object.prototype);
+    expect((leaf as { polluted?: unknown }).polluted).toBeUndefined();
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("drops unsafe keys inside array elements", () => {
+    const payload = '{"items":[{"__proto__":{"polluted":"yes"},"id":1}]}';
+    const back = serializer.deserialize<{
+      items: Array<Record<string, unknown>>;
+    }>(payload, { preserveTypes: true });
+
+    expect(Object.keys(back.items[0]!)).toEqual(["id"]);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("drops unsafe keys inside a Map value restored by a transformer", () => {
+    const payload = JSON.stringify({
+      $type: "Map",
+      $value: [
+        ["k", JSON.parse('{"__proto__":{"polluted":"yes"},"safe":1}') as unknown],
+      ],
+    });
+
+    const back = serializer.deserialize<Map<string, Record<string, unknown>>>(
+      payload,
+      { preserveTypes: true },
+    );
+
+    expect(back).toBeInstanceOf(Map);
+    const inner = back.get("k");
+    expect(inner).toBeDefined();
+    expect(Object.keys(inner as Record<string, unknown>)).toEqual(["safe"]);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("does not let a nested __proto__ reach Object.prototype on serialize", () => {
+    const hostile = {
+      outer: JSON.parse('{"__proto__":{"x":1},"keep":2}') as unknown,
+    };
+    const json = serializer.serialize(hostile, { preserveTypes: true });
+    expect(JSON.parse(json)).toEqual({ outer: { keep: 2 } });
+    expect(({} as Record<string, unknown>).x).toBeUndefined();
+  });
+});

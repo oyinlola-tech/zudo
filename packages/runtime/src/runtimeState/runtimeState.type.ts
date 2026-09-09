@@ -25,11 +25,6 @@ export type RuntimeFailureState =
   "initialization_failed" | "startup_failed" | "shutdown_failed";
 
 /**
- * All possible runtime states including failure variants.
- */
-export type RuntimeStateFull = RuntimeState | RuntimeFailureState;
-
-/**
  * Unique runtime identifier.
  */
 export type RuntimeId = EntityId;
@@ -66,23 +61,6 @@ export interface RuntimeShutdownFailure {
 }
 
 /**
- * A record of a runtime state transition.
- */
-export interface RuntimeStateTransition {
-  readonly from: RuntimeState;
-  readonly to: RuntimeState;
-  readonly timestamp: Date;
-  readonly reason?: string;
-}
-
-/**
- * Defines valid state transitions.
- */
-export type RuntimeStateTransitions = {
-  [K in RuntimeState]: readonly RuntimeState[];
-};
-
-/**
  * Runtime health state.
  */
 export type RuntimeHealthState =
@@ -105,5 +83,4 @@ export interface RuntimeHealthCheck {
   readonly healthy: boolean;
   readonly message?: string;
   readonly durationMs: number;
-  readonly metadata?: Readonly<Record<string, unknown>>;
 }

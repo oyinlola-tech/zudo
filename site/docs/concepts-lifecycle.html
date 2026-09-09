@@ -98,6 +98,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -151,7 +152,7 @@
 
       <!-- PAGE HEADER -->
             <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">Lifecycle</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           State machine for component lifecycle management with hooks and dependency ordering.
@@ -166,156 +167,205 @@
       <!-- CONTENT -->
       <div class="flex">
         <div class="content-area flex-1 px-6 py-10">
-
           <!-- OVERVIEW -->
           <section aria-labelledby="overview">
             <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="overview">Overview</h2>
             <p class="text-body text-black/80 mb-4">
-              <span class="code-inline">@zudojs/lifecycle</span> provides a state machine for managing component lifecycle. Every component transitions through well-defined states with hooks that execute at each transition.
+              A <em>lifecycle</em> is the fixed order in which things come up and go down. A database opens before anything queries it, and closes only after everything has stopped querying.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              You do not schedule any of this yourself. You write small hooks, say what depends on what, and the framework works out the order — forwards on startup, backwards on shutdown.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              Two kinds of thing take part. <em>Modules</em> are your features. <em>Participants</em> are application-level resources that are not modules, such as an HTTP server that must be listening before, and stop after, everything else.
             </p>
             <div class="callout callout-note mb-6">
-              <strong class="text-sm uppercase tracking-wider text-zudo-blue">Architecture Position</strong>
-              <p class="text-sm mt-1">Sits in <strong>Layer 2 (Runtime Primitives)</strong>. Used by <span class="code-inline">@zudojs/runtime</span>, <span class="code-inline">@zudojs/adapters</span>, and <span class="code-inline">@zudojs/storage</span>.</p>
+              <strong class="text-sm uppercase tracking-wider text-zudo-blue">Source of truth</strong>
+              <p class="text-sm mt-1">These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest <span class="code-inline">@zudojs</span> release. Everything here comes from <span class="code-inline">@zudojs/core</span>.</p>
             </div>
           </section>
 
-          <!-- LIFECYCLE STATES -->
-          <section class="mt-12" aria-labelledby="states">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="states">Lifecycle States &amp; Transitions</h2>
+          <!-- PHASES -->
+          <section class="mt-12" aria-labelledby="phases">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="phases">The Application Phases</h2>
             <p class="text-body text-black/80 mb-4">
-              Components transition through these states in order. Invalid transitions throw errors.
+              An application walks through a small set of states, readable at any time as <span class="code-inline">app.state</span>.
             </p>
-            <div class="flex flex-wrap gap-3 mb-6">
-              <div class="border-2 border-black px-4 py-2 bg-white">
-                <div class="text-xs font-bold uppercase tracking-wider text-black/50">Created</div>
-                <div class="text-sm font-bold">Initial state</div>
-              </div>
-              <div class="text-2xl font-black text-zudo-red self-center">→</div>
-              <div class="border-2 border-black px-4 py-2 bg-zudo-green text-black">
-                <div class="text-xs font-bold uppercase tracking-wider">Initialized</div>
-                <div class="text-sm font-bold">onInit hook ran</div>
-              </div>
-              <div class="text-2xl font-black text-zudo-red self-center">→</div>
-              <div class="border-2 border-black px-4 py-2 bg-zudo-blue text-white">
-                <div class="text-xs font-bold uppercase tracking-wider">Started</div>
-                <div class="text-sm font-bold">onStart hook ran</div>
-              </div>
-              <div class="text-2xl font-black text-zudo-red self-center">→</div>
-              <div class="border-2 border-black px-4 py-2 bg-zudo-yellow text-black">
-                <div class="text-xs font-bold uppercase tracking-wider">Stopped</div>
-                <div class="text-sm font-bold">onStop hook ran</div>
-              </div>
-              <div class="text-2xl font-black text-zudo-red self-center">→</div>
-              <div class="border-2 border-black px-4 py-2 bg-zudo-red text-white">
-                <div class="text-xs font-bold uppercase tracking-wider">Disposed</div>
-                <div class="text-sm font-bold">onDispose hook ran</div>
-              </div>
+            <div class="code-block p-4 mb-4"><span class="cmt">created → initializing → initialized → starting → running</span>
+<span class="cmt">running → stopping → stopped → (starting → running again)</span>
+<span class="cmt">any failure → failed</span></div>
+            <div class="overflow-x-auto mb-4">
+            <table class="doc-table">
+              <thead><tr><th>Call</th><th>What it does</th><th>Afterwards</th></tr></thead>
+              <tbody>
+                <tr><td><code>createApplication()</code></td><td>Wires everything and runs participant <code>initialize</code> hooks</td><td>State is <code>initialized</code></td></tr>
+                <tr><td><code>start()</code></td><td>Starts participants, then initializes and readies every module</td><td>State is <code>running</code></td></tr>
+                <tr><td><code>stop()</code></td><td>Shuts down and destroys modules, then stops participants</td><td>State is <code>stopped</code>; can start again</td></tr>
+                <tr><td><code>shutdown()</code></td><td>Stops, then disposes the runtime and participants</td><td>State is <code>stopped</code>; cannot start again</td></tr>
+              </tbody>
+            </table>
             </div>
-          </section>
-
-          <!-- STATE HOOKS -->
-          <section class="mt-12" aria-labelledby="hooks">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="hooks">State Hooks</h2>
             <p class="text-body text-black/80 mb-4">
-              Each lifecycle transition triggers a hook. Implement these hooks to define component behavior.
+              The difference between <span class="code-inline">stop()</span> and <span class="code-inline">shutdown()</span> matters. After <span class="code-inline">stop()</span> a later <span class="code-inline">start()</span> builds fresh module instances from your factories. After <span class="code-inline">shutdown()</span> the application is finished.
             </p>
-            <div class="code-block p-4 mb-4"><span class="kw">import</span> { <span class="tp">LifecycleComponent</span> } <span class="kw">from</span> <span class="str">"@zudojs/lifecycle"</span>;
-
-<span class="kw">class</span> <span class="tp">DatabaseService</span> <span class="kw">implements</span> <span class="tp">LifecycleComponent</span> {
-  <span class="kw">readonly</span> <span class="op">name</span> = <span class="str">"database"</span>;
-  <span class="kw">readonly</span> <span class="op">dependencies</span> = []; <span class="cmt">// No dependencies</span>
-
-  <span class="kw">async</span> <span class="fn">onInit</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt; {
-    <span class="cmt">// Validate config, check connectivity</span>
-    <span class="kw">await</span> <span class="kw">this</span>.<span class="fn">validateConnection</span>();
-  }
-
-  <span class="kw">async</span> <span class="fn">onStart</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt; {
-    <span class="cmt">// Open connection pool</span>
-    <span class="kw">this</span>.pool = <span class="kw">await</span> <span class="fn">createPool</span>(<span class="kw">this</span>.config);
-  }
-
-  <span class="kw">async</span> <span class="fn">onStop</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt; {
-    <span class="cmt">// Drain connection pool</span>
-    <span class="kw">await</span> <span class="kw">this</span>.pool.<span class="fn">drain</span>();
-  }
-
-  <span class="kw">async</span> <span class="fn">onDispose</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt; {
-    <span class="cmt">// Release all resources</span>
-    <span class="kw">await</span> <span class="kw">this</span>.pool.<span class="fn">destroy</span>();
-  }
-}</div>
           </section>
 
-          <!-- DEPENDENCY ORDERING -->
-          <section class="mt-12" aria-labelledby="dependencies">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="dependencies">Dependency Ordering</h2>
+          <!-- MODULE HOOKS -->
+          <section class="mt-12" aria-labelledby="module-hooks">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="module-hooks">Module Hooks</h2>
             <p class="text-body text-black/80 mb-4">
-              The lifecycle manager topologically sorts components by their declared dependencies. Components start in dependency order and stop in reverse order.
+              A module can implement any of four hooks. Startup runs the first two across all modules; shutdown runs the last two in reverse.
             </p>
-            <div class="code-block p-4 mb-4"><span class="kw">class</span> <span class="tp">ApiServer</span> <span class="kw">implements</span> <span class="tp">LifecycleComponent</span> {
-  <span class="kw">readonly</span> <span class="op">name</span> = <span class="str">"api-server"</span>;
-  <span class="kw">readonly</span> <span class="op">dependencies</span> = [<span class="str">"database"</span>, <span class="str">"cache"</span>];
-  <span class="cmt">// Starts AFTER database and cache</span>
-}
-
-<span class="kw">class</span> <span class="tp">CacheService</span> <span class="kw">implements</span> <span class="tp">LifecycleComponent</span> {
-  <span class="kw">readonly</span> <span class="op">name</span> = <span class="str">"cache"</span>;
-  <span class="kw">readonly</span> <span class="op">dependencies</span> = [<span class="str">"database"</span>];
-  <span class="cmt">// Starts AFTER database</span>
-}
-
-<span class="cmt">// Start order: database → cache → api-server</span>
-<span class="cmt">// Stop order:  api-server → cache → database</span></div>
-          </section>
-
-          <!-- GRACEFUL SHUTDOWN -->
-          <section class="mt-12" aria-labelledby="shutdown">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="shutdown">Graceful Shutdown</h2>
+            <div class="overflow-x-auto mb-4">
+            <table class="doc-table">
+              <thead><tr><th>Hook</th><th>When</th><th>Order</th></tr></thead>
+              <tbody>
+                <tr><td><code>onInitialize(context)</code></td><td>Startup, first pass</td><td>Dependencies before dependents</td></tr>
+                <tr><td><code>onReady(context)</code></td><td>Startup, after every module initialized</td><td>Dependencies before dependents</td></tr>
+                <tr><td><code>onShutdown(context)</code></td><td>Shutdown, first pass</td><td>Dependents before dependencies</td></tr>
+                <tr><td><code>onDestroy(context)</code></td><td>Shutdown, after every module shut down</td><td>Dependents before dependencies</td></tr>
+              </tbody>
+            </table>
+            </div>
             <p class="text-body text-black/80 mb-4">
-              The lifecycle manager handles SIGTERM/SIGINT signals and orchestrates a graceful shutdown sequence. In-flight requests complete before components stop.
+              Two passes exist because some work must wait until the whole application is up. Open a connection in <span class="code-inline">onInitialize</span>; begin consuming a queue in <span class="code-inline">onReady</span>, once everything that will handle those messages is ready.
             </p>
             <div class="callout callout-warning mb-6">
-              <strong class="text-sm uppercase tracking-wider text-zudo-yellow">Production Note</strong>
-              <p class="text-sm mt-1">Always implement <span class="code-inline">onStop</span> and <span class="code-inline">onDispose</span> hooks. Missing cleanup leads to orphaned connections, memory leaks, and zombie processes.</p>
+              <strong class="text-sm uppercase tracking-wider text-zudo-red">Watch out</strong>
+              <p class="text-sm mt-1">Only these four names are ever called on a module. A method called <span class="code-inline">start</span> or <span class="code-inline">stop</span> on a module is ignored without warning — those names belong to participants, not modules.</p>
             </div>
           </section>
 
-          <!-- WHY IT MATTERS -->
-          <section class="mt-12" aria-labelledby="why">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="why">Why Lifecycle Matters</h2>
+          <!-- PARTICIPANTS -->
+          <section class="mt-12" aria-labelledby="participants">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="participants">Participants</h2>
+            <p class="text-body text-black/80 mb-4">
+              A <em>lifecycle participant</em> is a plain object with a <span class="code-inline">name</span> and any of <span class="code-inline">initialize</span>, <span class="code-inline">start</span>, <span class="code-inline">stop</span>, <span class="code-inline">dispose</span>. Participants wrap around the modules: they start first and stop last.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              This complete program records the real order of events for one participant and one module.
+            </p>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> { createApplication, defineModule } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+<span class="kw">import type</span> { <span class="tp">Module</span> } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">const</span> events: <span class="tp">string</span>[] = [];
+
+<span class="kw">const</span> app = <span class="kw">await</span> <span class="fn">createApplication</span>({
+  logger: { level: <span class="str">"warn"</span> },
+  participants: [{
+    name: <span class="str">"http"</span>,
+    start: () =&gt; { events.<span class="fn">push</span>(<span class="str">"http:start"</span>); },
+    stop: () =&gt; { events.<span class="fn">push</span>(<span class="str">"http:stop"</span>); },
+  }],
+  modules: [<span class="fn">defineModule</span>({
+    id: <span class="str">"users"</span>,
+    name: <span class="str">"Users"</span>,
+    factory: (): <span class="tp">Module</span> =&gt; ({
+      id: <span class="str">"users"</span>,
+      name: <span class="str">"Users"</span>,
+      onInitialize: () =&gt; { events.<span class="fn">push</span>(<span class="str">"users:initialize"</span>); },
+      onShutdown: () =&gt; { events.<span class="fn">push</span>(<span class="str">"users:shutdown"</span>); },
+    }),
+  })],
+});
+
+<span class="kw">await</span> app.<span class="fn">start</span>();
+<span class="kw">await</span> app.<span class="fn">shutdown</span>();
+console.<span class="fn">log</span>(events);</div>
+            <p class="text-body text-black/80 mb-4">
+              <strong>What you should see.</strong> <span class="code-inline">[ 'http:start', 'users:initialize', 'users:shutdown', 'http:stop' ]</span> — the server is up before the module and comes down after it.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              The same machinery is available on its own. <span class="code-inline">new Lifecycle()</span>, then <span class="code-inline">register(participant)</span>, then <span class="code-inline">initialize()</span>, <span class="code-inline">start()</span>, <span class="code-inline">stop()</span>, <span class="code-inline">dispose()</span>. Stop runs in reverse registration order.
+            </p>
+          </section>
+
+          <!-- FAILURES -->
+          <section class="mt-12" aria-labelledby="failures">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="failures">When a Hook Throws</h2>
+            <p class="text-body text-black/80 mb-4">
+              By default a failing startup hook stops the whole start. Modules that already initialized are rolled back, <span class="code-inline">start()</span> throws a <span class="code-inline">RuntimeError</span>, and <span class="code-inline">app.state</span> becomes <span class="code-inline">failed</span>. That is usually what you want: a half-started service is worse than one that refuses to boot.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              When a single non-essential module should not take the service down, turn the flag on and read the report instead.
+            </p>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> { createApplication, defineModule } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+<span class="kw">import type</span> { <span class="tp">Module</span> } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">const</span> app = <span class="kw">await</span> <span class="fn">createApplication</span>({
+  logger: { level: <span class="str">"fatal"</span> },
+  runtime: { mode: <span class="str">"test"</span>, startup: { continueOnStartError: <span class="kw">true</span> } },
+  autoStart: <span class="kw">true</span>,
+  modules: [<span class="fn">defineModule</span>({
+    id: <span class="str">"metrics"</span>,
+    name: <span class="str">"Metrics"</span>,
+    factory: (): <span class="tp">Module</span> =&gt; ({
+      id: <span class="str">"metrics"</span>,
+      name: <span class="str">"Metrics"</span>,
+      onReady: () =&gt; { <span class="kw">throw new</span> <span class="tp">Error</span>(<span class="str">"exporter unreachable"</span>); },
+    }),
+  })],
+});
+
+<span class="kw">const</span> report = app.applicationRuntime!.<span class="fn">getStatus</span>().bootstrap!;
+console.<span class="fn">log</span>(app.state, report.success);      <span class="cmt">// "running" false</span>
+console.<span class="fn">log</span>(report.errors[<span class="num">0</span>]?.moduleName);    <span class="cmt">// "metrics" (the module id)</span>
+<span class="kw">await</span> app.<span class="fn">shutdown</span>();</div>
+            <p class="text-body text-black/80 mb-4">
+              <strong>What you should see.</strong> <span class="code-inline">running false</span>, then <span class="code-inline">metrics</span>. The application is up; the failure is recorded rather than fatal.
+            </p>
+            <div class="overflow-x-auto mb-4">
+            <table class="doc-table">
+              <thead><tr><th>Runtime option</th><th>What it changes</th><th>Default</th></tr></thead>
+              <tbody>
+                <tr><td><code>startup.continueOnInitializeError</code></td><td>Keep starting when <code>onInitialize</code> throws</td><td><code>false</code></td></tr>
+                <tr><td><code>startup.continueOnStartError</code></td><td>Keep starting when <code>onReady</code> throws</td><td><code>false</code></td></tr>
+                <tr><td><code>shutdown.continueOnStopError</code>, <code>continueOnDestroyError</code></td><td>Keep shutting down past a failing module</td><td><code>false</code></td></tr>
+                <tr><td><code>startup.timeoutMs</code>, <code>shutdown.timeoutMs</code></td><td>Give up with <code>RuntimeTimeoutError</code>; <code>0</code> means no limit</td><td><code>0</code>, <code>30000</code></td></tr>
+                <tr><td><code>signals.handleSigint</code>, <code>handleSigterm</code></td><td>Stop gracefully when the OS asks the process to quit</td><td><code>true</code></td></tr>
+              </tbody>
+            </table>
+            </div>
+            <div class="callout callout-tip mb-6">
+              <strong class="text-sm uppercase tracking-wider text-zudo-green">Tip</strong>
+              <p class="text-sm mt-1">Signal handling is what makes a container restart graceful. Leave <span class="code-inline">handleSigterm</span> on in production, and use <span class="code-inline">mode: "test"</span> in tests so parallel runs do not fight over process signals.</p>
+            </div>
+          </section>
+
+          <!-- RELATED -->
+          <section class="mt-12" aria-labelledby="related">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="related">Related</h2>
             <div class="border-2 border-black p-6 bg-white">
               <ul class="space-y-3 text-body text-black/80">
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-yellow font-black mt-1">01</span>
-                  <span><strong>Predictable startup</strong> — components initialize in the correct order, every time.</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-yellow font-black mt-1">02</span>
-                  <span><strong>Clean shutdown</strong> — no orphaned resources, no data corruption on process exit.</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-yellow font-black mt-1">03</span>
-                  <span><strong>Error recovery</strong> — if a component fails to start, dependent components are skipped.</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-yellow font-black mt-1">04</span>
-                  <span><strong>Testability</strong> — start and stop individual components in isolation.</span>
-                </li>
+                <li><a href="/docs/packages-lifecycle" class="underline font-bold">@zudojs/lifecycle</a> — a standalone orchestrator for resources that are not modules, with <span class="code-inline">dependsOn</span>, per-component timeouts and retries.</li>
+                <li><a href="/docs/packages-core" class="underline font-bold">@zudojs/core</a> — the full reference for <span class="code-inline">Lifecycle</span>, the runtime states and every runtime option.</li>
+                <li><a href="/docs/concepts-modules" class="underline font-bold">Modules</a> — where the four hooks are written.</li>
+                <li><a href="/docs/concepts" class="underline font-bold">Application</a> — the object that drives all of this.</li>
               </ul>
             </div>
           </section>
-
         </div>
       </div>
 
     </main>
+
+    <!-- TABLE OF CONTENTS -->
+    <aside class="doc-toc" aria-label="On this page">
+      <div class="p-4 text-xs font-bold uppercase text-black/40 tracking-wider">On this page</div>
+      <a href="#overview" class="toc-link">Overview</a>
+      <a href="#phases" class="toc-link">The Application Phases</a>
+      <a href="#module-hooks" class="toc-link">Module Hooks</a>
+      <a href="#participants" class="toc-link">Participants</a>
+      <a href="#failures" class="toc-link">When a Hook Throws</a>
+      <a href="#related" class="toc-link">Related</a>
+    </aside>
   </div>
 
   <script src="/js/docs.js"></script>
 
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 
   <!-- FOOTER -->
   <div id="zudo-footer"></div>

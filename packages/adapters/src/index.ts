@@ -19,6 +19,7 @@
 // Core adapter
 export type { Adapter } from "./adapter/index.js";
 export { AdapterRegistry } from "./adapter/index.js";
+export type { AdapterCapabilityName } from "./adapter/index.js";
 
 // Capabilities
 export type { AdapterCapabilities } from "./capabilities/index.js";

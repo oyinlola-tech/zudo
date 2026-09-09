@@ -315,21 +315,7 @@ export async function loadConfigSource(
   context: ConfigSourceContext = {},
 ): Promise<ConfigSourceResult | undefined> {
   try {
-    if (source.isAvailable) {
-      const available = await source.isAvailable(context);
-
-      if (!available) {
-        if (source.optional) {
-          return undefined;
-        }
-
-        throw new Error(
-          `Configuration source "${source.name}" is unavailable.`,
-        );
-      }
-    }
-
-    return await source.load(context);
+    return await loadConfigSourceStrict(source, context);
   } catch (error) {
     if (source.optional) {
       return undefined;
@@ -337,6 +323,43 @@ export async function loadConfigSource(
 
     throw error;
   }
+}
+
+/**
+ * Loads a single configuration source WITHOUT swallowing failures.
+ *
+ * An unavailable optional source still resolves to `undefined`, but
+ * every other failure propagates so callers can route it to their own
+ * error handling (ConfigLoader forwards it to `onSourceError`).
+ *
+ * This is the single implementation of the source loading contract;
+ * `loadConfigSource` is the error-swallowing wrapper around it.
+ */
+export async function loadConfigSourceStrict(
+  source: ConfigSource,
+  context: ConfigSourceContext = {},
+): Promise<ConfigSourceResult | undefined> {
+  if (source.isAvailable) {
+    const available = await source.isAvailable(context);
+
+    if (!available) {
+      if (source.optional) {
+        return undefined;
+      }
+
+      throw new Error(`Configuration source "${source.name}" is unavailable.`);
+    }
+  }
+
+  const result = await source.load(context);
+
+  if (!result || typeof result !== "object") {
+    throw new Error(
+      `Configuration source "${source.name}" returned an invalid result.`,
+    );
+  }
+
+  return result;
 }
 
 /**

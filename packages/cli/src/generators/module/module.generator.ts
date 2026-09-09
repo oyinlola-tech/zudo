@@ -6,6 +6,7 @@
 
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
 import { CLIGenerationError } from "../../errors/index.js";
+import { assertGeneratableName, toPascalCase } from "../../utils/utils.name.js";
 
 export interface GenerateModuleOptions {
   readonly name: string;
@@ -19,18 +20,13 @@ export async function generateModule(
   cwd: string,
 ): Promise<string[]> {
   const basePath = options.basePath ?? "modules";
-  const name = options.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  const name = assertGeneratableName(options.name, "module name");
+  const namePascal = toPascalCase(name);
 
   const files: Record<string, string> = {
     [`${basePath}/${name}/${name}.module.ts`]: `import { createLogger } from "@zudojs/logger";
 
-export class ${
-      name
-        .replace(/-([a-z])/g, (_, c) => c.toUpperCase())
-        .charAt(0)
-        .toUpperCase() +
-      name.replace(/-([a-z])/g, (_, c) => c.toUpperCase()).slice(1)
-    }Module {
+export class ${namePascal}Module {
   private readonly logger = createLogger({ name: "${name}-module" });
 
   id = "${name}-module";
@@ -41,13 +37,7 @@ export class ${
 }
 `,
 
-    [`${basePath}/${name}/index.ts`]: `export { ${
-      name
-        .replace(/-([a-z])/g, (_, c) => c.toUpperCase())
-        .charAt(0)
-        .toUpperCase() +
-      name.replace(/-([a-z])/g, (_, c) => c.toUpperCase()).slice(1)
-    }Module } from "./${name}.module.js";
+    [`${basePath}/${name}/index.ts`]: `export { ${namePascal}Module } from "./${name}.module.js";
 `,
   };
 
@@ -56,24 +46,12 @@ export class ${
     files[`${basePath}/${name}/features/${featureName}.ts`] =
       `import { createLogger } from "@zudojs/logger";
 
-export class ${
-        name
-          .replace(/-([a-z])/g, (_, c) => c.toUpperCase())
-          .charAt(0)
-          .toUpperCase() +
-        name.replace(/-([a-z])/g, (_, c) => c.toUpperCase()).slice(1)
-      }Feature {
+export class ${namePascal}Feature {
   private readonly logger = createLogger({ name: "${name}-feature" });
 }
 `;
 
-    files[`${basePath}/${name}/features/index.ts`] = `export { ${
-      name
-        .replace(/-([a-z])/g, (_, c) => c.toUpperCase())
-        .charAt(0)
-        .toUpperCase() +
-      name.replace(/-([a-z])/g, (_, c) => c.toUpperCase()).slice(1)
-    }Feature } from "./${featureName}.js";
+    files[`${basePath}/${name}/features/index.ts`] = `export { ${namePascal}Feature } from "./${featureName}.js";
 `;
   }
 

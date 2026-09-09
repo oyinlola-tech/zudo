@@ -75,6 +75,26 @@ export interface RuntimeOptions {
   readonly trackHealth?: boolean;
 
   /**
+   * How long a single readiness check may run before it is recorded as
+   * failed, in milliseconds. Set to `0` to remove the bound.
+   *
+   * @default 5000
+   */
+  readonly readinessCheckTimeout?: number;
+
+  /**
+   * Whether modules at the same dependency depth are initialized
+   * concurrently.
+   *
+   * Modules within a depth group do not depend on one another, so this is
+   * safe by construction — but it surfaces any ordering a module assumed
+   * without declaring, so it is opt-in.
+   *
+   * @default false
+   */
+  readonly parallelInitialization?: boolean;
+
+  /**
    * Additional runtime metadata.
    */
   readonly metadata?: Readonly<Record<string, unknown>>;
@@ -95,6 +115,8 @@ export interface ResolvedRuntimeOptions {
   readonly emitEvents: boolean;
   readonly trackReadiness: boolean;
   readonly trackHealth: boolean;
+  readonly readinessCheckTimeout: number;
+  readonly parallelInitialization: boolean;
   readonly metadata: Readonly<Record<string, unknown>>;
 }
 
@@ -109,6 +131,8 @@ export const DEFAULT_RUNTIME_OPTIONS = Object.freeze({
   emitEvents: true,
   trackReadiness: true,
   trackHealth: true,
+  readinessCheckTimeout: 5_000,
+  parallelInitialization: false,
   applicationVersion: "0.1.0",
   // `metadata` is required on ResolvedRuntimeOptions, so it needs a
   // default; without one the resolved options claimed a value the

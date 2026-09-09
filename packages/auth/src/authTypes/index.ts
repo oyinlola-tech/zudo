@@ -1,5 +1,5 @@
 /**
- * Core auth types: users, tokens, sessions, strategies, and RBAC.
+ * Core auth types: users, tokens, sessions, credentials, and RBAC.
  *
  * @module authTypes
  */
@@ -28,14 +28,9 @@ export {
   type SessionStore,
 } from "./authSession.type.js";
 export {
-  type OAuthProvider,
-  type OAuthConfig,
-  type OAuthUserInfo,
-  type OAuthResult,
-  type AuthStrategy,
   type PasswordCredentials,
   type ApiKeyCredentials,
-} from "./authStrategy.type.js";
+} from "./authCredentials.type.js";
 export {
   type LoginAttemptRecord,
   type LoginAttemptStore,

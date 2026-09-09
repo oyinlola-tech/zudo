@@ -4,7 +4,6 @@
 
 export {
   createRuntimeContext,
-  createRuntimeIdentity,
   withRuntimeContextState,
 } from "./runtimeContext.core.js";
 
@@ -16,7 +15,6 @@ export {
 
 export type {
   RuntimeContext,
-  RuntimeIdentity,
   RuntimeContextDependencies,
   RuntimeContextState,
 } from "./runtimeContext.type.js";

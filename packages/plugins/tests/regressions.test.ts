@@ -5,7 +5,9 @@ import { DependencyResolver } from "../src/pluginDependencies/dependencyResolver
 import {
   satisfiesVersion,
   assertDependencyVersions,
+  PluginDependencyVersionError,
 } from "../src/pluginDependencies/versionCheck.core.js";
+import { PluginDependencyError } from "@zudojs/errors";
 
 const ctx = () => createPluginContext({ name: "host" });
 
@@ -220,5 +222,89 @@ describe("regressions: audit round 7", () => {
     await m["lifecycle"].stop(m["registry"].get("p")!, ctx());
     await m.start(ctx());
     expect(starts).toBe(2);
+  });
+});
+
+describe("regressions: audit round 9", () => {
+  it("assertDependencyVersions names the requirer, the target and the actual version", () => {
+    const plugins = new Map([
+      ["a", { metadata: { name: "a" }, dependencies: [{ name: "b", version: "^2.0.0" }] }],
+      ["b", { metadata: { name: "b", version: "1.4.0" } }],
+    ]);
+
+    expect(() => assertDependencyVersions(plugins)).toThrow(
+      /requires "b\@\^2\.0\.0", but version 1\.4\.0 is registered/,
+    );
+  });
+
+  it("PluginManager.start enforces declared versions by default", async () => {
+    const manager = new PluginManager();
+    manager.register({ metadata: { name: "b", version: "1.4.0" } });
+    manager.register({
+      metadata: { name: "a" },
+      dependencies: [{ name: "b", version: "^2.0.0" }],
+    });
+
+    await expect(manager.start(ctx())).rejects.toThrow(/1\.4\.0 is registered/);
+  });
+
+  it("a version mismatch is not reported as a missing plugin", () => {
+    const plugins = new Map([
+      ["a", { metadata: { name: "a" }, dependencies: [{ name: "b", version: "^2.0.0" }] }],
+      ["b", { metadata: { name: "b", version: "1.4.0" } }],
+    ]);
+
+    let caught: unknown;
+    try {
+      assertDependencyVersions(plugins);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(PluginDependencyVersionError);
+    // Existing handlers that catch the base class still match.
+    expect(caught).toBeInstanceOf(PluginDependencyError);
+
+    const error = caught as PluginDependencyVersionError;
+    expect(error.requiredBy).toBe("a");
+    expect(error.dependencyName).toBe("b");
+    expect(error.required).toBe("^2.0.0");
+    expect(error.actual).toBe("1.4.0");
+    // The old message claimed "b" was not registered, which was false.
+    expect(error.message).not.toMatch(/not registered/);
+    expect(error.message).toMatch(/checkVersions: false/);
+  });
+
+  it("an unparseable range says which forms are supported", () => {
+    const plugins = new Map([
+      ["a", { metadata: { name: "a" }, dependencies: [{ name: "b", version: "not-a-range" }] }],
+      ["b", { metadata: { name: "b", version: "1.4.0" } }],
+    ]);
+
+    expect(() => assertDependencyVersions(plugins)).toThrow(
+      /Supported forms are an exact version/,
+    );
+  });
+
+  it("a dependency with no declared version says so", () => {
+    const plugins = new Map([
+      ["a", { metadata: { name: "a" }, dependencies: [{ name: "b", version: "^1.0.0" }] }],
+      ["b", { metadata: { name: "b" } }],
+    ]);
+
+    expect(() => assertDependencyVersions(plugins)).toThrow(
+      /declares no version/,
+    );
+  });
+
+  it("checkVersions:false skips the check it says it skips", async () => {
+    const manager = new PluginManager({ checkVersions: false });
+    manager.register({ metadata: { name: "b", version: "1.4.0" } });
+    manager.register({
+      metadata: { name: "a" },
+      dependencies: [{ name: "b", version: "^2.0.0" }],
+    });
+
+    await expect(manager.start(ctx())).resolves.toBeUndefined();
   });
 });

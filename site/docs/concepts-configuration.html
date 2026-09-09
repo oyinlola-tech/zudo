@@ -98,6 +98,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -151,7 +152,7 @@
 
       <!-- PAGE HEADER -->
             <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">Configuration</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Layered configuration with multiple sources and clear precedence.
@@ -166,157 +167,274 @@
       <!-- CONTENT -->
       <div class="flex">
         <div class="content-area flex-1 px-6 py-10">
-
           <!-- OVERVIEW -->
           <section aria-labelledby="overview">
             <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="overview">Overview</h2>
             <p class="text-body text-black/80 mb-4">
-              <span class="code-inline">@zudojs/config</span> provides a layered configuration system where values are resolved from multiple sources with defined priority ordering. Configuration is validated against schemas at startup, and sensitive values are automatically redacted in logs.
+              <em>Configuration</em> is the set of values that change between machines but not between runs: a port, a database URL, a feature flag. Code should not care where they came from.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              Zudo collects them from any number of <em>sources</em> and merges them into one lookup by dotted path. Ask for <span class="code-inline">"http.port"</span> and you get a number, whether it came from a defaults object, a file, or an environment variable.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              Each source has a <span class="code-inline">priority</span>. When two sources define the same path, the higher number wins. That is how "environment overrides defaults" works, with no special cases in your code.
             </p>
             <div class="callout callout-note mb-6">
-              <strong class="text-sm uppercase tracking-wider text-zudo-blue">Architecture Position</strong>
-              <p class="text-sm mt-1">Sits in <strong>Layer 1 (Foundation)</strong>. No internal dependencies beyond <span class="code-inline">@zudojs/errors</span>.</p>
+              <strong class="text-sm uppercase tracking-wider text-zudo-blue">Source of truth</strong>
+              <p class="text-sm mt-1">These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest <span class="code-inline">@zudojs</span> release. The pieces below all come from <span class="code-inline">@zudojs/core</span>.</p>
             </div>
           </section>
 
-          <!-- CONFIG SOURCES -->
+          <!-- SOURCES -->
           <section class="mt-12" aria-labelledby="sources">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="sources">Config Sources</h2>
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="sources">Sources and Priority</h2>
             <p class="text-body text-black/80 mb-4">
-              Configuration values are loaded from multiple sources. Each source has a priority level — higher priority sources override lower ones.
+              A source is an object with a <span class="code-inline">name</span>, a <span class="code-inline">type</span>, a <span class="code-inline">priority</span>, and an async <span class="code-inline">load()</span> that returns <span class="code-inline">{ path, value }</span> entries. <span class="code-inline">createConfigurationSource</span> builds one from a plain function.
             </p>
-            <table class="w-full text-smdoc-table mb-6">
-              <thead>
-                <tr>
-                  <th>Source</th>
-                  <th>Description</th>
-                  <th>Priority</th>
-                </tr>
-              </thead>
+            <p class="text-body text-black/80 mb-4">
+              You put sources in a <em>registry</em>, hand the registry to a <em>manager</em>, and call <span class="code-inline">initialize()</span> once. The manager does the loading and merging. This complete program shows one defaults source being overridden by an environment source.
+            </p>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> {
+  createConfigurationManager,
+  createConfigurationRegistry,
+  createConfigurationSource,
+} <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">const</span> registry = <span class="fn">createConfigurationRegistry</span>();
+
+registry.<span class="fn">registerSource</span>(<span class="fn">createConfigurationSource</span>({
+  name: <span class="str">"defaults"</span>,
+  type: <span class="str">"default"</span>,
+  priority: <span class="num">0</span>,
+  load: <span class="kw">async</span> () =&gt; [
+    { path: <span class="str">"http.port"</span>, value: <span class="num">3000</span> },
+    { path: <span class="str">"http.host"</span>, value: <span class="str">"localhost"</span> },
+  ],
+}));
+
+registry.<span class="fn">registerSource</span>(<span class="fn">createConfigurationSource</span>({
+  name: <span class="str">"env"</span>,
+  type: <span class="str">"environment"</span>,
+  priority: <span class="num">10</span>,
+  load: <span class="kw">async</span> () =&gt; [{ path: <span class="str">"http.port"</span>, value: <span class="num">8080</span> }],
+}));
+
+<span class="kw">const</span> configuration = <span class="fn">createConfigurationManager</span>({ registry });
+<span class="kw">await</span> configuration.<span class="fn">initialize</span>();
+
+console.<span class="fn">log</span>(configuration.<span class="fn">get</span>(<span class="str">"http.port"</span>));   <span class="cmt">// 8080  (env wins)</span>
+console.<span class="fn">log</span>(configuration.<span class="fn">get</span>(<span class="str">"http.host"</span>));   <span class="cmt">// "localhost"</span></div>
+            <p class="text-body text-black/80 mb-4">
+              <strong>What you should see.</strong> <span class="code-inline">8080</span>, then <span class="code-inline">localhost</span>. The defaults source still supplies the host because nothing overrode it.
+            </p>
+            <div class="overflow-x-auto mb-4">
+            <table class="doc-table">
+              <thead><tr><th>Source field</th><th>What it is</th></tr></thead>
               <tbody>
-                <tr>
-                  <td><span class="code-inline">environment</span></td>
-                  <td>Environment variables (process.env)</td>
-                  <td><span class="tag tag-red">Highest</span></td>
-                </tr>
-                <tr>
-                  <td><span class="code-inline">file</span></td>
-                  <td>JSON/YAML config files</td>
-                  <td><span class="tag tag-blue">High</span></td>
-                </tr>
-                <tr>
-                  <td><span class="code-inline">memory</span></td>
-                  <td>In-memory values set programmatically</td>
-                  <td><span class="tag tag-yellow">Medium</span></td>
-                </tr>
-                <tr>
-                  <td><span class="code-inline">defaults</span></td>
-                  <td>Default values defined in code</td>
-                  <td><span class="tag tag-green">Low</span></td>
-                </tr>
+                <tr><td><code>name</code></td><td>Unique label; registering the same name twice throws</td></tr>
+                <tr><td><code>type</code></td><td>One of <code>"default"</code>, <code>"environment"</code>, <code>"file"</code>, <code>"secret"</code>, <code>"remote"</code>, <code>"runtime"</code>, <code>"custom"</code></td></tr>
+                <tr><td><code>priority</code></td><td>Higher wins on conflict; defaults to <code>0</code></td></tr>
+                <tr><td><code>load()</code></td><td>Async function returning <code>{ path, value }</code> entries</td></tr>
               </tbody>
             </table>
+            </div>
+            <p class="text-body text-black/80 mb-4">
+              <span class="code-inline">configuration.reload()</span> runs every <span class="code-inline">load()</span> again. If the new values fail validation, the previous configuration is kept and the error is thrown — a bad reload cannot leave the app half-configured.
+            </p>
           </section>
 
-          <!-- CONFIG RESOLUTION -->
-          <section class="mt-12" aria-labelledby="resolution">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="resolution">Config Resolution &amp; Priority</h2>
+          <!-- READING -->
+          <section class="mt-12" aria-labelledby="reading">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="reading">Reading Values</h2>
             <p class="text-body text-black/80 mb-4">
-              When a config key is read, the resolver checks each source in priority order and returns the first defined value. This allows environment-specific overrides without changing application code.
+              There are two ways to ask, and the difference is what happens when a value is missing.
             </p>
-            <div class="code-block p-4 mb-4"><span class="kw">import</span> { <span class="fn">createConfigManager</span> } <span class="kw">from</span> <span class="str">"@zudojs/config"</span>;
+            <div class="overflow-x-auto mb-4">
+            <table class="doc-table">
+              <thead><tr><th>Call</th><th>Missing value</th><th>Use it for</th></tr></thead>
+              <tbody>
+                <tr><td><code>get(path)</code></td><td>Returns <code>undefined</code></td><td>Optional settings with a sensible fallback</td></tr>
+                <tr><td><code>require(path)</code></td><td>Throws <code>ConfigurationMissingError</code></td><td>Anything the app cannot run without</td></tr>
+              </tbody>
+            </table>
+            </div>
+            <p class="text-body text-black/80 mb-4">
+              Prefer <span class="code-inline">require</span> for essentials. Failing at startup with a clear message beats an <span class="code-inline">undefined</span> reaching a database driver ten minutes later.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              <span class="code-inline">getConfiguration()</span> returns the merged snapshot, which has a few extra readers. This continues from the previous example.
+            </p>
+            <div class="code-block p-4 mb-4"><span class="cmt">// Continues the example above.</span>
+<span class="kw">const</span> snapshot = configuration.<span class="fn">getConfiguration</span>();
 
-<span class="kw">const</span> config = <span class="fn">createConfigManager</span>({
-  <span class="op">sources:</span> [
-    { <span class="op">type:</span> <span class="str">"defaults"</span>, <span class="op">data:</span> { <span class="op">port:</span> <span class="num">3000</span>, <span class="op">host:</span> <span class="str">"localhost"</span> } },
-    { <span class="op">type:</span> <span class="str">"file"</span>, <span class="op">path:</span> <span class="str">"./config.json"</span> },
-    { <span class="op">type:</span> <span class="str">"environment"</span>, <span class="op">prefix:</span> <span class="str">"APP_"</span> },
-  ],
-});
+console.<span class="fn">log</span>(snapshot.<span class="fn">getNumber</span>(<span class="str">"http.port"</span>));        <span class="cmt">// 8080</span>
+console.<span class="fn">log</span>(snapshot.<span class="fn">getString</span>(<span class="str">"http.host"</span>));        <span class="cmt">// "localhost"</span>
+console.<span class="fn">log</span>(snapshot.<span class="fn">has</span>(<span class="str">"http.tls"</span>));               <span class="cmt">// false</span>
+console.<span class="fn">log</span>(snapshot.<span class="fn">getSource</span>(<span class="str">"http.port"</span>));        <span class="cmt">// "environment"</span>
+console.<span class="fn">log</span>(snapshot.<span class="fn">scope</span>(<span class="str">"http"</span>).<span class="fn">get</span>(<span class="str">"port"</span>));    <span class="cmt">// 8080</span>
 
-<span class="cmt">// Resolution: env APP_PORT → file config.json → defaults</span>
-<span class="kw">const</span> port = config.<span class="fn">get</span>(<span class="str">"port"</span>); <span class="cmt">// number</span></div>
+configuration.<span class="fn">require</span>(<span class="str">"http.tls"</span>);   <span class="cmt">// throws ConfigurationMissingError</span></div>
+            <p class="text-body text-black/80 mb-4">
+              <strong>What you should see.</strong> <span class="code-inline">8080</span>, <span class="code-inline">localhost</span>, <span class="code-inline">false</span>, <span class="code-inline">environment</span>, <span class="code-inline">8080</span> — and then the program stops on the throw. <span class="code-inline">getSource</span> is useful when you are wondering which source actually won.
+            </p>
           </section>
 
-          <!-- SCHEMA VALIDATION -->
-          <section class="mt-12" aria-labelledby="validation">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="validation">Schema Validation</h2>
+          <!-- IN AN APPLICATION -->
+          <section class="mt-12" aria-labelledby="in-an-application">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="in-an-application">Inside an Application</h2>
             <p class="text-body text-black/80 mb-4">
-              Configuration is validated against a schema at startup. Invalid configuration fails fast with clear error messages, preventing runtime surprises.
+              Pass the manager to <span class="code-inline">createApplication</span> as <span class="code-inline">configuration</span>. It is initialized for you if you have not done it yourself, and every module hook can then read values straight off its context.
             </p>
-            <div class="code-block p-4 mb-4"><span class="kw">import</span> { <span class="fn">createConfigManager</span> } <span class="kw">from</span> <span class="str">"@zudojs/config"</span>;
-<span class="kw">import</span> { z } <span class="kw">from</span> <span class="str">"zod"</span>;
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> {
+  createApplication, defineModule,
+  createConfigurationManager, createConfigurationRegistry, createConfigurationSource,
+} <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+<span class="kw">import type</span> { <span class="tp">Module</span> } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
 
-<span class="kw">const</span> schema = z.<span class="fn">object</span>({
-  <span class="op">port:</span> z.<span class="fn">number</span>().<span class="fn">min</span>(<span class="num">1</span>).<span class="fn">max</span>(<span class="num">65535</span>),
-  <span class="op">host:</span> z.<span class="fn">string</span>().<span class="fn">min</span>(<span class="num">1</span>),
-  <span class="op">database:</span> z.<span class="fn">object</span>({
-    <span class="op">url:</span> z.<span class="fn">string</span>().<span class="fn">url</span>(),
-    <span class="op">poolSize:</span> z.<span class="fn">number</span>().<span class="fn">default</span>(<span class="num">10</span>),
+<span class="kw">const</span> registry = <span class="fn">createConfigurationRegistry</span>();
+registry.<span class="fn">registerSource</span>(<span class="fn">createConfigurationSource</span>({
+  name: <span class="str">"defaults"</span>,
+  type: <span class="str">"default"</span>,
+  priority: <span class="num">0</span>,
+  load: <span class="kw">async</span> () =&gt; [{ path: <span class="str">"http.port"</span>, value: <span class="num">3000</span> }],
+}));
+
+<span class="kw">const</span> server = <span class="fn">defineModule</span>({
+  id: <span class="str">"server"</span>,
+  name: <span class="str">"Server"</span>,
+  factory: (): <span class="tp">Module</span> =&gt; ({
+    id: <span class="str">"server"</span>,
+    name: <span class="str">"Server"</span>,
+    onInitialize: (context) =&gt; {
+      console.<span class="fn">log</span>(context.<span class="fn">requireConfig</span>(<span class="str">"http.port"</span>));   <span class="cmt">// 3000</span>
+      console.<span class="fn">log</span>(context.<span class="fn">getConfig</span>(<span class="str">"http.tls"</span>));         <span class="cmt">// undefined</span>
+    },
   }),
 });
 
-<span class="kw">const</span> config = <span class="fn">createConfigManager</span>({ <span class="op">schema</span> });
-
-<span class="cmt">// Throws ConfigurationError if validation fails</span>
-<span class="kw">await</span> config.<span class="fn">load</span>();</div>
-          </section>
-
-          <!-- SENSITIVE VALUE HANDLING -->
-          <section class="mt-12" aria-labelledby="sensitive">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="sensitive">Sensitive Value Handling</h2>
-            <p class="text-body text-black/80 mb-4">
-              Configuration values matching sensitive patterns (password, secret, token, api_key) are automatically redacted in logs and error messages.
-            </p>
-            <div class="callout callout-warning mb-6">
-              <strong class="text-sm uppercase tracking-wider text-zudo-yellow">Security</strong>
-              <p class="text-sm mt-1">Never log raw configuration objects. Use <span class="code-inline">config.redact()</span> to sanitize output before logging.</p>
-            </div>
-            <div class="code-block p-4 mb-4"><span class="cmt">// Sensitive values are auto-redacted</span>
-<span class="kw">const</span> config = <span class="fn">createConfigManager</span>({
-  <span class="op">sensitivePatterns:</span> [<span class="str">"password"</span>, <span class="str">"secret"</span>, <span class="str">"token"</span>, <span class="str">"api_key"</span>],
+<span class="kw">const</span> app = <span class="kw">await</span> <span class="fn">createApplication</span>({
+  modules: [server],
+  configuration: <span class="fn">createConfigurationManager</span>({ registry }),
+  logger: { level: <span class="str">"warn"</span> },
 });
 
-<span class="cmt">// config.redact() returns sanitized copy</span>
-console.<span class="fn">log</span>(config.<span class="fn">redact</span>());
-<span class="cmt">// { db: { password: "[REDACTED]" }, apiKey: "[REDACTED]" }</span></div>
+<span class="kw">await</span> app.<span class="fn">start</span>();
+<span class="kw">await</span> app.<span class="fn">shutdown</span>();</div>
+            <p class="text-body text-black/80 mb-4">
+              <strong>What you should see.</strong> <span class="code-inline">3000</span>, then <span class="code-inline">undefined</span>.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              Read configuration in <span class="code-inline">onInitialize</span>, not in the factory. The factory runs while the application is still being wired.
+            </p>
           </section>
 
-          <!-- WHY IT MATTERS -->
-          <section class="mt-12" aria-labelledby="why">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="why">Why Configuration Matters</h2>
+          <!-- SCHEMAS -->
+          <section class="mt-12" aria-labelledby="schemas">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="schemas">Schemas and Defaults</h2>
+            <p class="text-body text-black/80 mb-4">
+              A <em>schema</em> declares what a path should look like: whether it is required, what its default is, and optionally a validator. Register schemas and <span class="code-inline">initialize()</span> checks them before anything else runs.
+            </p>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> {
+  createConfigurationManager,
+  createConfigurationSchema,
+  createConfigurationSchemaRegistry,
+} <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">const</span> schemas = <span class="fn">createConfigurationSchemaRegistry</span>();
+schemas.<span class="fn">register</span>(<span class="fn">createConfigurationSchema</span>({
+  path: <span class="str">"cache.ttl"</span>,
+  required: <span class="kw">false</span>,
+  defaultValue: <span class="num">60</span>,
+}));
+
+<span class="kw">const</span> configuration = <span class="fn">createConfigurationManager</span>({ schemas });
+<span class="kw">await</span> configuration.<span class="fn">initialize</span>();
+
+console.<span class="fn">log</span>(configuration.<span class="fn">get</span>(<span class="str">"cache.ttl"</span>));                          <span class="cmt">// 60</span>
+console.<span class="fn">log</span>(configuration.<span class="fn">getConfiguration</span>().<span class="fn">getSource</span>(<span class="str">"cache.ttl"</span>));   <span class="cmt">// "default"</span></div>
+            <p class="text-body text-black/80 mb-4">
+              <strong>What you should see.</strong> <span class="code-inline">60</span>, then <span class="code-inline">default</span> — no source supplied the value, so the schema's default filled it in.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              Change <span class="code-inline">required</span> to <span class="code-inline">true</span> and drop the default, and <span class="code-inline">initialize()</span> throws <span class="code-inline">ConfigurationValidationError</span> listing every path that is missing. That is a much better failure than a service that boots and then misbehaves.
+            </p>
+          </section>
+
+          <!-- SENSITIVE -->
+          <section class="mt-12" aria-labelledby="sensitive">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="sensitive">Secrets in Output</h2>
+            <p class="text-body text-black/80 mb-4">
+              Configuration usually holds passwords and tokens, and the easiest way to leak one is to print the whole config while debugging. A <em>redactor</em> replaces values whose key looks sensitive.
+            </p>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> { createConfiguration, redactConfiguration } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">const</span> configuration = <span class="fn">createConfiguration</span>({
+  values: { db: { host: <span class="str">"localhost"</span>, password: <span class="str">"hunter2"</span> } },
+});
+
+console.<span class="fn">log</span>(<span class="fn">redactConfiguration</span>(configuration));
+<span class="cmt">// { db: { host: "localhost", password: "[REDACTED]" } }</span></div>
+            <p class="text-body text-black/80 mb-4">
+              <strong>What you should see.</strong> The host untouched and the password replaced by <span class="code-inline">[REDACTED]</span>. Node prefixes the printed object with <span class="code-inline">[Object: null prototype]</span>, which is just how it renders a prototype-less object.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              Keys such as <span class="code-inline">password</span>, <span class="code-inline">secret</span>, <span class="code-inline">token</span>, <span class="code-inline">privateKey</span> and <span class="code-inline">connectionString</span> are covered by default. Lookalikes like <span class="code-inline">tokenizer</span> are left alone.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              The manager applies the same masking to configuration error messages, so a source that fails while loading a database URL will not print the password in its stack trace.
+            </p>
+          </section>
+
+          <!-- MISTAKES -->
+          <section class="mt-12" aria-labelledby="common-mistakes">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="common-mistakes">Common Mistakes</h2>
             <div class="border-2 border-black p-6 bg-white">
               <ul class="space-y-3 text-body text-black/80">
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-red font-black mt-1">01</span>
-                  <span><strong>Environment parity</strong> — same config schema works in dev, staging, and production.</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-red font-black mt-1">02</span>
-                  <span><strong>Fail-fast validation</strong> — missing or invalid config is caught at startup, not at runtime.</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-red font-black mt-1">03</span>
-                  <span><strong>Security by default</strong> — sensitive values are never leaked in logs or error traces.</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-red font-black mt-1">04</span>
-                  <span><strong>Type safety</strong> — validated config is fully typed throughout your application.</span>
-                </li>
+                <li><strong>Reading before <span class="code-inline">initialize()</span>.</strong> Nothing has been loaded yet, so every <span class="code-inline">get</span> is <span class="code-inline">undefined</span>. Await <span class="code-inline">initialize()</span>, or let <span class="code-inline">createApplication</span> do it.</li>
+                <li><strong>Expecting a lower-priority source to win.</strong> Higher <span class="code-inline">priority</span> always overrides. Give defaults <span class="code-inline">0</span> and environment values something larger.</li>
+                <li><strong>Registering two sources with the same <span class="code-inline">name</span>.</strong> <span class="code-inline">registerSource</span> throws. Names identify a source; priority decides who wins.</li>
+                <li><strong>Using <span class="code-inline">get</span> for something essential.</strong> You get <span class="code-inline">undefined</span> and a confusing crash later. Use <span class="code-inline">require</span>, or a required schema.</li>
+                <li><strong>Logging the raw configuration.</strong> Secrets go straight into your log aggregator. Log <span class="code-inline">redactConfiguration(configuration)</span> instead.</li>
               </ul>
             </div>
           </section>
 
+          <!-- RELATED -->
+          <section class="mt-12" aria-labelledby="related">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="related">Related</h2>
+            <div class="border-2 border-black p-6 bg-white">
+              <ul class="space-y-3 text-body text-black/80">
+                <li><a href="/docs/packages-core" class="underline font-bold">@zudojs/core</a> — the full reference for the manager, registry, sources, schemas and configuration errors.</li>
+                <li><a href="/docs/packages-config" class="underline font-bold">@zudojs/config</a> — ready-made environment, file and secret sources so you do not write <span class="code-inline">load()</span> by hand.</li>
+                <li><a href="/docs/concepts-modules" class="underline font-bold">Modules</a> — where <span class="code-inline">getConfig</span> and <span class="code-inline">requireConfig</span> are used.</li>
+                <li><a href="/docs/concepts" class="underline font-bold">Application</a> — how the manager is handed to <span class="code-inline">createApplication</span>.</li>
+              </ul>
+            </div>
+          </section>
         </div>
       </div>
 
     </main>
+
+    <!-- TABLE OF CONTENTS -->
+    <aside class="doc-toc" aria-label="On this page">
+      <div class="p-4 text-xs font-bold uppercase text-black/40 tracking-wider">On this page</div>
+      <a href="#overview" class="toc-link">Overview</a>
+      <a href="#sources" class="toc-link">Sources and Priority</a>
+      <a href="#reading" class="toc-link">Reading Values</a>
+      <a href="#in-an-application" class="toc-link">Inside an Application</a>
+      <a href="#schemas" class="toc-link">Schemas and Defaults</a>
+      <a href="#sensitive" class="toc-link">Secrets in Output</a>
+      <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
+      <a href="#related" class="toc-link">Related</a>
+    </aside>
   </div>
 
   <script src="/js/docs.js"></script>
 
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 
   <!-- FOOTER -->
   <div id="zudo-footer"></div>

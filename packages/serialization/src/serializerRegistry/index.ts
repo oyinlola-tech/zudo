@@ -10,3 +10,4 @@ export {
   createSerializer,
   createDefaultRegistry,
 } from "./serializerRegistry.factory.js";
+export type { CreateSerializerOptions } from "./serializerRegistry.factory.js";

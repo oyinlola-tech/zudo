@@ -16,6 +16,10 @@ export {
   assertResolutionValid,
 } from "./dependencyResolver.core.js";
 
+export type { SemVer } from "./versionCheck.core.js";
+
+export { PluginDependencyVersionError } from "./versionCheck.core.js";
+
 export {
   parseVersion,
   compareVersions,

@@ -1,6 +1,11 @@
 import type { ScheduleOptions } from "./scheduleOptions.type.js";
 
-import type { ScheduleState } from "../types/schedulerTypes.core.js";
+import type {
+  ScheduleState,
+  ScheduleType,
+} from "../types/schedulerTypes.core.js";
+
+export type { ScheduleType };
 
 /**
  * Schedule definition.
@@ -24,12 +29,15 @@ export interface Schedule {
 }
 
 /**
- * Type of schedule.
- */
-export type ScheduleType = "once" | "delay" | "interval" | "cron";
-
-/**
  * Creates a schedule.
+ *
+ * @param id - Schedule identifier.
+ * @param jobId - The job this schedule fires.
+ * @param type - The kind of schedule.
+ * @param nextRunAt - The first fire time.
+ * @param options - Schedule options.
+ * @param expression - The cron expression, for cron schedules.
+ * @returns A frozen, active schedule.
  */
 export function createSchedule(
   id: string,
@@ -37,13 +45,15 @@ export function createSchedule(
   type: ScheduleType,
   nextRunAt: Date,
   options: ScheduleOptions = {},
+  expression?: string,
 ): Schedule {
   return Object.freeze({
     id,
     jobId,
     type,
     nextRunAt,
-    state: "active",
+    state: "active" as const,
     options: Object.freeze(options),
+    ...(expression === undefined ? {} : { expression }),
   });
 }

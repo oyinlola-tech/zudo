@@ -3,6 +3,10 @@ import type { Schedule } from "../schedule/schedule.type.js";
 /**
  * Priority queue using a min heap for scheduling.
  *
+ * Ordered by fire time, with `ScheduleOptions.priority` breaking ties: a
+ * higher priority runs first among schedules due at the same instant. That
+ * option used to be documented as "reserved" and read by nothing at all.
+ *
  * Provides O(log n) insertion and removal, and O(1) peek.
  */
 export class PriorityQueue {
@@ -104,6 +108,17 @@ export class PriorityQueue {
   }
 
   /**
+   * Orders two schedules: earlier fire time first, then higher priority.
+   *
+   * @returns A negative number when `a` should run before `b`.
+   */
+  private compare(a: Schedule, b: Schedule): number {
+    const byTime = a.nextRunAt.getTime() - b.nextRunAt.getTime();
+    if (byTime !== 0) return byTime;
+    return (b.options?.priority ?? 0) - (a.options?.priority ?? 0);
+  }
+
+  /**
    * Bubble up an element to maintain heap property.
    */
   private bubbleUp(index: number): void {
@@ -112,7 +127,7 @@ export class PriorityQueue {
       const parent = this.heap[parentIndex]!;
       const current = this.heap[index]!;
 
-      if (current.nextRunAt.getTime() < parent.nextRunAt.getTime()) {
+      if (this.compare(current, parent) < 0) {
         [this.heap[parentIndex], this.heap[index]] = [current, parent];
         index = parentIndex;
       } else {
@@ -132,16 +147,14 @@ export class PriorityQueue {
 
       if (
         left < this.heap.length &&
-        this.heap[left]!.nextRunAt.getTime() <
-          this.heap[smallest]!.nextRunAt.getTime()
+        this.compare(this.heap[left]!, this.heap[smallest]!) < 0
       ) {
         smallest = left;
       }
 
       if (
         right < this.heap.length &&
-        this.heap[right]!.nextRunAt.getTime() <
-          this.heap[smallest]!.nextRunAt.getTime()
+        this.compare(this.heap[right]!, this.heap[smallest]!) < 0
       ) {
         smallest = right;
       }

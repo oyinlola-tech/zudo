@@ -50,6 +50,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -102,10 +103,10 @@
       </div>
 
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/validation</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
-          Schema validation with Zod, 40+ constraints, parsers, composers, normalizers, transformers, registries, and circular/depth/size checks for the Zudojs framework.
+          Check untrusted input against Zod schemas and reusable constraints, and get back one result shape you can read field by field.
         </p>
         <div class="flex flex-wrap gap-2 mt-4">
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">VALIDATION</span>
@@ -116,1151 +117,548 @@
         </div>
       </div>
 
+      <!-- OVERVIEW -->
+      <section id="overview" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OVERVIEW</h2>
+        <p class="mb-4 leading-relaxed">
+          <em>Validation</em> means checking that a value you did not create has the shape and contents you expect before your code uses it. A form submission, a JSON request body, a config file and a row from a CSV are all values you did not create.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          <code class="bg-black/5 px-1">@zudojs/validation</code> gives you three tools for that. A <em>schema</em> describes the shape of a whole value ("an object with a string <code>name</code> and a positive number <code>age</code>"). A <em>constraint</em> is one small reusable rule ("is an email", "at least 3 characters"). A <em>pipeline</em> chains schemas and constraints into one check. All three return the same <code>ValidationResult</code>, so you handle failures the same way everywhere.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          It also ships guards for hostile input. A payload nested 20,000 levels deep, or a 50 MB object, can crash a server before validation even starts. The depth, size and circular-reference guards reject those early and cheaply.
+        </p>
+
+        <div class="grid md:grid-cols-2 gap-4 mt-6">
+          <div class="border-2 border-black p-4">
+            <div class="font-black text-sm mb-2 text-zudo-green">WHEN YOU NEED IT</div>
+            <ul class="text-sm space-y-1">
+              <li>→ Any input that crosses a trust boundary: HTTP bodies, query strings, webhooks, files</li>
+              <li>→ You already use Zod and want field-level errors that map to an HTTP 400</li>
+              <li>→ You want to reuse one rule ("adult age", "slug") across many schemas</li>
+              <li>→ You accept JSON from strangers and need depth and size limits</li>
+            </ul>
+          </div>
+          <div class="border-2 border-black p-4">
+            <div class="font-black text-sm mb-2 text-zudo-red">WHEN YOU DON'T</div>
+            <ul class="text-sm space-y-1">
+              <li>→ The value was produced by your own code and TypeScript already guarantees its type</li>
+              <li>→ You want Zudo's own schema builder without Zod. Use <a href="/docs/packages-schema" class="text-zudo-blue underline">@zudojs/schema</a> instead</li>
+              <li>→ You only need to convert data (JSON, dates, bytes). See <a href="/docs/packages-serialization" class="text-zudo-blue underline">@zudojs/serialization</a></li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- VALIDATION VS SCHEMA -->
+      <section id="validation-vs-schema" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">VALIDATION VS @ZUDOJS/SCHEMA</h2>
+        <p class="mb-4 leading-relaxed">
+          Zudo has two packages that check data, and they do not share schemas. Pick one per project boundary.
+        </p>
+        <ul class="space-y-2 mb-4 text-sm">
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>@zudojs/validation</strong> (this page) is built on <a href="https://zod.dev" class="text-zudo-blue underline">Zod</a>. You write schemas with <code>z.object(...)</code>, and the package adds constraints, pipelines, normalizers, a registry and structural guards around them. Its <code>validate()</code> and <code>parse()</code> accept a <code>ZodType</code> only.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <a href="/docs/packages-schema" class="text-zudo-blue underline"><strong>@zudojs/schema</strong></a> is Zudo's own schema engine with no Zod dependency. You write <code>schema.object(...)</code> and call <code>.safeParse()</code> on the schema itself.</li>
+        </ul>
+        <div class="callout callout-tip">
+          <strong class="text-zudo-green">Rule of thumb:</strong> already using Zod, or you want reusable constraints and payload guards? Use this package. Want zero extra dependencies and a smaller API? Use @zudojs/schema.
+        </div>
+      </section>
+
       <!-- INSTALLATION -->
       <section id="installation" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-        <div class="code-block mb-4"><span class="cm">// npm</span>
-npm install @zudojs/validation
-
-<span class="cm">// pnpm</span>
-pnpm add @zudojs/validation
-
-<span class="cm">// yarn</span>
-yarn add @zudojs/validation</div>
+        <p class="mb-3">Install the package. It pulls in <code>zod</code> (v4) and <code>@zudojs/errors</code> as regular dependencies, so you do not install those separately.</p>
+        <div class="code-block mb-4">$ npm install @zudojs/validation</div>
 
         <div class="callout callout-note">
-          <strong class="text-zudo-blue">Peer Dependencies:</strong> @zudojs/validation depends on <code>zod</code> and <code>@zudojs/errors</code>. Both are required at runtime.
+          These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest @zudojs release.
+        </div>
+        <div class="callout callout-tip">
+          <strong class="text-zudo-green">Tip:</strong> import <code>z</code> from <code>@zudojs/validation</code> instead of from <code>zod</code>. It is the same object, and it guarantees your schemas and this package use one copy of Zod.
         </div>
       </section>
 
-      <!-- WHAT IT DOES -->
-      <section id="what-it-does" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHAT IT DOES</h2>
+      <!-- QUICK START -->
+      <section id="quick-start" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK START</h2>
+        <p class="mb-3">This example describes a sign-up payload, validates two inputs, and prints the outcome of each.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { z, <span class="fn">validate</span> } <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
+
+<span class="cmt">// 1. Describe the shape you expect.</span>
+<span class="kw">const</span> <span class="tp">SignUp</span> = z.<span class="fn">object</span>({
+  name: z.<span class="fn">string</span>().<span class="fn">min</span>(<span class="num">1</span>),
+  age: z.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">positive</span>(),
+});
+
+<span class="cmt">// 2. Check a good value.</span>
+<span class="kw">const</span> ok = <span class="fn">validate</span>(<span class="tp">SignUp</span>, { name: <span class="str">"Ada"</span>, age: <span class="num">36</span> });
+console.<span class="fn">log</span>(ok.success, ok.success ? ok.data : ok.issues);
+<span class="cmt">// true { name: "Ada", age: 36 }</span>
+
+<span class="cmt">// 3. Check a bad value.</span>
+<span class="kw">const</span> bad = <span class="fn">validate</span>(<span class="tp">SignUp</span>, { name: <span class="str">""</span>, age: <span class="str">"36"</span> });
+console.<span class="fn">log</span>(bad.success, bad.success ? bad.data : bad.issues);
+<span class="cmt">// false [</span>
+<span class="cmt">//   { path: ["name"], code: "too_small",    message: "Too small: expected string to have &gt;=1 characters" },</span>
+<span class="cmt">//   { path: ["age"],  code: "invalid_type", message: "Invalid input: expected number, received string", expected: "number" }</span>
+<span class="cmt">// ]</span></div>
+        <p class="text-sm text-black/70">
+          <code>validate()</code> never throws. It returns an object whose <code>success</code> field tells you which of two shapes you got. The next section explains how to read it.
+        </p>
+      </section>
+
+      <!-- READING A RESULT -->
+      <section id="reading-a-result" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">READING A RESULT</h2>
         <p class="mb-4 leading-relaxed">
-          <code class="bg-black/5 px-1">@zudojs/validation</code> provides a complete validation toolkit built on top of Zod:
+          Every check in this package returns a <code>ValidationResult&lt;T&gt;</code>. It is one of two plain objects, and the <code>success</code> field tells them apart. TypeScript uses that field to narrow the type, so inside <code>if (result.success)</code> the <code>data</code> field is typed as <code>T</code>.
         </p>
-        <ul class="space-y-2 mb-6">
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> Zod-based schema validation with TypeScript type inference</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> 40+ built-in constraints for strings, numbers, arrays, dates, and collections</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> Validation result types with success/failure discrimination</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> Validation composer for chaining and combining validation steps</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> Validation parser with safe/throw modes for reusable parsing</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> Validation normalizer for input sanitization and cleanup</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> Validation transformer for type conversion after validation</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> Validation registry for named rule storage and lookup</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> Validation factory as a unified API for creating all components</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> Circular reference detection in object graphs</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> Depth and size estimation for serialization safety</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> 7 error types with field-level issue reporting</li>
-        </ul>
+        <div class="code-block mb-4"><span class="kw">interface</span> <span class="tp">ValidationSuccess</span>&lt;<span class="tp">T</span>&gt; { success: <span class="num">true</span>;  data: <span class="tp">T</span>; issues?: <span class="tp">ValidationIssue</span>[] }
+<span class="kw">interface</span> <span class="tp">ValidationFailure</span>    { success: <span class="num">false</span>; issues: <span class="tp">ValidationIssue</span>[] }   <span class="cmt">// always at least one issue</span>
+
+<span class="kw">interface</span> <span class="tp">ValidationIssue</span> {
+  path: (<span class="tp">string</span> | <span class="tp">number</span>)[];  <span class="cmt">// where: ["address", "zip"] or [2] for an array index</span>
+  code: <span class="tp">string</span>;                <span class="cmt">// machine-readable, e.g. "invalid_type" or "min_length"</span>
+  message: <span class="tp">string</span>;             <span class="cmt">// human-readable</span>
+  expected?: <span class="tp">unknown</span>;          <span class="cmt">// set for type mismatches</span>
+  received?: <span class="tp">unknown</span>;
+}</div>
+
+        <p class="mb-3">Two helpers turn an issue list into something you can show a user. <code>formatIssues</code> makes one line; <code>toFieldErrors</code> makes a map of field name to first message, which is what a form wants.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { z, <span class="fn">validate</span>, <span class="fn">formatIssues</span>, <span class="fn">toFieldErrors</span> } <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
+
+<span class="kw">const</span> <span class="tp">SignUp</span> = z.<span class="fn">object</span>({ name: z.<span class="fn">string</span>().<span class="fn">min</span>(<span class="num">1</span>), age: z.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">positive</span>() });
+<span class="kw">const</span> result = <span class="fn">validate</span>(<span class="tp">SignUp</span>, { name: <span class="str">""</span>, age: <span class="str">"36"</span> });
+
+<span class="kw">if</span> (!result.success) {
+  console.<span class="fn">log</span>(<span class="fn">formatIssues</span>(result.issues));
+  <span class="cmt">// name: Too small: expected string to have &gt;=1 characters; age: Invalid input: expected number, received string</span>
+
+  console.<span class="fn">log</span>(<span class="fn">toFieldErrors</span>(result.issues));
+  <span class="cmt">// { name: "Too small: expected string to have &gt;=1 characters",</span>
+  <span class="cmt">//   age:  "Invalid input: expected number, received string" }</span>
+}</div>
+
+        <div class="callout callout-note">
+          <strong class="text-zudo-blue">In plain words:</strong> a result is a box. Look at <code>success</code> first. If it is <code>true</code>, take <code>data</code> out of the box. If it is <code>false</code>, read <code>issues</code> to learn what went wrong and where.
+        </div>
+
+        <p class="mb-3 text-sm">Other result helpers: <code>isValidationSuccess(r)</code> and <code>isValidationFailure(r)</code> are type guards; <code>unwrapValidation(r)</code> returns <code>data</code> or throws a <code>ValidationResultError</code>; <code>map(r, fn)</code> transforms <code>data</code> only on success; <code>combine([r1, r2])</code> merges several results into one, collecting every issue.</p>
       </section>
 
-      <!-- WHERE IT SITS -->
-      <section id="architecture-position" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHERE IT SITS</h2>
-        <div class="border-4 border-black p-6 space-y-3">
-          <div class="bg-zudo-red text-black p-3 font-bold text-center text-sm">APPLICATION LAYER (CQRS, Modules, Services)</div>
-          <div class="bg-zudo-blue text-white p-3 font-bold text-center text-sm">VALIDATION LAYER (@zudojs/validation)</div>
-          <div class="bg-white border-2 border-black p-3 font-bold text-center text-sm">ZOD SCHEMA ENGINE</div>
-          <div class="bg-black text-white p-3 font-bold text-center text-sm">CONSTRAINTS / NORMALIZER / TRANSFORMER</div>
-        </div>
-        <p class="mt-4 text-sm text-black/60">
-          Validation sits between application logic and data ingestion. It wraps Zod with a richer API: constraints, composition, parsing, normalization, transformation, and registries. Application code validates input through this layer before it reaches business logic.
+      <!-- HANDLING FAILURES -->
+      <section id="handling-failures" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HANDLING FAILURES</h2>
+        <p class="mb-4 leading-relaxed">
+          You can handle a failure in two styles. The <em>result style</em> uses <code>validate()</code> and an <code>if</code>, as above. The <em>throwing style</em> uses <code>parse()</code>, which returns the typed data directly and throws a <code>SchemaValidationError</code> when the value is bad. Use throwing when a bad value means the current operation cannot continue anyway.
         </p>
-      </section>
+        <p class="mb-3">This example parses in throwing style and catches the error. The error carries the same issues, plus helpers.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { z, <span class="fn">parse</span>, <span class="fn">isValidationError</span> } <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
 
-      <!-- DEPENDENCIES -->
-      <section id="dependencies" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DEPENDENCIES</h2>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Package</th>
-                <th class="p-3 text-left">Version</th>
-                <th class="p-3 text-left">Purpose</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono text-sm">zod</td>
-                <td class="p-3">3.x</td>
-                <td class="p-3">Underlying schema engine. Re-exported as <code>z</code> for consumer convenience.</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono text-sm">@zudojs/errors</td>
-                <td class="p-3">0.0.1</td>
-                <td class="p-3">Error hierarchy (CircularReferenceError, SerializationDepthError, SerializationPayloadTooLargeError)</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+<span class="kw">const</span> <span class="tp">SignUp</span> = z.<span class="fn">object</span>({ name: z.<span class="fn">string</span>().<span class="fn">min</span>(<span class="num">1</span>), age: z.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">positive</span>() });
 
-        <div class="mt-4 callout callout-warning">
-          <strong class="text-zudo-yellow">Version Lock:</strong> All internal dependencies use <code>workspace:*</code> in development. When published, they use exact version <code>0.0.1</code>. Always use matching versions across the ecosystem.
-        </div>
-      </section>
-
-      <!-- RESULT TYPES -->
-      <section id="result-types" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RESULT TYPES</h2>
-        <p class="mb-4">Every validation operation returns a discriminated union. The <code>success</code> field determines the variant.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">ValidationIssue</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ValidationIssue</span> {
-  <span class="kw">readonly</span> path: <span class="kw">readonly</span> (<span class="tp">string</span> | <span class="tp">number</span>)[];
-  <span class="kw">readonly</span> code: <span class="tp">string</span>;
-  <span class="kw">readonly</span> message: <span class="tp">string</span>;
-  <span class="kw">readonly</span> expected?: <span class="tp">unknown</span>;
-  <span class="kw">readonly</span> received?: <span class="tp">unknown</span>;
+<span class="kw">try</span> {
+  <span class="kw">const</span> user = <span class="fn">parse</span>(<span class="tp">SignUp</span>, { name: <span class="str">""</span>, age: <span class="str">"36"</span> }); <span class="cmt">// user is typed { name: string; age: number }</span>
+  console.<span class="fn">log</span>(user);
+} <span class="kw">catch</span> (error) {
+  <span class="kw">if</span> (<span class="fn">isValidationError</span>(error)) {
+    console.<span class="fn">log</span>(error.name);            <span class="cmt">// "SchemaValidationError"</span>
+    console.<span class="fn">log</span>(error.statusCode);      <span class="cmt">// 400</span>
+    console.<span class="fn">log</span>(error.validationCode);  <span class="cmt">// "VALIDATION_SCHEMA_FAILED"</span>
+    console.<span class="fn">log</span>(error.fieldErrors);     <span class="cmt">// { name: "Too small: expected string to have &gt;=1 characters", age: "Invalid input: expected number, received string" }</span>
+    console.<span class="fn">log</span>(error.formattedIssues); <span class="cmt">// "name: Too small: expected string to have &gt;=1 characters; age: Invalid input: expected number, received string"</span>
+  } <span class="kw">else</span> {
+    <span class="kw">throw</span> error; <span class="cmt">// not ours: let it propagate</span>
+  }
 }</div>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">ValidationSuccess</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ValidationSuccess</span>&lt;<span class="tp">T</span>&gt; {
-  <span class="kw">readonly</span> success: <span class="num">true</span>;
-  <span class="kw">readonly</span> data: <span class="tp">T</span>;
-  <span class="kw">readonly</span> issues?: <span class="kw">readonly</span> <span class="tp">ValidationIssue</span>[];
-}</div>
+        <p class="mb-3">All validation errors extend <code>ValidationError</code>, which extends <code>BaseError</code> from <a href="/docs/packages-errors" class="text-zudo-blue underline">@zudojs/errors</a>. That means they already carry <code>statusCode: 400</code>, <code>expose: true</code> and a <code>toJSON()</code> that includes <code>issues</code>, so an HTTP layer can serialize them without extra code.</p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">ValidationFailure</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ValidationFailure</span> {
-  <span class="kw">readonly</span> success: <span class="num">false</span>;
-  <span class="kw">readonly</span> data?: <span class="tp">unknown</span>;
-  <span class="kw">readonly</span> issues: <span class="kw">readonly</span> <span class="tp">ValidationIssue</span>[];
-}</div>
+        <table class="doc-table mb-4">
+          <thead><tr><th>Error class</th><th>Thrown by</th><th>validationCode</th></tr></thead>
+          <tbody>
+            <tr><td><code>ValidationError</code></td><td>Base class. Build one yourself with <code>createValidationError(issues)</code></td><td><code>VALIDATION_UNKNOWN</code> unless you pass a code</td></tr>
+            <tr><td><code>SchemaValidationError</code></td><td><code>parse</code>, <code>parseAsync</code>, <code>assertValid</code>, parser <code>.parse()</code></td><td><code>VALIDATION_SCHEMA_FAILED</code></td></tr>
+            <tr><td><code>ConstraintValidationError</code></td><td>composer <code>.assert()</code>, normalizer and transformer <code>.normalize()</code> / <code>.transform()</code></td><td><code>VALIDATION_CONSTRAINT_FAILED</code></td></tr>
+            <tr><td><code>RequiredValidationError</code>, <code>InvalidTypeValidationError</code>, <code>InvalidFormatValidationError</code>, <code>InvalidValueValidationError</code></td><td>Never thrown by the package. Available for your own code</td><td><code>VALIDATION_REQUIRED</code>, <code>_INVALID_TYPE</code>, <code>_INVALID_FORMAT</code>, <code>_INVALID_VALUE</code></td></tr>
+            <tr><td><code>ValidationResultError</code></td><td><code>unwrapValidation</code> on a failed result</td><td>none (extends <code>BaseError</code> directly, not <code>ValidationError</code>)</td></tr>
+          </tbody>
+        </table>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">ValidationResult</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">ValidationResult</span>&lt;<span class="tp">T</span>&gt; = <span class="tp">ValidationSuccess</span>&lt;<span class="tp">T</span>&gt; | <span class="tp">ValidationFailure</span>;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">ValidationError</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">ValidationError</span> <span class="kw">extends</span> <span class="tp">BaseError</span> {
-  <span class="kw">readonly</span> validationCode: <span class="tp">ValidationErrorCode</span>;
-  <span class="kw">readonly</span> issues: <span class="kw">readonly</span> <span class="tp">ValidationIssue</span>[];
-  <span class="kw">readonly</span> context?: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;;
-  <span class="kw">readonly</span> timestamp: <span class="tp">number</span>;
-  <span class="kw">readonly</span> fieldErrors: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">string</span>&gt;&gt;;
-  <span class="kw">readonly</span> formattedIssues: <span class="tp">string</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">ValidationResultError</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">ValidationResultError</span> <span class="kw">extends</span> <span class="tp">BaseError</span> {
-  <span class="kw">readonly</span> issues: <span class="kw">readonly</span> <span class="tp">ValidationIssue</span>[];
-  <span class="fn">toJSON</span>(): <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;;
-}</div>
-      </section>
-
-      <!-- RESULT HELPERS -->
-      <section id="result-helpers" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RESULT HELPERS</h2>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">formatIssues()</td>
-                <td class="p-3 font-mono text-xs">formatIssues(issues: readonly ValidationIssue[]): string</td>
-                <td class="p-3">Human-readable string of all issues</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">toFieldErrors()</td>
-                <td class="p-3 font-mono text-xs">toFieldErrors(issues: readonly ValidationIssue[]): Readonly&lt;Record&lt;string, string&gt;&gt;</td>
-                <td class="p-3">Issues grouped by first path segment</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">success()</td>
-                <td class="p-3 font-mono text-xs">success&lt;T&gt;(data: T): ValidationSuccess&lt;T&gt;</td>
-                <td class="p-3">Frozen success result</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">failure()</td>
-                <td class="p-3 font-mono text-xs">failure(issues: readonly ValidationIssue[]): ValidationFailure</td>
-                <td class="p-3">Frozen failure result. Throws if issues is empty.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">isValidationSuccess()</td>
-                <td class="p-3 font-mono text-xs">isValidationSuccess&lt;T&gt;(result: ValidationResult&lt;T&gt;): result is ValidationSuccess&lt;T&gt;</td>
-                <td class="p-3">Type guard for success</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">isValidationFailure()</td>
-                <td class="p-3 font-mono text-xs">isValidationFailure&lt;T&gt;(result: ValidationResult&lt;T&gt;): result is ValidationFailure</td>
-                <td class="p-3">Type guard for failure</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">unwrapValidation()</td>
-                <td class="p-3 font-mono text-xs">unwrapValidation&lt;T&gt;(result: ValidationResult&lt;T&gt;): T</td>
-                <td class="p-3">Returns data or throws ValidationResultError</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">issue()</td>
-                <td class="p-3 font-mono text-xs">issue(message: string, options?: { path?, code?, expected?, received? }): ValidationIssue</td>
-                <td class="p-3">Frozen single issue</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">map()</td>
-                <td class="p-3 font-mono text-xs">map&lt;T, U&gt;(result: ValidationResult&lt;T&gt;, fn: (data: T) =&gt; U): ValidationResult&lt;U&gt;</td>
-                <td class="p-3">Transforms data on success, passes through on failure</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">combine()</td>
-                <td class="p-3 font-mono text-xs">combine&lt;T extends readonly unknown[]&gt;(results: { [K in keyof T]: ValidationResult&lt;T[K]&gt; }): ValidationResult&lt;T&gt;</td>
-                <td class="p-3">Merges results; first failure or tuple of all data</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">assertValid()</td>
-                <td class="p-3 font-mono text-xs">assertValid&lt;T&gt;(result: ValidationResult&lt;T&gt;): asserts result is ValidationSuccess&lt;T&gt;</td>
-                <td class="p-3">Narrows type or throws SchemaValidationError</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- SCHEMA -->
-      <section id="schema" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SCHEMA</h2>
-        <p class="mb-4">Core functions for validating and parsing values against Zod schemas. The <code>z</code> namespace is re-exported for convenience.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Type</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">ValidationSchema</span>&lt;<span class="tp">T</span> = <span class="tp">unknown</span>&gt; = <span class="tp">ZodType</>&lt;<span class="tp">T</span>&gt;;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Functions</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">validate()</td>
-                <td class="p-3 font-mono text-xs">validate&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, value: unknown, options?: ParseOptions): ValidationResult&lt;T&gt;</td>
-                <td class="p-3">Safe validation result</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">parse()</td>
-                <td class="p-3 font-mono text-xs">parse&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, value: unknown, options?: ParseOptions): T</td>
-                <td class="p-3">Parsed value or throws SchemaValidationError</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">validateAsync()</td>
-                <td class="p-3 font-mono text-xs">validateAsync&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, value: unknown, options?: ParseOptions): Promise&lt;ValidationResult&lt;T&gt;&gt;</td>
-                <td class="p-3">Async safe validation</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">parseAsync()</td>
-                <td class="p-3 font-mono text-xs">parseAsync&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, value: unknown, options?: ParseOptions): Promise&lt;T&gt;</td>
-                <td class="p-3">Async parsed value or throws</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">isValid()</td>
-                <td class="p-3 font-mono text-xs">isValid&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, value: unknown): value is T</td>
-                <td class="p-3">Boolean type guard</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">createValidator()</td>
-                <td class="p-3 font-mono text-xs">createValidator&lt;T&gt;(schema: ValidationSchema&lt;T&gt;): (value: unknown) =&gt; ValidationResult&lt;T&gt;</td>
-                <td class="p-3">Reusable safe validation function</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">createParser()</td>
-                <td class="p-3 font-mono text-xs">createParser&lt;T&gt;(schema: ValidationSchema&lt;T&gt;): (value: unknown) =&gt; T</td>
-                <td class="p-3">Reusable throwing parser</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">createAsyncValidator()</td>
-                <td class="p-3 font-mono text-xs">createAsyncValidator&lt;T&gt;(schema: ValidationSchema&lt;T&gt;): (value: unknown) =&gt; Promise&lt;ValidationResult&lt;T&gt;&gt;</td>
-                <td class="p-3">Async reusable validator</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">createAsyncParser()</td>
-                <td class="p-3 font-mono text-xs">createAsyncParser&lt;T&gt;(schema: ValidationSchema&lt;T&gt;): (value: unknown) =&gt; Promise&lt;T&gt;</td>
-                <td class="p-3">Async throwing parser</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">unwrapSchema()</td>
-                <td class="p-3 font-mono text-xs">unwrapSchema&lt;T&gt;(schema: ValidationSchema&lt;T&gt;): ValidationSchema&lt;T&gt;</td>
-                <td class="p-3">Returns the underlying Zod schema</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">mapZodIssues()</td>
-                <td class="p-3 font-mono text-xs">mapZodIssues(error: ZodError, pathPrefix?: readonly (string | number)[]): ValidationIssue[]</td>
-                <td class="p-3">Converts Zod issues to ValidationIssue[]</td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out:</strong> <code>isValidationError()</code> returns <code>false</code> for <code>ValidationResultError</code>, because that class does not extend <code>ValidationError</code>. If you use <code>unwrapValidation</code>, catch <code>ValidationResultError</code> by name.
         </div>
       </section>
 
       <!-- CONSTRAINTS -->
       <section id="constraints" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONSTRAINTS</h2>
-        <p class="mb-4">Reusable validation rules that check a single aspect of a value. Composable, negatable, and combinable.</p>
+        <p class="mb-4 leading-relaxed">
+          A <em>constraint</em> is one named rule for one value: a function that returns <code>true</code> or <code>false</code>, plus a <code>code</code> and <code>message</code> to report when it fails. Constraints exist so you can define a rule once ("must be an adult") and reuse it in many places without a full schema.
+        </p>
+        <p class="mb-3">This example runs two built-in constraints against a string, then builds a custom one with <code>createConstraint</code>.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">checkConstraints</span>, <span class="fn">createConstraint</span>, <span class="fn">minLength</span>, <span class="fn">email</span>, <span class="fn">integer</span> } <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ValidationConstraint</span>&lt;<span class="tp">T</span>&gt; {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="kw">readonly</span> validate: (value: <span class="tp">T</span>) =&gt; <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> message: <span class="tp">string</span>;
-  <span class="kw">readonly</span> code: <span class="tp">string</span>;
-}
+<span class="cmt">// Every constraint runs; every failure is reported.</span>
+console.<span class="fn">log</span>(<span class="fn">checkConstraints</span>([<span class="fn">minLength</span>(<span class="num">3</span>), email], <span class="str">"ad"</span>));
+<span class="cmt">// { success: false, issues: [</span>
+<span class="cmt">//   { path: [], code: "min_length",    message: "Value must contain at least 3 characters." },</span>
+<span class="cmt">//   { path: [], code: "invalid_email", message: "Value must be a valid email address." } ] }</span>
 
-<span class="kw">interface</span> <span class="tp">ConstraintOptions</span> {
-  <span class="kw">readonly</span> name?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> code?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> message?: <span class="tp">string</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Functions</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">createConstraint()</td>
-                <td class="p-3 font-mono text-xs">createConstraint&lt;T&gt;(validate: (value: T) =&gt; boolean, options?: ConstraintOptions): ValidationConstraint&lt;T&gt;</td>
-                <td class="p-3">Frozen constraint</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">checkConstraint()</td>
-                <td class="p-3 font-mono text-xs">checkConstraint&lt;T&gt;(constraint: ValidationConstraint&lt;T&gt;, value: T, path?: readonly (string | number)[]): ValidationResult&lt;T&gt;</td>
-                <td class="p-3">Result of single constraint check</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">checkConstraints()</td>
-                <td class="p-3 font-mono text-xs">checkConstraints&lt;T&gt;(constraints: readonly ValidationConstraint&lt;T&gt;[], value: T, path?: readonly (string | number)[]): ValidationResult&lt;T&gt;</td>
-                <td class="p-3">Result of all constraint checks (collects all failures)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">combineConstraints()</td>
-                <td class="p-3 font-mono text-xs">combineConstraints&lt;T&gt;(...constraints: readonly ValidationConstraint&lt;T&gt;[]): ValidationConstraint&lt;T&gt;</td>
-                <td class="p-3">Single constraint requiring all to pass</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">not()</td>
-                <td class="p-3 font-mono text-xs">not&lt;T&gt;(constraint: ValidationConstraint&lt;T&gt;, options?: ConstraintOptions): ValidationConstraint&lt;T&gt;</td>
-                <td class="p-3">Negated constraint</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">assertNonNegativeInteger()</td>
-                <td class="p-3 font-mono text-xs">assertNonNegativeInteger(value: number, name: string): void</td>
-                <td class="p-3">Throws RangeError if not non-negative integer</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">required</td>
-                <td class="p-3 font-mono text-xs">required: ValidationConstraint&lt;unknown&gt;</td>
-                <td class="p-3">Constant — requires value to be defined and non-null</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- STRING CONSTRAINTS -->
-      <section id="string-constraints" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">STRING CONSTRAINTS</h2>
-        <p class="mb-4">Pre-built constraints for string validation.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Constants</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Name</th>
-                <th class="p-3 text-left">Code</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">nonEmptyString</td><td class="p-3">required</td><td class="p-3">String must not be empty after trimming</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">email</td><td class="p-3">invalid_email</td><td class="p-3">Basic email format check</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">uuid</td><td class="p-3">invalid_uuid</td><td class="p-3">UUID v1–v5 format</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">httpUrl</td><td class="p-3">invalid_url</td><td class="p-3">Valid HTTP or HTTPS URL</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ascii</td><td class="p-3">invalid_ascii</td><td class="p-3">Only ASCII characters</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">digits</td><td class="p-3">invalid_digits</td><td class="p-3">Only digits</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">letters</td><td class="p-3">invalid_letters</td><td class="p-3">Only Unicode letters</td></tr>
-              <tr><td class="p-3 font-mono">slug</td><td class="p-3">invalid_slug</td><td class="p-3">Lowercase alphanumeric with hyphens</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Functions</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">minLength()</td><td class="p-3 font-mono text-xs">minLength(minimum: number): ValidationConstraint&lt;string&gt;</td><td class="p-3">At least N characters</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">maxLength()</td><td class="p-3 font-mono text-xs">maxLength(maximum: number): ValidationConstraint&lt;string&gt;</td><td class="p-3">At most N characters</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">lengthBetween()</td><td class="p-3 font-mono text-xs">lengthBetween(minimum: number, maximum: number): ValidationConstraint&lt;string&gt;</td><td class="p-3">Length in range [min, max]</td></tr>
-              <tr><td class="p-3 font-mono">matches()</td><td class="p-3 font-mono text-xs">matches(pattern: RegExp, message?: string): ValidationConstraint&lt;string&gt;</td><td class="p-3">Regex match</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- NUMBER CONSTRAINTS -->
-      <section id="number-constraints" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">NUMBER CONSTRAINTS</h2>
-        <p class="mb-4">Pre-built constraints for numeric validation.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Constants</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Name</th>
-                <th class="p-3 text-left">Code</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">finiteNumber</td><td class="p-3">invalid_number</td><td class="p-3">Must be a finite number</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">integer</td><td class="p-3">invalid_integer</td><td class="p-3">Must be an integer</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">positive</td><td class="p-3">invalid_positive</td><td class="p-3">Must be &gt; 0</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">nonNegative</td><td class="p-3">invalid_non_negative</td><td class="p-3">Must be &gt;= 0</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">even</td><td class="p-3">invalid_even</td><td class="p-3">Even integer</td></tr>
-              <tr><td class="p-3 font-mono">odd</td><td class="p-3">invalid_odd</td><td class="p-3">Odd integer</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Functions</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">min()</td><td class="p-3 font-mono text-xs">min(minimum: number): ValidationConstraint&lt;number&gt;</td><td class="p-3">Value &gt;= minimum</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">max()</td><td class="p-3 font-mono text-xs">max(maximum: number): ValidationConstraint&lt;number&gt;</td><td class="p-3">Value &lt;= maximum</td></tr>
-              <tr><td class="p-3 font-mono">between()</td><td class="p-3 font-mono text-xs">between(minimum: number, maximum: number): ValidationConstraint&lt;number&gt;</td><td class="p-3">Value in [min, max]</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- COLLECTION CONSTRAINTS -->
-      <section id="collection-constraints" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COLLECTION CONSTRAINTS</h2>
-        <p class="mb-4">Constraints for membership checks against a set of allowed or disallowed values.</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">oneOf()</td><td class="p-3 font-mono text-xs">oneOf&lt;T&gt;(values: readonly T[]): ValidationConstraint&lt;T&gt;</td><td class="p-3">Value must be in the allowed list (Object.is)</td></tr>
-              <tr><td class="p-3 font-mono">noneOf()</td><td class="p-3 font-mono text-xs">noneOf&lt;T&gt;(values: readonly T[]): ValidationConstraint&lt;T&gt;</td><td class="p-3">Value must NOT be in the disallowed list</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- DATE CONSTRAINTS -->
-      <section id="date-constraints" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DATE CONSTRAINTS</h2>
-        <p class="mb-4">Constraints for date and time validation.</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Name</th>
-                <th class="p-3 text-left">Type</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">isoDate</td><td class="p-3">ValidationConstraint&lt;string&gt;</td><td class="p-3">Valid ISO 8601 date string</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">futureDate</td><td class="p-3">ValidationConstraint&lt;Date&gt;</td><td class="p-3">Date must be in the future</td></tr>
-              <tr><td class="p-3 font-mono">pastDate</td><td class="p-3">ValidationConstraint&lt;Date&gt;</td><td class="p-3">Date must be in the past</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- ARRAY CONSTRAINTS -->
-      <section id="array-constraints" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ARRAY CONSTRAINTS</h2>
-        <p class="mb-4">Constraints for array length and element validation.</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">minItems()</td><td class="p-3 font-mono text-xs">minItems&lt;T&gt;(minimum: number): ValidationConstraint&lt;readonly T[]&gt;</td><td class="p-3">At least N items</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">maxItems()</td><td class="p-3 font-mono text-xs">maxItems&lt;T&gt;(maximum: number): ValidationConstraint&lt;readonly T[]&gt;</td><td class="p-3">At most N items</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">exactItems()</td><td class="p-3 font-mono text-xs">exactItems&lt;T&gt;(length: number): ValidationConstraint&lt;readonly T[]&gt;</td><td class="p-3">Exactly N items</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">everyItem()</td><td class="p-3 font-mono text-xs">everyItem&lt;T&gt;(constraint: ValidationConstraint&lt;T&gt;): ValidationConstraint&lt;readonly T[]&gt;</td><td class="p-3">Every item must satisfy constraint</td></tr>
-              <tr><td class="p-3 font-mono">someItem()</td><td class="p-3 font-mono text-xs">someItem&lt;T&gt;(constraint: ValidationConstraint&lt;T&gt;): ValidationConstraint&lt;readonly T[]&gt;</td><td class="p-3">At least one item must satisfy constraint</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- COMPOSER -->
-      <section id="composer" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMPOSER</h2>
-        <p class="mb-4">Chain and combine validation steps into reusable pipelines with AND/OR/first semantics.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Types</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">ValidationStep</span>&lt;<span class="tp">T</span>&gt; = (value: <span class="tp">T</span>) =&gt; <span class="tp">ValidationResult</span>&lt;<span class="tp">T</span>&gt;;
-
-<span class="kw">interface</span> <span class="tp">ValidationComposerOptions</span> {
-  <span class="kw">readonly</span> name?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> stopOnFirstError?: <span class="tp">boolean</span>;
-}
-
-<span class="kw">interface</span> <span class="tp">ValidationComposer</span>&lt;<span class="tp">T</span>&gt; {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="fn">validate</span>(value: <span class="tp">T</span>): <span class="tp">ValidationResult</span>&lt;<span class="tp">T</span>&gt;;
-  <span class="fn">assert</span>(value: <span class="tp">T</span>): <span class="tp">T</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Functions</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createValidationComposer()</td><td class="p-3 font-mono text-xs">createValidationComposer&lt;T&gt;(steps: readonly ValidationStep&lt;T&gt;[], options?: ValidationComposerOptions): ValidationComposer&lt;T&gt;</td><td class="p-3">Reusable composed validator</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">composeSchemas()</td><td class="p-3 font-mono text-xs">composeSchemas&lt;T&gt;(...schemas: readonly ValidationSchema&lt;T&gt;[]): ValidationSchema&lt;T&gt;</td><td class="p-3">Pipes multiple Zod schemas</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">schemaStep()</td><td class="p-3 font-mono text-xs">schemaStep&lt;T&gt;(schema: ValidationSchema&lt;T&gt;): ValidationStep&lt;T&gt;</td><td class="p-3">Wraps a schema as a step</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">constraintStep()</td><td class="p-3 font-mono text-xs">constraintStep&lt;T&gt;(constraint: ValidationConstraint&lt;T&gt;): ValidationStep&lt;T&gt;</td><td class="p-3">Wraps a constraint as a step</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">constraintsStep()</td><td class="p-3 font-mono text-xs">constraintsStep&lt;T&gt;(constraints: readonly ValidationConstraint&lt;T&gt;[]): ValidationStep&lt;T&gt;</td><td class="p-3">Wraps multiple constraints as a step</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">all()</td><td class="p-3 font-mono text-xs">all&lt;T&gt;(...validators: readonly ValidationStep&lt;T&gt;[]): ValidationStep&lt;T&gt;</td><td class="p-3">Logical AND — all must pass</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">any()</td><td class="p-3 font-mono text-xs">any&lt;T&gt;(...validators: readonly ValidationStep&lt;T&gt;[]): ValidationStep&lt;T&gt;</td><td class="p-3">Logical OR — at least one must pass</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">first()</td><td class="p-3 font-mono text-xs">first&lt;T&gt;(...validators: readonly ValidationStep&lt;T&gt;[]): ValidationStep&lt;T&gt;</td><td class="p-3">Returns first successful result</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">negate()</td><td class="p-3 font-mono text-xs">negate&lt;T&gt;(validator: ValidationStep&lt;T&gt;): ValidationStep&lt;T&gt;</td><td class="p-3">Inverts a step's result</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">optional()</td><td class="p-3 font-mono text-xs">optional&lt;T&gt;(validator: ValidationStep&lt;T&gt;): ValidationStep&lt;T | undefined&gt;</td><td class="p-3">Undefined bypasses validation</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">nullable()</td><td class="p-3 font-mono text-xs">nullable&lt;T&gt;(validator: ValidationStep&lt;T&gt;): ValidationStep&lt;T | null&gt;</td><td class="p-3">Null bypasses validation</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">optionalNullable()</td><td class="p-3 font-mono text-xs">optionalNullable&lt;T&gt;(validator: ValidationStep&lt;T&gt;): ValidationStep&lt;T | null | undefined&gt;</td><td class="p-3">Null or undefined bypasses</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">append()</td><td class="p-3 font-mono text-xs">append&lt;T&gt;(composer: ValidationComposer&lt;T&gt;, step: ValidationStep&lt;T&gt;, options?: ValidationComposerOptions): ValidationComposer&lt;T&gt;</td><td class="p-3">Adds a step to an existing composer</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">tap()</td><td class="p-3 font-mono text-xs">tap&lt;T&gt;(validator: ValidationStep&lt;T&gt;): ValidationStep&lt;T&gt;</td><td class="p-3">Returns original value on success</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">when()</td><td class="p-3 font-mono text-xs">when&lt;T&gt;(predicate: (value: T) =&gt; boolean, validator: ValidationStep&lt;T&gt;): ValidationStep&lt;T&gt;</td><td class="p-3">Runs only when predicate is true</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">unless()</td><td class="p-3 font-mono text-xs">unless&lt;T&gt;(predicate: (value: T) =&gt; boolean, validator: ValidationStep&lt;T&gt;): ValidationStep&lt;T&gt;</td><td class="p-3">Runs only when predicate is false</td></tr>
-              <tr><td class="p-3 font-mono">mapValidated()</td><td class="p-3 font-mono text-xs">mapValidated&lt;T, U&gt;(validator: ValidationStep&lt;T&gt;, mapper: (value: T) =&gt; U): ValidationStep&lt;T&gt;</td><td class="p-3">Applies side-effect after success</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- PARSER -->
-      <section id="parser" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">PARSER</h2>
-        <p class="mb-4">Reusable parsers created from schemas. Safe mode returns results, throw mode throws on failure.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interfaces</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ParserOptions</span> {
-  <span class="kw">readonly</span> name?: <span class="tp">string</span>;
-}
-
-<span class="kw">interface</span> <span class="tp">ValidationParser</span>&lt;<span class="tp">T</span>&gt; {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="fn">parse</span>(value: <span class="tp">unknown</span>): <span class="tp">T</span>;
-  <span class="fn">safeParse</span>(value: <span class="tp">unknown</span>): <span class="tp">ValidationResult</span>&lt;<span class="tp">T</span>&gt;;
-  <span class="fn">isValid</span>(value: <span class="tp">unknown</span>): value <span class="kw">is</span> <span class="tp">T</span>;
-}
-
-<span class="kw">interface</span> <span class="tp">AsyncValidationParser</span>&lt;<span class="tp">T</span>&gt; {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="fn">parse</span>(value: <span class="tp">unknown</span>): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-  <span class="fn">safeParse</span>(value: <span class="tp">unknown</span>): <span class="tp">Promise</span>&lt;<span class="tp">ValidationResult</span>&lt;<span class="tp">T</span>&gt;&gt;;
-  <span class="fn">isValid</span>(value: <span class="tp">unknown</span>): <span class="tp">Promise</span>&lt;<span class="tp">boolean</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Functions</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createValidationParser()</td><td class="p-3 font-mono text-xs">createValidationParser&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, options?: ParserOptions): ValidationParser&lt;T&gt;</td><td class="p-3">Reusable sync parser</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createAsyncValidationParser()</td><td class="p-3 font-mono text-xs">createAsyncValidationParser&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, options?: ParserOptions): AsyncValidationParser&lt;T&gt;</td><td class="p-3">Reusable async parser</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">parseOr()</td><td class="p-3 font-mono text-xs">parseOr&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, value: unknown, fallback: T): T</td><td class="p-3">Parsed value or static fallback</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">parseOrElse()</td><td class="p-3 font-mono text-xs">parseOrElse&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, value: unknown, fallback: (error: SchemaValidationError) =&gt; T): T</td><td class="p-3">Parsed value or computed fallback</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">parseMany()</td><td class="p-3 font-mono text-xs">parseMany&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, values: readonly unknown[]): ValidationResult&lt;readonly T[]&gt;</td><td class="p-3">All-or-nothing batch parse</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">parseManyAsync()</td><td class="p-3 font-mono text-xs">parseManyAsync&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, values: readonly unknown[]): Promise&lt;ValidationResult&lt;readonly T[]&gt;&gt;</td><td class="p-3">Async batch parse</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">parseRecord()</td><td class="p-3 font-mono text-xs">parseRecord&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, values: Readonly&lt;Record&lt;string, unknown&gt;&gt;): ValidationResult&lt;Readonly&lt;Record&lt;string, T&gt;&gt;&gt;</td><td class="p-3">Parse all record values</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">parseOptional()</td><td class="p-3 font-mono text-xs">parseOptional&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, value: unknown): ValidationResult&lt;T | undefined&gt;</td><td class="p-3">Undefined accepted</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">parseNullable()</td><td class="p-3 font-mono text-xs">parseNullable&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, value: unknown): ValidationResult&lt;T | null&gt;</td><td class="p-3">Null accepted</td></tr>
-              <tr><td class="p-3 font-mono">parseOptionalNullable()</td><td class="p-3 font-mono text-xs">parseOptionalNullable&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, value: unknown): ValidationResult&lt;T | null | undefined&gt;</td><td class="p-3">Null or undefined accepted</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- NORMALIZER -->
-      <section id="normalizer" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">NORMALIZER</h2>
-        <p class="mb-4">Input sanitization and cleanup. Normalize strings, arrays, and compose normalizer pipelines.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Types</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">Normalizer</span>&lt;<span class="tp">T</span>&gt; = (value: <span class="tp">T</span>) =&gt; <span class="tp">T</span>;
-<span class="kw">type</span> <span class="tp">AsyncNormalizer</span>&lt;<span class="tp">T</span>&gt; = (value: <span class="tp">T</span>) =&gt; <span class="tp">T</span> | <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-
-<span class="kw">interface</span> <span class="tp">NormalizerOptions</span> {
-  <span class="kw">readonly</span> name?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> errorMessage?: <span class="tp">string</span>;
-}
-
-<span class="kw">interface</span> <span class="tp">ValidationNormalizer</span>&lt;<span class="tp">T</span>&gt; {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="fn">normalize</span>(value: <span class="tp">T</span>): <span class="tp">T</span>;
-  <span class="fn">safeNormalize</span>(value: <span class="tp">T</span>): <span class="tp">ValidationResult</span>&lt;<span class="tp">T</span>&gt;;
-}
-
-<span class="kw">interface</span> <span class="tp">AsyncValidationNormalizer</span>&lt;<span class="tp">T</span>&gt; {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="fn">normalize</span>(value: <span class="tp">T</span>): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-  <span class="fn">safeNormalize</span>(value: <span class="tp">T</span>): <span class="tp">Promise</span>&lt;<span class="tp">ValidationResult</span>&lt;<span class="tp">T</span>&gt;&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Factory Functions</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createNormalizer()</td><td class="p-3 font-mono text-xs">createNormalizer&lt;T&gt;(normalizer: Normalizer&lt;T&gt;, options?: NormalizerOptions): ValidationNormalizer&lt;T&gt;</td><td class="p-3">Reusable sync normalizer</td></tr>
-              <tr><td class="p-3 font-mono">createAsyncNormalizer()</td><td class="p-3 font-mono text-xs">createAsyncNormalizer&lt;T&gt;(normalizer: AsyncNormalizer&lt;T&gt;, options?: NormalizerOptions): AsyncValidationNormalizer&lt;T&gt;</td><td class="p-3">Reusable async normalizer</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">String Helpers</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">normalizeTrim()</td><td class="p-3 font-mono text-xs">normalizeTrim(value: string): string</td><td class="p-3">Trims whitespace</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">normalizeWhitespace()</td><td class="p-3 font-mono text-xs">normalizeWhitespace(value: string): string</td><td class="p-3">Collapses whitespace to single space</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">normalizeLowercase()</td><td class="p-3 font-mono text-xs">normalizeLowercase(value: string): string</td><td class="p-3">Lowercase</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">normalizeUppercase()</td><td class="p-3 font-mono text-xs">normalizeUppercase(value: string): string</td><td class="p-3">Uppercase</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">normalizeUnicode()</td><td class="p-3 font-mono text-xs">normalizeUnicode(value: string): string</td><td class="p-3">NFC normalization</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">normalizeEmail()</td><td class="p-3 font-mono text-xs">normalizeEmail(value: string): string</td><td class="p-3">Trim, collapse, NFC, lowercase</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">normalizeUrl()</td><td class="p-3 font-mono text-xs">normalizeUrl(value: string): string</td><td class="p-3">Trim, NFC</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">normalizeIdentifier()</td><td class="p-3 font-mono text-xs">normalizeIdentifier(value: string): string</td><td class="p-3">Trim, NFC, lowercase</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">normalizeQuotes()</td><td class="p-3 font-mono text-xs">normalizeQuotes(value: string): string</td><td class="p-3">Removes surrounding quotes</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">removeBom()</td><td class="p-3 font-mono text-xs">removeBom(value: string): string</td><td class="p-3">Strips BOM prefix</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">normalizeOptionalString()</td><td class="p-3 font-mono text-xs">normalizeOptionalString(value: string | undefined): string | undefined</td><td class="p-3">Trim + NFC or undefined</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">normalizeNullableString()</td><td class="p-3 font-mono text-xs">normalizeNullableString(value: string | null): string | null</td><td class="p-3">Trim + NFC or null</td></tr>
-              <tr><td class="p-3 font-mono">normalizeOptionalNullableString()</td><td class="p-3 font-mono text-xs">normalizeOptionalNullableString(value: string | null | undefined): string | null | undefined</td><td class="p-3">Trim + NFC or pass-through</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Composition Helpers</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">normalizeArray()</td><td class="p-3 font-mono text-xs">normalizeArray&lt;T&gt;(values: readonly T[], normalizer: (value: T) =&gt; T): T[]</td><td class="p-3">Apply normalizer to every item</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">normalizeArrayAsync()</td><td class="p-3 font-mono text-xs">normalizeArrayAsync&lt;T&gt;(values: readonly T[], normalizer: (value: T) =&gt; T | Promise&lt;T&gt;): Promise&lt;T[]&gt;</td><td class="p-3">Async array normalization</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">composeNormalizers()</td><td class="p-3 font-mono text-xs">composeNormalizers&lt;T&gt;(...normalizers: readonly ((value: T) =&gt; T)[]): (value: T) =&gt; T</td><td class="p-3">Chain normalizers sequentially</td></tr>
-              <tr><td class="p-3 font-mono">conditionalNormalizer()</td><td class="p-3 font-mono text-xs">conditionalNormalizer&lt;T&gt;(predicate: (value: T) =&gt; boolean, normalizer: (value: T) =&gt; T): (value: T) =&gt; T</td><td class="p-3">Normalizer that only fires when predicate matches</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- TRANSFORMER -->
-      <section id="transformer" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TRANSFORMER</h2>
-        <p class="mb-4">Type conversion after validation. Transform validated data into different shapes.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Types</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">ValidationTransform</span>&lt;<span class="tp">T</span>, <span class="tp">U</span>&gt; = (value: <span class="tp">T</span>) =&gt; <span class="tp">U</span>;
-<span class="kw">type</span> <span class="tp">AsyncValidationTransform</span>&lt;<span class="tp">T</span>, <span class="tp">U</span>&gt; = (value: <span class="tp">T</span>) =&gt; <span class="tp">U</span> | <span class="tp">Promise</span>&lt;<span class="tp">U</span>&gt;;
-
-<span class="kw">interface</span> <span class="tp">TransformerOptions</span> {
-  <span class="kw">readonly</span> name?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> transformErrorMessage?: <span class="tp">string</span>;
-}
-
-<span class="kw">interface</span> <span class="tp">ValidationTransformer</span>&lt;<span class="tp">T</span>, <span class="tp">U</span>&gt; {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="fn">transform</span>(value: <span class="tp">T</span>): <span class="tp">U</span>;
-  <span class="fn">safeTransform</span>(value: <span class="tp">T</span>): <span class="tp">ValidationResult</span>&lt;<span class="tp">U</span>&gt;;
-  <span class="fn">validateAndTransform</span>(value: <span class="tp">unknown</span>): <span class="tp">ValidationResult</span>&lt;<span class="tp">U</span>&gt;;
-}
-
-<span class="kw">interface</span> <span class="tp">AsyncValidationTransformer</span>&lt;<span class="tp">T</span>, <span class="tp">U</span>&gt; {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="fn">transform</span>(value: <span class="tp">T</span>): <span class="tp">Promise</span>&lt;<span class="tp">U</span>&gt;;
-  <span class="fn">safeTransform</span>(value: <span class="tp">T</span>): <span class="tp">Promise</span>&lt;<span class="tp">ValidationResult</span>&lt;<span class="tp">U</span>&gt;&gt;;
-  <span class="fn">validateAndTransform</span>(value: <span class="tp">unknown</span>): <span class="tp">Promise</span>&lt;<span class="tp">ValidationResult</span>&lt;<span class="tp">U</span>&gt;&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Functions</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createValidationTransformer()</td><td class="p-3 font-mono text-xs">createValidationTransformer&lt;T, U&gt;(transform: ValidationTransform&lt;T, U&gt;, options?: TransformerOptions): ValidationTransformer&lt;T, U&gt;</td><td class="p-3">Reusable sync transformer</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createAsyncValidationTransformer()</td><td class="p-3 font-mono text-xs">createAsyncValidationTransformer&lt;T, U&gt;(transform: AsyncValidationTransform&lt;T, U&gt;, options?: TransformerOptions): AsyncValidationTransformer&lt;T, U&gt;</td><td class="p-3">Reusable async transformer</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">validateAndTransform()</td><td class="p-3 font-mono text-xs">validateAndTransform&lt;T, U&gt;(schema: ValidationSchema&lt;T&gt;, value: unknown, transform: ValidationTransform&lt;T, U&gt;, options?: TransformerOptions): ValidationResult&lt;U&gt;</td><td class="p-3">Validate then transform in one step</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">validateAndTransformAsync()</td><td class="p-3 font-mono text-xs">validateAndTransformAsync&lt;T, U&gt;(schema: ValidationSchema&lt;T&gt;, value: unknown, transform: AsyncValidationTransform&lt;T, U&gt;, options?: TransformerOptions): Promise&lt;ValidationResult&lt;U&gt;&gt;</td><td class="p-3">Async validate then transform</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">composeTransforms()</td><td class="p-3 font-mono text-xs">composeTransforms&lt;T, U, V&gt;(first: ValidationTransform&lt;T, U&gt;, second: ValidationTransform&lt;U, V&gt;): ValidationTransform&lt;T, V&gt;</td><td class="p-3">Chain two transforms</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">composeManyTransforms()</td><td class="p-3 font-mono text-xs">composeManyTransforms&lt;T&gt;(...transforms: readonly ValidationTransform&lt;T, T&gt;[]): ValidationTransform&lt;T, T&gt;</td><td class="p-3">Chain multiple same-type transforms</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">transformArray()</td><td class="p-3 font-mono text-xs">transformArray&lt;T, U&gt;(values: readonly T[], transform: ValidationTransform&lt;T, U&gt;): U[]</td><td class="p-3">Map transform over array</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">transformArrayAsync()</td><td class="p-3 font-mono text-xs">transformArrayAsync&lt;T, U&gt;(values: readonly T[], transform: AsyncValidationTransform&lt;T, U&gt;): Promise&lt;U[]&gt;</td><td class="p-3">Async map transform over array</td></tr>
-              <tr><td class="p-3 font-mono">withTransformer()</td><td class="p-3 font-mono text-xs">withTransformer&lt;T, U&gt;(schema: ValidationSchema&lt;T&gt;, transform: ValidationTransform&lt;T, U&gt;): ValidationSchema&lt;U&gt;</td><td class="p-3">Attach transform to schema via .transform()</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- REGISTRY -->
-      <section id="registry" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">REGISTRY</h2>
-        <p class="mb-4">Named storage for reusable validation schemas and constraints. Lookup by name at runtime.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ValidationRule</span>&lt;<span class="tp">T</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="kw">readonly</span> description?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> schema?: <span class="tp">ValidationSchema</span>&lt;<span class="tp">T</span>&gt;;
-  <span class="kw">readonly</span> constraints?: <span class="kw">readonly</span> <span class="tp">ValidationConstraint</span>&lt;<span class="tp">T</span>&gt;[];
-}
-
-<span class="kw">interface</span> <span class="tp">ValidationRuleOptions</span> {
-  <span class="kw">readonly</span> overwrite?: <span class="tp">boolean</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">ValidationRegistry</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Method</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">register()</td><td class="p-3 font-mono text-xs">register&lt;T&gt;(rule: ValidationRule&lt;T&gt;, options?: ValidationRuleOptions): this</td><td class="p-3">this. Throws on duplicate unless overwrite.</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">registerSchema()</td><td class="p-3 font-mono text-xs">registerSchema&lt;T&gt;(name: string, schema: ValidationSchema&lt;T&gt;, options?: { description?, overwrite? }): this</td><td class="p-3">Shorthand for schema-only rule</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">registerConstraints()</td><td class="p-3 font-mono text-xs">registerConstraints&lt;T&gt;(name: string, constraints: readonly ValidationConstraint&lt;T&gt;[], options?: { description?, overwrite? }): this</td><td class="p-3">Shorthand for constraint-only rule</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">get()</td><td class="p-3 font-mono text-xs">get&lt;T&gt;(name: string): ValidationRule&lt;T&gt; | undefined</td><td class="p-3">Rule or undefined</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">require()</td><td class="p-3 font-mono text-xs">require&lt;T&gt;(name: string): ValidationRule&lt;T&gt;</td><td class="p-3">Rule or throws</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">has()</td><td class="p-3 font-mono text-xs">has(name: string): boolean</td><td class="p-3">Existence check</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">unregister()</td><td class="p-3 font-mono text-xs">unregister(name: string): boolean</td><td class="p-3">Removed or not found</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">names()</td><td class="p-3 font-mono text-xs">names(): readonly string[]</td><td class="p-3">All registered names</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">entries()</td><td class="p-3 font-mono text-xs">entries(): readonly ValidationRule[]</td><td class="p-3">All rules</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">size</td><td class="p-3 font-mono text-xs">get size(): number</td><td class="p-3">Number of rules</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">clear()</td><td class="p-3 font-mono text-xs">clear(): void</td><td class="p-3">Removes all rules</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">validate()</td><td class="p-3 font-mono text-xs">validate&lt;T&gt;(name: string, value: unknown): ValidationResult&lt;T&gt;</td><td class="p-3">Validate against registered rule</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">clone()</td><td class="p-3 font-mono text-xs">clone(): ValidationRegistry</td><td class="p-3">Deep copy</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">extend()</td><td class="p-3 font-mono text-xs">extend(source: ValidationRegistry, options?: ValidationRuleOptions): this</td><td class="p-3">Import all rules from another registry</td></tr>
-              <tr><td class="p-3 font-mono">readonly()</td><td class="p-3 font-mono text-xs">readonly(): ReadonlyValidationRegistry</td><td class="p-3">Read-only wrapper</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">ReadonlyValidationRegistry</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Method</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">get()</td><td class="p-3 font-mono text-xs">get&lt;T&gt;(name: string): ValidationRule&lt;T&gt; | undefined</td><td class="p-3">Rule or undefined</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">require()</td><td class="p-3 font-mono text-xs">require&lt;T&gt;(name: string): ValidationRule&lt;T&gt;</td><td class="p-3">Rule or throws</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">has()</td><td class="p-3 font-mono text-xs">has(name: string): boolean</td><td class="p-3">Existence check</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">names()</td><td class="p-3 font-mono text-xs">names(): readonly string[]</td><td class="p-3">All names</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">entries()</td><td class="p-3 font-mono text-xs">entries(): readonly ValidationRule[]</td><td class="p-3">All rules</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">size</td><td class="p-3 font-mono text-xs">get size(): number</td><td class="p-3">Count</td></tr>
-              <tr><td class="p-3 font-mono">validate()</td><td class="p-3 font-mono text-xs">validate&lt;T&gt;(name: string, value: unknown): ValidationResult&lt;T&gt;</td><td class="p-3">Validate against rule</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Factory Functions</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createValidationRegistry()</td><td class="p-3 font-mono text-xs">createValidationRegistry(): ValidationRegistry</td><td class="p-3">Empty registry</td></tr>
-              <tr><td class="p-3 font-mono">createRegistryFromRules()</td><td class="p-3 font-mono text-xs">createRegistryFromRules(rules: readonly ValidationRule[]): ValidationRegistry</td><td class="p-3">Registry pre-populated with rules</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- FACTORY -->
-      <section id="factory" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">FACTORY</h2>
-        <p class="mb-4">Unified API for creating all validation components. Single entry point for parsers, transformers, normalizers, composers, and constraints.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ValidationFactoryOptions</span> {
-  <span class="kw">readonly</span> registry?: <span class="tp">ValidationRegistry</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">ValidationFactory Class</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Method</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">parser()</td><td class="p-3 font-mono text-xs">parser&lt;T&gt;(schema: ValidationSchema&lt;T&gt;): ValidationParser&lt;T&gt;</td><td class="p-3">Sync parser</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">asyncParser()</td><td class="p-3 font-mono text-xs">asyncParser&lt;T&gt;(schema: ValidationSchema&lt;T&gt;): AsyncValidationParser&lt;T&gt;</td><td class="p-3">Async parser</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">transformer()</td><td class="p-3 font-mono text-xs">transformer&lt;T, U&gt;(transform: ValidationTransform&lt;T, U&gt;): ValidationTransformer&lt;T, U&gt;</td><td class="p-3">Sync transformer</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">asyncTransformer()</td><td class="p-3 font-mono text-xs">asyncTransformer&lt;T, U&gt;(transform: AsyncValidationTransform&lt;T, U&gt;): AsyncValidationTransformer&lt;T, U&gt;</td><td class="p-3">Async transformer</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">normalizer()</td><td class="p-3 font-mono text-xs">normalizer&lt;T&gt;(normalizer: Normalizer&lt;T&gt;): ValidationNormalizer&lt;T&gt;</td><td class="p-3">Sync normalizer</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">asyncNormalizer()</td><td class="p-3 font-mono text-xs">asyncNormalizer&lt;T&gt;(normalizer: AsyncNormalizer&lt;T&gt;): AsyncValidationNormalizer&lt;T&gt;</td><td class="p-3">Async normalizer</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">composer()</td><td class="p-3 font-mono text-xs">composer&lt;T&gt;(steps: readonly ValidationStep&lt;T&gt;[], options?: ValidationComposerOptions): ValidationComposer&lt;T&gt;</td><td class="p-3">Composed validator</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">constraint()</td><td class="p-3 font-mono text-xs">constraint&lt;T&gt;(validateValue: (value: T) =&gt; boolean, options?: { name?, code?, message? }): ValidationConstraint&lt;T&gt;</td><td class="p-3">Inline constraint</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">validate()</td><td class="p-3 font-mono text-xs">validate&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, value: unknown): ValidationResult&lt;T&gt;</td><td class="p-3">Direct validation</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">validateAsync()</td><td class="p-3 font-mono text-xs">validateAsync&lt;T&gt;(schema: ValidationSchema&lt;T&gt;, value: unknown): Promise&lt;ValidationResult&lt;T&gt;&gt;</td><td class="p-3">Async validation</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">check()</td><td class="p-3 font-mono text-xs">check&lt;T&gt;(constraints: readonly ValidationConstraint&lt;T&gt;[], value: T): ValidationResult&lt;T&gt;</td><td class="p-3">Check constraints directly</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">registerSchema()</td><td class="p-3 font-mono text-xs">registerSchema&lt;T&gt;(name: string, schema: ValidationSchema&lt;T&gt;, description?: string): this</td><td class="p-3">Register in internal registry</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">registerConstraints()</td><td class="p-3 font-mono text-xs">registerConstraints&lt;T&gt;(name: string, constraints: readonly ValidationConstraint&lt;T&gt;[], description?: string): this</td><td class="p-3">Register constraints in registry</td></tr>
-              <tr><td class="p-3 font-mono">validateRegistered()</td><td class="p-3 font-mono text-xs">validateRegistered&lt;T&gt;(name: string, value: unknown): ValidationResult&lt;T&gt;</td><td class="p-3">Validate against registered rule</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Factory Functions</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createValidationFactory()</td><td class="p-3 font-mono text-xs">createValidationFactory(options?: ValidationFactoryOptions): ValidationFactory</td><td class="p-3">New factory instance</td></tr>
-              <tr><td class="p-3 font-mono">validationFactory</td><td class="p-3 font-mono text-xs">const validationFactory: ValidationFactory</td><td class="p-3">Default singleton factory</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- CIRCULAR / DEPTH / SIZE -->
-      <section id="circular-depth-size" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CIRCULAR / DEPTH / SIZE</h2>
-        <p class="mb-4">Utilities for detecting circular references, measuring nesting depth, and estimating serialized payload size.</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns / Throws</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">assertNoCircularReference()</td><td class="p-3 font-mono text-xs">assertNoCircularReference(value: unknown, path?: string, seen?: WeakSet&lt;object&gt;): void</td><td class="p-3">Throws CircularReferenceError on cycle</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">hasCircularReference()</td><td class="p-3 font-mono text-xs">hasCircularReference(value: unknown): boolean</td><td class="p-3">true if cycle found</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">getSerializationDepth()</td><td class="p-3 font-mono text-xs">getSerializationDepth(value: unknown, currentDepth?: number): number</td><td class="p-3">Max nesting depth</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">assertDepthWithinLimit()</td><td class="p-3 font-mono text-xs">assertDepthWithinLimit(value: unknown, maxDepth: number): void</td><td class="p-3">Throws SerializationDepthError</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">estimateSerializedSize()</td><td class="p-3 font-mono text-xs">estimateSerializedSize(value: unknown, seen?: WeakSet&lt;object&gt;): number</td><td class="p-3">Estimated byte size</td></tr>
-              <tr><td class="p-3 font-mono">assertSizeWithinLimit()</td><td class="p-3 font-mono text-xs">assertSizeWithinLimit(value: unknown, maxSize: number): void</td><td class="p-3">Throws SerializationPayloadTooLargeError</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- ERROR HIERARCHY -->
-      <section id="error-hierarchy" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERROR HIERARCHY</h2>
-        <p class="mb-4">All error classes extend <code>ValidationError</code> which extends <code>BaseError</code> from <code>@zudojs/errors</code>.</p>
-
-        <div class="code-block"><span class="kw">class</span> <span class="tp">ValidationError</span> <span class="kw">extends</span> <span class="tp">BaseError</span> {
-  <span class="kw">readonly</span> validationCode: <span class="tp">ValidationErrorCode</span>;
-  <span class="kw">readonly</span> issues: <span class="kw">readonly</span> <span class="tp">ValidationIssue</span>[];
-  <span class="kw">readonly</span> context?: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;;
-  <span class="kw">readonly</span> timestamp: <span class="tp">number</span>;
-  <span class="kw">readonly</span> fieldErrors: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">string</span>&gt;&gt;;
-  <span class="kw">readonly</span> formattedIssues: <span class="tp">string</span>;
-}
-
-<span class="kw">class</span> <span class="tp">RequiredValidationError</span> <span class="kw">extends</span> <span class="tp">ValidationError</span> { <span class="cm">/* code: REQUIRED */</span> }
-<span class="kw">class</span> <span class="tp">InvalidTypeValidationError</span> <span class="kw">extends</span> <span class="tp">ValidationError</span> { <span class="cm">/* code: INVALID_TYPE */</span> }
-<span class="kw">class</span> <span class="tp">InvalidFormatValidationError</span> <span class="kw">extends</span> <span class="tp">ValidationError</span> { <span class="cm">/* code: INVALID_FORMAT */</span> }
-<span class="kw">class</span> <span class="tp">InvalidValueValidationError</span> <span class="kw">extends</span> <span class="tp">ValidationError</span> { <span class="cm">/* code: INVALID_VALUE */</span> }
-<span class="kw">class</span> <span class="tp">ConstraintValidationError</span> <span class="kw">extends</span> <span class="tp">ValidationError</span> { <span class="cm">/* code: CONSTRAINT_FAILED */</span> }
-<span class="kw">class</span> <span class="tp">SchemaValidationError</span> <span class="kw">extends</span> <span class="tp">ValidationError</span> { <span class="cm">/* code: SCHEMA_FAILED */</span> }</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">ValidationErrorCode Enum</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Member</th>
-                <th class="p-3 text-left">Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">INVALID_INPUT</td><td class="p-3">VALIDATION_INVALID_INPUT</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">REQUIRED</td><td class="p-3">VALIDATION_REQUIRED</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">INVALID_TYPE</td><td class="p-3">VALIDATION_INVALID_TYPE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">INVALID_FORMAT</td><td class="p-3">VALIDATION_INVALID_FORMAT</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">INVALID_VALUE</td><td class="p-3">VALIDATION_INVALID_VALUE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">CONSTRAINT_FAILED</td><td class="p-3">VALIDATION_CONSTRAINT_FAILED</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SCHEMA_FAILED</td><td class="p-3">VALIDATION_SCHEMA_FAILED</td></tr>
-              <tr><td class="p-3 font-mono">UNKNOWN</td><td class="p-3">VALIDATION_UNKNOWN</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Helper Functions</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">toValidationError()</td><td class="p-3 font-mono text-xs">toValidationError(error: unknown, fallbackMessage?: string, options?: ValidationErrorOptions): ValidationError</td><td class="p-3">Converts unknown error</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">isValidationError()</td><td class="p-3 font-mono text-xs">isValidationError(error: unknown): error is ValidationError</td><td class="p-3">Type guard</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">hasValidationErrorCode()</td><td class="p-3 font-mono text-xs">hasValidationErrorCode(error: unknown, code: ValidationErrorCode): boolean</td><td class="p-3">Check specific code</td></tr>
-              <tr><td class="p-3 font-mono">createValidationError()</td><td class="p-3 font-mono text-xs">createValidationError(issues: readonly ValidationIssue[], options?: ValidationErrorOptions): ValidationError</td><td class="p-3">Create from issues</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- FULL INTEGRATION EXAMPLE -->
-      <section id="full-example" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">FULL INTEGRATION EXAMPLE</h2>
-        <p class="mb-4">A complete example showing schemas, constraints, composition, parsing, normalization, transformation, and registry usage.</p>
-
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">z</span>,
-  <span class="fn">validate</span>,
-  <span class="fn">parse</span>,
-  <span class="fn">isValid</span>,
-  <span class="fn">createValidator</span>,
-  <span class="fn">createParser</span>,
-  <span class="fn">createValidationRegistry</span>,
-  <span class="fn">createValidationFactory</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
-
-<span class="kw">import</span> {
-  <span class="fn">email</span>,
-  <span class="fn">uuid</span>,
-  <span class="fn">nonEmptyString</span>,
-  <span class="fn">minLength</span>,
-  <span class="fn">maxLength</span>,
-  <span class="fn">integer</span>,
-  <span class="fn">positive</span>,
-  <span class="fn">between</span>,
-  <span class="fn">oneOf</span>,
-  <span class="fn">minItems</span>,
-  <span class="fn">createConstraint</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
-
-<span class="kw">import</span> {
-  <span class="fn">normalizeEmail</span>,
-  <span class="fn">normalizeWhitespace</span>,
-  <span class="fn">composeNormalizers</span>,
-  <span class="fn">createNormalizer</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
-
-<span class="kw">import</span> {
-  <span class="fn">createValidationTransformer</span>,
-  <span class="fn">validateAndTransform</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
-
-<span class="cm">// 1. Define a Zod schema</span>
-<span class="kw">const</span> <span class="tp">CreateUserSchema</span> = z.<span class="fn">object</span>({
-  name: z.<span class="fn">string</span>().<span class="fn">min</span>(<span class="num">1</span>),
-  email: z.<span class="fn">string</span>().<span class="fn">email</span>(),
-  role: z.<span class="fn">enum</span>([<span class="str">"admin"</span>, <span class="str">"editor"</span>, <span class="str">"viewer"</span>]),
-  age: z.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">positive</span>().<span class="fn">optional</span>(),
-  tags: z.<span class="fn">array</span>(z.<span class="fn">string</span>()).<span class="fn">min</span>(<span class="num">1</span>),
+<span class="cmt">// A custom rule. The guard rejects wrong-typed input instead of crashing.</span>
+<span class="kw">const</span> adult = <span class="fn">createConstraint</span>&lt;<span class="tp">number</span>&gt;((value) =&gt; value &gt;= <span class="num">18</span>, {
+  name: <span class="str">"adult"</span>,
+  code: <span class="str">"too_young"</span>,
+  message: <span class="str">"You must be at least 18."</span>,
+  guard: (value): value <span class="kw">is</span> <span class="tp">number</span> =&gt; <span class="kw">typeof</span> value === <span class="str">"number"</span>,
 });
 
-<span class="cm">// 2. Validate raw input</span>
-<span class="kw">const</span> result = <span class="fn">validate</span>(<span class="tp">CreateUserSchema</span>, rawData);
-<span class="kw">if</span> (result.success) {
-  console.<span class="fn">log</span>(<span class="str">"Valid user:"</span>, result.data);
-} <span class="kw">else</span> {
-  console.<span class="fn">log</span>(<span class="str">"Errors:"</span>, result.issues);
-}
+console.<span class="fn">log</span>(<span class="fn">checkConstraints</span>([integer, adult], <span class="num">15</span>));
+<span class="cmt">// { success: false, issues: [{ path: [], code: "too_young", message: "You must be at least 18." }] }</span>
 
-<span class="cm">// 3. Use constraints directly</span>
-<span class="kw">import</span> { <span class="fn">checkConstraints</span> } <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
+console.<span class="fn">log</span>(<span class="fn">checkConstraints</span>([integer, adult], <span class="num">21</span>).success); <span class="cmt">// true</span></div>
 
-<span class="kw">const</span> emailResult = <span class="fn">checkConstraints</span>([email, nonEmptyString], <span class="str">"user@example.com"</span>);
+        <p class="mb-3">Built-in constraints. Those written as <code>name(arg)</code> are functions you call; the rest are ready-made values.</p>
+        <table class="doc-table mb-4">
+          <thead><tr><th>Group</th><th>Constraints</th></tr></thead>
+          <tbody>
+            <tr><td>Any value</td><td><code>required</code> (not null or undefined)</td></tr>
+            <tr><td>Strings</td><td><code>nonEmptyString</code>, <code>minLength(n)</code>, <code>maxLength(n)</code>, <code>lengthBetween(min, max)</code>, <code>matches(regex, message?)</code>, <code>email</code>, <code>uuid</code>, <code>httpUrl</code>, <code>ascii</code>, <code>digits</code>, <code>letters</code>, <code>slug</code></td></tr>
+            <tr><td>Numbers</td><td><code>min(n)</code>, <code>max(n)</code>, <code>between(min, max)</code>, <code>finiteNumber</code>, <code>integer</code>, <code>positive</code>, <code>nonNegative</code>, <code>even</code>, <code>odd</code></td></tr>
+            <tr><td>Dates</td><td><code>isoDate</code> (a string such as <code>"2024-02-29"</code>), <code>futureDate</code>, <code>pastDate</code> (both take a <code>Date</code>)</td></tr>
+            <tr><td>Arrays</td><td><code>minItems(n)</code>, <code>maxItems(n)</code>, <code>exactItems(n)</code>, <code>everyItem(constraint)</code>, <code>someItem(constraint)</code></td></tr>
+            <tr><td>Membership</td><td><code>oneOf([...values])</code>, <code>noneOf([...values])</code></td></tr>
+            <tr><td>Combining</td><td><code>combineConstraints(a, b)</code> (all must pass, one issue), <code>not(constraint)</code></td></tr>
+          </tbody>
+        </table>
 
-<span class="cm">// 4. Create reusable validators</span>
-<span class="kw">const</span> validateUser = <span class="fn">createValidator</span>(<span class="tp">CreateUserSchema</span>);
-<span class="kw">const</span> parseUser = <span class="fn">createParser</span>(<span class="tp">CreateUserSchema</span>);
-
-<span class="cm">// 5. Use the factory</span>
-<span class="kw">const</span> factory = <span class="fn">createValidationFactory</span>();
-<span class="kw">const</span> userParser = factory.<span class="fn">parser</span>(<span class="tp">CreateUserSchema</span>);
-<span class="kw">const</span> parsed = userParser.<span class="fn">safeParse</span>(rawData);
-
-<span class="cm">// 6. Register schemas and validate by name</span>
-factory.<span class="fn">registerSchema</span>(<span class="str">"CreateUser"</span>, <span class="tp">CreateUserSchema</span>, <span class="str">"User creation payload"</span>);
-<span class="kw">const</span> registeredResult = factory.<span class="fn">validateRegistered</span>(<span class="str">"CreateUser"</span>, rawData);
-
-<span class="cm">// 7. Create a normalizer</span>
-<span class="kw">const</span> normalizeUserInput = <span class="fn">createNormalizer</span>(
-  <span class="fn">composeNormalizers</span>(normalizeWhitespace, normalizeEmail),
-  { name: <span class="str">"UserInputNormalizer"</span> },
-);
-
-<span class="cm">// 8. Transform after validation</span>
-<span class="kw">const</span> toCreateUserDTO = <span class="fn">createValidationTransformer</span>(
-  (user) =&gt; ({
-    ...user,
-    displayName: user.name.<span class="fn">toUpperCase</span>(),
-    createdAt: <span class="kw">new</span> <span class="tp">Date</span>(),
-  }),
-  { name: <span class="str">"ToCreateUserDTO"</span> },
-);
-
-<span class="kw">const</span> dtoResult = <span class="fn">validateAndTransform</span>(
-  <span class="tp">CreateUserSchema</span>,
-  rawData,
-  (user) =&gt; ({
-    ...user,
-    displayName: user.name.<span class="fn">toUpperCase</span>(),
-    createdAt: <span class="kw">new</span> <span class="tp">Date</span>(),
-  }),
-);
-
-<span class="cm">// 9. Build a custom constraint</span>
-<span class="kw">const</span> <span class="tp">minAge</span> = <span class="fn">createConstraint</span>(
-  (value) =&gt; value &gt;= <span class="num">18</span>,
-  {
-    name: <span class="str">"min_age"</span>,
-    code: <span class="str">"invalid_age"</span>,
-    message: <span class="str">"Must be at least 18 years old."</span>,
-  },
-);
-
-<span class="cm">// 10. Use registry directly</span>
-<span class="kw">const</span> registry = <span class="fn">createValidationRegistry</span>();
-registry.<span class="fn">registerSchema</span>(<span class="str">"CreateUser"</span>, <span class="tp">CreateUserSchema</span>);
-registry.<span class="fn">registerConstraints</span>(<span class="str">"AgeCheck"</span>, [positive, integer, <span class="tp">minAge</span>]);
-
-<span class="kw">const</span> lookupResult = registry.<span class="fn">validate</span>(<span class="str">"CreateUser"</span>, rawData);</div>
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Common mistake:</strong> a constraint issue has an empty <code>path</code> because a constraint only sees one value. When you check a field of an object, pass the path yourself: <code>checkConstraints([email], input.email, ["email"])</code>. Otherwise <code>toFieldErrors</code> has nothing to group by.
+        </div>
       </section>
 
+      <!-- PIPELINES -->
+      <section id="pipelines" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">PIPELINES (COMPOSER)</h2>
+        <p class="mb-4 leading-relaxed">
+          A <em>pipeline</em> runs several checks in order on one value. Each check is a <em>step</em>: a function that takes a value and returns a <code>ValidationResult</code>. You turn a schema into a step with <code>schemaStep()</code> and constraints into a step with <code>constraintsStep()</code>, then hand the list to <code>createValidationComposer()</code>.
+        </p>
+        <p class="mb-3">This pipeline first checks that the value is a number, then that it is a positive integer. It stops at the first failing step, so the constraints never see a non-number.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  z, <span class="fn">createValidationComposer</span>, <span class="fn">schemaStep</span>, <span class="fn">constraintsStep</span>, <span class="fn">integer</span>, <span class="fn">positive</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
+
+<span class="kw">const</span> quantity = <span class="fn">createValidationComposer</span>&lt;<span class="tp">number</span>&gt;(
+  [<span class="fn">schemaStep</span>(z.<span class="fn">number</span>()), <span class="fn">constraintsStep</span>([integer, positive])],
+  { name: <span class="str">"Quantity"</span> },
+);
+
+console.<span class="fn">log</span>(quantity.<span class="fn">validate</span>(<span class="num">3</span>));
+<span class="cmt">// { success: true, data: 3, issues: [] }</span>
+
+console.<span class="fn">log</span>(quantity.<span class="fn">validate</span>(-<span class="num">2</span>));
+<span class="cmt">// { success: false, issues: [{ path: [], code: "invalid_positive", message: "Value must be greater than zero." }] }</span>
+
+<span class="kw">try</span> {
+  quantity.<span class="fn">assert</span>(-<span class="num">2</span>); <span class="cmt">// same check, throwing style</span>
+} <span class="kw">catch</span> (error) {
+  console.<span class="fn">log</span>((error <span class="kw">as</span> <span class="tp">Error</span>).name, (error <span class="kw">as</span> <span class="tp">Error</span>).message);
+  <span class="cmt">// ConstraintValidationError Quantity validation failed.</span>
+}</div>
+
+        <p class="mb-3 text-sm">Steps are plain functions, so you can shape them before putting them in a pipeline:</p>
+        <ul class="space-y-1 mb-4 text-sm">
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <code>all(a, b)</code> runs every step and reports all issues; <code>any(a, b)</code> passes if one passes; <code>first(a, b)</code> like <code>any</code> but reports only the last failure; <code>negate(a)</code> flips it.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <code>optional(a)</code>, <code>nullable(a)</code>, <code>optionalNullable(a)</code> let <code>undefined</code> / <code>null</code> through without running <code>a</code>.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <code>when(predicate, a)</code> and <code>unless(predicate, a)</code> run <code>a</code> conditionally; <code>tap(a)</code> runs <code>a</code> but keeps the original value; <code>mapValidated(a, fn)</code> changes the value after <code>a</code> passes; <code>append(composer, step)</code> adds a step to an existing pipeline.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <code>composeSchemas(s1, s2)</code> pipes Zod schemas of the same type into one schema.</li>
+        </ul>
+
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Common mistake:</strong> passing <code>{ stopOnFirstError: false }</code> to a pipeline whose later steps depend on earlier ones. A failed schema step returns the raw value, and the constraint step then runs on the wrong type. Only turn it off for independent checks where collecting every issue is the point.
+        </div>
+      </section>
+
+      <!-- PARSERS -->
+      <section id="parsers" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">PARSERS</h2>
+        <p class="mb-4 leading-relaxed">
+          A <em>parser</em> is a schema bundled with the three ways to use it: <code>parse()</code> (throws), <code>safeParse()</code> (returns a result) and <code>isValid()</code> (returns a boolean). Create one when the same schema is used in several places so callers do not need to import the schema.
+        </p>
+        <p class="mb-3">This example builds a parser, then uses the fallback helpers <code>parseOr</code> and <code>parseMany</code> on the same schema.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { z, <span class="fn">createValidationParser</span>, <span class="fn">parseOr</span>, <span class="fn">parseMany</span> } <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
+
+<span class="kw">const</span> <span class="tp">SignUp</span> = z.<span class="fn">object</span>({ name: z.<span class="fn">string</span>().<span class="fn">min</span>(<span class="num">1</span>), age: z.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">positive</span>() });
+<span class="kw">const</span> signUp = <span class="fn">createValidationParser</span>(<span class="tp">SignUp</span>, { name: <span class="str">"SignUp"</span> });
+
+console.<span class="fn">log</span>(signUp.<span class="fn">isValid</span>({ name: <span class="str">"Ada"</span>, age: <span class="num">36</span> }));  <span class="cmt">// true</span>
+console.<span class="fn">log</span>(signUp.<span class="fn">isValid</span>({}));                         <span class="cmt">// false</span>
+console.<span class="fn">log</span>(signUp.<span class="fn">safeParse</span>({}).success);              <span class="cmt">// false</span>
+<span class="kw">const</span> user = signUp.<span class="fn">parse</span>({ name: <span class="str">"Ada"</span>, age: <span class="num">36</span> });    <span class="cmt">// throws SchemaValidationError on bad input</span>
+
+<span class="cmt">// Fall back to a default instead of failing.</span>
+console.<span class="fn">log</span>(<span class="fn">parseOr</span>(z.<span class="fn">number</span>(), <span class="str">"oops"</span>, <span class="num">0</span>));            <span class="cmt">// 0</span>
+
+<span class="cmt">// Validate a list; the index becomes the issue path.</span>
+console.<span class="fn">log</span>(<span class="fn">parseMany</span>(z.<span class="fn">number</span>(), [<span class="num">1</span>, <span class="str">"two"</span>, <span class="num">3</span>]));
+<span class="cmt">// { success: false, issues: [{ path: [1], code: "invalid_type", message: "Invalid input: expected number, received string", expected: "number" }] }</span></div>
+        <p class="text-sm text-black/70">
+          Related helpers: <code>createAsyncValidationParser</code> for schemas with async refinements, <code>parseOrElse(schema, value, fn)</code> to compute the fallback from the error, <code>parseRecord(schema, obj)</code> to validate every value of an object (it rejects <code>__proto__</code> keys), and <code>parseOptional</code> / <code>parseNullable</code> / <code>parseOptionalNullable</code> to let <code>undefined</code> or <code>null</code> pass.
+        </p>
+      </section>
+
+      <!-- NORMALIZE AND TRANSFORM -->
+      <section id="normalize-and-transform" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">NORMALIZE AND TRANSFORM</h2>
+        <p class="mb-4 leading-relaxed">
+          <em>Normalizing</em> means cleaning a value <strong>before</strong> validation so that harmless differences (extra spaces, uppercase domain) do not cause failures. <em>Transforming</em> means converting a value <strong>after</strong> validation into the shape your code wants. Both wrap a plain function and turn any exception it throws into a validation failure instead of a crash.
+        </p>
+        <p class="mb-3">This example cleans an email address, then validates a string and upper-cases it in one call.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  z, <span class="fn">createNormalizer</span>, <span class="fn">composeNormalizers</span>, <span class="fn">normalizeWhitespace</span>, <span class="fn">normalizeEmail</span>, <span class="fn">validateAndTransform</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
+
+<span class="kw">const</span> cleanEmail = <span class="fn">createNormalizer</span>(
+  <span class="fn">composeNormalizers</span>(normalizeWhitespace, normalizeEmail),
+  { name: <span class="str">"EmailNormalizer"</span> },
+);
+console.<span class="fn">log</span>(cleanEmail.<span class="fn">normalize</span>(<span class="str">"  Ada.Lovelace@Example.COM "</span>));
+<span class="cmt">// "Ada.Lovelace@example.com"   (only the domain is lower-cased; the local part is case-sensitive)</span>
+
+<span class="kw">const</span> shout = <span class="fn">validateAndTransform</span>(z.<span class="fn">string</span>(), <span class="str">"hello"</span>, (s) =&gt; s.<span class="fn">toUpperCase</span>());
+console.<span class="fn">log</span>(shout);
+<span class="cmt">// { success: true, data: "HELLO", issues: [] }</span>
+
+console.<span class="fn">log</span>(<span class="fn">validateAndTransform</span>(z.<span class="fn">string</span>(), <span class="num">5</span>, (s) =&gt; s.<span class="fn">toUpperCase</span>()).success);
+<span class="cmt">// false   (the transform never runs on invalid input)</span></div>
+
+        <p class="mb-3 text-sm">Built-in string normalizers: <code>normalizeTrim</code>, <code>normalizeWhitespace</code>, <code>normalizeLowercase</code>, <code>normalizeUppercase</code>, <code>normalizeUnicode</code> (NFC), <code>normalizeUnicodeCompatibility</code> (NFKC), <code>foldCase</code>, <code>normalizeEmail</code>, <code>normalizeUrl</code>, <code>normalizeIdentifier</code>, <code>normalizeQuotes</code>, <code>removeBom</code>, and <code>normalizeArray(values, fn)</code> for lists. A normalizer object also has <code>safeNormalize()</code>, which returns a result instead of throwing.</p>
+        <p class="mb-3 text-sm">Transformer helpers: <code>createValidationTransformer(fn)</code> gives you <code>transform()</code> and <code>safeTransform()</code>; <code>composeTransforms(a, b)</code> chains two; <code>withTransformer(schema, fn)</code> returns a new Zod schema that applies <code>fn</code> to parsed data. Async versions exist for each: <code>createAsyncNormalizer</code>, <code>createAsyncValidationTransformer</code>, <code>validateAndTransformAsync</code>.</p>
+
+        <div class="callout callout-tip">
+          <strong class="text-zudo-green">Tip:</strong> use <code>normalizeIdentifier</code> (not <code>normalizeLowercase</code>) for usernames and keys. It applies NFKC and a case fold, so two spellings that look identical do not become two different accounts.
+        </div>
+      </section>
+
+      <!-- REGISTRY AND FACTORY -->
+      <section id="registry-and-factory" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">REGISTRY AND FACTORY</h2>
+        <p class="mb-4 leading-relaxed">
+          A <em>registry</em> is a named collection of rules. You register a schema or a list of constraints under a string name once, then validate by name anywhere. This is useful when the rule name comes from data, for example a field type in a form definition.
+        </p>
+        <p class="mb-3">This example registers two rules and validates against each by name.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { z, <span class="fn">createValidationRegistry</span>, <span class="fn">integer</span>, <span class="fn">positive</span> } <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
+
+<span class="kw">const</span> registry = <span class="fn">createValidationRegistry</span>();
+registry.<span class="fn">registerSchema</span>(<span class="str">"user"</span>, z.<span class="fn">object</span>({ name: z.<span class="fn">string</span>().<span class="fn">min</span>(<span class="num">1</span>) }), { description: <span class="str">"Sign-up payload"</span> });
+registry.<span class="fn">registerConstraints</span>(<span class="str">"quantity"</span>, [integer, positive]);
+
+console.<span class="fn">log</span>(registry.<span class="fn">names</span>());                              <span class="cmt">// ["user", "quantity"]</span>
+console.<span class="fn">log</span>(registry.<span class="fn">validate</span>(<span class="str">"quantity"</span>, <span class="num">0</span>).success);        <span class="cmt">// false</span>
+console.<span class="fn">log</span>(registry.<span class="fn">validate</span>(<span class="str">"user"</span>, { name: <span class="str">"Ada"</span> }).success); <span class="cmt">// true</span>
+console.<span class="fn">log</span>(registry.<span class="fn">has</span>(<span class="str">"missing"</span>));                        <span class="cmt">// false</span></div>
+
+        <p class="mb-3 text-sm">Registering a name twice throws unless you pass <code>{ overwrite: true }</code>. Other methods: <code>register(rule)</code>, <code>get(name)</code>, <code>require(name)</code> (throws if absent), <code>unregister(name)</code>, <code>entries()</code>, <code>size</code>, <code>clear()</code>, <code>clone()</code>, <code>extend(otherRegistry)</code>, and <code>readonly()</code> which returns a view that can look up and validate but not change anything.</p>
+
+        <p class="mb-3 leading-relaxed">
+          A <code>ValidationFactory</code> is a convenience object that bundles a registry with short methods for everything on this page: <code>factory.parser(schema)</code>, <code>factory.composer(steps)</code>, <code>factory.constraint(fn, options)</code>, <code>factory.validate(schema, value)</code>, <code>factory.registerSchema(name, schema)</code>, <code>factory.validateRegistered(name, value)</code> and so on. Create one with <code>createValidationFactory()</code>.
+        </p>
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out:</strong> there is no global default factory or registry. Create one per application and pass it around. To give a module its own factory that shares the parent's rules, call <code>createScopedValidationFactory(parent)</code>.
+        </div>
+      </section>
+
+      <!-- STRUCTURAL GUARDS -->
+      <section id="structural-guards" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">STRUCTURAL GUARDS</h2>
+        <p class="mb-4 leading-relaxed">
+          A schema checks <em>what</em> a value contains. A structural guard checks whether the value is safe to walk at all. Deeply nested JSON can overflow the call stack, a huge object can exhaust memory, and an object that refers to itself can loop forever in a serializer. Run these guards on raw input before schema validation.
+        </p>
+        <p class="mb-3">Each guard stops the moment its limit is passed, so a hostile payload costs you the limit, not the payload's full size.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  <span class="fn">assertDepthWithinLimit</span>, <span class="fn">assertSizeWithinLimit</span>, <span class="fn">hasCircularReference</span>, <span class="fn">getSerializationDepth</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
+
+<span class="kw">const</span> deep = <span class="tp">JSON</span>.<span class="fn">parse</span>(<span class="str">"["</span>.<span class="fn">repeat</span>(<span class="num">100</span>) + <span class="str">"]"</span>.<span class="fn">repeat</span>(<span class="num">100</span>)); <span class="cmt">// 100 nested arrays</span>
+<span class="kw">try</span> {
+  <span class="fn">assertDepthWithinLimit</span>(deep, <span class="num">32</span>);
+} <span class="kw">catch</span> (error) {
+  console.<span class="fn">log</span>((error <span class="kw">as</span> <span class="tp">Error</span>).message); <span class="cmt">// "Maximum serialization depth exceeded: 33 &gt; 32"</span>
+}
+
+<span class="kw">try</span> {
+  <span class="fn">assertSizeWithinLimit</span>({ big: <span class="str">"x"</span>.<span class="fn">repeat</span>(<span class="num">10_000</span>) }, <span class="num">1_000</span>);
+} <span class="kw">catch</span> (error) {
+  console.<span class="fn">log</span>((error <span class="kw">as</span> <span class="tp">Error</span>).message); <span class="cmt">// "Serialized payload too large: 20011 bytes (max: 1000)"</span>
+}
+
+<span class="kw">const</span> loop: { name: <span class="tp">string</span>; self?: <span class="tp">unknown</span> } = { name: <span class="str">"a"</span> };
+loop.self = loop;
+console.<span class="fn">log</span>(<span class="fn">hasCircularReference</span>(loop));            <span class="cmt">// true</span>
+console.<span class="fn">log</span>(<span class="fn">getSerializationDepth</span>({ a: { b: [<span class="num">1</span>] } })); <span class="cmt">// 3</span></div>
+
+        <table class="doc-table mb-4">
+          <thead><tr><th>Function</th><th>What it does</th><th>Throws</th></tr></thead>
+          <tbody>
+            <tr><td><code>assertDepthWithinLimit(value, maxDepth)</code></td><td>Rejects nesting deeper than <code>maxDepth</code></td><td><code>SerializationDepthError</code> (400)</td></tr>
+            <tr><td><code>assertSizeWithinLimit(value, maxBytes)</code></td><td>Rejects an estimated JSON size above <code>maxBytes</code></td><td><code>SerializationPayloadTooLargeError</code> (413)</td></tr>
+            <tr><td><code>assertNoCircularReference(value, path?, maxDepth?)</code></td><td>Rejects a value that contains itself</td><td><code>CircularReferenceError</code> (500)</td></tr>
+            <tr><td><code>hasCircularReference(value)</code></td><td>Same check, returns <code>boolean</code></td><td>never</td></tr>
+            <tr><td><code>getSerializationDepth(value, limit?)</code></td><td>Measures nesting depth (0 for a primitive), capped at <code>limit</code></td><td>never</td></tr>
+            <tr><td><code>estimateSerializedSize(value, maxBytes?)</code></td><td>Estimates JSON byte size without building the string</td><td>never</td></tr>
+          </tbody>
+        </table>
+        <p class="text-sm text-black/70">The three error classes come from <a href="/docs/packages-errors" class="text-zudo-blue underline">@zudojs/errors</a>. <code>MAX_MEASURABLE_DEPTH</code> (512) is the ceiling the measuring functions use when you give no limit. The same object appearing twice as siblings is a shared reference, not a cycle, and is allowed.</p>
+      </section>
+
+      <!-- API REFERENCE -->
+      <section id="api-reference" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">API REFERENCE</h2>
+        <p class="mb-4 text-sm">Everything below is exported from <code>@zudojs/validation</code>. Constraints, normalizers and pipeline helpers are listed in their sections above.</p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Schema functions</h3>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>z</code></td><td>The Zod namespace, re-exported</td><td>Use this instead of importing <code>zod</code> yourself</td></tr>
+            <tr><td><code>validate(schema, value, options?)</code></td><td>Returns a <code>ValidationResult&lt;T&gt;</code></td><td><code>options.pathPrefix</code> prepends segments to every issue path</td></tr>
+            <tr><td><code>parse(schema, value, options?)</code></td><td>Returns <code>T</code> or throws <code>SchemaValidationError</code></td><td></td></tr>
+            <tr><td><code>validateAsync</code>, <code>parseAsync</code></td><td>Same, for schemas with async refinements</td><td>Return promises</td></tr>
+            <tr><td><code>isValid(schema, value)</code></td><td>Returns <code>boolean</code>; narrows <code>value</code> to <code>T</code></td><td></td></tr>
+            <tr><td><code>assertValid(result)</code></td><td>Throws <code>SchemaValidationError</code> if the result failed</td><td>Narrows <code>result</code> to success afterwards</td></tr>
+            <tr><td><code>createValidator</code>, <code>createParser</code>, <code>createAsyncValidator</code>, <code>createAsyncParser</code></td><td>Bind a schema and return a one-argument function</td><td>Lighter than a parser object</td></tr>
+            <tr><td><code>mapZodIssues(zodError, pathPrefix?)</code></td><td>Converts a raw <code>ZodError</code> to <code>ValidationIssue[]</code></td><td>Only needed if you call Zod directly</td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Result helpers</h3>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>success(data)</code>, <code>failure(issues)</code></td><td>Build a result by hand</td><td><code>failure([])</code> throws; a failure needs one issue</td></tr>
+            <tr><td><code>issue(message, options?)</code></td><td>Build one <code>ValidationIssue</code></td><td><code>options</code>: <code>path</code>, <code>code</code>, <code>expected</code>, <code>received</code></td></tr>
+            <tr><td><code>isValidationSuccess</code>, <code>isValidationFailure</code></td><td>Type guards on a result</td><td></td></tr>
+            <tr><td><code>formatIssues(issues)</code></td><td>One string: <code>"path: message; path: message"</code></td><td></td></tr>
+            <tr><td><code>toFieldErrors(issues)</code></td><td>Map of top-level field to first message</td><td>Issues with an empty path are skipped</td></tr>
+            <tr><td><code>unwrapValidation(result)</code></td><td>Returns <code>data</code> or throws <code>ValidationResultError</code></td><td></td></tr>
+            <tr><td><code>map(result, fn)</code>, <code>combine(results)</code></td><td>Transform success data / merge several results</td><td><code>combine</code> collects every issue</td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Classes and factories</h3>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>createConstraint(fn, options?)</code>, <code>checkConstraint</code>, <code>checkConstraints</code></td><td>Build and run constraints</td><td><code>checkConstraints(list, value, path?)</code> runs all and reports all</td></tr>
+            <tr><td><code>createValidationComposer(steps, options?)</code></td><td>Build a pipeline with <code>validate()</code> and <code>assert()</code></td><td><code>options</code>: <code>name</code>, <code>stopOnFirstError</code> (default <code>true</code>)</td></tr>
+            <tr><td><code>schemaStep</code>, <code>constraintStep</code>, <code>constraintsStep</code></td><td>Turn a schema or constraints into a pipeline step</td><td></td></tr>
+            <tr><td><code>createValidationParser(schema, options?)</code></td><td>Object with <code>parse</code>, <code>safeParse</code>, <code>isValid</code></td><td><code>createAsyncValidationParser</code> for async</td></tr>
+            <tr><td><code>createNormalizer(fn, options?)</code></td><td>Object with <code>normalize</code>, <code>safeNormalize</code></td><td><code>options</code>: <code>name</code>, <code>errorMessage</code></td></tr>
+            <tr><td><code>createValidationTransformer(fn, options?)</code></td><td>Object with <code>transform</code>, <code>safeTransform</code></td><td><code>options</code>: <code>name</code>, <code>transformErrorMessage</code></td></tr>
+            <tr><td><code>ValidationRegistry</code>, <code>createValidationRegistry()</code>, <code>createRegistryFromRules(rules)</code></td><td>Named rule storage</td><td><code>ReadonlyValidationRegistry</code> via <code>.readonly()</code></td></tr>
+            <tr><td><code>ValidationFactory</code>, <code>createValidationFactory(options?)</code>, <code>createScopedValidationFactory(parent)</code></td><td>One object that builds everything above and owns a registry</td><td><code>options.registry</code> to supply your own</td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Errors and types</h3>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>ValidationError</code> and subclasses</td><td>See <a href="#handling-failures" class="text-zudo-blue underline">Handling failures</a></td><td>All have <code>issues</code>, <code>fieldErrors</code>, <code>formattedIssues</code>, <code>validationCode</code></td></tr>
+            <tr><td><code>ValidationErrorCode</code></td><td>Enum of <code>validationCode</code> values</td><td><code>INVALID_INPUT</code>, <code>REQUIRED</code>, <code>INVALID_TYPE</code>, <code>INVALID_FORMAT</code>, <code>INVALID_VALUE</code>, <code>CONSTRAINT_FAILED</code>, <code>SCHEMA_FAILED</code>, <code>UNKNOWN</code></td></tr>
+            <tr><td><code>isValidationError(e)</code>, <code>hasValidationErrorCode(e, code)</code>, <code>toValidationError(e)</code>, <code>createValidationError(issues)</code></td><td>Inspect or build validation errors</td><td><code>toValidationError</code> wraps any thrown value</td></tr>
+            <tr><td><code>ValidationResult</code>, <code>ValidationSuccess</code>, <code>ValidationFailure</code>, <code>ValidationIssue</code></td><td>Result types</td><td></td></tr>
+            <tr><td><code>ValidationSchema&lt;T&gt;</code>, <code>ParseOptions</code></td><td>Alias for <code>ZodType&lt;T&gt;</code>; options for <code>validate</code>/<code>parse</code></td><td></td></tr>
+            <tr><td><code>ValidationConstraint</code>, <code>ConstraintOptions</code>, <code>ValidationStep</code>, <code>ValidationComposer</code>, <code>ValidationParser</code>, <code>ValidationNormalizer</code>, <code>ValidationTransformer</code>, <code>ValidationRule</code></td><td>Types of the objects each factory returns</td><td></td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- COMMON MISTAKES -->
+      <section id="common-mistakes" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMON MISTAKES</h2>
+        <ul class="space-y-3">
+          <li class="border-l-4 border-zudo-red pl-4"><strong>Reading <code>result.data</code> without checking <code>success</code></strong> → TypeScript types <code>data</code> as <code>unknown</code>, and on a failure it is <code>undefined</code> at runtime → Always branch on <code>if (result.success)</code> first, or use <code>parse()</code> when you want a throw.</li>
+          <li class="border-l-4 border-zudo-red pl-4"><strong>Passing a <code>@zudojs/schema</code> schema to <code>validate()</code></strong> → a type error, and a crash on invalid input because <code>validate</code> expects a Zod schema → Use <code>z.object(...)</code> from this package, or call <code>.safeParse()</code> on the @zudojs/schema schema directly.</li>
+          <li class="border-l-4 border-zudo-red pl-4"><strong>Writing a custom constraint without a <code>guard</code></strong> → wrong-typed input reaches your function; a throw inside it is caught and reported as a plain failure, but a non-throwing check such as <code>value &gt;= 18</code> silently compares a string → Pass <code>guard</code> in <code>createConstraint</code> options so non-numbers fail cleanly.</li>
+          <li class="border-l-4 border-zudo-red pl-4"><strong>Expecting the rejected value inside an issue</strong> → constraint issues never include the value, on purpose: errors are exposed with a 400 and would echo passwords and tokens → Log the value yourself where it is safe to do so.</li>
+          <li class="border-l-4 border-zudo-red pl-4"><strong>Validating first, guarding second</strong> → a 20,000-level payload crashes the process before the schema runs → Call <code>assertDepthWithinLimit</code> and <code>assertSizeWithinLimit</code> on the raw body before <code>validate()</code>.</li>
+          <li class="border-l-4 border-zudo-red pl-4"><strong>Sharing one registry across modules and calling <code>clear()</code></strong> → another module's rules vanish silently → Give each module <code>createScopedValidationFactory(parent)</code> and never clear a shared registry.</li>
+        </ul>
+      </section>
+
+      <!-- RELATED -->
+      <section id="related" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATED PACKAGES</h2>
+        <ul class="space-y-2 text-sm">
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <a href="/docs/packages-schema" class="text-zudo-blue underline">@zudojs/schema</a> — Zudo's own schema builder, when you do not want a Zod dependency.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <a href="/docs/packages-errors" class="text-zudo-blue underline">@zudojs/errors</a> — the <code>BaseError</code> every validation error extends, plus the depth, size and circular-reference errors.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <a href="/docs/packages-http" class="text-zudo-blue underline">@zudojs/http</a> — where request bodies come from; validate them at the handler boundary.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <a href="/docs/packages-config" class="text-zudo-blue underline">@zudojs/config</a> — configuration loading, another place a schema check pays off at startup.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <a href="/docs/packages-serialization" class="text-zudo-blue underline">@zudojs/serialization</a> — converting values to and from JSON once they are known to be safe.</li>
+        </ul>
+      </section>
+
+      <!-- EXPORT INDEX -->
+      <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/validation</code> exports from its package root at v1.0.0 &mdash; <strong>179</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <details class="border-2 border-black p-5 bg-white">
+          <summary class="font-bold cursor-pointer select-none">Show all 179 exports</summary>
+          <div class="mt-5">
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Classes <span class="text-black/40 font-normal">(12)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConstraintValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidFormatValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidTypeValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidValueValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ReadonlyValidationRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RequiredValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TraversalLimitError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationFactory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationResultError</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Functions <span class="text-black/40 font-normal">(109)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">all</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">any</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">append</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertDepthWithinLimit</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertNoCircularReference</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertSizeWithinLimit</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertValid</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">between</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">combine</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">composeManyTransforms</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">composeNormalizers</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">composeSchemas</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">composeTransforms</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">conditionalNormalizer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">constraintStep</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">constraintsStep</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createAsyncNormalizer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createAsyncParser</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createAsyncValidationParser</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createAsyncValidationTransformer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createAsyncValidator</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createNormalizer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createParser</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRegistryFromRules</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createScopedValidationFactory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createValidationComposer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createValidationFactory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createValidationParser</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createValidationRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createValidationTransformer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createValidator</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">estimateSerializedSize</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">everyItem</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">exactItems</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">failure</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">first</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">foldCase</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">formatIssues</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getSerializationDepth</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasCircularReference</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasValidationErrorCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isValid</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isValidationFailure</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isValidationSuccess</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">issue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">lengthBetween</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">map</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">mapValidated</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">mapZodIssues</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">matches</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">max</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">maxItems</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">maxLength</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">min</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">minItems</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">minLength</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">negate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">noneOf</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeArray</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeArrayAsync</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeEmail</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeIdentifier</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeLowercase</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeNullableString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeOptionalNullableString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeOptionalString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeQuotes</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeTrim</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeUnicode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeUnicodeCompatibility</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeUppercase</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeUrl</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeWhitespace</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">nullable</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">oneOf</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">optional</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">optionalNullable</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parse</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseAsync</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseMany</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseManyAsync</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseNullable</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseOptional</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseOptionalNullable</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseOr</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseOrElse</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseRecord</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">removeBom</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">schemaStep</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">someItem</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">success</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">tap</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">tapValidated</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toFieldErrors</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">transformArray</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">transformArrayAsync</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">traverse</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">unless</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">unwrapSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">unwrapValidation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateAndTransform</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateAndTransformAsync</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateAsync</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">when</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withTransformer</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Interfaces <span class="text-black/40 font-normal">(21)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AsyncValidationNormalizer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AsyncValidationParser</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AsyncValidationTransformer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">NormalizerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ParseOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ParserOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransformerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TraversalReport</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TraversalVisitor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationComposer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationComposerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationFactoryOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationFailure</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationIssue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationNormalizer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationParser</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationRule</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationRuleOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationSuccess</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationTransformer</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Type aliases <span class="text-black/40 font-normal">(8)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AsyncNormalizer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AsyncValidationTransform</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Normalizer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TraversalHalt</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationStep</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationTransform</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Enums <span class="text-black/40 font-normal">(1)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationErrorCode</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Constants <span class="text-black/40 font-normal">(18)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_MEASURABLE_DEPTH</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ascii</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">digits</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">email</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">even</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">finiteNumber</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">futureDate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">httpUrl</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">integer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isoDate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">letters</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">nonEmptyString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">nonNegative</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">odd</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">pastDate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">positive</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">slug</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">uuid</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Re-exported <span class="text-black/40 font-normal">(10)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConstraintOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationConstraint</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertNonNegativeInteger</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">checkConstraint</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">checkConstraints</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">combineConstraints</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConstraint</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">not</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">required</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">z</code></div>
+          </div>
+          </div>
+        </details>
+      </section>
     </main>
 
     <aside class="doc-toc" aria-label="On this page">
       <div class="text-xs font-bold uppercase tracking-wider mb-4 text-black/40">On This Page</div>
+      <a href="#overview" class="toc-link">Overview</a>
+      <a href="#validation-vs-schema" class="toc-link">Validation vs @zudojs/schema</a>
       <a href="#installation" class="toc-link">Installation</a>
-      <a href="#what-it-does" class="toc-link">What It Does</a>
-      <a href="#architecture-position" class="toc-link">Where It Sits</a>
-      <a href="#dependencies" class="toc-link">Dependencies</a>
-      <a href="#result-types" class="toc-link">Result Types</a>
-      <a href="#result-helpers" class="toc-link">Result Helpers</a>
-      <a href="#schema" class="toc-link">Schema</a>
+      <a href="#quick-start" class="toc-link">Quick Start</a>
+      <a href="#reading-a-result" class="toc-link">Reading a Result</a>
+      <a href="#handling-failures" class="toc-link">Handling Failures</a>
       <a href="#constraints" class="toc-link">Constraints</a>
-      <a href="#string-constraints" class="toc-link">String Constraints</a>
-      <a href="#number-constraints" class="toc-link">Number Constraints</a>
-      <a href="#collection-constraints" class="toc-link">Collection Constraints</a>
-      <a href="#date-constraints" class="toc-link">Date Constraints</a>
-      <a href="#array-constraints" class="toc-link">Array Constraints</a>
-      <a href="#composer" class="toc-link">Composer</a>
-      <a href="#parser" class="toc-link">Parser</a>
-      <a href="#normalizer" class="toc-link">Normalizer</a>
-      <a href="#transformer" class="toc-link">Transformer</a>
-      <a href="#registry" class="toc-link">Registry</a>
-      <a href="#factory" class="toc-link">Factory</a>
-      <a href="#circular-depth-size" class="toc-link">Circular / Depth / Size</a>
-      <a href="#error-hierarchy" class="toc-link">Error Hierarchy</a>
-      <a href="#full-example" class="toc-link">Full Example</a>
+      <a href="#pipelines" class="toc-link">Pipelines (Composer)</a>
+      <a href="#parsers" class="toc-link">Parsers</a>
+      <a href="#normalize-and-transform" class="toc-link">Normalize and Transform</a>
+      <a href="#registry-and-factory" class="toc-link">Registry and Factory</a>
+      <a href="#structural-guards" class="toc-link">Structural Guards</a>
+      <a href="#api-reference" class="toc-link">API Reference</a>
+      <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
+      <a href="#related" class="toc-link">Related Packages</a>
+          <a href="#export-index" class="toc-link">Complete Export Index</a>
     </aside>
 
   </div>
@@ -1271,5 +669,6 @@ registry.<span class="fn">registerConstraints</span>(<span class="str">"AgeCheck
   <script src="/js/docs.js"></script>
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 </body>
 </html>

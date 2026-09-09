@@ -27,6 +27,8 @@ tailwind.config = {
         'zudo-code-mauve': '#CBA6F7',
         'zudo-code-text': '#CDD6F4',
         'zudo-code-muted': '#6C7086',
+        'zudo-code-comment': '#6C7086',
+        'zudo-code-peach': '#FAB387',
       },
       borderWidth: {
         '3': '3px',

@@ -2,11 +2,7 @@
  * Logger entry creation from input.
  */
 
-import type {
-  LogMetadata,
-  LoggerEntry,
-  LoggerEntryInput,
-} from "./loggerEntry.type.js";
+import type { LoggerEntry, LoggerEntryInput } from "./loggerEntry.type.js";
 
 import { createLoggerEntryId } from "./loggerEntry.core.js";
 

@@ -2,8 +2,6 @@
  * Logger context creation and manipulation.
  */
 
-import type { LogMetadata } from "../loggerEntry/loggerEntry.type.js";
-
 import type {
   LoggerContext,
   LoggerContextData,

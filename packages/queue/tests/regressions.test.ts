@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { InMemoryQueue } from "../src/inMemoryQueue/inMemoryQueue.core.js";
 import { createQueueName } from "../src/jobTypes/jobTypes.type.js";
 import { createWorker } from "../src/worker/worker.core.js";

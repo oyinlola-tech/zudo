@@ -12,6 +12,10 @@ export interface SignalHandlerOptions {
   readonly handler: () => void;
 }
 
+/** Default signal configuration for graceful shutdown. */
+export const DEFAULT_SHUTDOWN_SIGNALS: readonly NodeJS.Signals[] =
+  Object.freeze(["SIGINT", "SIGTERM"]);
+
 /**
  * Installs process signal handlers that trigger lifecycle shutdown.
  * Returns a cleanup function to remove the handlers.
@@ -19,7 +23,10 @@ export interface SignalHandlerOptions {
 export function installSignalHandlers(
   options: SignalHandlerOptions,
 ): () => void {
-  const signals = options.signals ?? ["SIGINT", "SIGTERM"];
+  // DEFAULT_SHUTDOWN_SIGNALS was exported as the documented default
+  // while this function hard-coded its own copy of the same list, so
+  // changing the constant had no effect on the actual default.
+  const signals = options.signals ?? DEFAULT_SHUTDOWN_SIGNALS;
   const handler = options.handler;
 
   const installed: Array<[NodeJS.Signals, () => void]> = [];
@@ -38,7 +45,3 @@ export function installSignalHandlers(
     }
   };
 }
-
-/** Default signal configuration for graceful shutdown. */
-export const DEFAULT_SHUTDOWN_SIGNALS: readonly NodeJS.Signals[] =
-  Object.freeze(["SIGINT", "SIGTERM"]);

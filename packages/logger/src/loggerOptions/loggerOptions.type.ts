@@ -1,7 +1,8 @@
-import type { LoggerLevel } from "../loggerLevel/loggerLevel.type.js";
+import { LoggerLevel } from "../loggerLevel/loggerLevel.type.js";
 import type { LoggerContextData } from "../loggerContext/loggerContext.core.js";
 import type { LoggerFormatterLike } from "../loggerFormatter/loggerFormatter.type.js";
 import type { LoggerTransportLike } from "../loggerTransport/loggerTransport.type.js";
+import type { LoggerRedactionOptions } from "../loggerEntry/loggerEntryHelpers/loggerEntryHelpers.sanitize.js";
 
 /** Options used to configure a Zudojs logger. */
 export interface LoggerOptions {
@@ -17,6 +18,16 @@ export interface LoggerOptions {
   readonly transportTimeout?: number;
   readonly inheritContext?: boolean;
   readonly mutable?: boolean;
+
+  /**
+   * Secret redaction for metadata and context.
+   *
+   * Redaction is ON by default: fields whose NAME looks like a secret
+   * (password, token, api key, credential, authorization, cookie) are
+   * replaced with "[REDACTED]" before an entry reaches a formatter.
+   * Pass `{ enabled: false }` to opt out.
+   */
+  readonly redact?: LoggerRedactionOptions;
 }
 
 /** Options used when creating a child logger. */
@@ -57,6 +68,7 @@ export interface LoggerConfiguration {
   readonly transportTimeout: number;
   readonly inheritContext: boolean;
   readonly mutable: boolean;
+  readonly redact: LoggerRedactionOptions;
 }
 
 /** Default logger configuration values. */
@@ -112,7 +124,7 @@ export function resolveLoggerOptions(
 
   return Object.freeze({
     name: options.name ?? "zudojs",
-    level: options.level ?? 3,
+    level: options.level ?? LoggerLevel.INFO,
     environment: options.environment,
     metadata: Object.freeze({ ...(options.metadata ?? {}) }),
     formatter: options.formatter ?? "text",
@@ -127,6 +139,7 @@ export function resolveLoggerOptions(
     inheritContext:
       options.inheritContext ?? DEFAULT_LOGGER_OPTIONS.inheritContext,
     mutable: options.mutable ?? DEFAULT_LOGGER_OPTIONS.mutable,
+    redact: Object.freeze({ ...(options.redact ?? {}) }),
   });
 }
 
@@ -161,5 +174,6 @@ export function createChildLoggerOptions(
     transportTimeout: parent.transportTimeout,
     inheritContext: parent.inheritContext,
     mutable: parent.mutable,
+    redact: parent.redact,
   };
 }

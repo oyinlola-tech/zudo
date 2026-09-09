@@ -16,6 +16,5 @@ export {
   TenantAccessDeniedError,
   TenantTrustLevelError,
   TenantAlreadyExistsError,
-  TenantProvisioningError,
   TenantIsolationError,
 } from "./tenancyError.types.js";

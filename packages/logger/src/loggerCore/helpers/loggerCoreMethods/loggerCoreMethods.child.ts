@@ -39,5 +39,7 @@ export function withContextLogger(
 
   const child = childLogger(ctx);
 
-  return new ContextLogger(child, context);
+  // The child shares the parent's context storage, so the wrapper must
+  // scope THAT storage for the context to reach created entries.
+  return new ContextLogger(child, context, ctx.contextStorage);
 }

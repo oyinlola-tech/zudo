@@ -6,7 +6,10 @@
 
 export { createEntry } from "./loggerCoreMethods.entry.js";
 
-export { dispatchEntry } from "./loggerCoreMethods.dispatch.js";
+export {
+  dispatchEntry,
+  dispatchEntrySync,
+} from "./loggerCoreMethods.dispatch.js";
 
 export { logAtLevel } from "./loggerCoreMethods.level.js";
 

@@ -51,6 +51,46 @@ const DEFAULT_MAX_DEPTH = 8;
 export const CIRCULAR_MARKER = "[CIRCULAR]";
 export const MAX_DEPTH_MARKER = "[MAX_DEPTH]";
 
+/**
+ * Splits a field name into its lowercase words.
+ *
+ * `x-api-key`, `api_key` and `apiKey` all reduce to `["api", "key"]`, and a
+ * digit run is its own word so `token2` yields `["token", "2"]`.
+ */
+function words(key: string): readonly string[] {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([a-zA-Z])([0-9])/g, "$1 $2")
+    .replace(/([0-9])([a-zA-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/**
+ * Every run of consecutive words in `key`, joined.
+ *
+ * Matching on these rather than on a raw substring is what keeps
+ * `shippingAddress` out of the `pin` rule and `authorId` out of the `auth`
+ * rule, while still catching `userPassword`, `x-api-key` and `accessToken`.
+ * A plain `normalized.includes(field)` test redacts every one of those — a
+ * silent, permanent loss of legitimate log data that looks exactly like the
+ * field never being logged.
+ */
+function wordJoins(key: string): readonly string[] {
+  const parts = words(key);
+  const joins: string[] = [];
+  for (let start = 0; start < parts.length; start++) {
+    let joined = "";
+    for (let end = start; end < parts.length; end++) {
+      joined += parts[end] ?? "";
+      joins.push(joined);
+    }
+  }
+  return joins;
+}
+
 /** A field matcher compiled once from a {@link RedactionConfig}. */
 interface CompiledRedaction {
   readonly isSensitive: (key: string) => boolean;
@@ -67,15 +107,23 @@ function compile(config?: RedactionConfig): CompiledRedaction {
   const matchMode = config?.matchMode ?? "contains";
   const exact = new Set(fields);
 
+  const normalizedFields = new Set(
+    fields.map((field) => field.replace(/[^a-z0-9]/g, "")).filter(Boolean),
+  );
+
   const isSensitive = (key: string): boolean => {
     const lower = key.toLowerCase();
     if (exact.has(lower)) return true;
     if (matchMode === "contains") {
-      // Normalize separators so `x-api-key`, `api_key` and `apiKey` all
-      // reduce to the same haystack.
-      const normalized = lower.replace(/[^a-z0-9]/g, "");
-      for (const field of fields) {
-        if (normalized.includes(field.replace(/[^a-z0-9]/g, ""))) return true;
+      for (const candidate of wordJoins(key)) {
+        if (normalizedFields.has(candidate)) return true;
+        // Tolerate a plural: `passwords` is the `password` field.
+        if (
+          candidate.endsWith("s") &&
+          normalizedFields.has(candidate.slice(0, -1))
+        ) {
+          return true;
+        }
       }
     }
     for (const pattern of patterns) {

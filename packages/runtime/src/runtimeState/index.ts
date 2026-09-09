@@ -20,12 +20,9 @@ export {
 export type {
   RuntimeState,
   RuntimeFailureState,
-  RuntimeStateFull,
   RuntimeId,
   RuntimeStatus,
   RuntimeShutdownFailure,
-  RuntimeStateTransition,
-  RuntimeStateTransitions,
   RuntimeHealthState,
   RuntimeHealth,
   RuntimeHealthCheck,

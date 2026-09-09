@@ -7,7 +7,10 @@
  */
 
 import type { FeatureFlag } from "../featureFlagTypes/featureFlag.interface.js";
-import type { FeatureFlagProvider } from "../featureFlagTypes/featureFlagProvider.js";
+import type {
+  FeatureFlagProvider,
+  RefreshableFeatureFlagProvider,
+} from "../featureFlagTypes/featureFlagProvider.js";
 
 /** Options for the cached provider. */
 export interface CachedProviderOptions {
@@ -25,12 +28,12 @@ interface CacheEntry {
  *
  * @param inner - The upstream provider to cache.
  * @param options - Caching options.
- * @returns A FeatureFlagProvider with in-memory TTL caching.
+ * @returns A provider with in-memory TTL caching.
  */
 export function createCachedProvider(
   inner: FeatureFlagProvider,
   options: CachedProviderOptions = {},
-): FeatureFlagProvider {
+): RefreshableFeatureFlagProvider {
   const ttl = options.ttl ?? 30_000;
   const flagCache = new Map<string, CacheEntry>();
   let listCache:

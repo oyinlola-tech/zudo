@@ -3,57 +3,12 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// @ts-expect-error - plain JS module, single source of truth for tiers
+import { TIERS, packageNameToKey } from "../../scripts/package-tiers.js";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packagesDir = join(__dirname, "../../packages");
 
-const TIERS = {
-  errors: 0,
-  types: 0,
-  constants: 1,
-  container: 1,
-  logger: 1,
-  crypto: 1,
-  validation: 1,
-  schema: 1,
-  config: 1,
-  middleware: 1,
-  serialization: 1,
-  events: 1,
-  messaging: 1,
-  lifecycle: 1,
-  transactions: 1,
-  permissions: 1,
-  featureFlags: 1,
-  plugins: 1,
-  security: 1,
-  tenancy: 1,
-  docs: 1,
-  cache: 1,
-  storage: 1,
-  adapters: 1,
-  queue: 1,
-  scheduler: 1,
-  database: 1,
-  observability: 1,
-  core: 2,
-  cqrs: 2,
-  auth: 2,
-  runtime: 2,
-  openapi: 2,
-  rpc: 2,
-  api: 2,
-  http: 3,
-  cli: 3,
-  testing: 4,
-};
-
-function packageNameToKey(name) {
-  return name
-    .replace(/^@oyinlola141\/zudojs-/, "")
-    .replace(/^@zudojs\//, "")
-    .replace(/^zudojs-/, "")
-    .replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
-}
 
 function getPackages() {
   const entries = readdirSync(packagesDir, { withFileTypes: true });
@@ -81,22 +36,30 @@ function getPackages() {
 describe("Architecture Boundaries", () => {
   const packages = getPackages();
 
-  it("has no wildcard @zudojs/* dependency versions", () => {
+  it("uses the workspace protocol for every internal dependency", () => {
     const errors = [];
 
     for (const pkg of packages) {
       const allDeps = { ...pkg.dependencies, ...pkg.peerDependencies };
 
       for (const [depName, version] of Object.entries(allDeps)) {
-        if (depName.startsWith("@zudojs/") && version === "*") {
-          errors.push(`${pkg.name}: ${depName}@${version}`);
+        if (!depName.startsWith("@zudojs/") && depName !== "zudojs-cli") {
+          continue;
+        }
+
+        // A hand-written range resolves the sibling from the npm registry
+        // rather than from source, so dependents compile against a
+        // published artifact and local changes go unvalidated.
+        if (!String(version).startsWith("workspace:")) {
+          errors.push(`${pkg.name}: ${depName} is "${version}"`);
         }
       }
     }
 
-    expect(errors, `Wildcard versions found:\n${errors.join("\n")}`).toEqual(
-      [],
-    );
+    expect(
+      errors,
+      `Internal dependencies must use "workspace:*":\n${errors.join("\n")}`,
+    ).toEqual([]);
   });
 
   it("has no tier violations in regular dependencies", () => {

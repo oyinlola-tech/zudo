@@ -4,10 +4,7 @@
  * Fluent builder for constructing CLI commands.
  */
 
-import type {
-  CLICommand,
-  CLICommandDefinition,
-} from "../cliType/cliType.type.js";
+import type { CLICommand } from "../cliType/cliType.type.js";
 import { createCommand } from "./cliCommand.factory.js";
 
 /* -------------------------------------------------------------------------- */

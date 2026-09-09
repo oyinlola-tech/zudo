@@ -21,7 +21,11 @@ const NAME_TO_LEVEL: ReadonlyMap<LogLevelName, LogLevel> = new Map(
   [...LEVEL_TO_NAME].map(([level, name]) => [name, level]),
 );
 
-const LEVEL_NAMES: readonly LogLevelName[] = [...LEVEL_TO_NAME.values()];
+// Frozen: this array is handed straight to callers, and an unfrozen module
+// singleton is one `push` away from corrupting every later reader.
+const LEVEL_NAMES: readonly LogLevelName[] = Object.freeze([
+  ...LEVEL_TO_NAME.values(),
+]);
 
 /** Converts a numeric level to its name. */
 export function logLevelToName(level: LogLevel): LogLevelName {

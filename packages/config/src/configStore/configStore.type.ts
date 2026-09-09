@@ -2,8 +2,6 @@ import type { ConfigValue } from "../configValue/configValue.core.js";
 
 import type { ConfigEntry } from "../configEntry/configEntry.type.js";
 
-import type { ConfigSourceType } from "../configSource/configSource.core.js";
-
 /**
  * Event emitted when a configuration value changes.
  */

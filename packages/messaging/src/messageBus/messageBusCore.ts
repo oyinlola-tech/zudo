@@ -11,7 +11,10 @@ import type {
   NamedMessageHandler,
 } from "../messageHandler/messageHandlerType.type.js";
 
-import type { MessageMiddlewareLike } from "../messageMiddleware/messageMiddlewareType.type.js";
+import type {
+  MessageMiddlewareLike,
+  MessageMiddlewareOptions,
+} from "../messageMiddleware/messageMiddlewareType.type.js";
 
 import type { MessageBus, MessageBusOptions } from "./messageBusType.type.js";
 
@@ -30,6 +33,7 @@ export class InMemoryMessageBus implements MessageBus {
   private readonly dispatcher: DefaultDispatcher;
   private readonly registry: HandlerRegistryStore;
   private readonly defaultTimeout: number;
+  private handlerSequence = 0;
   private _disposed = false;
 
   constructor(options: MessageBusOptions = {}) {
@@ -56,40 +60,19 @@ export class InMemoryMessageBus implements MessageBus {
   ): Promise<DispatchResult<TResult>> {
     this.validateNotDisposed(message);
     const timeout = options.timeout ?? this.defaultTimeout;
-    const dispatchOptions = { ...options, timeout };
 
-    if (timeout > 0) {
-      return this.dispatchWithTimeout(message, dispatchOptions);
-    }
-
-    return this.dispatcher.dispatch(message, dispatchOptions) as Promise<
-      DispatchResult<TResult>
-    >;
+    // The timeout is the dispatcher's job. The bus used to race the dispatch
+    // itself and abort on expiry, which produced a generic abort error and
+    // meant the dispatcher's own documented `timeout` option stayed dead.
+    return this.dispatcher.dispatch(message, {
+      ...options,
+      timeout,
+    }) as Promise<DispatchResult<TResult>>;
   }
 
   private validateNotDisposed(_message: Message): void {
     if (this._disposed) {
       throw new MessageBusDisposedError();
-    }
-  }
-
-  private async dispatchWithTimeout<TPayload, TResult>(
-    message: Message<TPayload>,
-    options: DispatchOptions<TResult>,
-  ): Promise<DispatchResult<TResult>> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(
-      () => controller.abort(),
-      options.timeout ?? 0,
-    );
-    try {
-      const result = await this.dispatcher.dispatch(message, {
-        ...options,
-        signal: controller.signal,
-      });
-      return result as DispatchResult<TResult>;
-    } finally {
-      clearTimeout(timeoutId);
     }
   }
 
@@ -105,7 +88,11 @@ export class InMemoryMessageBus implements MessageBus {
     handler: MessageHandler<Message<TPayload>, TResult>,
     options: { id?: string; priority?: number } = {},
   ): void {
-    const id = options.id ?? `handler:${messageType}:${Date.now()}`;
+    // A clock-derived id collided whenever two handlers for the same type
+    // were registered inside one millisecond, which then threw
+    // DuplicateMessageHandlerError from what looked like ordinary setup.
+    const id =
+      options.id ?? `handler:${messageType}:${++this.handlerSequence}`;
     const namedHandler: NamedMessageHandler<Message<TPayload>, TResult> = {
       id,
       name: id,
@@ -129,8 +116,13 @@ export class InMemoryMessageBus implements MessageBus {
 
   use<TMessage extends Message = Message, TResult = unknown>(
     middleware: MessageMiddlewareLike<TMessage, TResult>,
-  ): void {
-    this.dispatcher.use(middleware);
+    options?: MessageMiddlewareOptions,
+  ): string {
+    return this.dispatcher.use(middleware, options);
+  }
+
+  removeMiddleware(middlewareId: string): boolean {
+    return this.dispatcher.removeMiddleware(middlewareId);
   }
 
   hasHandlers(messageType: string): boolean {

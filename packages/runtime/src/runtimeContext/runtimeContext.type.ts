@@ -28,24 +28,17 @@ export interface RuntimeContext {
   readonly state: RuntimeState;
   readonly status: RuntimeStatus;
   readonly startedAt?: Date;
+  /** When the runtime last reached `stopped`. */
+  readonly stoppedAt?: Date;
+  /** When the runtime last reached `failed`. */
+  readonly failedAt?: Date;
+  /** The error that failed the runtime, if it has failed. */
+  readonly error?: RuntimeError;
   readonly logger: Logger;
   readonly container: Container;
   readonly eventBus: EventBus;
   readonly health: RuntimeHealth;
   readonly ready: boolean;
-}
-
-/**
- * Runtime identity information.
- */
-export interface RuntimeIdentity {
-  readonly runtimeId: RuntimeId;
-  readonly applicationName: string;
-  readonly applicationVersion: string;
-  readonly environment: Environment;
-  readonly hostname: string;
-  readonly processId: number;
-  readonly startedAt?: Date;
 }
 
 /**

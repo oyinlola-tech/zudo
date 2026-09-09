@@ -17,10 +17,14 @@ import {
 } from "../transaction/transaction.internal.js";
 import { canTransition } from "../transaction/transactionStateMachine.js";
 import {
+  SavepointError,
   TransactionCommitError,
   TransactionRollbackError,
   TransactionStateError,
+  TransactionTimeoutError,
 } from "../transactionErrors/transactionError.types.js";
+import type { TransactionEmitter } from "./manager.events.js";
+import { noopEmitter, TRANSACTION_EVENTS } from "./manager.events.js";
 
 /** Moves a transaction to `failed` when the state machine allows it. */
 function markFailed(transaction: Transaction): void {
@@ -39,7 +43,14 @@ async function adapterCommit(
 
   if (savepoint) {
     if (adapter.releaseSavepoint) {
-      await adapter.releaseSavepoint(savepoint.parent, savepoint.savepoint);
+      try {
+        await adapter.releaseSavepoint(savepoint.parent, savepoint.savepoint);
+      } catch (error) {
+        throw new SavepointError(
+          `Failed to release savepoint "${savepoint.savepoint}"`,
+          error,
+        );
+      }
     }
     return;
   }
@@ -59,11 +70,21 @@ async function adapterRollback(
   const savepoint = asSavepointHandle(handle);
 
   if (savepoint) {
-    if (adapter.rollbackToSavepoint) {
-      await adapter.rollbackToSavepoint(savepoint.parent, savepoint.savepoint);
-    }
-    if (adapter.releaseSavepoint) {
-      await adapter.releaseSavepoint(savepoint.parent, savepoint.savepoint);
+    try {
+      if (adapter.rollbackToSavepoint) {
+        await adapter.rollbackToSavepoint(
+          savepoint.parent,
+          savepoint.savepoint,
+        );
+      }
+      if (adapter.releaseSavepoint) {
+        await adapter.releaseSavepoint(savepoint.parent, savepoint.savepoint);
+      }
+    } catch (error) {
+      throw new SavepointError(
+        `Failed to roll back to savepoint "${savepoint.savepoint}"`,
+        error,
+      );
     }
     return;
   }
@@ -79,6 +100,7 @@ async function adapterRollback(
  * else must be active: committing a transaction that was already rolled back
  * is a programming error, not a no-op.
  *
+ * @throws {TransactionTimeoutError} when the transaction outlived its timeout.
  * @throws {TransactionRollbackError} when the transaction is rollback-only.
  * @throws {TransactionStateError} when the transaction cannot be committed.
  * @throws {TransactionCommitError} when the adapter refuses the commit.
@@ -87,6 +109,7 @@ export async function commitTransaction(
   transaction: Transaction,
   adapter: TransactionAdapter,
   hooks?: TransactionHooks,
+  emit: TransactionEmitter = noopEmitter,
 ): Promise<void> {
   if (transaction.kind === "participant") return;
   if (transaction.state === "committed") return;
@@ -101,30 +124,41 @@ export async function commitTransaction(
   }
 
   if (transaction.isRollbackOnly()) {
-    await rollbackTransaction(
-      transaction,
-      adapter,
-      internals(transaction)._getRollbackOnlyReason() ?? "marked rollback-only",
-      hooks,
-    );
+    const reason =
+      internals(transaction)._getRollbackOnlyReason() ?? "marked rollback-only";
+
+    await rollbackTransaction(transaction, adapter, reason, hooks, emit);
+
+    // A timeout is a distinct failure from a caller marking the transaction
+    // rollback-only, and the timed-out case used to be indistinguishable
+    // because both raised TransactionRollbackError.
+    if (transaction.timedOut) {
+      emit(TRANSACTION_EVENTS.TIMED_OUT, transaction, reason);
+      throw new TransactionTimeoutError(
+        transaction.id,
+        transaction.options.timeout ?? 0,
+      );
+    }
+
     throw new TransactionRollbackError(transaction.id, {
-      originalError:
-        internals(transaction)._getRollbackOnlyReason() ??
-        "marked rollback-only",
+      originalError: reason,
     });
   }
 
   if (hooks?.beforeCommit) await hooks.beforeCommit({ transaction });
+  emit(TRANSACTION_EVENTS.COMMITTING, transaction);
 
   try {
     await adapterCommit(transaction, adapter);
     await transaction.commit();
   } catch (error) {
     markFailed(transaction);
+    emit(TRANSACTION_EVENTS.FAILED, transaction, error);
     if (hooks?.onError) await hooks.onError({ transaction, error });
     throw new TransactionCommitError(transaction.id, error);
   }
 
+  emit(TRANSACTION_EVENTS.COMMITTED, transaction);
   if (hooks?.afterCommit) await hooks.afterCommit({ transaction });
 }
 
@@ -138,6 +172,7 @@ export async function rollbackTransaction(
   adapter: TransactionAdapter,
   reason?: unknown,
   hooks?: TransactionHooks,
+  emit: TransactionEmitter = noopEmitter,
 ): Promise<void> {
   if (transaction.kind === "participant") {
     await transaction.rollback(reason);
@@ -153,6 +188,7 @@ export async function rollbackTransaction(
   }
 
   if (hooks?.beforeRollback) await hooks.beforeRollback({ transaction });
+  emit(TRANSACTION_EVENTS.ROLLING_BACK, transaction, reason);
 
   try {
     if (transaction.kind !== "none") {
@@ -161,6 +197,7 @@ export async function rollbackTransaction(
     await transaction.rollback(reason);
   } catch (error) {
     markFailed(transaction);
+    emit(TRANSACTION_EVENTS.FAILED, transaction, error);
     if (hooks?.onError) await hooks.onError({ transaction, error });
     throw new TransactionRollbackError(transaction.id, {
       cause: error,
@@ -168,5 +205,6 @@ export async function rollbackTransaction(
     });
   }
 
+  emit(TRANSACTION_EVENTS.ROLLED_BACK, transaction, reason);
   if (hooks?.afterRollback) await hooks.afterRollback({ transaction });
 }

@@ -38,14 +38,15 @@ By default the serializer is a thin pass to `JSON.stringify`/`JSON.parse`. With
 ```typescript
 const s = createSerializer("json", { preserveTypes: true });
 
-const json = s.serialize({
+const value = {
   when: new Date(),
   amount: 42n,
   seen: new Set(["a"]),
   index: new Map([["k", new Date()]]),
   bytes: new Uint8Array([1, 2, 3]),
-});
+};
 
+const json = s.serialize(value);
 const back = s.deserialize<typeof value>(json);
 // Date, BigInt, Set, Map, Uint8Array all restored — including values nested
 // inside a Map or Set.
@@ -112,6 +113,21 @@ const envelope = serializeToEnvelope(payload, serializer);
 // { metadata: { format, version, contentType, encoding }, data }
 
 const value = deserializeFromEnvelope(envelope, serializer, "json");
+```
+
+Both helpers forward a fourth argument to the serializer, so the options that
+matter on the wire are reachable through an envelope:
+
+```typescript
+const envelope = serializeToEnvelope(payload, serializer, "json", {
+  preserveTypes: true,
+});
+
+const value = deserializeFromEnvelope(envelope, serializer, "json", {
+  preserveTypes: true,
+  strict: true,
+  maxSize: 1_000_000,
+});
 ```
 
 `unwrapEnvelope` validates the shape and rejects a payload stamped with a schema

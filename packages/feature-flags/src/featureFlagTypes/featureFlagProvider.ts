@@ -25,3 +25,14 @@ export interface FeatureFlagProvider {
   /** Optional: subscribe to flag changes. */
   subscribe?(listener: FeatureFlagChangeListener): Unsubscribe;
 }
+
+/**
+ * A provider that always implements {@link FeatureFlagProvider.refresh}.
+ *
+ * The built-in providers all do, but declaring them as `FeatureFlagProvider`
+ * hid it behind an optional method, so a caller could not invoke `refresh()`
+ * without a non-null assertion.
+ */
+export interface RefreshableFeatureFlagProvider extends FeatureFlagProvider {
+  refresh(): Promise<void>;
+}

@@ -133,10 +133,15 @@ describe("randomChoice", () => {
 
 describe("fillRandomBytes", () => {
   it("fills the provided Uint8Array", async () => {
-    const target = new Uint8Array(16);
+    // Pre-fill with a sentinel and assert the buffer changed, rather
+    // than asserting no byte is zero: a zero byte is a legitimate
+    // random result, and for 16 bytes P(at least one zero) is about
+    // 6%, so the old assertion failed roughly one run in sixteen.
+    const target = new Uint8Array(16).fill(0xab);
     const result = await fillRandomBytes(target);
+
     expect(result).toBe(target);
-    expect(target.every((b) => b !== 0)).toBe(true);
+    expect(target.some((b) => b !== 0xab)).toBe(true);
   });
 
   it("rejects non-Uint8Array", async () => {

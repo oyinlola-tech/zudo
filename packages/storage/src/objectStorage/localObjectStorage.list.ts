@@ -12,6 +12,7 @@ import type {
   ListObjectsResult,
   ObjectMetadata,
 } from "../types/storage.type.js";
+import { SIDECAR_DIR, readAttributes } from "./localObjectStorage.sidecar.js";
 
 /** Options accepted when listing objects. */
 export interface ListOptions {
@@ -61,6 +62,8 @@ export async function listObjects(
 
   const keys = entries
     .map((entry) => toKey(basePath, join(basePath, entry)))
+    // The reserved metadata tree describes objects; it is not one.
+    .filter((key) => key !== SIDECAR_DIR && !key.startsWith(`${SIDECAR_DIR}/`))
     .filter((key) => (prefix ? key.startsWith(prefix) : true))
     .filter((key) =>
       options?.continuationToken ? key > options.continuationToken : true,
@@ -79,7 +82,12 @@ export async function listObjects(
     try {
       const stats = await stat(join(basePath, key));
       if (!stats.isFile()) continue;
-      objects.push({ key, size: stats.size, lastModified: stats.mtime });
+      objects.push({
+        key,
+        ...(await readAttributes(basePath, key)),
+        size: stats.size,
+        lastModified: stats.mtime,
+      });
     } catch {
       continue;
     }

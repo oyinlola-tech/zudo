@@ -15,7 +15,13 @@ import type {
   RuntimeHealthState,
 } from "../runtimeState/index.js";
 
-import { canTransition, isRunning } from "../runtimeState/index.js";
+import {
+  assertTransition,
+  canStart,
+  canStop,
+  hasFailed,
+  isRunning,
+} from "../runtimeState/index.js";
 
 import type {
   RuntimeOptions,
@@ -171,7 +177,15 @@ export class DefaultRuntime implements Runtime {
       this.logger,
       {
         shutdownTimeout: this.options.shutdownTimeout,
+        // Always false during startup: rollback depends on stopping at
+        // the first failure rather than pressing on into modules whose
+        // dependencies never came up.
         continueOnFailure: false,
+        parallelInitialization: this.options.parallelInitialization,
+        runtimeId: this.options.runtimeId,
+        onModuleEvent: (type, payload) => {
+          this.emitEvent(type, payload);
+        },
       },
       {
         ...(dependencies.configuration !== undefined && {
@@ -190,6 +204,7 @@ export class DefaultRuntime implements Runtime {
 
     this.readinessTracker = new ReadinessTracker({
       autoMarkReady: this.options.trackReadiness,
+      checkTimeout: this.options.readinessCheckTimeout,
     });
   }
 
@@ -325,9 +340,12 @@ export class DefaultRuntime implements Runtime {
       return this.startPromise;
     }
 
-    if (!canTransition(this._state, "initializing")) {
+    if (!canStart(this._state)) {
       throw new RuntimeStateError(
-        `Cannot start runtime from state "${this._state}".`,
+        `Cannot start a runtime in state "${this._state}"; start is only valid from "created". ` +
+          (hasFailed(this._state)
+            ? "This runtime failed to start; call stop() to release it and create a new one."
+            : "Create a new runtime instead of restarting this one."),
       );
     }
 
@@ -367,9 +385,9 @@ export class DefaultRuntime implements Runtime {
       return;
     }
 
-    if (!canTransition(this._state, "stopping")) {
+    if (!canStop(this._state)) {
       throw new RuntimeStateError(
-        `Cannot stop runtime from state "${this._state}".`,
+        `Cannot stop a runtime in state "${this._state}"; stop is valid from "created", "running" and "failed".`,
       );
     }
 
@@ -387,6 +405,10 @@ export class DefaultRuntime implements Runtime {
    */
   private async performStart(): Promise<void> {
     this.transitionTo("initializing");
+    this.readinessTracker.setState(
+      "initializing",
+      "Runtime is starting its modules.",
+    );
 
     if (this.options.emitEvents) {
       this.emitEvent("runtime.initializing");
@@ -496,7 +518,10 @@ export class DefaultRuntime implements Runtime {
    */
   private async performStop(): Promise<void> {
     this.transitionTo("stopping");
-    this.readinessTracker.markNotReady("Runtime is shutting down.");
+    this.readinessTracker.setState(
+      "shutting_down",
+      "Runtime is shutting down.",
+    );
 
     if (this.options.emitEvents) {
       this.emitEvent("runtime.stopping");
@@ -585,11 +610,9 @@ export class DefaultRuntime implements Runtime {
   private transitionTo(newState: RuntimeState): void {
     const oldState = this._state;
 
-    if (!canTransition(oldState, newState)) {
-      throw new RuntimeStateError(
-        `Invalid state transition from "${oldState}" to "${newState}".`,
-      );
-    }
+    // Delegates to the exported assertion so the public state machine and
+    // the runtime cannot disagree about what a legal transition is.
+    assertTransition(oldState, newState);
 
     const previousHealth = this.health.state;
 

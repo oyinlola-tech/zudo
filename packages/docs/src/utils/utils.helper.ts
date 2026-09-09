@@ -20,10 +20,14 @@ export function isValidDocumentId(id: string): boolean {
  * Trims whitespace, collapses consecutive dots and strips leading/trailing dots.
  */
 export function normalizeDocumentId(id: string): string {
-  return id
-    .trim()
-    .replace(/\.+/g, ".")
-    .replace(/^\.+|\.+$/g, "");
+  return (
+    id
+      .trim()
+      .replace(/\.+/g, ".")
+      // Runs are already collapsed, so at most one dot can sit at each end.
+      // Matching a single dot keeps this linear; `\.+$` would backtrack.
+      .replace(/^\.|\.$/g, "")
+  );
 }
 
 /**
@@ -136,16 +140,32 @@ function cleanHeadingText(text: string): string {
   return text.replace(/\s+#+\s*$/, "").trim();
 }
 
+const HTML_TAG = /<\/?[a-zA-Z][^>\n]*>/g;
+
+/**
+ * Removes HTML tags until the result stops changing. A single pass is not
+ * enough: stripping the inner tag of `<<b>b>x` re-forms `<b>x`, so a lone pass
+ * can leave a tag behind in text that is later rendered as HTML.
+ */
+function stripHtmlTags(text: string): string {
+  let current = text;
+  let previous: string;
+  do {
+    previous = current;
+    current = current.replace(HTML_TAG, "");
+  } while (current !== previous);
+  return current;
+}
+
 /**
  * Strips markdown formatting to plain text.
  */
 export function stripMarkdown(markdown: string): string {
   return (
-    markdown
+    stripHtmlTags(
       // fenced code blocks: keep the code, drop the fences
-      .replace(/^(`{3,}|~{3,})[^\n]*\n([\s\S]*?)^\1[^\n]*$/gm, "$2")
-      // html tags
-      .replace(/<\/?[a-zA-Z][^>\n]*>/g, "")
+      markdown.replace(/^(`{3,}|~{3,})[^\n]*\n([\s\S]*?)^\1[^\n]*$/gm, "$2"),
+    )
       // images before links
       .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")

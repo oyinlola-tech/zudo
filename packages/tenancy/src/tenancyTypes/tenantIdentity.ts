@@ -77,10 +77,3 @@ export function isValidTenantId(value: unknown): value is TenantId {
 /** Tenant lifecycle status. */
 export type TenantStatus =
   "provisioning" | "active" | "inactive" | "suspended" | "deleting" | "deleted";
-
-/** Database isolation strategy for tenant data. */
-export type TenantIsolationStrategy =
-  "shared" | "schema" | "database" | "hybrid";
-
-/** Tenancy execution mode. */
-export type TenancyMode = "tenant" | "system";

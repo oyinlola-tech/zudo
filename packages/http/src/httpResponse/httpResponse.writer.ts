@@ -231,6 +231,19 @@ export function writeHeaders(
       }
     }
 
+    if (name.toLowerCase() === "set-cookie") {
+      /*
+       * Set-Cookie is the one header that must not be folded into a single
+       * comma-separated line: browsers read the joined form as one malformed
+       * cookie, so every cookie after the first is lost. Emit one line each.
+       */
+      for (const entry of values) {
+        writer.appendHeader(name, entry);
+      }
+
+      continue;
+    }
+
     writer.setHeader(name, values.join(", "));
   }
 }

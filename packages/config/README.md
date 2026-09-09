@@ -55,13 +55,25 @@ priorities are applied in registration order (last registered wins).
 - `createDefaultsConfigSource(values, name?)` — low-priority defaults.
 - `createMemoryConfigSource(values, { name, priority?, optional? })` —
   in-memory values.
+- `createEnvironmentConfigSource({ prefix, env?, priority?, keyMapper?, isSensitive? })`
+  — reads environment variables. Values stay RAW STRINGS (use the typed
+  accessors to coerce, so `"false"` becomes `false` instead of a truthy
+  string). Names matching a password/token/secret/API-key pattern are
+  reported as sensitive and therefore redacted by `toSafeObject()`.
 - `createCustomConfigSource(name, loader, options?)` — async loader
   function returning `{ values, source, type }`. Include
   `sensitiveKeys: ["some.key"]` in the result to mark values as
   sensitive so they are redacted by safe serialization.
 
 ```typescript
-import { createCustomConfigSource, ConfigSourceType } from "@zudojs/config";
+import {
+  createEnvironmentConfigSource,
+  createCustomConfigSource,
+  ConfigSourceType,
+} from "@zudojs/config";
+
+// APP__DB__HOST=localhost -> "db.host"
+const env = createEnvironmentConfigSource({ prefix: "APP__" });
 
 const remote = createCustomConfigSource("vault", async () => ({
   values: { "db.password": "s3cret" },
@@ -100,6 +112,11 @@ const config = manager.validate({
 });
 ```
 
+Object schemas nest: a property schema of type `OBJECT` that declares
+its own `properties` / `additionalProperties` is validated recursively,
+so nested constraints are enforced by `validate()`, `resolve()` and the
+standalone `validateConfigValue`.
+
 `validate()` throws on failure and marks entries whose schema has
 `secret: true` as sensitive. Individual values can be validated with
 `manager.resolve(key, schema)` or the standalone
@@ -117,6 +134,16 @@ const config = manager.validate({
 `manager.reload()` re-runs all sources. Values set at runtime via
 `manager.set()` and `initialValues` survive loads; sources only
 overwrite entries at equal or higher priority.
+
+## Untrusted input
+
+Configuration frequently originates from files, environment variables
+or remote services. Keys such as `__proto__`, `constructor` and
+`prototype` are copied with `Object.defineProperty`, never plain
+assignment, so a hostile key becomes an ordinary own property and can
+never replace an object's prototype. Schema properties are read as OWN
+properties, so a schema property named `constructor` is reported as
+missing rather than matching an inherited function.
 
 ## Use Cases
 

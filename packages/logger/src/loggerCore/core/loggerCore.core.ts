@@ -61,6 +61,12 @@ export interface ZudojsLoggerContext {
   markDisposed(): void;
   updateConfiguration(config: LoggerConfiguration): void;
   createChildLogger(options: LoggerOptions): Logger;
+
+  /** Registers an in-flight dispatch so it can be awaited later. */
+  trackDispatch(dispatch: Promise<void>): void;
+
+  /** Resolves once every registered dispatch has settled. */
+  drainDispatches(): Promise<void>;
 }
 
 /**
@@ -70,6 +76,7 @@ export class ZudojsLogger implements Logger, ZudojsLoggerContext {
   private _configuration: LoggerConfiguration;
   private readonly _contextStorage: LoggerContextStorage;
   private _disposed = false;
+  private readonly _pending = new Set<Promise<void>>();
 
   constructor(
     options: LoggerOptions = {},
@@ -167,6 +174,27 @@ export class ZudojsLogger implements Logger, ZudojsLoggerContext {
 
   createChildLogger(options: LoggerOptions): Logger {
     return new ZudojsLogger(options, this._contextStorage);
+  }
+
+  trackDispatch(dispatch: Promise<void>): void {
+    // dispatchEntry routes its own failures through handleError, so a
+    // rejection here is unexpected; swallow it to keep an unawaited log
+    // call from crashing the process, and keep the entry drainable.
+    const tracked = dispatch
+      .catch(() => {})
+      .finally(() => {
+        this._pending.delete(tracked);
+      });
+
+    this._pending.add(tracked);
+  }
+
+  async drainDispatches(): Promise<void> {
+    // A dispatch can start further dispatches (a transport that logs),
+    // so drain until the set is genuinely empty.
+    while (this._pending.size > 0) {
+      await Promise.all([...this._pending]);
+    }
   }
 }
 

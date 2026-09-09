@@ -57,8 +57,3 @@ export const DEFAULT_MISFIRE_POLICY: MisfirePolicy = "run-once";
  * Default overlap policy.
  */
 export const DEFAULT_OVERLAP_POLICY: OverlapPolicy = "allow";
-
-/**
- * Tick interval for the scheduler timer (1 second).
- */
-export const SCHEDULER_TICK_INTERVAL = 1_000;

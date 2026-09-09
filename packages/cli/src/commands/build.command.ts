@@ -9,15 +9,15 @@ import { join } from "node:path";
 import type { CLIContext } from "../cliType/cliType.type.js";
 import { runStreaming } from "../utils/utils.exec.js";
 import { findProjectRoot } from "../resolvers/project.resolver.js";
+import { CLIGenerationError, CLINotInProjectError } from "../errors/index.js";
 
 export async function runBuildCommand(context: CLIContext): Promise<void> {
   const projectRoot = findProjectRoot(context.cwd);
 
   if (!projectRoot) {
-    context.logger.error(
-      "No Zudojs project found. Run this command from a Zudojs project directory.",
-    );
-    return;
+    // Throwing (rather than returning) is what gives the process a non-zero
+    // exit code; CI must not see a green build for a missing project.
+    throw new CLINotInProjectError();
   }
 
   context.logger.info(`Building project at: ${projectRoot}`);
@@ -31,6 +31,8 @@ export async function runBuildCommand(context: CLIContext): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     context.logger.error(`Build failed: ${message}`);
+    // A failed build must fail the command so CI does not report success.
+    throw new CLIGenerationError(`Build failed: ${message}`, error);
   }
 }
 

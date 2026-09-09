@@ -85,6 +85,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -140,7 +141,7 @@
 
       <!-- HEADER -->
             <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/cqrs</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Command Query Responsibility Segregation — separate read and write models with typed handlers.
@@ -156,667 +157,544 @@
       <section id="overview" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OVERVIEW</h2>
         <p class="mb-4">
-          <code class="bg-gray-100 px-1 font-bold">@zudojs/cqrs</code> implements the Command Query Responsibility Segregation pattern. Write operations (commands) and read operations (queries) are handled by separate pipelines with their own buses, handlers, middleware, and result types.
+          <em>CQRS</em> (Command Query Responsibility Segregation) is one simple rule: code that <strong>changes</strong> something and code that only <strong>reads</strong> something are kept apart.
         </p>
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-          <div class="border-4 border-black p-3 bg-zudo-red text-white text-center">
-            <div class="text-2xl font-black">2</div>
-            <div class="text-xs font-bold">PIPELINES</div>
-          </div>
-          <div class="border-4 border-black p-3 bg-zudo-blue text-white text-center">
-            <div class="text-2xl font-black">11</div>
-            <div class="text-xs font-bold">MIDDLEWARE</div>
-          </div>
-          <div class="border-4 border-black p-3 bg-zudo-yellow text-center">
-            <div class="text-2xl font-black">10</div>
-            <div class="text-xs font-bold">ERROR TYPES</div>
-          </div>
-          <div class="border-4 border-black p-3 bg-zudo-green text-black text-center">
-            <div class="text-2xl font-black">3</div>
-            <div class="text-xs font-bold">SUBMODULES</div>
-          </div>
+        <p class="mb-4">
+          The package has four building blocks. A <em>command</em> is a plain object asking for a change ("create this user"). A <em>query</em> is a plain object asking for data ("give me this user"). A <em>handler</em> is the function that does the work for one of them. A <em>bus</em> is the router: it finds the handler by the object's <code class="bg-gray-100 px-1 font-bold">type</code> string and runs it.
+        </p>
+        <div class="callout callout-note">
+          <strong>In plain words:</strong> the bus is a lookup table from <code class="bg-gray-100 px-1 font-bold">type</code> to a function. <code class="bg-gray-100 px-1 font-bold">bus.execute(message)</code> finds the function and calls it.
         </div>
-        <h3 class="text-xl font-black mt-6 mb-3">Architecture</h3>
-        <div class="code-block">
-<span class="cm">// Two parallel pipelines</span>
-<span class="cm">//</span>
-<span class="cm">// Command Pipeline:</span>
-<span class="cm">//   Command → Middleware → CommandHandler → CommandResult</span>
-<span class="cm">//</span>
-<span class="cm">// Query Pipeline:</span>
-<span class="cm">//   Query → Middleware → QueryHandler → QueryResult</span>
-<span class="cm">//</span>
-<span class="cm">// Event Extensions:</span>
-<span class="cm">//   CqrsEvent → EventBus → CqrsEventHandler → EventResult</span>
+        <div class="grid md:grid-cols-2 gap-4 mt-6">
+          <div class="border-4 border-black p-4">
+            <div class="font-black mb-2">WHEN YOU NEED IT</div>
+            <ul class="list-disc pl-5 space-y-1 text-sm">
+              <li>Many distinct operations, each in its own small function.</li>
+              <li>One place to log, time, or guard every operation.</li>
+              <li>Writes and reads that should evolve separately.</li>
+            </ul>
+          </div>
+          <div class="border-4 border-black p-4">
+            <div class="font-black mb-2">WHEN YOU DON'T</div>
+            <ul class="list-disc pl-5 space-y-1 text-sm">
+              <li>A small script: call your functions directly.</li>
+              <li>Reacting to things that already happened: use <a href="/docs/packages-events" class="text-zudo-blue font-bold">@zudojs/events</a>.</li>
+              <li>Messages between processes: see <a href="/docs/packages-messaging" class="text-zudo-blue font-bold">@zudojs/messaging</a>.</li>
+            </ul>
+          </div>
         </div>
       </section>
 
       <!-- ==================== INSTALLATION ==================== -->
       <section id="installation" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-        <div class="code-block">
-npm install @zudojs/cqrs
-
-<span class="cm">// Import everything</span>
-<span class="kw">import</span> { CommandBus, QueryBus, createCommandBus } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="cm">// Import specific submodules</span>
-<span class="kw">import</span> { Command, CommandHandler } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-<span class="kw">import</span> { Query, QueryHandler } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-<span class="kw">import</span> { timingMiddleware } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
+        <p class="mb-4">Install the package. It depends on <code class="bg-gray-100 px-1 font-bold">@zudojs/errors</code> and <code class="bg-gray-100 px-1 font-bold">@zudojs/events</code>, which npm installs for you. Needs Node.js 24+ and an ES module project.</p>
+        <div class="code-block">$ npm install @zudojs/cqrs</div>
+        <div class="callout callout-note">
+          These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest @zudojs release.
         </div>
       </section>
 
-      <!-- ==================== COMMANDS ==================== -->
-      <section id="commands" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMANDS</h2>
-        <p class="mb-4">Commands represent write operations that mutate application state.</p>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Creating Commands</h3>
+      <!-- ==================== QUICK START ==================== -->
+      <section id="quick-start" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK START</h2>
+        <p class="mb-4">
+          This example stores users in a <code class="bg-gray-100 px-1 font-bold">Map</code>. One command creates a user; one query reads it back. The generics on <code class="bg-gray-100 px-1 font-bold">register</code> and <code class="bg-gray-100 px-1 font-bold">execute</code> tell TypeScript the message shape and the return type.
+        </p>
         <div class="code-block">
-<span class="cm">// Option 1: Simple factory function (recommended)</span>
-<span class="kw">import</span> { createCommand } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
+<span class="kw">import</span> {
+  <span class="fn">createCommandBus</span>,
+  <span class="fn">createQueryBus</span>,
+  <span class="kw">type</span> <span class="tp">CommandOf</span>,
+  <span class="kw">type</span> <span class="tp">QueryOf</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
 
-<span class="kw">const</span> cmd = <span class="fn">createCommand</span>(<span class="str">"CreateUser"</span>, {
-  name: <span class="str">"Alice"</span>,
-  email: <span class="str">"alice@example.com"</span>,
+<span class="kw">interface</span> <span class="tp">User</span> {
+  id: <span class="tp">string</span>;
+  name: <span class="tp">string</span>;
+}
+
+<span class="cmt">// A command and a query are object shapes with a `type` field.</span>
+<span class="kw">type</span> <span class="tp">CreateUser</span> = <span class="tp">CommandOf</span>&lt;<span class="str">"CreateUser"</span>, { name: <span class="tp">string</span> }&gt;;
+<span class="kw">type</span> <span class="tp">GetUser</span> = <span class="tp">QueryOf</span>&lt;<span class="str">"GetUser"</span>, { id: <span class="tp">string</span> }&gt;;
+
+<span class="kw">const</span> users = <span class="kw">new</span> <span class="tp">Map</span>&lt;<span class="tp">string</span>, <span class="tp">User</span>&gt;();
+<span class="kw">const</span> commandBus = <span class="fn">createCommandBus</span>();
+<span class="kw">const</span> queryBus = <span class="fn">createQueryBus</span>();
+
+<span class="cmt">// The command handler changes state and returns the new user.</span>
+commandBus.<span class="fn">register</span>&lt;<span class="tp">CreateUser</span>, <span class="tp">User</span>&gt;(<span class="str">"CreateUser"</span>, <span class="kw">async</span> (command) =&gt; {
+  <span class="kw">const</span> user = { id: <span class="tp">String</span>(users.size + <span class="num">1</span>), name: command.name };
+  users.<span class="fn">set</span>(user.id, user);
+  <span class="kw">return</span> user;
 });
-<span class="cm">// → { type: "CreateUser", name: "Alice", email: "alice@example.com" }</span>
 
-<span class="cm">// Option 2: Abstract class</span>
-<span class="kw">import</span> { Command } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
+<span class="cmt">// The query handler only reads.</span>
+queryBus.<span class="fn">register</span>&lt;<span class="tp">GetUser</span>, <span class="tp">User</span> | <span class="tp">undefined</span>&gt;(<span class="str">"GetUser"</span>, <span class="kw">async</span> (query) =&gt; {
+  <span class="kw">return</span> users.<span class="fn">get</span>(query.id);
+});
 
-<span class="kw">class</span> <span class="tp">CreateUserCommand</span> <span class="kw">extends</span> <span class="tp">Command</span>&lt;<span class="str">"CreateUser"</span>&gt; {
-  <span class="kw">readonly</span> type = <span class="str">"CreateUser"</span> <span class="kw">as const</span>;
-  <span class="kw">constructor</span>(
-    <span class="kw">readonly</span> name: <span class="tp">string</span>,
-    <span class="kw">readonly</span> email: <span class="tp">string</span>,
-  ) { <span class="kw">super</span>(<span class="str">"CreateUser"</span>); }
-}
+<span class="kw">const</span> created = <span class="kw">await</span> commandBus.<span class="fn">execute</span>&lt;<span class="tp">CreateUser</span>, <span class="tp">User</span>&gt;({
+  type: <span class="str">"CreateUser"</span>,
+  name: <span class="str">"Alice"</span>,
+});
+console.<span class="fn">log</span>(created);
+<span class="cmt">// { id: '1', name: 'Alice' }</span>
 
-<span class="cm">// Option 3: Type-safe utility</span>
-<span class="kw">import</span> { CommandOf } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="kw">type</span> <span class="tp">CreateUser</span> = <span class="tp">CommandOf</span>&lt;<span class="str">"CreateUser"</span>, { name: <span class="tp">string</span>; email: <span class="tp">string</span> }&gt;;
+<span class="kw">const</span> found = <span class="kw">await</span> queryBus.<span class="fn">execute</span>&lt;<span class="tp">GetUser</span>, <span class="tp">User</span> | <span class="tp">undefined</span>&gt;({
+  type: <span class="str">"GetUser"</span>,
+  id: created.id,
+});
+console.<span class="fn">log</span>(found?.name);
+<span class="cmt">// Alice</span>
         </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Command Interface</h3>
-        <div class="code-block">
-<span class="kw">interface</span> <span class="tp">Command</span>&lt;TType <span class="kw">extends</span> <span class="tp">string</span> = <span class="tp">string</span>&gt; {
-  <span class="kw">readonly</span> type: TType;
-}
-        </div>
+        <p class="mt-4">
+          The code calling <code class="bg-gray-100 px-1 font-bold">execute</code> never touches the <code class="bg-gray-100 px-1 font-bold">Map</code>. Only the handlers do.
+        </p>
       </section>
 
-      <!-- ==================== QUERIES ==================== -->
-      <section id="queries" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUERIES</h2>
-        <p class="mb-4">Queries represent read operations that return data without mutation.</p>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Creating Queries</h3>
+      <!-- ==================== COMMANDS AND QUERIES ==================== -->
+      <section id="commands-and-queries" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMANDS AND QUERIES</h2>
+        <p class="mb-4">
+          A command or query is any object with a non-empty <code class="bg-gray-100 px-1 font-bold">type</code> string. The bus uses that string to find the handler; everything else on the object is data for the handler.
+        </p>
+        <p class="mb-4">
+          Both have the same shape. The difference is the promise you make: a command handler may change state, a query handler must not. A type alias (as in the Quick Start) is usually enough. <code class="bg-gray-100 px-1 font-bold">createCommand</code> / <code class="bg-gray-100 px-1 font-bold">createQuery</code> build a frozen object and guarantee the <code class="bg-gray-100 px-1 font-bold">type</code> you pass wins over any <code class="bg-gray-100 px-1 font-bold">type</code> in the payload.</p>
         <div class="code-block">
-<span class="cm">// Option 1: Simple factory function (recommended)</span>
-<span class="kw">import</span> { createQuery } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
+<span class="kw">import</span> { <span class="fn">createCommand</span>, <span class="fn">isCommand</span> } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
 
-<span class="kw">const</span> q = <span class="fn">createQuery</span>(<span class="str">"GetUser"</span>, { userId: <span class="str">"usr_123"</span> });
-<span class="cm">// → { type: "GetUser", userId: "usr_123" }</span>
+<span class="kw">const</span> command = <span class="fn">createCommand</span>(<span class="str">"CreateUser"</span>, { name: <span class="str">"Alice"</span> });
+console.<span class="fn">log</span>(command, <span class="tp">Object</span>.<span class="fn">isFrozen</span>(command), <span class="fn">isCommand</span>(command));
+<span class="cmt">// { name: 'Alice', type: 'CreateUser' } true true</span>
 
-<span class="cm">// Option 2: Abstract class</span>
-<span class="kw">import</span> { Query } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="kw">class</span> <span class="tp">GetUserQuery</span> <span class="kw">extends</span> <span class="tp">Query</span>&lt;<span class="str">"GetUser"</span>&gt; {
-  <span class="kw">readonly</span> type = <span class="str">"GetUser"</span> <span class="kw">as const</span>;
-  <span class="kw">constructor</span>(<span class="kw">readonly</span> userId: <span class="tp">string</span>) { <span class="kw">super</span>(<span class="str">"GetUser"</span>); }
-}
-
-<span class="cm">// Option 3: Type-safe utility</span>
-<span class="kw">import</span> { QueryOf } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="kw">type</span> <span class="tp">GetUser</span> = <span class="tp">QueryOf</span>&lt;<span class="str">"GetUser"</span>, { userId: <span class="tp">string</span> }&gt;;
+<span class="kw">const</span> safe = <span class="fn">createCommand</span>(<span class="str">"CreateUser"</span>, { type: <span class="str">"DeleteEverything"</span> });
+console.<span class="fn">log</span>(safe.type);
+<span class="cmt">// CreateUser</span>
         </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Query Interface</h3>
-        <div class="code-block">
-<span class="kw">interface</span> <span class="tp">Query</span>&lt;TType <span class="kw">extends</span> <span class="tp">string</span> = <span class="tp">string</span>&gt; {
-  <span class="kw">readonly</span> type: TType;
-}
+        <p class="mt-4 mb-4">You can also extend the <code class="bg-gray-100 px-1 font-bold">Command</code> / <code class="bg-gray-100 px-1 font-bold">Query</code> classes and call <code class="bg-gray-100 px-1 font-bold">super("CreateUser")</code>; <code class="bg-gray-100 px-1 font-bold">MetadataCommand</code> / <code class="bg-gray-100 px-1 font-bold">MetadataQuery</code> add a frozen <code class="bg-gray-100 px-1 font-bold">metadata</code> field.</p>
+        <div class="callout callout-warning">
+          <strong>Common mistake:</strong> an empty or whitespace-only <code class="bg-gray-100 px-1 font-bold">type</code>. <code class="bg-gray-100 px-1 font-bold">execute</code> throws <code class="bg-gray-100 px-1 font-bold">InvalidCommandError</code> / <code class="bg-gray-100 px-1 font-bold">InvalidQueryError</code>; <code class="bg-gray-100 px-1 font-bold">register</code> throws <code class="bg-gray-100 px-1 font-bold">InvalidHandlerTypeError</code>.
         </div>
       </section>
 
       <!-- ==================== HANDLERS ==================== -->
       <section id="handlers" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HANDLERS</h2>
-        <p class="mb-4">Handlers contain the business logic. Two styles: class-based (abstract class) or function-based (factory).</p>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Command Handlers</h3>
+        <p class="mb-4">
+          A <em>handler</em> is the code that runs for one <code class="bg-gray-100 px-1 font-bold">type</code>. It receives the request plus an optional <a href="#execution-context" class="text-zudo-blue font-bold">context</a>, and what it returns is what <code class="bg-gray-100 px-1 font-bold">execute</code> resolves to. Sync or async both work.
+        </p>
+        <p class="mb-4">The bus accepts three forms and treats them the same: a plain function, any object with an <code class="bg-gray-100 px-1 font-bold">execute()</code> method, or a class extending <code class="bg-gray-100 px-1 font-bold">CommandHandler</code> / <code class="bg-gray-100 px-1 font-bold">QueryHandler</code>. This example registers a function and a class; both return the user's name.</p>
         <div class="code-block">
-<span class="cm">// Class-based (recommended for complex logic)</span>
-<span class="kw">import</span> { CommandHandler } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
+<span class="kw">import</span> { <span class="tp">CommandHandler</span>, <span class="fn">createCommandBus</span>, <span class="kw">type</span> <span class="tp">CommandOf</span> } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
 
-<span class="kw">class</span> <span class="tp">CreateUserHandler</span> <span class="kw">extends</span> <span class="tp">CommandHandler</span>&lt;<span class="tp">CreateUserCommand</span>, <span class="tp">User</span>&gt; {
+<span class="kw">type</span> <span class="tp">CreateUser</span> = <span class="tp">CommandOf</span>&lt;<span class="str">"CreateUser"</span>, { name: <span class="tp">string</span> }&gt;;
+
+<span class="cmt">// 1. A plain function</span>
+<span class="kw">const</span> fnBus = <span class="fn">createCommandBus</span>().<span class="fn">register</span>&lt;<span class="tp">CreateUser</span>, <span class="tp">string</span>&gt;(
+  <span class="str">"CreateUser"</span>,
+  (command) =&gt; command.name,
+);
+
+<span class="cmt">// 2. A class</span>
+<span class="kw">class</span> <span class="tp">CreateUserHandler</span> <span class="kw">extends</span> <span class="tp">CommandHandler</span>&lt;<span class="tp">CreateUser</span>, <span class="tp">string</span>&gt; {
   <span class="kw">readonly</span> commandType = <span class="str">"CreateUser"</span>;
 
-  <span class="kw">async</span> <span class="fn">execute</span>(command: <span class="tp">CreateUserCommand</span>): <span class="tp">Promise</span>&lt;<span class="tp">User</span>&gt; {
-    <span class="kw">return</span> <span class="kw">this</span>.repo.<span class="fn">CREATE</span>({ name: command.name, email: command.email });
+  <span class="fn">execute</span>(command: <span class="tp">CreateUser</span>): <span class="tp">string</span> {
+    <span class="kw">return</span> command.name;
   }
 }
+<span class="kw">const</span> classBus = <span class="fn">createCommandBus</span>().<span class="fn">register</span>(<span class="str">"CreateUser"</span>, <span class="kw">new</span> <span class="tp">CreateUserHandler</span>());
 
-<span class="cm">// Function-based (recommended for simple logic)</span>
-<span class="kw">import</span> { createCommandHandler } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="kw">const</span> handler = <span class="fn">createCommandHandler</span>(<span class="str">"CreateUser"</span>, <span class="kw">async</span> (cmd) =&gt; {
-  <span class="kw">return</span> repo.<span class="fn">CREATE</span>({ name: cmd.name, email: cmd.email });
-});
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Query Handlers</h3>
-        <div class="code-block">
-<span class="cm">// Class-based</span>
-<span class="kw">import</span> { QueryHandler } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="kw">class</span> <span class="tp">GetUserHandler</span> <span class="kw">extends</span> <span class="tp">QueryHandler</span>&lt;<span class="tp">GetUserQuery</span>, <span class="tp">User</span>&gt; {
-  <span class="kw">readonly</span> queryType = <span class="str">"GetUser"</span>;
-
-  <span class="kw">async</span> <span class="fn">execute</span>(query: <span class="tp">GetUserQuery</span>): <span class="tp">Promise</span>&lt;<span class="tp">User</span>&gt; {
-    <span class="kw">return</span> <span class="kw">this</span>.repo.<span class="fn">findById</span>(query.userId);
-  }
+<span class="kw">for</span> (<span class="kw">const</span> bus <span class="kw">of</span> [fnBus, classBus]) {
+  console.<span class="fn">log</span>(<span class="kw">await</span> bus.<span class="fn">execute</span>&lt;<span class="tp">CreateUser</span>, <span class="tp">string</span>&gt;({ type: <span class="str">"CreateUser"</span>, name: <span class="str">"Alice"</span> }));
 }
-
-<span class="cm">// Function-based</span>
-<span class="kw">import</span> { createQueryHandler } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="kw">const</span> handler = <span class="fn">createQueryHandler</span>(<span class="str">"GetUser"</span>, <span class="kw">async</span> (q) =&gt; {
-  <span class="kw">return</span> repo.<span class="fn">findById</span>(q.userId);
-});
+<span class="cmt">// Alice</span>
+<span class="cmt">// Alice</span>
         </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Handler Type Guards</h3>
-        <div class="code-block">
-<span class="kw">import</span> { isCommandHandler, isQueryHandler, isCommandHandlerLike, isQueryHandlerLike } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="fn">isCommandHandler</span>(handler)   <span class="cm">// true if CommandHandler instance</span>
-<span class="fn">isQueryHandler</span>(handler)     <span class="cm">// true if QueryHandler instance</span>
-<span class="fn">isCommandHandlerLike</span>(fn)    <span class="cm">// true if function or object with execute()</span>
-<span class="fn">isQueryHandlerLike</span>(fn)      <span class="cm">// true if function or object with execute()</span>
+        <p class="mt-4 mb-4"><code class="bg-gray-100 px-1 font-bold">createCommandHandler("CreateUser", fn)</code> wraps a function in a handler object when you want one without writing a class. Query handlers mirror all of this with <code class="bg-gray-100 px-1 font-bold">QueryHandler</code> and <code class="bg-gray-100 px-1 font-bold">createQueryHandler</code>.</p>
+        <div class="callout callout-warning">
+          <strong>Common mistake:</strong> the bus keys on the string you pass to <code class="bg-gray-100 px-1 font-bold">register</code>, not on a class's <code class="bg-gray-100 px-1 font-bold">commandType</code> field. If they disagree, <code class="bg-gray-100 px-1 font-bold">execute</code> throws <code class="bg-gray-100 px-1 font-bold">CommandHandlerNotFoundError</code>.
         </div>
       </section>
 
       <!-- ==================== BUSES ==================== -->
       <section id="buses" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">BUSES</h2>
-        <p class="mb-4">The CommandBus and QueryBus route requests to their registered handlers through a middleware pipeline.</p>
-
-        <h3 class="text-xl font-black mt-6 mb-3">CommandBus</h3>
+        <p class="mb-4">
+          A <em>bus</em> maps <code class="bg-gray-100 px-1 font-bold">type</code> to handler and runs each request through a <a href="#middleware" class="text-zudo-blue font-bold">middleware</a> pipeline. <code class="bg-gray-100 px-1 font-bold">CommandBus</code> and <code class="bg-gray-100 px-1 font-bold">QueryBus</code> share the same methods. Below: the bookkeeping methods and the two errors you meet first.
+        </p>
         <div class="code-block">
-<span class="kw">import</span> { createCommandBus } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
+<span class="kw">import</span> {
+  <span class="fn">createCommandBus</span>,
+  <span class="tp">CommandHandlerNotFoundError</span>,
+  <span class="tp">DuplicateHandlerError</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
 
-<span class="kw">const</span> bus = <span class="fn">createCommandBus</span>({
-  middleware: [<span class="fn">timingMiddleware</span>(), <span class="fn">errorMiddleware</span>()],
-  contextFactory: () =&gt; ({ userId: <span class="str">"usr_123"</span> }),
-});
+<span class="kw">const</span> bus = <span class="fn">createCommandBus</span>();
 
-<span class="cm">// Register handlers</span>
-bus.<span class="fn">register</span>(<span class="str">"CreateUser"</span>, createUserHandler);
+bus.<span class="fn">register</span>(<span class="str">"CreateUser"</span>, <span class="kw">async</span> () =&gt; <span class="str">"created"</span>);
 bus.<span class="fn">registerMany</span>([
-  { commandType: <span class="str">"DeleteUser"</span>, handler: deleteUserHandler },
+  <span class="cmt">// registerMany entries type their handler result as void</span>
+  { commandType: <span class="str">"DeleteUser"</span>, handler: <span class="kw">async</span> () =&gt; {} },
 ]);
+console.<span class="fn">log</span>(bus.<span class="fn">size</span>(), bus.<span class="fn">has</span>(<span class="str">"CreateUser"</span>), bus.<span class="fn">getCommandTypes</span>());
+<span class="cmt">// 2 true [ 'CreateUser', 'DeleteUser' ]</span>
 
-<span class="cm">// Execute a command</span>
-<span class="kw">const</span> result = <span class="kw">await</span> bus.<span class="fn">execute</span>(<span class="fn">createCommand</span>(<span class="str">"CreateUser"</span>, { name: <span class="str">"Alice"</span> }));
-
-<span class="cm">// Query methods</span>
-bus.<span class="fn">has</span>(<span class="str">"CreateUser"</span>)      <span class="cm">// boolean</span>
-bus.<span class="fn">size</span>()                   <span class="cm">// number of registered handlers</span>
-bus.<span class="fn">getCommandTypes</span>()        <span class="cm">// string[]</span>
-bus.<span class="fn">clear</span>()                  <span class="cm">// remove all handlers</span>
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">QueryBus</h3>
-        <div class="code-block">
-<span class="kw">import</span> { createQueryBus } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="kw">const</span> bus = <span class="fn">createQueryBus</span>({
-  middleware: [<span class="fn">timingMiddleware</span>()],
-});
-
-bus.<span class="fn">register</span>(<span class="str">"GetUser"</span>, getUserHandler);
-
-<span class="kw">const</span> user = <span class="kw">await</span> bus.<span class="fn">execute</span>(<span class="fn">createQuery</span>(<span class="str">"GetUser"</span>, { userId: <span class="str">"usr_123"</span> }));
-        </div>
-      </section>
-
-      <!-- ==================== RESULTS ==================== -->
-      <section id="results" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RESULTS</h2>
-        <p class="mb-4">Structured result types with status, timing, and metadata.</p>
-
-        <h3 class="text-xl font-black mt-6 mb-3">CommandResult</h3>
-        <div class="code-block">
-<span class="kw">interface</span> <span class="tp">CommandResult</span>&lt;TResult, TCommand&gt; {
-  <span class="kw">readonly</span> status: <span class="str">"success"</span> | <span class="str">"failure"</span>;
-  <span class="kw">readonly</span> result: TResult;
-  <span class="kw">readonly</span> commandType: <span class="tp">string</span>;
-  <span class="kw">readonly</span> executedAt: <span class="tp">Date</span>;
-  <span class="kw">readonly</span> durationMs?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> metadata?: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;;
+<span class="kw">try</span> {
+  bus.<span class="fn">register</span>(<span class="str">"CreateUser"</span>, <span class="kw">async</span> () =&gt; <span class="str">"again"</span>);
+} <span class="kw">catch</span> (error) {
+  console.<span class="fn">log</span>(error <span class="kw">instanceof</span> <span class="tp">DuplicateHandlerError</span>);  <span class="cmt">// true</span>
 }
 
-<span class="cm">// Create results</span>
-<span class="kw">import</span> { createCommandResult, createFailedCommandResult } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
+bus.<span class="fn">replace</span>(<span class="str">"CreateUser"</span>, <span class="kw">async</span> () =&gt; <span class="str">"created v2"</span>);
+console.<span class="fn">log</span>(<span class="kw">await</span> bus.<span class="fn">execute</span>({ type: <span class="str">"CreateUser"</span> }));
+<span class="cmt">// created v2</span>
 
-<span class="kw">const</span> ok = <span class="fn">createCommandResult</span>(user, { command: cmd, durationMs: <span class="num">42</span> });
-<span class="kw">const</span> fail = <span class="fn">createFailedCommandResult</span>(<span class="kw">null</span>, { command: cmd });
-
-<span class="cm">// Check status</span>
-<span class="kw">import</span> { isSuccessfulCommandResult, unwrapCommandResult } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="fn">isSuccessfulCommandResult</span>(ok)  <span class="cm">// true</span>
-<span class="fn">unwrapCommandResult</span>(ok)         <span class="cm">// the user object</span>
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">QueryResult</h3>
-        <div class="code-block">
-<span class="kw">interface</span> <span class="tp">QueryResult</span>&lt;TResult, TQuery&gt; {
-  <span class="kw">readonly</span> status: <span class="str">"success"</span> | <span class="str">"failure"</span>;
-  <span class="kw">readonly</span> result: TResult;
-  <span class="kw">readonly</span> queryType: <span class="tp">string</span>;
-  <span class="kw">readonly</span> executedAt: <span class="tp">Date</span>;
-  <span class="kw">readonly</span> durationMs?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> metadata?: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;;
+bus.<span class="fn">unregister</span>(<span class="str">"DeleteUser"</span>);
+<span class="kw">try</span> {
+  <span class="kw">await</span> bus.<span class="fn">execute</span>({ type: <span class="str">"DeleteUser"</span> });
+} <span class="kw">catch</span> (error) {
+  console.<span class="fn">log</span>(error <span class="kw">instanceof</span> <span class="tp">CommandHandlerNotFoundError</span>);  <span class="cmt">// true</span>
 }
-
-<span class="kw">import</span> { createQueryResult, isSuccessfulQueryResult, unwrapQueryResult } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="kw">const</span> ok = <span class="fn">createQueryResult</span>(user, { query: q });
-<span class="fn">isSuccessfulQueryResult</span>(ok)  <span class="cm">// true</span>
-<span class="fn">unwrapQueryResult</span>(ok)         <span class="cm">// the user object</span>
+        </div>
+        <p class="mt-4 mb-4">The factories take <code class="bg-gray-100 px-1 font-bold">{ middleware, contextFactory }</code>. <code class="bg-gray-100 px-1 font-bold">contextFactory</code> builds a context for any <code class="bg-gray-100 px-1 font-bold">execute</code> call that did not pass one.</p>
+        <div class="callout callout-tip">
+          <strong>Tip:</strong> <code class="bg-gray-100 px-1 font-bold">register</code>, <code class="bg-gray-100 px-1 font-bold">registerMany</code>, <code class="bg-gray-100 px-1 font-bold">replace</code> and <code class="bg-gray-100 px-1 font-bold">use</code> return the bus, so calls chain.
         </div>
       </section>
 
       <!-- ==================== MIDDLEWARE ==================== -->
       <section id="middleware" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MIDDLEWARE</h2>
-        <p class="mb-4">Middleware wraps command/query execution. 11 built-in middleware factories included.</p>
+        <p class="mb-4">
+          <em>Middleware</em> is a function that wraps every request on a bus. It gets the request, the context, and a <code class="bg-gray-100 px-1 font-bold">next</code> function. Calling <code class="bg-gray-100 px-1 font-bold">next(request, context)</code> continues to the next middleware and finally the handler. Code before <code class="bg-gray-100 px-1 font-bold">next</code> runs before the handler; code after it runs after.
+        </p>
+        <p class="mb-4">
+          It exists so you can add behaviour to <strong>all</strong> operations in one place. Handler lookup happens at the end of the pipeline, so middleware also sees "handler not found" errors. This example writes a logging middleware, adds the built-in <code class="bg-gray-100 px-1 font-bold">timingMiddleware</code>, and appends one more with <code class="bg-gray-100 px-1 font-bold">bus.use</code>.</p>
+        <div class="code-block">
+<span class="kw">import</span> {
+  <span class="fn">createCommandBus</span>,
+  <span class="fn">timingMiddleware</span>,
+  <span class="fn">onErrorMiddleware</span>,
+  <span class="kw">type</span> <span class="tp">CqrsMiddleware</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
 
-        <h3 class="text-xl font-black mt-6 mb-3">Built-in Middleware</h3>
-        <table class="w-full text-smw-full border-4 border-black text-sm mb-4">
-          <thead class="bg-black text-white"><tr><th class="px-4 py-2 text-left font-bold">MIDDLEWARE</th><th class="px-4 py-2 text-left font-bold">Purpose</th></tr></thead>
+<span class="kw">const</span> logging: <span class="tp">CqrsMiddleware</span> = <span class="kw">async</span> (request, context, next) =&gt; {
+  console.<span class="fn">log</span>(<span class="str">"start"</span>, request.type);
+  <span class="kw">const</span> result = <span class="kw">await</span> next(request, context);
+  console.<span class="fn">log</span>(<span class="str">"done"</span>, request.type);
+  <span class="kw">return</span> result;
+};
+
+<span class="kw">const</span> timing = <span class="fn">timingMiddleware</span>({
+  onTiming: ({ request, durationMs, succeeded }) =&gt;
+    console.<span class="fn">log</span>(<span class="str">"timed"</span>, request.type, succeeded, <span class="tp">Math</span>.<span class="fn">round</span>(durationMs), <span class="str">"ms"</span>),
+});
+
+<span class="kw">const</span> bus = <span class="fn">createCommandBus</span>({ middleware: [logging, timing] });
+bus.<span class="fn">use</span>(<span class="fn">onErrorMiddleware</span>((request, error) =&gt; {
+  console.<span class="fn">log</span>(<span class="str">"failed"</span>, request.type, (error <span class="kw">as</span> <span class="tp">Error</span>).message);
+}));
+bus.<span class="fn">register</span>(<span class="str">"Ping"</span>, <span class="kw">async</span> () =&gt; <span class="str">"pong"</span>);
+
+console.<span class="fn">log</span>(<span class="kw">await</span> bus.<span class="fn">execute</span>({ type: <span class="str">"Ping"</span> }));
+<span class="cmt">// start Ping</span>
+<span class="cmt">// timed Ping true 0 ms</span>
+<span class="cmt">// done Ping</span>
+<span class="cmt">// pong</span>
+
+<span class="kw">await</span> bus.<span class="fn">execute</span>({ type: <span class="str">"Missing"</span> }).<span class="fn">catch</span>(() =&gt; {});
+<span class="cmt">// start Missing</span>
+<span class="cmt">// failed Missing No command handler is registered for "Missing".</span>
+<span class="cmt">// timed Missing false 0 ms</span>
+        </div>
+        <p class="mt-4 mb-4">Measurements are also kept on the middleware as <code class="bg-gray-100 px-1 font-bold">timing.lastTiming</code> and <code class="bg-gray-100 px-1 font-bold">timing.count</code>.</p>
+        <h3 class="text-xl font-black mt-6 mb-3">Built-in middleware</h3>
+        <p class="mb-4">Each factory returns a <code class="bg-gray-100 px-1 font-bold">CqrsMiddleware</code>. Those taking <code class="bg-gray-100 px-1 font-bold">options</code> accept <code class="bg-gray-100 px-1 font-bold">{ name?, enabled? }</code>; <code class="bg-gray-100 px-1 font-bold">enabled: false</code> makes it a pass-through.</p>
+        <div class="overflow-x-auto">
+        <table class="doc-table mb-4">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-mono font-bold text-zudo-blue">timingMiddleware()</td><td class="px-4 py-2">Measures execution time; reports it via <code>onTiming</code> and exposes <code>lastTiming</code></td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-mono font-bold text-zudo-blue">errorMiddleware()</td><td class="px-4 py-2">Catches exceptions, normalizes into BaseError</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-mono font-bold text-zudo-blue">validationMiddleware()</td><td class="px-4 py-2">Validates CQRS request structure before execution</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-mono font-bold text-zudo-blue">contextMiddleware()</td><td class="px-4 py-2">Adds execution metadata to the CQRS context</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-mono font-bold text-zudo-blue">lockMiddleware(lock)</td><td class="px-4 py-2">Prevents concurrent execution of same request type</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-mono font-bold text-zudo-blue">commandMiddleware(fn)</td><td class="px-4 py-2">Adapts command-specific middleware to generic middleware</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-mono font-bold text-zudo-blue">queryMiddleware(fn)</td><td class="px-4 py-2">Adapts query-specific middleware to generic middleware</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-mono font-bold text-zudo-blue">composeMiddleware([])</td><td class="px-4 py-2">Combines multiple middleware into a single pipeline</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-mono font-bold text-zudo-blue">beforeMiddleware(fn)</td><td class="px-4 py-2">Runs callback before execution</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-mono font-bold text-zudo-blue">afterMiddleware(fn)</td><td class="px-4 py-2">Runs callback after successful execution</td></tr>
-            <tr class="bg-gray-50"><td class="px-4 py-2 font-mono font-bold text-zudo-blue">onErrorMiddleware(fn)</td><td class="px-4 py-2">Runs callback when execution fails</td></tr>
+            <tr><td><code>timingMiddleware(options?)</code></td><td>Measures downstream duration.</td><td><code>onTiming</code> callback, <code>lastTiming</code>, <code>count</code>.</td></tr>
+            <tr><td><code>errorMiddleware(options?)</code></td><td>Wraps unknown thrown values in <code>CqrsError</code>.</td><td><code>BaseError</code> instances pass through.</td></tr>
+            <tr><td><code>validationMiddleware(options?)</code></td><td>Throws <code>CqrsValidationError</code> for a request with no <code>type</code>.</td><td>Fails earlier than the bus's own check.</td></tr>
+            <tr><td><code>contextMiddleware(options?)</code></td><td>Adds <code>metadata.cqrsRequestType</code> to the context.</td><td></td></tr>
+            <tr><td><code>lockMiddleware(lock, options?)</code></td><td>Serialises requests sharing a key.</td><td><code>lock.acquire(key)</code> returns a release function; default key is <code>request.type</code>.</td></tr>
+            <tr><td><code>beforeMiddleware(fn)</code>, <code>afterMiddleware(fn)</code>, <code>onErrorMiddleware(fn)</code></td><td>Run a callback before, after success, or on failure.</td><td><code>onError</code> rethrows after the callback.</td></tr>
+            <tr><td><code>commandMiddleware(fn)</code> / <code>queryMiddleware(fn)</code></td><td>Adapt a <code>CommandMiddleware</code> / <code>QueryMiddleware</code> to the generic shape.</td><td></td></tr>
+            <tr><td><code>composeMiddleware(list)</code></td><td>Joins several middleware into one.</td><td>Used by the buses internally.</td></tr>
           </tbody>
         </table>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Using Middleware</h3>
-        <div class="code-block">
-<span class="kw">import</span> {
-  createCommandBus, timingMiddleware, errorMiddleware,
-  validationMiddleware, beforeMiddleware, afterMiddleware
-} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="kw">const</span> bus = <span class="fn">createCommandBus</span>({
-  middleware: [
-    <span class="fn">timingMiddleware</span>(),
-    <span class="fn">errorMiddleware</span>(),
-    <span class="fn">validationMiddleware</span>(),
-    <span class="fn">beforeMiddleware</span>((req) =&gt; console.<span class="fn">log</span>(<span class="str">"Before:"</span>, req.type)),
-    <span class="fn">afterMiddleware</span>((req, result) =&gt; console.<span class="fn">log</span>(<span class="str">"After:"</span>, req.type)),
-  ],
-});
-
-<span class="cm">// Add middleware at runtime</span>
-bus.<span class="fn">use</span>(<span class="fn">onErrorMiddleware</span>((req, err) =&gt; console.<span class="fn">error</span>(req.type, err)));
         </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Custom Middleware</h3>
-        <div class="code-block">
-<span class="kw">import</span> { CqrsMiddleware } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="kw">const</span> authMiddleware: <span class="tp">CqrsMiddleware</span> = <span class="kw">async</span> (request, context, next) =&gt; {
-  <span class="kw">if</span> (!context?.userId) {
-    <span class="kw">throw new</span> <span class="fn">CqrsValidationError</span>(<span class="str">"Authentication required"</span>);
-  }
-  <span class="kw">return</span> <span class="fn">next</span>(request, context);
-};
+        <div class="callout callout-danger">
+          <strong>Danger:</strong> call <code class="bg-gray-100 px-1 font-bold">next</code> at most once. A second call throws <code class="bg-gray-100 px-1 font-bold">MiddlewareExecutionError</code>. Not calling it at all silently skips the handler.
         </div>
       </section>
 
-      <!-- ==================== HANDLER REGISTRY ==================== -->
-      <section id="handler-registry" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HANDLER REGISTRY</h2>
-        <p class="mb-4">Central registry for both command and query handlers.</p>
-
-        <div class="code-block">
-<span class="kw">import</span> { createHandlerRegistry } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="kw">const</span> registry = <span class="fn">createHandlerRegistry</span>();
-
-<span class="cm">// Register</span>
-registry.<span class="fn">registerCommand</span>(<span class="str">"CreateUser"</span>, createUserHandler);
-registry.<span class="fn">registerQuery</span>(<span class="str">"GetUser"</span>, getUserHandler);
-
-<span class="cm">// Query</span>
-registry.<span class="fn">hasCommand</span>(<span class="str">"CreateUser"</span>)  <span class="cm">// true</span>
-registry.<span class="fn">hasQuery</span>(<span class="str">"GetUser"</span>)      <span class="cm">// true</span>
-registry.<span class="fn">commandCount</span>()             <span class="cm">// 1</span>
-registry.<span class="fn">queryCount</span>()               <span class="cm">// 1</span>
-registry.<span class="fn">size</span>()                     <span class="cm">// 2</span>
-registry.<span class="fn">getCommandTypes</span>()          <span class="cm">// ["CreateUser"]</span>
-registry.<span class="fn">getQueryTypes</span>()            <span class="cm">// ["GetUser"]</span>
-
-<span class="cm">// Replace</span>
-registry.<span class="fn">replaceCommand</span>(<span class="str">"CreateUser"</span>, newHandler);
-
-<span class="cm">// Unregister</span>
-registry.<span class="fn">unregisterCommand</span>(<span class="str">"CreateUser"</span>)  <span class="cm">// boolean</span>
-registry.<span class="fn">clearCommands</span>()                    <span class="cm">// remove all command handlers</span>
-registry.<span class="fn">clear</span>()                            <span class="cm">// remove everything</span>
-        </div>
-      </section>
-
-      <!-- ==================== CONTEXT ==================== -->
-      <section id="context" class="mb-12">
+      <!-- ==================== EXECUTION CONTEXT ==================== -->
+      <section id="execution-context" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">EXECUTION CONTEXT</h2>
-        <p class="mb-4">Propagates request metadata (user, tenant, correlation) through the pipeline.</p>
-
+        <p class="mb-4">
+          A <em>context</em> is a small frozen object that rides along with a request: who is asking (<code class="bg-gray-100 px-1 font-bold">userId</code>, <code class="bg-gray-100 px-1 font-bold">tenantId</code>), where it came from (<code class="bg-gray-100 px-1 font-bold">source</code>), and ids linking related requests. Pass it as the second argument to <code class="bg-gray-100 px-1 font-bold">execute</code>; middleware and the handler receive it.
+        </p>
+        <p class="mb-4">Helpers like <code class="bg-gray-100 px-1 font-bold">withUser</code> return a new context rather than mutating. This example hands one to a handler, then derives a child sharing the parent's correlation id.</p>
         <div class="code-block">
 <span class="kw">import</span> {
-  createExecutionContext, createChildExecutionContext,
-  withUser, withTenant, withSource, withContextMetadata,
-  getUserId, getTenantId, sharesCorrelation, serializeExecutionContext
+  <span class="fn">createCommandBus</span>,
+  <span class="fn">createExecutionContext</span>,
+  <span class="fn">createChildExecutionContext</span>,
+  <span class="fn">withUser</span>,
+  <span class="fn">sharesCorrelation</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
 
-<span class="cm">// Create context</span>
-<span class="kw">const</span> ctx = <span class="fn">createExecutionContext</span>({
-  userId: <span class="str">"usr_123"</span>,
-  tenantId: <span class="str">"tenant_abc"</span>,
-  source: <span class="str">"http"</span>,
-  correlationId: <span class="str">"corr_001"</span>,
+<span class="kw">const</span> bus = <span class="fn">createCommandBus</span>().<span class="fn">register</span>(<span class="str">"WhoAmI"</span>, (command, context) =&gt; {
+  <span class="kw">return</span> context?.userId ?? <span class="str">"anonymous"</span>;
 });
 
-<span class="cm">// Immutable transformations</span>
-<span class="kw">const</span> ctx2 = <span class="fn">withUser</span>(ctx, <span class="str">"usr_456"</span>);
-<span class="kw">const</span> ctx3 = <span class="fn">withSource</span>(ctx, <span class="str">"rpc"</span>);
+<span class="kw">const</span> anonymous = <span class="fn">createExecutionContext</span>({ source: <span class="str">"http"</span> });
+<span class="kw">const</span> alice = <span class="fn">withUser</span>(anonymous, <span class="str">"user-1"</span>);
 
-<span class="cm">// Child context (preserves correlation chain)</span>
-<span class="kw">const</span> child = <span class="fn">createChildExecutionContext</span>(ctx, { source: <span class="str">"event"</span> });
+console.<span class="fn">log</span>(<span class="kw">await</span> bus.<span class="fn">execute</span>({ type: <span class="str">"WhoAmI"</span> }, anonymous));
+<span class="cmt">// anonymous</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> bus.<span class="fn">execute</span>({ type: <span class="str">"WhoAmI"</span> }, alice));
+<span class="cmt">// user-1</span>
 
-<span class="cm">// Getters</span>
-<span class="fn">getUserId</span>(ctx)         <span class="cm">// "usr_123"</span>
-<span class="fn">getTenantId</span>(ctx)       <span class="cm">// "tenant_abc"</span>
-<span class="fn">sharesCorrelation</span>(ctx, child) <span class="cm">// true</span>
-
-<span class="cm">// Serialize for logging/transport</span>
-<span class="kw">const</span> plain = <span class="fn">serializeExecutionContext</span>(ctx);
+<span class="kw">const</span> child = <span class="fn">createChildExecutionContext</span>(alice, { source: <span class="str">"event"</span> });
+console.<span class="fn">log</span>(child.userId, child.causationId === alice.requestId, <span class="fn">sharesCorrelation</span>(alice, child));
+<span class="cmt">// user-1 true true</span>
+        </div>
+        <div class="callout callout-note">
+          <strong>In plain words:</strong> <code class="bg-gray-100 px-1 font-bold">requestId</code> names this request. <code class="bg-gray-100 px-1 font-bold">correlationId</code> names the whole chain that started together. <code class="bg-gray-100 px-1 font-bold">causationId</code> names the one request that directly caused this one.
         </div>
       </section>
 
       <!-- ==================== EVENTS ==================== -->
       <section id="events" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">EVENT EXTENSIONS</h2>
-        <p class="mb-4">CQRS-specific event types for event-sourced aggregates.</p>
-
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">EVENTS</h2>
+        <p class="mb-4">
+          An <em>event</em> records that something already happened ("UserCreated"). A command handler often publishes one so other code can react. This package re-exports the <code class="bg-gray-100 px-1 font-bold">EventBus</code> from <a href="/docs/packages-events" class="text-zudo-blue font-bold">@zudojs/events</a> and adds <code class="bg-gray-100 px-1 font-bold">createCqrsEvent</code>, which accepts optional <code class="bg-gray-100 px-1 font-bold">aggregateId</code>, <code class="bg-gray-100 px-1 font-bold">aggregateType</code> and <code class="bg-gray-100 px-1 font-bold">version</code> fields. Below: subscribe to an event type, then publish one event.
+        </p>
         <div class="code-block">
-<span class="kw">import</span> {
-  createCqrsEvent, isCqrsEvent, isAggregateEvent,
-  getAggregateId, createCqrsEventHandler
-} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
+<span class="kw">import</span> { <span class="fn">createEventBus</span>, <span class="fn">createCqrsEvent</span>, <span class="fn">isAggregateEvent</span> } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
 
-<span class="cm">// Create a CQRS event with aggregate info</span>
+<span class="kw">const</span> events = <span class="fn">createEventBus</span>();
+events.<span class="fn">on</span>(<span class="str">"UserCreated"</span>, (event) =&gt; {
+  console.<span class="fn">log</span>(<span class="str">"heard"</span>, event.type, event.payload);
+});
+
 <span class="kw">const</span> event = <span class="fn">createCqrsEvent</span>({
   type: <span class="str">"UserCreated"</span>,
-  payload: { name: <span class="str">"Alice"</span>, email: <span class="str">"alice@example.com"</span> },
-  aggregateId: <span class="str">"usr_123"</span>,
+  payload: { name: <span class="str">"Alice"</span> },
+  aggregateId: <span class="str">"user-1"</span>,
   aggregateType: <span class="str">"User"</span>,
   version: <span class="num">1</span>,
 });
+console.<span class="fn">log</span>(<span class="fn">isAggregateEvent</span>(event));
+<span class="cmt">// true</span>
 
-<span class="fn">isCqrsEvent</span>(event)           <span class="cm">// true</span>
-<span class="fn">isAggregateEvent</span>(event)      <span class="cm">// true</span>
-<span class="fn">getAggregateId</span>(event)        <span class="cm">// "usr_123"</span>
-
-<span class="cm">// Create event handler registration</span>
-<span class="kw">const</span> registration = <span class="fn">createCqrsEventHandler</span>(<span class="str">"UserCreated"</span>, (event) =&gt; {
-  console.<span class="fn">log</span>(<span class="str">"User created:"</span>, event.payload.name);
-});
+<span class="kw">await</span> events.<span class="fn">publish</span>(event);
+<span class="cmt">// heard UserCreated { name: 'Alice' }</span>
         </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">EventResult</h3>
-        <div class="code-block">
-<span class="kw">import</span> {
-  createEventResult, isEventPublished, hasEventHandlerFailures
-} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="kw">const</span> result = <span class="fn">createEventResult</span>({
-  event,
-  handlerCount: <span class="num">3</span>,
-  successfulHandlers: <span class="num">3</span>,
-  failedHandlers: <span class="num">0</span>,
-});
-
-<span class="fn">isEventPublished</span>(result)         <span class="cm">// true</span>
-<span class="fn">hasEventHandlerFailures</span>(result)  <span class="cm">// false</span>
-        </div>
+        <p class="mt-4"><code class="bg-gray-100 px-1 font-bold">createEvent</code> and <code class="bg-gray-100 px-1 font-bold">createEventHandler</code> are deprecated aliases of <code class="bg-gray-100 px-1 font-bold">createCqrsEvent</code> and <code class="bg-gray-100 px-1 font-bold">createCqrsEventHandler</code>.</p>
       </section>
 
-      <!-- ==================== DECORATORS ==================== -->
-      <section id="decorators" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DECORATORS</h2>
-        <p class="mb-4">TypeScript decorators for metadata-driven handler registration.</p>
-
+      <!-- ==================== REGISTRY AND DECORATORS ==================== -->
+      <section id="registry-and-decorators" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">REGISTRY AND DECORATORS</h2>
+        <p class="mb-4">
+          <code class="bg-gray-100 px-1 font-bold">HandlerRegistry</code> is a standalone store with the same duplicate and type checks as the buses. Use it to collect handlers first and wire them into buses later with <code class="bg-gray-100 px-1 font-bold">getEntries()</code>.
+        </p>
+        <p class="mb-4">
+          The decorators <code class="bg-gray-100 px-1 font-bold">@CommandHandlerFor("Type")</code>, <code class="bg-gray-100 px-1 font-bold">@QueryHandlerFor("Type")</code> and <code class="bg-gray-100 px-1 font-bold">@CqrsHandler(kind, "Type")</code> attach a <code class="bg-gray-100 px-1 font-bold">{ kind, type }</code> label to a class. They are standard TypeScript 5 decorators; no compiler flag is needed.
+        </p>
         <div class="code-block">
-<span class="kw">import</span> { CommandHandlerFor, QueryHandlerFor, getCqrsHandlerMetadata } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
+<span class="kw">import</span> {
+  <span class="dec">CommandHandlerFor</span>,
+  <span class="fn">getCqrsType</span>,
+  <span class="fn">createHandlerRegistry</span>,
+  <span class="fn">createCommandBus</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
 
-<span class="kw">@</span><span class="fn">CommandHandlerFor</span>(<span class="str">"CreateUser"</span>)
+<span class="dec">@CommandHandlerFor</span>(<span class="str">"CreateUser"</span>)
 <span class="kw">class</span> <span class="tp">CreateUserHandler</span> {
-  <span class="kw">async</span> <span class="fn">execute</span>(command: <span class="tp">CreateUserCommand</span>) {
-    <span class="cm">// ...</span>
+  <span class="fn">execute</span>(): <span class="tp">string</span> {
+    <span class="kw">return</span> <span class="str">"created"</span>;
   }
 }
 
-<span class="kw">@</span><span class="fn">QueryHandlerFor</span>(<span class="str">"GetUser"</span>)
-<span class="kw">class</span> <span class="tp">GetUserHandler</span> {
-  <span class="kw">async</span> <span class="fn">execute</span>(query: <span class="tp">GetUserQuery</span>) {
-    <span class="cm">// ...</span>
-  }
-}
+<span class="kw">const</span> registry = <span class="fn">createHandlerRegistry</span>()
+  .<span class="fn">registerCommand</span>(<span class="fn">getCqrsType</span>(<span class="tp">CreateUserHandler</span>)!, <span class="kw">new</span> <span class="tp">CreateUserHandler</span>());
 
-<span class="cm">// Read metadata</span>
-<span class="kw">const</span> meta = <span class="fn">getCqrsHandlerMetadata</span>(CreateUserHandler);
-<span class="cm">// → { kind: "command", type: "CreateUser" }</span>
+<span class="kw">const</span> bus = <span class="fn">createCommandBus</span>();
+<span class="kw">for</span> (<span class="kw">const</span> entry <span class="kw">of</span> registry.<span class="fn">getEntries</span>()) {
+  <span class="kw">if</span> (entry.kind === <span class="str">"command"</span>) bus.<span class="fn">register</span>(entry.type, entry.handler);
+}
+console.<span class="fn">log</span>(bus.<span class="fn">getCommandTypes</span>(), <span class="kw">await</span> bus.<span class="fn">execute</span>({ type: <span class="str">"CreateUser"</span> }));
+<span class="cmt">// [ 'CreateUser' ] created</span>
+        </div>
+        <div class="callout callout-warning">
+          <strong>Watch out:</strong> neither the registry nor a decorator registers anything on a bus by itself. A decorated class is only a label until you call <code class="bg-gray-100 px-1 font-bold">bus.register</code>.
         </div>
       </section>
 
       <!-- ==================== ERRORS ==================== -->
       <section id="errors" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERRORS</h2>
-        <p class="mb-4">10 specialized error types extending <code class="bg-gray-100 px-1 font-bold">BaseError</code> from <code class="bg-gray-100 px-1 font-bold">@zudojs/errors</code>.</p>
-
-        <table class="w-full text-smw-full border-4 border-black text-sm">
-          <thead class="bg-black text-white"><tr><th class="px-4 py-2 text-left font-bold">Error</th><th class="px-4 py-2 text-left font-bold">Status</th><th class="px-4 py-2 text-left font-bold">When Thrown</th></tr></thead>
+        <p class="mb-4">
+          Every error extends <code class="bg-gray-100 px-1 font-bold">CqrsError</code>, which extends <code class="bg-gray-100 px-1 font-bold">BaseError</code> from <a href="/docs/packages-errors" class="text-zudo-blue font-bold">@zudojs/errors</a>, so each has a <code class="bg-gray-100 px-1 font-bold">code</code>, <code class="bg-gray-100 px-1 font-bold">statusCode</code> and <code class="bg-gray-100 px-1 font-bold">metadata</code>. <code class="bg-gray-100 px-1 font-bold">isCqrsError(e)</code> checks for any of them; <code class="bg-gray-100 px-1 font-bold">toCqrsError(e)</code> converts an arbitrary thrown value.
+        </p>
+        <div class="overflow-x-auto">
+        <table class="doc-table">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold text-zudo-red">CqrsError</td><td class="px-4 py-2">500</td><td class="px-4 py-2">Base CQRS error</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold text-zudo-red">CqrsValidationError</td><td class="px-4 py-2">400</td><td class="px-4 py-2">Invalid CQRS request structure</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold text-zudo-red">CommandHandlerNotFoundError</td><td class="px-4 py-2">500</td><td class="px-4 py-2">No handler registered for command type</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold text-zudo-red">QueryHandlerNotFoundError</td><td class="px-4 py-2">500</td><td class="px-4 py-2">No handler registered for query type</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold text-zudo-red">EventHandlerExecutionError</td><td class="px-4 py-2">500</td><td class="px-4 py-2">Event handler throws during publication</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold text-zudo-red">DuplicateHandlerError</td><td class="px-4 py-2">409</td><td class="px-4 py-2">Registering a handler for an existing type</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold text-zudo-red">EventPublishError</td><td class="px-4 py-2">500</td><td class="px-4 py-2">Event cannot be published</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold text-zudo-red">InvalidHandlerTypeError</td><td class="px-4 py-2">400</td><td class="px-4 py-2">Handler registered with invalid type</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold text-zudo-red">InvalidMiddlewareError</td><td class="px-4 py-2">400</td><td class="px-4 py-2">Middleware is invalid</td></tr>
-            <tr class="bg-gray-50"><td class="px-4 py-2 font-bold text-zudo-red">MiddlewareExecutionError</td><td class="px-4 py-2">500</td><td class="px-4 py-2">Middleware calls next() more than once</td></tr>
+            <tr><td><code>CqrsError</code></td><td>Base class.</td><td>Status 500.</td></tr>
+            <tr><td><code>CqrsValidationError</code></td><td>Malformed request or configuration.</td><td>Status 400.</td></tr>
+            <tr><td><code>InvalidCommandError</code> / <code>InvalidQueryError</code></td><td>Request with no usable <code>type</code>.</td><td>Thrown by <code>execute</code>.</td></tr>
+            <tr><td><code>CommandHandlerNotFoundError</code> / <code>QueryHandlerNotFoundError</code></td><td>No handler for that <code>type</code>.</td><td>Carry <code>commandType</code> / <code>queryType</code>.</td></tr>
+            <tr><td><code>DuplicateHandlerError</code></td><td><code>register</code> called twice for one type.</td><td>Status 409. Use <code>replace</code>.</td></tr>
+            <tr><td><code>InvalidHandlerTypeError</code>, <code>InvalidHandlerKindError</code></td><td>Bad type string; registry kind not <code>"command"</code>/<code>"query"</code>.</td><td></td></tr>
+            <tr><td><code>HandlerConfigurationError</code></td><td>Handler is not a function or object with <code>execute()</code>.</td><td>Also conflicting decorators.</td></tr>
+            <tr><td><code>InvalidMiddlewareError</code>, <code>MiddlewareExecutionError</code></td><td>Middleware is not a function; <code>next()</code> called twice.</td><td></td></tr>
+            <tr><td><code>EventHandlerExecutionError</code>, <code>EventPublishError</code></td><td>Error classes for your own event code.</td><td>The buses on this page do not throw them.</td></tr>
           </tbody>
         </table>
-      </section>
-
-      <!-- ==================== TESTING ==================== -->
-      <section id="testing" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TESTING</h2>
-        <div class="code-block">
-<span class="kw">import</span> { describe, it, expect, beforeEach } <span class="kw">from</span> <span class="str">"vitest"</span>;
-<span class="kw">import</span> {
-  createCommandBus, createQueryBus, createCommand, createQuery,
-  createCommandHandler, createQueryHandler, timingMiddleware
-} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="fn">describe</span>(<span class="str">"CommandBus"</span>, () =&gt; {
-  <span class="kw">let</span> bus: <span class="tp">CommandBus</span>;
-
-  <span class="fn">beforeEach</span>(() =&gt; {
-    bus = <span class="fn">createCommandBus</span>();
-    bus.<span class="fn">register</span>(<span class="str">"CreateUser"</span>, <span class="fn">createCommandHandler</span>(<span class="str">"CreateUser"</span>, <span class="kw">async</span> (cmd) =&gt; {
-      <span class="kw">return</span> { id: <span class="str">"usr_123"</span>, name: cmd.name };
-    }));
-  });
-
-  <span class="fn">it</span>(<span class="str">"should execute commands"</span>, <span class="kw">async</span> () =&gt; {
-    <span class="kw">const</span> result = <span class="kw">await</span> bus.<span class="fn">execute</span>(<span class="fn">createCommand</span>(<span class="str">"CreateUser"</span>, { name: <span class="str">"Alice"</span> }));
-    <span class="fn">expect</span>(result).<span class="fn">toEqual</span>({ id: <span class="str">"usr_123"</span>, name: <span class="str">"Alice"</span> });
-  });
-
-  <span class="fn">it</span>(<span class="str">"should run middleware"</span>, <span class="kw">async</span> () =&gt; {
-    <span class="kw">const</span> bus = <span class="fn">createCommandBus</span>({ middleware: [<span class="fn">timingMiddleware</span>()] });
-    bus.<span class="fn">register</span>(<span class="str">"CreateUser"</span>, <span class="fn">createCommandHandler</span>(<span class="str">"CreateUser"</span>, <span class="kw">async</span> () =&gt; <span class="str">"ok"</span>));
-    <span class="kw">const</span> result = <span class="kw">await</span> bus.<span class="fn">execute</span>(<span class="fn">createCommand</span>(<span class="str">"CreateUser"</span>));
-    <span class="fn">expect</span>(result).<span class="fn">toBe</span>(<span class="str">"ok"</span>);
-  });
-});
         </div>
       </section>
 
-      <!-- ==================== CONNECTIONS ==================== -->
-      <section id="connections" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONNECTIONS TO OTHER PACKAGES</h2>
-        <table class="w-full text-smw-full border-4 border-black text-sm">
-          <thead class="bg-black text-white"><tr><th class="px-4 py-2 text-left font-bold">Package</th><th class="px-4 py-2 text-left font-bold">Relationship</th></tr></thead>
+      <!-- ==================== API REFERENCE ==================== -->
+      <section id="api-reference" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">API REFERENCE</h2>
+        <p class="mb-4">All from <code class="bg-gray-100 px-1 font-bold">"@zudojs/cqrs"</code>. Query equivalents mirror the command ones with <code class="bg-gray-100 px-1 font-bold">Query</code> in the name.</p>
+
+        <h3 class="text-xl font-black mt-6 mb-3">Functions</h3>
+        <div class="overflow-x-auto">
+        <table class="doc-table mb-4">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold">@zudojs/errors</td><td class="px-4 py-2">Dependency — all CqrsError types extend BaseError</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold">@zudojs/events</td><td class="px-4 py-2">Dependency — EventBus, Event re-exports</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold">@zudojs/messaging</td><td class="px-4 py-2">Dependency — message bus types</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold">@zudojs/core</td><td class="px-4 py-2">Consumer — module system registers CQRS handlers</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold">@zudojs/http</td><td class="px-4 py-2">Consumer — HTTP handlers dispatch commands/queries</td></tr>
-            <tr class="bg-gray-50"><td class="px-4 py-2 font-bold">@zudojs/rpc</td><td class="px-4 py-2">Consumer — RPC handlers dispatch commands/queries</td></tr>
+            <tr><td><code>createCommandBus(options?)</code></td><td>Creates a bus.</td><td>Options: <code>middleware</code>, <code>contextFactory</code>.</td></tr>
+            <tr><td><code>createCommand(type, payload?)</code></td><td>Frozen request object.</td><td><code>type</code> overrides the payload's.</td></tr>
+            <tr><td><code>createCommandHandler(type, fn)</code></td><td>Wraps a function in a handler object.</td><td>Returns <code>FunctionCommandHandler</code>.</td></tr>
+            <tr><td><code>executeCommandHandler(handler, command, context?)</code></td><td>Runs a handler without a bus.</td><td></td></tr>
+            <tr><td><code>isCommand</code>, <code>isQuery</code>, <code>isCqrsRequest</code></td><td>True for an object with a non-empty <code>type</code>.</td><td>Same check.</td></tr>
+            <tr><td><code>isCommandHandler</code>, <code>isCommandHandlerLike</code></td><td>Class instance / anything the bus accepts.</td><td><code>getCommandType(c)</code> and <code>commandType(type)</code> read or fix a type string.</td></tr>
+            <tr><td><code>createExecutionContext(input?)</code></td><td>Frozen context with a generated <code>requestId</code>.</td><td><code>correlationId</code> defaults to it. <code>createChildExecutionContext(parent, overrides?)</code> makes a child sharing that correlation.</td></tr>
+            <tr><td><code>withUser</code>, <code>withTenant</code>, <code>withSource</code>, <code>withContextMetadata</code></td><td>Copy of a context with one field changed.</td><td>Readers: <code>getUserId</code>, <code>getTenantId</code>, <code>getRequestId</code>, <code>getCorrelationId</code>, <code>getCausationId</code>, <code>hasUser</code>, <code>hasTenant</code>, <code>sharesCorrelation</code>, <code>serializeExecutionContext</code>.</td></tr>
+            <tr><td><code>createCommandResult(value, { command })</code></td><td>Wraps a value with <code>status</code>, <code>commandType</code>, <code>executedAt</code>.</td><td>Optional; buses do not produce these. Also <code>createFailedCommandResult</code>, <code>isSuccessfulCommandResult</code>, <code>unwrapCommandResult</code>, <code>withCommandResultMetadata</code>.</td></tr>
+            <tr><td><code>createCqrsEvent(input)</code></td><td>Frozen event with aggregate fields.</td><td>With <code>createEventId</code>, <code>isCqrsEvent</code>, <code>isAggregateEvent</code>, <code>getEventType</code>, <code>getAggregateId</code>, <code>createCqrsEventHandler</code>.</td></tr>
+            <tr><td><code>createEventBus(options?)</code></td><td>Re-export from <code>@zudojs/events</code>.</td><td>Also <code>createStartedEventBus</code>, <code>EventBus</code>, <code>EventBusState</code>.</td></tr>
+            <tr><td><code>createEventResult(options)</code></td><td>Summary value for a publish.</td><td><code>isEventPublished</code>, <code>isEventFailed</code>, <code>hasEventHandlerFailures</code>, <code>getEventErrors</code>.</td></tr>
+            <tr><td><code>createHandlerRegistry()</code></td><td>Standalone handler store.</td><td></td></tr>
+            <tr><td><code>getCqrsHandlerMetadata</code>, <code>getCqrsType</code>, <code>isCqrsHandler</code></td><td>Read a decorator label from a class.</td><td>Plus <code>getCommandHandlerMetadata</code>, <code>isDecoratedCommandHandler</code> and query versions.</td></tr>
+            <tr><td><code>isCqrsError(e)</code>, <code>toCqrsError(e, message?)</code></td><td>Detect or convert to <code>CqrsError</code>.</td><td></td></tr>
           </tbody>
         </table>
-      </section>
+        </div>
 
-      <!-- ==================== VERSION COMPATIBILITY ==================== -->
-      <section id="version-compatibility" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">VERSION COMPATIBILITY</h2>
-        <table class="w-full text-smw-full border-4 border-black text-sm">
-          <thead class="bg-black text-white"><tr><th class="px-4 py-2 text-left font-bold">@zudojs/cqrs</th><th class="px-4 py-2 text-left font-bold">TypeScript</th><th class="px-4 py-2 text-left font-bold">Node.js</th><th class="px-4 py-2 text-left font-bold">Module</th></tr></thead>
+        <h3 class="text-xl font-black mt-6 mb-3">Classes</h3>
+        <div class="overflow-x-auto">
+        <table class="doc-table mb-4">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold">1.0.x</td><td class="px-4 py-2">5.x – 7.x</td><td class="px-4 py-2">≥ 24.0</td><td class="px-4 py-2">ESM</td></tr>
+            <tr><td><code>CommandBus</code> / <code>QueryBus</code></td><td><code>register</code>, <code>registerMany</code>, <code>replace</code>, <code>unregister</code>, <code>has</code>, <code>getHandler</code>, <code>execute</code>, <code>use</code>, <code>size</code>, <code>clear</code>, <code>getCommandTypes</code> / <code>getQueryTypes</code>.</td><td>Prefer the factories.</td></tr>
+            <tr><td><code>Command</code> / <code>Query</code>, <code>MetadataCommand</code> / <code>MetadataQuery</code></td><td>Abstract request bases.</td><td>Protected constructor; call <code>super(type)</code> or <code>super(type, { metadata })</code>.</td></tr>
+            <tr><td><code>CommandHandler</code> / <code>QueryHandler</code></td><td>Abstract handler base.</td><td>Implement <code>commandType</code> / <code>queryType</code> and <code>execute</code>.</td></tr>
+            <tr><td><code>FunctionCommandHandler</code> / <code>FunctionQueryHandler</code></td><td>Handler object around a function.</td><td>What the factories return.</td></tr>
+            <tr><td><code>HandlerRegistry</code></td><td><code>registerCommand</code>, <code>registerQuery</code>, <code>replace*</code>, <code>unregister*</code>, <code>has*</code>, <code>get*Handler</code>, <code>getEntries</code>, <code>size</code>, <code>clear</code>.</td><td></td></tr>
           </tbody>
         </table>
+        </div>
+
+        <h3 class="text-xl font-black mt-6 mb-3">Types</h3>
+        <div class="overflow-x-auto">
+        <table class="doc-table">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>CommandOf&lt;Type, Payload?&gt;</code> / <code>QueryOf</code></td><td>Request type <code>{ type } &amp; Payload</code>.</td><td>Payload defaults to empty.</td></tr>
+            <tr><td><code>CqrsContext</code>, <code>CqrsExecutionContext</code></td><td>Context shape.</td><td>The second adds <code>source</code>.</td></tr>
+            <tr><td><code>CqrsMiddleware</code></td><td><code>(request, context, next) =&gt; Promise&lt;unknown&gt;</code>.</td><td>Also <code>CommandMiddleware</code>, <code>QueryMiddleware</code>.</td></tr>
+            <tr><td><code>CommandHandlerLike</code> / <code>QueryHandlerLike</code></td><td>Function or object with <code>execute</code> — what <code>register</code> accepts.</td><td>Interfaces: <code>CommandHandlerContract</code>, <code>QueryHandlerContract</code>.</td></tr>
+            <tr><td><code>CommandRegistration</code> / <code>QueryRegistration</code></td><td>Entry for <code>registerMany</code>.</td><td><code>{ commandType, handler }</code>; the handler result is typed <code>void</code>, so use <code>register</code> for handlers that return a value.</td></tr>
+            <tr><td><code>CommandResult</code>, <code>QueryResult</code>, <code>EventResult</code>, <code>CqrsEvent</code>, <code>CqrsTiming</code>, <code>CqrsLock</code></td><td>Shapes used by the helpers above.</td><td></td></tr>
+          </tbody>
+        </table>
+        </div>
       </section>
 
-      <!-- ==================== IMPROVEMENTS ==================== -->
-      <section id="improvements" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">POTENTIAL IMPROVEMENTS</h2>
-        <ul class="space-y-2 text-sm">
-          <li class="border-l-4 border-zudo-red pl-3"><strong>Auto-registration:</strong> Scan decorated classes and register handlers automatically</li>
-          <li class="border-l-4 border-zudo-blue pl-3"><strong>Command/query versioning:</strong> Support multiple handler versions for backward compatibility</li>
-          <li class="border-l-4 border-zudo-yellow pl-3"><strong>Distributed bus:</strong> Redis/RabbitMQ-backed bus for microservice CQRS</li>
-          <li class="border-l-4 border-zudo-green pl-3"><strong>Saga support:</strong> Long-running process managers spanning multiple commands</li>
-          <li class="border-l-4 border-black pl-3"><strong>Dead letter queue:</strong> Persist failed commands for retry</li>
+      <!-- ==================== COMMON MISTAKES ==================== -->
+      <section id="common-mistakes" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMON MISTAKES</h2>
+        <ul class="space-y-3">
+          <li class="border-l-4 border-zudo-red pl-3"><strong>Registering the same type twice</strong> → <code class="bg-gray-100 px-1 font-bold">DuplicateHandlerError</code> at startup → use <code class="bg-gray-100 px-1 font-bold">bus.replace</code> when you mean to swap.</li>
+          <li class="border-l-4 border-zudo-blue pl-3"><strong>Executing a type nobody registered</strong> (often a typo) → <code class="bg-gray-100 px-1 font-bold">CommandHandlerNotFoundError</code> → define type strings once with <code class="bg-gray-100 px-1 font-bold">CommandOf</code>; check with <code class="bg-gray-100 px-1 font-bold">bus.has</code>.</li>
+          <li class="border-l-4 border-zudo-yellow pl-3"><strong>Not returning <code class="bg-gray-100 px-1 font-bold">next()</code> in middleware</strong> → the handler never runs, <code class="bg-gray-100 px-1 font-bold">execute</code> resolves to <code class="bg-gray-100 px-1 font-bold">undefined</code> → always return the value of <code class="bg-gray-100 px-1 font-bold">next</code>.</li>
+          <li class="border-l-4 border-zudo-green pl-3"><strong>Calling <code class="bg-gray-100 px-1 font-bold">next</code> twice</strong> (a retry loop inside middleware) → <code class="bg-gray-100 px-1 font-bold">MiddlewareExecutionError</code> → retry by calling <code class="bg-gray-100 px-1 font-bold">bus.execute</code> again from outside.</li>
+          <li class="border-l-4 border-black pl-3"><strong>Expecting a decorator or the registry to register handlers</strong> → the bus is empty → call <code class="bg-gray-100 px-1 font-bold">bus.register</code> yourself.</li>
+          <li class="border-l-4 border-zudo-red pl-3"><strong>Writing data inside a query handler</strong> → nothing breaks, but the read/write split is gone → move the write into a command.</li>
         </ul>
       </section>
 
-      <!-- ==================== QUICK REFERENCE ==================== -->
-      <section id="quick-reference" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK REFERENCE</h2>
-        <div class="code-block">
-<span class="cm">// ─── Commands ───</span>
-<span class="kw">import</span> {
-  Command, MetadataCommand, createCommand, commandType,
-  CommandHandler, createCommandHandler, CommandBus, createCommandBus
-} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="cm">// ─── Queries ───</span>
-<span class="kw">import</span> {
-  Query, MetadataQuery, createQuery, queryType,
-  QueryHandler, createQueryHandler, QueryBus, createQueryBus
-} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="cm">// ─── Results ───</span>
-<span class="kw">import</span> {
-  createCommandResult, createFailedCommandResult, isSuccessfulCommandResult, unwrapCommandResult,
-  createQueryResult, createFailedQueryResult, isSuccessfulQueryResult, unwrapQueryResult
-} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="cm">// ─── Middleware ───</span>
-<span class="kw">import</span> {
-  timingMiddleware, errorMiddleware, validationMiddleware,
-  contextMiddleware, lockMiddleware, composeMiddleware,
-  beforeMiddleware, afterMiddleware, onErrorMiddleware,
-  commandMiddleware, queryMiddleware
-} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="cm">// ─── Registry ───</span>
-<span class="kw">import</span> { HandlerRegistry, createHandlerRegistry } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="cm">// ─── Context ───</span>
-<span class="kw">import</span> {
-  createExecutionContext, createChildExecutionContext,
-  withUser, withTenant, withSource, serializeExecutionContext
-} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="cm">// ─── Events ───</span>
-<span class="kw">import</span> {
-  createCqrsEvent, isCqrsEvent, isAggregateEvent,
-  createCqrsEventHandler, createEventResult
-} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="cm">// ─── Decorators ───</span>
-<span class="kw">import</span> { CommandHandlerFor, QueryHandlerFor, getCqrsHandlerMetadata } <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="cm">// ─── Types ───</span>
-<span class="kw">import</span> {
-  CqrsContext, CqrsMiddleware, CommandOf, QueryOf,
-  CommandResult, QueryResult, CommandResultStatus
-} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-
-<span class="cm">// ─── Errors ───</span>
-<span class="kw">import</span> {
-  CqrsError, CqrsValidationError, CommandHandlerNotFoundError,
-  QueryHandlerNotFoundError, DuplicateHandlerError
-} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
-        </div>
+      <!-- ==================== RELATED ==================== -->
+      <section id="related" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATED</h2>
+        <ul class="space-y-2">
+          <li><a href="/docs/packages-events" class="text-zudo-blue font-bold">@zudojs/events</a> — the full event bus this package re-exports; use it when handlers need to announce what happened.</li>
+          <li><a href="/docs/packages-errors" class="text-zudo-blue font-bold">@zudojs/errors</a> — <code class="bg-gray-100 px-1 font-bold">BaseError</code>, codes and status values every <code class="bg-gray-100 px-1 font-bold">CqrsError</code> inherits.</li>
+          <li><a href="/docs/packages-messaging" class="text-zudo-blue font-bold">@zudojs/messaging</a> — when commands must cross a process boundary.</li>
+          <li><a href="/docs/packages-http" class="text-zudo-blue font-bold">@zudojs/http</a> — a common place to call <code class="bg-gray-100 px-1 font-bold">bus.execute</code>: one route, one command or query.</li>
+        </ul>
       </section>
 
+      <!-- EXPORT INDEX -->
+      <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/cqrs</code> exports from its package root at v1.0.0 &mdash; <strong>195</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <details class="border-2 border-black p-5 bg-white">
+          <summary class="font-bold cursor-pointer select-none">Show all 195 exports</summary>
+          <div class="mt-5">
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Classes <span class="text-black/40 font-normal">(15)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandHandlerNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DuplicateHandlerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventHandlerExecutionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventPublishError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HandlerConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HandlerRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidCommandError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidHandlerKindError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidHandlerTypeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidMiddlewareError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidQueryError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MiddlewareExecutionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryHandlerNotFoundError</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Functions <span class="text-black/40 font-normal">(31)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">afterMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">beforeMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">commandMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">composeMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">contextMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createChildExecutionContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createExecutionContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createHandlerRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRequestId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">errorMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getCausationId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getContextMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getCorrelationId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getRequestId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getTenantId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getUserId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasTenant</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasUser</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isCqrsError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">lockMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">onErrorMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">queryMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">serializeExecutionContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sharesCorrelation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">timingMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toCqrsError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validationMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withContextMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withTenant</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withUser</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Interfaces <span class="text-black/40 font-normal">(10)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandHandlerEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsExecutionContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsLock</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsTiming</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CreateExecutionContextInput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LockMiddlewareOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MiddlewareOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryHandlerEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TimingMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TimingMiddlewareOptions</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Type aliases <span class="text-black/40 font-normal">(3)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsNext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HandlerEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HandlerKind</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Re-exported <span class="text-black/40 font-normal">(136)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Command</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandBus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandBusOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandHandlerContract</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandHandlerFor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandHandlerFunction</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandHandlerLike</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandHandlerMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandHandlerRegistration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandOf</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandRegistration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CommandResultStatus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsBusOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsClass</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsEventExtensions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsEventHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsEventHandlerRegistration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsHandlerKind</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsHandlerMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsPayload</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsRequest</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CqrsRequestType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CreateCommandResultOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CreateCqrsEventInput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CreateEventResultOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CreateQueryResultOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DecoratedCqrsClass</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Event</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventBus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventBusEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventBusListener</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventBusOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventBusState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventDefinition</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventHandlerRegistration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventInput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventPayload</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventPublishResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventResultStatus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">FunctionCommandHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">FunctionQueryHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MetadataCommand</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MetadataQuery</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PublishOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Query</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryBus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryBusOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryHandlerContract</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryHandlerFor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryHandlerFunction</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryHandlerLike</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryHandlerMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryHandlerRegistration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryOf</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryRegistration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueryResultStatus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">allEventHandlersSucceeded</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">commandType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createBaseEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createBaseEventId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCommand</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCommandBus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCommandHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCommandHandlerDecorator</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCommandResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCqrsEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCqrsEventHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createEventBus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createEventHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createEventId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createEventResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createFailedCommandResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createFailedEventResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createFailedQueryResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createPartialEventResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createQuery</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createQueryBus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createQueryHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createQueryHandlerDecorator</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createQueryResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createStartedEventBus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createSuccessfulEventResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">executeCommandHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">executeQueryHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getAggregateId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getCommandHandlerMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getCommandType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getCqrsHandlerMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getCqrsType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getEventErrors</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getEventType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getQueryHandlerMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getQueryType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasEventHandlerFailures</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isAggregateEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isCommand</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isCommandHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isCommandHandlerLike</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isCqrsEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isCqrsHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isCqrsRequest</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isDecoratedCommandHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isDecoratedQueryHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isEventFailed</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isEventPartiallyPublished</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isEventPublished</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isFailedCommandResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isFailedQueryResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isQuery</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isQueryHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isQueryHandlerLike</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSuccessfulCommandResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSuccessfulQueryResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">queryType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">unwrapCommandResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">unwrapQueryResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withCommandResultMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withEventResultMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withQueryResultMetadata</code></div>
+          </div>
+          </div>
+        </details>
+      </section>
     </main>
 
     <!-- TABLE OF CONTENTS -->
     <aside class="doc-toc" aria-label="On this page">
-      <div class="p-4 text-xs font-bold uppercase text-black/40 tracking-wider">On this page</div>
+      <div class="text-xs font-bold uppercase tracking-wider mb-4 text-black/40">On This Page</div>
       <a href="#overview" class="toc-link">OVERVIEW</a>
       <a href="#installation" class="toc-link">INSTALLATION</a>
-      <a href="#commands" class="toc-link">COMMANDS</a>
-      <a href="#queries" class="toc-link">QUERIES</a>
+      <a href="#quick-start" class="toc-link">QUICK START</a>
+      <a href="#commands-and-queries" class="toc-link">COMMANDS AND QUERIES</a>
       <a href="#handlers" class="toc-link">HANDLERS</a>
       <a href="#buses" class="toc-link">BUSES</a>
-      <a href="#results" class="toc-link">RESULTS</a>
       <a href="#middleware" class="toc-link">MIDDLEWARE</a>
-      <a href="#handler-registry" class="toc-link">HANDLER REGISTRY</a>
-      <a href="#context" class="toc-link">Context</a>
-      <a href="#events" class="toc-link">Events</a>
-      <a href="#decorators" class="toc-link">DECORATORS</a>
+      <a href="#execution-context" class="toc-link">EXECUTION CONTEXT</a>
+      <a href="#events" class="toc-link">EVENTS</a>
+      <a href="#registry-and-decorators" class="toc-link">REGISTRY AND DECORATORS</a>
       <a href="#errors" class="toc-link">ERRORS</a>
-      <a href="#testing" class="toc-link">TESTING</a>
-      <a href="#connections" class="toc-link">Connections</a>
-      <a href="#version-compatibility" class="toc-link">Version Compat</a>
-      <a href="#improvements" class="toc-link">Improvements</a>
-      <a href="#quick-reference" class="toc-link">QUICK REFERENCE</a>
+      <a href="#api-reference" class="toc-link">API REFERENCE</a>
+      <a href="#common-mistakes" class="toc-link">COMMON MISTAKES</a>
+      <a href="#related" class="toc-link">RELATED</a>
+          <a href="#export-index" class="toc-link">Complete Export Index</a>
     </aside>
 
   </div>
@@ -830,5 +708,6 @@ registry.<span class="fn">clear</span>()                            <span class=
   <script src="/js/docs.js"></script>
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 </body>
 </html>

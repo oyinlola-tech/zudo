@@ -400,8 +400,9 @@ export function freezeConfigValue<T extends ConfigValue>(value: T): T {
  * objects (class instances) are returned BY REFERENCE — the clone
  * shares them with the original (freezeConfigValue treats them the
  * same way and never freezes them). Unsafe keys ("__proto__",
- * "constructor", "prototype") are skipped so untrusted payloads
- * cannot pollute prototypes through the clone.
+ * "constructor", "prototype") are copied as own data properties via
+ * Object.defineProperty, so untrusted payloads can never pollute a
+ * prototype through the clone.
  */
 export function cloneConfigValue<T extends ConfigValue>(value: T): T {
   if (value === null || value === undefined || typeof value !== "object") {
@@ -420,11 +421,11 @@ export function cloneConfigValue<T extends ConfigValue>(value: T): T {
     const result: Record<string, ConfigValue> = {};
 
     for (const [key, child] of Object.entries(value)) {
-      if (isUnsafeConfigKey(key)) {
-        continue;
-      }
-
-      result[key] = cloneConfigValue(child);
+      // Unsafe keys ("__proto__" and friends) are preserved as own
+      // data properties rather than assigned: assignment would reach
+      // the inherited "__proto__" setter and mutate the clone's
+      // prototype instead of copying the value.
+      defineConfigProperty(result, key, cloneConfigValue(child));
     }
 
     return result as T;
@@ -473,4 +474,44 @@ export function configValuesEqual(
   }
 
   return false;
+}
+
+/**
+ * Assigns a key onto a plain object without prototype pollution.
+ *
+ * Plain assignment (`target[key] = value`) invokes inherited setters:
+ * for the key "__proto__" that REPLACES the target's prototype instead
+ * of creating an own property, which both loses the value and lets an
+ * untrusted configuration key mutate object shape. Defining the
+ * property explicitly always creates an own, enumerable data property,
+ * so keys such as "__proto__", "constructor" and "prototype" survive
+ * round-trips without ever reaching a setter.
+ */
+export function defineConfigProperty(
+  target: Record<string, ConfigValue>,
+  key: string,
+  value: ConfigValue,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
+/**
+ * Reads an OWN property from a configuration-shaped object.
+ *
+ * Bracket access would walk the prototype chain, so a schema property
+ * named "constructor" or "toString" would read an inherited function
+ * rather than reporting a missing value.
+ */
+export function readOwnConfigProperty(
+  source: Readonly<Record<string, unknown>>,
+  key: string,
+): unknown {
+  return Object.prototype.hasOwnProperty.call(source, key)
+    ? source[key]
+    : undefined;
 }

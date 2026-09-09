@@ -1,7 +1,7 @@
 import type { ConfigValue } from "../../configValue/configValue.core.js";
 
 import {
-  isUnsafeConfigKey,
+  defineConfigProperty,
   parseConfigBigInt,
   parseConfigBoolean,
   parseConfigDate,
@@ -407,7 +407,7 @@ export class ConfigResolver {
       const value = this.get(key);
 
       if (value !== undefined) {
-        result[key] = value;
+        defineConfigProperty(result, key, value);
       }
     }
 
@@ -454,11 +454,11 @@ export class ConfigResolver {
     const result: Record<string, ConfigValue> = {};
 
     for (const [key, child] of Object.entries(value)) {
-      if (isUnsafeConfigKey(key)) {
-        continue;
-      }
-
-      result[key] = this.prepareValue(child) as ConfigValue;
+      defineConfigProperty(
+        result,
+        key,
+        this.prepareValue(child) as ConfigValue,
+      );
     }
 
     return result;

@@ -5,7 +5,14 @@
  */
 
 import type { PermissionPolicyDefinition } from "../permissionTypes/index.js";
-import { matches } from "../permission/permission.core.js";
+import { DuplicatePolicyError } from "../permissionErrors/index.js";
+import { selectPolicies } from "../evaluator/evaluator.pipeline.js";
+
+/** Options for the policy registry. */
+export interface PolicyRegistryOptions {
+  /** Allow overwriting an existing policy. Defaults to false. */
+  readonly allowOverride?: boolean;
+}
 
 /** A policy registry, usable directly as the engine's `policies` source. */
 export interface PolicyRegistry {
@@ -24,11 +31,24 @@ export interface PolicyRegistry {
  *
  * Pass it straight to `createPermissionEngine({ policies: registry })`.
  */
-export function createPolicyRegistry(): PolicyRegistry {
+export function createPolicyRegistry(
+  options?: PolicyRegistryOptions,
+): PolicyRegistry {
   const policies = new Map<string, PermissionPolicyDefinition>();
+  const allowOverride = options?.allowOverride ?? false;
 
   return {
+    /**
+     * Register a policy.
+     *
+     * Re-registering a name is rejected unless `allowOverride` was set: a
+     * second `define("owner-only", …)` used to replace the first in silence,
+     * which is an authorization rule vanishing without a trace.
+     */
     define(definition: PermissionPolicyDefinition): void {
+      if (policies.has(definition.name) && !allowOverride) {
+        throw new DuplicatePolicyError(definition.name);
+      }
       policies.set(definition.name, Object.freeze({ ...definition }));
     },
 
@@ -43,15 +63,12 @@ export function createPolicyRegistry(): PolicyRegistry {
     /**
      * Policies that apply to a permission, highest priority first.
      *
-     * Patterns are matched with the same wildcard rules as grants, so a
-     * policy registered for `post:*` covers `post:update`.
+     * Delegates to the evaluator's own selection, so this and the engine can
+     * never disagree about which policies cover a permission — they were two
+     * copies of the same filter-and-sort before.
      */
     forPermission(permission: string): readonly PermissionPolicyDefinition[] {
-      return [...policies.values()]
-        .filter((policy) =>
-          policy.permissions.some((pattern) => matches(pattern, permission)),
-        )
-        .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+      return selectPolicies([...policies.values()], permission);
     },
 
     names(): readonly string[] {

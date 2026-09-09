@@ -1,5 +1,8 @@
 import type { Plugin } from "../pluginTypes/plugin.type.js";
-import type { PluginContext } from "../pluginTypes/pluginContext.type.js";
+import type {
+  PluginContext,
+  PluginEvents,
+} from "../pluginTypes/pluginContext.type.js";
 import type {
   PluginRegistry,
   RegisteredPlugin,
@@ -12,13 +15,13 @@ import {
 } from "../pluginDependencies/dependencyResolver.core.js";
 import { assertDependencyVersions } from "../pluginDependencies/versionCheck.core.js";
 import { LifecycleController } from "../pluginLifecycle/pluginLifecycle.core.js";
-import {
-  PluginAlreadyRegisteredError,
-  PluginError,
-  PluginRegistrationError,
-} from "@zudojs/errors";
+import { PluginError, PluginRegistrationError } from "@zudojs/errors";
 import { createOwnedPluginContext } from "../pluginIntegration/pluginContext.core.js";
 import { buildDiagnosticReport } from "../pluginDiagnostics/pluginDiagnostic.core.js";
+import {
+  PLUGIN_EVENTS,
+  createPluginLifecycleEvent,
+} from "../pluginEvents/pluginEvent.core.js";
 import type { PluginDiagnosticReport } from "../pluginDiagnostics/pluginDiagnostic.core.js";
 
 /**
@@ -61,6 +64,15 @@ export interface PluginManagerOptions {
    * any capability.
    */
   readonly allowedCapabilities?: readonly string[];
+  /**
+   * Event sink for `plugin:registered`.
+   *
+   * Registration happens before any plugin context exists, so the
+   * lifecycle events emitted through `context.events` cannot cover it.
+   * Without this, `PLUGIN_EVENTS.REGISTERED` was a name nothing ever
+   * emitted.
+   */
+  readonly events?: PluginEvents;
 }
 
 /**
@@ -150,6 +162,7 @@ export class PluginManager {
     try {
       this.registry.register(plugin, options as never);
       this.plugins.set(plugin.metadata.name, plugin);
+      this.emitRegistered(plugin);
     } catch (error) {
       // Typed plugin errors already say what went wrong and let callers
       // branch on the cause; only unexpected failures are wrapped.
@@ -426,6 +439,27 @@ export class PluginManager {
    */
   private abortContext(name: string, reason?: unknown): void {
     this.contexts.get(name)?.abort(reason);
+  }
+
+  /**
+   * Emits `plugin:registered`, containing a throwing subscriber so a bad
+   * listener cannot fail the registration that triggered it.
+   */
+  private emitRegistered(plugin: Plugin): void {
+    const events = this.options.events;
+
+    if (!events) {
+      return;
+    }
+
+    try {
+      events.emit(
+        PLUGIN_EVENTS.REGISTERED,
+        createPluginLifecycleEvent(plugin.metadata, "registered"),
+      );
+    } catch (error) {
+      this.report(error, plugin.metadata.name);
+    }
   }
 
   private report(error: unknown, pluginName: string): void {

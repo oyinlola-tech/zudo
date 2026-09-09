@@ -5,3 +5,4 @@
  */
 
 export * from "./configSource.core.js";
+export * from "./configSource.environment.js";

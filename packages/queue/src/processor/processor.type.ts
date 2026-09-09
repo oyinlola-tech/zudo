@@ -6,11 +6,17 @@ import type { JobResult } from "../jobResult/jobResult.type.js";
 
 /**
  * A function that processes a job.
+ *
+ * A processor may return a {@link JobResult} to report success or failure
+ * explicitly, a plain value to be carried on `job:completed`, or nothing at
+ * all. The queue narrows the three cases at runtime; the previous signature
+ * admitted only the first two, so a processor returning its own value — the
+ * common case — failed to typecheck against a queue that handled it happily.
  */
 export type Processor<TData = unknown, TResult = unknown> = (
   job: Job<TData>,
   context: JobContext<TData>,
-) => Promise<JobResult<TResult>> | Promise<void>;
+) => Promise<JobResult<TResult> | TResult | void>;
 
 /**
  * Metadata about a registered processor.
@@ -51,4 +57,27 @@ export interface ProcessorRegistry {
  */
 export function isProcessor(value: unknown): value is Processor {
   return typeof value === "function";
+}
+
+/**
+ * Assert that a value can actually process a job.
+ *
+ * Registering a non-function succeeded silently and failed much later, deep
+ * inside job processing, as a job that "failed" and was dead-lettered.
+ *
+ * @param value - The candidate processor.
+ * @param jobName - The job name it is being registered for.
+ * @throws {TypeError} when the value is not callable.
+ */
+export function assertProcessor(
+  value: unknown,
+  jobName: string,
+): asserts value is Processor {
+  if (!isProcessor(value)) {
+    throw new TypeError(
+      `Processor for job "${jobName}" must be a function; received ${
+        value === null ? "null" : typeof value
+      }.`,
+    );
+  }
 }

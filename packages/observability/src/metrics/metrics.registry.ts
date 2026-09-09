@@ -61,19 +61,38 @@ export interface MetricsRegistryOptions {
 
 const DEFAULT_MAX_SERIES = 10_000;
 
+/** Upper bound on the detached series kept for callers past the cap. */
+const MAX_OVERFLOW_SERIES = 1_024;
+
 /**
  * In-memory metrics registry. Creates, caches, and manages metrics.
  */
 export class DefaultMetricsRegistry implements MetricsRegistry {
   private readonly metrics = new Map<string, MetricEntry>();
+  /**
+   * The type each metric name was first registered as.
+   *
+   * The cache key includes the type, so the map alone can never surface a
+   * differently-typed entry — the conflict check that reads it was dead code,
+   * and `counter("x")` followed by `gauge("x")` produced two same-named series
+   * of different types in one document. An OTLP or Prometheus backend rejects
+   * that, so the whole scrape is lost rather than one metric.
+   */
+  private readonly typeByName = new Map<string, MetricType>();
   private readonly maxSeries: number;
   private readonly histogramBoundaries?: readonly number[];
   private readonly onCardinalityLimit?: (name: string, size: number) => void;
   /** Series rejected by the cap, reused so callers still get a usable object. */
   private readonly overflow = new Map<string, MetricEntry>();
+  /**
+   * Cap on the detached-series cache. Bounded well below `maxSeries` so the
+   * documented ceiling is not quietly doubled by the overflow path.
+   */
+  private readonly maxOverflow: number;
 
   constructor(options?: MetricsRegistryOptions) {
     this.maxSeries = options?.maxSeries ?? DEFAULT_MAX_SERIES;
+    this.maxOverflow = Math.max(1, Math.min(this.maxSeries, MAX_OVERFLOW_SERIES));
     this.histogramBoundaries = options?.histogramBoundaries;
     this.onCardinalityLimit = options?.onCardinalityLimit;
   }
@@ -100,6 +119,14 @@ export class DefaultMetricsRegistry implements MetricsRegistry {
     name: string,
     labels?: Record<string, string>,
   ): MetricEntry {
+    const registeredAs = this.typeByName.get(name);
+    if (registeredAs !== undefined && registeredAs !== type) {
+      throw new ObservabilityConfigError(
+        `Metric "${name}" is already registered as a ${registeredAs}`,
+        { name, registeredAs, requestedAs: type },
+      );
+    }
+
     const key = metricKey(type, name, labels);
     const existing = this.metrics.get(key);
     if (existing) return existing;
@@ -111,17 +138,20 @@ export class DefaultMetricsRegistry implements MetricsRegistry {
       if (cached) return cached;
       this.onCardinalityLimit?.(name, this.metrics.size);
       const detached = this.create(type, name, labels);
-      if (this.overflow.size < this.maxSeries) this.overflow.set(key, detached);
+      if (this.overflow.size < this.maxOverflow) this.overflow.set(key, detached);
       return detached;
     }
 
     const entry = this.create(type, name, labels);
     this.metrics.set(key, entry);
+    this.typeByName.set(name, type);
     return entry;
   }
 
   counter(name: string, labels?: Record<string, string>): Counter {
     const entry = this.obtain("counter", name, labels);
+    // `obtain` rejects a type conflict before returning, so this narrowing
+    // always succeeds; the throw is a guard, not a cast.
     if (entry.type !== "counter") {
       throw new ObservabilityConfigError(
         `Metric "${name}" is already registered as a ${entry.type}`,
@@ -133,6 +163,8 @@ export class DefaultMetricsRegistry implements MetricsRegistry {
 
   gauge(name: string, labels?: Record<string, string>): Gauge {
     const entry = this.obtain("gauge", name, labels);
+    // `obtain` rejects a type conflict before returning, so this narrowing
+    // always succeeds; the throw is a guard, not a cast.
     if (entry.type !== "gauge") {
       throw new ObservabilityConfigError(
         `Metric "${name}" is already registered as a ${entry.type}`,
@@ -144,6 +176,8 @@ export class DefaultMetricsRegistry implements MetricsRegistry {
 
   histogram(name: string, labels?: Record<string, string>): Histogram {
     const entry = this.obtain("histogram", name, labels);
+    // `obtain` rejects a type conflict before returning, so this narrowing
+    // always succeeds; the throw is a guard, not a cast.
     if (entry.type !== "histogram") {
       throw new ObservabilityConfigError(
         `Metric "${name}" is already registered as a ${entry.type}`,
@@ -223,6 +257,7 @@ export class DefaultMetricsRegistry implements MetricsRegistry {
   clear(): void {
     this.metrics.clear();
     this.overflow.clear();
+    this.typeByName.clear();
   }
 }
 

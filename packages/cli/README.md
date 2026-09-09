@@ -51,7 +51,19 @@ zudojs generate module users
 
 # Add a feature
 zudojs add database
+
+# Build the project
+zudojs build
 ```
+
+`zudojs build` and `zudojs doctor` exit with a non-zero status when they fail,
+so they can be used as CI gates.
+
+### Disabling the update check
+
+`zudojs-cli` checks npm for a newer version after a global install. Set
+`ZUDOJS_NO_UPDATE_CHECK=1` to turn it off; it is skipped automatically when
+`CI` is set, when npm is offline, and for non-global installs.
 
 ## Commands
 
@@ -61,12 +73,13 @@ zudojs add database
 | `generate` | Generate files (service, module, command, query, controller, repository) |
 | `add`      | Add feature packages (database, queue, messaging, etc.)                  |
 | `dev`      | Start development servers                                                |
+| `build`    | Build the project with its detected package manager                      |
 | `doctor`   | Run project diagnostics                                                  |
 | `info`     | Show project information                                                 |
 
 ## Supported Frameworks
 
-- **Backend:** Node.js, Express, Fastify
+- **Backend:** Node.js (Zudojs runtime)
 - **Frontend:** React, Next.js, Vue, Nuxt, Angular, Svelte, SvelteKit, Astro, Vanilla, Flutter, React Native
 - **Architectures:** Monolith, Modular Monolith, Microservice
 

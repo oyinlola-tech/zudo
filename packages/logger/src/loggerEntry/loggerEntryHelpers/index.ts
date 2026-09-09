@@ -22,3 +22,14 @@ export {
   serializeLoggerValue,
   loggerLevelNameFallback,
 } from "./loggerEntryHelpers.serialize.js";
+
+export {
+  LOGGER_REDACTION_TOKEN,
+  DEFAULT_LOGGER_SECRET_PATTERN,
+  escapeLogText,
+  hasLogControlCharacters,
+  createSecretMatcher,
+  redactLogValue,
+} from "./loggerEntryHelpers.sanitize.js";
+
+export type { LoggerRedactionOptions } from "./loggerEntryHelpers.sanitize.js";

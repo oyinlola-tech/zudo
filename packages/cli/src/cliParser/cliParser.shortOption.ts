@@ -10,7 +10,7 @@ import {
   InvalidOptionError,
   MissingOptionValueError,
 } from "../cliError/cliError.option.js";
-import { findOption, assignOptionValue } from "./cliParser.longOption.js";
+import { assignOptionValue } from "./cliParser.longOption.js";
 
 /** Parses a short option token from the token stream. */
 export function parseShortOption(

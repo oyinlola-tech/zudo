@@ -6,9 +6,10 @@
 
 import type { HttpMiddleware } from "../../httpMiddleware.type.js";
 
-import type { HttpResponseContext as ResponseContext } from "../../../httpResponse/httpResponse.context.js";
 
 import { isValidHeaderFieldValue } from "../../../httpHeaders/security/index.js";
+
+import { withResponseHeaders } from "../helpers/index.js";
 
 /**
  * Headers applied when the caller does not override them.
@@ -80,15 +81,6 @@ export function createSecurityMiddleware(
   return async (_context, next) => {
     const response = await next();
 
-    const headers = new Headers(response.headers as Record<string, string>);
-
-    for (const [name, value] of Object.entries(resolved)) {
-      headers.set(name, value);
-    }
-
-    return {
-      ...response,
-      headers,
-    } as unknown as ResponseContext;
+    return withResponseHeaders(response, resolved);
   };
 }

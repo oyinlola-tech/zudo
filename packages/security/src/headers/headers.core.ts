@@ -190,6 +190,8 @@ export function validateCspDirective(directive: string): string | undefined {
     warnings.push("unsafe-hashes weakens CSP");
   }
 
-  // Return first warning as info (not error)
-  return warnings.length > 0 ? warnings[0] : undefined;
+  // Every warning, not just the first. A policy carrying all three used to
+  // report only `unsafe-inline`, so fixing that one made the function fall
+  // silent while `unsafe-eval` and `unsafe-hashes` were still in place.
+  return warnings.length > 0 ? warnings.join("; ") : undefined;
 }

@@ -2,11 +2,6 @@
  * Logger entry value and metadata types.
  */
 
-import type {
-  LoggerLevel,
-  LoggerLevelName,
-} from "../../loggerLevel/loggerLevel.type.js";
-
 /**
  * Values that can safely be attached to a log entry.
  */

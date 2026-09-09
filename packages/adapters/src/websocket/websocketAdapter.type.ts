@@ -4,11 +4,7 @@
  * WebSocket adapter contracts — bridges Zudojs to WebSocket providers.
  */
 
-import type {
-  Adapter,
-  AdapterCapabilities,
-  AdapterOperationOptions,
-} from "../index.js";
+import type { Adapter } from "../index.js";
 
 /**
  * WebSocket adapter — manages WebSocket connections.

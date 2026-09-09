@@ -16,6 +16,7 @@ import type {
 
 import type {
   MessageMiddlewareLike,
+  MessageMiddlewareOptions,
   MessageMiddlewarePipelineResult,
 } from "../messageMiddleware/messageMiddlewareType.type.js";
 
@@ -78,7 +79,12 @@ export interface DispatchOptions<TResult = unknown> {
   /** Middleware to apply for this dispatch. */
   readonly middleware?: readonly MessageMiddlewareLike[];
 
-  /** Timeout in ms. 0 = no timeout. Default: 0. */
+  /**
+   * Timeout in ms. 0 = no timeout. Default: 0.
+   *
+   * On expiry the dispatch is aborted through `context.signal` and the result
+   * carries a `MessageTimeoutError`.
+   */
   readonly timeout?: number;
 
   /** AbortSignal for cancellation. */
@@ -102,14 +108,22 @@ export interface Dispatcher {
 
   /**
    * Registers middleware for all dispatches.
+   *
+   * Middleware runs in ascending `priority` order (default 100), registration
+   * order breaking ties.
+   *
+   * @returns The identifier {@link Dispatcher.removeMiddleware} takes, which
+   *   is `options.id` when one was supplied.
    */
   use<TMessage extends Message = Message, TResult = unknown>(
     middleware: MessageMiddlewareLike<TMessage, TResult>,
-    options?: { priority?: number },
-  ): void;
+    options?: MessageMiddlewareOptions,
+  ): string;
 
   /**
    * Removes middleware by ID.
+   *
+   * @returns Whether a registration was removed.
    */
   removeMiddleware(middlewareId: string): boolean;
 }

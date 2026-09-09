@@ -52,6 +52,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -95,7 +96,6 @@
 
     <!-- MAIN CONTENT -->
     <main class="flex-1 min-w-0 px-8 py-10 max-w-4xl">
-
       <!-- Breadcrumbs -->
       <div class="text-sm mb-6">
         <a href="/docs/getting-started" class="hover:text-zudo-blue">Docs</a>
@@ -107,1049 +107,736 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/scheduler</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
-          Time and recurring execution engine for the Zudojs framework. Provides job definitions, schedules, triggers, priority queue, cron support, retry strategies, and execution history.
+          Runs your code later, or over and over: after a delay, at a date, on a fixed interval, or on a cron schedule — inside one Node.js process.
         </p>
         <div class="flex flex-wrap gap-2 mt-4">
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">SCHEDULER</span>
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">CRON</span>
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">JOBS</span>
-          <span class="px-3 py-1 border-2 border-black text-xs font-bold">SCHEDULES</span>
-          <span class="px-3 py-1 border-2 border-black text-xs font-bold">TIMER</span>
+          <span class="px-3 py-1 border-2 border-black text-xs font-bold">RETRIES</span>
+          <span class="px-3 py-1 border-2 border-black text-xs font-bold">TIMERS</span>
         </div>
       </div>
+
+      <!-- Overview -->
+      <section id="overview" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OVERVIEW</h2>
+
+        <p class="mb-4 leading-relaxed">
+          <strong>Scheduling</strong> means telling the computer &ldquo;run this piece of code at this time&rdquo; instead of running it right now. You hand over a function and a time rule; something else watches the clock and calls the function when the moment arrives.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          You can do a crude version of this yourself with <code>setTimeout</code>. That stops being enough quickly: you need the job to repeat, to stop cleanly when the process shuts down, to give up if it hangs, to retry when it fails, and to not pile up ten copies of itself. This package is that machinery.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          Everything happens inside your own process. There is no database, no Redis and no separate worker. That keeps it simple and makes it a poor fit for some jobs &mdash; see <a href="#scheduler-vs-queue" class="text-zudo-blue underline">Scheduler vs. queue</a>.
+        </p>
+
+        <div class="grid md:grid-cols-2 gap-4">
+          <div class="border-4 border-black p-4">
+            <p class="font-black text-sm mb-2">USE IT WHEN</p>
+            <ul class="text-sm space-y-1">
+              <li>&bull; You want housekeeping on a timer &mdash; expire sessions, prune logs, refresh a cache.</li>
+              <li>&bull; You want a nightly or weekly task inside a service you already run.</li>
+              <li>&bull; You want a heartbeat or a poll every few seconds.</li>
+              <li>&bull; Missing a run because the process restarted is acceptable.</li>
+            </ul>
+          </div>
+          <div class="border-4 border-black p-4">
+            <p class="font-black text-sm mb-2">DO NOT USE IT WHEN</p>
+            <ul class="text-sm space-y-1">
+              <li>&bull; The work must survive a restart. Nothing is written to disk.</li>
+              <li>&bull; You run several copies of your service. Each copy runs the job, so it happens twice.</li>
+              <li>&bull; The work is triggered by a user action rather than by the clock &mdash; that is a queue.</li>
+              <li>&bull; You need a real IANA time zone such as <code>America/New_York</code>. Only UTC and the machine's local zone are supported.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
 
       <!-- Installation -->
       <section id="installation" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-        <div class="code-block mb-4"><span class="cm">// npm</span>
-npm install @zudojs/scheduler
 
-<span class="cm">// pnpm</span>
-pnpm add @zudojs/scheduler
+        <p class="mb-4 leading-relaxed">Install the package. It needs Node.js 24 or newer, and it pulls in <code>@zudojs/errors</code>, <code>@zudojs/constants</code> and <code>@zudojs/types</code> on its own.</p>
 
-<span class="cm">// yarn</span>
-yarn add @zudojs/scheduler</div>
+        <div class="code-block mb-4">$ npm install @zudojs/scheduler</div>
 
-        <div class="callout callout-note">
-          <strong class="text-zudo-blue">Peer Dependencies:</strong> @zudojs/scheduler depends on @zudojs/errors, @zudojs/constants, and @zudojs/types. All at version 0.1.0.
+        <div class="callout callout-note mb-6">
+          <p class="text-sm">These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest <code>@zudojs</code> release.</p>
         </div>
       </section>
 
-      <!-- What It Does -->
-      <section id="what-it-does" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHAT IT DOES</h2>
+      <!-- Quick start -->
+      <section id="quick-start" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK START</h2>
+
         <p class="mb-4 leading-relaxed">
-          <code class="bg-black/5 px-1">@zudojs/scheduler</code> is the time-based execution engine for the Zudojs ecosystem. It defines:
+          Three steps, always in this order: create a scheduler, <em>define</em> a job so it has a name, then <em>schedule</em> that name. Scheduling a name you never defined throws.
         </p>
-        <ul class="space-y-2 mb-6">
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Cron-like scheduling</strong> with once, delay, interval, and cron expression support</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Job definitions</strong> with typed handlers, timeouts, and retry policies</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Schedule management</strong> — pause, resume, and cancel schedules at runtime</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Overlap policies</strong> — allow, skip, queue, or replace concurrent executions</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Misfire policies</strong> — skip, run-once, or catch-up when executions are missed</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Retry with backoff</strong> — fixed, linear, or exponential strategies with jitter</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Priority queue</strong> for ordered execution scheduling</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Abort signal support</strong> for graceful job cancellation</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Execution history</strong> tracking with configurable retention</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>17 error classes</strong> from @zudojs/errors for precise error handling</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Test utilities</strong> for deterministic clock mocking and scheduler testing</li>
-        </ul>
-      </section>
 
-      <!-- Where It Sits -->
-      <section id="architecture-position" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHERE IT SITS</h2>
-        <div class="border-4 border-black p-6">
-          <div class="bg-zudo-red text-black p-3 font-bold text-center text-sm">SCHEDULER (@zudojs/scheduler)</div>
-          <div class="grid grid-cols-6 gap-0 mt-0 border-l-2 border-r-2 border-black">
-            <div class="bg-zudo-blue text-white p-2 font-bold text-center text-xs border-r-2 border-black">Jobs</div>
-            <div class="bg-zudo-yellow text-black p-2 font-bold text-center text-xs border-r-2 border-black">Triggers</div>
-            <div class="bg-white text-black p-2 font-bold text-center text-xs border-r-2 border-black">Clock</div>
-            <div class="bg-zudo-green text-black p-2 font-bold text-center text-xs border-r-2 border-black">Executor</div>
-            <div class="bg-black text-white p-2 font-bold text-center text-xs border-r-2 border-black">PriorityQueue</div>
-            <div class="bg-zudo-red text-black p-2 font-bold text-center text-xs">Registry</div>
-          </div>
-          <div class="bg-black text-white p-3 font-bold text-center text-sm mt-0">APPLICATION LAYER (Modules, Services)</div>
-        </div>
-        <p class="mt-4 text-sm text-black/60">
-          The Scheduler sits at the boundary between application logic and the event loop. It consumes job definitions from modules, manages schedules through a priority queue, and executes jobs via the executor with clock-driven precision.
-        </p>
-      </section>
+        <p class="mb-4 leading-relaxed">This program prints a line once per second for about three seconds, then shuts down.</p>
 
-      <!-- Dependencies -->
-      <section id="dependencies" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DEPENDENCIES</h2>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Package</th>
-                <th class="p-3 text-left">Version</th>
-                <th class="p-3 text-left">Purpose</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono text-sm">@zudojs/errors</td>
-                <td class="p-3">0.1.0</td>
-                <td class="p-3">Scheduler error hierarchy (SchedulerError, CronParseError, etc.)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono text-sm">@zudojs/constants</td>
-                <td class="p-3">0.1.0</td>
-                <td class="p-3">Branded types and constants</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono text-sm">@zudojs/types</td>
-                <td class="p-3">0.1.0</td>
-                <td class="p-3">Type guards and utility types</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">Scheduler</span> } <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
 
-        <div class="mt-4 callout callout-warning">
-          <strong class="text-zudo-yellow">Version Lock:</strong> All internal dependencies use <code>workspace:*</code> in development. When published, they use exact version <code>0.1.0</code>. Always use matching versions across the ecosystem.
-        </div>
-      </section>
+<span class="kw">const</span> scheduler = <span class="kw">new</span> <span class="tp">Scheduler</span>();
 
-      <!-- Types -->
-      <section id="types" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TYPES</h2>
-        <p class="mb-4">Core type definitions for the scheduler package.</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Type</th>
-                <th class="p-3 text-left">Definition</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">SchedulerJobId</td>
-                <td class="p-3">string</td>
-                <td class="p-3">Unique identifier for a scheduled job</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">ScheduleId</td>
-                <td class="p-3">string</td>
-                <td class="p-3">Unique identifier for a schedule</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">ExecutionId</td>
-                <td class="p-3">string</td>
-                <td class="p-3">Unique identifier for a job execution</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">ScheduleType</td>
-                <td class="p-3">"once" | "delay" | "interval" | "cron"</td>
-                <td class="p-3">Type of schedule trigger</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">ScheduleState</td>
-                <td class="p-3">"active" | "paused" | "cancelled" | "completed"</td>
-                <td class="p-3">Current state of a schedule</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">JobState</td>
-                <td class="p-3">"pending" | "running" | "completed" | "failed" | "cancelled" | "timed_out"</td>
-                <td class="p-3">Current state of a job execution</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">OverlapPolicy</td>
-                <td class="p-3">"allow" | "skip" | "queue" | "replace"</td>
-                <td class="p-3">Policy for handling overlapping executions</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">MisfirePolicy</td>
-                <td class="p-3">"skip" | "run-once" | "catch-up"</td>
-                <td class="p-3">Policy for handling missed executions</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">RetryStrategy</td>
-                <td class="p-3">"fixed" | "linear" | "exponential"</td>
-                <td class="p-3">Backoff strategy for retries</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Type Definitions</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">SchedulerJobId</span> = <span class="tp">string</span>;
-
-<span class="kw">type</span> <span class="tp">ScheduleId</span> = <span class="tp">string</span>;
-
-<span class="kw">type</span> <span class="tp">ExecutionId</span> = <span class="tp">string</span>;
-
-<span class="kw">type</span> <span class="tp">ScheduleType</span> = <span class="str">"once"</span> | <span class="str">"delay"</span> | <span class="str">"interval"</span> | <span class="str">"cron"</span>;
-
-<span class="kw">type</span> <span class="tp">ScheduleState</span> = <span class="str">"active"</span> | <span class="str">"paused"</span> | <span class="str">"cancelled"</span> | <span class="str">"completed"</span>;
-
-<span class="kw">type</span> <span class="tp">JobState</span> =
-  | <span class="str">"pending"</span>
-  | <span class="str">"running"</span>
-  | <span class="str">"completed"</span>
-  | <span class="str">"failed"</span>
-  | <span class="str">"cancelled"</span>
-  | <span class="str">"timed_out"</span>;
-
-<span class="kw">type</span> <span class="tp">OverlapPolicy</span> = <span class="str">"allow"</span> | <span class="str">"skip"</span> | <span class="str">"queue"</span> | <span class="str">"replace"</span>;
-
-<span class="kw">type</span> <span class="tp">MisfirePolicy</span> = <span class="str">"skip"</span> | <span class="str">"run-once"</span> | <span class="str">"catch-up"</span>;
-
-<span class="kw">type</span> <span class="tp">RetryStrategy</span> = <span class="str">"fixed"</span> | <span class="str">"linear"</span> | <span class="str">"exponential"</span>;</div>
-      </section>
-
-      <!-- Job Definition -->
-      <section id="job-definition" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">JOB DEFINITION</h2>
-        <p class="mb-4">A job definition describes what to execute, how to identify it, and its runtime options.</p>
-
-        <h3 class="text-lg font-bold mb-3">Interface: JobDefinition</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">JobDefinition</span> {
-  <span class="kw">readonly</span> id: <span class="tp">SchedulerJobId</span>;
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="kw">readonly</span> handler: <span class="tp">JobHandler</span>;
-  <span class="kw">readonly</span> options?: <span class="tp">JobOptions</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Type: JobHandler</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">JobHandler</span>&lt;<span class="tp">T</span> = <span class="tp">unknown</span>&gt; = (
-  context: <span class="tp">JobContext</span>&lt;<span class="tp">T</span>&gt;,
-) =&gt; <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt; | <span class="tp">void</span>;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: JobOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">JobOptions</span> {
-  <span class="kw">readonly</span> timeout?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> retry?: <span class="tp">RetryPolicy</span>;
-  <span class="kw">readonly</span> concurrency?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> overlap?: <span class="tp">OverlapPolicy</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: RetryPolicy</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RetryPolicy</span> {
-  <span class="kw">readonly</span> attempts: <span class="tp">number</span>;
-  <span class="kw">readonly</span> strategy: <span class="tp">RetryStrategy</span>;
-  <span class="kw">readonly</span> delay: <span class="tp">number</span>;
-  <span class="kw">readonly</span> maxDelay?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> jitter?: <span class="tp">boolean</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Factory: createJobDefinition</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">createJobDefinition</span> } <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
-
-<span class="kw">const</span> job = <span class="fn">createJobDefinition</span>(
-  <span class="str">"cleanup"</span>,
-  <span class="str">"Cleanup expired sessions"</span>,
-  <span class="kw">async</span> (ctx) =&gt; {
-    console.<span class="fn">log</span>(<span class="str">`Running ${ctx.jobId}`</span>);
-    <span class="kw">await</span> <span class="fn">cleanupSessions</span>();
+<span class="cm">// 1. Define the job: an id, a human-readable name, and the function to run.</span>
+scheduler.<span class="fn">define</span>({
+  id: <span class="str">"heartbeat"</span>,
+  name: <span class="str">"Print a heartbeat"</span>,
+  handler: (ctx) =&gt; {
+    console.<span class="fn">log</span>(<span class="str">"beat"</span>, ctx.attempt);
   },
-  {
+});
+
+<span class="cm">// 2. Schedule it: run every second, forever.</span>
+<span class="kw">const</span> handle = scheduler.<span class="fn">every</span>(<span class="str">"1s"</span>, <span class="str">"heartbeat"</span>);
+console.<span class="fn">log</span>(<span class="str">"next run:"</span>, handle.<span class="fn">nextRun</span>());
+
+<span class="cm">// 3. Start the clock. Nothing runs until you call start().</span>
+scheduler.<span class="fn">start</span>();
+
+<span class="cm">// Shut down after 3.5 seconds.</span>
+<span class="fn">setTimeout</span>(<span class="kw">async</span> () =&gt; {
+  <span class="kw">await</span> scheduler.<span class="fn">stop</span>();
+  console.<span class="fn">log</span>(<span class="str">"stopped"</span>);
+}, <span class="num">3500</span>);</div>
+
+        <p class="mb-4 leading-relaxed">What you should see &mdash; the date will be yours, one second in the future:</p>
+
+        <div class="code-block mb-4"><span class="cm">next run: 2026-09-09T10:15:31.412Z</span>
+<span class="cm">beat 1</span>
+<span class="cm">beat 1</span>
+<span class="cm">beat 1</span>
+<span class="cm">stopped</span></div>
+
+        <div class="callout callout-note mb-6">
+          <p class="text-sm font-bold mb-1">IN PLAIN WORDS</p>
+          <p class="text-sm">A <strong>job</strong> is a named function. A <strong>schedule</strong> is a rule about when to call it. A <strong>handle</strong> is the remote control for one schedule. One job can have many schedules pointing at it.</p>
+        </div>
+      </section>
+
+      <!-- Jobs -->
+      <section id="jobs" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">JOBS</h2>
+
+        <p class="mb-4 leading-relaxed">
+          <code>define()</code> registers a job. It takes an <code>id</code> (a non-empty string, unique), a <code>name</code> for humans, a <code>handler</code> function, and optional <code>options</code>. Defining the same id twice throws <code>SchedulerJobAlreadyExistsError</code>.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          Your handler receives one argument, the <strong>job context</strong>. It carries the ids, the time the run was scheduled for, the time it actually started, the attempt number, any <code>data</code> you attached to the schedule, and an <code>AbortSignal</code>.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          The <strong>signal</strong> is how the scheduler asks a running job to stop &mdash; on timeout, on cancel, or on shutdown. Pass it to anything that accepts one, such as <code>fetch</code>, and long jobs stop promptly instead of hanging around.
+        </p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">Scheduler</span> } <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
+
+<span class="kw">const</span> scheduler = <span class="kw">new</span> <span class="tp">Scheduler</span>();
+
+scheduler.<span class="fn">define</span>({
+  id: <span class="str">"fetch-rates"</span>,
+  name: <span class="str">"Fetch exchange rates"</span>,
+  options: { timeout: <span class="num">5_000</span> },
+  handler: <span class="kw">async</span> (ctx) =&gt; {
+    <span class="cm">// Hand the signal over: a timeout then cancels the request itself.</span>
+    <span class="kw">const</span> response = <span class="kw">await</span> <span class="fn">fetch</span>(<span class="str">"https://example.com/rates"</span>, {
+      signal: ctx.signal,
+    });
+    console.<span class="fn">log</span>(<span class="str">"job"</span>, ctx.jobId, <span class="str">"status"</span>, response.status);
+  },
+});
+
+<span class="kw">const</span> handle = scheduler.<span class="fn">every</span>(<span class="str">"10m"</span>, <span class="str">"fetch-rates"</span>);
+console.<span class="fn">log</span>(handle.id, handle.state);
+scheduler.<span class="fn">start</span>();</div>
+
+        <p class="mb-4 leading-relaxed">The <code>console.log</code> prints a random UUID and the word <code>active</code>, for example <code>3f0c1a7e-9b21-4d0e-8a55-2c7f6b1e0d44 active</code>. Every ten minutes the handler then prints <code>job fetch-rates status 200</code>.</p>
+
+        <div class="callout callout-warning mb-6">
+          <p class="text-sm font-bold mb-1">COMMON MISTAKE</p>
+          <p class="text-sm">Calling <code>scheduler.every("10m", "fetch-rates")</code> before <code>define()</code> throws <code>InvalidJobError</code>. Define first, schedule second.</p>
+        </div>
+      </section>
+
+      <!-- Scheduling -->
+      <section id="scheduling" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SCHEDULING</h2>
+
+        <p class="mb-4 leading-relaxed">There are four ways to schedule a defined job. Each returns a <code>ScheduleHandle</code>.</p>
+
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Call</th><th>When it runs</th><th>Repeats?</th></tr></thead>
+            <tbody>
+              <tr><td><code>after("30s", "job-id")</code></td><td>Once, 30 seconds from now.</td><td>No</td></tr>
+              <tr><td><code>at(new Date("2027-01-01"), "job-id")</code></td><td>Once, at that instant.</td><td>No</td></tr>
+              <tr><td><code>every("5m", "job-id")</code></td><td>Every five minutes, starting five minutes from now.</td><td>Yes</td></tr>
+              <tr><td><code>cron("0 2 * * *", "job-id")</code></td><td>Every day at 02:00.</td><td>Yes</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Duration strings</h3>
+
+        <p class="mb-4 leading-relaxed">
+          <code>after()</code> and <code>every()</code> take a duration string, not a number. Units are <code>ms</code>, <code>s</code>, <code>m</code>, <code>h</code>, <code>d</code>, <code>w</code>, and you can stick them together. <code>parseDuration</code> is exported if you want the milliseconds yourself.
+        </p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">parseDuration</span> } <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
+
+console.<span class="fn">log</span>(<span class="fn">parseDuration</span>(<span class="str">"250ms"</span>)); <span class="cm">// 250</span>
+console.<span class="fn">log</span>(<span class="fn">parseDuration</span>(<span class="str">"5s"</span>));    <span class="cm">// 5000</span>
+console.<span class="fn">log</span>(<span class="fn">parseDuration</span>(<span class="str">"1h30m"</span>)); <span class="cm">// 5400000</span>
+console.<span class="fn">log</span>(<span class="fn">parseDuration</span>(<span class="str">"1w"</span>));    <span class="cm">// 604800000</span></div>
+
+        <p class="mb-4 leading-relaxed">
+          Anything else throws <code>InvalidDurationError</code>: a bare number (<code>"5"</code>), an unknown unit (<code>"5x"</code>), a decimal (<code>"1.5h"</code>), a negative or zero value, and anything over roughly a century.
+        </p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Controlling a schedule</h3>
+
+        <p class="mb-4 leading-relaxed">The handle is wired to the live schedule, so these actually change what runs.</p>
+
+        <div class="code-block mb-4"><span class="kw">const</span> handle = scheduler.<span class="fn">every</span>(<span class="str">"1h"</span>, <span class="str">"sync"</span>);
+
+handle.<span class="fn">nextRun</span>();      <span class="cm">// Date — the real next fire time, or undefined once gone</span>
+handle.state;          <span class="cm">// "active" | "paused" | "cancelled" | "completed"</span>
+
+<span class="kw">await</span> handle.<span class="fn">pause</span>();  <span class="cm">// stops firing, keeps the schedule</span>
+<span class="kw">await</span> handle.<span class="fn">resume</span>(); <span class="cm">// recomputes the next time from now</span>
+<span class="kw">await</span> handle.<span class="fn">cancel</span>(); <span class="cm">// aborts any run in progress, then removes the schedule</span></div>
+
+        <p class="mb-4 leading-relaxed">
+          Resuming deliberately recomputes from the current time. A schedule paused across three of its fire times does not fire three times the moment you resume it.
+        </p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">A time that has already passed</h3>
+
+        <p class="mb-4 leading-relaxed">
+          <code>at()</code> with a date in the past is a <strong>misfire</strong>. That is not an error by default: the <code>misfire</code> option is <code>"run-once"</code>, so the job runs immediately. Pass <code>{ misfire: "skip" }</code> to reject the schedule instead, which throws <code>InvalidScheduleError</code>.
+        </p>
+
+        <div class="code-block mb-4">scheduler.<span class="fn">at</span>(<span class="kw">new</span> <span class="tp">Date</span>(<span class="tp">Date</span>.<span class="fn">now</span>() - <span class="num">60_000</span>), <span class="str">"report"</span>);
+<span class="cm">// runs as soon as start() is called</span>
+
+scheduler.<span class="fn">at</span>(<span class="kw">new</span> <span class="tp">Date</span>(<span class="tp">Date</span>.<span class="fn">now</span>() - <span class="num">60_000</span>), <span class="str">"report"</span>, { misfire: <span class="str">"skip"</span> });
+<span class="cm">// throws InvalidScheduleError</span></div>
+
+        <div class="callout callout-warning mb-6">
+          <p class="text-sm font-bold mb-1">NOT IMPLEMENTED YET</p>
+          <p class="text-sm">The third misfire value, <code>"catch-up"</code>, is accepted by the type but behaves exactly like <code>"run-once"</code>. Missed occurrences are never replayed one by one. The <code>priority</code> option is likewise accepted and ignored &mdash; the queue orders strictly by fire time.</p>
+        </div>
+      </section>
+
+      <!-- Cron -->
+      <section id="cron-expressions" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CRON EXPRESSIONS</h2>
+
+        <p class="mb-4 leading-relaxed">
+          A <strong>cron expression</strong> is five values separated by spaces that describe a repeating calendar time, such as &ldquo;02:00 on weekdays&rdquo;. It comes from Unix and it is the standard way to write a recurring schedule.
+        </p>
+
+        <p class="mb-4 leading-relaxed">The five fields are always in this order:</p>
+
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>#</th><th>Field</th><th>Allowed values</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td>minute</td><td>0&ndash;59</td><td>Minute past the hour.</td></tr>
+              <tr><td>2</td><td>hour</td><td>0&ndash;23</td><td>24-hour clock. <code>0</code> is midnight.</td></tr>
+              <tr><td>3</td><td>day of month</td><td>1&ndash;31</td><td>Day number in the month.</td></tr>
+              <tr><td>4</td><td>month</td><td>1&ndash;12 or <code>jan</code>&ndash;<code>dec</code></td><td>Names are case-insensitive.</td></tr>
+              <tr><td>5</td><td>day of week</td><td>0&ndash;6 or <code>sun</code>&ndash;<code>sat</code></td><td>0 is Sunday. 7 also means Sunday.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="mb-4 leading-relaxed">Each field takes one of these shapes:</p>
+
+        <ul class="mb-4 space-y-1 text-sm">
+          <li>&bull; <code>*</code> &mdash; every value. &ldquo;Any minute&rdquo;, &ldquo;any month&rdquo;.</li>
+          <li>&bull; A single number &mdash; <code>5</code> means exactly 5.</li>
+          <li>&bull; A range &mdash; <code>1-5</code> means 1, 2, 3, 4, 5. The start must not be larger than the end.</li>
+          <li>&bull; A step &mdash; <code>*/15</code> means every 15th value: 0, 15, 30, 45. <code>10-30/5</code> means 10, 15, 20, 25, 30.</li>
+          <li>&bull; A list &mdash; <code>1,15</code> means 1 and 15. List items can themselves be ranges or steps.</li>
+        </ul>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">One worked example</h3>
+
+        <p class="mb-4 leading-relaxed">Take <code>30 2 * * 1-5</code> and read it left to right:</p>
+
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Field</th><th>Value</th><th>Reads as</th></tr></thead>
+            <tbody>
+              <tr><td>minute</td><td><code>30</code></td><td>at minute 30</td></tr>
+              <tr><td>hour</td><td><code>2</code></td><td>of hour 2 (02:xx)</td></tr>
+              <tr><td>day of month</td><td><code>*</code></td><td>on any day number</td></tr>
+              <tr><td>month</td><td><code>*</code></td><td>in any month</td></tr>
+              <tr><td>day of week</td><td><code>1-5</code></td><td>if it is Monday through Friday</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="mb-4 leading-relaxed">Put together: <strong>02:30 every weekday</strong>. You can check any expression without a scheduler:</p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">parseCron</span>, <span class="fn">nextCronDate</span> } <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
+
+<span class="kw">const</span> parsed = <span class="fn">parseCron</span>(<span class="str">"30 2 * * 1-5"</span>);
+
+<span class="cm">// Saturday 20 June 2026, noon UTC. The third argument means "read the</span>
+<span class="cm">// fields in UTC" rather than in the machine's local zone.</span>
+<span class="kw">const</span> next = <span class="fn">nextCronDate</span>(parsed, <span class="kw">new</span> <span class="tp">Date</span>(<span class="str">"2026-06-20T12:00:00Z"</span>), <span class="kw">true</span>);
+
+console.<span class="fn">log</span>(next?.<span class="fn">toISOString</span>()); <span class="cm">// 2026-06-22T02:30:00.000Z — the Monday</span></div>
+
+        <p class="mb-4 leading-relaxed">Five shorthand macros are also accepted anywhere an expression is:</p>
+
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Macro</th><th>Same as</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td><code>@hourly</code></td><td><code>0 * * * *</code></td><td>Top of every hour.</td></tr>
+              <tr><td><code>@daily</code> / <code>@midnight</code></td><td><code>0 0 * * *</code></td><td>Midnight every day.</td></tr>
+              <tr><td><code>@weekly</code></td><td><code>0 0 * * 0</code></td><td>Midnight every Sunday.</td></tr>
+              <tr><td><code>@monthly</code></td><td><code>0 0 1 * *</code></td><td>Midnight on the 1st.</td></tr>
+              <tr><td><code>@yearly</code> / <code>@annually</code></td><td><code>0 0 1 1 *</code></td><td>Midnight on 1 January.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout callout-warning mb-6">
+          <p class="text-sm font-bold mb-1">WATCH OUT: THE TWO DAY FIELDS</p>
+          <p class="text-sm">When day-of-month and day-of-week are <em>both</em> restricted, cron fires if <strong>either</strong> matches, not both. <code>0 0 1 * mon</code> means &ldquo;the 1st of the month, <em>and</em> every Monday&rdquo;. This is odd but it is what every cron does, so expressions copied from elsewhere behave the same here.</p>
+        </div>
+
+        <p class="mb-4 leading-relaxed">
+          A bad expression throws <code>CronParseError</code> the moment you write it, not silently at 2 a.m. Wrong field count, a value out of range (<code>99 0 * * *</code>), a zero step (<code>*/0 * * * *</code>) and an inverted range (<code>5-1 * * * *</code>) are all rejected. An expression that can never happen, such as 30 February (<code>0 0 30 2 *</code>), parses but never fires &mdash; the search gives up after five years.
+        </p>
+      </section>
+
+      <!-- Time zones -->
+      <section id="time-zones" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TIME ZONES</h2>
+
+        <p class="mb-4 leading-relaxed">
+          A cron expression says &ldquo;02:30&rdquo;, but 02:30 <em>where</em>? The time zone is what turns those numbers into an actual instant. The same expression fires at different moments in London and in Tokyo.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          By default the fields are read in the <strong>machine's local zone</strong>, whatever the operating system is set to. Pass <code>timezone: "UTC"</code> to read them in UTC instead. <code>"Etc/UTC"</code> is accepted as the same thing.
+        </p>
+
+        <div class="code-block mb-4"><span class="cm">// 02:30 on weekdays, in the server's local zone</span>
+scheduler.<span class="fn">cron</span>(<span class="str">"30 2 * * 1-5"</span>, <span class="str">"nightly"</span>);
+
+<span class="cm">// 02:30 UTC on weekdays, wherever the server happens to live</span>
+scheduler.<span class="fn">cron</span>(<span class="str">"30 2 * * 1-5"</span>, <span class="str">"nightly"</span>, { timezone: <span class="str">"UTC"</span> });
+
+<span class="cm">// Throws InvalidScheduleError — no zone database is bundled</span>
+scheduler.<span class="fn">cron</span>(<span class="str">"30 2 * * 1-5"</span>, <span class="str">"nightly"</span>, { timezone: <span class="str">"America/New_York"</span> });</div>
+
+        <p class="mb-4 leading-relaxed">
+          Any other zone name is <strong>rejected</strong> rather than quietly ignored, so a schedule never runs at a time you did not ask for. If you need a specific region, set the process time zone (<code>TZ=America/New_York</code>) and use the local-zone form.
+        </p>
+
+        <div class="callout callout-tip mb-6">
+          <p class="text-sm font-bold mb-1">TIP: DAYLIGHT SAVING</p>
+          <p class="text-sm">In a local zone that observes daylight saving, the clock jumps. A job at 02:30 can be skipped on the spring-forward day and run twice on the fall-back day. The search steps hour by hour on the wall clock, not by adding 3,600,000 milliseconds, which limits the damage &mdash; but <code>timezone: "UTC"</code> is the way to avoid the question entirely.</p>
+        </div>
+      </section>
+
+      <!-- Overlap -->
+      <section id="overlapping-runs" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OVERLAPPING RUNS</h2>
+
+        <p class="mb-4 leading-relaxed">
+          You schedule a job every ten seconds. One day it takes twenty-five seconds. The next fire time arrives while the previous run is still going. That is an <strong>overlap</strong>, and you have to decide what should happen.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          The <code>overlap</code> option on the schedule decides. Set it per schedule, since two schedules of the same job can want different answers.
+        </p>
+
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Value</th><th>What happens</th><th>Use when</th></tr></thead>
+            <tbody>
+              <tr><td><code>"allow"</code> (default)</td><td>The new run starts alongside the old one. Two copies run at once.</td><td>Runs are independent and safe to double up.</td></tr>
+              <tr><td><code>"skip"</code></td><td>The new run is dropped. The old one continues undisturbed.</td><td>A slow run has already covered the work.</td></tr>
+              <tr><td><code>"replace"</code></td><td>The old run is aborted through its <code>ctx.signal</code>, then the new one starts.</td><td>Only the freshest result matters.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="mb-4 leading-relaxed">This job takes 120&nbsp;ms but is scheduled every 10&nbsp;ms. With <code>"skip"</code>, exactly one copy runs at a time.</p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">Scheduler</span> } <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
+
+<span class="kw">let</span> started = <span class="num">0</span>;
+<span class="kw">const</span> scheduler = <span class="kw">new</span> <span class="tp">Scheduler</span>();
+
+scheduler.<span class="fn">define</span>({
+  id: <span class="str">"slow"</span>,
+  name: <span class="str">"Slow job"</span>,
+  handler: <span class="kw">async</span> () =&gt; {
+    started++;
+    <span class="kw">await</span> <span class="kw">new</span> <span class="tp">Promise</span>((resolve) =&gt; <span class="fn">setTimeout</span>(resolve, <span class="num">120</span>));
+  },
+});
+
+scheduler.<span class="fn">every</span>(<span class="str">"10ms"</span>, <span class="str">"slow"</span>, { overlap: <span class="str">"skip"</span> });
+scheduler.<span class="fn">start</span>();
+
+<span class="fn">setTimeout</span>(<span class="kw">async</span> () =&gt; {
+  console.<span class="fn">log</span>(<span class="str">"runs started:"</span>, started); <span class="cm">// runs started: 1</span>
+  <span class="kw">await</span> scheduler.<span class="fn">stop</span>({ timeoutMs: <span class="num">500</span> });
+}, <span class="num">90</span>);</div>
+
+        <p class="mb-4 leading-relaxed">Without <code>overlap: "skip"</code> that same program prints <code>runs started: 8</code> or so.</p>
+
+        <div class="callout callout-warning mb-6">
+          <p class="text-sm font-bold mb-1">NOT IMPLEMENTED YET</p>
+          <p class="text-sm">The <code>OverlapPolicy</code> type also lists <code>"queue"</code>, but nothing implements it: it currently behaves like <code>"allow"</code>. Use <code>"skip"</code> or <code>"replace"</code>.</p>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">The separate global ceiling</h3>
+
+        <p class="mb-4 leading-relaxed">
+          <code>overlap</code> is per schedule. <code>maxConcurrency</code> on the scheduler caps how many job runs may be in flight <em>in total</em>, across every schedule. It defaults to 10. Anything over the ceiling stays on the queue and is picked up on a later tick, not dropped.
+        </p>
+
+        <div class="code-block mb-4"><span class="kw">const</span> scheduler = <span class="kw">new</span> <span class="tp">Scheduler</span>({ maxConcurrency: <span class="num">2</span> });</div>
+      </section>
+
+      <!-- Failures -->
+      <section id="failures-and-retries" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">FAILURES AND RETRIES</h2>
+
+        <p class="mb-4 leading-relaxed">
+          A job handler that throws does not crash the scheduler, and it does not disappear silently either. It is retried according to the job's retry policy, and whatever survives that is handed to the scheduler's <code>onError</code> callback.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          A <strong>retry policy</strong> says how many attempts to make and how long to wait between them. <code>strategy</code> picks the shape of that wait: <code>"fixed"</code> always waits <code>delay</code>; <code>"linear"</code> waits <code>delay &times; attempt</code>; <code>"exponential"</code> doubles each time. <code>maxDelay</code> caps it, and <code>jitter: true</code> randomises it so many failing jobs do not all retry in the same instant.
+        </p>
+
+        <p class="mb-4 leading-relaxed">This job fails twice and succeeds on the third attempt, then fails permanently the next time round.</p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">Scheduler</span> } <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
+
+<span class="kw">const</span> scheduler = <span class="kw">new</span> <span class="tp">Scheduler</span>({
+  onError: ({ jobId, executionId, error }) =&gt; {
+    console.<span class="fn">error</span>(<span class="str">"job failed:"</span>, jobId, executionId, (error <span class="kw">as</span> <span class="tp">Error</span>).message);
+  },
+});
+
+<span class="kw">let</span> calls = <span class="num">0</span>;
+
+scheduler.<span class="fn">define</span>({
+  id: <span class="str">"flaky"</span>,
+  name: <span class="str">"Flaky upstream call"</span>,
+  options: {
     timeout: <span class="num">10_000</span>,
     retry: {
       attempts: <span class="num">3</span>,
       strategy: <span class="str">"exponential"</span>,
       delay: <span class="num">1_000</span>,
+      maxDelay: <span class="num">30_000</span>,
+      jitter: <span class="kw">true</span>,
     },
-    overlap: <span class="str">"skip"</span>,
   },
-);</div>
-      </section>
-
-      <!-- Job Context -->
-      <section id="job-context" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">JOB CONTEXT</h2>
-        <p class="mb-4">The context object passed to every job handler during execution.</p>
-
-        <h3 class="text-lg font-bold mb-3">Interface: JobContext</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">JobContext</span>&lt;<span class="tp">T</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> jobId: <span class="tp">SchedulerJobId</span>;
-  <span class="kw">readonly</span> executionId: <span class="tp">ExecutionId</span>;
-  <span class="kw">readonly</span> scheduledAt: <span class="tp">Date</span>;
-  <span class="kw">readonly</span> startedAt: <span class="tp">Date</span>;
-  <span class="kw">readonly</span> attempt: <span class="tp">number</span>;
-  <span class="kw">readonly</span> data: <span class="tp">T</span>;
-  <span class="kw">readonly</span> signal: <span class="tp">AbortSignal</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Factory: createJobContext</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">createJobContext</span> } <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
-
-<span class="kw">const</span> context = <span class="fn">createJobContext</span>(
-  <span class="str">"cleanup"</span>,
-  <span class="str">"exec-abc-123"</span>,
-  <span class="kw">new</span> <span class="fn">Date</span>(<span class="str">"2026-01-15T10:00:00Z"</span>),
-  <span class="kw">new</span> <span class="fn">Date</span>(),
-  <span class="num">1</span>,
-  <span class="num">undefined</span>,
-  <span class="kw">new</span> <span class="fn">AbortController</span>().signal,
-);</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: JobExecution</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">JobExecution</span> {
-  <span class="kw">readonly</span> id: <span class="tp">ExecutionId</span>;
-  <span class="kw">readonly</span> jobId: <span class="tp">SchedulerJobId</span>;
-  <span class="kw">readonly</span> scheduleId: <span class="tp">ScheduleId</span>;
-  <span class="kw">readonly</span> status: <span class="tp">JobState</span>;
-  <span class="kw">readonly</span> scheduledAt: <span class="tp">Date</span>;
-  <span class="kw">readonly</span> startedAt?: <span class="tp">Date</span>;
-  <span class="kw">readonly</span> completedAt?: <span class="tp">Date</span>;
-  <span class="kw">readonly</span> duration?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> attempt: <span class="tp">number</span>;
-  <span class="kw">readonly</span> error?: <span class="tp">unknown</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: JobExecutionResult</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">JobExecutionResult</span> {
-  <span class="kw">readonly</span> success: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> error?: <span class="tp">unknown</span>;
-}</div>
-      </section>
-
-      <!-- Schedules -->
-      <section id="schedules" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SCHEDULES</h2>
-        <p class="mb-4">A schedule binds a job to a trigger, defining when and how often it runs.</p>
-
-        <h3 class="text-lg font-bold mb-3">Interface: Schedule</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Schedule</span> {
-  <span class="kw">readonly</span> id: <span class="tp">ScheduleId</span>;
-  <span class="kw">readonly</span> jobId: <span class="tp">SchedulerJobId</span>;
-  <span class="kw">readonly</span> type: <span class="tp">ScheduleType</span>;
-  <span class="kw">readonly</span> expression?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> nextRunAt: <span class="tp">Date</span>;
-  <span class="kw">readonly</span> lastRunAt?: <span class="tp">Date</span>;
-  <span class="kw">readonly</span> state: <span class="tp">ScheduleState</span>;
-  <span class="kw">readonly</span> options?: <span class="tp">ScheduleOptions</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: ScheduleOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ScheduleOptions</span> {
-  <span class="kw">readonly</span> timezone?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> misfire?: <span class="tp">MisfirePolicy</span>;
-  <span class="kw">readonly</span> priority?: <span class="tp">number</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Factory: createSchedule</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">createSchedule</span> } <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
-
-<span class="kw">const</span> schedule = <span class="fn">createSchedule</span>(
-  <span class="str">"schedule-001"</span>,
-  <span class="str">"cleanup"</span>,
-  <span class="str">"cron"</span>,
-  <span class="kw">new</span> <span class="fn">Date</span>(<span class="str">"2026-01-15T10:00:00Z"</span>),
-  <span class="str">"0 2 * * *"</span>,
-  { misfire: <span class="str">"catch-up"</span>, priority: <span class="num">1</span> },
-);</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: ScheduleHandle</h3>
-        <p class="mb-3 text-sm">Returned when scheduling a job. Provides control over the live schedule.</p>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">ScheduleHandle</span> {
-  <span class="kw">readonly</span> id: <span class="tp">ScheduleId</span>;
-  <span class="kw">readonly</span> state: <span class="tp">ScheduleState</span>;
-  <span class="fn">pause</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">resume</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">cancel</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">nextRun</span>(): <span class="tp">Date</span> | <span class="tp">undefined</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Class: ScheduleHandleImpl</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">ScheduleHandleImpl</span> <span class="kw">implements</span> <span class="tp">ScheduleHandle</span> {
-  <span class="kw">readonly</span> id: <span class="tp">string</span>;
-  state: <span class="tp">ScheduleState</span>;
-
-  <span class="kw">constructor</span>(id: <span class="tp">string</span>, state: <span class="tp">ScheduleState</span>);
-
-  <span class="kw">async</span> <span class="fn">pause</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;   <span class="cm">// Sets state to "paused"</span>
-  <span class="kw">async</span> <span class="fn">resume</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;  <span class="cm">// Sets state to "active"</span>
-  <span class="kw">async</span> <span class="fn">cancel</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;; <span class="cm">// Sets state to "cancelled"</span>
-  <span class="fn">nextRun</span>(): <span class="tp">Date</span> | <span class="tp">undefined</span>;
-}</div>
-      </section>
-
-      <!-- Triggers -->
-      <section id="triggers" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TRIGGERS</h2>
-        <p class="mb-4">Triggers calculate the next execution time for a schedule.</p>
-
-        <h3 class="text-lg font-bold mb-3">Interface: Trigger</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Trigger</span> {
-  <span class="fn">next</span>(after: <span class="tp">Date</span>): <span class="tp">Date</span> | <span class="tp">null</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Class: DateTrigger</h3>
-        <p class="mb-3 text-sm">Fires once at a specific date. Returns null if the date has already passed.</p>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">DateTrigger</span> <span class="kw">implements</span> <span class="tp">Trigger</span> {
-  <span class="kw">constructor</span>(date: <span class="tp">Date</span>);
-  <span class="fn">next</span>(after: <span class="tp">Date</span>): <span class="tp">Date</span> | <span class="tp">null</span>;
-}
-
-<span class="kw">const</span> trigger = <span class="kw">new</span> <span class="fn">DateTrigger</span>(<span class="kw">new</span> <span class="fn">Date</span>(<span class="str">"2026-06-15T09:00:00Z"</span>));
-trigger.<span class="fn">next</span>(<span class="kw">new</span> <span class="fn">Date</span>()); <span class="cm">// Date(2026-06-15T09:00:00Z) or null</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Class: DelayTrigger</h3>
-        <p class="mb-3 text-sm">Fires once after a fixed delay from the given date.</p>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">DelayTrigger</span> <span class="kw">implements</span> <span class="tp">Trigger</span> {
-  <span class="kw">constructor</span>(delayMs: <span class="tp">number</span>);
-  <span class="fn">next</span>(after: <span class="tp">Date</span>): <span class="tp">Date</span>;
-}
-
-<span class="kw">const</span> trigger = <span class="kw">new</span> <span class="fn">DelayTrigger</span>(<span class="num">5_000</span>); <span class="cm">// 5 seconds</span>
-trigger.<span class="fn">next</span>(<span class="kw">new</span> <span class="fn">Date</span>()); <span class="cm">// now + 5s</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Class: IntervalTrigger</h3>
-        <p class="mb-3 text-sm">Fires at fixed intervals indefinitely.</p>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">IntervalTrigger</span> <span class="kw">implements</span> <span class="tp">Trigger</span> {
-  <span class="kw">constructor</span>(intervalMs: <span class="tp">number</span>);
-  <span class="fn">next</span>(after: <span class="tp">Date</span>): <span class="tp">Date</span>;
-}
-
-<span class="kw">const</span> trigger = <span class="kw">new</span> <span class="fn">IntervalTrigger</span>(<span class="num">60_000</span>); <span class="cm">// Every minute</span>
-trigger.<span class="fn">next</span>(<span class="kw">new</span> <span class="fn">Date</span>()); <span class="cm">// now + 60s</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Class: CronTrigger</h3>
-        <p class="mb-3 text-sm">Fires according to a standard five-field cron expression (<code>minute hour day-of-month month day-of-week</code>) with ranges, lists, steps, three-letter names and <code>@daily</code>-style macros. The expression is parsed at construction, so an invalid one throws where the schedule is declared. Only <code>"UTC"</code> and the system local zone are supported; any other zone is rejected rather than silently ignored.</p>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">CronTrigger</span> <span class="kw">implements</span> <span class="tp">Trigger</span> {
-  <span class="kw">constructor</span>(expression: <span class="tp">string</span>, timezone?: <span class="tp">string</span>);
-  <span class="fn">next</span>(after: <span class="tp">Date</span>): <span class="tp">Date</span> | <span class="tp">null</span>;
-}
-
-<span class="cm">// Run every day at 2am UTC</span>
-<span class="kw">const</span> trigger = <span class="kw">new</span> <span class="fn">CronTrigger</span>(<span class="str">"0 2 * * *"</span>);
-
-<span class="cm">// Run every Monday at 9am in New York</span>
-<span class="kw">const</span> nycTrigger = <span class="kw">new</span> <span class="fn">CronTrigger</span>(<span class="str">"0 9 * * 1"</span>, <span class="str">"America/New_York"</span>);</div>
-      </section>
-
-      <!-- Clock -->
-      <section id="clock" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CLOCK</h2>
-        <p class="mb-4">The clock abstraction allows deterministic testing by decoupling time from the system clock.</p>
-
-        <h3 class="text-lg font-bold mb-3">Interface: Clock</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Clock</span> {
-  <span class="fn">now</span>(): <span class="tp">Date</span>;
-  <span class="fn">nowMs</span>(): <span class="tp">number</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Class: SystemClock</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">SystemClock</span> <span class="kw">implements</span> <span class="tp">Clock</span> {
-  <span class="fn">now</span>(): <span class="tp">Date</span> {
-    <span class="kw">return new</span> <span class="fn">Date</span>();
-  }
-
-  <span class="fn">nowMs</span>(): <span class="tp">number</span> {
-    <span class="kw">return</span> Date.<span class="fn">now</span>();
-  }
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Factory: createSystemClock</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">createSystemClock</span> } <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
-
-<span class="kw">const</span> clock = <span class="fn">createSystemClock</span>();
-console.<span class="fn">log</span>(clock.<span class="fn">now</span>());     <span class="cm">// Current Date</span>
-console.<span class="fn">log</span>(clock.<span class="fn">nowMs</span>());   <span class="cm">// Current timestamp in ms</span></div>
-      </section>
-
-      <!-- Job Registry -->
-      <section id="job-registry" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">JOB REGISTRY</h2>
-        <p class="mb-4">Manages registration, lookup, and removal of job definitions. Capped at <code class="bg-black/5 px-1">MAX_JOBS</code> (4096).</p>
-
-        <h3 class="text-lg font-bold mb-3">Methods</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Method</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">register()</td>
-                <td class="p-3">register(job: JobDefinition): void</td>
-                <td class="p-3">void. Throws <code>SchedulerJobAlreadyExistsError</code> on duplicate.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">get()</td>
-                <td class="p-3">get(id: string): JobDefinition | undefined</td>
-                <td class="p-3">Job definition or undefined</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">has()</td>
-                <td class="p-3">has(id: string): boolean</td>
-                <td class="p-3">true if registered</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">list()</td>
-                <td class="p-3">list(): readonly string[]</td>
-                <td class="p-3">Array of all registered job IDs</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">unregister()</td>
-                <td class="p-3">unregister(id: string): boolean</td>
-                <td class="p-3">true if removed, false if not found</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">clear()</td>
-                <td class="p-3">clear(): void</td>
-                <td class="p-3">Removes all registered jobs</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Using the Registry</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">JobRegistry</span>, <span class="fn">createJobDefinition</span> } <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
-
-<span class="kw">const</span> registry = <span class="kw">new</span> <span class="fn">JobRegistry</span>();
-
-<span class="cm">// Register a job</span>
-registry.<span class="fn">register</span>(<span class="fn">createJobDefinition</span>(
-  <span class="str">"cleanup"</span>,
-  <span class="str">"Cleanup Task"</span>,
-  <span class="kw">async</span> (ctx) =&gt; { <span class="cm">/* ... */</span> },
-));
-
-<span class="cm">// Lookup</span>
-<span class="kw">const</span> job = registry.<span class="fn">get</span>(<span class="str">"cleanup"</span>);
-
-<span class="cm">// Check existence</span>
-<span class="kw">if</span> (registry.<span class="fn">has</span>(<span class="str">"cleanup"</span>)) {
-  console.<span class="fn">log</span>(<span class="str">"Job exists"</span>);
-}
-
-<span class="cm">// List all</span>
-console.<span class="fn">log</span>(registry.<span class="fn">list</span>()); <span class="cm">// ["cleanup"]</span></div>
-      </section>
-
-      <!-- Job Executor -->
-      <section id="job-executor" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">JOB EXECUTOR</h2>
-        <p class="mb-4">Executes job handlers with timeout support and abort signal handling.</p>
-
-        <h3 class="text-lg font-bold mb-3">Class: JobExecutor</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">JobExecutor</span> {
-  <span class="kw">constructor</span>(clock: <span class="tp">Clock</span>);
-
-  <span class="kw">async</span> <span class="fn">execute</span>(
-    job: <span class="tp">JobDefinition</span>,
-    executionId: <span class="tp">string</span>,
-    scheduledAt: <span class="tp">Date</span>,
-    attempt: <span class="tp">number</span>,
-    signal: <span class="tp">AbortSignal</span>,
-  ): <span class="tp">Promise</span>&lt;<span class="tp">JobExecutionResult</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Execution Flow</h3>
-        <ol class="space-y-2 mb-6 list-decimal list-inside">
-          <li>Creates a frozen <code class="bg-black/5 px-1">JobContext</code> with job metadata, timestamps, and the abort signal</li>
-          <li>Wraps the handler call with a timeout using <code class="bg-black/5 px-1">setTimeout</code></li>
-          <li>On success, returns <code class="bg-black/5 px-1">{ success: true }</code></li>
-          <li>On timeout, throws <code class="bg-black/5 px-1">SchedulerJobTimeoutError</code></li>
-          <li>On abort, throws <code class="bg-black/5 px-1">SchedulerJobCancelledError</code></li>
-          <li>On other errors, wraps in <code class="bg-black/5 px-1">SchedulerJobExecutionError</code></li>
-        </ol>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">JobExecutor</span>, <span class="fn">createSystemClock</span> } <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
-
-<span class="kw">const</span> executor = <span class="kw">new</span> <span class="fn">JobExecutor</span>(<span class="fn">createSystemClock</span>());
-<span class="kw">const</span> signal = <span class="kw">new</span> <span class="fn">AbortController</span>().signal;
-
-<span class="kw">const</span> result = <span class="kw">await</span> executor.<span class="fn">execute</span>(
-  job,
-  <span class="str">"exec-001"</span>,
-  <span class="kw">new</span> <span class="fn">Date</span>(),
-  <span class="num">1</span>,
-  signal,
-);
-
-console.<span class="fn">log</span>(result.success); <span class="cm">// true</span></div>
-      </section>
-
-      <!-- Priority Queue -->
-      <section id="priority-queue" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">PRIORITY QUEUE</h2>
-        <p class="mb-4">Min-heap priority queue for ordered schedule execution. Orders by <code class="bg-black/5 px-1">nextRunAt</code> timestamp.</p>
-
-        <h3 class="text-lg font-bold mb-3">Class: PriorityQueue</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Method</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">enqueue()</td>
-                <td class="p-3">enqueue(schedule: Schedule): void</td>
-                <td class="p-3">void. Inserts into heap. O(log n).</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">dequeue()</td>
-                <td class="p-3">dequeue(): Schedule | undefined</td>
-                <td class="p-3">Removes and returns earliest schedule. O(log n).</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">peek()</td>
-                <td class="p-3">peek(): Schedule | undefined</td>
-                <td class="p-3">Returns earliest without removing. O(1).</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">remove()</td>
-                <td class="p-3">remove(id: string): boolean</td>
-                <td class="p-3">Removes schedule by ID. O(n).</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">size</td>
-                <td class="p-3">get size(): number</td>
-                <td class="p-3">Number of schedules in queue</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">isEmpty</td>
-                <td class="p-3">get isEmpty(): boolean</td>
-                <td class="p-3">true if queue is empty</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">clear()</td>
-                <td class="p-3">clear(): void</td>
-                <td class="p-3">Removes all schedules</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="callout callout-tip mt-4">
-          <strong class="text-zudo-green">Min-Heap:</strong> The queue uses a binary min-heap ordered by <code>nextRunAt</code>. The schedule with the earliest next execution time is always at the top.
-        </div>
-      </section>
-
-      <!-- Duration Parsing -->
-      <section id="duration-parsing" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DURATION PARSING</h2>
-        <p class="mb-4">Parses human-readable duration strings into milliseconds.</p>
-
-        <h3 class="text-lg font-bold mb-3">Function: parseDuration</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">parseDuration</span> } <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
-
-<span class="fn">parseDuration</span>(<span class="str">"5s"</span>);   <span class="cm">// 5_000</span>
-<span class="fn">parseDuration</span>(<span class="str">"10m"</span>);  <span class="cm">// 600_000</span>
-<span class="fn">parseDuration</span>(<span class="str">"2h"</span>);   <span class="cm">// 7_200_000</span>
-<span class="fn">parseDuration</span>(<span class="str">"3d"</span>);   <span class="cm">// 259_200_000</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Supported Formats</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Suffix</th>
-                <th class="p-3 text-left">Unit</th>
-                <th class="p-3 text-left">Multiplier</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">s</td><td class="p-3">Seconds</td><td class="p-3">× 1,000</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">m</td><td class="p-3">Minutes</td><td class="p-3">× 60,000</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">h</td><td class="p-3">Hours</td><td class="p-3">× 3,600,000</td></tr>
-              <tr><td class="p-3 font-mono">d</td><td class="p-3">Days</td><td class="p-3">× 86,400,000</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="callout callout-warning mt-4">
-          <strong class="text-zudo-yellow">Invalid Format:</strong> Throws <code>InvalidDurationError</code> if the string doesn't match <code>/^(\d+)(s|m|h|d)$/</code>.
-        </div>
-      </section>
-
-      <!-- Scheduler -->
-      <section id="scheduler" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SCHEDULER</h2>
-        <p class="mb-4">The main entry point. Manages job definitions, scheduling, and the tick loop.</p>
-
-        <h3 class="text-lg font-bold mb-3">Class: Scheduler</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Method</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">start()</td>
-                <td class="p-3">start(): void</td>
-                <td class="p-3">Starts the scheduler tick loop</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">stop()</td>
-                <td class="p-3">stop(): void</td>
-                <td class="p-3">Stops the scheduler and clears the timer</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">define()</td>
-                <td class="p-3">define(job: JobDefinition): void</td>
-                <td class="p-3">Registers a job definition</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">after()</td>
-                <td class="p-3">after(delay: string, jobId: string): ScheduleHandle</td>
-                <td class="p-3">Schedules a job to run once after a delay</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">at()</td>
-                <td class="p-3">at(date: Date, jobId: string): ScheduleHandle</td>
-                <td class="p-3">Schedules a job to run at a specific date</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">every()</td>
-                <td class="p-3">every(interval: string, jobId: string): ScheduleHandle</td>
-                <td class="p-3">Schedules a job at a fixed interval</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">cron()</td>
-                <td class="p-3">cron(expression: string, jobId: string): ScheduleHandle</td>
-                <td class="p-3">Schedules a job using a cron expression</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Constructor</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">Scheduler</span>, <span class="tp">JobRegistry</span>, <span class="tp">JobExecutor</span>, <span class="tp">PriorityQueue</span>, <span class="fn">createSystemClock</span> } <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
-
-<span class="cm">// Default (all internal)</span>
-<span class="kw">const</span> scheduler = <span class="kw">new</span> <span class="fn">Scheduler</span>();
-
-<span class="cm">// Custom dependencies</span>
-<span class="kw">const</span> clock = <span class="fn">createSystemClock</span>();
-<span class="kw">const</span> scheduler = <span class="kw">new</span> <span class="fn">Scheduler</span>(
-  <span class="kw">new</span> <span class="fn">JobRegistry</span>(),
-  <span class="kw">new</span> <span class="fn">JobExecutor</span>(clock),
-  <span class="kw">new</span> <span class="fn">PriorityQueue</span>(),
-  clock,
-);</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Scheduling Flow</h3>
-        <ol class="space-y-2 mb-6 list-decimal list-inside">
-          <li>Call <code class="bg-black/5 px-1">define()</code> to register job definitions</li>
-          <li>Use <code class="bg-black/5 px-1">after()</code>, <code class="bg-black/5 px-1">at()</code>, <code class="bg-black/5 px-1">every()</code>, or <code class="bg-black/5 px-1">cron()</code> to create schedules</li>
-          <li>Each method creates a <code class="bg-black/5 px-1">Trigger</code> and inserts the schedule into the <code class="bg-black/5 px-1">PriorityQueue</code></li>
-          <li>Returns a <code class="bg-black/5 px-1">ScheduleHandle</code> for control (pause, resume, cancel)</li>
-          <li>Call <code class="bg-black/5 px-1">start()</code> to begin the tick loop</li>
-        </ol>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Tick Loop</h3>
-        <ol class="space-y-2 mb-6 list-decimal list-inside">
-          <li>Peek at the next schedule in the priority queue</li>
-          <li>If <code class="bg-black/5 px-1">nextRunAt</code> is in the future, calculate delay and set timer</li>
-          <li>If due, dequeue and execute via <code class="bg-black/5 px-1">JobExecutor</code></li>
-          <li>Repeat until the queue is empty or scheduler is stopped</li>
-          <li>Timer delay is clamped to <code class="bg-black/5 px-1">MAX_TIMER_DELAY</code> (2^31 - 1 ms)</li>
-        </ol>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">Scheduler</span> } <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
-
-<span class="kw">const</span> scheduler = <span class="kw">new</span> <span class="fn">Scheduler</span>();
-
-<span class="cm">// Define a job</span>
-scheduler.<span class="fn">define</span>({
-  id: <span class="str">"cleanup"</span>,
-  name: <span class="str">"Cleanup expired sessions"</span>,
-  handler: <span class="kw">async</span> (ctx) =&gt; {
-    console.<span class="fn">log</span>(<span class="str">`Running ${ctx.jobId} (attempt ${ctx.attempt})`</span>);
+  handler: (ctx) =&gt; {
+    calls++;
+    console.<span class="fn">log</span>(<span class="str">"attempt"</span>, ctx.attempt);
+    <span class="kw">if</span> (calls &lt; <span class="num">3</span>) <span class="kw">throw</span> <span class="kw">new</span> <span class="tp">Error</span>(<span class="str">"upstream is down"</span>);
   },
 });
 
-<span class="cm">// Schedule it</span>
-<span class="kw">const</span> handle = scheduler.<span class="fn">cron</span>(<span class="str">"0 2 * * *"</span>, <span class="str">"cleanup"</span>);
+scheduler.<span class="fn">after</span>(<span class="str">"1s"</span>, <span class="str">"flaky"</span>);
+scheduler.<span class="fn">start</span>();</div>
 
-<span class="cm">// Start</span>
-scheduler.<span class="fn">start</span>();
+        <p class="mb-4 leading-relaxed">You should see <code>attempt 1</code>, then <code>attempt 2</code> about a second later, then <code>attempt 3</code>, and no error line &mdash; the third attempt succeeded. Had all three failed, <code>onError</code> would have printed once.</p>
 
-<span class="cm">// Pause later</span>
-<span class="kw">await</span> handle.<span class="fn">pause</span>();
+        <p class="mb-4 leading-relaxed">The error you receive tells you <em>how</em> it failed:</p>
 
-<span class="cm">// Resume</span>
-<span class="kw">await</span> handle.<span class="fn">resume</span>();
-
-<span class="cm">// Stop</span>
-scheduler.<span class="fn">stop</span>();</div>
-      </section>
-
-      <!-- Constants -->
-      <section id="constants" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONSTANTS</h2>
-        <p class="mb-4">Default values and limits used by the scheduler.</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Constant</th>
-                <th class="p-3 text-left">Value</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Error</th><th>Means</th><th>Notes</th></tr></thead>
             <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">DEFAULT_JOB_TIMEOUT</td>
-                <td class="p-3">30,000</td>
-                <td class="p-3">Default timeout for job executions (30 seconds)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">DEFAULT_MAX_CONCURRENCY</td>
-                <td class="p-3">10</td>
-                <td class="p-3">Maximum number of concurrent job executions</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">DEFAULT_MAX_RETRIES</td>
-                <td class="p-3">3</td>
-                <td class="p-3">Maximum number of retries for failed jobs</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">DEFAULT_RETRY_DELAY</td>
-                <td class="p-3">1,000</td>
-                <td class="p-3">Default retry delay in milliseconds</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">MAX_TIMER_DELAY</td>
-                <td class="p-3">2,147,483,647</td>
-                <td class="p-3">Maximum timer delay to avoid overflow (2^31 - 1 ms)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">MAX_JOBS</td>
-                <td class="p-3">4,096</td>
-                <td class="p-3">Maximum number of jobs in the registry</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">MAX_SCHEDULES</td>
-                <td class="p-3">4,096</td>
-                <td class="p-3">Maximum number of active schedules</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">MAX_EXECUTION_HISTORY</td>
-                <td class="p-3">100</td>
-                <td class="p-3">Maximum execution history per job</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">DEFAULT_MISFIRE_POLICY</td>
-                <td class="p-3">"run-once"</td>
-                <td class="p-3">Default policy for missed executions</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">DEFAULT_OVERLAP_POLICY</td>
-                <td class="p-3">"allow"</td>
-                <td class="p-3">Default policy for overlapping executions</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">SCHEDULER_TICK_INTERVAL</td>
-                <td class="p-3">1,000</td>
-                <td class="p-3">Tick interval for the scheduler timer (1 second)</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Error Hierarchy -->
-      <section id="errors" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERROR HIERARCHY</h2>
-        <p class="mb-4">All error types are defined in <code class="bg-black/5 px-1">@zudojs/errors</code> and re-exported by this package.</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Error</th>
-                <th class="p-3 text-left">When Thrown</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SchedulerError</td><td class="p-3">Base error for all scheduler issues</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SchedulerNotStartedError</td><td class="p-3">Scheduler used before start()</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SchedulerAlreadyStartedError</td><td class="p-3">start() called when already running</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SchedulerStoppedError</td><td class="p-3">stop() called when already stopped</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SchedulerJobNotFoundError</td><td class="p-3">Job ID not found in registry</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SchedulerJobAlreadyExistsError</td><td class="p-3">Duplicate job ID registration</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">InvalidJobError</td><td class="p-3">Job definition is invalid</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ScheduleNotFoundError</td><td class="p-3">Schedule ID not found</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ScheduleAlreadyExistsError</td><td class="p-3">Duplicate schedule ID</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">InvalidScheduleError</td><td class="p-3">Schedule definition is invalid</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">CronParseError</td><td class="p-3">Invalid cron expression</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">InvalidDurationError</td><td class="p-3">Invalid duration string format</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SchedulerJobExecutionError</td><td class="p-3">Job handler threw an error</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SchedulerJobTimeoutError</td><td class="p-3">Job execution exceeded timeout</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SchedulerJobCancelledError</td><td class="p-3">Job cancelled via abort signal</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SchedulerStoreError</td><td class="p-3">Persistence/storage failure</td></tr>
-              <tr><td class="p-3 font-mono">SchedulerLockError</td><td class="p-3">Distributed lock acquisition failed</td></tr>
+              <tr><td><code>SchedulerJobTimeoutError</code></td><td>The handler ran past <code>options.timeout</code>.</td><td>Default timeout is 30,000&nbsp;ms. The handler's <code>ctx.signal</code> is aborted too.</td></tr>
+              <tr><td><code>SchedulerJobExecutionError</code></td><td>The handler threw.</td><td>The original error is kept on <code>.cause</code>.</td></tr>
+              <tr><td><code>SchedulerJobCancelledError</code></td><td>The run was aborted &mdash; by <code>cancel()</code>, by <code>stop()</code>, or by <code>overlap: "replace"</code>.</td><td>Retries stop as well.</td></tr>
             </tbody>
           </table>
         </div>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Error Handling Pattern</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">isSchedulerError</span>,
-  <span class="tp">SchedulerJobExecutionError</span>,
-  <span class="tp">SchedulerJobTimeoutError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
-
-<span class="kw">try</span> {
-  <span class="kw">await</span> executor.<span class="fn">execute</span>(job, executionId, scheduledAt, <span class="num">1</span>, signal);
-} <span class="kw">catch</span> (error) {
-  <span class="kw">if</span> (<span class="fn">isSchedulerError</span>(error)) {
-    console.<span class="fn">error</span>(<span class="str">`[${error.code}] ${error.message}`</span>);
-
-    <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">SchedulerJobTimeoutError</span>) {
-      <span class="cm">// Retry or alert</span>
-    } <span class="kw">else if</span> (error <span class="kw">instanceof</span> <span class="tp">SchedulerJobExecutionError</span>) {
-      <span class="cm">// Log and skip</span>
-    }
-  }
-}</div>
+        <div class="callout callout-danger mb-6">
+          <p class="text-sm font-bold mb-1">DANGER</p>
+          <p class="text-sm">Without <code>onError</code>, a permanently failing job fails invisibly &mdash; forever, if it is on an interval. Always pass <code>onError</code> in production.</p>
+        </div>
       </section>
 
-      <!-- Full Integration Example -->
-      <section id="full-example" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">FULL INTEGRATION EXAMPLE</h2>
-        <p class="mb-4">Complete working example: create scheduler, define jobs, schedule with cron/delay/interval, handle execution, use ScheduleHandle, retry with backoff, and graceful shutdown.</p>
+      <!-- Shutdown -->
+      <section id="starting-and-stopping" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">STARTING AND STOPPING</h2>
 
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">Scheduler</span>,
-  <span class="fn">createJobDefinition</span>,
-  <span class="fn">createSystemClock</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
+        <p class="mb-4 leading-relaxed">
+          <code>start()</code> begins watching the clock. Nothing fires before it. Calling it twice throws <code>SchedulerAlreadyStartedError</code>. You can define jobs and create schedules before or after starting.
+        </p>
 
-<span class="cm">// 1. Create scheduler</span>
-<span class="kw">const</span> clock = <span class="fn">createSystemClock</span>();
-<span class="kw">const</span> scheduler = <span class="kw">new</span> <span class="fn">Scheduler</span>(<span class="kw">undefined</span>, <span class="kw">undefined</span>, <span class="kw">undefined</span>, clock);
+        <p class="mb-4 leading-relaxed">
+          <code>stop()</code> is <code>async</code> &mdash; always <code>await</code> it. By default it aborts every run in flight and waits for them to settle. Pass <code>{ drain: true }</code> to let them finish instead, and <code>timeoutMs</code> to bound the wait either way. Calling it when already stopped rejects with <code>SchedulerStoppedError</code>.
+        </p>
 
-<span class="cm">// 2. Define jobs</span>
-scheduler.<span class="fn">define</span>(<span class="fn">createJobDefinition</span>(
-  <span class="str">"cleanup"</span>,
-  <span class="str">"Cleanup expired sessions"</span>,
-  <span class="kw">async</span> (ctx) =&gt; {
-    console.<span class="fn">log</span>(<span class="str">`[cleanup] Execution ${ctx.executionId}`</span>);
-    console.<span class="fn">log</span>(<span class="str">`[cleanup] Scheduled at ${ctx.scheduledAt.toISOString()}`</span>);
-    console.<span class="fn">log</span>(<span class="str">`[cleanup] Attempt ${ctx.attempt}`</span>);
-
-    <span class="cm">// Check abort signal</span>
-    <span class="kw">if</span> (ctx.signal.aborted) {
-      console.<span class="fn">log</span>(<span class="str">"[cleanup] Cancelled"</span>);
-      <span class="kw">return</span>;
-    }
-
-    <span class="kw">await</span> <span class="fn">deleteExpiredSessions</span>();
-    console.<span class="fn">log</span>(<span class="str">"[cleanup] Done"</span>);
-  },
-  {
-    timeout: <span class="num">15_000</span>,
-    retry: {
-      attempts: <span class="num">3</span>,
-      strategy: <span class="str">"exponential"</span>,
-      delay: <span class="num">1_000</span>,
-      maxDelay: <span class="num">30_000</span>,
-      jitter: <span class="num">true</span>,
-    },
-    overlap: <span class="str">"skip"</span>,
-  },
-));
-
-scheduler.<span class="fn">define</span>(<span class="fn">createJobDefinition</span>(
-  <span class="str">"report"</span>,
-  <span class="str">"Generate daily report"</span>,
-  <span class="kw">async</span> (ctx) =&gt; {
-    console.<span class="fn">log</span>(<span class="str">`[report] Generating report...`</span>);
-    <span class="kw">await</span> <span class="fn">generateDailyReport</span>();
-  },
-));
-
-scheduler.<span class="fn">define</span>(<span class="fn">createJobDefinition</span>(
-  <span class="str">"health-check"</span>,
-  <span class="str">"Health check ping"</span>,
-  <span class="kw">async</span> (ctx) =&gt; {
-    console.<span class="fn">log</span>(<span class="str">`[health-check] Pinging services...`</span>);
-  },
-));
-
-<span class="cm">// 3. Schedule jobs</span>
-
-<span class="cm">// Run cleanup every day at 2am</span>
-<span class="kw">const</span> cleanupHandle = scheduler.<span class="fn">cron</span>(<span class="str">"0 2 * * *"</span>, <span class="str">"cleanup"</span>);
-console.<span class="fn">log</span>(<span class="str">`Cleanup schedule: ${cleanupHandle.id}`</span>);
-
-<span class="cm">// Run report every Monday at 9am</span>
-scheduler.<span class="fn">cron</span>(<span class="str">"0 9 * * 1"</span>, <span class="str">"report"</span>);
-
-<span class="cm">// Run health check every 30 seconds</span>
-<span class="kw">const</span> healthHandle = scheduler.<span class="fn">every</span>(<span class="str">"30s"</span>, <span class="str">"health-check"</span>);
-
-<span class="cm">// Run a one-time task after 5 minutes</span>
-scheduler.<span class="fn">after</span>(<span class="str">"5m"</span>, <span class="str">"health-check"</span>);
-
-<span class="cm">// Run at a specific date</span>
-scheduler.<span class="fn">at</span>(<span class="kw">new</span> <span class="fn">Date</span>(<span class="str">"2026-06-15T09:00:00Z"</span>), <span class="str">"report"</span>);
-
-<span class="cm">// 4. Control schedules</span>
-<span class="kw">await</span> cleanupHandle.<span class="fn">pause</span>();
-console.<span class="fn">log</span>(<span class="str">`Cleanup state: ${cleanupHandle.state}`</span>); <span class="cm">// "paused"</span>
-
-<span class="kw">await</span> cleanupHandle.<span class="fn">resume</span>();
-console.<span class="fn">log</span>(<span class="str">`Cleanup state: ${cleanupHandle.state}`</span>); <span class="cm">// "active"</span>
-
-<span class="cm">// 5. Start the scheduler</span>
-scheduler.<span class="fn">start</span>();
-console.<span class="fn">log</span>(<span class="str">"Scheduler started"</span>);
-
-<span class="cm">// 6. Graceful shutdown</span>
+        <div class="code-block mb-4"><span class="cm">// Let running jobs finish, but wait no longer than 30 seconds.</span>
 process.<span class="fn">on</span>(<span class="str">"SIGTERM"</span>, <span class="kw">async</span> () =&gt; {
-  console.<span class="fn">log</span>(<span class="str">"Shutting down scheduler..."</span>);
-  <span class="kw">await</span> healthHandle.<span class="fn">cancel</span>();
-  scheduler.<span class="fn">stop</span>();
-  console.<span class="fn">log</span>(<span class="str">"Scheduler stopped"</span>);
+  <span class="kw">await</span> scheduler.<span class="fn">stop</span>({ drain: <span class="kw">true</span>, timeoutMs: <span class="num">30_000</span> });
+  console.<span class="fn">log</span>(<span class="str">"scheduler stopped"</span>);
   process.<span class="fn">exit</span>(<span class="num">0</span>);
 });</div>
+
+        <p class="mb-4 leading-relaxed">Two read-only properties let you inspect the scheduler, and two methods let you inspect its schedules.</p>
+
+        <div class="code-block mb-4">console.<span class="fn">log</span>(scheduler.isRunning);      <span class="cm">// true</span>
+console.<span class="fn">log</span>(scheduler.scheduleCount);  <span class="cm">// 3</span>
+console.<span class="fn">log</span>(scheduler.<span class="fn">listSchedules</span>().<span class="fn">map</span>((s) =&gt; s.jobId));
+<span class="cm">// [ 'cleanup', 'report', 'heartbeat' ]</span>
+console.<span class="fn">log</span>(scheduler.<span class="fn">getSchedule</span>(handle.id)?.nextRunAt);</div>
       </section>
 
+      <!-- Scheduler vs queue -->
+      <section id="scheduler-vs-queue" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SCHEDULER VS. QUEUE</h2>
+
+        <p class="mb-4 leading-relaxed">
+          <code>@zudojs/scheduler</code> and <a href="/docs/packages-queue" class="text-zudo-blue underline"><code>@zudojs/queue</code></a> both run functions in the background, and it is easy to reach for the wrong one. The difference is <em>what starts the work</em>.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          The scheduler is driven by the <strong>clock</strong>. You declare a rule once and it fires on time, over and over, whether or not anything else happened.
+        </p>
+
+        <p class="mb-4 leading-relaxed">
+          The queue is driven by <strong>events</strong>. Something happens &mdash; a user signs up &mdash; and you push one piece of work onto a list for a worker to pick up as soon as it can.
+        </p>
+
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th></th><th>@zudojs/scheduler</th><th>@zudojs/queue</th></tr></thead>
+            <tbody>
+              <tr><td>Triggered by</td><td>The clock.</td><td>Code calling <code>add()</code>.</td></tr>
+              <tr><td>Unit of work</td><td>A named job plus a repeating time rule.</td><td>One job with its own payload.</td></tr>
+              <tr><td>Survives a restart</td><td>No. Schedules live in memory.</td><td>With a durable adapter, yes.</td></tr>
+              <tr><td>Several service instances</td><td>Each runs the job, so it happens N times.</td><td>One worker takes each job.</td></tr>
+              <tr><td>Typical use</td><td>Nightly cleanup, hourly sync, heartbeat.</td><td>Send this email, resize this image.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="mb-4 leading-relaxed">
+          They combine well. Let the scheduler fire on time and have its handler push the real work onto a queue &mdash; you get a reliable trigger and durable, distributed execution.
+        </p>
+
+        <div class="callout callout-danger mb-6">
+          <p class="text-sm font-bold mb-1">DANGER: MULTIPLE INSTANCES</p>
+          <p class="text-sm">Deploy three copies of a service that schedules a nightly billing job and the billing runs three times. This package has no cross-process lock. <code>SchedulerStoreError</code> and <code>SchedulerLockError</code> exist in the error list for future persistence work; no store or lock is implemented today.</p>
+        </div>
+      </section>
+
+      <!-- API reference -->
+      <section id="api-reference" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">API REFERENCE</h2>
+
+        <p class="mb-4 leading-relaxed">Everything below is exported from <code>@zudojs/scheduler</code>. Most applications only need the <code>Scheduler</code> class.</p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Scheduler methods</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>new Scheduler(options?)</code></td><td>Creates a scheduler.</td><td>Options: <code>jobs</code>, <code>executor</code>, <code>queue</code>, <code>clock</code>, <code>maxConcurrency</code>, <code>onError</code>. All optional.</td></tr>
+              <tr><td><code>define(job)</code></td><td>Registers a <code>JobDefinition</code>.</td><td>Throws <code>InvalidJobError</code> on a blank id, a missing handler or a non-positive timeout.</td></tr>
+              <tr><td><code>after(duration, jobId, options?)</code></td><td>Runs once after a delay.</td><td>Returns a <code>ScheduleHandle</code>.</td></tr>
+              <tr><td><code>at(date, jobId, options?)</code></td><td>Runs once at a <code>Date</code>.</td><td>A past date follows the misfire policy.</td></tr>
+              <tr><td><code>every(duration, jobId, options?)</code></td><td>Runs repeatedly on an interval.</td><td>First run is one interval away.</td></tr>
+              <tr><td><code>cron(expression, jobId, options?)</code></td><td>Runs repeatedly on a cron schedule.</td><td>Options also accept <code>timezone</code>.</td></tr>
+              <tr><td><code>start()</code></td><td>Starts the timer loop.</td><td>Throws <code>SchedulerAlreadyStartedError</code> if already running.</td></tr>
+              <tr><td><code>stop(options?)</code></td><td>Stops and waits for in-flight runs.</td><td><code>async</code>. Options: <code>drain</code>, <code>timeoutMs</code>.</td></tr>
+              <tr><td><code>getSchedule(scheduleId)</code></td><td>Snapshot of one schedule, or <code>undefined</code>.</td><td>Read-only copy.</td></tr>
+              <tr><td><code>listSchedules()</code></td><td>Snapshots of every live schedule.</td><td>Completed and cancelled ones are gone.</td></tr>
+              <tr><td><code>isRunning</code> / <code>scheduleCount</code></td><td>Getters for state and live schedule count.</td><td>Read-only.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Functions</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>parseDuration(text)</code></td><td>Turns <code>"1h30m"</code> into milliseconds.</td><td>Throws <code>InvalidDurationError</code>.</td></tr>
+              <tr><td><code>parseCron(expression)</code></td><td>Parses a cron expression into a <code>ParsedCron</code>.</td><td>Throws <code>CronParseError</code>.</td></tr>
+              <tr><td><code>nextCronDate(parsed, after, utc?)</code></td><td>Next fire time strictly after <code>after</code>, or <code>null</code>.</td><td><code>utc</code> defaults to <code>false</code> (local zone).</td></tr>
+              <tr><td><code>retryDelay(policy, attempt)</code></td><td>Milliseconds to wait before the next attempt.</td><td>Returns 0 when <code>policy</code> is <code>undefined</code>.</td></tr>
+              <tr><td><code>createJobDefinition(id, name, handler, options?)</code></td><td>Builds a frozen <code>JobDefinition</code>.</td><td>An alternative to the object literal.</td></tr>
+              <tr><td><code>createJobContext(jobId, executionId, scheduledAt, startedAt, attempt, data, signal)</code></td><td>Builds a frozen <code>JobContext</code>.</td><td>Mostly for tests; the executor builds one for you.</td></tr>
+              <tr><td><code>createSchedule(id, jobId, type, nextRunAt, options?)</code></td><td>Builds a frozen <code>Schedule</code>.</td><td>For building a queue by hand.</td></tr>
+              <tr><td><code>createSystemClock()</code></td><td>Returns a <code>SystemClock</code>.</td><td>Same as <code>new SystemClock()</code>.</td></tr>
+              <tr><td><code>isSchedulerError(value)</code></td><td>Type guard for <code>SchedulerError</code>.</td><td>Use in <code>catch</code> blocks.</td></tr>
+              <tr><td><code>createSchedulerError(message, options?)</code></td><td>Factory from <code>@zudojs/errors</code>.</td><td>Re-exported for convenience.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Classes</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>Scheduler</code></td><td>The one class most apps use.</td><td>See the table above.</td></tr>
+              <tr><td><code>JobRegistry</code></td><td>Holds job definitions: <code>register</code>, <code>get</code>, <code>getOrThrow</code>, <code>has</code>, <code>list</code>, <code>unregister</code>, <code>clear</code>.</td><td>The scheduler builds one unless you pass your own.</td></tr>
+              <tr><td><code>JobExecutor</code></td><td>Runs one job under a timeout, an abort signal and the retry policy.</td><td><code>new JobExecutor(clock)</code>; <code>execute(job, executionId, scheduledAt, attempt, signal, data?)</code>.</td></tr>
+              <tr><td><code>PriorityQueue</code></td><td>Min-heap of schedules ordered by <code>nextRunAt</code>.</td><td><code>enqueue</code> throws <code>RangeError</code> on an invalid date.</td></tr>
+              <tr><td><code>SystemClock</code></td><td>Real time: <code>now()</code> and <code>nowMs()</code>.</td><td>Pass any object with those two methods as <code>clock</code> to fake time in tests.</td></tr>
+              <tr><td><code>DelayTrigger</code>, <code>DateTrigger</code>, <code>IntervalTrigger</code>, <code>CronTrigger</code></td><td>Compute the next fire time. Each has <code>next(after)</code>.</td><td>The scheduler picks one for you; use them directly to preview times.</td></tr>
+              <tr><td><code>ScheduleHandleImpl</code></td><td>The concrete <code>ScheduleHandle</code>.</td><td>You get an instance back from <code>after</code>/<code>at</code>/<code>every</code>/<code>cron</code>; rarely constructed by hand.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Types</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it is</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>JobDefinition</code></td><td><code>{ id, name, handler, options? }</code>.</td><td>What <code>define()</code> takes.</td></tr>
+              <tr><td><code>JobHandler&lt;T&gt;</code></td><td><code>(context: JobContext&lt;T&gt;) =&gt; Promise&lt;void&gt; | void</code>.</td><td>The return value is ignored.</td></tr>
+              <tr><td><code>JobContext&lt;T&gt;</code></td><td><code>jobId</code>, <code>executionId</code>, <code>scheduledAt</code>, <code>startedAt</code>, <code>attempt</code>, <code>data</code>, <code>signal</code>.</td><td>The single argument your handler gets.</td></tr>
+              <tr><td><code>JobOptions</code></td><td><code>timeout</code>, <code>retry</code>, <code>concurrency</code>, <code>overlap</code>.</td><td><code>concurrency</code> is accepted but not applied; use the scheduler's <code>maxConcurrency</code>.</td></tr>
+              <tr><td><code>RetryPolicy</code></td><td><code>attempts</code>, <code>strategy</code>, <code>delay</code>, <code>maxDelay?</code>, <code>jitter?</code>.</td><td><code>strategy</code> is <code>RetryStrategy</code>: fixed, linear or exponential.</td></tr>
+              <tr><td><code>ScheduleOptions</code></td><td><code>timezone</code>, <code>misfire</code>, <code>priority</code>.</td><td>The scheduler methods additionally accept <code>overlap</code> and <code>data</code> inline; this exported type does not list them.</td></tr>
+              <tr><td><code>Schedule</code></td><td><code>id</code>, <code>jobId</code>, <code>type</code>, <code>expression?</code>, <code>nextRunAt</code>, <code>lastRunAt?</code>, <code>state</code>, <code>options?</code>.</td><td>What <code>getSchedule()</code> returns.</td></tr>
+              <tr><td><code>ScheduleHandle</code></td><td><code>id</code>, <code>state</code>, <code>pause</code>, <code>resume</code>, <code>cancel</code>, <code>nextRun</code>.</td><td>Returned by every scheduling method.</td></tr>
+              <tr><td><code>Trigger</code></td><td><code>{ next(after: Date): Date | null }</code>.</td><td>Implement it for a custom timing rule.</td></tr>
+              <tr><td><code>ParsedCron</code></td><td>The value sets for each cron field.</td><td>Returned by <code>parseCron</code>.</td></tr>
+              <tr><td><code>SchedulerOptions</code>, <code>SchedulerErrorEvent</code></td><td>Constructor options, and the <code>{ scheduleId, jobId, executionId, error }</code> given to <code>onError</code>.</td><td></td></tr>
+              <tr><td><code>ScheduleType</code>, <code>ScheduleState</code>, <code>JobState</code>, <code>OverlapPolicy</code>, <code>MisfirePolicy</code></td><td>String unions used above.</td><td><code>JobState</code> is declared but no run state is recorded.</td></tr>
+              <tr><td><code>SchedulerJobId</code>, <code>ScheduleId</code>, <code>ExecutionId</code></td><td>Aliases for <code>string</code>.</td><td>Documentation only.</td></tr>
+              <tr><td><code>JobExecution</code>, <code>JobExecutionResult</code></td><td>Shapes for an execution record and its result.</td><td><code>JobExecutionResult</code> is what <code>JobExecutor.execute</code> resolves to. Nothing produces <code>JobExecution</code>: there is no execution history.</td></tr>
+              <tr><td><code>ScheduleHandleBinding</code>, <code>SchedulerErrorOptions</code></td><td>The wiring a handle needs; the options bag for scheduler errors.</td><td>Only needed if you build a handle yourself.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Errors</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>Thrown when</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>SchedulerError</code></td><td>Base class for every error here.</td><td>All are re-exported from <code>@zudojs/errors</code>.</td></tr>
+              <tr><td><code>InvalidJobError</code></td><td><code>define()</code> gets a bad job, or you schedule an unregistered id.</td><td>The most common one you will hit.</td></tr>
+              <tr><td><code>InvalidScheduleError</code></td><td>A bad trigger, an unsupported time zone, or <code>misfire: "skip"</code> on a past time.</td><td>Also for a non-positive or absurd interval.</td></tr>
+              <tr><td><code>CronParseError</code></td><td>The cron expression is malformed.</td><td>Thrown at <code>cron()</code>, not at fire time.</td></tr>
+              <tr><td><code>InvalidDurationError</code></td><td>The duration string is malformed or out of range.</td><td>From <code>parseDuration</code>, <code>after</code> and <code>every</code>.</td></tr>
+              <tr><td><code>SchedulerAlreadyStartedError</code> / <code>SchedulerStoppedError</code></td><td><code>start()</code> while running; <code>stop()</code> while stopped.</td><td><code>stop()</code> rejects rather than throwing synchronously.</td></tr>
+              <tr><td><code>SchedulerJobAlreadyExistsError</code> / <code>SchedulerJobNotFoundError</code></td><td>Duplicate <code>define()</code>; <code>JobRegistry.getOrThrow</code> on an unknown id.</td><td></td></tr>
+              <tr><td><code>SchedulerJobExecutionError</code> / <code>SchedulerJobTimeoutError</code> / <code>SchedulerJobCancelledError</code></td><td>A run threw, ran too long, or was aborted.</td><td>These reach you through <code>onError</code>.</td></tr>
+              <tr><td><code>SchedulerNotStartedError</code>, <code>ScheduleNotFoundError</code>, <code>ScheduleAlreadyExistsError</code>, <code>SchedulerStoreError</code>, <code>SchedulerLockError</code></td><td>Declared for completeness.</td><td>Exported, but nothing in this package throws them yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Constants</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>Value</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>DEFAULT_JOB_TIMEOUT</code></td><td>30,000</td><td>Used when a job sets no <code>timeout</code>.</td></tr>
+              <tr><td><code>DEFAULT_MAX_CONCURRENCY</code></td><td>10</td><td>Default <code>maxConcurrency</code>.</td></tr>
+              <tr><td><code>DEFAULT_RETRY_DELAY</code></td><td>1,000</td><td>Used when a policy omits <code>delay</code>.</td></tr>
+              <tr><td><code>DEFAULT_MAX_RETRIES</code></td><td>3</td><td>Caps the exponent growth inside <code>retryDelay</code>.</td></tr>
+              <tr><td><code>DEFAULT_MISFIRE_POLICY</code></td><td><code>"run-once"</code></td><td>Applied when <code>misfire</code> is omitted.</td></tr>
+              <tr><td><code>DEFAULT_OVERLAP_POLICY</code></td><td><code>"allow"</code></td><td>Applied when <code>overlap</code> is omitted.</td></tr>
+              <tr><td><code>MAX_TIMER_DELAY</code></td><td>2,147,483,647</td><td>Longest single <code>setTimeout</code> the loop will arm.</td></tr>
+              <tr><td><code>MAX_JOBS</code> / <code>MAX_SCHEDULES</code></td><td>4,096 each</td><td>Hard caps; exceeding either throws.</td></tr>
+              <tr><td><code>MAX_EXECUTION_HISTORY</code>, <code>SCHEDULER_TICK_INTERVAL</code></td><td>100, 1,000</td><td>Exported but unused &mdash; the loop sleeps until the next fire time rather than ticking on a fixed interval.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Common mistakes -->
+      <section id="common-mistakes" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMON MISTAKES</h2>
+
+        <ul class="space-y-4">
+          <li><strong>Scheduling before defining.</strong> &rarr; <code>InvalidJobError: Job "x" is not registered.</code> &rarr; Call <code>define()</code> first; the scheduler checks the registry at scheduling time.</li>
+          <li><strong>Forgetting <code>start()</code>.</strong> &rarr; Schedules exist, <code>nextRun()</code> returns a date, nothing ever runs. &rarr; Call <code>scheduler.start()</code> once at boot.</li>
+          <li><strong>Not awaiting <code>stop()</code>.</strong> &rarr; The process exits mid-job, or an unhandled rejection appears on shutdown. &rarr; <code>await scheduler.stop({ drain: true, timeoutMs: 30_000 })</code>.</li>
+          <li><strong>Leaving out <code>onError</code>.</strong> &rarr; A job that throws every run fails in total silence. &rarr; Pass <code>onError</code> to the constructor and log the event.</li>
+          <li><strong>Passing a number where a duration string goes.</strong> &rarr; <code>every(5000, "job")</code> is a type error, and <code>every("5", "job")</code> throws <code>InvalidDurationError</code>. &rarr; Write the unit: <code>"5s"</code>.</li>
+          <li><strong>Ignoring <code>ctx.signal</code> in a long handler.</strong> &rarr; A timeout or <code>stop()</code> reports the job as cancelled while the work keeps running. &rarr; Pass the signal to <code>fetch</code>, database drivers and anything else that accepts one.</li>
+          <li><strong>Expecting a real IANA time zone.</strong> &rarr; <code>{ timezone: "Europe/Paris" }</code> throws <code>InvalidScheduleError</code>. &rarr; Use <code>"UTC"</code>, or set the process <code>TZ</code> and omit the option.</li>
+        </ul>
+      </section>
+
+      <!-- Related -->
+      <section id="related" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATED PACKAGES</h2>
+
+        <ul class="space-y-3">
+          <li><a href="/docs/packages-queue" class="font-bold text-zudo-blue underline">@zudojs/queue</a> &mdash; when work is triggered by an event rather than the clock, or must survive a restart. Often the handler a scheduled job calls.</li>
+          <li><a href="/docs/packages-errors" class="font-bold text-zudo-blue underline">@zudojs/errors</a> &mdash; the home of every <code>Scheduler*Error</code> class this package re-exports.</li>
+          <li><a href="/docs/packages-lifecycle" class="font-bold text-zudo-blue underline">@zudojs/lifecycle</a> &mdash; run <code>start()</code> on boot and <code>stop()</code> on shutdown as part of the app's lifecycle instead of by hand.</li>
+          <li><a href="/docs/packages-logger" class="font-bold text-zudo-blue underline">@zudojs/logger</a> &mdash; somewhere structured for your <code>onError</code> callback to write.</li>
+          <li><a href="/docs/packages-cache" class="font-bold text-zudo-blue underline">@zudojs/cache</a> &mdash; the usual thing a scheduled job refreshes or expires.</li>
+        </ul>
+      </section>
+
+      <!-- EXPORT INDEX -->
+      <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/scheduler</code> exports from its package root at v1.0.0 &mdash; <strong>67</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <details class="border-2 border-black p-5 bg-white">
+          <summary class="font-bold cursor-pointer select-none">Show all 67 exports</summary>
+          <div class="mt-5">
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Re-exported <span class="text-black/40 font-normal">(67)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CronParseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CronTrigger</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_JOB_TIMEOUT</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_MAX_CONCURRENCY</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_MAX_RETRIES</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_MISFIRE_POLICY</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_OVERLAP_POLICY</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_RETRY_DELAY</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DateTrigger</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DelayTrigger</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ExecutionId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">IntervalTrigger</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidDurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidJobError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidScheduleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobDefinition</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobExecution</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobExecutionResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobExecutor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_EXECUTION_HISTORY</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_JOBS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_SCHEDULES</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_TIMER_DELAY</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MisfirePolicy</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">OverlapPolicy</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ParsedCron</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PriorityQueue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RetryPolicy</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RetryStrategy</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Schedule</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ScheduleHandle</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ScheduleHandleBinding</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ScheduleHandleImpl</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ScheduleId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ScheduleOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ScheduleState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ScheduleType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Scheduler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerAlreadyStartedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerErrorEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerJobAlreadyExistsError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerJobCancelledError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerJobExecutionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerJobId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerJobNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerJobTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerStoppedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SystemClock</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Trigger</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createJobContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createJobDefinition</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createSchedule</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createSchedulerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createSystemClock</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSchedulerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">nextCronDate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseCron</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseDuration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">retryDelay</code></div>
+          </div>
+          </div>
+        </details>
+      </section>
     </main>
 
     <!-- TABLE OF CONTENTS -->
     <aside class="doc-toc" aria-label="On this page">
       <div class="text-xs font-bold uppercase tracking-wider mb-4 text-black/40">On This Page</div>
+      <a href="#overview" class="toc-link">Overview</a>
       <a href="#installation" class="toc-link">Installation</a>
-      <a href="#what-it-does" class="toc-link">What It Does</a>
-      <a href="#architecture-position" class="toc-link">Where It Sits</a>
-      <a href="#dependencies" class="toc-link">Dependencies</a>
-      <a href="#types" class="toc-link">Types</a>
-      <a href="#job-definition" class="toc-link">Job Definition</a>
-      <a href="#job-context" class="toc-link">Job Context</a>
-      <a href="#schedules" class="toc-link">Schedules</a>
-      <a href="#triggers" class="toc-link">Triggers</a>
-      <a href="#clock" class="toc-link">Clock</a>
-      <a href="#job-registry" class="toc-link">Job Registry</a>
-      <a href="#job-executor" class="toc-link">Job Executor</a>
-      <a href="#priority-queue" class="toc-link">Priority Queue</a>
-      <a href="#duration-parsing" class="toc-link">Duration Parsing</a>
-      <a href="#scheduler" class="toc-link">Scheduler</a>
-      <a href="#constants" class="toc-link">Constants</a>
-      <a href="#errors" class="toc-link">Errors</a>
-      <a href="#full-example" class="toc-link">Full Example</a>
+      <a href="#quick-start" class="toc-link">Quick Start</a>
+      <a href="#jobs" class="toc-link">Jobs</a>
+      <a href="#scheduling" class="toc-link">Scheduling</a>
+      <a href="#cron-expressions" class="toc-link">Cron Expressions</a>
+      <a href="#time-zones" class="toc-link">Time Zones</a>
+      <a href="#overlapping-runs" class="toc-link">Overlapping Runs</a>
+      <a href="#failures-and-retries" class="toc-link">Failures and Retries</a>
+      <a href="#starting-and-stopping" class="toc-link">Starting and Stopping</a>
+      <a href="#scheduler-vs-queue" class="toc-link">Scheduler vs. Queue</a>
+      <a href="#api-reference" class="toc-link">API Reference</a>
+      <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
+      <a href="#related" class="toc-link">Related Packages</a>
+          <a href="#export-index" class="toc-link">Complete Export Index</a>
     </aside>
 
   </div>
@@ -1161,5 +848,6 @@ process.<span class="fn">on</span>(<span class="str">"SIGTERM"</span>, <span cla
   <script src="/js/docs.js"></script>
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 </body>
 </html>

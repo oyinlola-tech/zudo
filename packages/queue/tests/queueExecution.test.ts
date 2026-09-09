@@ -4,7 +4,6 @@ import { createInMemoryQueue } from "../src/inMemoryQueue/index.js";
 
 import {
   createQueueName,
-  createJobName,
   JobState,
 } from "../src/jobTypes/jobTypes.type.js";
 
@@ -114,8 +113,15 @@ describe("Queue Execution", () => {
       const job1 = await queue.add("first", {}, { priority: 50 });
       const job2 = await queue.add("second", {}, { priority: 50 });
 
-      const nextJob = await queue.getNextJob();
-      expect(nextJob?.id).toBe(job1.id);
+      // Checking only the head passes for a queue that returns the same job
+      // forever. Claim it, then assert the second job follows.
+      queue.process("first", async () => undefined);
+      queue.process("second", async () => undefined);
+
+      expect((await queue.claimNextJob())?.id).toBe(job1.id);
+      expect((await queue.claimNextJob())?.id).toBe(job2.id);
+
+      await queue.close();
     });
   });
 

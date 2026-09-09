@@ -1,4 +1,4 @@
-import type { EntityId, Timestamp } from "@zudojs/constants";
+import type { EntityId } from "@zudojs/constants";
 
 /**
  * Unique identifier for a job.
@@ -56,6 +56,16 @@ export enum BackoffType {
   FIXED = "fixed",
   EXPONENTIAL = "exponential",
 }
+
+/**
+ * A backoff strategy as either the enum member or its string value.
+ *
+ * Job options routinely arrive from JSON — a config file, a broker payload,
+ * an HTTP body — where `"fixed"` is the only spelling available. The runtime
+ * has always compared against the string values, but a bare `BackoffType`
+ * annotation rejected them, so correct calls failed to typecheck.
+ */
+export type BackoffStrategy = `${BackoffType}`;
 
 /**
  * Worker lifecycle states.

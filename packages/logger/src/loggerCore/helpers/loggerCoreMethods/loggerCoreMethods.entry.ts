@@ -13,6 +13,12 @@ import type {
 import { createLoggerEntry } from "../../../loggerEntry/loggerEntry.core.js";
 
 import {
+  createSecretMatcher,
+  redactLogValue,
+  LOGGER_REDACTION_TOKEN,
+} from "../../../loggerEntry/loggerEntryHelpers/loggerEntryHelpers.sanitize.js";
+
+import {
   contextToLogMetadata,
   createLoggerContext,
 } from "../../../loggerContext/loggerContext.core.js";
@@ -44,11 +50,25 @@ export function createEntry(
     ? contextToLogMetadata(activeContext)
     : {};
 
-  const metadata = {
+  const rawMetadata = {
     ...configuration.metadata,
     ...contextMetadata,
     ...(options.metadata ?? {}),
-  } as LogMetadata;
+  };
+
+  // Redaction is applied HERE, before the entry is frozen, so every
+  // formatter and every transport sees the already-masked value and no
+  // path can bypass it — including nested objects, arrays and getters.
+  const isSecret = createSecretMatcher(configuration.redact);
+
+  const replacement =
+    configuration.redact.replacement ?? LOGGER_REDACTION_TOKEN;
+
+  const metadata = redactLogValue(
+    rawMetadata,
+    isSecret,
+    replacement,
+  ) as LogMetadata;
 
   const context = options.context
     ? createLoggerContext({
@@ -63,8 +83,11 @@ export function createEntry(
     metadata,
     context: context
       ? {
-          metadata:
-            context.metadata as unknown as import("../../../loggerEntry/loggerEntry.type.js").LogMetadata,
+          metadata: redactLogValue(
+            context.metadata,
+            isSecret,
+            replacement,
+          ) as import("../../../loggerEntry/loggerEntry.type.js").LogMetadata,
         }
       : undefined,
     source: options.source,

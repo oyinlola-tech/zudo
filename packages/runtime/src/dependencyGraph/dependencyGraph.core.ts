@@ -2,7 +2,6 @@ import type {
   DependencyGraph,
   DependencyNode,
   DependencyResolutionResult,
-  ParallelModuleGroup,
   CircularDependencyInfo,
 } from "./dependencyGraph.type.js";
 
@@ -145,22 +144,6 @@ export function resolveDependencies(
     hasCircularDependency: false,
     circularDependencies: [],
   });
-}
-
-/**
- * Returns parallel module groups for concurrent initialization.
- */
-export function getParallelGroups(
-  modules: ReadonlyMap<string, readonly string[]>,
-): readonly ParallelModuleGroup[] {
-  const result = resolveDependencies(modules);
-
-  return result.parallelGroups.map((group, index) =>
-    Object.freeze({
-      modules: group,
-      depth: index,
-    }),
-  );
 }
 
 /**

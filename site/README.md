@@ -1,59 +1,77 @@
 # Zudo Documentation Site
 
-Public-facing documentation website for the Zudo framework.
+Public-facing website for the Zudo framework: landing page, documentation, sponsors, error pages, and an in-browser TypeScript playground.
 
 ## Structure
 
 ```
 site/
 ├── index.html              # Landing page
-├── design.md               # Design system documentation
+├── sponsors.html           # Sponsorship page
+├── design.md               # Design system notes
+├── vercel.json             # Clean-URL rewrites + headers
 ├── css/
-│   ├── docs.css            # Documentation pages
-│   ├── home.css            # Landing page
-│   ├── errors.css          # Error pages (404, 401, 403, 500, 503)
-│   ├── packages.css        # Package filter buttons
-│   └── playground.css      # Floating code playground
+│   ├── site.css            # Shared: tokens, header, footer, search, docs shell, copy buttons
+│   ├── home.css            # Landing page (hero terminal, ticker, cards)
+│   ├── docs.css            # Documentation pages (typography, code, callouts, tables)
+│   ├── errors.css          # Error pages
+│   ├── packages.css        # Package index filters
+│   └── playground.css      # Terminal playground
 ├── js/
-│   ├── tailwind-config.js  # Shared Tailwind config
-│   ├── components.js       # Reusable nav/footer injection
-│   ├── playground.js       # Floating code playground
-│   ├── router.js           # Client-side navigation
-│   ├── toc.js              # TOC IntersectionObserver
-│   ├── docs.js             # Docs sidebar/TOC/search/code-copy
-│   ├── home.js             # Homepage search/menu
-│   ├── error-pages.js      # Error page scripts
-│   └── packages.js         # Package filter scripts
-├── docs/                   # 31 documentation pages
-├── error/                  # 5 error pages
-└── assets/                 # SVG icons (favicon, logo, icon)
+│   ├── tailwind-config.js  # Shared Tailwind theme (colours, border-3, brutal shadows)
+│   ├── components.js       # Header, footer, global search (Ctrl+K), copy buttons — every page
+│   ├── playground.js       # Terminal playground (TypeScript via lazy-loaded Babel)
+│   ├── docs.js             # Docs: active sidebar, mobile drawer, TOC + scroll spy, tables
+│   ├── packages.js         # Package index filtering
+│   ├── error-pages.js      # 404 search redirect, 503 countdown
+│   ├── version.js          # Version selector persistence
+│   ├── home.js             # Reserved for homepage-only behaviour
+│   └── toc.js              # Superseded by docs.js (kept so old references do not 404)
+├── docs/                   # 57 documentation pages
+├── error/                  # 401, 403, 404, 500, 503
+└── assets/
+    ├── zudo-mark.svg           # Mark, light backgrounds
+    ├── zudo-mark-dark.svg      # Mark, dark backgrounds
+    ├── zudo-logo.svg           # Wordmark, light backgrounds
+    ├── zudo-logo-dark.svg      # Wordmark, dark backgrounds
+    ├── zudo-logo-icon.svg      # App-icon tile (navy)
+    ├── zudo-favicon.svg        # Favicon (red tile)
+    ├── favicon-32.png, apple-touch-icon.png
+    └── og-image.png            # Social share image (1200×630)
 ```
+
+## Every page
+
+Each page contains only two placeholders, `<div id="zudo-nav"></div>` and
+`<div id="zudo-footer"></div>`, and loads `css/site.css` + `js/components.js`.
+The header, footer, global search and copy buttons are rendered from
+`components.js`, so a change there applies to every page.
+
+The playground (`playground.js` + `playground.css`) is also loaded on every
+page. Open it with the `>_` button in the header, the floating launcher, or
+Ctrl+` . Any link with `data-playground="<example-id>"` opens it with that
+example loaded.
 
 ## Deployment
 
-Vercel config is at the repo root (`vercel.json`), not in this directory.
-
-- `outputDirectory: "site"` — Vercel serves files from this folder
-- `installCommand: "echo noop"` — skips monorepo install (static site, no build)
-- Clean URLs enabled — `/docs/packages/auth` serves `packages-auth.html`
-
-### Deploy
+Vercel serves this folder as a static site (`vercel.json`, clean URLs):
+`/docs/packages/auth` → `docs/packages-auth.html`.
 
 ```bash
-# From repo root
-vercel --prod
-
-# Or push to main — Vercel auto-deploys
+vercel --prod          # or push to main
 ```
 
-## Local Development
+## Local development
 
 ```bash
 cd site
-npx serve .
+python3 -m http.server 8765     # or: npx serve .
 ```
+
+Pages are plain HTML; open `http://localhost:8765/docs/packages-core.html`
+directly (the clean-URL rewrites only exist on Vercel).
 
 ## Design
 
-Softened brutalist system — zero border-radius, visible borders, muted palette.
-See `design.md` for full documentation.
+Soft Brutalism: zero border-radius, visible borders, muted palette, Inter +
+JetBrains Mono. See `design.md`.

@@ -161,7 +161,11 @@ export function timeoutMiddleware<TContext, TResult = void>(
   }
 
   return {
-    name: "timeout",
+    // The configured name, not a constant: two timeouts in one pipeline were
+    // both reported as "timeout" in `executedMiddleware` and in error
+    // attribution, so `options.name` reached the error message and nothing
+    // else.
+    name,
     handler: async (_ctx, next) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const pending = next();

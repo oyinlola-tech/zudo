@@ -43,16 +43,6 @@ export interface TransactionRegistry {
   getActive(): readonly Transaction[];
 }
 
-// ─── Result ───────────────────────────────────────────────────────────────
-
-/** Result of a transaction.run() call. */
-export interface TransactionResult<T> {
-  readonly value: T;
-  readonly transactionId: string;
-  readonly committed: boolean;
-  readonly duration: number;
-}
-
 // ─── Events ───────────────────────────────────────────────────────────────
 
 /** Transaction event types. */

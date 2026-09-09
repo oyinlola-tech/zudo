@@ -9,7 +9,12 @@ import type {
   LifecycleFailure,
   LifecycleManagerOptions,
   ModuleContextServices,
+  ModuleEventListener,
 } from "./lifecycle.type.js";
+
+import type { RuntimeModuleEventType } from "../runtimeEvents/runtimeEvents.type.js";
+
+import { createModuleEventPayload } from "../runtimeEvents/runtimeEvents.core.js";
 
 import { resolveDependencies } from "../dependencyGraph/index.js";
 
@@ -24,7 +29,13 @@ import {
 export class LifecycleManager {
   private readonly modules: ReadonlyMap<string, Module>;
   private readonly logger: Logger;
-  private readonly options: Required<LifecycleManagerOptions>;
+  private readonly options: {
+    readonly shutdownTimeout: number;
+    readonly continueOnFailure: boolean;
+    readonly parallelInitialization: boolean;
+  };
+  private readonly onModuleEvent: ModuleEventListener | undefined;
+  private readonly runtimeId: string;
   private initializedModules: string[] = [];
   private startedModules: string[] = [];
   private readonly configuration: ConfigurationManager;
@@ -41,6 +52,8 @@ export class LifecycleManager {
     this.logger = logger;
     this.configuration = services.configuration ?? createConfigurationManager();
     this.application = services.application;
+    this.onModuleEvent = options.onModuleEvent;
+    this.runtimeId = options.runtimeId ?? "";
     this.options = {
       shutdownTimeout: options.shutdownTimeout ?? 30_000,
       continueOnFailure: options.continueOnFailure ?? false,
@@ -49,6 +62,44 @@ export class LifecycleManager {
       // beyond what they declared, so it is opt-in.
       parallelInitialization: options.parallelInitialization ?? false,
     };
+  }
+
+  /**
+   * Publishes a per-module lifecycle event.
+   *
+   * A throwing listener must not fail the phase that produced the event,
+   * so delivery failures are contained here.
+   */
+  private emitModuleEvent(
+    type: RuntimeModuleEventType,
+    moduleId: string,
+    state: string,
+    options: { readonly durationMs?: number; readonly error?: Error } = {},
+  ): void {
+    if (!this.onModuleEvent) {
+      return;
+    }
+
+    const module = this.modules.get(moduleId);
+
+    try {
+      this.onModuleEvent(
+        type,
+        createModuleEventPayload(
+          this.runtimeId,
+          state,
+          moduleId,
+          module?.name ?? moduleId,
+          options,
+        ),
+      );
+    } catch (error) {
+      this.logger.warn("A runtime module event listener threw.", {
+        eventType: type,
+        moduleId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**
@@ -141,13 +192,19 @@ export class LifecycleManager {
 
     const startedAt = Date.now();
 
+    this.emitModuleEvent("runtime.module.initializing", moduleId, "initializing");
+
     try {
       if (module.onInitialize) {
         await module.onInitialize(this.createModuleContext(module));
       }
 
-      this.logger.debug(`Module "${moduleId}" initialized.`, {
-        durationMs: Date.now() - startedAt,
+      const durationMs = Date.now() - startedAt;
+
+      this.logger.debug(`Module "${moduleId}" initialized.`, { durationMs });
+
+      this.emitModuleEvent("runtime.module.initialized", moduleId, "initialized", {
+        durationMs,
       });
 
       return { moduleId };
@@ -160,6 +217,11 @@ export class LifecycleManager {
       };
 
       this.logger.error(`Module "${moduleId}" failed during initialization.`, {
+        error: failure.error,
+      });
+
+      this.emitModuleEvent("runtime.module.failed", moduleId, "failed", {
+        durationMs: failure.durationMs,
         error: failure.error,
       });
 
@@ -182,6 +244,8 @@ export class LifecycleManager {
 
       const moduleStartTime = Date.now();
 
+      this.emitModuleEvent("runtime.module.starting", moduleId, "starting");
+
       try {
         if (module.onReady) {
           const context = this.createModuleContext(module);
@@ -191,8 +255,12 @@ export class LifecycleManager {
         succeeded.push(moduleId);
         this.startedModules.push(moduleId);
 
-        this.logger.debug(`Module "${moduleId}" started.`, {
-          durationMs: Date.now() - moduleStartTime,
+        const durationMs = Date.now() - moduleStartTime;
+
+        this.logger.debug(`Module "${moduleId}" started.`, { durationMs });
+
+        this.emitModuleEvent("runtime.module.started", moduleId, "started", {
+          durationMs,
         });
       } catch (error) {
         const failure: LifecycleFailure = {
@@ -205,6 +273,11 @@ export class LifecycleManager {
         failed.push(failure);
 
         this.logger.error(`Module "${moduleId}" failed during startup.`, {
+          error: failure.error,
+        });
+
+        this.emitModuleEvent("runtime.module.failed", moduleId, "failed", {
+          durationMs: failure.durationMs,
           error: failure.error,
         });
 
@@ -238,6 +311,8 @@ export class LifecycleManager {
 
       const moduleStartTime = Date.now();
 
+      this.emitModuleEvent("runtime.module.stopping", moduleId, "stopping");
+
       try {
         if (module.onShutdown) {
           const context = this.createModuleContext(module);
@@ -246,8 +321,12 @@ export class LifecycleManager {
 
         succeeded.push(moduleId);
 
-        this.logger.debug(`Module "${moduleId}" stopped.`, {
-          durationMs: Date.now() - moduleStartTime,
+        const durationMs = Date.now() - moduleStartTime;
+
+        this.logger.debug(`Module "${moduleId}" stopped.`, { durationMs });
+
+        this.emitModuleEvent("runtime.module.stopped", moduleId, "stopped", {
+          durationMs,
         });
       } catch (error) {
         const failure: LifecycleFailure = {
@@ -260,6 +339,11 @@ export class LifecycleManager {
         failed.push(failure);
 
         this.logger.error(`Module "${moduleId}" failed during shutdown.`, {
+          error: failure.error,
+        });
+
+        this.emitModuleEvent("runtime.module.failed", moduleId, "failed", {
+          durationMs: failure.durationMs,
           error: failure.error,
         });
       }

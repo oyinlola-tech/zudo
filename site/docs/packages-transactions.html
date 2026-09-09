@@ -52,6 +52,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -107,893 +108,671 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/transactions</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
-          Transaction lifecycle management for the Zudojs framework. Provides a state-machine-driven transaction model, AsyncLocalStorage context propagation, adapter abstraction for database-specific behavior, savepoints, 7 propagation strategies, lifecycle hooks, and a transaction registry.
+          Run a group of database writes so that either all of them happen or none of them do, with nesting, savepoints, retries and hooks.
         </p>
         <div class="flex flex-wrap gap-2 mt-4">
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">TRANSACTIONS</span>
-          <span class="px-3 py-1 border-2 border-black text-xs font-bold">SAVEPOINTS</span>
+          <span class="px-3 py-1 border-2 border-black text-xs font-bold">COMMIT</span>
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">ROLLBACK</span>
-          <span class="px-3 py-1 border-2 border-black text-xs font-bold">STATE MACHINE</span>
-          <span class="px-3 py-1 border-2 border-black text-xs font-bold">ASYNC</span>
+          <span class="px-3 py-1 border-2 border-black text-xs font-bold">SAVEPOINTS</span>
+          <span class="px-3 py-1 border-2 border-black text-xs font-bold">RETRY</span>
         </div>
       </div>
 
-      <!-- Installation -->
-      <section id="installation" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-        <div class="code-block mb-4"><span class="cm">// npm</span>
-npm install @zudojs/transactions
+      <!-- ==================== OVERVIEW ==================== -->
+      <section id="overview" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OVERVIEW</h2>
+        <p class="mb-4 leading-relaxed">
+          A <em>transaction</em> is a group of database changes that the database treats as one thing: either all of them happen, or none of them do. Take money off one account and add it to another — a transaction is what stops the first write from surviving on its own when the second one fails.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          Two words describe how a transaction ends. <strong>Commit</strong> means "keep everything I did" — the changes become permanent and other people can see them. <strong>Rollback</strong> means "throw everything I did away" — the database goes back to how it looked before the transaction started.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          The group of work you wrap in one transaction is called a <em>unit of work</em>. "Place an order" is a unit of work: insert the order row, insert the line items, decrease the stock count. All three, or none.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          <code>@zudojs/transactions</code> does not talk to any database. You give it an <em>adapter</em> — a small object that knows how to say BEGIN, COMMIT and ROLLBACK to your particular database — and it handles everything above that: when to commit, when to roll back, what a transaction inside another transaction should do, retrying after a deadlock, and running your hooks. See <a href="/docs/packages-database" class="font-bold text-zudo-blue hover:underline">@zudojs/database</a> for the database side.
+        </p>
 
-<span class="cm">// pnpm</span>
-pnpm add @zudojs/transactions
-
-<span class="cm">// yarn</span>
-yarn add @zudojs/transactions</div>
-
-        <div class="callout callout-note">
-          <strong class="text-zudo-blue">Peer Dependencies:</strong> @zudojs/transactions depends on @zudojs/errors at version 0.1.0.
+        <div class="grid md:grid-cols-2 gap-4 mb-6">
+          <div class="border-2 border-black p-4">
+            <p class="text-sm font-bold mb-2">When you need it</p>
+            <ul class="text-sm space-y-1">
+              <li>• One user action writes to several tables and a half-finished result would be wrong.</li>
+              <li>• Service functions call each other and you want one transaction across all of them, not one each.</li>
+              <li>• You want retries on deadlocks and serialization failures without writing the retry loop yourself.</li>
+              <li>• You want to run code only after a commit really succeeded (send the email, publish the event).</li>
+            </ul>
+          </div>
+          <div class="border-2 border-black p-4">
+            <p class="text-sm font-bold mb-2">When you don't</p>
+            <ul class="text-sm space-y-1">
+              <li>• A single write. Your database already makes one statement all-or-nothing.</li>
+              <li>• Reads only. Wrapping a read in a transaction buys you nothing unless you need a specific isolation level.</li>
+              <li>• Work that spans two systems that cannot share a transaction, such as a database plus a payment provider. Use a saga or an outbox instead.</li>
+              <li>• Your database driver's own <code>transaction()</code> helper is enough and nothing nests.</li>
+            </ul>
+          </div>
         </div>
       </section>
 
-      <!-- What It Does -->
-      <section id="what-it-does" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHAT IT DOES</h2>
+      <!-- ==================== INSTALLATION ==================== -->
+      <section id="installation" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
+        <p class="mb-4 leading-relaxed">Install the package. It pulls in <code>@zudojs/errors</code> on its own, and it needs Node 24 or newer.</p>
+        <div class="code-block mb-4">$ npm install @zudojs/transactions</div>
+
+        <div class="callout callout-note mb-4">
+          <p class="text-sm">These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest @zudojs release.</p>
+        </div>
+      </section>
+
+      <!-- ==================== QUICK START ==================== -->
+      <section id="quick-start" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK START</h2>
         <p class="mb-4 leading-relaxed">
-          <code class="bg-black/5 px-1">@zudojs/transactions</code> provides a complete transaction abstraction for the Zudojs ecosystem:
+          The package ships an in-memory adapter so you can try everything without a database. This opens a transaction, runs your code inside it, and commits when your code returns.
         </p>
-        <ul class="space-y-2 mb-6">
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Transaction state machine</strong> with 7 lifecycle states (pending, active, committing, committed, rolling_back, rolled_back, failed)</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>AsyncLocalStorage context propagation</strong> — transactions automatically propagate across async call chains</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Adapter abstraction</strong> for database-specific transaction behavior (begin, commit, rollback)</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Savepoint support</strong> for nested transactions without full isolation</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>7 propagation strategies</strong>: required, requires_new, supports, not_supported, mandatory, never, nested</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Lifecycle hooks</strong>: beforeBegin, afterBegin, beforeCommit, afterCommit, beforeRollback, afterRollback, onError</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Transaction registry</strong> for tracking all active transactions</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Timeout support</strong> with automatic rollback-only marking</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Retry configuration</strong> with fixed or exponential backoff</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>11 error types</strong> for every failure mode</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>7 lifecycle events</strong> for monitoring and observability</li>
-        </ul>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  <span class="fn">createTransactionManager</span>,
+  <span class="fn">createInMemoryAdapter</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
+
+<span class="kw">const</span> manager = <span class="fn">createTransactionManager</span>({
+  adapter: <span class="fn">createInMemoryAdapter</span>(),
+});
+
+<span class="kw">const</span> orderId = <span class="kw">await</span> manager.<span class="fn">run</span>(<span class="kw">async</span> (transaction) =&gt; {
+  console.<span class="fn">log</span>(transaction.state); <span class="cm">// "active"</span>
+  console.<span class="fn">log</span>(transaction.kind);  <span class="cm">// "root"</span>
+  <span class="cm">// your inserts and updates go here</span>
+  <span class="kw">return</span> <span class="str">"ord_1"</span>;
+});
+
+console.<span class="fn">log</span>(orderId); <span class="cm">// "ord_1"</span></div>
+        <p class="mb-4 leading-relaxed">
+          <code>run()</code> returns whatever your callback returns, so <code>orderId</code> is the string <code>"ord_1"</code>. If your callback throws instead, <code>run()</code> rolls the transaction back and rethrows your error — you never write a <code>try/catch</code> just to roll back.
+        </p>
 
         <div class="callout callout-tip">
-          <strong class="text-zudo-green">Core Principle:</strong> Transaction logic is adapter-agnostic. Your business code never calls database drivers directly — it works with the Transaction interface, and the adapter translates to the underlying database.
+          <p class="text-sm"><strong>Reach for <code>run()</code> first.</strong> <code>begin()</code>, <code>commit()</code> and <code>rollback()</code> exist for the rare case where a transaction must outlive one function call. Everything else is easier and safer with <code>run()</code>.</p>
         </div>
       </section>
 
-      <!-- Architecture Position -->
-      <section id="architecture-position" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHERE IT SITS</h2>
-        <div class="border-4 border-black p-6 space-y-3">
-          <div class="bg-zudo-red text-black p-3 font-bold text-center text-sm">APPLICATION LAYER (CQRS, Events, Services)</div>
-          <div class="bg-zudo-blue text-white p-3 font-bold text-center text-sm">TRANSACTION LAYER (@zudojs/transactions)</div>
-          <div class="bg-white border-2 border-black p-3 font-bold text-center text-sm">ADAPTER LAYER (Database-specific implementations)</div>
-          <div class="bg-black text-white p-3 font-bold text-center text-sm">DATABASE (PostgreSQL, MySQL, MongoDB)</div>
+      <!-- ==================== UNIT OF WORK ==================== -->
+      <section id="unit-of-work" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">UNIT OF WORK</h2>
+        <p class="mb-4 leading-relaxed">
+          The callback you pass to <code>run()</code> is the unit of work. Put everything that must succeed together inside it, and nothing that must not be undone.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          This is the whole shape of it: three writes, one transaction. If <code>decreaseStock</code> throws, the order row and the line items are rolled back too, and the caller sees the original error.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  <span class="fn">createTransactionManager</span>,
+  <span class="fn">createInMemoryAdapter</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
+
+<span class="kw">const</span> manager = <span class="fn">createTransactionManager</span>({
+  adapter: <span class="fn">createInMemoryAdapter</span>(),
+});
+
+<span class="kw">async function</span> <span class="fn">insertOrder</span>() { console.<span class="fn">log</span>(<span class="str">"insert order"</span>); }
+<span class="kw">async function</span> <span class="fn">insertLineItems</span>() { console.<span class="fn">log</span>(<span class="str">"insert line items"</span>); }
+<span class="kw">async function</span> <span class="fn">decreaseStock</span>() { <span class="kw">throw new</span> <span class="tp">Error</span>(<span class="str">"out of stock"</span>); }
+
+<span class="kw">try</span> {
+  <span class="kw">await</span> manager.<span class="fn">run</span>(<span class="kw">async</span> () =&gt; {
+    <span class="kw">await</span> <span class="fn">insertOrder</span>();
+    <span class="kw">await</span> <span class="fn">insertLineItems</span>();
+    <span class="kw">await</span> <span class="fn">decreaseStock</span>();
+  }, { name: <span class="str">"place-order"</span> });
+} <span class="kw">catch</span> (error) {
+  console.<span class="fn">log</span>((error <span class="kw">as</span> <span class="tp">Error</span>).message); <span class="cm">// "out of stock"</span>
+}</div>
+        <p class="mb-4 leading-relaxed">
+          You should see <code>insert order</code>, <code>insert line items</code>, then <code>out of stock</code>. The two inserts were rolled back before the error reached your <code>catch</code>.
+        </p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Doing it by hand</h3>
+        <p class="mb-4 leading-relaxed">
+          When you need the transaction open across several calls, use <code>begin()</code> and finish it yourself. Every path must end in a commit or a rollback, or the database connection is left holding an open transaction.
+        </p>
+        <div class="code-block mb-4"><span class="kw">const</span> transaction = <span class="kw">await</span> manager.<span class="fn">begin</span>({ name: <span class="str">"manual"</span> });
+
+<span class="kw">try</span> {
+  <span class="cm">// your writes go here</span>
+  <span class="kw">await</span> manager.<span class="fn">commit</span>(transaction);
+} <span class="kw">catch</span> (error) {
+  <span class="kw">await</span> manager.<span class="fn">rollback</span>(transaction, error);
+}
+
+console.<span class="fn">log</span>(transaction.state); <span class="cm">// "committed"</span></div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">The states a transaction moves through</h3>
+        <p class="mb-4 leading-relaxed">
+          <code>transaction.state</code> tells you where it is. The order is fixed, and an illegal jump throws a <code>TransactionStateError</code> rather than quietly doing nothing.
+        </p>
+        <div class="overflow-x-auto mb-4">
+          <table class="doc-table">
+            <thead><tr><th>State</th><th>What it means</th><th>Can move to</th></tr></thead>
+            <tbody>
+              <tr><td><code>pending</code></td><td>Created, but the adapter has not opened it yet.</td><td><code>active</code>, <code>rolling_back</code>, <code>failed</code></td></tr>
+              <tr><td><code>active</code></td><td>Open. This is where your writes happen.</td><td><code>committing</code>, <code>rolling_back</code>, <code>failed</code></td></tr>
+              <tr><td><code>committing</code></td><td>The commit is under way.</td><td><code>committed</code>, <code>rolling_back</code>, <code>failed</code></td></tr>
+              <tr><td><code>committed</code></td><td>Done and kept. Nothing follows.</td><td>—</td></tr>
+              <tr><td><code>rolling_back</code></td><td>The rollback is under way.</td><td><code>rolled_back</code>, <code>failed</code></td></tr>
+              <tr><td><code>rolled_back</code></td><td>Done and thrown away. Nothing follows.</td><td>—</td></tr>
+              <tr><td><code>failed</code></td><td>The adapter refused a commit or a rollback. Nothing follows.</td><td>—</td></tr>
+            </tbody>
+          </table>
         </div>
-        <p class="mt-4 text-sm text-black/60">
-          Transactions sit between application code and database adapters. Application code calls the Transaction Manager; the manager coordinates with the adapter to execute begin/commit/rollback on the actual database.
+
+        <div class="callout callout-warning">
+          <p class="text-sm"><strong>Watch out:</strong> committing a transaction that was already rolled back throws <code>TransactionStateError</code>. Only a second commit of an already-committed transaction is a harmless no-op.</p>
+        </div>
+      </section>
+
+      <!-- ==================== ADAPTERS ==================== -->
+      <section id="adapters" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ADAPTERS</h2>
+        <p class="mb-4 leading-relaxed">
+          An <em>adapter</em> is the object that turns "begin a transaction" into something your database understands. The manager never touches a driver; it calls <code>adapter.begin()</code>, <code>adapter.commit(handle)</code> and <code>adapter.rollback(handle)</code>.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          A <em>handle</em> is whatever your <code>begin()</code> returns — a client, a connection, an id. The manager stores it and hands it straight back to you on commit and rollback, without looking inside.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          An adapter also declares its <code>capabilities</code>: whether it can do savepoints, nested transactions, read-only transactions, timeouts, and which isolation levels it accepts. Asking for something the adapter did not declare throws <code>TransactionAdapterError</code> before any work starts.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          This adapter records what it was asked to do instead of talking to a database, so you can see exactly which calls the manager makes.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createTransactionManager</span> } <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
+<span class="kw">import type</span> {
+  <span class="tp">TransactionAdapter</span>,
+  <span class="tp">TransactionHandle</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
+
+<span class="kw">const</span> log: <span class="tp">string</span>[] = [];
+
+<span class="kw">const</span> adapter: <span class="tp">TransactionAdapter</span> = {
+  capabilities: {
+    savepoints: <span class="kw">true</span>,
+    nestedTransactions: <span class="kw">true</span>,
+    isolationLevels: [<span class="str">"read_committed"</span>, <span class="str">"serializable"</span>],
+    readOnlyTransactions: <span class="kw">true</span>,
+    timeouts: <span class="kw">true</span>,
+  },
+  <span class="kw">async</span> <span class="fn">begin</span>(): <span class="tp">Promise</span>&lt;<span class="tp">TransactionHandle</span>&gt; {
+    log.<span class="fn">push</span>(<span class="str">"BEGIN"</span>);
+    <span class="kw">return</span> { connection: log.length };
+  },
+  <span class="kw">async</span> <span class="fn">commit</span>() { log.<span class="fn">push</span>(<span class="str">"COMMIT"</span>); },
+  <span class="kw">async</span> <span class="fn">rollback</span>() { log.<span class="fn">push</span>(<span class="str">"ROLLBACK"</span>); },
+  <span class="kw">async</span> <span class="fn">createSavepoint</span>(_handle, name) { log.<span class="fn">push</span>(<span class="str">`SAVEPOINT ${name}`</span>); },
+  <span class="kw">async</span> <span class="fn">rollbackToSavepoint</span>(_handle, name) { log.<span class="fn">push</span>(<span class="str">`ROLLBACK TO ${name}`</span>); },
+  <span class="kw">async</span> <span class="fn">releaseSavepoint</span>(_handle, name) { log.<span class="fn">push</span>(<span class="str">`RELEASE ${name}`</span>); },
+};
+
+<span class="kw">const</span> manager = <span class="fn">createTransactionManager</span>({ adapter });
+
+<span class="kw">await</span> manager.<span class="fn">run</span>(<span class="kw">async</span> () =&gt; <span class="str">"done"</span>);
+console.<span class="fn">log</span>(log); <span class="cm">// [ 'BEGIN', 'COMMIT' ]</span></div>
+        <p class="mb-4 leading-relaxed">
+          A real adapter looks the same, with the <code>log.push</code> lines replaced by <code>client.query("BEGIN")</code> and friends. <code>createAdapter(implementation, capabilities)</code> is a small helper that takes an existing adapter and replaces its capability list with a frozen one.
+        </p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Isolation levels</h3>
+        <p class="mb-4 leading-relaxed">
+          An <em>isolation level</em> says how much of other, still-unfinished transactions' work yours is allowed to see. The four levels, from most permissive to strictest, are <code>read_uncommitted</code>, <code>read_committed</code>, <code>repeatable_read</code> and <code>serializable</code>.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          You ask for one per transaction with <code>isolation</code>. The adapter above accepts two of the four, so this throws:
+        </p>
+        <div class="code-block mb-4"><span class="kw">await</span> manager.<span class="fn">begin</span>({ isolation: <span class="str">"repeatable_read"</span> });
+<span class="cm">// TransactionAdapterError: Adapter does not support isolation level "repeatable_read"</span></div>
+      </section>
+
+      <!-- ==================== PROPAGATION ==================== -->
+      <section id="propagation" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">NESTING AND PROPAGATION</h2>
+        <p class="mb-4 leading-relaxed">
+          Service functions call each other, and each of them may want a transaction. <em>Propagation</em> is the rule that decides what happens when one <code>run()</code> starts while another is already open.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          The default is <code>required</code>: the inner call joins the transaction already in progress instead of opening a second one. What it receives is a <em>participant</em> — a handle that can read the transaction and mark it rollback-only, but can never commit it. The scope that opened the transaction is the only one that finishes it.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          The manager finds the transaction in progress through Node's <code>AsyncLocalStorage</code>, so it travels down through every <code>await</code> without you passing anything around.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  <span class="fn">createTransactionManager</span>,
+  <span class="fn">createInMemoryAdapter</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
+
+<span class="kw">const</span> manager = <span class="fn">createTransactionManager</span>({
+  adapter: <span class="fn">createInMemoryAdapter</span>(),
+});
+
+<span class="kw">await</span> manager.<span class="fn">run</span>(<span class="kw">async</span> (outer) =&gt; {
+  <span class="kw">await</span> manager.<span class="fn">run</span>(<span class="kw">async</span> (inner) =&gt; {
+    console.<span class="fn">log</span>(inner.kind);            <span class="cm">// "participant"</span>
+    console.<span class="fn">log</span>(inner.id === outer.id); <span class="cm">// true</span>
+  });
+
+  console.<span class="fn">log</span>(outer.state); <span class="cm">// "active" — the inner run did not commit it</span>
+});</div>
+        <p class="mb-4 leading-relaxed">
+          If the inner callback throws, the participant does not roll the whole thing back on the spot. It marks the enclosing transaction <em>rollback-only</em>, and the error travels up to whoever opened the transaction.
+        </p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">The seven modes</h3>
+        <p class="mb-4 leading-relaxed">Pass one as <code>propagation</code>. Both columns matter — what a mode does when a transaction is in progress, and what it does when none is.</p>
+        <div class="overflow-x-auto mb-4">
+          <table class="doc-table">
+            <thead><tr><th>Mode</th><th>Transaction in progress</th><th>None in progress</th></tr></thead>
+            <tbody>
+              <tr><td><code>required</code> (default)</td><td>Joins it as a participant.</td><td>Opens a new one.</td></tr>
+              <tr><td><code>requires_new</code></td><td>Suspends it and opens a separate one.</td><td>Opens a new one.</td></tr>
+              <tr><td><code>nested</code></td><td>Opens a savepoint inside it.</td><td>Opens a new one.</td></tr>
+              <tr><td><code>supports</code></td><td>Joins it as a participant.</td><td>Runs with no transaction.</td></tr>
+              <tr><td><code>not_supported</code></td><td>Suspends it and runs with no transaction.</td><td>Runs with no transaction.</td></tr>
+              <tr><td><code>mandatory</code></td><td>Joins it as a participant.</td><td>Throws <code>TransactionPropagationError</code>.</td></tr>
+              <tr><td><code>never</code></td><td>Throws <code>TransactionPropagationError</code>.</td><td>Runs with no transaction.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="mb-4 leading-relaxed">
+          "Runs with no transaction" gives you a handle whose <code>kind</code> is <code>"none"</code>: it moves through the same states so your code can treat it uniformly, but the adapter is never called. "Suspends" means the enclosing transaction is hidden for the duration, so anything nested inside sees nothing in progress.
+        </p>
+
+        <div class="callout callout-danger">
+          <p class="text-sm"><strong>Danger:</strong> <code>requires_new</code> opens a second, independent transaction while the first is still open. It commits on its own and its writes survive even if the outer transaction later rolls back. On a single-connection driver it can also deadlock against the transaction it suspended.</p>
+        </div>
+      </section>
+
+      <!-- ==================== SAVEPOINTS ==================== -->
+      <section id="savepoints" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SAVEPOINTS</h2>
+        <p class="mb-4 leading-relaxed">
+          A <em>savepoint</em> is a bookmark inside a transaction. You can undo back to the bookmark without throwing away everything the transaction did before it.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          That is what <code>propagation: "nested"</code> gives you. The inner scope gets a handle whose <code>kind</code> is <code>"savepoint"</code>. If it fails, the manager rolls back to that savepoint only; if it succeeds, the savepoint is released and its work stays part of the outer transaction.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          Here an optional step fails and the outer transaction still commits.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  <span class="fn">createTransactionManager</span>,
+  <span class="fn">createInMemoryAdapter</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
+
+<span class="kw">const</span> manager = <span class="fn">createTransactionManager</span>({
+  adapter: <span class="fn">createInMemoryAdapter</span>(),
+});
+
+<span class="kw">await</span> manager.<span class="fn">run</span>(<span class="kw">async</span> (outer) =&gt; {
+  <span class="kw">try</span> {
+    <span class="kw">await</span> manager.<span class="fn">run</span>(
+      <span class="kw">async</span> (child) =&gt; {
+        console.<span class="fn">log</span>(child.kind);     <span class="cm">// "savepoint"</span>
+        console.<span class="fn">log</span>(child.parentId === outer.id); <span class="cm">// true</span>
+        <span class="kw">throw new</span> <span class="tp">Error</span>(<span class="str">"coupon rejected"</span>);
+      },
+      { propagation: <span class="str">"nested"</span> },
+    );
+  } <span class="kw">catch</span> (error) {
+    console.<span class="fn">log</span>((error <span class="kw">as</span> <span class="tp">Error</span>).message); <span class="cm">// "coupon rejected"</span>
+  }
+
+  console.<span class="fn">log</span>(outer.<span class="fn">isRollbackOnly</span>()); <span class="cm">// false — the outer work survived</span>
+});</div>
+        <p class="mb-4 leading-relaxed">
+          Nested transactions need an adapter that declares <code>savepoints: true</code> and implements <code>createSavepoint</code>. Without both, <code>begin({ propagation: "nested" })</code> throws <code>TransactionPropagationError</code>. The in-memory adapter supports them.
         </p>
       </section>
 
-      <!-- Dependencies -->
-      <section id="dependencies" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DEPENDENCIES</h2>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Package</th>
-                <th class="p-3 text-left">Version</th>
-                <th class="p-3 text-left">Purpose</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td class="p-3 font-mono text-sm">@zudojs/errors</td>
-                <td class="p-3">0.1.0</td>
-                <td class="p-3">Transaction error hierarchy (TransactionError, TransactionStateError, etc.)</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+      <!-- ==================== ROLLBACK-ONLY AND TIMEOUTS ==================== -->
+      <section id="rollback-only" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ROLLBACK-ONLY AND TIMEOUTS</h2>
+        <p class="mb-4 leading-relaxed">
+          Sometimes you know a transaction must not be kept, but you are not the code that will finish it — you are three functions deep. Mark it <em>rollback-only</em> and carry on; whoever tries to commit it gets a rollback instead.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          The flag is checked before the adapter is asked to commit, so a rollback can never be reported to you as a commit.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  <span class="fn">createTransactionManager</span>,
+  <span class="fn">createInMemoryAdapter</span>,
+  <span class="tp">TransactionRollbackError</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
 
-        <div class="mt-4 callout callout-warning">
-          <strong class="text-zudo-yellow">Version Lock:</strong> All internal dependencies use <code>workspace:*</code> in development. When published, they use exact version <code>0.1.0</code>. Always use matching versions across the ecosystem.
-        </div>
-      </section>
+<span class="kw">const</span> manager = <span class="fn">createTransactionManager</span>({
+  adapter: <span class="fn">createInMemoryAdapter</span>(),
+});
 
-      <!-- Types -->
-      <section id="types" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TYPES</h2>
+<span class="kw">const</span> transaction = <span class="kw">await</span> manager.<span class="fn">begin</span>();
+transaction.<span class="fn">markRollbackOnly</span>(<span class="str">"stock check failed"</span>);
 
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionState</h3>
-        <p class="mb-3 text-sm">Lifecycle states a transaction passes through:</p>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">State</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">pending</td><td class="p-3">Transaction created but not yet begun on the adapter</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">active</td><td class="p-3">Transaction is open and can accept operations</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">committing</td><td class="p-3">Commit is in progress</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">committed</td><td class="p-3">Transaction successfully committed (terminal)</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">rolling_back</td><td class="p-3">Rollback is in progress</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">rolled_back</td><td class="p-3">Transaction successfully rolled back (terminal)</td></tr>
-              <tr><td class="p-3 font-mono">failed</td><td class="p-3">Transaction failed irrecoverably (terminal)</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionPropagation</h3>
-        <p class="mb-3 text-sm">Propagation strategies when a transaction already exists:</p>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Strategy</th>
-                <th class="p-3 text-left">Behavior</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">required</td><td class="p-3">Join existing transaction (default)</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">requires_new</td><td class="p-3">Always start a new transaction, suspending the existing one</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">supports</td><td class="p-3">Join existing if present, otherwise run without transaction</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">not_supported</td><td class="p-3">Suspend existing transaction and run without one</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">mandatory</td><td class="p-3">Join existing transaction; throw if none exists</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">never</td><td class="p-3">Run without transaction; throw if one exists</td></tr>
-              <tr><td class="p-3 font-mono">nested</td><td class="p-3">Start a nested transaction using savepoints</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionIsolationLevel</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">TransactionIsolationLevel</span> =
-  | <span class="str">"read_uncommitted"</span>
-  | <span class="str">"read_committed"</span>
-  | <span class="str">"repeatable_read"</span>
-  | <span class="str">"serializable"</span>;</div>
-      </section>
-
-      <!-- Interfaces -->
-      <section id="interfaces" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INTERFACES</h2>
-
-        <!-- Transaction -->
-        <h3 class="text-lg font-bold mb-3 mt-6">Transaction</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Transaction</span> {
-  <span class="kw">readonly</span> id: <span class="tp">string</span>;
-  <span class="kw">readonly</span> parentId?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> state: <span class="tp">TransactionState</span>;
-  <span class="kw">readonly</span> options: <span class="tp">Readonly</span>&lt;<span class="tp">TransactionOptions</span>&gt;;
-  <span class="kw">readonly</span> startedAt: <span class="tp">number</span>;
-  <span class="kw">readonly</span> metadata: <span class="tp">ReadonlyMap</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;;
-  <span class="kw">readonly</span> timedOut: <span class="tp">boolean</span>;
-  <span class="fn">commit</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">rollback</span>(reason?: <span class="tp">unknown</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">markRollbackOnly</span>(reason?: <span class="tp">unknown</span>): <span class="tp">void</span>;
-  <span class="fn">isRollbackOnly</span>(): <span class="tp">boolean</span>;
-  <span class="fn">afterCommit</span>(callback: () =&gt; <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;): <span class="tp">void</span>;
-  <span class="fn">afterRollback</span>(callback: () =&gt; <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;): <span class="tp">void</span>;
-}</div>
-
-        <!-- TransactionOptions -->
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">TransactionOptions</span> {
-  <span class="kw">readonly</span> isolation?: <span class="tp">TransactionIsolationLevel</span>;
-  <span class="kw">readonly</span> propagation?: <span class="tp">TransactionPropagation</span>;
-  <span class="kw">readonly</span> timeout?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> readOnly?: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> name?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> metadata?: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;;
-  <span class="kw">readonly</span> retry?: <span class="tp">TransactionRetryOptions</span>;
-}</div>
-
-        <!-- TransactionRetryOptions -->
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionRetryOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">TransactionRetryOptions</span> {
-  <span class="kw">readonly</span> attempts?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> delay?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> backoff?: <span class="str">"fixed"</span> | <span class="str">"exponential"</span>;
-}</div>
-
-        <!-- TransactionAdapter -->
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionAdapter</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">TransactionAdapter</span> {
-  <span class="kw">readonly</span> capabilities: <span class="tp">TransactionAdapterCapabilities</span>;
-  <span class="fn">begin</span>(options?: <span class="tp">TransactionOptions</span>): <span class="tp">Promise</span>&lt;<span class="tp">TransactionHandle</span>&gt;;
-  <span class="fn">commit</span>(handle: <span class="tp">TransactionHandle</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">rollback</span>(handle: <span class="tp">TransactionHandle</span>, reason?: <span class="tp">unknown</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">createSavepoint</span>?(handle: <span class="tp">TransactionHandle</span>, name: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">rollbackToSavepoint</span>?(handle: <span class="tp">TransactionHandle</span>, name: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">releaseSavepoint</span>?(handle: <span class="tp">TransactionHandle</span>, name: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
+<span class="kw">try</span> {
+  <span class="kw">await</span> manager.<span class="fn">commit</span>(transaction);
+} <span class="kw">catch</span> (error) {
+  console.<span class="fn">log</span>(error <span class="kw">instanceof</span> <span class="tp">TransactionRollbackError</span>); <span class="cm">// true</span>
 }
 
-<span class="kw">type</span> <span class="tp">TransactionHandle</span> = <span class="tp">unknown</span>;</div>
+console.<span class="fn">log</span>(transaction.state); <span class="cm">// "rolled_back"</span></div>
 
-        <!-- TransactionAdapterCapabilities -->
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionAdapterCapabilities</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">TransactionAdapterCapabilities</span> {
-  <span class="kw">readonly</span> savepoints: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> nestedTransactions: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> isolationLevels: <span class="tp">readonly</span> <span class="tp">TransactionIsolationLevel</span>[];
-  <span class="kw">readonly</span> readOnlyTransactions: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> timeouts: <span class="tp">boolean</span>;
-}</div>
+        <h3 class="text-lg font-bold mb-3 mt-6">Timeouts</h3>
+        <p class="mb-4 leading-relaxed">
+          <code>timeout</code> is a number of milliseconds. When it passes, the transaction is marked rollback-only and <code>timedOut</code> becomes <code>true</code>, so the commit at the end of <code>run()</code> turns into a rollback.
+        </p>
+        <div class="code-block mb-4"><span class="kw">await</span> manager.<span class="fn">run</span>(<span class="kw">async</span> () =&gt; {
+  <span class="kw">await new</span> <span class="tp">Promise</span>((resolve) =&gt; <span class="fn">setTimeout</span>(resolve, <span class="num">40</span>));
+}, { timeout: <span class="num">10</span> });
+<span class="cm">// rejects with TransactionRollbackError; the adapter saw BEGIN then ROLLBACK</span></div>
+        <p class="mb-4 leading-relaxed">
+          A timeout does not interrupt your callback — it cannot, since the work is already in flight. It guarantees the result is thrown away, not that the work stops early. The timer is cleared as soon as the transaction ends.
+        </p>
 
-        <!-- Savepoint -->
-        <h3 class="text-lg font-bold mb-3 mt-6">Savepoint</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Savepoint</span> {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="fn">rollback</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">release</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-}</div>
-
-        <!-- TransactionContext -->
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionContext</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">TransactionContext</span> {
-  <span class="fn">get</span>(): <span class="tp">Transaction</span> | <span class="tp">undefined</span>;
-  <span class="fn">run</span>&lt;<span class="tp">T</span>&gt;(transaction: <span class="tp">Transaction</span>, callback: () =&gt; <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-}</div>
-
-        <!-- TransactionHookContext -->
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionHookContext</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">TransactionHookContext</span> {
-  <span class="kw">readonly</span> transaction: <span class="tp">Transaction</span>;
-}</div>
-
-        <!-- TransactionErrorContext -->
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionErrorContext</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">TransactionErrorContext</span> {
-  <span class="kw">readonly</span> transaction: <span class="tp">Transaction</span>;
-  <span class="kw">readonly</span> error: <span class="tp">unknown</span>;
-}</div>
-
-        <!-- TransactionHooks -->
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionHooks</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">TransactionHooks</span> {
-  <span class="fn">beforeBegin</span>?(context: <span class="tp">TransactionHookContext</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">afterBegin</span>?(context: <span class="tp">TransactionHookContext</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">beforeCommit</span>?(context: <span class="tp">TransactionHookContext</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">afterCommit</span>?(context: <span class="tp">TransactionHookContext</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">beforeRollback</span>?(context: <span class="tp">TransactionHookContext</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">afterRollback</span>?(context: <span class="tp">TransactionHookContext</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">onError</span>?(context: <span class="tp">TransactionErrorContext</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-}</div>
-
-        <!-- TransactionRegistry -->
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionRegistry</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">TransactionRegistry</span> {
-  <span class="fn">register</span>(transaction: <span class="tp">Transaction</span>): <span class="tp">void</span>;
-  <span class="fn">unregister</span>(transactionId: <span class="tp">string</span>): <span class="tp">void</span>;
-  <span class="fn">get</span>(transactionId: <span class="tp">string</span>): <span class="tp">Transaction</span> | <span class="tp">undefined</span>;
-  <span class="fn">getActive</span>(): <span class="tp">readonly</span> <span class="tp">Transaction</span>[];
-}</div>
-
-        <!-- TransactionResult -->
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionResult</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">TransactionResult</span>&lt;<span class="tp">T</span>&gt; {
-  <span class="kw">readonly</span> value: <span class="tp">T</span>;
-  <span class="kw">readonly</span> transactionId: <span class="tp">string</span>;
-  <span class="kw">readonly</span> committed: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> duration: <span class="tp">number</span>;
-}</div>
-
-        <!-- TransactionEvent -->
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionEvent</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">TransactionEvent</span> {
-  <span class="kw">readonly</span> type: (<span class="kw">typeof</span> <span class="tp">TRANSACTION_EVENTS</span>)[<span class="kw">keyof</span> <span class="kw">typeof</span> <span class="tp">TRANSACTION_EVENTS</span>];
-  <span class="kw">readonly</span> transactionId: <span class="tp">string</span>;
-  <span class="kw">readonly</span> timestamp: <span class="tp">number</span>;
-  <span class="kw">readonly</span> duration?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> error?: <span class="tp">unknown</span>;
-}</div>
-
-        <!-- TransactionManagerOptions -->
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionManagerOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">TransactionManagerOptions</span> {
-  <span class="kw">readonly</span> adapter: <span class="tp">TransactionAdapter</span>;
-  <span class="kw">readonly</span> context?: <span class="tp">TransactionContext</span>;
-  <span class="kw">readonly</span> hooks?: <span class="tp">TransactionHooks</span>;
-}</div>
-      </section>
-
-      <!-- Transaction (createTransaction) -->
-      <section id="create-transaction" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TRANSACTION</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">createTransaction</h3>
-        <p class="mb-3 text-sm">Creates a new Transaction instance with internal state machine, callbacks, and metadata:</p>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">createTransaction</span>(
-  options?: <span class="tp">TransactionOptions</span>,
-  parentId?: <span class="tp">string</span>,
-): <span class="tp">Transaction</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Internal Methods</h3>
-        <p class="mb-3 text-sm">The returned Transaction also exposes internal methods (prefixed with <code>_</code>) for the manager and adapter to use:</p>
-        <div class="code-block"><span class="cm">/** Set the adapter handle on the transaction. */</span>
-_setHandle(handle: <span class="tp">unknown</span>): <span class="tp">void</span>;
-
-<span class="cm">/** Get the adapter handle from the transaction. */</span>
-_getHandle(): <span class="tp">unknown</span>;
-
-<span class="cm">/** Transition the state machine. */</span>
-_transition(to: <span class="tp">TransactionState</span>): <span class="tp">void</span>;
-
-<span class="cm">/** Mark the transaction as timed out. */</span>
-_markTimedOut(): <span class="tp">void</span>;
-
-<span class="cm">/** Get all registered afterCommit callbacks. */</span>
-_getAfterCommitCallbacks(): <span class="tp">Array</span>&lt;() =&gt; <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;&gt;;
-
-<span class="cm">/** Get all registered afterRollback callbacks. */</span>
-_getAfterRollbackCallbacks(): <span class="tp">Array</span>&lt;() =&gt; <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;&gt;;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">createTransaction</span> } <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
-
-<span class="kw">const</span> txn = <span class="fn">createTransaction</span>({
-  name: <span class="str">"create-order"</span>,
-  timeout: <span class="num">30000</span>,
-  metadata: { userId: <span class="str">"user_123"</span> },
-});
-
-console.<span class="fn">log</span>(txn.id);        <span class="cm">// "txn_a1b2c3d4..."</span>
-console.<span class="fn">log</span>(txn.state);     <span class="cm">// "pending"</span>
-console.<span class="fn">log</span>(txn.startedAt); <span class="cm">// Date.now()</span></div>
-      </section>
-
-      <!-- State Machine -->
-      <section id="state-machine" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">STATE MACHINE</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">VALID_TRANSITIONS</h3>
-        <p class="mb-3 text-sm">The complete state transition map. An error is thrown if a transition is not allowed:</p>
-        <div class="code-block"><span class="kw">const</span> <span class="tp">VALID_TRANSITIONS</span>: <span class="tp">Record</span>&lt;<span class="tp">TransactionState</span>, <span class="tp">TransactionState</span>[]&gt; = {
-  pending:       [<span class="str">"active"</span>, <span class="str">"failed"</span>],
-  active:        [<span class="str">"committing"</span>, <span class="str">"rolling_back"</span>, <span class="str">"failed"</span>],
-  committing:    [<span class="str">"committed"</span>, <span class="str">"failed"</span>, <span class="str">"rolling_back"</span>],
-  committed:     [],
-  rolling_back:  [<span class="str">"rolled_back"</span>, <span class="str">"failed"</span>],
-  rolled_back:   [],
-  failed:        [],
-};</div>
-
-        <div class="border-4 border-black mt-6">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">From</th>
-                <th class="p-3 text-left">Valid Transitions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">pending</td><td class="p-3">active, failed</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">active</td><td class="p-3">committing, rolling_back, failed</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">committing</td><td class="p-3">committed, failed, rolling_back</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">committed</td><td class="p-3"><em>(terminal)</em></td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">rolling_back</td><td class="p-3">rolled_back, failed</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">rolled_back</td><td class="p-3"><em>(terminal)</em></td></tr>
-              <tr><td class="p-3 font-mono">failed</td><td class="p-3"><em>(terminal)</em></td></tr>
-            </tbody>
-          </table>
+        <div class="callout callout-warning">
+          <p class="text-sm"><strong>Watch out:</strong> a timeout surfaces as <code>TransactionRollbackError</code>, not <code>TransactionTimeoutError</code>. Check <code>transaction.timedOut</code> if you need to tell a timeout apart from any other rollback. The adapter must declare <code>timeouts: true</code> or the <code>timeout</code> option is rejected up front.</p>
         </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">createTransitionFunction</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">createTransitionFunction</span>(
-  getState: () =&gt; <span class="tp">TransactionState</span>,
-  setState: (state: <span class="tp">TransactionState</span>) =&gt; <span class="tp">void</span>,
-): (to: <span class="tp">TransactionState</span>) =&gt; <span class="tp">void</span></div>
-        <p class="mt-2 text-sm">Returns a function that validates and applies state transitions. Throws <code>TransactionStateError</code> if the transition is invalid.</p>
       </section>
 
-      <!-- Context -->
-      <section id="context" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONTEXT</h2>
-        <p class="mb-4">AsyncLocalStorage-based transaction context for automatic propagation across async call chains.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">createTransactionContext</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">createTransactionContext</span>(): <span class="tp">TransactionContext</span></div>
-        <p class="mt-2 text-sm">Creates a new context instance backed by Node.js <code>AsyncLocalStorage</code>.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">getDefaultContext</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">getDefaultContext</span>(): <span class="tp">TransactionContext</span></div>
-        <p class="mt-2 text-sm">Returns the singleton default context. Creates one if it doesn't exist.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">resetDefaultContext</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">resetDefaultContext</span>(): <span class="tp">void</span></div>
-        <p class="mt-2 text-sm">Resets the default context singleton. Useful for testing.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">createTransactionContext</span>,
-  <span class="fn">getDefaultContext</span>,
-  <span class="fn">resetDefaultContext</span>,
+      <!-- ==================== RETRIES ==================== -->
+      <section id="retries" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RETRIES</h2>
+        <p class="mb-4 leading-relaxed">
+          Some database failures are worth trying again: deadlocks and serialization failures happen because two transactions collided, and one of them usually succeeds on a second run.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          A failed transaction cannot be resumed, only replayed, so a retry re-runs your whole callback in a brand new transaction. Write callbacks that are safe to run twice.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  <span class="fn">createTransactionManager</span>,
+  <span class="fn">createInMemoryAdapter</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
 
-<span class="cm">// Create a custom context</span>
-<span class="kw">const</span> ctx = <span class="fn">createTransactionContext</span>();
-
-<span class="cm">// Or use the singleton</span>
-<span class="kw">const</span> defaultCtx = <span class="fn">getDefaultContext</span>();
-
-<span class="cm">// Reset in tests</span>
-<span class="fn">resetDefaultContext</span>();</div>
-      </section>
-
-      <!-- Adapter -->
-      <section id="adapter" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ADAPTER</h2>
-        <p class="mb-4">Adapter abstraction for database-specific transaction behavior.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">createInMemoryAdapter</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">createInMemoryAdapter</span>(): <span class="tp">TransactionAdapter</span></div>
-        <p class="mt-2 text-sm">Creates an in-memory adapter for testing. Supports basic begin/commit/rollback with no savepoints.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">createAdapter</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">createAdapter</span>(
-  implementation: <span class="tp">TransactionAdapter</span>,
-  capabilities: <span class="tp">TransactionAdapterCapabilities</span>,
-): <span class="tp">TransactionAdapter</span></div>
-        <p class="mt-2 text-sm">Wraps an adapter with explicit capabilities. The capabilities are frozen.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Custom Adapter</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">createAdapter</span> } <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
-<span class="kw">import</span> <span class="kw">type</span> { <span class="tp">TransactionAdapter</span> } <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
-
-<span class="kw">const</span> pgAdapter: <span class="tp">TransactionAdapter</span> = <span class="fn">createAdapter</span>(
-  {
-    <span class="kw">async</span> <span class="fn">begin</span>(options) {
-      <span class="cm">// Start a PostgreSQL transaction</span>
-      <span class="kw">return</span> pgClient.<span class="fn">query</span>(<span class="str">"BEGIN"</span>);
-    },
-    <span class="kw">async</span> <span class="fn">commit</span>(handle) {
-      <span class="kw">await</span> pgClient.<span class="fn">query</span>(<span class="str">"COMMIT"</span>);
-    },
-    <span class="kw">async</span> <span class="fn">rollback</span>(handle) {
-      <span class="kw">await</span> pgClient.<span class="fn">query</span>(<span class="str">"ROLLBACK"</span>);
-    },
-  },
-  {
-    savepoints: <span class="num">true</span>,
-    nestedTransactions: <span class="num">false</span>,
-    isolationLevels: [<span class="str">"read_committed"</span>, <span class="str">"repeatable_read"</span>, <span class="str">"serializable"</span>],
-    readOnlyTransactions: <span class="num">true</span>,
-    timeouts: <span class="num">true</span>,
-  },
-);</div>
-      </section>
-
-      <!-- Hooks -->
-      <section id="hooks" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HOOKS</h2>
-        <p class="mb-4">Lifecycle hooks and composition for transaction events.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">mergeHooks</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">mergeHooks</span>(
-  ...hookSets: <span class="tp">readonly</span> <span class="tp">TransactionHooks</span>[]
-): <span class="tp">TransactionHooks</span></div>
-        <p class="mt-2 text-sm">Merges multiple hook sets into one. Later hooks run after earlier ones for each lifecycle event.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">mergeHooks</span> } <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
-
-<span class="kw">const</span> loggingHooks: <span class="tp">TransactionHooks</span> = {
-  <span class="kw">async</span> <span class="fn">beforeBegin</span>({ transaction }) {
-    console.<span class="fn">log</span>(<span class="str">`Starting transaction ${transaction.id}`</span>);
-  },
-  <span class="kw">async</span> <span class="fn">afterCommit</span>({ transaction }) {
-    console.<span class="fn">log</span>(<span class="str">`Committed ${transaction.id}`</span>);
-  },
-};
-
-<span class="kw">const</span> auditHooks: <span class="tp">TransactionHooks</span> = {
-  <span class="kw">async</span> <span class="fn">afterBegin</span>({ transaction }) {
-    <span class="kw">await</span> <span class="fn">auditLog</span>(<span class="str">"transaction.begin"</span>, transaction.id);
-  },
-  <span class="kw">async</span> <span class="fn">onError</span>({ transaction, error }) {
-    <span class="kw">await</span> <span class="fn">auditLog</span>(<span class="str">"transaction.error"</span>, transaction.id, error);
-  },
-};
-
-<span class="cm">// Merge: logging runs first, then audit</span>
-<span class="kw">const</span> hooks = <span class="fn">mergeHooks</span>(loggingHooks, auditHooks);</div>
-      </section>
-
-      <!-- Manager -->
-      <section id="manager" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MANAGER</h2>
-        <p class="mb-4">The Transaction Manager coordinates begin, commit, rollback, context, and propagation.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">createTransactionManager</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">createTransactionManager</span>(options: <span class="tp">TransactionManagerOptions</span>): {
-  <span class="fn">begin</span>(opts?: <span class="tp">TransactionOptions</span>): <span class="tp">Promise</span>&lt;<span class="tp">Transaction</span>&gt;;
-  <span class="fn">run</span>&lt;<span class="tp">T</span>&gt;(
-    callback: (transaction: <span class="tp">Transaction</span>) =&gt; <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;,
-    opts?: <span class="tp">TransactionOptions</span>,
-  ): <span class="tp">Promise</span>&lt;<span class="tp">T</span>&gt;;
-  <span class="fn">commit</span>(transaction: <span class="tp">Transaction</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">rollback</span>(transaction: <span class="tp">Transaction</span>, reason?: <span class="tp">unknown</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">getCurrent</span>(): <span class="tp">Transaction</span> | <span class="tp">undefined</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Methods</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Method</th>
-                <th class="p-3 text-left">Purpose</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">begin(opts?)</td><td class="p-3">Start a new transaction. Handles propagation if one exists. Returns a <code>Transaction</code>.</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">run(callback, opts?)</td><td class="p-3">Begin, run callback, auto-commit on success, auto-rollback on error. Returns the callback result.</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">commit(txn)</td><td class="p-3">Commit a transaction with adapter coordination and hooks.</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">rollback(txn, reason?)</td><td class="p-3">Rollback a transaction with adapter coordination and hooks.</td></tr>
-              <tr><td class="p-3 font-mono">getCurrent()</td><td class="p-3">Get the current active transaction from the context (if any).</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">createTransactionManager</span>, <span class="fn">createInMemoryAdapter</span> } <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
-
-<span class="kw">const</span> adapter = <span class="fn">createInMemoryAdapter</span>();
-<span class="kw">const</span> manager = <span class="fn">createTransactionManager</span>({ adapter });
-
-<span class="cm">// Using run() — auto commit/rollback</span>
-<span class="kw">const</span> result = <span class="kw">await</span> manager.<span class="fn">run</span>(<span class="kw">async</span> (txn) => {
-  <span class="cm">// Do work inside the transaction</span>
-  <span class="kw">return</span> { orderId: <span class="str">"ord_123"</span> };
+<span class="kw">const</span> manager = <span class="fn">createTransactionManager</span>({
+  adapter: <span class="fn">createInMemoryAdapter</span>(),
 });
 
-<span class="cm">// Manual begin/commit/rollback</span>
-<span class="kw">const</span> txn = <span class="kw">await</span> manager.<span class="fn">begin</span>({ name: <span class="str">"manual"</span> });
-<span class="kw">try</span> {
-  <span class="cm">// ... do work</span>
-  <span class="kw">await</span> manager.<span class="fn">commit</span>(txn);
-} <span class="kw">catch</span> (error) {
-  <span class="kw">await</span> manager.<span class="fn">rollback</span>(txn, error);
-}</div>
+<span class="kw">let</span> tries = <span class="num">0</span>;
+
+<span class="kw">const</span> result = <span class="kw">await</span> manager.<span class="fn">run</span>(
+  <span class="kw">async</span> () =&gt; {
+    tries++;
+    <span class="kw">if</span> (tries &lt; <span class="num">3</span>) <span class="kw">throw new</span> <span class="tp">Error</span>(<span class="str">"deadlock detected"</span>);
+    <span class="kw">return</span> <span class="str">"ok"</span>;
+  },
+  {
+    retry: {
+      attempts: <span class="num">3</span>,
+      delay: <span class="num">50</span>,
+      backoff: <span class="str">"exponential"</span>,
+      shouldRetry: (error) =&gt;
+        (error <span class="kw">as</span> <span class="tp">Error</span>).message.<span class="fn">includes</span>(<span class="str">"deadlock"</span>),
+    },
+  },
+);
+
+console.<span class="fn">log</span>(result, tries); <span class="cm">// "ok" 3</span></div>
+        <p class="mb-4 leading-relaxed">
+          <code>attempts</code> counts retries on top of the first try, so <code>attempts: 3</code> means up to four runs. <code>delay</code> is the wait in milliseconds; with <code>backoff: "exponential"</code> it doubles each time (50, 100, 200). Without <code>shouldRetry</code>, every failure is retried — including the constraint violations that will fail identically every time.
+        </p>
       </section>
 
-      <!-- Propagation -->
-      <section id="propagation" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">PROPAGATION</h2>
-        <p class="mb-4">How nested transaction calls behave when a transaction already exists.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">handlePropagation</h3>
-        <div class="code-block"><span class="kw">async function</span> <span class="fn">handlePropagation</span>(
-  current: <span class="tp">Transaction</span>,
-  propagation: <span class="tp">string</span>,
-  opts: <span class="tp">TransactionOptions</span> | <span class="tp">undefined</span>,
-  adapter: <span class="tp">TransactionAdapter</span>,
-  context: <span class="tp">TransactionContext</span>,
-  hooks?: <span class="tp">TransactionHooks</span>,
-): <span class="tp">Promise</span>&lt;<span class="tp">Transaction</span>&gt;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Strategy Table</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Strategy</th>
-                <th class="p-3 text-left">Existing Txn</th>
-                <th class="p-3 text-left">No Existing Txn</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">required</td><td class="p-3">Join existing</td><td class="p-3">Create new</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">requires_new</td><td class="p-3">Suspend existing, create new</td><td class="p-3">Create new</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">supports</td><td class="p-3">Join existing</td><td class="p-3">Run without tx</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">not_supported</td><td class="p-3">Suspend, run without tx</td><td class="p-3">Run without tx</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">mandatory</td><td class="p-3">Join existing</td><td class="p-3">Throw TransactionRequiredError</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">never</td><td class="p-3">Throw TransactionUnexpectedError</td><td class="p-3">Run without tx</td></tr>
-              <tr><td class="p-3 font-mono">nested</td><td class="p-3">Create nested via savepoints</td><td class="p-3">Create new</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">createNestedTransaction</h3>
-        <div class="code-block"><span class="kw">async function</span> <span class="fn">createNestedTransaction</span>(
-  parent: <span class="tp">Transaction</span>,
-  opts: <span class="tp">TransactionOptions</span> | <span class="tp">undefined</span>,
-  adapter: <span class="tp">TransactionAdapter</span>,
-): <span class="tp">Promise</span>&lt;<span class="tp">Transaction</span>&gt;</div>
-        <p class="mt-2 text-sm">Creates a nested transaction using savepoints. The parent must have an adapter handle, and the adapter must support savepoints.</p>
-      </section>
-
-      <!-- Registry -->
-      <section id="registry" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">REGISTRY</h2>
-        <p class="mb-4">Tracks all active transactions for monitoring and diagnostics.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">createTransactionRegistry</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">createTransactionRegistry</span>(): <span class="tp">TransactionRegistry</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Methods</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Method</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">register()</td><td class="p-3">register(txn: Transaction): void</td><td class="p-3">void</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">unregister()</td><td class="p-3">unregister(id: string): void</td><td class="p-3">void</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">get()</td><td class="p-3">get(id: string): Transaction | undefined</td><td class="p-3">Transaction or undefined</td></tr>
-              <tr><td class="p-3 font-mono">getActive()</td><td class="p-3">getActive(): readonly Transaction[]</td><td class="p-3">Frozen array of active transactions</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">createTransactionRegistry</span> } <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
-
-<span class="kw">const</span> registry = <span class="fn">createTransactionRegistry</span>();
-
-registry.<span class="fn">register</span>(transaction);
-console.<span class="fn">log</span>(registry.<span class="fn">getActive</span>()); <span class="cm">// [transaction]</span>
-
-registry.<span class="fn">unregister</span>(transaction.id);
-console.<span class="fn">log</span>(registry.<span class="fn">getActive</span>()); <span class="cm">// []</span></div>
-      </section>
-
-      <!-- Utilities -->
-      <section id="utilities" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">UTILITIES</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">isTerminalState</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">isTerminalState</span>(state: <span class="tp">TransactionState</span>): <span class="tp">boolean</span></div>
-        <p class="mt-2 text-sm">Returns <code>true</code> if the state is <code>committed</code>, <code>rolled_back</code>, or <code>failed</code>.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">isModifiable</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">isModifiable</span>(transaction: <span class="tp">Transaction</span>): <span class="tp">boolean</span></div>
-        <p class="mt-2 text-sm">Returns <code>true</code> if the transaction is in <code>active</code> or <code>pending</code> state.</p>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">summarizeTransaction</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">summarizeTransaction</span>(transaction: <span class="tp">Transaction</span>): <span class="tp">string</span></div>
-        <p class="mt-2 text-sm">Returns a human-readable summary string like: <code>"Transaction txn_a1b2c3, state=active, duration=42ms"</code>.</p>
-      </section>
-
-      <!-- Events -->
-      <section id="events" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">EVENTS</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">TRANSACTION_EVENTS</h3>
-        <div class="code-block"><span class="kw">const</span> <span class="tp">TRANSACTION_EVENTS</span> = {
-  STARTED:      <span class="str">"transaction.started"</span>,
-  COMMITTING:   <span class="str">"transaction.committing"</span>,
-  COMMITTED:    <span class="str">"transaction.committed"</span>,
-  ROLLING_BACK: <span class="str">"transaction.rolling_back"</span>,
-  ROLLED_BACK:  <span class="str">"transaction.rolled_back"</span>,
-  FAILED:       <span class="str">"transaction.failed"</span>,
-  TIMED_OUT:    <span class="str">"transaction.timed_out"</span>,
-} <span class="kw">as const</span>;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">TransactionEventHandler</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">TransactionEventHandler</span> = (event: <span class="tp">TransactionEvent</span>) =&gt; <span class="tp">void</span>;</div>
-
-        <div class="border-4 border-black mt-6">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Event</th>
-                <th class="p-3 text-left">When Emitted</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">transaction.started</td><td class="p-3">Transaction successfully began</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">transaction.committing</td><td class="p-3">Commit process started</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">transaction.committed</td><td class="p-3">Transaction successfully committed</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">transaction.rolling_back</td><td class="p-3">Rollback process started</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">transaction.rolled_back</td><td class="p-3">Transaction successfully rolled back</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">transaction.failed</td><td class="p-3">Transaction failed irrecoverably</td></tr>
-              <tr><td class="p-3 font-mono">transaction.timed_out</td><td class="p-3">Transaction exceeded its timeout</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Error Hierarchy -->
-      <section id="errors" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERROR HIERARCHY</h2>
-        <p class="mb-4">All error types extend <code class="bg-black/5 px-1">TransactionError</code>, which extends <code class="bg-black/5 px-1">BaseError</code> from <code class="bg-black/5 px-1">@zudojs/errors</code>.</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Error</th>
-                <th class="p-3 text-left">ErrorCode</th>
-                <th class="p-3 text-left">When Thrown</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">TransactionError</td><td class="p-3">OPERATION_FAILED</td><td class="p-3">Base error for all transaction failures</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">TransactionStateError</td><td class="p-3">LIFECYCLE_STATE</td><td class="p-3">Invalid state transition attempted</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">TransactionTimeoutError</td><td class="p-3">TIMEOUT</td><td class="p-3">Transaction exceeded its timeout</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">TransactionCommitError</td><td class="p-3">DATABASE_TRANSACTION</td><td class="p-3">Commit failed</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">TransactionRollbackError</td><td class="p-3">DATABASE_TRANSACTION</td><td class="p-3">Rollback failed</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">TransactionAdapterError</td><td class="p-3">ADAPTER_OPERATION_FAILED</td><td class="p-3">Adapter threw an error</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">TransactionPropagationError</td><td class="p-3">VALIDATION_FAILED</td><td class="p-3">Propagation strategy violation</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">TransactionIsolationError</td><td class="p-3">VALIDATION_FAILED</td><td class="p-3">Isolation level not supported by adapter</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SavepointError</td><td class="p-3">OPERATION_FAILED</td><td class="p-3">Savepoint operation failed</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">TransactionRequiredError</td><td class="p-3">PRECONDITION_FAILED</td><td class="p-3">A transaction is required but none exists</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">TransactionUnexpectedError</td><td class="p-3">CONFLICT</td><td class="p-3">A transaction exists but none was expected</td></tr>
-              <tr><td class="p-3 font-mono">TransactionCapabilityError</td><td class="p-3">NOT_IMPLEMENTED</td><td class="p-3">Adapter does not support requested capability</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Error Handling Pattern</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">TransactionError</span>,
-  <span class="tp">TransactionCommitError</span>,
-  <span class="tp">TransactionTimeoutError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
-
-<span class="kw">try</span> {
-  <span class="kw">await</span> manager.<span class="fn">run</span>(<span class="kw">async</span> (txn) => { <span class="cm">/* ... */</span> });
-} <span class="kw">catch</span> (error) {
-  <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">TransactionTimeoutError</span>) {
-    console.<span class="fn">error</span>(<span class="str">"Transaction timed out"</span>, error.metadata);
-  } <span class="kw">else if</span> (error <span class="kw">instanceof</span> <span class="tp">TransactionCommitError</span>) {
-    console.<span class="fn">error</span>(<span class="str">"Commit failed"</span>, error.metadata);
-  } <span class="kw">else if</span> (error <span class="kw">instanceof</span> <span class="tp">TransactionError</span>) {
-    console.<span class="fn">error</span>(<span class="str">"Transaction error"</span>, error.code);
-  }
-}</div>
-      </section>
-
-      <!-- Full Integration Example -->
-      <section id="full-example" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">FULL INTEGRATION EXAMPLE</h2>
-        <p class="mb-4">Complete working example: create adapter, create manager, begin/run/commit/rollback, use hooks, handle propagation, and use savepoints.</p>
-
-        <div class="code-block"><span class="kw">import</span> {
+      <!-- ==================== HOOKS AND REGISTRY ==================== -->
+      <section id="hooks-and-registry" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HOOKS AND REGISTRY</h2>
+        <p class="mb-4 leading-relaxed">
+          A <em>hook</em> is a function the manager calls at a fixed moment in a transaction's life: <code>beforeBegin</code>, <code>afterBegin</code>, <code>beforeCommit</code>, <code>afterCommit</code>, <code>beforeRollback</code>, <code>afterRollback</code> and <code>onError</code>. Hooks belong to the manager and run for every transaction it owns.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          <code>mergeHooks()</code> combines several sets into one, running them in the order you passed them. A <em>registry</em> is a list of the transactions currently open, useful for a health endpoint or a "what is stuck?" log.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
   <span class="fn">createTransactionManager</span>,
   <span class="fn">createInMemoryAdapter</span>,
   <span class="fn">createTransactionRegistry</span>,
-  <span class="fn">createTransactionContext</span>,
   <span class="fn">mergeHooks</span>,
-  <span class="fn">isTerminalState</span>,
-  <span class="fn">summarizeTransaction</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
-<span class="kw">import</span> <span class="kw">type</span> { <span class="tp">TransactionHooks</span>, <span class="tp">TransactionAdapter</span> } <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
+<span class="kw">import type</span> { <span class="tp">TransactionHooks</span> } <span class="kw">from</span> <span class="str">"@zudojs/transactions"</span>;
 
-<span class="cm">// 1. Create a custom adapter with savepoint support</span>
-<span class="kw">const</span> adapter: <span class="tp">TransactionAdapter</span> = {
-  capabilities: {
-    savepoints: <span class="num">true</span>,
-    nestedTransactions: <span class="num">true</span>,
-    isolationLevels: [<span class="str">"read_committed"</span>, <span class="str">"serializable"</span>],
-    readOnlyTransactions: <span class="num">true</span>,
-    timeouts: <span class="num">true</span>,
-  },
-  <span class="kw">async</span> <span class="fn">begin</span>(options) {
-    console.<span class="fn">log</span>(<span class="str">`BEGIN ${options?.name ?? "unnamed"}`</span>);
-    <span class="kw">return</span> { id: <span class="fn">Date.now</span>().<span class="fn">toString</span>() };
-  },
-  <span class="kw">async</span> <span class="fn">commit</span>(handle) {
-    console.<span class="fn">log</span>(<span class="str">"COMMIT"</span>);
-  },
-  <span class="kw">async</span> <span class="fn">rollback</span>(handle, reason) {
-    console.<span class="fn">log</span>(<span class="str">`ROLLBACK: ${reason}`</span>);
-  },
-  <span class="kw">async</span> <span class="fn">createSavepoint</span>(handle, name) {
-    console.<span class="fn">log</span>(<span class="str">`SAVEPOINT ${name}`</span>);
-  },
-  <span class="kw">async</span> <span class="fn">rollbackToSavepoint</span>(handle, name) {
-    console.<span class="fn">log</span>(<span class="str">`ROLLBACK TO SAVEPOINT ${name}`</span>);
-  },
-  <span class="kw">async</span> <span class="fn">releaseSavepoint</span>(handle, name) {
-    console.<span class="fn">log</span>(<span class="str">`RELEASE SAVEPOINT ${name}`</span>);
-  },
-};
-
-<span class="cm">// 2. Create hooks</span>
-<span class="kw">const</span> loggingHooks: <span class="tp">TransactionHooks</span> = {
-  <span class="kw">async</span> <span class="fn">beforeBegin</span>({ transaction }) {
-    console.<span class="fn">log</span>(<span class="str">`[${transaction.id}] Starting`</span>);
+<span class="kw">const</span> logging: <span class="tp">TransactionHooks</span> = {
+  <span class="kw">async</span> <span class="fn">afterBegin</span>({ transaction }) {
+    console.<span class="fn">log</span>(<span class="str">"begin"</span>, transaction.options.name);
   },
   <span class="kw">async</span> <span class="fn">afterCommit</span>({ transaction }) {
-    console.<span class="fn">log</span>(<span class="str">`[${transaction.id}] Committed`</span>);
-  },
-  <span class="kw">async</span> <span class="fn">afterRollback</span>({ transaction }) {
-    console.<span class="fn">log</span>(<span class="str">`[${transaction.id}] Rolled back`</span>);
-  },
-  <span class="kw">async</span> <span class="fn">onError</span>({ transaction, error }) {
-    console.<span class="fn">error</span>(<span class="str">`[${transaction.id}] Error:`, error</span>);
+    console.<span class="fn">log</span>(<span class="str">"commit"</span>, transaction.options.name);
   },
 };
 
-<span class="cm">// 3. Create context and registry</span>
-<span class="kw">const</span> context = <span class="fn">createTransactionContext</span>();
+<span class="kw">const</span> auditing: <span class="tp">TransactionHooks</span> = {
+  <span class="kw">async</span> <span class="fn">onError</span>({ error }) {
+    console.<span class="fn">error</span>(<span class="str">"transaction error"</span>, error);
+  },
+};
+
 <span class="kw">const</span> registry = <span class="fn">createTransactionRegistry</span>();
 
-<span class="cm">// 4. Create the manager</span>
 <span class="kw">const</span> manager = <span class="fn">createTransactionManager</span>({
-  adapter,
-  context,
-  hooks: loggingHooks,
+  adapter: <span class="fn">createInMemoryAdapter</span>(),
+  hooks: <span class="fn">mergeHooks</span>(logging, auditing),
+  registry,
 });
 
-<span class="cm">// 5. Use run() for auto commit/rollback</span>
-<span class="kw">const</span> order = <span class="kw">await</span> manager.<span class="fn">run</span>(<span class="kw">async</span> (txn) => {
-  registry.<span class="fn">register</span>(txn);
+<span class="kw">await</span> manager.<span class="fn">run</span>(<span class="kw">async</span> () =&gt; {
+  console.<span class="fn">log</span>(registry.<span class="fn">getActive</span>().length); <span class="cm">// 1</span>
+}, { name: <span class="str">"place-order"</span> });
 
-  <span class="cm">// Inner transaction with nested propagation</span>
-  <span class="kw">const</span> nested = <span class="kw">await</span> manager.<span class="fn">begin</span>({
-    propagation: <span class="str">"nested"</span>,
-    name: <span class="str">"nested-check"</span>,
+console.<span class="fn">log</span>(registry.<span class="fn">getActive</span>().length); <span class="cm">// 0</span></div>
+        <p class="mb-4 leading-relaxed">
+          You should see <code>begin place-order</code>, then <code>1</code>, then <code>commit place-order</code>, then <code>0</code>. Participants are not registered separately — the registry tracks the transactions the manager actually owns.
+        </p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Per-transaction callbacks</h3>
+        <p class="mb-4 leading-relaxed">
+          <code>afterCommit()</code> and <code>afterRollback()</code> on the transaction itself register callbacks for that one transaction. Use <code>afterCommit</code> for side effects that must not happen unless the data really landed, such as sending an email or publishing an event.
+        </p>
+        <div class="code-block mb-4"><span class="kw">await</span> manager.<span class="fn">run</span>(<span class="kw">async</span> (transaction) =&gt; {
+  transaction.<span class="fn">afterCommit</span>(<span class="kw">async</span> () =&gt; {
+    console.<span class="fn">log</span>(<span class="str">"order confirmation sent"</span>);
   });
-
-  console.<span class="fn">log</span>(<span class="fn">summarizeTransaction</span>(nested));
-
-  <span class="cm">// ... do nested work</span>
-  <span class="kw">await</span> manager.<span class="fn">commit</span>(nested);
-
-  registry.<span class="fn">unregister</span>(txn.id);
-  <span class="kw">return</span> { orderId: <span class="str">"ord_456"</span> };
-}, {
-  name: <span class="str">"create-order"</span>,
-  timeout: <span class="num">30000</span>,
-  isolation: <span class="str">"read_committed"</span>,
 });
-
-<span class="cm">// 6. Check transaction status</span>
-<span class="kw">const</span> active = registry.<span class="fn">getActive</span>();
-console.<span class="fn">log</span>(<span class="str">"Active transactions:"</span>, active.length);
-
-<span class="cm">// 7. Error handling with manual control</span>
-<span class="kw">const</span> txn = <span class="kw">await</span> manager.<span class="fn">begin</span>({
-  propagation: <span class="str">"required"</span>,
-  name: <span class="str">"manual-tx"</span>,
-});
-
-<span class="kw">try</span> {
-  <span class="cm">// ... risky operations</span>
-  <span class="kw">if</span> (<span class="fn">isTerminalState</span>(txn.state)) <span class="kw">return</span>;
-  <span class="kw">await</span> manager.<span class="fn">commit</span>(txn);
-} <span class="kw">catch</span> (error) {
-  <span class="kw">await</span> manager.<span class="fn">rollback</span>(txn, error);
-}</div>
+<span class="cm">// prints "order confirmation sent" after the commit succeeds</span></div>
       </section>
 
+      <!-- ==================== API REFERENCE ==================== -->
+      <section id="api-reference" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">API REFERENCE</h2>
+        <p class="mb-4 leading-relaxed">Everything below is exported from <code>@zudojs/transactions</code>. Most apps only need <code>createTransactionManager</code>, an adapter, and <code>manager.run()</code>.</p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Functions</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>createTransactionManager({ adapter, context?, hooks?, registry? })</code></td><td>Builds the manager you call from app code.</td><td><code>adapter</code> is required; the context defaults to a shared <code>AsyncLocalStorage</code> one.</td></tr>
+              <tr><td><code>createInMemoryAdapter()</code></td><td>Adapter that keeps handles in memory and emulates savepoints.</td><td>For tests and examples. Declares every capability.</td></tr>
+              <tr><td><code>createAdapter(implementation, capabilities)</code></td><td>Copies an adapter with a frozen capability list.</td><td>Handy when one driver is used at two capability levels.</td></tr>
+              <tr><td><code>createTransactionContext()</code></td><td>A fresh <code>AsyncLocalStorage</code>-backed context.</td><td>Pass as <code>context</code> to isolate a manager, as the tests do.</td></tr>
+              <tr><td><code>getDefaultContext()</code> / <code>resetDefaultContext()</code></td><td>Read or discard the shared default context.</td><td><code>reset</code> is for tests.</td></tr>
+              <tr><td><code>createTransactionRegistry()</code></td><td>In-memory list of open transactions.</td><td>Pass as <code>registry</code>; read with <code>getActive()</code>.</td></tr>
+              <tr><td><code>mergeHooks(...hookSets)</code></td><td>Combines hook objects into one.</td><td>Earlier sets run first for each event.</td></tr>
+              <tr><td><code>createTransaction(options?, parentId?, kind?)</code></td><td>Builds a bare transaction in <code>pending</code> state.</td><td>The manager calls this for you. Direct use is rare.</td></tr>
+              <tr><td><code>createParticipant(parent)</code> / <code>createNonTransactional(options?)</code></td><td>The handles <code>required</code> and <code>not_supported</code> hand back.</td><td>Exposed for custom propagation logic.</td></tr>
+              <tr><td><code>isTerminalState(state)</code></td><td><code>true</code> for <code>committed</code>, <code>rolled_back</code>, <code>failed</code>.</td><td>Works on a state string.</td></tr>
+              <tr><td><code>isModifiable(transaction)</code></td><td><code>true</code> while the state is <code>active</code> or <code>pending</code>.</td><td>Takes a transaction, not a state.</td></tr>
+              <tr><td><code>summarizeTransaction(transaction)</code></td><td>One-line summary for logs.</td><td>e.g. <code>"Transaction txn_ab12, state=active, duration=42ms"</code>.</td></tr>
+              <tr><td><code>canTransition(from, to)</code> / <code>isTerminal(state)</code> / <code>createTransitionFunction(get, set)</code></td><td>The state machine rules, on their own.</td><td>For custom <code>Transaction</code> implementations.</td></tr>
+              <tr><td><code>asSavepointHandle(handle)</code></td><td>Narrows a handle to <code>{ parent, savepoint }</code>, or <code>undefined</code>.</td><td>For adapters that inspect nested handles.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Manager methods</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>run&lt;T&gt;(callback, options?)</code></td><td>Opens a transaction, runs the callback, commits or rolls back.</td><td>Returns whatever the callback returns. Honours <code>retry</code>.</td></tr>
+              <tr><td><code>begin(options?)</code></td><td>Opens a transaction and returns it.</td><td>You must commit or roll it back yourself.</td></tr>
+              <tr><td><code>commit(transaction)</code></td><td>Commits it, or rolls back if it is rollback-only.</td><td>No-op for participants and already-committed transactions; throws otherwise when not <code>active</code>.</td></tr>
+              <tr><td><code>rollback(transaction, reason?)</code></td><td>Rolls back, or marks the joined transaction rollback-only.</td><td>Already-finished transactions are a no-op.</td></tr>
+              <tr><td><code>getCurrent()</code></td><td>The transaction in scope right now, or <code>undefined</code>.</td><td>Reads the async context.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Transaction members</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>id</code>, <code>parentId</code>, <code>startedAt</code></td><td>Identity and start time.</td><td><code>id</code> looks like <code>txn_ab12…</code>; a participant shares the id it joined.</td></tr>
+              <tr><td><code>kind</code></td><td><code>"root"</code>, <code>"participant"</code>, <code>"savepoint"</code> or <code>"none"</code>.</td><td>How the manager routes commit and rollback.</td></tr>
+              <tr><td><code>state</code>, <code>timedOut</code></td><td>Lifecycle state and whether the timeout fired.</td><td>See the state table above.</td></tr>
+              <tr><td><code>options</code>, <code>metadata</code></td><td>The options it was opened with; metadata as a map.</td><td><code>metadata</code> hands back a copy, so writing to it changes nothing.</td></tr>
+              <tr><td><code>markRollbackOnly(reason?)</code> / <code>isRollbackOnly()</code></td><td>Forbid the commit / ask whether it was forbidden.</td><td>On a participant, both apply to the joined transaction.</td></tr>
+              <tr><td><code>afterCommit(cb)</code> / <code>afterRollback(cb)</code></td><td>Run a callback once this transaction ends that way.</td><td>The other list is discarded, so exactly one set runs.</td></tr>
+              <tr><td><code>commit()</code> / <code>rollback(reason?)</code></td><td>Move the transaction's own state.</td><td>Call <code>manager.commit()</code> instead — these do not touch the adapter.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Options</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>propagation</code></td><td>What to do when a transaction is already open.</td><td>Default <code>"required"</code>. See the table above.</td></tr>
+              <tr><td><code>isolation</code></td><td>Isolation level to ask the adapter for.</td><td>Must appear in the adapter's <code>isolationLevels</code>.</td></tr>
+              <tr><td><code>timeout</code></td><td>Milliseconds before the transaction is marked rollback-only.</td><td><code>0</code> or omitted means no timeout. Needs <code>timeouts: true</code>.</td></tr>
+              <tr><td><code>readOnly</code></td><td>Asks the adapter for a read-only transaction.</td><td>Needs <code>readOnlyTransactions: true</code>.</td></tr>
+              <tr><td><code>name</code>, <code>metadata</code></td><td>Labels for logs and hooks.</td><td>Never interpreted by the package.</td></tr>
+              <tr><td><code>retry</code></td><td><code>{ attempts?, delay?, backoff?, shouldRetry? }</code>.</td><td>Only honoured by <code>run()</code>, not by <code>begin()</code>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Errors</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>TransactionError</code></td><td>Base class for every error here.</td><td>Extends <code>BaseError</code> from <a href="/docs/packages-errors" class="font-bold text-zudo-blue hover:underline">@zudojs/errors</a>.</td></tr>
+              <tr><td><code>TransactionStateError</code></td><td>The transaction is in the wrong state for what you asked.</td><td>Thrown by commit, rollback and illegal transitions.</td></tr>
+              <tr><td><code>TransactionRollbackError</code></td><td>The commit turned into a rollback, or the rollback itself failed.</td><td>This is what a rollback-only or timed-out commit rejects with.</td></tr>
+              <tr><td><code>TransactionCommitError</code></td><td>The adapter refused the commit.</td><td>The driver error is in <code>cause</code>.</td></tr>
+              <tr><td><code>TransactionAdapterError</code></td><td>A requested capability is missing, or the adapter misbehaved.</td><td>Thrown before any work starts.</td></tr>
+              <tr><td><code>TransactionPropagationError</code></td><td>A propagation rule was broken.</td><td><code>mandatory</code> with nothing open, <code>never</code> with something open, an unknown mode.</td></tr>
+              <tr><td><code>TransactionTimeoutError</code>, <code>TransactionIsolationError</code>, <code>SavepointError</code>, <code>TransactionRequiredError</code>, <code>TransactionUnexpectedError</code>, <code>TransactionCapabilityError</code></td><td>Extra error classes you can throw from your own adapters and services.</td><td>The package itself never throws these.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Types and constants</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>Transaction</code>, <code>TransactionOptions</code>, <code>TransactionRetryOptions</code></td><td>The handle you are given and the options you pass.</td><td>Type-only exports.</td></tr>
+              <tr><td><code>TransactionState</code>, <code>TransactionPropagation</code>, <code>TransactionIsolationLevel</code></td><td>The string unions used above.</td><td>Useful for typing your own wrappers.</td></tr>
+              <tr><td><code>TransactionAdapter</code>, <code>TransactionAdapterCapabilities</code>, <code>TransactionHandle</code></td><td>The adapter contract.</td><td>Implement the first; <code>TransactionHandle</code> is <code>unknown</code>.</td></tr>
+              <tr><td><code>TransactionContext</code></td><td>Contract for async propagation: <code>get</code>, <code>run</code>, <code>exit</code>.</td><td>A custom context must implement <code>exit</code>.</td></tr>
+              <tr><td><code>TransactionHooks</code>, <code>TransactionHookContext</code>, <code>TransactionErrorContext</code></td><td>Hook shapes.</td><td>Hooks receive <code>{ transaction }</code>, <code>onError</code> also <code>{ error }</code>.</td></tr>
+              <tr><td><code>TransactionRegistry</code></td><td>Contract for a registry.</td><td>Implement it to publish open transactions elsewhere.</td></tr>
+              <tr><td><code>Savepoint</code>, <code>TransactionResult</code></td><td>Shapes for savepoint objects and run results.</td><td>Declarations only — nothing in the package returns one.</td></tr>
+              <tr><td><code>TRANSACTION_EVENTS</code>, <code>TransactionEvent</code>, <code>TransactionEventHandler</code></td><td>Names and shapes for transaction lifecycle events.</td><td>Constants and types only; the package emits nothing. Publish them from hooks yourself.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout callout-note">
+          <p class="text-sm">Transaction internals (<code>_setHandle</code>, <code>_transition</code>, <code>_markTimedOut</code>) live behind a private symbol and are not reachable from the package's exports. Drive the state machine through the manager.</p>
+        </div>
+      </section>
+
+      <!-- ==================== COMMON MISTAKES ==================== -->
+      <section id="common-mistakes" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMON MISTAKES</h2>
+        <ul class="space-y-4">
+          <li class="border-2 border-black p-4">
+            <p class="text-sm"><strong>Committing the handle an inner <code>run()</code> gave you.</strong> With the default <code>required</code> propagation that handle is a participant, so <code>manager.commit(inner)</code> does nothing and the outer transaction is still open. Let the scope that opened the transaction finish it.</p>
+          </li>
+          <li class="border-2 border-black p-4">
+            <p class="text-sm"><strong>Swallowing an inner failure and committing anyway.</strong> A failing participant marks the enclosing transaction rollback-only, so the outer <code>commit()</code> rejects with <code>TransactionRollbackError</code> even though you caught the error. If a step is genuinely optional, run it with <code>propagation: "nested"</code> so only its savepoint is undone.</p>
+          </li>
+          <li class="border-2 border-black p-4">
+            <p class="text-sm"><strong>Sending the email inside the callback.</strong> If the commit later fails, the mail is already gone. Register it with <code>transaction.afterCommit()</code> so it only runs once the data is really saved.</p>
+          </li>
+          <li class="border-2 border-black p-4">
+            <p class="text-sm"><strong>Retrying everything.</strong> Without <code>shouldRetry</code>, a constraint violation is replayed until the attempts run out — slower, and the error is the same each time. Return <code>true</code> only for deadlocks and serialization failures.</p>
+          </li>
+          <li class="border-2 border-black p-4">
+            <p class="text-sm"><strong>Expecting <code>timeout</code> to cancel the work.</strong> It marks the transaction rollback-only, so the result is thrown away, but your callback keeps running to the end. Add your own cancellation if the work itself must stop.</p>
+          </li>
+          <li class="border-2 border-black p-4">
+            <p class="text-sm"><strong>Declaring capabilities the adapter does not have.</strong> Claiming <code>savepoints: true</code> without implementing <code>createSavepoint</code> makes <code>propagation: "nested"</code> throw; claiming isolation levels the driver ignores means a <code>serializable</code> unit of work silently runs at the default. Declare only what you implement.</p>
+          </li>
+          <li class="border-2 border-black p-4">
+            <p class="text-sm"><strong>Reaching for <code>requires_new</code> to "just commit this bit".</strong> It opens a second transaction on top of the first. On a single-connection driver the two can deadlock, and its writes survive the outer rollback. Use <code>nested</code> unless you truly want independent work.</p>
+          </li>
+        </ul>
+      </section>
+
+      <!-- ==================== RELATED ==================== -->
+      <section id="related" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATED PACKAGES</h2>
+        <ul class="space-y-3">
+          <li><a href="/docs/packages-database" class="font-bold text-zudo-blue hover:underline">@zudojs/database</a> — the connection and query side. Your adapter's <code>begin</code>, <code>commit</code> and <code>rollback</code> are written against it.</li>
+          <li><a href="/docs/packages-errors" class="font-bold text-zudo-blue hover:underline">@zudojs/errors</a> — the <code>BaseError</code> every transaction error extends, and the codes you match on.</li>
+          <li><a href="/docs/packages-cqrs" class="font-bold text-zudo-blue hover:underline">@zudojs/cqrs</a> — command handlers are the natural place to wrap one unit of work per command.</li>
+          <li><a href="/docs/packages-events" class="font-bold text-zudo-blue hover:underline">@zudojs/events</a> — publish from <code>afterCommit</code> so events only leave once the data is saved.</li>
+          <li><a href="/docs/packages-testing" class="font-bold text-zudo-blue hover:underline">@zudojs/testing</a> — helpers for the tests where <code>createInMemoryAdapter()</code> stands in for a database.</li>
+        </ul>
+      </section>
+
+      <!-- EXPORT INDEX -->
+      <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/transactions</code> exports from its package root at v1.0.0 &mdash; <strong>53</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <details class="border-2 border-black p-5 bg-white">
+          <summary class="font-bold cursor-pointer select-none">Show all 53 exports</summary>
+          <div class="mt-5">
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Re-exported <span class="text-black/40 font-normal">(53)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SavepointError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SavepointHandle</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TRANSACTION_EVENTS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Transaction</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionAdapter</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionAdapterCapabilities</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionAdapterError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionCapabilityError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionCommitError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionEmitter</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionErrorContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionEventHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionHandle</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionHookContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionHooks</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionIsolationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionIsolationLevel</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionKind</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionManagerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionPropagation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionPropagationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionRequiredError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionRetryOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionRetryPredicate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionRollbackError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionStateError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransactionUnexpectedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">asSavepointHandle</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">canTransition</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createAdapter</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createEmitter</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createInMemoryAdapter</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createNonTransactional</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createParticipant</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createTransaction</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createTransactionContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createTransactionManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createTransactionRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createTransitionFunction</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getDefaultContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isModifiable</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isTerminal</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isTerminalState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">mergeHooks</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">resetDefaultContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">summarizeTransaction</code></div>
+          </div>
+          </div>
+        </details>
+      </section>
     </main>
 
     <!-- TABLE OF CONTENTS -->
     <aside class="doc-toc" aria-label="On this page">
       <div class="text-xs font-bold uppercase tracking-wider mb-4 text-black/40">On This Page</div>
+      <a href="#overview" class="toc-link">Overview</a>
       <a href="#installation" class="toc-link">Installation</a>
-      <a href="#what-it-does" class="toc-link">What It Does</a>
-      <a href="#architecture-position" class="toc-link">Where It Sits</a>
-      <a href="#dependencies" class="toc-link">Dependencies</a>
-      <a href="#types" class="toc-link">Types</a>
-      <a href="#interfaces" class="toc-link">Interfaces</a>
-      <a href="#create-transaction" class="toc-link">Transaction</a>
-      <a href="#state-machine" class="toc-link">State Machine</a>
-      <a href="#context" class="toc-link">Context</a>
-      <a href="#adapter" class="toc-link">Adapter</a>
-      <a href="#hooks" class="toc-link">Hooks</a>
-      <a href="#manager" class="toc-link">Manager</a>
-      <a href="#propagation" class="toc-link">Propagation</a>
-      <a href="#registry" class="toc-link">Registry</a>
-      <a href="#utilities" class="toc-link">Utilities</a>
-      <a href="#events" class="toc-link">Events</a>
-      <a href="#errors" class="toc-link">Errors</a>
-      <a href="#full-example" class="toc-link">Full Example</a>
+      <a href="#quick-start" class="toc-link">Quick Start</a>
+      <a href="#unit-of-work" class="toc-link">Unit of Work</a>
+      <a href="#adapters" class="toc-link">Adapters</a>
+      <a href="#propagation" class="toc-link">Nesting and Propagation</a>
+      <a href="#savepoints" class="toc-link">Savepoints</a>
+      <a href="#rollback-only" class="toc-link">Rollback-Only and Timeouts</a>
+      <a href="#retries" class="toc-link">Retries</a>
+      <a href="#hooks-and-registry" class="toc-link">Hooks and Registry</a>
+      <a href="#api-reference" class="toc-link">API Reference</a>
+      <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
+      <a href="#related" class="toc-link">Related Packages</a>
+          <a href="#export-index" class="toc-link">Complete Export Index</a>
     </aside>
 
   </div>
@@ -1005,5 +784,6 @@ console.<span class="fn">log</span>(<span class="str">"Active transactions:"</sp
   <script src="/js/docs.js"></script>
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 </body>
 </html>

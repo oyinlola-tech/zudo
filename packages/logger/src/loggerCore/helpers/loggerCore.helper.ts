@@ -2,6 +2,8 @@
  * Logger helper functions.
  */
 
+import { LoggerLevel } from "../../loggerLevel/loggerLevel.type.js";
+
 import type { LogMetadata } from "../../loggerEntry/loggerEntry.type.js";
 
 import type { LoggerContext } from "../../loggerContext/loggerContext.core.js";
@@ -13,8 +15,6 @@ import { createConsoleLoggerTransport } from "../../loggerTransport/loggerTransp
 import type { ChildLoggerOptions } from "../../loggerOptions/loggerOptions.type.js";
 
 import type { Logger } from "../core/loggerCore.type.js";
-
-import { ContextLogger } from "../core/loggerCore.context.js";
 
 import { createLogger } from "../core/loggerCore.core.js";
 
@@ -41,27 +41,26 @@ export function logError(
     return;
   }
 
-  logger.log(1, message ?? error.message, {
+  logger.log(LoggerLevel.ERROR, message ?? error.message, {
     metadata,
     error,
   });
 }
 
 /**
- * Creates a logger context and executes a callback inside it.
+ * Creates a context-scoped logger and runs a callback with it.
+ *
+ * The scoped logger is passed to the callback. Both branches of the
+ * previous implementation were identical and simply discarded the
+ * scoped logger, so the context never applied to anything the callback
+ * logged.
  */
 export function withLoggerContext<T>(
   logger: Logger,
   context: LoggerContext,
-  callback: () => T,
+  callback: (scoped: Logger) => T,
 ): T {
-  const scoped = logger.withContext(context);
-
-  if (scoped instanceof ContextLogger) {
-    return callback();
-  }
-
-  return callback();
+  return callback(logger.withContext(context));
 }
 
 /**
@@ -70,7 +69,7 @@ export function withLoggerContext<T>(
 export function createDefaultLogger(name = "zudojs"): Logger {
   return createLogger({
     name,
-    level: 3,
+    level: LoggerLevel.INFO,
     formatter: createTextLoggerFormatter(),
     transports: [createConsoleLoggerTransport()],
   });

@@ -10,6 +10,7 @@ import { FrontendAdapterRegistry } from "../../registries/adapter/frontendAdapte
 import { PackageManagerRegistry } from "../../registries/adapter/packageManagerRegistry.core.js";
 import { DependencyResolver } from "../../resolvers/dependency/dependencyResolver.core.js";
 import { CLIGenerationError } from "../../errors/index.js";
+import { runFrontendPipeline } from "./frontendPipeline.js";
 
 /**
  * Frontend generation options.
@@ -80,40 +81,14 @@ export class FrontendGenerator {
     const errors: string[] = [];
 
     try {
-      // 1. Scaffold using official tool
-      await adapter.scaffold(context);
-      files.push("scaffold");
-
-      // 2. Apply Zudojs structure
-      await adapter.applyZudojsStructure(context);
-      files.push("structure");
-
-      // 3. Resolve and install dependencies
-      const deps = adapter.getDependencies(context);
-      const resolution = this.dependencyResolver.resolve(deps);
-
-      if (resolution.conflicts.length > 0) {
-        for (const conflict of resolution.conflicts) {
-          errors.push(`Conflict: ${conflict.reason}`);
-        }
-        return { success: false, framework: options.framework, files, errors };
-      }
-
-      // 4. Install dependencies
-      const pmName = options.packageManager ?? "pnpm";
-      const packageManager = this.packageManagerRegistry.get(pmName);
-
-      if (packageManager) {
-        const devDeps = resolution.devDependencies.map((d) => d.name);
-        await packageManager.addDev(options.projectPath, devDeps);
-        files.push("dependencies");
-      }
-
-      // 5. Validate
-      const validation = await adapter.validate(context);
-      if (!validation.valid) {
-        errors.push(...validation.errors);
-      }
+      const outcome = await runFrontendPipeline(
+        adapter,
+        context,
+        this.packageManagerRegistry,
+        this.dependencyResolver,
+      );
+      files.push(...outcome.files);
+      errors.push(...outcome.errors);
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error));
     }

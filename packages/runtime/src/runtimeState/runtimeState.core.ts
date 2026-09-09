@@ -1,3 +1,5 @@
+import { RuntimeStateError } from "../runtimeError/runtimeError.base.js";
+
 import type { RuntimeState, RuntimeStatus } from "./runtimeState.type.js";
 
 /**
@@ -53,11 +55,20 @@ export function canTransition(from: RuntimeState, to: RuntimeState): boolean {
 
 /**
  * Asserts that a state transition is valid.
+ *
+ * Throws {@link RuntimeStateError} rather than a bare `Error`: every other
+ * runtime failure is typed, and a caller that branches on the error type
+ * could not catch this one.
  */
 export function assertTransition(from: RuntimeState, to: RuntimeState): void {
   if (!canTransition(from, to)) {
-    throw new Error(
-      `Invalid runtime state transition from "${from}" to "${to}".`,
+    throw new RuntimeStateError(
+      `Invalid runtime state transition from "${from}" to "${to}". ` +
+        `Valid transitions from "${from}" are: ${
+          RUNTIME_STATE_TRANSITIONS[from].length > 0
+            ? RUNTIME_STATE_TRANSITIONS[from].map((s) => `"${s}"`).join(", ")
+            : "none — it is a terminal state"
+        }.`,
     );
   }
 }

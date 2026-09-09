@@ -18,12 +18,23 @@ import { normalizeRegistryEventType } from "./eventRegistry.registration.js";
 /**
  * Returns enabled handlers matching an event, sorted by priority,
  * exactly as the emitter would dispatch them.
+ *
+ * The event's type is normalized before matching, mirroring
+ * getHandlersForType(). Handler patterns are normalized when they
+ * are registered, so an event whose `type` preserves its original
+ * casing (as CQRS domain events do) still routes to the handlers
+ * that registered for it. Only the routing key is normalized; the
+ * event object handed to handlers is left untouched.
  */
 export function getHandlersForEvent(
   handlers: Map<string, EventHandlerEntry>,
   event: Event,
 ): readonly RegisteredEventHandler[] {
-  return getMatchingEventHandlers(getAllHandlers(handlers), event);
+  const type = normalizeRegistryEventType(event.type);
+
+  const routed: Event = event.type === type ? event : { ...event, type };
+
+  return getMatchingEventHandlers(getAllHandlers(handlers), routed);
 }
 
 /**

@@ -15,6 +15,9 @@ export interface ObjectMetadata {
   readonly contentType?: string;
   readonly size: number;
   readonly lastModified: Date;
+  /** Cache-control directive recorded when the object was stored. */
+  readonly cacheControl?: string;
+  /** Content hash of the stored bytes, set by implementations that compute one. */
   readonly etag?: string;
   readonly metadata?: Record<string, string>;
 }

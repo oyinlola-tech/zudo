@@ -87,7 +87,11 @@ function toYaml(value: unknown, indent: number, seen: WeakSet<object>): string {
     case "string":
       return yamlScalar(value);
     case "number":
-      return Number.isFinite(value) ? String(value) : ".nan";
+      if (Number.isFinite(value)) return String(value);
+      // YAML distinguishes infinity from not-a-number; collapsing both onto
+      // `.nan` turns an out-of-range bound into an unrepresentable one.
+      if (Number.isNaN(value)) return ".nan";
+      return value > 0 ? ".inf" : "-.inf";
     case "boolean":
       return value ? "true" : "false";
     case "bigint":

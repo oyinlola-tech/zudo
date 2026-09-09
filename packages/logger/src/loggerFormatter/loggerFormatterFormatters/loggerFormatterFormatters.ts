@@ -13,6 +13,8 @@ import type {
 
 import { createLoggerFormatter } from "../loggerFormatter.core.js";
 
+import { escapeLogText } from "../../loggerEntry/loggerEntryHelpers/loggerEntryHelpers.sanitize.js";
+
 import { createJsonLoggerFormatter } from "./loggerFormatterFormatters.json.js";
 import { createTextLoggerFormatter } from "./loggerFormatterFormatters.text.js";
 
@@ -26,9 +28,9 @@ export function createCompactLoggerFormatter(
     (entry) => {
       const level = entry.levelName.toUpperCase();
 
-      const logger = entry.logger ? ` ${entry.logger}:` : "";
+      const logger = entry.logger ? ` ${escapeLogText(entry.logger)}:` : "";
 
-      return `${level}${logger} ${entry.message}`;
+      return `${level}${logger} ${escapeLogText(entry.message)}`;
     },
     {
       name: options.name ?? "compact",

@@ -4,6 +4,8 @@
  * @module generators/integration
  */
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { ProjectConfiguration } from "../../types/projectConfiguration.type.js";
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
 
@@ -37,15 +39,25 @@ export class IntegrationGenerator {
       files[apiPath] = apiClient;
     }
 
-    // CORS configuration for backend
-    files["config/cors.ts"] = this.generateCorsConfig(context);
+    // CORS configuration, written next to the backend it configures. In a
+    // fullstack workspace the backend lives in apps/api; writing it at the
+    // workspace root left it where nothing could import it.
+    files[`${this.getBackendPath(context)}config/cors.ts`] =
+      this.generateCorsConfig(context);
 
-    // Development proxy configuration (belongs to the frontend app).
+    // Development proxy configuration (belongs to the frontend app). The
+    // frontend adapter has already written a vite.config.ts carrying the
+    // framework plugin and path aliases; overwriting it with this minimal
+    // proxy-only config silently destroyed that work, so only create the
+    // file when the adapter did not.
     if (
       context.project.frontend?.framework === "react" ||
       context.project.frontend?.framework === "vue"
     ) {
-      files["apps/web/vite.config.ts"] = this.generateViteProxy(context);
+      const viteConfigPath = "apps/web/vite.config.ts";
+      if (!existsSync(join(context.projectPath, viteConfigPath))) {
+        files[viteConfigPath] = this.generateViteProxy(context);
+      }
     }
 
     await writeFileTree(context.projectPath, files);
@@ -60,6 +72,10 @@ export class IntegrationGenerator {
       `API_URL=http://localhost:${backendPort}`,
       "",
       "# Frontend",
+      // The frontend dev-server port was accepted, defaulted and then never
+      // written anywhere, so nothing downstream could agree with the CORS
+      // origins generated from the same value.
+      `FRONTEND_PORT=${frontendPort}`,
       `VITE_API_URL=http://localhost:${backendPort}`,
       "",
       "# Database",
@@ -74,6 +90,15 @@ export class IntegrationGenerator {
     }
 
     return lines.join("\n");
+  }
+
+  /**
+   * Path prefix (relative to projectPath) of the backend application.
+   *
+   * Ends with a "/" when non-empty so it can be prefixed directly.
+   */
+  private getBackendPath(context: IntegrationContext): string {
+    return context.project.type === "fullstack" ? "apps/api/" : "";
   }
 
   private generateApiClient(context: IntegrationContext): string {

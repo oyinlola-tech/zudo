@@ -1,4 +1,5 @@
 import { BackoffType } from "../jobTypes/jobTypes.type.js";
+import type { BackoffStrategy } from "../jobTypes/jobTypes.type.js";
 
 import type { BackoffOptions } from "../jobOptions/jobOptions.type.js";
 
@@ -121,7 +122,7 @@ export function shouldRetry(attempt: number, maxAttempts: number): boolean {
  * Creates a backoff options object.
  */
 export function createBackoffOptions(
-  type: BackoffType,
+  type: BackoffStrategy,
   delay: number,
   options?: {
     maxDelay?: number;

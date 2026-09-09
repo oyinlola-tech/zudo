@@ -6,7 +6,7 @@
  */
 export { createProcessorRegistry } from "./processor.core.js";
 
-export { isProcessor } from "./processor.type.js";
+export { assertProcessor, isProcessor } from "./processor.type.js";
 
 export type {
   Processor,

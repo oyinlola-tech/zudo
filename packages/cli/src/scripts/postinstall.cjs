@@ -41,7 +41,28 @@ async function checkLatestVersion(packageName) {
   }
 }
 
+/**
+ * Whether the update check should be skipped.
+ *
+ * The check reaches out to registry.npmjs.org on every install. That is
+ * unwanted in CI, in Docker builds and on air-gapped machines, and there was
+ * previously no way to turn it off.
+ */
+function shouldSkip() {
+  if (process.env.ZUDOJS_NO_UPDATE_CHECK) return true;
+  if (process.env.CI) return true;
+  if (process.env.NODE_ENV === "test") return true;
+  if (process.env.npm_config_offline === "true") return true;
+  // Only a global install is the one the user upgrades with `npm i -g`.
+  if (process.env.npm_config_global !== "true") return true;
+  return false;
+}
+
 async function main() {
+  if (shouldSkip()) {
+    return;
+  }
+
   const installed = getInstalledVersion();
   const latest = await checkLatestVersion("zudojs-cli");
 

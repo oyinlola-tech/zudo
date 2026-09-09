@@ -10,9 +10,12 @@ describe("RPCServer", () => {
   it("registers and dispatches a procedure", async () => {
     const server = new RPCServer();
     server.register(
-      createRPCProcedure("users.get", async (input) => {
-        return { id: input.id, name: "Alice" };
-      }),
+      createRPCProcedure<{ id: string }, { id: string; name: string }>(
+        "users.get",
+        async (input) => {
+          return { id: input.id, name: "Alice" };
+        },
+      ),
     );
 
     const request = createRPCRequest({

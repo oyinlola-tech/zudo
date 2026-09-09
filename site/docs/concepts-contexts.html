@@ -98,6 +98,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -151,7 +152,7 @@
 
       <!-- PAGE HEADER -->
             <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">Execution Contexts</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           AsyncLocalStorage-based context propagation across async boundaries.
@@ -166,155 +167,250 @@
       <!-- CONTENT -->
       <div class="flex">
         <div class="content-area flex-1 px-6 py-10">
-
           <!-- OVERVIEW -->
           <section aria-labelledby="overview">
             <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="overview">Overview</h2>
             <p class="text-body text-black/80 mb-4">
-              Zudo uses <span class="code-inline">AsyncLocalStorage</span> to propagate execution context across async call chains. This means request-scoped data (user identity, correlation IDs, tenant info) is available anywhere in the call stack without explicit parameter passing.
+              An <em>execution context</em> is a small read-only record of what is happening right now: one HTTP request, one background job, one message being consumed.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              The point is to stop threading the same argument through every function. Without a context, a request id has to be passed from the route handler, into the service, into the repository, into the logger. With one, any of those can simply read it.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              Zudo keeps the current context in a <span class="code-inline">ContextStorage</span>, built on Node's <span class="code-inline">AsyncLocalStorage</span>. Anything called inside <span class="code-inline">run()</span> can read it, even after an <span class="code-inline">await</span>.
             </p>
             <div class="callout callout-note mb-6">
-              <strong class="text-sm uppercase tracking-wider text-zudo-blue">Architecture Position</strong>
-              <p class="text-sm mt-1">Contexts are a runtime primitive used by <span class="code-inline">@zudojs/core</span>, <span class="code-inline">@zudojs/tenancy</span>, <span class="code-inline">@zudojs/transactions</span>, and <span class="code-inline">@zudojs/observability</span>.</p>
+              <strong class="text-sm uppercase tracking-wider text-zudo-blue">Source of truth</strong>
+              <p class="text-sm mt-1">These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest <span class="code-inline">@zudojs</span> release. Contexts live in <span class="code-inline">@zudojs/core</span>.</p>
             </div>
           </section>
 
-          <!-- WHAT IS EXECUTION CONTEXT -->
-          <section class="mt-12" aria-labelledby="what-is">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="what-is">What Is Execution Context</h2>
+          <!-- THE RECORD -->
+          <section class="mt-12" aria-labelledby="the-record">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="the-record">What Is in a Context</h2>
             <p class="text-body text-black/80 mb-4">
-              Execution context is a data envelope that travels with every request through your application. It carries metadata that services need without cluttering function signatures.
+              <span class="code-inline">createExecutionContext()</span> builds one. Every field is optional except the two it fills in for you, and the whole object is frozen — you never change a context, you make a new one.
             </p>
-            <div class="code-block p-4 mb-4"><span class="cmt">// Context carries request-scoped data</span>
-<span class="kw">interface</span> <span class="tp">ExecutionContext</span> {
-  <span class="op">requestId:</span> <span class="tp">RequestId</span>;      <span class="cmt">// Unique request identifier</span>
-  <span class="op">correlationId:</span> <span class="tp">CorrelationId</span>; <span class="cmt">// Traces across services</span>
-  <span class="op">userId?:</span> <span class="tp">UserId</span>;          <span class="cmt">// Authenticated user</span>
-  <span class="op">tenantId?:</span> <span class="tp">TenantId</span>;      <span class="cmt">// Multi-tenant context</span>
-  <span class="op">timestamp:</span> <span class="tp">Timestamp</span>;      <span class="cmt">// Request start time</span>
-}</div>
-          </section>
-
-          <!-- ASYNCLOCALSTORAGE -->
-          <section class="mt-12" aria-labelledby="async-local">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="async-local">AsyncLocalStorage Usage</h2>
-            <p class="text-body text-black/80 mb-4">
-              Node.js <span class="code-inline">AsyncLocalStorage</span> creates a context that persists across all async operations within a single request. Zudo wraps this in a <span class="code-inline">ContextProvider</span>.
-            </p>
-            <div class="code-block p-4 mb-4"><span class="kw">import</span> { <span class="tp">ContextProvider</span> } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
-
-<span class="kw">const</span> ctx = <span class="kw">new</span> <span class="tp">ContextProvider</span>();
-
-<span class="cmt">// Run code within a context</span>
-<span class="kw">await</span> ctx.<span class="fn">run</span>({ <span class="op">requestId:</span> <span class="str">"req-123"</span> }, <span class="kw">async</span> () => {
-  <span class="cmt">// Any code here can access the context</span>
-  <span class="kw">const</span> current = ctx.<span class="fn">get</span>();
-  console.<span class="fn">log</span>(current.requestId); <span class="cmt">// "req-123"</span>
-
-  <span class="cmt">// Even nested async calls</span>
-  <span class="kw">await</span> <span class="fn">someService</span>(); <span class="cmt">// ctx.get() still works here</span>
-});</div>
-          </section>
-
-          <!-- CONTEXT PROVIDERS & CONSUMERS -->
-          <section class="mt-12" aria-labelledby="providers-consumers">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="providers-consumers">Context Providers &amp; Consumers</h2>
-            <p class="text-body text-black/80 mb-4">
-              Providers set context at request boundaries. Consumers read context anywhere in the call chain.
-            </p>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-              <div class="border-2 border-black p-4">
-                <div class="text-xs font-bold uppercase tracking-wider text-zudo-green mb-2">Providers</div>
-                <ul class="text-sm text-black/60 space-y-1">
-                  <li>HTTP middleware</li>
-                  <li>Message handlers</li>
-                  <li>Event listeners</li>
-                  <li>CLI command runners</li>
-                </ul>
-              </div>
-              <div class="border-2 border-black p-4">
-                <div class="text-xs font-bold uppercase tracking-wider text-zudo-blue mb-2">Consumers</div>
-                <ul class="text-sm text-black/60 space-y-1">
-                  <li>Services and repositories</li>
-                  <li>Logger (auto-injects requestId)</li>
-                  <li>Database clients (audit trails)</li>
-                  <li>External API clients</li>
-                </ul>
-              </div>
+            <div class="overflow-x-auto mb-4">
+            <table class="doc-table">
+              <thead><tr><th>Field</th><th>What it holds</th></tr></thead>
+              <tbody>
+                <tr><td><code>executionId</code></td><td>A unique id for this execution; generated when you omit it</td></tr>
+                <tr><td><code>startedAt</code></td><td>When it began; defaults to now</td></tr>
+                <tr><td><code>correlationId</code>, <code>traceId</code>, <code>spanId</code></td><td>Ids that tie related work together across services</td></tr>
+                <tr><td><code>principalId</code>, <code>authenticationScheme</code></td><td>Who is doing this, and how they proved it</td></tr>
+                <tr><td><code>service</code>, <code>module</code>, <code>operation</code></td><td>Which service, module and operation is running</td></tr>
+                <tr><td><code>transport</code></td><td>Where it came from: <code>"http"</code>, <code>"rpc"</code>, <code>"messaging"</code>, <code>"cli"</code>, …</td></tr>
+                <tr><td><code>metadata</code></td><td>A frozen bag of anything else small and JSON-ish</td></tr>
+              </tbody>
+            </table>
             </div>
+            <p class="text-body text-black/80 mb-4">
+              <span class="code-inline">getExecutionDuration(context)</span> tells you how long it has been running, in milliseconds.
+            </p>
           </section>
 
-          <!-- REQUEST-SCOPED DATA PATTERNS -->
-          <section class="mt-12" aria-labelledby="patterns">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="patterns">Request-Scoped Data Patterns</h2>
+          <!-- PROPAGATION -->
+          <section class="mt-12" aria-labelledby="propagation">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="propagation">Making It Readable Anywhere</h2>
             <p class="text-body text-black/80 mb-4">
-              Common patterns for using execution context in Zudo applications.
+              <span class="code-inline">getDefaultContextStorage()</span> returns the one storage the whole framework shares. Wrap work in <span class="code-inline">run()</span> and every function it calls can read the context with <span class="code-inline">get()</span> or <span class="code-inline">require()</span>.
             </p>
-            <div class="code-block p-4 mb-4"><span class="cmt">// Pattern 1: Auto-logging with context</span>
-<span class="kw">class</span> <span class="tp">UserService</span> {
-  <span class="fn">constructor</span>(<span class="kw">private</span> <span class="kw">readonly</span> <span class="op">logger:</span> <span class="tp">Logger</span>) {}
+            <p class="text-body text-black/80 mb-4">
+              This is a complete program. <span class="code-inline">saveOrder</span> takes no arguments, yet it knows which operation it belongs to — even after awaiting.
+            </p>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> { createExecutionContext, getDefaultContextStorage } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
 
-  <span class="kw">async</span> <span class="fn">getUser</span>(<span class="op">id:</span> <span class="tp">UserId</span>): <span class="tp">Promise</span>&lt;<span class="tp">User</span>&gt; {
-    <span class="cmt">// Logger automatically includes requestId from context</span>
-    <span class="kw">this</span>.logger.<span class="fn">info</span>(<span class="str">"Fetching user"</span>, { <span class="op">userId:</span> id });
-    <span class="kw">return</span> <span class="kw">this</span>.repo.<span class="fn">findById</span>(id);
-  }
+<span class="kw">const</span> storage = <span class="fn">getDefaultContextStorage</span>();
+
+<span class="kw">async function</span> <span class="fn">saveOrder</span>(): <span class="tp">Promise</span>&lt;<span class="kw">void</span>&gt; {
+  <span class="kw">await</span> <span class="tp">Promise</span>.<span class="fn">resolve</span>();
+  <span class="kw">const</span> context = storage.<span class="fn">require</span>();
+  console.<span class="fn">log</span>(context.operation, context.principalId);
 }
 
-<span class="cmt">// Pattern 2: Tenant isolation</span>
-<span class="kw">async</span> <span class="fn">getProjects</span>() {
-  <span class="kw">const</span> ctx = contextProvider.<span class="fn">get</span>();
-  <span class="cmt">// Repository automatically filters by tenantId</span>
-  <span class="kw">return</span> <span class="kw">this</span>.projectRepo.<span class="fn">findAll</span>({ <span class="op">tenantId:</span> ctx.tenantId });
-}
+<span class="kw">await</span> storage.<span class="fn">run</span>(
+  <span class="fn">createExecutionContext</span>({ operation: <span class="str">"checkout"</span>, principalId: <span class="str">"user-42"</span> }),
+  saveOrder,
+);
 
-<span class="cmt">// Pattern 3: Audit trail</span>
-<span class="kw">async</span> <span class="fn">updateUser</span>(<span class="op">id:</span> <span class="tp">UserId</span>, <span class="op">data:</span> <span class="tp">Partial</span>&lt;<span class="tp">User</span>&gt;) {
-  <span class="kw">const</span> ctx = contextProvider.<span class="fn">get</span>();
-  <span class="kw">await</span> <span class="kw">this</span>.repo.<span class="fn">update</span>(id, data);
-  <span class="kw">await</span> <span class="kw">this</span>.auditLog.<span class="fn">record</span>({
-    <span class="op">action:</span> <span class="str">"user.update"</span>,
-    <span class="op">userId:</span> ctx.userId,
-    <span class="op">requestId:</span> ctx.requestId,
+console.<span class="fn">log</span>(storage.<span class="fn">get</span>());       <span class="cmt">// undefined</span>
+console.<span class="fn">log</span>(storage.<span class="fn">has</span>());       <span class="cmt">// false</span></div>
+            <p class="text-body text-black/80 mb-4">
+              <strong>What you should see.</strong> <span class="code-inline">checkout user-42</span>, then <span class="code-inline">undefined</span> and <span class="code-inline">false</span> — outside <span class="code-inline">run()</span> there is no context at all.
+            </p>
+            <div class="overflow-x-auto mb-4">
+            <table class="doc-table">
+              <thead><tr><th>Method</th><th>What it does</th></tr></thead>
+              <tbody>
+                <tr><td><code>run(context, fn)</code></td><td>Runs <code>fn</code> with that context current, and returns its result</td></tr>
+                <tr><td><code>get()</code></td><td>The current context, or <code>undefined</code></td></tr>
+                <tr><td><code>require()</code></td><td>The current context, or throws <code>ExecutionContextNotFoundError</code></td></tr>
+                <tr><td><code>has()</code></td><td>Whether a context is currently active</td></tr>
+                <tr><td><code>runDerived(overrides, fn)</code></td><td>Runs <code>fn</code> in a copy of the current context with fields changed</td></tr>
+                <tr><td><code>runWithoutContext(fn)</code></td><td>Runs <code>fn</code> with no context, for genuinely unrelated work</td></tr>
+              </tbody>
+            </table>
+            </div>
+            <p class="text-body text-black/80 mb-4">
+              A running application already does this for you. The runtime executes every module hook inside a context whose <span class="code-inline">module</span> is that module's id, the default logger stamps the <span class="code-inline">executionId</span> onto each line, and <span class="code-inline">"scoped"</span> container providers resolve once per context.
+            </p>
+          </section>
+
+          <!-- DERIVING -->
+          <section class="mt-12" aria-labelledby="deriving">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="deriving">Narrowing a Context</h2>
+            <p class="text-body text-black/80 mb-4">
+              Contexts are frozen, so you refine one by making a new one. <span class="code-inline">deriveExecutionContext</span> copies a context with your overrides applied and merges metadata rather than replacing it.
+            </p>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> {
+  createExecutionContext, deriveExecutionContext, withExecutionMetadata,
+} <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">const</span> request = <span class="fn">createExecutionContext</span>({
+  operation: <span class="str">"checkout"</span>,
+  transport: <span class="str">"http"</span>,
+  metadata: { route: <span class="str">"/orders"</span> },
+});
+
+<span class="kw">const</span> step = <span class="fn">deriveExecutionContext</span>(request, { operation: <span class="str">"charge-card"</span> });
+console.<span class="fn">log</span>(step.operation, step.transport);          <span class="cmt">// "charge-card" "http"</span>
+
+<span class="kw">const</span> tagged = <span class="fn">withExecutionMetadata</span>(step, { attempt: <span class="num">2</span> });
+console.<span class="fn">log</span>(tagged.metadata);                          <span class="cmt">// { route: "/orders", attempt: 2 }</span>
+console.<span class="fn">log</span>(request.operation);                       <span class="cmt">// "checkout" (unchanged)</span></div>
+            <p class="text-body text-black/80 mb-4">
+              <strong>What you should see.</strong> <span class="code-inline">charge-card http</span>, then the merged metadata, then the original context still saying <span class="code-inline">checkout</span>.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              Inside a <span class="code-inline">run()</span> you can do both steps at once with <span class="code-inline">storage.runDerived({ operation: "charge-card" }, fn)</span>.
+            </p>
+          </section>
+
+          <!-- TYPED VALUES -->
+          <section class="mt-12" aria-labelledby="typed-values">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="typed-values">Carrying Your Own Values</h2>
+            <p class="text-body text-black/80 mb-4">
+              The context's fields are fixed. For your own per-request data — the signed-in user, a tenant, a feature flag set — use <span class="code-inline">ContextValues</span> with typed keys.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              A <em>context key</em> is a named key that also carries the type of its value, so reading it back is type-safe. <span class="code-inline">ContextValues</span> is immutable: <span class="code-inline">set()</span> returns a new collection.
+            </p>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> {
+  createContextKey, createContextValues,
+  createExecutionContext, createContextStorage,
+} <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">interface</span> <span class="tp">User</span> { id: <span class="tp">string</span>; email: <span class="tp">string</span>; }
+
+<span class="kw">const</span> UserKey = <span class="fn">createContextKey</span>&lt;<span class="tp">User</span>&gt;(<span class="str">"current-user"</span>);
+
+<span class="kw">const</span> storage = <span class="fn">createContextStorage</span>();
+<span class="kw">const</span> values = <span class="fn">createContextValues</span>().<span class="fn">set</span>(UserKey, {
+  id: <span class="str">"user-42"</span>,
+  email: <span class="str">"ada@example.com"</span>,
+});
+
+<span class="kw">await</span> storage.<span class="fn">runWithValues</span>(<span class="fn">createExecutionContext</span>(), values, <span class="kw">async</span> () =&gt; {
+  <span class="kw">await</span> <span class="tp">Promise</span>.<span class="fn">resolve</span>();
+  console.<span class="fn">log</span>(storage.<span class="fn">getValues</span>()?.<span class="fn">get</span>(UserKey)?.email);   <span class="cmt">// "ada@example.com"</span>
+});
+
+console.<span class="fn">log</span>(storage.<span class="fn">getValues</span>());                          <span class="cmt">// undefined</span></div>
+            <p class="text-body text-black/80 mb-4">
+              <strong>What you should see.</strong> <span class="code-inline">ada@example.com</span>, then <span class="code-inline">undefined</span>.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              <span class="code-inline">values.require(key)</span> throws when the value is missing, which is usually better than a silent <span class="code-inline">undefined</span> for something like the current user. <span class="code-inline">createContextStorage()</span> makes an isolated storage — handy in tests so parallel cases cannot see each other's values.
+            </p>
+          </section>
+
+          <!-- SNAPSHOTS -->
+          <section class="mt-12" aria-labelledby="snapshots">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="snapshots">Crossing Into Background Work</h2>
+            <p class="text-body text-black/80 mb-4">
+              Context follows <span class="code-inline">await</span>, but it does not follow work you hand to a queue, a timer or another process. A <em>snapshot</em> bridges that gap: capture the context and its values now, restore them later.
+            </p>
+            <div class="code-block p-4 mb-4"><span class="kw">import</span> {
+  createContextStorage, createExecutionContext,
+  createContextKey, createContextValues,
+} <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">const</span> JobKey = <span class="fn">createContextKey</span>&lt;<span class="tp">number</span>&gt;(<span class="str">"job-size"</span>);
+
+<span class="kw">const</span> storage = <span class="fn">createContextStorage</span>();
+<span class="kw">const</span> values = <span class="fn">createContextValues</span>().<span class="fn">set</span>(JobKey, <span class="num">42</span>);
+
+<span class="kw">const</span> snapshot = storage.<span class="fn">runWithValues</span>(
+  <span class="fn">createExecutionContext</span>({ operation: <span class="str">"import"</span> }),
+  values,
+  () =&gt; storage.<span class="fn">capture</span>(),
+);
+
+<span class="fn">setTimeout</span>(() =&gt; {
+  storage.<span class="fn">runSnapshot</span>(snapshot, () =&gt; {
+    console.<span class="fn">log</span>(storage.<span class="fn">require</span>().operation);          <span class="cmt">// "import"</span>
+    console.<span class="fn">log</span>(storage.<span class="fn">getValues</span>()?.<span class="fn">get</span>(JobKey));   <span class="cmt">// 42</span>
   });
-}</div>
+}, <span class="num">0</span>);</div>
+            <p class="text-body text-black/80 mb-4">
+              <strong>What you should see.</strong> <span class="code-inline">import</span>, then <span class="code-inline">42</span> — printed after the timer fires, long after the original <span class="code-inline">run</span> finished.
+            </p>
+            <p class="text-body text-black/80 mb-4">
+              <span class="code-inline">capture()</span> outside a running context throws <span class="code-inline">ExecutionContextNotFoundError</span>, so take the snapshot while the work is still in scope.
+            </p>
           </section>
 
-          <!-- WHY IT MATTERS -->
-          <section class="mt-12" aria-labelledby="why">
-            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="why">Why Contexts Matter</h2>
+          <!-- MISTAKES -->
+          <section class="mt-12" aria-labelledby="common-mistakes">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="common-mistakes">Common Mistakes</h2>
             <div class="border-2 border-black p-6 bg-white">
               <ul class="space-y-3 text-body text-black/80">
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-green font-black mt-1">01</span>
-                  <span><strong>No parameter drilling</strong> — context is available everywhere without passing it through 10 function layers.</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-green font-black mt-1">02</span>
-                  <span><strong>Request tracing</strong> — every log, metric, and database query carries the request ID automatically.</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-green font-black mt-1">03</span>
-                  <span><strong>Tenant isolation</strong> — multi-tenant apps get automatic data filtering without service-level boilerplate.</span>
-                </li>
-                <li class="flex items-start gap-3">
-                  <span class="text-zudo-green font-black mt-1">04</span>
-                  <span><strong>Audit compliance</strong> — who did what, when, and from which request — all captured automatically.</span>
-                </li>
+                <li><strong>Trying to write to the context.</strong> An <span class="code-inline">ExecutionContext</span> is frozen; there is no <span class="code-inline">set</span> method. Derive a new one, or put the value in <span class="code-inline">ContextValues</span>.</li>
+                <li><strong>Calling <span class="code-inline">require()</span> at module top level.</strong> No context is active there, so it throws <span class="code-inline">ExecutionContextNotFoundError</span>. Read it inside the request or hook.</li>
+                <li><strong>Expecting context inside <span class="code-inline">setTimeout</span> or a queued job.</strong> It is gone. Use <span class="code-inline">capture()</span> and <span class="code-inline">runSnapshot()</span>.</li>
+                <li><strong>Mutating the object returned by <span class="code-inline">set()</span>'s caller.</strong> <span class="code-inline">ContextValues.set</span> returns a new collection and leaves the old one alone. Keep the returned value.</li>
+                <li><strong>Storing large objects in <span class="code-inline">metadata</span>.</strong> It is frozen deeply and copied into every derived context. Keep it to small, JSON-ish data.</li>
               </ul>
             </div>
           </section>
 
+          <!-- RELATED -->
+          <section class="mt-12" aria-labelledby="related">
+            <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2 uppercase" id="related">Related</h2>
+            <div class="border-2 border-black p-6 bg-white">
+              <ul class="space-y-3 text-body text-black/80">
+                <li><a href="/docs/packages-core" class="underline font-bold">@zudojs/core</a> — the full reference for <span class="code-inline">ContextStorage</span>, <span class="code-inline">ContextValues</span> and snapshots.</li>
+                <li><a href="/docs/concepts-dependency-injection" class="underline font-bold">Dependency Injection</a> — how <span class="code-inline">"scoped"</span> providers use the current context as their scope.</li>
+                <li><a href="/docs/packages-container" class="underline font-bold">@zudojs/container</a> — explicit scopes when you want a boundary that is not an execution context.</li>
+                <li><a href="/docs/concepts-modules" class="underline font-bold">Modules</a> — hooks already run inside a context created by the runtime.</li>
+              </ul>
+            </div>
+          </section>
         </div>
       </div>
 
     </main>
+
+    <!-- TABLE OF CONTENTS -->
+    <aside class="doc-toc" aria-label="On this page">
+      <div class="p-4 text-xs font-bold uppercase text-black/40 tracking-wider">On this page</div>
+      <a href="#overview" class="toc-link">Overview</a>
+      <a href="#the-record" class="toc-link">What Is in a Context</a>
+      <a href="#propagation" class="toc-link">Making It Readable</a>
+      <a href="#deriving" class="toc-link">Narrowing a Context</a>
+      <a href="#typed-values" class="toc-link">Carrying Your Own Values</a>
+      <a href="#snapshots" class="toc-link">Background Work</a>
+      <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
+      <a href="#related" class="toc-link">Related</a>
+    </aside>
   </div>
 
   <script src="/js/docs.js"></script>
 
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 
   <!-- FOOTER -->
   <div id="zudo-footer"></div>

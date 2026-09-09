@@ -141,7 +141,12 @@ function listItem(value: string): string {
 }
 
 function escapeLinkText(value: string): string {
-  return singleLine(value).replace(/\[/g, "\\[").replace(/\]/g, "\\]");
+  // Backslash first: escaping it after the brackets would turn the escapes we
+  // just added back into a literal backslash plus an unescaped bracket.
+  return singleLine(value)
+    .replace(/\\/g, "\\\\")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]");
 }
 
 function escapeLinkHref(href: string): string {

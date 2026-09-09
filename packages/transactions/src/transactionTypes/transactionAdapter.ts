@@ -44,16 +44,6 @@ export interface TransactionAdapter {
   releaseSavepoint?(handle: TransactionHandle, name: string): Promise<void>;
 }
 
-/** A savepoint within a transaction. */
-export interface Savepoint {
-  /** Savepoint name. */
-  readonly name: string;
-  /** Rollback to this savepoint. */
-  rollback(): Promise<void>;
-  /** Release this savepoint. */
-  release(): Promise<void>;
-}
-
 /** Transaction context for async propagation. */
 export interface TransactionContext {
   /** Get the current active transaction, if any. */

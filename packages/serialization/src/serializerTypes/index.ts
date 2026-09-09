@@ -12,7 +12,5 @@ export type {
   SerializationMetadata,
   SerializedEnvelope,
   Serializer,
-  AsyncSerializer,
   TypeTransformer,
-  UndefinedStrategy,
 } from "./serializer.type.js";

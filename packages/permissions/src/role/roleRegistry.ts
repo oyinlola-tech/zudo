@@ -8,6 +8,7 @@ import type { RoleDefinition } from "../permissionTypes/index.js";
 import {
   DuplicateRoleError,
   InvalidRoleError,
+  RoleNotFoundError,
 } from "../permissionErrors/index.js";
 import { isValidPermission } from "../permission/permission.core.js";
 
@@ -27,6 +28,8 @@ export interface RoleRegistryOptions {
 export interface RoleRegistry {
   define(definition: RoleDefinition): void;
   get(name: string): RoleDefinition | undefined;
+  /** Like {@link RoleRegistry.get}, but throws when the role is unregistered. */
+  require(name: string): RoleDefinition;
   has(name: string): boolean;
   names(): readonly string[];
   all(): readonly RoleDefinition[];
@@ -83,6 +86,12 @@ export function createRoleRegistry(
 
     get(name: string): RoleDefinition | undefined {
       return roles.get(name);
+    },
+
+    require(name: string): RoleDefinition {
+      const role = roles.get(name);
+      if (!role) throw new RoleNotFoundError(name);
+      return role;
     },
 
     has(name: string): boolean {

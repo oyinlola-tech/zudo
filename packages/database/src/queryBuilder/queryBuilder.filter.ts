@@ -314,7 +314,9 @@ export function matchesPattern(field: string, pattern: string): QueryFilter {
     throw new TypeError("A pattern is required.");
   }
 
-  const inner = pattern.replace(/^%+/, "").replace(/%+$/, "");
+  // The lookbehind pins the trailing match to the start of a `%` run; plain
+  // `%+$` retries from every `%` in an interior run, which is quadratic.
+  const inner = pattern.replace(/^%+/, "").replace(/(?<!%)%+$/, "");
 
   if (inner.length === 0 || inner.includes("%") || inner.includes("_")) {
     throw new TypeError(

@@ -18,11 +18,9 @@ import {
   normalizeCLIValue,
 } from "../src/cliParser/cliParser.helper.js";
 import {
-  parseLongOption,
   findOption,
   assignOptionValue,
 } from "../src/cliParser/cliParser.longOption.js";
-import { parseShortOption } from "../src/cliParser/cliParser.shortOption.js";
 import { InvalidArgumentsError } from "../src/cliError/cliError.argument.js";
 import {
   InvalidOptionError,

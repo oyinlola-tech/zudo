@@ -63,25 +63,49 @@ const TARGET_CONTROL_CHARS = /[\x00-\x08\x0A-\x1F\x7F]/;
 export function fullyDecodeUri(value: string): {
   decoded: string;
   truncated: boolean;
+  malformed: boolean;
 } {
   let current = value;
+  let malformed = INVALID_PERCENT_ENCODING.test(value);
 
   for (let round = 0; round < MAX_DECODE_ROUNDS; round++) {
-    let next: string;
-    try {
-      next = decodeURIComponent(current);
-    } catch {
-      // Malformed escape — nothing further to decode.
-      return { decoded: current, truncated: false };
-    }
+    const { decoded: next, malformed: roundMalformed } = decodeOnce(current);
+    if (roundMalformed) malformed = true;
     if (next === current) {
-      return { decoded: current, truncated: false };
+      return { decoded: current, truncated: false, malformed };
     }
     current = next;
   }
 
   // Still changing after the cap: treat as hostile rather than looping.
-  return { decoded: current, truncated: true };
+  return { decoded: current, truncated: true, malformed };
+}
+
+/**
+ * One decoding round that survives a malformed escape.
+ *
+ * `decodeURIComponent` throws for the *whole* string if any escape in it is
+ * bad, so a single stray `%` anywhere used to abort decoding entirely and
+ * return the still-encoded input with `truncated: false`. Every downstream
+ * check then ran against the encoded form: `/a/%2e%2e/etc/passwd%` was
+ * reported valid, and so was `/a%0d%0aX-Evil:1%`. That is a fail-open guard.
+ *
+ * Decoding run-by-run instead keeps multi-byte sequences intact (a run of
+ * valid triplets is a complete UTF-8 character) while leaving an invalid run
+ * as literal text, so the rest of the string still collapses to its true
+ * shape and `malformed` records that something was wrong.
+ */
+function decodeOnce(value: string): { decoded: string; malformed: boolean } {
+  let malformed = false;
+  const decoded = value.replace(/(?:%[0-9a-fA-F]{2})+/g, (run) => {
+    try {
+      return decodeURIComponent(run);
+    } catch {
+      malformed = true;
+      return run;
+    }
+  });
+  return { decoded, malformed };
 }
 
 /**
@@ -96,6 +120,7 @@ export function fullyDecodeUri(value: string): {
 export function containsTraversal(path: string): boolean {
   const { decoded, truncated } = fullyDecodeUri(path);
   if (truncated) return true;
+
 
   return decoded
     .split(/[/\\]/)
@@ -160,8 +185,20 @@ export function validateUrl(
     }
   }
 
+  // `normalizePaths` was declared on UrlValidationConfig and read only by
+  // validateRequestTarget, so `UrlValidationResult.normalized` was never once
+  // populated by this function — the field looked optional-by-chance rather
+  // than opt-in.
+  let normalized: string | undefined;
+  if (config?.normalizePaths === true) {
+    const rebuilt = new URL(parsed.href);
+    rebuilt.pathname = normalizePath(parsed.pathname);
+    normalized = rebuilt.href;
+  }
+
   return {
     valid: errors.length === 0,
+    normalized,
     errors,
   };
 }
@@ -197,6 +234,18 @@ export function normalizePath(pathname: string): string {
 }
 
 /**
+ * Options accepted by {@link validateRequestTarget}.
+ *
+ * A request target is origin-form (`/users?page=1`) and carries no scheme, so
+ * `allowedProtocols` can never apply to it. Declaring the full
+ * {@link UrlValidationConfig} advertised a knob this function cannot honour.
+ */
+export type RequestTargetConfig = Omit<
+  UrlValidationConfig,
+  "allowedProtocols"
+>;
+
+/**
  * Validates a request target (URI path + query).
  *
  * @param target - The request target (e.g., "/users?page=1").
@@ -205,9 +254,19 @@ export function normalizePath(pathname: string): string {
  */
 export function validateRequestTarget(
   target: string,
-  config?: UrlValidationConfig,
+  config?: RequestTargetConfig,
 ): UrlValidationResult {
   const errors: string[] = [];
+
+  // `maxLength` was accepted and discarded here, leaving the request target —
+  // the one input that arrives straight off the wire — with no length bound
+  // at all.
+  const maxLength = config?.maxLength ?? DEFAULT_MAX_URL_LENGTH;
+  if (target.length > maxLength) {
+    errors.push(
+      `Request target length ${target.length} exceeds maximum ${maxLength}`,
+    );
+  }
 
   // Check for null bytes
   for (const pattern of NULL_BYTE_PATTERNS) {
@@ -229,9 +288,23 @@ export function validateRequestTarget(
     errors.push("Request target contains control characters");
   }
 
-  // A decoded CR/LF is just as dangerous as a literal one.
+  // `validateUrl` has always rejected a malformed escape; the request-target
+  // path did not, which is how a single trailing `%` used to disable both the
+  // traversal and the encoded-CRLF checks below.
+  if (INVALID_PERCENT_ENCODING.test(target)) {
+    errors.push(
+      "Request target contains invalid percent encoding (a % must be followed by two hex digits)",
+    );
+  }
+
+  // A decoded CR/LF is just as dangerous as a literal one. Run this whenever
+  // decoding produced anything, rather than only when the whole string
+  // changed.
   const { decoded } = fullyDecodeUri(target);
-  if (decoded !== target && TARGET_CONTROL_CHARS.test(decoded)) {
+  if (
+    !TARGET_CONTROL_CHARS.test(target) &&
+    TARGET_CONTROL_CHARS.test(decoded)
+  ) {
     errors.push("Request target contains encoded control characters");
   }
 

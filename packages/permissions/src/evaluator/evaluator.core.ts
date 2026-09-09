@@ -19,6 +19,7 @@ import type {
   AuthorizationOptions,
 } from "../permissionTypes/index.js";
 import { parsePermissionSafe, matches } from "../permission/permission.core.js";
+import { InvalidPermissionError } from "../permissionErrors/index.js";
 import { compileRules, findMatchingRules } from "../rule/ruleCompiler.js";
 import { evaluateRules } from "../rule/rule.core.js";
 import {
@@ -82,15 +83,57 @@ export async function evaluate(
     return denied("invalid_permission");
   }
 
+  /* ── Explicit denies ─────────────────────────────────────────────────── */
+
+  // Denies are checked before the cache is consulted. `deniedPermissions`
+  // travels on the actor object, which is per-request data the cache key
+  // knows nothing about, so a cached allow from an earlier call would
+  // otherwise be served to a caller who has since denied the permission.
+  for (const deny of actor.deniedPermissions ?? []) {
+    // Denies go through the same matcher as grants. Comparing them as exact
+    // strings meant `*:delete` was ignored while `*:delete` as a grant was
+    // honoured — an asymmetry a deny list cannot survive.
+    if (!parsePermissionSafe(deny)) {
+      // A malformed deny can never match, so it would silently grant what it
+      // was written to forbid. Report it rather than dropping it in silence.
+      options.onError?.(
+        new InvalidPermissionError(deny),
+        "Actor.deniedPermissions",
+      );
+      trace?.push({
+        type: "deny",
+        detail: `Malformed deny ignored: ${deny}`,
+        matched: false,
+      });
+      continue;
+    }
+    if (matches(deny, permissionStr)) {
+      trace?.push({
+        type: "deny",
+        detail: `Explicit deny: ${deny}`,
+        matched: true,
+      });
+      return denied("explicit_deny", { matchedPermission: deny });
+    }
+  }
+
   /* ── Cache ───────────────────────────────────────────────────────────── */
 
+  const resourceId = authOptions?.resourceId ?? resourceIdOf(resource);
+  // Only a decision the key can fully describe may be cached.
+  //
+  // A resource with no derivable id is the sharp case: the key would collapse
+  // to `actor|permission`, so an allow for `{ ownerId: "ada" }` would answer
+  // for `{ ownerId: "bob" }` on the next call. Request metadata is the other:
+  // `tenantIsolation()` reads the tenant from it, and it is not part of the
+  // key, so a decision made for one tenant must not answer for another.
+  const keyable =
+    (resource === undefined || resourceId !== undefined) &&
+    !hasMetadata(authOptions?.metadata);
+
   const cacheKey =
-    options.cache && authOptions?.skipCache !== true
-      ? permissionCacheKey(
-          actor.id,
-          permissionStr,
-          authOptions?.resourceId ?? resourceIdOf(resource),
-        )
+    options.cache && authOptions?.skipCache !== true && keyable
+      ? permissionCacheKey(actor.id, permissionStr, resourceId)
       : undefined;
 
   if (options.cache && cacheKey) {
@@ -106,22 +149,6 @@ export async function evaluate(
       }
     } catch (error) {
       options.onError?.(error, "PermissionCache.get");
-    }
-  }
-
-  /* ── Explicit denies ─────────────────────────────────────────────────── */
-
-  for (const deny of actor.deniedPermissions ?? []) {
-    // Denies go through the same matcher as grants. Comparing them as exact
-    // strings meant `*:delete` was ignored while `*:delete` as a grant was
-    // honoured — an asymmetry a deny list cannot survive.
-    if (matches(deny, permissionStr)) {
-      trace?.push({
-        type: "deny",
-        detail: `Explicit deny: ${deny}`,
-        matched: true,
-      });
-      return denied("explicit_deny", { matchedPermission: deny });
     }
   }
 
@@ -278,6 +305,13 @@ function combine(
   if (policyDecision?.allowed) return policyDecision;
 
   return denied("no_matching_rule");
+}
+
+/** True when the caller supplied request metadata the cache key cannot carry. */
+function hasMetadata(metadata: AuthorizationOptions["metadata"]): boolean {
+  if (!metadata) return false;
+  if (metadata instanceof Map) return metadata.size > 0;
+  return Object.keys(metadata).length > 0;
 }
 
 /** Best-effort resource identity for the cache key. */

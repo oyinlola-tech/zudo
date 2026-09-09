@@ -21,8 +21,22 @@ import { resolveRolePermissions } from "../role/roleHierarchy.js";
 import { matches } from "../permission/permission.core.js";
 import {
   AuthorizationAbortedError,
+  PermissionResolverError,
+  PolicyError,
   PolicyTimeoutError,
 } from "../permissionErrors/index.js";
+
+/**
+ * Normalize a thrown value into an `Error` before it reaches `onError`.
+ *
+ * A resolver or a policy is caller code and may throw anything at all — a
+ * string, `undefined`, a plain object. An `onError` handler that reads
+ * `error.message` then fails inside the failure path, so anything that is not
+ * already an `Error` is wrapped, keeping the original as `cause`.
+ */
+function reportable(value: unknown, wrap: (cause: unknown) => Error): unknown {
+  return value instanceof Error ? value : wrap(value);
+}
 
 /** Configuration for the evaluator. */
 export interface EvaluatorOptions {
@@ -105,17 +119,41 @@ export async function resolveActorGrants(
         roleNames.add(role);
       }
     } catch (error) {
-      options.onError?.(error, "RoleResolver.resolveRoles");
+      options.onError?.(
+        reportable(
+          error,
+          (cause) =>
+            new PermissionResolverError(
+              "RoleResolver.resolveRoles failed",
+              cause,
+            ),
+        ),
+        "RoleResolver.resolveRoles",
+      );
     }
   }
 
   if (roleNames.size > 0 && options.getRole) {
-    const resolution = resolveRolePermissions([...roleNames], options.getRole, {
-      onUnknownRole: (name) => unknownRoles.push(name),
-    });
-    for (const permission of resolution.permissions)
-      permissions.add(permission);
-    rules.push(...resolution.rules);
+    try {
+      const resolution = resolveRolePermissions(
+        [...roleNames],
+        options.getRole,
+        { onUnknownRole: (name) => unknownRoles.push(name) },
+      );
+      for (const permission of resolution.permissions)
+        permissions.add(permission);
+      rules.push(...resolution.rules);
+    } catch (error) {
+      // A cycle in the role graph, or a role source that throws, is a
+      // configuration failure. Throwing here would hand the outcome to
+      // whichever error handler the caller installed, which may well be more
+      // permissive than a denial — so every role is treated as unresolved and
+      // the check falls through to deny.
+      options.onError?.(error, "RoleHierarchy");
+      for (const name of roleNames) {
+        if (!unknownRoles.includes(name)) unknownRoles.push(name);
+      }
+    }
   }
 
   if (options.permissionResolver) {
@@ -125,7 +163,17 @@ export async function resolveActorGrants(
         ...(await options.permissionResolver.resolvePermissions(actor)),
       );
     } catch (error) {
-      options.onError?.(error, "PermissionResolver.resolvePermissions");
+      options.onError?.(
+        reportable(
+          error,
+          (cause) =>
+            new PermissionResolverError(
+              "PermissionResolver.resolvePermissions failed",
+              cause,
+            ),
+        ),
+        "PermissionResolver.resolvePermissions",
+      );
     }
   }
 
@@ -246,7 +294,10 @@ export async function evaluatePolicies(
       }
     } catch (error) {
       if (error instanceof AuthorizationAbortedError) throw error;
-      options.onError?.(error, `Policy.${policy.name}`);
+      options.onError?.(
+        reportable(error, (cause) => new PolicyError(policy.name, cause)),
+        `Policy.${policy.name}`,
+      );
       // Policy error — fail closed.
       return {
         decision: Object.freeze({

@@ -9,7 +9,8 @@ import type {
   HttpMiddlewareContext,
 } from "../../httpMiddleware.type.js";
 
-import type { HttpResponseContext as ResponseContext } from "../../../httpResponse/httpResponse.context.js";
+
+import { applyHeadersToResponse } from "../helpers/index.js";
 
 export interface CorsMiddlewareOptions {
   /**
@@ -198,10 +199,11 @@ export function createCorsMiddleware(
 
       headers.set("content-length", "0");
 
-      return {
-        status: options.optionsSuccessStatus ?? 204,
+      return applyHeadersToResponse(
+        undefined,
         headers,
-      } as unknown as ResponseContext;
+        options.optionsSuccessStatus ?? 204,
+      );
     }
 
     const response = await next();
@@ -210,9 +212,6 @@ export function createCorsMiddleware(
 
     applyHeaders(headers);
 
-    return {
-      ...response,
-      headers,
-    } as unknown as ResponseContext;
+    return applyHeadersToResponse(response, headers);
   };
 }

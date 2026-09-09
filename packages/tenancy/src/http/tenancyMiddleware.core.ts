@@ -26,8 +26,17 @@ import type {
   TenantClaims,
 } from "./httpResolverContext.js";
 import { createHttpResolverContext } from "./httpResolverContext.js";
-import { createForbidden, createNotFound } from "./httpHelpers.js";
+import {
+  createBadRequest,
+  createForbidden,
+  createNotFound,
+  createUnauthorized,
+} from "./httpHelpers.js";
 import { meetsTrustLevel } from "../security/guard.core.js";
+import {
+  TenantResolutionConflictError,
+  TenantResolutionError,
+} from "../tenancyErrors/tenancyError.types.js";
 
 // ─── State Keys ───────────────────────────────────────────────────────────
 
@@ -94,9 +103,29 @@ export function createResolveTenantMiddleware(
   const minimumTrust = options.minimumTrust ?? "untrusted";
 
   return async (context, next) => {
-    const resolution = await options.resolver.resolve(
-      createHttpResolverContext(context, options.getClaims),
-    );
+    let resolution: TenantResolution | undefined;
+
+    try {
+      resolution = await options.resolver.resolve(
+        createHttpResolverContext(context, options.getClaims),
+      );
+    } catch (error) {
+      // A resolver chain throws when a credential was rejected or when two
+      // sources name different tenants. Letting that escape produced a 500
+      // carrying the framework's own error text; both cases are a refusal
+      // the caller caused, and neither may fall through to `next()`.
+      if (error instanceof TenantResolutionConflictError) {
+        return createForbidden(
+          "Tenant could not be established: request sources name different tenants",
+        );
+      }
+
+      if (error instanceof TenantResolutionError) {
+        return createBadRequest("Tenant could not be resolved for this request");
+      }
+
+      throw error;
+    }
 
     if (!resolution) {
       return options.notFoundResponse
@@ -175,11 +204,7 @@ export function createRequireTenantMiddleware(
             body: options.deniedResponse(undefined),
             headers: { "content-type": "application/json" },
           }
-        : {
-            status: 401,
-            body: { error: "Tenant context is required" },
-            headers: { "content-type": "application/json" },
-          };
+        : createUnauthorized("Tenant context is required");
     }
 
     return next();

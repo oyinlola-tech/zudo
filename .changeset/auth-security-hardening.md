@@ -82,7 +82,11 @@ login-throttle types, `MIN_SALT_LENGTH`, `MAX_SALT_LENGTH`,
 `TokenPayload.sid`. `createMemorySessionStore()` and
 `createMemoryTokenRevocationStore()` accept `{ purgeIntervalMs }`.
 
-**Removed claim:** the package description advertised OAuth2 while exporting
-`OAuthProvider`/`OAuthConfig`/`OAuthUserInfo`/`OAuthResult`/`AuthStrategy` with
-zero implementation. The claim is removed and those types are marked
-contract-only.
+**OAuth2 has moved to `@zudojs/auth-oauth`.** This package advertised OAuth2 in
+its npm description while exporting `OAuthProvider`, `OAuthConfig`,
+`OAuthUserInfo`, `OAuthResult` and `AuthStrategy` with zero implementation — no
+authorize-URL builder, no code exchange, no state or PKCE handling, no user-info
+fetch, and no strategy registry. **Those five type exports are removed.** The new
+`@zudojs/auth-oauth` package implements the flow for real; install it if you need
+OAuth2. `PasswordCredentials` and `ApiKeyCredentials` moved to
+`authCredentials.type.ts` and are unchanged for consumers.

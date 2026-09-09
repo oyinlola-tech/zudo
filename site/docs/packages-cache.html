@@ -49,7 +49,7 @@
     "@type": "TechArticle",
     "headline": "@zudojs/cache — Caching Primitives, Adapters & Invalidation",
     "description": "Complete reference for @zudojs/cache v0.1.0. CacheService, MemoryCacheAdapter, tag-based invalidation, distributed locking, metrics, serialization, and middleware pipelines.",
-    "version": "0.0.1",
+    "version": "1.0.0",
     "programmingLanguage": "TypeScript",
     "runtimePlatform": "Node.js >= 24.0.0",
     "license": "https://opensource.org/licenses/MIT",
@@ -119,6 +119,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item sidebar-item-active">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -174,13 +175,14 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.2</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/cache</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
-          Caching primitives, adapters, tag-based invalidation, distributed locking, and metrics
+          Keep copies of slow results so you can serve them again fast, with expiry, tags, locks and per-tenant scoping.
         </p>
         <div class="flex flex-wrap gap-2 mt-4">
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">CACHING</span>
+          <span class="px-3 py-1 border-2 border-black text-xs font-bold">TTL</span>
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">INVALIDATION</span>
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">LOCKING</span>
         </div>
@@ -190,1021 +192,572 @@
       <section id="overview" class="mb-16">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OVERVIEW</h2>
         <p class="mb-4 leading-relaxed">
-          <code>@zudojs/cache</code> provides a complete caching infrastructure for the Zudo framework. It follows the <strong>adapter pattern</strong> — a pluggable <code>CacheAdapter</code> interface with a built-in <code>MemoryCacheAdapter</code> and a high-level <code>CacheService</code> orchestrator that coordinates key building, tag-based invalidation, distributed locking, metrics collection, and middleware pipelines.
+          A <em>cache</em> is a small, fast store where you keep copies of results that were expensive to produce: a database row, an API response, a rendered page. The next time you need the same result, you read the copy instead of doing the slow work again.
         </p>
         <p class="mb-4 leading-relaxed">
-          The package is designed for <strong>zero-config usage</strong> with sensible defaults (5-minute TTL, 10K max entries, 50MB memory budget) while supporting full customization for production deployments.
+          <code>@zudojs/cache</code> gives you one object, a <code>CacheService</code>, with <code>get</code>, <code>set</code>, <code>delete</code> and a few helpers. Behind it sits an <em>adapter</em>, which is the actual storage. The package ships an in-memory adapter. To use Redis or another store, you implement the <code>CacheAdapter</code> interface and pass it in.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          On top of plain storage it adds what real apps need: entries that expire on their own (TTL), tags that let you delete related entries together, locks so two workers do not run the same slow job at once, and namespaces that keep one tenant's data away from another's.
         </p>
 
-        <div class="callout callout-note mb-6">
-          <p class="text-sm font-bold mb-1">KEY CONCEPTS</p>
-          <ul class="text-sm space-y-1">
-            <li>• <strong>CacheAdapter</strong> — Pluggable backend interface (Memory, Redis, etc.)</li>
-            <li>• <strong>CacheService</strong> — High-level orchestrator with get/set/invalidate/lock</li>
-            <li>• <strong>CacheStore</strong> — Adapter wrapper with middleware, events, and metrics</li>
-            <li>• <strong>Tag-based invalidation</strong> — Invalidate related keys by logical tags</li>
-            <li>• <strong>Cache-aside pattern</strong> — <code>getOrSet()</code> for read-through caching</li>
-          </ul>
+        <div class="grid md:grid-cols-2 gap-4 mb-6">
+          <div class="border-2 border-black p-4">
+            <p class="text-sm font-bold mb-2">When you need it</p>
+            <ul class="text-sm space-y-1">
+              <li>• The same slow read happens many times.</li>
+              <li>• Many users see the same data (product lists, settings, flags).</li>
+              <li>• You want to stop duplicate work under load.</li>
+              <li>• Your app serves several tenants and each needs its own scope.</li>
+            </ul>
+          </div>
+          <div class="border-2 border-black p-4">
+            <p class="text-sm font-bold mb-2">When you don't</p>
+            <ul class="text-sm space-y-1">
+              <li>• The data changes on every request.</li>
+              <li>• You must not lose the data. A cache can drop entries at any time; use a database.</li>
+              <li>• You need one cache shared by several processes and have no adapter for a shared store yet. The memory adapter lives in a single process.</li>
+            </ul>
+          </div>
         </div>
       </section>
 
       <!-- ==================== INSTALLATION ==================== -->
-      <section id="install" class="mb-16">
+      <section id="installation" class="mb-16">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-        <div class="code-block mb-4">
-<span class="cm">// Install as part of the Zudo framework</span>
-npm install @zudojs/cache
+        <p class="mb-4 leading-relaxed">Install the package. It pulls in <code>@zudojs/errors</code>, <code>@zudojs/types</code> and <code>@zudojs/serialization</code> on its own. It needs Node 24 or newer.</p>
+        <div class="code-block mb-4">$ npm install @zudojs/cache</div>
 
-<span class="cm">// Or use the full framework</span>
-npm install zudo
-        </div>
-        <p class="text-sm text-gray-600 mb-4"><strong>Peer dependencies:</strong> <code>@zudojs/errors</code>, <code>@zudojs/types</code>, <code>@zudojs/serialization</code></p>
-      </section>
-
-      <!-- ==================== ARCHITECTURE ==================== -->
-      <section id="architecture" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ARCHITECTURE</h2>
-        <p class="mb-4 leading-relaxed">The package follows a layered architecture where each component has a single responsibility:</p>
-
-        <div class="border-2 border-black p-6 bg-gray-50 mb-6 font-mono text-sm leading-loose">
-<pre class="whitespace-pre-wrap"><span class="kw">CacheService</span>                    <span class="cm">← High-level orchestrator</span>
-    ├── <span class="tp">DefaultCacheStore</span>         <span class="cm">← Adapter wrapper + middleware + events</span>
-    │       └── <span class="fn">CacheAdapter</span>      <span class="cm">← Pluggable backend interface</span>
-    ├── <span class="tp">DefaultKeyBuilder</span>         <span class="cm">← Key generation (prefix:namespace:key)</span>
-    ├── <span class="tp">InMemoryTagStore</span>          <span class="cm">← Bidirectional tag ↔ key mapping</span>
-    ├── <span class="tp">CacheInvalidationManager</span> <span class="cm">← Tag/pattern/namespace/key invalidation</span>
-    ├── <span class="tp">CacheLockManager</span>          <span class="cm">← Distributed locking with retries</span>
-    │       └── <span class="fn">CacheLockStore</span>    <span class="cm">← Lock backend interface</span>
-    └── <span class="tp">InMemoryCacheMetrics</span>     <span class="cm">← Hit/miss/latency/hot keys</span></pre>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Data Flow — Set with Tags</h3>
-        <div class="code-block mb-4">
-<span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"user:1"</span>, userData, { <span class="fn">tags</span>: [<span class="str">"users"</span>, <span class="str">"active"</span>] });
-
-<span class="cm">// 1. CacheService checks if enabled</span>
-<span class="cm">// 2. DefaultKeyBuilder.build("user:1") → "zudojs:user:1"</span>
-<span class="cm">// 3. DefaultCacheStore.set() runs middleware chain</span>
-<span class="cm">// 4. MemoryCacheAdapter.set() stores in Map with TTL</span>
-<span class="cm">// 5. Metrics increment the set counter</span>
-<span class="cm">// 6. Event "cache.set" emitted to subscribers</span>
-<span class="cm">// 7. InMemoryTagStore.add() registers tag mappings</span>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Data Flow — Invalidate by Tag</h3>
-        <div class="code-block mb-4">
-<span class="kw">await</span> cache.<span class="fn">invalidateByTag</span>([<span class="str">"users"</span>]);
-
-<span class="cm">// 1. InMemoryTagStore.getKeys("users") → ["zudojs:user:1", "zudojs:user:2"]</span>
-<span class="cm">// 2. For each key: adapter.delete(key) removes from cache</span>
-<span class="cm">// 3. InMemoryTagStore.invalidate("users") cleans up mappings</span>
-<span class="cm">// 4. Returns { cleared: 2 }</span>
+        <div class="callout callout-note mb-4">
+          <p class="text-sm">These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest @zudojs release.</p>
         </div>
       </section>
 
       <!-- ==================== QUICK START ==================== -->
       <section id="quick-start" class="mb-16">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK START</h2>
+        <p class="mb-4 leading-relaxed">This creates a cache backed by memory, stores one value for 60 seconds, and reads it back. The <code>{ name: string }</code> in angle brackets tells TypeScript what type the value has.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createCacheService</span>, <span class="fn">createMemoryCacheAdapter</span> } <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
 
-        <div class="callout callout-tip mb-6">
-          <p class="text-sm font-bold mb-1">ZERO-CONFIG USAGE</p>
-          <p class="text-sm">The simplest way to start — everything uses sensible defaults.</p>
-        </div>
-
-        <div class="code-block mb-6">
-<span class="kw">import</span> { <span class="fn">createCacheService</span>, <span class="fn">createMemoryCacheAdapter</span> } <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
-
-<span class="cm">// Create with defaults (5min TTL, 10K entries, 50MB)</span>
 <span class="kw">const</span> cache = <span class="fn">createCacheService</span>({
-  <span class="fn">adapter</span>: <span class="fn">createMemoryCacheAdapter</span>()
+  adapter: <span class="fn">createMemoryCacheAdapter</span>(),
+  config: { defaultTtl: <span class="num">60_000</span> }, <span class="cmt">// entries live for 60 seconds</span>
 });
 
-<span class="cm">// Connect before use</span>
-<span class="kw">await</span> cache.<span class="fn">connect</span>();
+<span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"user.123"</span>, { name: <span class="str">"Alice"</span> });
 
-<span class="cm">// Basic operations</span>
-<span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"user:1"</span>, { <span class="fn">name</span>: <span class="str">"Alice"</span>, <span class="fn">role</span>: <span class="str">"admin"</span> });
-<span class="kw">const</span> result = <span class="kw">await</span> cache.<span class="fn">get</span>(<span class="str">"user:1"</span>);
-<span class="cm">// result: { hit: true, value: { name: "Alice", role: "admin" } }</span>
+<span class="kw">const</span> result = <span class="kw">await</span> cache.<span class="fn">get</span>&lt;{ name: <span class="tp">string</span> }&gt;(<span class="str">"user.123"</span>);
+console.<span class="fn">log</span>(result.hit, result.value);
+<span class="cmt">// true { name: "Alice" }</span>
 
-<span class="cm">// Cache-aside pattern</span>
-<span class="kw">const</span> user = <span class="kw">await</span> cache.<span class="fn">getOrSet</span>(<span class="str">"user:1"</span>, <span class="kw">async</span> () => {
-  <span class="kw">return await</span> db.<span class="fn">findUser</span>(<span class="str">"1"</span>);
-}, { <span class="fn">ttl</span>: <span class="num">60000</span> });
+<span class="kw">const</span> missing = <span class="kw">await</span> cache.<span class="fn">get</span>(<span class="str">"user.999"</span>);
+console.<span class="fn">log</span>(missing.hit, missing.value);
+<span class="cmt">// false null</span></div>
+        <p class="mb-4 leading-relaxed">A read that finds the entry is a <em>hit</em>; one that does not is a <em>miss</em>. <code>get</code> never returns the value on its own. It returns an object, and you check <code>hit</code> before you trust <code>value</code>.</p>
 
-<span class="cm">// Disconnect when done</span>
-<span class="kw">await</span> cache.<span class="fn">disconnect</span>();
+        <div class="callout callout-warning mb-4">
+          <p class="text-sm font-bold mb-1">WATCH OUT</p>
+          <p class="text-sm">The key is <code>user.123</code> with a dot, not <code>user:123</code>. The colon is reserved. The next section explains why.</p>
         </div>
       </section>
 
-      <!-- ==================== CACHE SERVICE ==================== -->
-      <section id="cache-service" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CACHESERVICE</h2>
+      <!-- ==================== KEYS AND NAMESPACES ==================== -->
+      <section id="keys-and-namespaces" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">KEYS AND NAMESPACES</h2>
         <p class="mb-4 leading-relaxed">
-          The <code>CacheService</code> is the primary entry point. It orchestrates all caching operations, delegates to the adapter, and coordinates tags, locking, and metrics.
+          A <em>key</em> is the name you store a value under. Before the key reaches the adapter, a <em>key builder</em> turns it into a full key of the form <code>prefix:namespace:key</code>. The default prefix is <code>zudojs</code> and the default separator is <code>:</code>, so <code>set("user.123", ...)</code> is stored as <code>zudojs:user.123</code>.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          Every part is checked. A part may only contain letters, digits, <code>.</code>, <code>_</code> and <code>-</code>, and it must not contain the separator. The full key may be at most 256 characters. A bad key throws a <code>CacheError</code> right away.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          The separator is the only thing that marks where the namespace ends and your key begins. If your key could contain it, <code>set("admin:x")</code> would land inside the <code>admin</code> namespace. Rejecting the separator in each part closes that hole.
         </p>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Constructor</h3>
-        <div class="code-block mb-4">
-<span class="fn">createCacheService</span>(options: {
-  <span class="fn">adapter</span>: <span class="tp">CacheAdapter</span>;           <span class="cm">// Required: backend adapter</span>
-  <span class="fn">config</span>?: <span class="tp">CacheConfig</span>;            <span class="cm">// Optional: enabled, defaultTtl, namespace, prefix, etc.</span>
-  <span class="fn">keyBuilder</span>?: <span class="tp">CacheKeyBuilder</span>;    <span class="cm">// Optional: custom key builder</span>
-}): <span class="tp">CacheService</span>
+        <p class="mb-2 leading-relaxed">You can see what the key builder produces by using it directly.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createKeyBuilder</span> } <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
+
+<span class="kw">const</span> keys = <span class="fn">createKeyBuilder</span>({ prefix: <span class="str">"myapp"</span> });
+
+console.<span class="fn">log</span>(keys.<span class="fn">build</span>(<span class="str">"user.1"</span>));
+<span class="cmt">// "myapp:user.1"</span>
+console.<span class="fn">log</span>(keys.<span class="fn">build</span>(<span class="str">"user.1"</span>, { namespace: <span class="str">"auth"</span> }));
+<span class="cmt">// "myapp:auth:user.1"</span>
+
+keys.<span class="fn">build</span>(<span class="str">"user:1"</span>);
+<span class="cmt">// throws CacheError: Invalid cache key part "user:1"</span></div>
+
+        <h3 class="text-lg font-bold mb-3 mt-8">Namespaces and tenant isolation</h3>
+        <p class="mb-4 leading-relaxed">
+          A <em>namespace</em> is a label that groups a set of keys. Two entries with the same key but different namespaces are different entries. A <em>tenant</em> is one customer or organisation in an app that serves many; giving each tenant its own namespace keeps their cached data apart.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          You can set the namespace once for a whole service with <code>config.namespace</code>, or per call with <code>{ namespace }</code>. Reads, writes, <code>clear</code>, tag invalidation and locks all stay inside the namespace they were given.
+        </p>
+
+        <p class="mb-2 leading-relaxed">This stores the same key under two tenants and then clears only one of them.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createCacheService</span>, <span class="fn">createMemoryCacheAdapter</span> } <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
+
+<span class="kw">const</span> cache = <span class="fn">createCacheService</span>({ adapter: <span class="fn">createMemoryCacheAdapter</span>() });
+
+<span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"u1"</span>, { name: <span class="str">"Alice"</span> }, { namespace: <span class="str">"tenant-a"</span> });
+<span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"u1"</span>, { name: <span class="str">"Bob"</span> },   { namespace: <span class="str">"tenant-b"</span> });
+
+<span class="kw">const</span> a = <span class="kw">await</span> cache.<span class="fn">get</span>(<span class="str">"u1"</span>, { namespace: <span class="str">"tenant-a"</span> });
+<span class="kw">const</span> b = <span class="kw">await</span> cache.<span class="fn">get</span>(<span class="str">"u1"</span>, { namespace: <span class="str">"tenant-b"</span> });
+console.<span class="fn">log</span>(a.value, b.value);
+<span class="cmt">// { name: "Alice" } { name: "Bob" }</span>
+
+console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">clear</span>({ namespace: <span class="str">"tenant-a"</span> }));
+<span class="cmt">// { cleared: 1 }</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">has</span>(<span class="str">"u1"</span>, { namespace: <span class="str">"tenant-b"</span> }));
+<span class="cmt">// true</span>
+
+<span class="cmt">// A namespace is validated like a key part, so a wildcard is rejected.</span>
+<span class="kw">await</span> cache.<span class="fn">clear</span>({ namespace: <span class="str">"*"</span> });
+<span class="cmt">// throws CacheError</span></div>
+
+        <p class="mb-2 leading-relaxed">For one service per tenant, pass the namespace in the config and drop it from every call.</p>
+        <div class="code-block mb-4"><span class="kw">const</span> tenantA = <span class="fn">createCacheService</span>({
+  adapter: <span class="fn">createMemoryCacheAdapter</span>(),
+  config: { namespace: <span class="str">"tenant-a"</span> },
+});
+<span class="kw">await</span> tenantA.<span class="fn">set</span>(<span class="str">"u1"</span>, { name: <span class="str">"Alice"</span> }); <span class="cmt">// stored as zudojs:tenant-a:u1</span></div>
+
+        <div class="callout callout-danger mb-4">
+          <p class="text-sm font-bold mb-1">DANGER</p>
+          <p class="text-sm">A namespace that comes from a request (a tenant id, a header) is safe to pass in: the cache validates it and throws rather than widening the operation. The one thing it cannot do is guess the right tenant for you. Always pass the namespace on every call, or use one service per tenant.</p>
         </div>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Methods</h3>
+        <p class="mb-4 leading-relaxed"><strong>Common mistake:</strong> building keys with a colon, such as <code>`user:${id}`</code>. Use a dot or a dash inside a key and let the namespace carry the scope.</p>
+      </section>
 
-        <div class="overflow-x-auto mb-6">
-          <table class="w-full text-smw-full border-4 border-black text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="border border-black px-4 py-2 text-left font-bold">Method</th>
-                <th class="border border-black px-4 py-2 text-left font-bold">Returns</th>
-                <th class="border border-black px-4 py-2 text-left font-bold">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">get&lt;T&gt;(key, opts?)</td><td class="border border-black px-4 py-2 font-mono text-xs">CacheGetResult&lt;T&gt;</td><td class="border border-black px-4 py-2">Retrieve value by key. Returns <code>{ hit, value }</code>.</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">set&lt;T&gt;(key, value, opts?)</td><td class="border border-black px-4 py-2 font-mono text-xs">CacheSetResult</td><td class="border border-black px-4 py-2">Store value with optional TTL and tags.</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">delete(key, opts?)</td><td class="border border-black px-4 py-2 font-mono text-xs">CacheDeleteResult</td><td class="border border-black px-4 py-2">Remove a single key.</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">has(key, opts?)</td><td class="border border-black px-4 py-2 font-mono text-xs">boolean</td><td class="border border-black px-4 py-2">Check if key exists (with lazy expiry).</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">clear(opts?)</td><td class="border border-black px-4 py-2 font-mono text-xs">{ cleared: number }</td><td class="border border-black px-4 py-2">Clear all or by namespace/pattern.</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">getOrSet&lt;T&gt;(key, fn, opts?)</td><td class="border border-black px-4 py-2 font-mono text-xs">CacheOrComputeResult&lt;T&gt;</td><td class="border border-black px-4 py-2">Cache-aside: return cached or compute fresh.</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">invalidateByTag(tags)</td><td class="border border-black px-4 py-2 font-mono text-xs">{ cleared: number }</td><td class="border border-black px-4 py-2">Delete all keys mapped to given tags.</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">invalidateByPattern(pattern)</td><td class="border border-black px-4 py-2 font-mono text-xs">{ cleared: number }</td><td class="border border-black px-4 py-2">Delete all keys matching a glob pattern.</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">withLock&lt;T&gt;(key, fn, opts?)</td><td class="border border-black px-4 py-2 font-mono text-xs">T</td><td class="border border-black px-4 py-2">Execute function under a distributed lock.</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">getStats()</td><td class="border border-black px-4 py-2 font-mono text-xs">CacheStats | null</td><td class="border border-black px-4 py-2">Hit/miss/set/delete/error counts + hit rate.</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">healthCheck()</td><td class="border border-black px-4 py-2 font-mono text-xs">CacheHealth</td><td class="border border-black px-4 py-2">Probe adapter health with latency measurement.</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">connect() / disconnect()</td><td class="border border-black px-4 py-2 font-mono text-xs">Promise&lt;void&gt;</td><td class="border border-black px-4 py-2">Lifecycle management for the adapter.</td></tr>
-            </tbody>
-          </table>
+      <!-- ==================== TTL ==================== -->
+      <section id="ttl" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TTL: HOW LONG AN ENTRY LIVES</h2>
+        <p class="mb-4 leading-relaxed">
+          <em>TTL</em> stands for time to live. It is the number of milliseconds an entry stays valid after you store it. When the time is up, the entry is treated as missing. The default is 5 minutes (<code>DEFAULT_TTL_MS</code>).
+        </p>
+        <p class="mb-4 leading-relaxed">
+          You set it once with <code>config.defaultTtl</code> and override it per call with <code>{ ttl }</code>. Pass <code>null</code> for an entry that never expires. A TTL of 0, a negative number, or more than 24 hours (<code>MAX_TTL_MS</code>) throws.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          Expiry is lazy: nothing runs on a timer. An expired entry is dropped the next time it is read or when the adapter makes room. The memory adapter also evicts the least recently used entries once it holds more than <code>maxEntries</code> (10,000) or roughly <code>maxBytes</code> (50 MB).
+        </p>
+
+        <p class="mb-2 leading-relaxed">This stores two entries with different lifetimes, checks how long they have left, and extends one.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createCacheService</span>, <span class="fn">createMemoryCacheAdapter</span> } <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
+
+<span class="kw">const</span> cache = <span class="fn">createCacheService</span>({ adapter: <span class="fn">createMemoryCacheAdapter</span>() });
+
+<span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"timed"</span>,   <span class="str">"v"</span>, { ttl: <span class="num">10_000</span> });
+<span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"forever"</span>, <span class="str">"v"</span>, { ttl: <span class="kw">null</span> });
+
+console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">ttl</span>(<span class="str">"timed"</span>));   <span class="cmt">// 9999 (milliseconds left; yours will differ)</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">ttl</span>(<span class="str">"forever"</span>)); <span class="cmt">// null  (never expires)</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">ttl</span>(<span class="str">"missing"</span>)); <span class="cmt">// undefined (no such key)</span>
+
+console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">expire</span>(<span class="str">"timed"</span>, <span class="num">60_000</span>)); <span class="cmt">// true, now ~60 s left</span>
+
+<span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"bad"</span>, <span class="str">"v"</span>, { ttl: <span class="num">0</span> });
+<span class="cmt">// throws CacheError</span></div>
+
+        <div class="callout callout-tip mb-4">
+          <p class="text-sm font-bold mb-1">TIP</p>
+          <p class="text-sm">Timers use a monotonic clock, so a system clock jump does not stretch or shorten a TTL. <code>set</code> returns <code>{ success, key, expiresAt }</code>; <code>expiresAt</code> is a <code>Date</code> for display only.</p>
         </div>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Cache-Aside Pattern</h3>
-        <div class="code-block mb-4">
-<span class="cm">// Returns cached value or computes fresh, then caches</span>
-<span class="kw">const</span> result = <span class="kw">await</span> cache.<span class="fn">getOrSet</span>(
-  <span class="str">"product:42"</span>,
-  <span class="kw">async</span> () => <span class="kw">await</span> db.<span class="fn">getProduct</span>(<span class="str">"42"</span>),
-  { <span class="fn">ttl</span>: <span class="num">300000</span>, <span class="fn">tags</span>: [<span class="str">"products"</span>] }
+        <p class="mb-4 leading-relaxed"><strong>Common mistake:</strong> writing <code>ttl: 0</code> to mean "keep forever". Zero is rejected. Use <code>ttl: null</code>.</p>
+      </section>
+
+      <!-- ==================== GET OR SET ==================== -->
+      <section id="get-or-set" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">GETORSET: READ, OR COMPUTE AND STORE</h2>
+        <p class="mb-4 leading-relaxed">
+          Most code that uses a cache does the same three steps: look in the cache, and on a miss do the slow work, store the result, and return it. <code>getOrSet</code> does those steps for you.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          It also protects against a <em>stampede</em>. If 50 requests miss the same key at the same moment, only one of them runs your function; the other 49 wait for that result. Without this, all 50 would hit the database together.
+        </p>
+
+        <p class="mb-2 leading-relaxed">This fetches a user twice. The database function runs once; the second call is served from the cache.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createCacheService</span>, <span class="fn">createMemoryCacheAdapter</span> } <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
+
+<span class="kw">interface</span> <span class="tp">User</span> { id: <span class="tp">string</span>; name: <span class="tp">string</span>; }
+
+<span class="kw">const</span> cache = <span class="fn">createCacheService</span>({
+  adapter: <span class="fn">createMemoryCacheAdapter</span>({ maxEntries: <span class="num">1000</span> }),
+  config: { defaultTtl: <span class="num">60_000</span> },
+});
+
+<span class="kw">async function</span> <span class="fn">fetchUserFromDb</span>(id: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">User</span>&gt; {
+  console.<span class="fn">log</span>(<span class="str">"hitting the database"</span>);
+  <span class="kw">return</span> { id, name: <span class="str">"Alice"</span> };
+}
+
+<span class="kw">const</span> first  = <span class="kw">await</span> cache.<span class="fn">getOrSet</span>&lt;<span class="tp">User</span>&gt;(<span class="str">"user.123"</span>, () =&gt; <span class="fn">fetchUserFromDb</span>(<span class="str">"123"</span>));
+<span class="kw">const</span> second = <span class="kw">await</span> cache.<span class="fn">getOrSet</span>&lt;<span class="tp">User</span>&gt;(<span class="str">"user.123"</span>, () =&gt; <span class="fn">fetchUserFromDb</span>(<span class="str">"123"</span>));
+
+console.<span class="fn">log</span>(first.cached, second.cached); <span class="cmt">// false true</span>
+console.<span class="fn">log</span>(second.value.name);          <span class="cmt">// "Alice"</span></div>
+        <p class="mb-4 leading-relaxed">You should see <code>hitting the database</code> printed exactly once. <code>getOrSet</code> returns <code>{ value, cached }</code>; <code>value</code> is always present, and <code>cached</code> tells you whether it came from the cache.</p>
+
+        <p class="mb-2 leading-relaxed">The third argument takes the same options as <code>set</code> (<code>ttl</code>, <code>tags</code>, <code>namespace</code>) plus <code>forceRefresh</code>, which skips the read and recomputes.</p>
+        <div class="code-block mb-4"><span class="kw">const</span> fresh = <span class="kw">await</span> cache.<span class="fn">getOrSet</span>&lt;<span class="tp">User</span>&gt;(
+  <span class="str">"user.123"</span>,
+  () =&gt; <span class="fn">fetchUserFromDb</span>(<span class="str">"123"</span>),
+  { ttl: <span class="num">300_000</span>, tags: [<span class="str">"users"</span>], forceRefresh: <span class="kw">true</span> },
 );
+console.<span class="fn">log</span>(fresh.cached); <span class="cmt">// false</span></div>
 
-<span class="cm">// result.value  — the data</span>
-<span class="cm">// result.cached — true if from cache, false if freshly computed</span>
+        <p class="mb-2 leading-relaxed">If you write the three steps by hand, check <code>hit</code>, not the value.</p>
+        <div class="code-block mb-4"><span class="kw">async function</span> <span class="fn">getUser</span>(id: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">User</span>&gt; {
+  <span class="kw">const</span> cached = <span class="kw">await</span> cache.<span class="fn">get</span>&lt;<span class="tp">User</span>&gt;(<span class="str">`user.${id}`</span>);
+  <span class="kw">if</span> (cached.hit) <span class="kw">return</span> cached.value!;
 
-<span class="cm">// Force refresh (skip cache)</span>
-<span class="kw">const</span> fresh = <span class="kw">await</span> cache.<span class="fn">getOrSet</span>(
-  <span class="str">"product:42"</span>,
-  <span class="kw">async</span> () => <span class="kw">await</span> db.<span class="fn">getProduct</span>(<span class="str">"42"</span>),
-  { <span class="fn">forceRefresh</span>: <span class="num">true</span> }
-);
+  <span class="kw">const</span> user = <span class="kw">await</span> <span class="fn">fetchUserFromDb</span>(id);
+  <span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">`user.${id}`</span>, user, { tags: [<span class="str">"users"</span>] });
+  <span class="kw">return</span> user;
+}</div>
+
+        <p class="mb-4 leading-relaxed"><strong>Common mistake:</strong> <code>if (!cached) fetch...</code>. The result object is never falsy, so that branch never runs, the cache never fills, and every call hits the database. Check <code>cached.hit</code>.</p>
+      </section>
+
+      <!-- ==================== TAGS AND INVALIDATION ==================== -->
+      <section id="tags-and-invalidation" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TAGS AND INVALIDATION</h2>
+        <p class="mb-4 leading-relaxed">
+          <em>Invalidation</em> means removing entries that are no longer correct, for example after a user changes their name. You can delete one key with <code>delete</code>, but often you do not know every key that is now stale. Tags and patterns solve that.
+        </p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Tags</h3>
+        <p class="mb-4 leading-relaxed">
+          A <em>tag</em> is a label you attach to an entry when you store it. One entry can carry several tags. Later, <code>invalidateByTag</code> deletes every entry that carries any of the tags you name, without you listing the keys.
+        </p>
+        <p class="mb-2 leading-relaxed">This tags three entries and then removes everything tagged <code>users</code>.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createCacheService</span>, <span class="fn">createMemoryCacheAdapter</span> } <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
+
+<span class="kw">const</span> cache = <span class="fn">createCacheService</span>({ adapter: <span class="fn">createMemoryCacheAdapter</span>() });
+
+<span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"user.1"</span>, { name: <span class="str">"Alice"</span> }, { tags: [<span class="str">"users"</span>] });
+<span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"user.2"</span>, { name: <span class="str">"Bob"</span> },   { tags: [<span class="str">"users"</span>, <span class="str">"admins"</span>] });
+<span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"post.1"</span>, { title: <span class="str">"Hi"</span> },   { tags: [<span class="str">"posts"</span>] });
+
+console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">invalidateByTag</span>([<span class="str">"users"</span>])); <span class="cmt">// { cleared: 2 }</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">has</span>(<span class="str">"user.1"</span>));                <span class="cmt">// false</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">has</span>(<span class="str">"post.1"</span>));                <span class="cmt">// true</span></div>
+        <p class="mb-4 leading-relaxed">
+          Tags live inside a namespace. A tag added under <code>tenant-a</code> is only visible to <code>invalidateByTag(tags, { namespace: "tenant-a" })</code> or to a service configured with that namespace. A tag must be a non-empty string of at most 128 characters.
+        </p>
+
+        <div class="callout callout-warning mb-4">
+          <p class="text-sm font-bold mb-1">WATCH OUT</p>
+          <p class="text-sm">If you tag an entry under a namespace and later call <code>invalidateByTag</code> without that namespace (or the other way round), nothing is cleared and no error is thrown. The scope must match on both sides.</p>
         </div>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Distributed Locking</h3>
-        <div class="code-block mb-4">
-<span class="cm">// Execute with exclusive lock (auto-releases in finally)</span>
-<span class="kw">const</span> result = <span class="kw">await</span> cache.<span class="fn">withLock</span>(
-  <span class="str">"rate-limit:user:1"</span>,
-  <span class="kw">async</span> () => {
-    <span class="kw">const</span> count = <span class="kw">await</span> redis.<span class="fn">incr</span>(<span class="str">"requests"</span>);
-    <span class="kw">if</span> (count > <span class="num">100</span>) <span class="kw">throw new</span> <span class="tp">Error</span>(<span class="str">"Rate limited"</span>);
-    <span class="kw">return</span> { <span class="fn">allowed</span>: <span class="num">true</span> };
+        <h3 class="text-lg font-bold mb-3 mt-6">Patterns</h3>
+        <p class="mb-4 leading-relaxed">
+          A <em>pattern</em> is a key with wildcards: <code>*</code> matches any run of characters and <code>?</code> matches one character. <code>invalidateByPattern</code> and <code>clear({ pattern })</code> delete every key that matches. The pattern is prefixed and namespaced just like a key.
+        </p>
+        <p class="mb-2 leading-relaxed">This removes every key that starts with <code>user.</code> and leaves the rest.</p>
+        <div class="code-block mb-4"><span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"user.1"</span>, <span class="str">"alice"</span>);
+<span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"user.2"</span>, <span class="str">"bob"</span>);
+<span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"post.1"</span>, <span class="str">"hello"</span>);
+
+console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">invalidateByPattern</span>(<span class="str">"user.*"</span>)); <span class="cmt">// { cleared: 2 }</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">has</span>(<span class="str">"post.1"</span>));                  <span class="cmt">// true</span></div>
+        <p class="mb-4 leading-relaxed">
+          <code>*</code> never crosses the <code>:</code> separator, so a pattern cannot reach into a namespace you did not name. On a service with no namespace, <code>invalidateByPattern("*")</code> removes only un-namespaced keys. To wipe across every namespace on purpose, use <code>"**"</code>. A pattern may only contain the key characters plus <code>*</code> and <code>?</code>; anything else throws.
+        </p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Clearing everything</h3>
+        <p class="mb-2 leading-relaxed"><code>clear()</code> with no arguments empties the whole cache and forgets every tag.</p>
+        <div class="code-block mb-4">console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">clear</span>()); <span class="cmt">// { cleared: 1 }</span></div>
+
+        <p class="mb-4 leading-relaxed"><strong>Common mistake:</strong> expecting <code>invalidateByPattern("*")</code> to clear tenants' entries too. It stops at the separator. Use <code>clear({ namespace })</code> per tenant, or <code>"**"</code> if you really mean everything.</p>
+      </section>
+
+      <!-- ==================== LOCKS ==================== -->
+      <section id="locks" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">LOCKS: ONE AT A TIME</h2>
+        <p class="mb-4 leading-relaxed">
+          A <em>lock</em> is a named ticket that only one piece of code can hold at a time. While you hold it, anyone else who asks for the same name has to wait or give up. Use it around work that must not run twice at once, such as an import job or a counter update.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          <code>withLock(name, fn, options)</code> takes the lock, runs <code>fn</code>, and releases the lock even if <code>fn</code> throws. The lock is a <em>lease</em>: it has a TTL (30 seconds by default) and is renewed while <code>fn</code> runs, so a slow job does not lose it. If the lease is lost anyway, the call throws instead of pretending it worked.
+        </p>
+
+        <p class="mb-2 leading-relaxed">This runs a job under a lock and returns its result.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createCacheService</span>, <span class="fn">createMemoryCacheAdapter</span>, <span class="fn">isCacheError</span> } <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
+
+<span class="kw">const</span> cache = <span class="fn">createCacheService</span>({ adapter: <span class="fn">createMemoryCacheAdapter</span>() });
+
+<span class="kw">const</span> imported = <span class="kw">await</span> cache.<span class="fn">withLock</span>(
+  <span class="str">"nightly-import"</span>,
+  <span class="kw">async</span> (signal) =&gt; {
+    <span class="cmt">// Only one caller is in here at a time.</span>
+    <span class="cmt">// `signal` aborts if the lease is lost mid-way.</span>
+    <span class="kw">return</span> <span class="num">42</span>;
   },
-  { <span class="fn">ttl</span>: <span class="num">5000</span>, <span class="fn">retryAttempts</span>: <span class="num">3</span> }
+  { ttl: <span class="num">10_000</span>, retryAttempts: <span class="num">3</span> },
 );
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Disabled Mode</h3>
-        <div class="code-block mb-4">
-<span class="cm">// When config.enabled = false, all operations are safe no-ops</span>
-<span class="kw">const</span> cache = <span class="fn">createCacheService</span>({
-  <span class="fn">adapter</span>,
-  <span class="fn">config</span>: { <span class="fn">enabled</span>: <span class="num">false</span> }
-});
-
-<span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"key"</span>, <span class="str">"value"</span>);  <span class="cm">// no-op</span>
-<span class="kw">const</span> r = <span class="kw">await</span> cache.<span class="fn">get</span>(<span class="str">"key"</span>);   <span class="cm">// { hit: false, value: null }</span>
-<span class="kw">await</span> cache.<span class="fn">has</span>(<span class="str">"key"</span>);            <span class="cm">// false</span>
-        </div>
-      </section>
-
-      <!-- ==================== CACHE STORE ==================== -->
-      <section id="cache-store" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DEFAULTCACHESTORE</h2>
-        <p class="mb-4 leading-relaxed">
-          Wraps a <code>CacheAdapter</code> with middleware pipeline, event emission, and metrics tracking. The store is used internally by <code>CacheService</code> but can also be used standalone.
-        </p>
-
-        <div class="code-block mb-4">
-<span class="kw">import</span> { <span class="fn">createCacheStore</span>, <span class="fn">createMemoryCacheAdapter</span> } <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
-
-<span class="kw">const</span> store = <span class="fn">createCacheStore</span>({
-  <span class="fn">adapter</span>: <span class="fn">createMemoryCacheAdapter</span>(),
-  <span class="fn">middlewares</span>: [
-    <span class="cm">// Custom middleware runs before every operation</span>
-    <span class="kw">async</span> (ctx, next) => {
-      console.<span class="fn">log</span>(<span class="str">`[cache] ${ctx.operation} on ${ctx.key}`</span>);
-      <span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">next</span>();
-      console.<span class="fn">log</span>(<span class="str">`[cache] done in ${Date.now() - ctx.startedAt}ms`</span>);
-      <span class="kw">return</span> result;
-    }
-  ]
-});
-
-<span class="cm">// Subscribe to events</span>
-<span class="kw">const</span> sub = store.<span class="fn">subscribe</span>(<span class="str">"cache.hit"</span>, (event) => {
-  console.<span class="fn">log</span>(<span class="str">`Cache hit: ${event.key} in ${event.latencyMs}ms`</span>);
-});
-
-<span class="cm">// Wildcard subscription</span>
-store.<span class="fn">subscribe</span>(<span class="str">"*"</span>, (event) => {
-  metrics.<span class="fn">record</span>(event.type, event);
-});
-
-<span class="cm">// Unsubscribe</span>
-sub.<span class="fn">unsubscribe</span>();
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Event Types</h3>
-        <div class="overflow-x-auto mb-6">
-          <table class="w-full text-smw-full border-4 border-black text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="border border-black px-4 py-2 text-left font-bold">Event</th>
-                <th class="border border-black px-4 py-2 text-left font-bold">Payload</th>
-                <th class="border border-black px-4 py-2 text-left font-bold">When</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">cache.hit</td><td class="border border-black px-4 py-2 font-mono text-xs">{ key, latencyMs }</td><td class="border border-black px-4 py-2">Value found in cache</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">cache.miss</td><td class="border border-black px-4 py-2 font-mono text-xs">{ key, latencyMs }</td><td class="border border-black px-4 py-2">Value not found</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">cache.set</td><td class="border border-black px-4 py-2 font-mono text-xs">{ key, ttl }</td><td class="border border-black px-4 py-2">Value stored</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">cache.delete</td><td class="border border-black px-4 py-2 font-mono text-xs">{ key, deleted }</td><td class="border border-black px-4 py-2">Key removed</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">cache.clear</td><td class="border border-black px-4 py-2 font-mono text-xs">{ cleared }</td><td class="border border-black px-4 py-2">Entries cleared</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">cache.error</td><td class="border border-black px-4 py-2 font-mono text-xs">{ key, error }</td><td class="border border-black px-4 py-2">Operation failed</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- ==================== MEMORY ADAPTER ==================== -->
-      <section id="memory-adapter" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MEMORYCACHEADAPTER</h2>
-        <p class="mb-4 leading-relaxed">
-          Built-in in-memory cache adapter backed by a <code>Map</code>. Uses <strong>FIFO eviction</strong> when capacity is reached and <strong>lazy expiration</strong> (entries removed on access, not by timers).
-        </p>
-
-        <div class="code-block mb-4">
-<span class="kw">import</span> { <span class="fn">createMemoryCacheAdapter</span> } <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
-
-<span class="cm">// Default: 10,000 entries, 5-minute TTL</span>
-<span class="kw">const</span> adapter = <span class="fn">createMemoryCacheAdapter</span>();
-
-<span class="cm">// Custom configuration</span>
-<span class="kw">const</span> adapter = <span class="fn">createMemoryCacheAdapter</span>({
-  <span class="fn">maxEntries</span>: <span class="num">5000</span>,       <span class="cm">// Max entries before FIFO eviction</span>
-  <span class="fn">defaultTtl</span>: <span class="num">60000</span>      <span class="cm">// Default TTL: 60 seconds</span>
-});
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Behavior</h3>
-        <ul class="list-disc list-inside mb-4 space-y-2 text-sm leading-relaxed">
-          <li><strong>FIFO eviction:</strong> When <code>maxEntries</code> is reached, the oldest entry (first key in Map insertion order) is removed.</li>
-          <li><strong>Lazy expiration:</strong> Expired entries are removed when accessed (<code>get</code>, <code>has</code>), not via background timers.</li>
-          <li><strong>Glob patterns:</strong> <code>clear()</code> and <code>keys()</code> support <code>*</code> and <code>?</code> glob patterns.</li>
-          <li><strong>Batch operations:</strong> <code>getMany</code>, <code>setMany</code>, <code>deleteMany</code> for efficient bulk operations.</li>
-          <li><strong>TTL extension:</strong> Use <code>expire(key, ttl)</code> to extend an entry's lifetime.</li>
-        </ul>
-
-        <div class="callout callout-warning mb-6">
-          <p class="text-sm font-bold mb-1">PRODUCTION NOTE</p>
-          <p class="text-sm"><code>MemoryCacheAdapter</code> is single-process only. For multi-instance deployments, implement a <code>CacheAdapter</code> backed by Redis, Memcached, or your preferred distributed store.</p>
-        </div>
-      </section>
-
-      <!-- ==================== KEY BUILDER ==================== -->
-      <section id="key-builder" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">KEY BUILDER</h2>
-        <p class="mb-4 leading-relaxed">
-          Builds fully qualified cache keys with prefix, namespace, and separator. Validates key length (max 256) and character pattern.
-        </p>
-
-        <div class="code-block mb-4">
-<span class="kw">import</span> { <span class="fn">createKeyBuilder</span> } <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
-
-<span class="kw">const</span> builder = <span class="fn">createKeyBuilder</span>({
-  <span class="fn">prefix</span>: <span class="str">"myapp"</span>,      <span class="cm">// Default: "zudojs"</span>
-  <span class="fn">separator</span>: <span class="str">":"</span>,        <span class="cm">// Default: ":"</span>
-});
-
-<span class="cm">// Build a key</span>
-builder.<span class="fn">build</span>(<span class="str">"user:1"</span>);
-<span class="cm">// → "myapp:user:1"</span>
-
-<span class="cm">// Build with namespace</span>
-builder.<span class="fn">build</span>(<span class="str">"user:1"</span>, { <span class="fn">namespace</span>: <span class="str">"auth"</span> });
-<span class="cm">// → "myapp:auth:user:1"</span>
-
-<span class="cm">// Create a scoped builder</span>
-<span class="kw">const</span> authBuilder = builder.<span class="fn">namespace</span>(<span class="str">"auth"</span>);
-authBuilder.<span class="fn">build</span>(<span class="str">"session:abc"</span>);
-<span class="cm">// → "myapp:auth:session:abc"</span>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Key Format</h3>
-        <div class="border-2 border-black p-4 bg-gray-50 mb-4 font-mono text-sm">
-          <code>[prefix][separator][namespace][separator][key]</code>
-        </div>
-        <ul class="list-disc list-inside mb-4 space-y-1 text-sm">
-          <li>Max length: 256 characters</li>
-          <li>Valid characters: <code>a-zA-Z0-9._-:</code></li>
-          <li>Default prefix: <code>zudojs</code></li>
-          <li>Default separator: <code>:</code></li>
-        </ul>
-      </section>
-
-      <!-- ==================== TAGS ==================== -->
-      <section id="tags" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TAG STORE</h2>
-        <p class="mb-4 leading-relaxed">
-          Bidirectional mapping between cache keys and logical tags. Tags let you invalidate groups of related keys without knowing them individually.
-        </p>
-
-        <div class="code-block mb-4">
-<span class="kw">import</span> { <span class="fn">createTagStore</span> } <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
-
-<span class="kw">const</span> tags = <span class="fn">createTagStore</span>();
-
-<span class="cm">// Associate tags with a key (bidirectional)</span>
-<span class="kw">await</span> tags.<span class="fn">add</span>(<span class="str">"zudojs:user:1"</span>, [<span class="str">"users"</span>, <span class="str">"active"</span>]);
-<span class="kw">await</span> tags.<span class="fn">add</span>(<span class="str">"zudojs:user:2"</span>, [<span class="str">"users"</span>, <span class="str">"inactive"</span>]);
-
-<span class="cm">// Get all keys for a tag</span>
-<span class="kw">const</span> keys = <span class="kw">await</span> tags.<span class="fn">getKeys</span>(<span class="str">"users"</span>);
-<span class="cm">// → ["zudojs:user:1", "zudojs:user:2"]</span>
-
-<span class="cm">// Get all tags for a key</span>
-<span class="kw">const</span> tagList = tags.<span class="fn">tagsForKey</span>(<span class="str">"zudojs:user:1"</span>);
-<span class="cm">// → ["users", "active"]</span>
-
-<span class="cm">// Invalidate a tag (removes all mappings)</span>
-<span class="kw">const</span> result = <span class="kw">await</span> tags.<span class="fn">invalidate</span>(<span class="str">"active"</span>);
-<span class="cm">// → { cleared: 1 }</span>
-        </div>
-      </section>
-
-      <!-- ==================== INVALIDATION ==================== -->
-      <section id="invalidation" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CACHEINVALIDATIONMANAGER</h2>
-        <p class="mb-4 leading-relaxed">
-          Coordinates cache invalidation across multiple strategies: by tag, pattern, namespace, or individual key.
-        </p>
-
-        <div class="code-block mb-4">
-<span class="kw">import</span> { <span class="fn">createInvalidationManager</span> } <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
-
-<span class="kw">const</span> invalidator = <span class="fn">createInvalidationManager</span>({
-  <span class="fn">adapter</span>,
-  <span class="fn">tagStore</span>
-});
-
-<span class="cm">// By tag — deletes all keys with "users" tag</span>
-<span class="kw">await</span> invalidator.<span class="fn">invalidateByTag</span>([<span class="str">"users"</span>]);
-
-<span class="cm">// By pattern — glob matching</span>
-<span class="kw">await</span> invalidator.<span class="fn">invalidateByPattern</span>(<span class="str">"user:*"</span>);
-
-<span class="cm">// By namespace</span>
-<span class="kw">await</span> invalidator.<span class="fn">invalidateByNamespace</span>(<span class="str">"auth"</span>);
-
-<span class="cm">// Single key</span>
-<span class="kw">await</span> invalidator.<span class="fn">invalidateKey</span>(<span class="str">"zudojs:user:1"</span>);
-
-<span class="cm">// Multiple keys</span>
-<span class="kw">await</span> invalidator.<span class="fn">invalidateKeys</span>([<span class="str">"key1"</span>, <span class="str">"key2"</span>]);
-
-<span class="cm">// Nuclear option — clear everything</span>
-<span class="kw">await</span> invalidator.<span class="fn">flushAll</span>();
-        </div>
-      </section>
-
-      <!-- ==================== LOCKING ==================== -->
-      <section id="locking" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DISTRIBUTED LOCKING</h2>
-        <p class="mb-4 leading-relaxed">
-          Token-based lock store with retry logic for coordinating concurrent access to shared resources.
-        </p>
-
-        <div class="code-block mb-4">
-<span class="kw">import</span> { <span class="fn">createLockManager</span> } <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
-
-<span class="kw">const</span> locker = <span class="fn">createLockManager</span>({
-  <span class="fn">retryAttempts</span>: <span class="num">3</span>,      <span class="cm">// Default: 3</span>
-  <span class="fn">retryDelayMs</span>: <span class="num">100</span>     <span class="cm">// Default: 100ms</span>
-});
-
-<span class="cm">// Execute under lock (auto-releases)</span>
-<span class="kw">await</span> locker.<span class="fn">withLock</span>(<span class="str">"resource:123"</span>, <span class="kw">async</span> () => {
-  <span class="cm">// Only one caller executes at a time</span>
-  <span class="kw">const</span> data = <span class="kw">await</span> <span class="fn">loadResource</span>();
-  data.version++;
-  <span class="kw">await</span> <span class="fn">saveResource</span>(data);
-}, { <span class="fn">ttl</span>: <span class="num">10000</span> });
-
-<span class="cm">// Manual acquire/release</span>
-<span class="kw">const</span> lock = <span class="kw">await</span> locker.<span class="fn">acquire</span>(<span class="str">"resource:123"</span>);
-<span class="kw">if</span> (lock) {
-  <span class="kw">try</span> {
-    <span class="kw">await</span> <span class="fn">doWork</span>();
-  } <span class="kw">finally</span> {
-    <span class="kw">await</span> lock.<span class="fn">release</span>();
-  }
-}
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Lock Object</h3>
-        <div class="overflow-x-auto mb-6">
-          <table class="w-full text-smw-full border-4 border-black text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="border border-black px-4 py-2 text-left font-bold">Property</th>
-                <th class="border border-black px-4 py-2 text-left font-bold">Type</th>
-                <th class="border border-black px-4 py-2 text-left font-bold">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">key</td><td class="border border-black px-4 py-2 font-mono text-xs">string</td><td class="border border-black px-4 py-2">The lock key</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">token</td><td class="border border-black px-4 py-2 font-mono text-xs">string</td><td class="border border-black px-4 py-2">Unique lock identity</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">acquiredAt</td><td class="border border-black px-4 py-2 font-mono text-xs">Date</td><td class="border border-black px-4 py-2">When the lock was acquired</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">expiresAt</td><td class="border border-black px-4 py-2 font-mono text-xs">Date</td><td class="border border-black px-4 py-2">When the lock expires</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">release()</td><td class="border border-black px-4 py-2 font-mono text-xs">Promise&lt;void&gt;</td><td class="border border-black px-4 py-2">Release the lock</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">extend(ttl)</td><td class="border border-black px-4 py-2 font-mono text-xs">Promise&lt;void&gt;</td><td class="border border-black px-4 py-2">Extend lock lifetime</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- ==================== METRICS ==================== -->
-      <section id="metrics" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CACHE METRICS</h2>
-        <p class="mb-4 leading-relaxed">
-          Tracks cache operation metrics including hit/miss rates, latency histograms, and hot key analysis.
-        </p>
-
-        <div class="code-block mb-4">
-<span class="kw">import</span> { <span class="fn">createCacheMetrics</span> } <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
-
-<span class="kw">const</span> metrics = <span class="fn">createCacheMetrics</span>();
-
-<span class="cm">// Get overall stats</span>
-<span class="kw">const</span> stats = metrics.<span class="fn">getStats</span>();
-<span class="cm">// { hits: 150, misses: 50, sets: 200, deletes: 10, errors: 2, hitRate: 0.75 }</span>
-
-<span class="cm">// Latency percentiles for a specific operation</span>
-<span class="kw">const</span> latency = metrics.<span class="fn">getLatencyStats</span>(<span class="str">"get"</span>);
-<span class="cm">// { count: 200, min: 0.1, max: 15.3, mean: 2.1, p50: 1.2, p95: 8.5, p99: 14.2 }</span>
-
-<span class="cm">// Hot keys (most accessed)</span>
-<span class="kw">const</span> hot = metrics.<span class="fn">getHotKeys</span>(<span class="num">5</span>);
-<span class="cm">// [{ key: "user:1", hits: 45 }, { key: "product:42", hits: 38 }, ...]</span>
-
-<span class="cm">// Latency histogram</span>
-<span class="kw">const</span> hist = metrics.<span class="fn">getLatencyHistogram</span>(<span class="str">"get"</span>);
-<span class="cm">// [{ bucket: 1, count: 80 }, { bucket: 5, count: 95 }, ...]</span>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Latency Buckets</h3>
-        <div class="border-2 border-black p-4 bg-gray-50 mb-4 font-mono text-sm">
-          <code>[1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1000ms]</code>
-        </div>
-        <p class="text-sm text-gray-600 mb-4">Maximum 1,000 samples per operation (older samples are trimmed).</p>
-      </section>
-
-      <!-- ==================== SERIALIZERS ==================== -->
-      <section id="serializers" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SERIALIZERS</h2>
-        <p class="mb-4 leading-relaxed">
-          Two built-in serializers for converting cache values to/from storable formats.
-        </p>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-          <div class="border-2 border-black p-5">
-            <h4 class="font-bold mb-2">JsonCacheSerializer</h4>
-            <p class="text-sm text-gray-600 mb-3">JSON serialization with optional type preservation (Date, BigInt, Map, Set, Uint8Array).</p>
-            <div class="code-block text-xs">
-<span class="kw">new</span> <span class="tp">JsonCacheSerializer</span>({
-  <span class="fn">preserveTypes</span>: <span class="num">true</span>
-})
-            </div>
-          </div>
-          <div class="border-2 border-black p-5">
-            <h4 class="font-bold mb-2">RawCacheSerializer</h4>
-            <p class="text-sm text-gray-600 mb-3">Pass-through serializer. Returns values as-is. Use when the adapter handles serialization natively.</p>
-            <div class="code-block text-xs">
-<span class="kw">new</span> <span class="tp">RawCacheSerializer</span>()
-<span class="cm">// serialize(v) → v</span>
-<span class="cm">// deserialize(v) → v</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ==================== TYPES ==================== -->
-      <section id="types" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TYPES REFERENCE</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">CacheConfig</h3>
-        <div class="code-block mb-4">
-<span class="kw">interface</span> <span class="tp">CacheConfig</span> {
-  <span class="fn">enabled</span>?: <span class="tp">boolean</span>;            <span class="cm">// Default: true</span>
-  <span class="fn">defaultTtl</span>?: <span class="tp">number</span>;          <span class="cm">// Default: 300000 (5 min)</span>
-  <span class="fn">namespace</span>?: <span class="tp">string</span>;           <span class="cm">// Default: undefined</span>
-  <span class="fn">prefix</span>?: <span class="tp">string</span>;              <span class="cm">// Default: "zudojs"</span>
-  <span class="fn">separator</span>?: <span class="tp">string</span>;           <span class="cm">// Default: ":"</span>
-  <span class="fn">failSilently</span>?: <span class="tp">boolean</span>;       <span class="cm">// Default: false</span>
-  <span class="fn">collectStats</span>?: <span class="tp">boolean</span>;       <span class="cm">// Default: true</span>
-}
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">CacheAdapter</h3>
-        <div class="code-block mb-4">
-<span class="kw">interface</span> <span class="tp">CacheAdapter</span> {
-  <span class="kw">readonly</span> <span class="fn">name</span>: <span class="tp">string</span>;
-  <span class="fn">get</span>&lt;T&gt;(key: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">CacheGetResult</span>&lt;T&gt;&gt;;
-  <span class="fn">set</span>&lt;T&gt;(key: <span class="tp">string</span>, value: T, opts?: <span class="tp">CacheSetOptions</span>): <span class="tp">Promise</span>&lt;<span class="tp">CacheSetResult</span>&gt;;
-  <span class="fn">delete</span>(key: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">CacheDeleteResult</span>&gt;;
-  <span class="fn">has</span>(key: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">boolean</span>&gt;;
-  <span class="fn">clear</span>(opts?: <span class="tp">CacheClearOptions</span>): <span class="tp">Promise</span>&lt;<span class="tp">CacheClearResult</span>&gt;;
-  <span class="fn">keys</span>(opts?: <span class="tp">CacheKeysOptions</span>): <span class="tp">Promise</span>&lt;<span class="tp">readonly</span> <span class="tp">string</span>[]&gt;;
-  <span class="fn">getMany</span>&lt;T&gt;(keys: <span class="tp">readonly</span> <span class="tp">string</span>[]): <span class="tp">Promise</span>&lt;<span class="tp">ReadonlyMap</span>&lt;<span class="tp">string</span>, <span class="tp">CacheGetResult</span>&lt;T&gt;&gt;&gt;;
-  <span class="fn">setMany</span>&lt;T&gt;(entries: <span class="tp">ReadonlyMap</span>&lt;<span class="tp">string</span>, T&gt;, opts?: <span class="tp">CacheSetManyOptions</span>): <span class="tp">Promise</span>&lt;<span class="tp">readonly</span> <span class="tp">CacheSetResult</span>[]&gt;;
-  <span class="fn">deleteMany</span>(keys: <span class="tp">readonly</span> <span class="tp">string</span>[]): <span class="tp">Promise</span>&lt;<span class="tp">CacheDeleteManyResult</span>&gt;;
-  <span class="fn">ttl</span>(key: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">number</span> | <span class="tp">null</span>&gt;;
-  <span class="fn">expire</span>(key: <span class="tp">string</span>, ttl: <span class="tp">number</span>): <span class="tp">Promise</span>&lt;<span class="tp">boolean</span>&gt;;
-  <span class="fn">connect</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">disconnect</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-}
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">CacheValue</h3>
-        <div class="code-block mb-4">
-<span class="kw">type</span> <span class="tp">CacheValue</span> =
-  | <span class="tp">string</span>
-  | <span class="tp">number</span>
-  | <span class="tp">boolean</span>
-  | <span class="tp">null</span>
-  | <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;
-  | <span class="kw">readonly</span> <span class="tp">unknown</span>[];
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Result Types</h3>
-        <div class="code-block mb-4">
-<span class="kw">interface</span> <span class="tp">CacheGetResult</span>&lt;T&gt; {
-  <span class="fn">hit</span>: <span class="tp">boolean</span>;
-  <span class="fn">value</span>: T | <span class="tp">null</span>;
-  <span class="fn">entry</span>?: <span class="tp">CacheEntry</span>;
-}
-
-<span class="kw">interface</span> <span class="tp">CacheSetResult</span> {
-  <span class="fn">success</span>: <span class="tp">boolean</span>;
-  <span class="fn">key</span>: <span class="tp">CacheKey</span>;
-  <span class="fn">expiresAt</span>: <span class="tp">Date</span> | <span class="tp">null</span>;
-}
-
-<span class="kw">interface</span> <span class="tp">CacheStats</span> {
-  <span class="fn">hits</span>: <span class="tp">number</span>;
-  <span class="fn">misses</span>: <span class="tp">number</span>;
-  <span class="fn">sets</span>: <span class="tp">number</span>;
-  <span class="fn">deletes</span>: <span class="tp">number</span>;
-  <span class="fn">errors</span>: <span class="tp">number</span>;
-  <span class="fn">size</span>?: <span class="tp">number</span>;
-  <span class="fn">hitRate</span>: <span class="tp">number</span>;
-}
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">CacheHealth</h3>
-        <div class="code-block mb-4">
-<span class="kw">interface</span> <span class="tp">CacheHealth</span> {
-  <span class="fn">healthy</span>: <span class="tp">boolean</span>;
-  <span class="fn">adapter</span>: <span class="tp">string</span>;
-  <span class="fn">latencyMs</span>?: <span class="tp">number</span>;
-  <span class="fn">checkedAt</span>: <span class="tp">Date</span>;
-  <span class="fn">error</span>?: <span class="tp">Error</span>;
-}
-        </div>
-      </section>
-
-      <!-- ==================== CONSTANTS ==================== -->
-      <section id="constants" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONSTANTS</h2>
-
-        <div class="overflow-x-auto mb-6">
-          <table class="w-full text-smw-full border-4 border-black text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="border border-black px-4 py-2 text-left font-bold">Constant</th>
-                <th class="border border-black px-4 py-2 text-left font-bold">Value</th>
-                <th class="border border-black px-4 py-2 text-left font-bold">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">DEFAULT_TTL_MS</td><td class="border border-black px-4 py-2 font-mono text-xs">300000</td><td class="border border-black px-4 py-2">5 minutes</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">MAX_TTL_MS</td><td class="border border-black px-4 py-2 font-mono text-xs">86400000</td><td class="border border-black px-4 py-2">24 hours</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">MIN_TTL_MS</td><td class="border border-black px-4 py-2 font-mono text-xs">1000</td><td class="border border-black px-4 py-2">1 second</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">DEFAULT_SEPARATOR</td><td class="border border-black px-4 py-2 font-mono text-xs">":"</td><td class="border border-black px-4 py-2">Key separator</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">DEFAULT_PREFIX</td><td class="border border-black px-4 py-2 font-mono text-xs">"zudojs"</td><td class="border border-black px-4 py-2">Key prefix</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">MAX_KEY_LENGTH</td><td class="border border-black px-4 py-2 font-mono text-xs">256</td><td class="border border-black px-4 py-2">Max key characters</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">DEFAULT_LOCK_TTL_MS</td><td class="border border-black px-4 py-2 font-mono text-xs">30000</td><td class="border border-black px-4 py-2">30 seconds</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">DEFAULT_LOCK_RETRY_ATTEMPTS</td><td class="border border-black px-4 py-2 font-mono text-xs">3</td><td class="border border-black px-4 py-2">Lock retry count</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">DEFAULT_LOCK_RETRY_DELAY_MS</td><td class="border border-black px-4 py-2 font-mono text-xs">100</td><td class="border border-black px-4 py-2">Retry delay</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">DEFAULT_MAX_ENTRIES</td><td class="border border-black px-4 py-2 font-mono text-xs">10000</td><td class="border border-black px-4 py-2">Memory adapter capacity</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">DEFAULT_MAX_MEMORY_BYTES</td><td class="border border-black px-4 py-2 font-mono text-xs">52428800</td><td class="border border-black px-4 py-2">50 MB memory budget</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">MAX_BATCH_SIZE</td><td class="border border-black px-4 py-2 font-mono text-xs">100</td><td class="border border-black px-4 py-2">Max keys per batch</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">MAX_LATENCY_SAMPLES</td><td class="border border-black px-4 py-2 font-mono text-xs">1000</td><td class="border border-black px-4 py-2">Latency sample cap</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- ==================== ERRORS ==================== -->
-      <section id="errors" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERRORS</h2>
-        <p class="mb-4 leading-relaxed">
-          All error types are imported from <code>@zudojs/errors</code>. The cache package provides factory functions for creating specific error instances.
-        </p>
-
-        <div class="code-block mb-4">
-<span class="kw">import</span> {
-  <span class="tp">CacheError</span>,
-  <span class="fn">isCacheError</span>,
-  <span class="fn">cacheConnectionError</span>,
-  <span class="fn">cacheTimeoutError</span>,
-  <span class="fn">cacheSerializationError</span>,
-  <span class="fn">cacheDeserializationError</span>,
-  <span class="fn">cacheInvalidKeyError</span>,
-  <span class="fn">cacheAdapterNotConfiguredError</span>
-} <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
-        </div>
-
-        <div class="overflow-x-auto mb-6">
-          <table class="w-full text-smw-full border-4 border-black text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="border border-black px-4 py-2 text-left font-bold">Error Factory</th>
-                <th class="border border-black px-4 py-2 text-left font-bold">Usage</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">cacheConnectionError()</td><td class="border border-black px-4 py-2">Adapter connection failure</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">cacheTimeoutError()</td><td class="border border-black px-4 py-2">Operation timeout</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">cacheSerializationError()</td><td class="border border-black px-4 py-2">Failed to serialize value</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">cacheDeserializationError()</td><td class="border border-black px-4 py-2">Failed to deserialize value</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">cacheInvalidKeyError()</td><td class="border border-black px-4 py-2">Key fails validation</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">cacheAdapterNotConfiguredError()</td><td class="border border-black px-4 py-2">No adapter provided</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="code-block mb-4">
-<span class="cm">// Error codes</span>
-<span class="kw">type</span> <span class="tp">CacheErrorCode</span> =
-  | <span class="str">"CACHE_DISABLED"</span>
-  | <span class="str">"CACHE_CONNECTION_FAILED"</span>
-  | <span class="str">"CACHE_TIMEOUT"</span>
-  | <span class="str">"CACHE_SERIALIZATION_ERROR"</span>
-  | <span class="str">"CACHE_DESERIALIZATION_ERROR"</span>
-  | <span class="str">"CACHE_INVALID_KEY"</span>
-  | <span class="str">"CACHE_ADAPTER_NOT_CONFIGURED"</span>
-  | <span class="str">"CACHE_KEY_NOT_FOUND"</span>
-  | <span class="str">"CACHE_LOCK_ACQUISITION_FAILED"</span>
-  | <span class="str">"CACHE_LOCK_RELEASE_FAILED"</span>
-  | <span class="str">"CACHE_MAX_ENTRIES_EXCEEDED"</span>
-  | <span class="str">"CACHE_OPERATION_FAILED"</span>
-  | <span class="str">"CACHE_NOT_SUPPORTED"</span>;
-        </div>
-      </section>
-
-      <!-- ==================== USE CASES ==================== -->
-      <section id="use-cases" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">USE CASES</h2>
-
-        <!-- Use Case 1 -->
-        <div class="border-4 border-black p-6 mb-6">
-          <h3 class="text-lg font-bold mb-3">1. HTTP Response Caching</h3>
-          <div class="code-block mb-3">
-<span class="kw">const</span> cache = <span class="fn">createCacheService</span>({ <span class="fn">adapter</span> });
-
-app.<span class="fn">get</span>(<span class="str">"/api/products"</span>, <span class="kw">async</span> (req, res) => {
-  <span class="kw">const</span> result = <span class="kw">await</span> cache.<span class="fn">getOrSet</span>(
-    <span class="str">`products:${req.query.category}`</span>,
-    <span class="kw">async</span> () => <span class="kw">await</span> db.<span class="fn">getProducts</span>(req.query.category),
-    { <span class="fn">ttl</span>: <span class="num">60000</span>, <span class="fn">tags</span>: [<span class="str">"products"</span>] }
-  );
-  res.<span class="fn">json</span>(result.value);
-});
-          </div>
-        </div>
-
-        <!-- Use Case 2 -->
-        <div class="border-4 border-black p-6 mb-6">
-          <h3 class="text-lg font-bold mb-3">2. Rate Limiting with Locks</h3>
-          <div class="code-block mb-3">
-<span class="kw">async function</span> <span class="fn">checkRateLimit</span>(userId: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">boolean</span>&gt; {
-  <span class="kw">return</span> cache.<span class="fn">withLock</span>(<span class="str">`ratelimit:${userId}`</span>, <span class="kw">async</span> () => {
-    <span class="kw">const</span> key = <span class="str">`requests:${userId}`</span>;
-    <span class="kw">const</span> result = <span class="kw">await</span> cache.<span class="fn">get</span>&lt;<span class="tp">number</span>&gt;(key);
-    <span class="kw">const</span> count = result.value ?? <span class="num">0</span>;
-    <span class="kw">if</span> (count >= <span class="num">100</span>) <span class="kw">return false</span>;
-    <span class="kw">await</span> cache.<span class="fn">set</span>(key, count + <span class="num">1</span>, { <span class="fn">ttl</span>: <span class="num">60000</span> });
-    <span class="kw">return true</span>;
+console.<span class="fn">log</span>(imported); <span class="cmt">// 42</span></div>
+
+        <p class="mb-2 leading-relaxed">If someone already holds the lock, <code>withLock</code> retries 3 times, 100 ms apart, then throws a <code>CacheError</code> with code <code>CACHE_LOCK_UNAVAILABLE</code>. This shows that by asking for the same lock from inside itself.</p>
+        <div class="code-block mb-4"><span class="kw">try</span> {
+  <span class="kw">await</span> cache.<span class="fn">withLock</span>(<span class="str">"import"</span>, <span class="kw">async</span> () =&gt; {
+    <span class="kw">await</span> cache.<span class="fn">withLock</span>(<span class="str">"import"</span>, <span class="kw">async</span> () =&gt; <span class="str">"inner"</span>, { retryAttempts: <span class="num">0</span> });
   });
-}
-          </div>
-        </div>
-
-        <!-- Use Case 3 -->
-        <div class="border-4 border-black p-6 mb-6">
-          <h3 class="text-lg font-bold mb-3">3. Session Management</h3>
-          <div class="code-block mb-3">
-<span class="kw">const</span> sessionCache = <span class="fn">createCacheService</span>({
-  <span class="fn">adapter</span>,
-  <span class="fn">config</span>: { <span class="fn">defaultTtl</span>: <span class="num">1800000</span> } <span class="cm">// 30 min sessions</span>
-});
-
-<span class="cm">// Store session</span>
-<span class="kw">await</span> sessionCache.<span class="fn">set</span>(<span class="str">`session:${token}`</span>, userData, {
-  <span class="fn">tags</span>: [<span class="str">`user:${userData.id}`</span>]
-});
-
-<span class="cm">// Invalidate all sessions for a user</span>
-<span class="kw">await</span> sessionCache.<span class="fn">invalidateByTag</span>([<span class="str">"user:123"</span>]);
-          </div>
-        </div>
-
-        <!-- Use Case 4 -->
-        <div class="border-4 border-black p-6 mb-6">
-          <h3 class="text-lg font-bold mb-3">4. Feature Flag Caching</h3>
-          <div class="code-block mb-3">
-<span class="kw">async function</span> <span class="fn">isEnabled</span>(flag: <span class="tp">string</span>, userId: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">boolean</span>&gt; {
-  <span class="kw">const</span> result = <span class="kw">await</span> cache.<span class="fn">getOrSet</span>(
-    <span class="str">`flag:${flag}:${userId}`</span>,
-    <span class="kw">async</span> () => <span class="kw">await</span> featureFlags.<span class="fn">evaluate</span>(flag, { userId }),
-    { <span class="fn">ttl</span>: <span class="num">300000</span>, <span class="fn">tags</span>: [<span class="str">`flag:${flag}`</span>] }
-  );
-  <span class="kw">return</span> result.value;
-}
-
-<span class="cm">// Invalidate when flag changes</span>
-<span class="kw">await</span> cache.<span class="fn">invalidateByPattern</span>(<span class="str">"flag:new-checkout:*"</span>);
-          </div>
-        </div>
-
-        <!-- Use Case 5 -->
-        <div class="border-4 border-black p-6 mb-6">
-          <h3 class="text-lg font-bold mb-3">5. Database Query Caching</h3>
-          <div class="code-block mb-3">
-<span class="kw">async function</span> <span class="fn">getUserWithPosts</span>(id: <span class="tp">string</span>) {
-  <span class="kw">return</span> cache.<span class="fn">getOrSet</span>(
-    <span class="str">`user-with-posts:${id}`</span>,
-    <span class="kw">async</span> () => {
-      <span class="kw">const</span> user = <span class="kw">await</span> db.user.<span class="fn">findUnique</span>({ <span class="fn">where</span>: { id }, <span class="fn">include</span>: { posts: <span class="num">true</span> } });
-      <span class="kw">return</span> user;
-    },
-    { <span class="fn">ttl</span>: <span class="num">120000</span>, <span class="fn">tags</span>: [<span class="str">`user:${id}`</span>, <span class="str">"user-posts"</span>] }
-  );
-}
-          </div>
-        </div>
-
-        <!-- Use Case 6 -->
-        <div class="border-4 border-black p-6 mb-6">
-          <h3 class="text-lg font-bold mb-3">6. Health Monitoring</h3>
-          <div class="code-block mb-3">
-<span class="kw">const</span> health = <span class="kw">await</span> cache.<span class="fn">healthCheck</span>();
-<span class="kw">if</span> (!health.healthy) {
-  alerts.<span class="fn">send</span>(<span class="str">`Cache unhealthy: ${health.error?.message}`</span>);
-}
-
-<span class="cm">// Periodic metrics collection</span>
-<span class="fn">setInterval</span>(() => {
-  <span class="kw">const</span> stats = cache.<span class="fn">getStats</span>();
-  <span class="kw">if</span> (stats && stats.hitRate < <span class="num">0.5</span>) {
-    console.<span class="fn">warn</span>(<span class="str">`Low cache hit rate: ${(stats.hitRate * 100).toFixed(1)}%`</span>);
-  }
-}, <span class="num">60000</span>);
-          </div>
-        </div>
-      </section>
-
-      <!-- ==================== CONNECTIONS ==================== -->
-      <section id="connections" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">PACKAGE CONNECTIONS</h2>
+} <span class="kw">catch</span> (error) {
+  <span class="kw">if</span> (<span class="fn">isCacheError</span>(error)) console.<span class="fn">log</span>(error.message);
+  <span class="cmt">// Could not acquire lock "zudojs:import" for exclusive operation.</span>
+}</div>
         <p class="mb-4 leading-relaxed">
-          <code>@zudojs/cache</code> integrates with multiple Zudo packages:
+          Lock names go through the key builder, so they are validated like keys and scoped by namespace. <code>withLock("import", fn, { namespace: "tenant-a" })</code> and the same call for <code>tenant-b</code> do not block each other.
         </p>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
-          <a href="/docs/packages-errors" class="border-2 border-black p-4 hover:border-zudo-red hover:bg-red-50">
-            <p class="font-bold text-sm">@zudojs/errors</p>
-            <p class="text-xs text-gray-600">CacheError, error factories, error codes</p>
-          </a>
-          <a href="/docs/packages-types" class="border-2 border-black p-4 hover:border-zudo-blue hover:bg-blue-50">
-            <p class="font-bold text-sm">@zudojs/types</p>
-            <p class="text-xs text-gray-600">MaybePromise type guard</p>
-          </a>
-          <a href="/docs/packages/serialization" class="border-2 border-black p-4 hover:border-zudo-green hover:bg-green-50">
-            <p class="font-bold text-sm">@zudojs/serialization</p>
-            <p class="text-xs text-gray-600">JSONSerializer for type-preserving serialization</p>
-          </a>
-          <a href="/docs/packages/logger" class="border-2 border-black p-4 hover:border-zudo-yellow hover:bg-yellow-50">
-            <p class="font-bold text-sm">@zudojs/logger</p>
-            <p class="text-xs text-gray-600">Cache event logging (when integrated)</p>
-          </a>
-          <a href="/docs/packages/middleware" class="border-2 border-black p-4 hover:border-zudo-pink hover:bg-pink-50">
-            <p class="font-bold text-sm">@zudojs/middleware</p>
-            <p class="text-xs text-gray-600">Middleware pipeline pattern (conceptual)</p>
-          </a>
-          <a href="/docs/packages/storage" class="border-2 border-black p-4 hover:border-zudo-green hover:bg-green-50">
-            <p class="font-bold text-sm">@zudojs/storage</p>
-            <p class="text-xs text-gray-600">Storage abstractions (adapter pattern)</p>
-          </a>
-          <a href="/docs/packages-config" class="border-2 border-black p-4 hover:border-zudo-blue hover:bg-blue-50">
-            <p class="font-bold text-sm">@zudojs/config</p>
-            <p class="text-xs text-gray-600">Configuration source integration</p>
-          </a>
-          <a href="/docs/packages/lifecycle" class="border-2 border-black p-4 hover:border-zudo-red hover:bg-red-50">
-            <p class="font-bold text-sm">@zudojs/lifecycle</p>
-            <p class="text-xs text-gray-600">Connect/disconnect lifecycle hooks</p>
-          </a>
+        <div class="callout callout-warning mb-4">
+          <p class="text-sm font-bold mb-1">WATCH OUT</p>
+          <p class="text-sm">The built-in lock store lives in one process. Two Node processes using it do not see each other's locks. For that you pass your own <code>CacheLockStore</code> (for example one backed by Redis) as <code>config.lockStore</code>. To share locks between several services in the same process, pass the exported <code>defaultLockStore</code>.</p>
+        </div>
+
+        <p class="mb-4 leading-relaxed"><strong>Common mistake:</strong> a lock name with a colon, like <code>"job:1"</code>. It is rejected just as a key would be. Use <code>"job.1"</code>.</p>
+      </section>
+
+      <!-- ==================== OBSERVABILITY ==================== -->
+      <section id="observability" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SEEING WHAT THE CACHE DOES</h2>
+        <p class="mb-4 leading-relaxed">
+          The service counts hits, misses, sets, deletes and errors, and it emits an <em>event</em> (a small message you can listen for) on every operation. Stats are on by default; turn them off with <code>config.collectStats: false</code>, after which <code>getStats()</code> returns <code>null</code>.
+        </p>
+
+        <p class="mb-2 leading-relaxed">This listens for misses, does a few reads, and prints the counters.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createCacheService</span>, <span class="fn">createMemoryCacheAdapter</span>, CacheOperation } <span class="kw">from</span> <span class="str">"@zudojs/cache"</span>;
+
+<span class="kw">const</span> cache = <span class="fn">createCacheService</span>({ adapter: <span class="fn">createMemoryCacheAdapter</span>() });
+
+<span class="kw">const</span> subscription = cache.<span class="fn">subscribe</span>(<span class="str">"cache.miss"</span>, (event) =&gt; {
+  console.<span class="fn">log</span>(<span class="str">"miss:"</span>, event.key);
+});
+
+<span class="kw">await</span> cache.<span class="fn">get</span>(<span class="str">"absent"</span>);        <span class="cmt">// prints: miss: zudojs:absent</span>
+<span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"present"</span>, <span class="num">1</span>);
+<span class="kw">await</span> cache.<span class="fn">get</span>(<span class="str">"present"</span>);
+
+console.<span class="fn">log</span>(cache.<span class="fn">getStats</span>());
+<span class="cmt">// { hits: 1, misses: 1, sets: 1, deletes: 0, errors: 0, hitRate: 0.5 }</span>
+console.<span class="fn">log</span>(cache.<span class="fn">getLatencyStats</span>(CacheOperation.GET)?.count); <span class="cmt">// 2</span>
+console.<span class="fn">log</span>(cache.<span class="fn">getHotKeys</span>(<span class="num">10</span>));  <span class="cmt">// [ { key: "zudojs:present", hits: 1 } ]</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">size</span>()); <span class="cmt">// 1</span>
+
+subscription.<span class="fn">unsubscribe</span>();</div>
+        <p class="mb-4 leading-relaxed">
+          Event names are <code>cache.hit</code>, <code>cache.miss</code>, <code>cache.set</code>, <code>cache.delete</code>, <code>cache.clear</code> and <code>cache.error</code>; subscribe to <code>"*"</code> for all of them. Event keys are full keys, prefix included. <code>healthCheck()</code> returns <code>{ healthy, adapter, latencyMs, checkedAt }</code> and is a cheap probe for a readiness endpoint.
+        </p>
+
+        <div class="callout callout-tip mb-4">
+          <p class="text-sm font-bold mb-1">TIP</p>
+          <p class="text-sm">Set <code>config.failSilently: true</code> in production if a broken cache should look like a miss rather than crash a request. Key validation errors and lock failures still throw, because those are bugs, not outages.</p>
         </div>
       </section>
 
-      <!-- ==================== IMPROVEMENTS ==================== -->
-      <section id="improvements" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SUGGESTED IMPROVEMENTS</h2>
+      <!-- ==================== API REFERENCE ==================== -->
+      <section id="api-reference" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">API REFERENCE</h2>
+        <p class="mb-4 leading-relaxed">Everything below is exported from <code>@zudojs/cache</code>. Most apps only need the first two functions and the <code>CacheService</code> methods.</p>
 
-        <div class="space-y-4">
-          <div class="border-l-4 border-zudo-yellow p-4 bg-yellow-50">
-            <p class="font-bold text-sm mb-1">1. Redis Adapter</p>
-            <p class="text-sm text-gray-600">Ship a built-in <code>RedisCacheAdapter</code> for production distributed caching. Implement the <code>CacheAdapter</code> interface with ioredis or node-redis.</p>
-          </div>
-          <div class="border-l-4 border-zudo-yellow p-4 bg-yellow-50">
-            <p class="font-bold text-sm mb-1">2. Cache Warming</p>
-            <p class="text-sm text-gray-600">Add a <code>warm()</code> method that pre-populates the cache from a data source on startup, reducing cold-start misses.</p>
-          </div>
-          <div class="border-l-4 border-zudo-yellow p-4 bg-yellow-50">
-            <p class="font-bold text-sm mb-1">3. Stale-While-Revalidate</p>
-            <p class="text-sm text-gray-600">Support <code>staleTtl</code> option in <code>getOrSet()</code> — return stale value immediately while refreshing in the background.</p>
-          </div>
-          <div class="border-l-4 border-zudo-yellow p-4 bg-yellow-50">
-            <p class="font-bold text-sm mb-1">4. Cache Stampede Protection</p>
-            <p class="text-sm text-gray-600">Single-flight deduplication — if 10 requests hit the same missing key simultaneously, only one computes the value.</p>
-          </div>
-          <div class="border-l-4 border-zudo-yellow p-4 bg-yellow-50">
-            <p class="font-bold text-sm mb-1">5. Compression Support</p>
-            <p class="text-sm text-gray-600">Add <code>compress: true</code> option to <code>CacheConfig</code> for large values. Integrate with <code>zlib</code> for automatic gzip compression.</p>
-          </div>
-          <div class="border-l-4 border-zudo-yellow p-4 bg-yellow-50">
-            <p class="font-bold text-sm mb-1">6. Event Bus Integration</p>
-            <p class="text-sm text-gray-600">Emit cache events through <code>@zudojs/events</code> EventBus for cross-service cache invalidation in distributed systems.</p>
-          </div>
-          <div class="border-l-4 border-zudo-yellow p-4 bg-yellow-50">
-            <p class="font-bold text-sm mb-1">7. Cache Prewarm Scheduler</p>
-            <p class="text-sm text-gray-600">Integrate with <code>@zudojs/scheduler</code> to automatically refresh expiring entries before they expire.</p>
-          </div>
-          <div class="border-l-4 border-zudo-yellow p-4 bg-yellow-50">
-            <p class="font-bold text-sm mb-1">8. Multi-Layer Cache</p>
-            <p class="text-sm text-gray-600">Support L1 (memory) + L2 (Redis) cascade — check local memory first, fall back to distributed, write to both.</p>
-          </div>
-        </div>
-      </section>
-
-      <!-- ==================== API SUMMARY ==================== -->
-      <section id="api-summary" class="mb-16">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">API SUMMARY</h2>
-
+        <h3 class="text-lg font-bold mb-3 mt-6">Functions</h3>
         <div class="overflow-x-auto mb-6">
-          <table class="w-full text-smw-full border-4 border-black text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="border border-black px-4 py-2 text-left font-bold">Export</th>
-                <th class="border border-black px-4 py-2 text-left font-bold">Kind</th>
-                <th class="border border-black px-4 py-2 text-left font-bold">Description</th>
-              </tr>
-            </thead>
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
             <tbody>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">createCacheService()</td><td class="border border-black px-4 py-2">Factory</td><td class="border border-black px-4 py-2">High-level cache orchestrator</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">createCacheStore()</td><td class="border border-black px-4 py-2">Factory</td><td class="border border-black px-4 py-2">Adapter wrapper with middleware + events</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">createMemoryCacheAdapter()</td><td class="border border-black px-4 py-2">Factory</td><td class="border border-black px-4 py-2">In-memory cache adapter</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">createTagStore()</td><td class="border border-black px-4 py-2">Factory</td><td class="border border-black px-4 py-2">In-memory tag store</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">createInvalidationManager()</td><td class="border border-black px-4 py-2">Factory</td><td class="border border-black px-4 py-2">Multi-strategy invalidation</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">createLockManager()</td><td class="border border-black px-4 py-2">Factory</td><td class="border border-black px-4 py-2">Lock manager with retries</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">createCacheMetrics()</td><td class="border border-black px-4 py-2">Factory</td><td class="border border-black px-4 py-2">Hit/miss/latency metrics</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">createKeyBuilder()</td><td class="border border-black px-4 py-2">Factory</td><td class="border border-black px-4 py-2">Key generation with prefix/namespace</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">getSerializer()</td><td class="border border-black px-4 py-2">Function</td><td class="border border-black px-4 py-2">Auto-select serializer by value type</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">defaultKeyBuilder</td><td class="border border-black px-4 py-2">Singleton</td><td class="border border-black px-4 py-2">Default key builder instance</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">defaultSerializer</td><td class="border border-black px-4 py-2">Singleton</td><td class="border border-black px-4 py-2">JSON serializer instance</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">rawSerializer</td><td class="border border-black px-4 py-2">Singleton</td><td class="border border-black px-4 py-2">Raw pass-through serializer</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">CacheService</td><td class="border border-black px-4 py-2">Class</td><td class="border border-black px-4 py-2">Main cache service class</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">DefaultCacheStore</td><td class="border border-black px-4 py-2">Class</td><td class="border border-black px-4 py-2">Adapter wrapper class</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">MemoryCacheAdapter</td><td class="border border-black px-4 py-2">Class</td><td class="border border-black px-4 py-2">In-memory adapter class</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">InMemoryTagStore</td><td class="border border-black px-4 py-2">Class</td><td class="border border-black px-4 py-2">In-memory tag store class</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">CacheInvalidationManager</td><td class="border border-black px-4 py-2">Class</td><td class="border border-black px-4 py-2">Invalidation coordinator</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">CacheLockManager</td><td class="border border-black px-4 py-2">Class</td><td class="border border-black px-4 py-2">Lock manager with retries</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">InMemoryLockStore</td><td class="border border-black px-4 py-2">Class</td><td class="border border-black px-4 py-2">In-memory lock backend</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">InMemoryCacheMetrics</td><td class="border border-black px-4 py-2">Class</td><td class="border border-black px-4 py-2">Metrics tracker</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">DefaultKeyBuilder</td><td class="border border-black px-4 py-2">Class</td><td class="border border-black px-4 py-2">Key builder</td></tr>
-              <tr class="bg-gray-50"><td class="border border-black px-4 py-2 font-mono text-xs">JsonCacheSerializer</td><td class="border border-black px-4 py-2">Class</td><td class="border border-black px-4 py-2">JSON serializer</td></tr>
-              <tr><td class="border border-black px-4 py-2 font-mono text-xs">RawCacheSerializer</td><td class="border border-black px-4 py-2">Class</td><td class="border border-black px-4 py-2">Raw pass-through serializer</td></tr>
+              <tr><td><code>createCacheService({ adapter, config?, keyBuilder? })</code></td><td>Builds the <code>CacheService</code> you call from app code.</td><td><code>adapter</code> is required.</td></tr>
+              <tr><td><code>createMemoryCacheAdapter(options?)</code></td><td>In-process adapter backed by a <code>Map</code>.</td><td>Options: <code>maxEntries</code>, <code>maxBytes</code>, <code>defaultTtl</code>, <code>separator</code>.</td></tr>
+              <tr><td><code>createKeyBuilder({ prefix?, separator?, namespace? })</code></td><td>Builds and validates full keys.</td><td>Pass as <code>keyBuilder</code> to the service, or use <code>build()</code> directly.</td></tr>
+              <tr><td><code>createLockManager(options?)</code></td><td>Stand-alone lock manager with <code>acquire()</code> and <code>withLock()</code>.</td><td>The service has its own; use this only outside a service.</td></tr>
+              <tr><td><code>createCacheStore</code>, <code>createTagStore</code>, <code>createInvalidationManager</code>, <code>createCacheMetrics</code></td><td>Factories for the internal pieces the service composes.</td><td>Only needed when you build your own service-like wrapper.</td></tr>
+              <tr><td><code>isCacheError(value)</code></td><td>Type guard for <code>CacheError</code>.</td><td>Use in <code>catch</code> blocks.</td></tr>
+              <tr><td><code>assertValidTag(tag)</code></td><td>Throws if a tag is empty, too long or malformed.</td><td>The service calls it for you.</td></tr>
+              <tr><td><code>estimateValueBytes(value)</code></td><td>Approximate size the memory adapter charges for a value.</td><td>Handy for tuning <code>maxBytes</code>.</td></tr>
+              <tr><td><code>stripUnsafeKeys(value)</code></td><td>Removes <code>__proto__</code>, <code>constructor</code>, <code>prototype</code> from a deserialized object.</td><td>Applied by <code>JsonCacheSerializer</code>.</td></tr>
             </tbody>
           </table>
         </div>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">All Types</h3>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-6 font-mono text-xs">
-          <div class="border border-black px-3 py-2">CacheKey</div>
-          <div class="border border-black px-3 py-2">CacheNamespace</div>
-          <div class="border border-black px-3 py-2">CacheKeyBuilder</div>
-          <div class="border border-black px-3 py-2">CacheKeyParts</div>
-          <div class="border border-black px-3 py-2">CacheKeyOptions</div>
-          <div class="border border-black px-3 py-2">CacheValue</div>
-          <div class="border border-black px-3 py-2">CacheTTL</div>
-          <div class="border border-black px-3 py-2">CacheExpiration</div>
-          <div class="border border-black px-3 py-2">CacheExpirationInfo</div>
-          <div class="border border-black px-3 py-2">CacheSetOptions</div>
-          <div class="border border-black px-3 py-2">CacheGetOptions</div>
-          <div class="border border-black px-3 py-2">CacheDeleteOptions</div>
-          <div class="border border-black px-3 py-2">CacheHasOptions</div>
-          <div class="border border-black px-3 py-2">CacheClearOptions</div>
-          <div class="border border-black px-3 py-2">CacheKeysOptions</div>
-          <div class="border border-black px-3 py-2">CacheGetManyOptions</div>
-          <div class="border border-black px-3 py-2">CacheSetManyOptions</div>
-          <div class="border border-black px-3 py-2">CacheDeleteManyOptions</div>
-          <div class="border border-black px-3 py-2">CacheGetResult&lt;T&gt;</div>
-          <div class="border border-black px-3 py-2">CacheSetResult</div>
-          <div class="border border-black px-3 py-2">CacheDeleteResult</div>
-          <div class="border border-black px-3 py-2">CacheDeleteManyResult</div>
-          <div class="border border-black px-3 py-2">CacheClearResult</div>
-          <div class="border border-black px-3 py-2">CacheStats</div>
-          <div class="border border-black px-3 py-2">CacheAdapter</div>
-          <div class="border border-black px-3 py-2">CacheStore</div>
-          <div class="border border-black px-3 py-2">CacheAdapterFactory</div>
-          <div class="border border-black px-3 py-2">CacheConfig</div>
-          <div class="border border-black px-3 py-2">CacheErrorCode</div>
-          <div class="border border-black px-3 py-2">CacheTag</div>
-          <div class="border border-black px-3 py-2">CacheTagStore</div>
-          <div class="border border-black px-3 py-2">CacheTagOptions</div>
-          <div class="border border-black px-3 py-2">CacheLock</div>
-          <div class="border border-black px-3 py-2">CacheLockStore</div>
-          <div class="border border-black px-3 py-2">CacheLockOptions</div>
-          <div class="border border-black px-3 py-2">CacheHealth</div>
-          <div class="border border-black px-3 py-2">CacheHealthChecker</div>
-          <div class="border border-black px-3 py-2">CacheSerializer</div>
-          <div class="border border-black px-3 py-2">CacheSerializationOptions</div>
-          <div class="border border-black px-3 py-2">CacheMetrics</div>
-          <div class="border border-black px-3 py-2">CacheMiddleware</div>
-          <div class="border border-black px-3 py-2">CacheMiddlewareContext</div>
-          <div class="border border-black px-3 py-2">CacheEventType</div>
-          <div class="border border-black px-3 py-2">CacheEvent</div>
-          <div class="border border-black px-3 py-2">CacheEventHandler</div>
-          <div class="border border-black px-3 py-2">CacheEventSubscription</div>
-          <div class="border border-black px-3 py-2">CacheOrComputeOptions</div>
-          <div class="border border-black px-3 py-2">CacheOrComputeResult&lt;T&gt;</div>
-          <div class="border border-black px-3 py-2">CacheBatchOperation</div>
-          <div class="border border-black px-3 py-2">CacheBatchResult</div>
-          <div class="border border-black px-3 py-2">CacheResult&lt;T&gt;</div>
-          <div class="border border-black px-3 py-2">CacheErrorOptions</div>
-          <div class="border border-black px-3 py-2">MaybePromise</div>
+        <h3 class="text-lg font-bold mb-3 mt-6">CacheService methods</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>get&lt;T&gt;(key, { namespace? })</code></td><td>Reads one entry.</td><td>Returns <code>{ hit, value, entry? }</code>.</td></tr>
+              <tr><td><code>set(key, value, { ttl?, tags?, namespace?, overwrite?, metadata? })</code></td><td>Writes one entry.</td><td>Returns <code>{ success, key, expiresAt, skipped? }</code>. <code>overwrite: false</code> skips existing keys.</td></tr>
+              <tr><td><code>has(key, opts?)</code> / <code>delete(key, opts?)</code></td><td>Existence check / removal.</td><td><code>delete</code> returns <code>{ deleted, key }</code>.</td></tr>
+              <tr><td><code>getOrSet&lt;T&gt;(key, fn, opts?)</code></td><td>Read, or compute and store.</td><td>Returns <code>{ value, cached }</code>. Options add <code>forceRefresh</code>.</td></tr>
+              <tr><td><code>ttl(key, opts?)</code> / <code>expire(key, ttl, opts?)</code></td><td>Remaining lifetime / set a new lifetime.</td><td><code>ttl</code> returns ms, <code>null</code> (never) or <code>undefined</code> (missing).</td></tr>
+              <tr><td><code>clear({ namespace?, pattern? })</code></td><td>Removes everything, or only matching entries.</td><td>Returns <code>{ cleared }</code>.</td></tr>
+              <tr><td><code>invalidateByTag(tags, { namespace? })</code></td><td>Removes entries carrying any of the tags.</td><td>Scoped to the namespace.</td></tr>
+              <tr><td><code>invalidateByPattern(pattern, { namespace? })</code></td><td>Removes entries matching a glob.</td><td><code>*</code> stops at <code>:</code>; <code>**</code> spans.</td></tr>
+              <tr><td><code>withLock&lt;T&gt;(name, fn, { ttl?, retryAttempts?, namespace? })</code></td><td>Runs <code>fn</code> while holding a lock.</td><td>Throws <code>CACHE_LOCK_UNAVAILABLE</code>, <code>CACHE_LOCK_LOST</code> or <code>CACHE_DISABLED</code>.</td></tr>
+              <tr><td><code>batch(operations, { namespace? })</code></td><td>Runs a list of <code>{ type: "get" | "set" | "delete", key, value?, options? }</code> in order.</td><td>One result per operation; a failure does not stop the rest.</td></tr>
+              <tr><td><code>subscribe(eventType | "*", handler)</code></td><td>Listens for cache events.</td><td>Returns <code>{ unsubscribe }</code>.</td></tr>
+              <tr><td><code>getStats()</code>, <code>getLatencyStats(op)</code>, <code>getLatencyHistogram(op)</code>, <code>getHotKeys(n?)</code>, <code>resetStats()</code>, <code>size()</code></td><td>Counters, percentiles, hot keys, live entry count.</td><td>Return <code>null</code> when <code>collectStats</code> is off (<code>size()</code> excepted).</td></tr>
+              <tr><td><code>healthCheck()</code>, <code>connect()</code>, <code>disconnect()</code></td><td>Probe the adapter / lifecycle hooks.</td><td>The memory adapter needs neither <code>connect</code> nor <code>disconnect</code>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">CacheConfig options</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>enabled</code></td><td>Kill switch. When <code>false</code>, reads miss, writes no-op, <code>withLock</code> throws.</td><td>Default <code>true</code>.</td></tr>
+              <tr><td><code>defaultTtl</code></td><td>TTL used when a call passes none.</td><td>Default <code>300_000</code> (5 min). <code>null</code> = never.</td></tr>
+              <tr><td><code>namespace</code>, <code>prefix</code>, <code>separator</code></td><td>Key layout: <code>prefix:namespace:key</code>.</td><td>Defaults: none, <code>"zudojs"</code>, <code>":"</code>.</td></tr>
+              <tr><td><code>failSilently</code></td><td>Swallow adapter errors and return a neutral result.</td><td>Default <code>false</code>. Validation and lock errors still throw.</td></tr>
+              <tr><td><code>collectStats</code></td><td>Track counters and latencies.</td><td>Default <code>true</code>.</td></tr>
+              <tr><td><code>serializer</code></td><td>Copy values on the way in and out (<code>JsonCacheSerializer</code>, <code>RawCacheSerializer</code>, or your own).</td><td>Without one the memory adapter stores objects by reference.</td></tr>
+              <tr><td><code>middlewares</code></td><td>Functions <code>(ctx, next) =&gt; Promise</code> wrapping every adapter call.</td><td>First entry is outermost. Always return <code>next()</code>'s result.</td></tr>
+              <tr><td><code>lockStore</code></td><td>Where locks are kept.</td><td>Default: a fresh in-process store. Pass <code>defaultLockStore</code> to share.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Classes and instances</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>CacheService</code></td><td>The class behind <code>createCacheService</code>.</td><td>Construct with <code>new CacheService({ adapter, config? })</code> if you prefer.</td></tr>
+              <tr><td><code>MemoryCacheAdapter</code></td><td>The class behind <code>createMemoryCacheAdapter</code>.</td><td>LRU eviction by count and by estimated bytes.</td></tr>
+              <tr><td><code>DefaultKeyBuilder</code>, <code>defaultKeyBuilder</code></td><td>Key builder class and a shared instance with defaults.</td><td>Has <code>build</code>, <code>buildPattern</code>, <code>namespace(ns)</code>.</td></tr>
+              <tr><td><code>JsonCacheSerializer</code>, <code>defaultSerializer</code></td><td>JSON serializer that keeps <code>Date</code>, <code>Map</code>, <code>Set</code> and <code>BigInt</code>.</td><td><code>new JsonCacheSerializer({ preserveTypes: false })</code> for plain JSON.</td></tr>
+              <tr><td><code>RawCacheSerializer</code>, <code>rawSerializer</code></td><td>Pass-through serializer.</td><td>For adapters that serialize themselves.</td></tr>
+              <tr><td><code>InMemoryLockStore</code>, <code>defaultLockStore</code>, <code>CacheLockManager</code></td><td>Lock storage and the manager that retries and renews.</td><td>Implement <code>CacheLockStore</code> for a distributed store.</td></tr>
+              <tr><td><code>DefaultCacheStore</code>, <code>InMemoryTagStore</code>, <code>CacheInvalidationManager</code>, <code>InMemoryCacheMetrics</code></td><td>Internal building blocks.</td><td>Exposed for advanced composition and tests.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Types</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>CacheAdapter</code></td><td>Contract a storage backend implements.</td><td><code>name</code>, <code>get</code>, <code>set</code>, <code>delete</code>, <code>has</code>, <code>clear</code>, plus optional <code>keys</code>, <code>getMany</code>, <code>setMany</code>, <code>deleteMany</code>, <code>ttl</code>, <code>expire</code>, <code>size</code>, <code>connect</code>, <code>disconnect</code>.</td></tr>
+              <tr><td><code>CacheConfig</code></td><td>The <code>config</code> object above.</td><td></td></tr>
+              <tr><td><code>CacheGetResult&lt;T&gt;</code>, <code>CacheSetResult</code>, <code>CacheDeleteResult</code>, <code>CacheClearResult</code></td><td>Return shapes of the basic operations.</td><td><code>CacheGetResult.entry</code> carries <code>createdAt</code>, <code>expiresAt</code>, <code>tags</code>, <code>metadata</code> on a hit.</td></tr>
+              <tr><td><code>CacheOrComputeOptions</code>, <code>CacheOrComputeResult&lt;T&gt;</code></td><td>Options and result of <code>getOrSet</code>.</td><td></td></tr>
+              <tr><td><code>CacheBatchOperation</code>, <code>CacheBatchResult</code></td><td>Input and output of <code>batch</code>.</td><td></td></tr>
+              <tr><td><code>CacheTTL</code></td><td><code>number | null</code>.</td><td></td></tr>
+              <tr><td><code>CacheStats</code>, <code>CacheHealth</code></td><td>Return shapes of <code>getStats</code> and <code>healthCheck</code>.</td><td><code>CacheHealth.disabled</code> is <code>true</code> when <code>enabled: false</code>.</td></tr>
+              <tr><td><code>CacheEvent</code>, <code>CacheEventType</code>, <code>CacheEventHandler</code>, <code>CacheEventSubscription</code></td><td>Event surface for <code>subscribe</code>.</td><td>Per-event types: <code>CacheHitEvent</code>, <code>CacheMissEvent</code>, <code>CacheSetEvent</code>, <code>CacheDeleteEvent</code>, <code>CacheClearEvent</code>, <code>CacheErrorEvent</code>.</td></tr>
+              <tr><td><code>CacheMiddleware</code>, <code>CacheMiddlewareContext</code></td><td>Shape of a middleware and the <code>{ key, operation, startedAt }</code> it receives.</td><td></td></tr>
+              <tr><td><code>CacheLockStore</code>, <code>CacheLock</code>, <code>CacheLockOptions</code></td><td>Contracts for custom lock backends.</td><td></td></tr>
+              <tr><td><code>CacheSerializer</code></td><td><code>{ serialize(value), deserialize(value) }</code>.</td><td></td></tr>
+              <tr><td><code>CacheKeyBuilder</code>, <code>CacheKeyOptions</code>, <code>CacheTagStore</code>, <code>CacheTagOptions</code>, <code>CacheMetrics</code>, <code>CacheStore</code></td><td>Contracts for the internal pieces.</td><td></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Errors</h3>
+        <p class="mb-4 leading-relaxed">Every error thrown by this package is a <code>CacheError</code> from <code>@zudojs/errors</code>, re-exported here together with its factories.</p>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>CacheError</code>, <code>isCacheError</code></td><td>Error class and type guard.</td><td>Has <code>message</code>, <code>code</code>, <code>statusCode</code>, <code>operation</code>, <code>key</code>.</td></tr>
+              <tr><td><code>CacheErrorCode</code></td><td>Codes this package sets: <code>CACHE_DISABLED</code>, <code>CACHE_OPERATION_FAILED</code>, <code>CACHE_INVALID_TTL</code>, <code>CACHE_MIDDLEWARE_RESULT_MISSING</code>, <code>CACHE_LOCK_UNAVAILABLE</code>, <code>CACHE_LOCK_ACQUIRE_FAILED</code>, <code>CACHE_LOCK_LOST</code>.</td><td>Type only.</td></tr>
+              <tr><td><code>CacheOperation</code></td><td>Enum of operation names (<code>GET</code>, <code>SET</code>, <code>DELETE</code>, <code>LOCK_ACQUIRE</code>, ...).</td><td>Pass to <code>getLatencyStats</code>.</td></tr>
+              <tr><td><code>cacheInvalidKeyError</code>, <code>cacheSerializationError</code>, <code>cacheDeserializationError</code>, <code>cacheConnectionError</code>, <code>cacheTimeoutError</code>, <code>cacheAdapterNotConfiguredError</code></td><td>Factories for building a <code>CacheError</code> of each kind.</td><td>Useful inside a custom adapter.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Constants</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>DEFAULT_TTL_MS</code>, <code>MIN_TTL_MS</code>, <code>MAX_TTL_MS</code></td><td>5 minutes, 1 ms, 24 hours.</td><td>TTL range accepted by <code>set</code>.</td></tr>
+              <tr><td><code>DEFAULT_PREFIX</code>, <code>DEFAULT_SEPARATOR</code>, <code>MAX_KEY_LENGTH</code></td><td><code>"zudojs"</code>, <code>":"</code>, 256.</td><td></td></tr>
+              <tr><td><code>CACHE_KEY_PATTERN</code>, <code>CACHE_PATTERN_PART_PATTERN</code>, <code>MAX_TAG_LENGTH</code></td><td>Regexes for key parts and glob parts; tag limit (128).</td><td></td></tr>
+              <tr><td><code>DEFAULT_LOCK_TTL_MS</code>, <code>DEFAULT_LOCK_RETRY_ATTEMPTS</code>, <code>DEFAULT_LOCK_RETRY_DELAY_MS</code></td><td>30 s, 3, 100 ms.</td><td></td></tr>
+              <tr><td><code>DEFAULT_MAX_ENTRIES</code>, <code>DEFAULT_MAX_MEMORY_BYTES</code>, <code>EXPIRED_PURGE_INTERVAL_MS</code></td><td>10,000 entries, 50 MB, 30 s purge interval.</td><td>Memory adapter defaults.</td></tr>
+              <tr><td><code>MAX_LATENCY_SAMPLES</code>, <code>MAX_TRACKED_KEYS</code>, <code>LATENCY_BUCKETS</code></td><td>1,000 samples, 1,024 hot keys, histogram edges in ms.</td><td>Metrics limits.</td></tr>
+            </tbody>
+          </table>
         </div>
       </section>
 
-    
+      <!-- ==================== COMMON MISTAKES ==================== -->
+      <section id="common-mistakes" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMON MISTAKES</h2>
+        <ul class="space-y-4">
+          <li class="border-2 border-black p-4">
+            <p class="text-sm"><strong>Treating <code>get()</code>'s result as the value.</strong> <code>if (!result)</code> is never true, so the miss branch never runs and the cache never fills. Check <code>result.hit</code> and read <code>result.value</code>.</p>
+          </li>
+          <li class="border-2 border-black p-4">
+            <p class="text-sm"><strong>Colons in keys, tags or lock names.</strong> <code>set("user:1", ...)</code> throws a <code>CacheError</code> because <code>:</code> is the separator. Write <code>user.1</code> and put the scope in the namespace.</p>
+          </li>
+          <li class="border-2 border-black p-4">
+            <p class="text-sm"><strong>Tagging in one namespace and invalidating in another.</strong> The call returns <code>{ cleared: 0 }</code> and stale data stays. Pass the same <code>namespace</code> to <code>set</code> and <code>invalidateByTag</code>, or configure it once on the service.</p>
+          </li>
+          <li class="border-2 border-black p-4">
+            <p class="text-sm"><strong>Using <code>"*"</code> to mean "everything".</strong> <code>*</code> stops at the separator, so namespaced keys survive. Use <code>clear()</code> for all, <code>clear({ namespace })</code> per tenant, or <code>"**"</code> when you really want to cross namespaces.</p>
+          </li>
+          <li class="border-2 border-black p-4">
+            <p class="text-sm"><strong><code>ttl: 0</code> for "never expire".</strong> Zero is rejected with <code>CACHE_INVALID_TTL</code>. Use <code>ttl: null</code>.</p>
+          </li>
+          <li class="border-2 border-black p-4">
+            <p class="text-sm"><strong>Expecting the memory adapter to be shared.</strong> Each process, and each <code>createMemoryCacheAdapter()</code> call, has its own store and its own locks. For several servers you need an adapter and a <code>lockStore</code> backed by a shared system such as Redis.</p>
+          </li>
+        </ul>
+      </section>
+
+      <!-- ==================== RELATED ==================== -->
+      <section id="related" class="mb-16">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATED PACKAGES</h2>
+        <ul class="space-y-3">
+          <li><a href="/docs/packages-errors" class="font-bold text-zudo-blue hover:underline">@zudojs/errors</a> — defines <code>CacheError</code> and the error codes you will catch.</li>
+          <li><a href="/docs/packages-serialization" class="font-bold text-zudo-blue hover:underline">@zudojs/serialization</a> — the JSON engine behind <code>JsonCacheSerializer</code>; reach for it when you need the same type-preserving JSON elsewhere.</li>
+          <li><a href="/docs/packages-tenancy" class="font-bold text-zudo-blue hover:underline">@zudojs/tenancy</a> — resolves the current tenant so you have a namespace to pass to the cache.</li>
+          <li><a href="/docs/packages-lifecycle" class="font-bold text-zudo-blue hover:underline">@zudojs/lifecycle</a> — a place to call <code>connect()</code> and <code>disconnect()</code> when your app starts and stops.</li>
+        </ul>
+      </section>
+
+      <!-- EXPORT INDEX -->
+      <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/cache</code> exports from its package root at v1.0.0 &mdash; <strong>104</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <details class="border-2 border-black p-5 bg-white">
+          <summary class="font-bold cursor-pointer select-none">Show all 104 exports</summary>
+          <div class="mt-5">
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Re-exported <span class="text-black/40 font-normal">(104)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BaseCacheEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CACHE_KEY_PATTERN</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CACHE_PATTERN_PART_PATTERN</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheAdapter</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheBatchOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheBatchResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheClearEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheClearOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheClearResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheConfig</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheDeleteEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheDeleteManyResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheDeleteResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheErrorCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheErrorEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheEventHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheEventSubscription</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheEventType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheExpiration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheGetResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheHealth</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheHealthChecker</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheHitEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheInvalidationManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheKeyBuilder</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheKeyOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheKeysOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheLock</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheLockManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheLockOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheLockStore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheMetrics</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheMiddlewareContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheMissEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheNamespace</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheOrComputeOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheOrComputeResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheSerializationOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheSerializer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheService</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheSetEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheSetManyOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheSetOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheSetResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheStats</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheStore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheTTL</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheTag</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheTagOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheTagStore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_LOCK_RETRY_ATTEMPTS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_LOCK_RETRY_DELAY_MS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_LOCK_TTL_MS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_MAX_ENTRIES</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_MAX_MEMORY_BYTES</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_PREFIX</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_SEPARATOR</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_TTL_MS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DefaultCacheStore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DefaultKeyBuilder</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EXPIRED_PURGE_INTERVAL_MS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InMemoryCacheMetrics</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InMemoryLockStore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InMemoryTagStore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JsonCacheSerializer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LATENCY_BUCKETS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_KEY_LENGTH</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_LATENCY_SAMPLES</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_TAG_LENGTH</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_TRACKED_KEYS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_TTL_MS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MIN_TTL_MS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MaybePromise</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MemoryCacheAdapter</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RawCacheSerializer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertValidTag</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cacheAdapterNotConfiguredError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cacheConnectionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cacheDeserializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cacheInvalidKeyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cacheSerializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cacheTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCacheMetrics</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCacheService</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCacheStore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createInvalidationManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createKeyBuilder</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createLockManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createMemoryCacheAdapter</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createTagStore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">defaultKeyBuilder</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">defaultLockStore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">defaultSerializer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">estimateValueBytes</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isCacheError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">rawSerializer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">stripUnsafeKeys</code></div>
+          </div>
+          </div>
+        </details>
+      </section>
     </main>
 
     <!-- TABLE OF CONTENTS -->
     <aside class="doc-toc" aria-label="On this page">
       <div class="text-xs font-bold uppercase tracking-wider mb-4 text-black/40">On This Page</div>
       <a href="#overview" class="toc-link">Overview</a>
-      <a href="#install" class="toc-link">Installation</a>
-      <a href="#architecture" class="toc-link">Architecture</a>
+      <a href="#installation" class="toc-link">Installation</a>
       <a href="#quick-start" class="toc-link">Quick Start</a>
-      <a href="#cache-service" class="toc-link">CacheService</a>
-      <a href="#cache-store" class="toc-link">DefaultCacheStore</a>
-      <a href="#memory-adapter" class="toc-link">MemoryCacheAdapter</a>
-      <a href="#key-builder" class="toc-link">Key Builder</a>
-      <a href="#tags" class="toc-link">Tag Store</a>
-      <a href="#invalidation" class="toc-link">CacheInvalidationManager</a>
-      <a href="#locking" class="toc-link">Distributed Locking</a>
-      <a href="#metrics" class="toc-link">Cache Metrics</a>
-      <a href="#serializers" class="toc-link">Serializers</a>
-      <a href="#types" class="toc-link">Types Reference</a>
-      <a href="#constants" class="toc-link">Constants</a>
-      <a href="#errors" class="toc-link">Errors</a>
-      <a href="#use-cases" class="toc-link">Use Cases</a>
-      <a href="#connections" class="toc-link">Connections</a>
-      <a href="#improvements" class="toc-link">Improvements</a>
-      <a href="#api-summary" class="toc-link">API Summary</a>
+      <a href="#keys-and-namespaces" class="toc-link">Keys and Namespaces</a>
+      <a href="#ttl" class="toc-link">TTL</a>
+      <a href="#get-or-set" class="toc-link">getOrSet</a>
+      <a href="#tags-and-invalidation" class="toc-link">Tags and Invalidation</a>
+      <a href="#locks" class="toc-link">Locks</a>
+      <a href="#observability" class="toc-link">Observability</a>
+      <a href="#api-reference" class="toc-link">API Reference</a>
+      <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
+      <a href="#related" class="toc-link">Related Packages</a>
+          <a href="#export-index" class="toc-link">Complete Export Index</a>
     </aside>
 
   </div>
@@ -1218,5 +771,5 @@ app.<span class="fn">get</span>(<span class="str">"/api/products"</span>, <span 
   <script src="/js/docs.js"></script>
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 </body>
-</html>

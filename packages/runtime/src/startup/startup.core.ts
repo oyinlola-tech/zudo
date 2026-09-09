@@ -3,7 +3,10 @@ import type { Logger } from "@zudojs/logger";
 import type { EventBus } from "@zudojs/events";
 
 import { createEvent } from "@zudojs/events";
-import { publishRuntimeEvent } from "../runtimeEvents/index.js";
+import {
+  createFailureEventPayload,
+  publishRuntimeEvent,
+} from "../runtimeEvents/index.js";
 
 import { LifecycleManager } from "../lifecycle/index.js";
 
@@ -83,22 +86,8 @@ async function runStartup(
   logger: Logger,
   emitEvents: boolean,
 ): Promise<void> {
-  // Initialize modules
-  if (emitEvents && eventBus) {
-    publishRuntimeEvent(
-      eventBus,
-      logger,
-      createEvent({
-        type: "runtime.module.initializing",
-        payload: {
-          runtimeId,
-          timestamp: new Date(),
-          state: "initializing",
-        },
-      }),
-    );
-  }
-
+  // Per-module `runtime.module.*` events are emitted by the lifecycle
+  // manager, which is the only layer that knows which module is running.
   const initResult = await lifecycle.initialize();
 
   if (initResult.failed.length > 0) {
@@ -109,15 +98,14 @@ async function runStartup(
         eventBus,
         logger,
         createEvent({
-          type: "runtime.module.failed",
-          payload: {
+          type: "runtime.failed",
+          payload: createFailureEventPayload(
             runtimeId,
-            state: "initialization_failed",
-            timestamp: new Date(),
-            error: failure.error,
-            phase: "initialize",
-            failedModuleId: failure.moduleId,
-          },
+            "initialization_failed",
+            failure.error,
+            "initialize",
+            failure.moduleId,
+          ),
         }),
       );
     }
@@ -137,22 +125,6 @@ async function runStartup(
     durationMs: initResult.durationMs,
   });
 
-  // Start modules
-  if (emitEvents && eventBus) {
-    publishRuntimeEvent(
-      eventBus,
-      logger,
-      createEvent({
-        type: "runtime.module.starting",
-        payload: {
-          runtimeId,
-          timestamp: new Date(),
-          state: "starting",
-        },
-      }),
-    );
-  }
-
   const startResult = await lifecycle.start();
 
   if (startResult.failed.length > 0) {
@@ -163,15 +135,14 @@ async function runStartup(
         eventBus,
         logger,
         createEvent({
-          type: "runtime.module.failed",
-          payload: {
+          type: "runtime.failed",
+          payload: createFailureEventPayload(
             runtimeId,
-            state: "startup_failed",
-            timestamp: new Date(),
-            error: failure.error,
-            phase: "start",
-            failedModuleId: failure.moduleId,
-          },
+            "startup_failed",
+            failure.error,
+            "start",
+            failure.moduleId,
+          ),
         }),
       );
     }

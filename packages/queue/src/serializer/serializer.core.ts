@@ -22,8 +22,9 @@ export const JsonSerializer: Serializer = Object.freeze({
  * Creates a serializer with custom options.
  */
 export function createJsonSerializer(options?: {
-  replacer?: (key: string, value: unknown) => unknown;
+  /** Indentation width. Any value turns on pretty-printing. */
   space?: number;
+  /** Preserve BigInt, Date, Map, Set and Uint8Array across the round trip. */
   preserveTypes?: boolean;
 }): Serializer {
   const inner = new JSONSerializer();

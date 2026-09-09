@@ -3,7 +3,11 @@ import type { Logger } from "@zudojs/logger";
 import type { EventBus } from "@zudojs/events";
 
 import { createEvent } from "@zudojs/events";
-import { publishRuntimeEvent } from "../runtimeEvents/index.js";
+import {
+  createFailureEventPayload,
+  createRuntimeEventPayload,
+  publishRuntimeEvent,
+} from "../runtimeEvents/index.js";
 
 import { LifecycleManager } from "../lifecycle/index.js";
 
@@ -53,11 +57,7 @@ export async function executeShutdown(
       logger,
       createEvent({
         type: "runtime.shutdown.drain",
-        payload: {
-          runtimeId,
-          timestamp: new Date(),
-          state: "stopping",
-        },
+        payload: createRuntimeEventPayload(runtimeId, "stopping"),
       }),
     );
   }
@@ -92,11 +92,7 @@ export async function executeShutdown(
         logger,
         createEvent({
           type: "runtime.shutdown.complete",
-          payload: {
-            runtimeId,
-            timestamp: new Date(),
-            state: "stopped",
-          },
+          payload: createRuntimeEventPayload(runtimeId, "stopped"),
         }),
       );
     }
@@ -126,13 +122,12 @@ export async function executeShutdown(
         logger,
         createEvent({
           type: "runtime.failed",
-          payload: {
+          payload: createFailureEventPayload(
             runtimeId,
-            timestamp: new Date(),
-            state: "shutdown_failed",
-            error: error instanceof Error ? error : new Error(String(error)),
-            phase: "stop",
-          },
+            "shutdown_failed",
+            error instanceof Error ? error : new Error(String(error)),
+            "stop",
+          ),
         }),
       );
     }

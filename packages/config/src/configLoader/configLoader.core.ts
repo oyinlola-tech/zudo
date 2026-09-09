@@ -10,7 +10,10 @@ import type {
   ConfigSourceResult,
 } from "../configSource/configSource.core.js";
 
-import { sortConfigSources } from "../configSource/configSource.core.js";
+import {
+  loadConfigSourceStrict,
+  sortConfigSources,
+} from "../configSource/configSource.core.js";
 
 import type { ConfigStore } from "../configStore/configStore.core.js";
 
@@ -185,7 +188,7 @@ export class ConfigLoader {
         }
 
         try {
-          const result = await loadSingleSource(source, this.context);
+          const result = await loadConfigSourceStrict(source, this.context);
 
           if (!result) {
             continue;
@@ -396,36 +399,6 @@ export class ConfigLoader {
 }
 
 /**
- * Loads one source while preserving the source lifecycle contract.
- */
-async function loadSingleSource(
-  source: ConfigSource,
-  context: ConfigSourceContext,
-): Promise<ConfigSourceResult | undefined> {
-  if (source.isAvailable) {
-    const available = await source.isAvailable(context);
-
-    if (!available) {
-      if (source.optional) {
-        return undefined;
-      }
-
-      throw new Error(`Configuration source "${source.name}" is unavailable.`);
-    }
-  }
-
-  const result = await source.load(context);
-
-  if (!result || typeof result !== "object") {
-    throw new Error(
-      `Configuration source "${source.name}" returned an invalid result.`,
-    );
-  }
-
-  return result;
-}
-
-/**
  * Creates a configuration loader.
  */
 export function createConfigLoader(
@@ -470,6 +443,11 @@ export function sourceResultsToEntries(
   for (const result of results) {
     const source = sourceMap.get(result.source);
 
+    // A source result's `sensitiveKeys` must survive the conversion:
+    // dropping it here produced entries with `sensitive: false` for
+    // credentials, which toSafeConfigEntry() then printed in clear.
+    const sensitiveKeys = new Set(result.sensitiveKeys ?? []);
+
     for (const [key, value] of Object.entries(result.values)) {
       entries.push(
         createConfigEntry({
@@ -478,6 +456,7 @@ export function sourceResultsToEntries(
           source: result.source,
           sourceType: result.type,
           priority: source?.priority ?? 0,
+          sensitive: sensitiveKeys.has(key),
         }),
       );
     }

@@ -76,6 +76,15 @@ export function isUrl(value: unknown): value is string {
 }
 
 /**
+ * Longest input `isEmail` will examine.
+ *
+ * RFC 5321 caps a forward path at 254 characters; anything longer cannot be a
+ * deliverable address, and refusing it up front keeps an attacker from
+ * handing the domain pattern a megabyte to backtrack over.
+ */
+export const MAX_EMAIL_LENGTH = 254;
+
+/**
  * Check if a value is a valid email string.
  *
  * This is the monorepo's single email check; `@zudojs/validation` re-exports
@@ -85,6 +94,12 @@ export function isUrl(value: unknown): value is string {
  */
 export function isEmail(value: unknown): value is string {
   if (typeof value !== "string") return false;
+  // Bound the input before the pattern runs against it. The domain half
+  // contains `(?:[a-z0-9-]*[a-z0-9])?` nested inside `(?:\. … )+`, which is
+  // the ambiguous-quantifier shape that backtracks super-linearly on a long
+  // non-matching label. RFC 5321 caps a path at 254 characters, so nothing
+  // legitimate is lost by refusing to even look at more.
+  if (value.length > MAX_EMAIL_LENGTH) return false;
   if (value.includes("..")) return false;
   return /^[^\s@,;<>"[\]\\]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/iu.test(
     value,
@@ -138,15 +153,29 @@ export function isIsoDateString(value: unknown): value is string {
     return false;
   }
 
-  const timestamp = new Date(value).getTime();
-  if (Number.isNaN(timestamp)) return false;
+  if (Number.isNaN(new Date(value).getTime())) return false;
 
-  const [year, month, day] = value.slice(0, 10).split("-").map(Number);
-  const asUtc = new Date(Date.UTC(year!, month! - 1, day!));
+  // Real guards rather than `!` assertions: the regex above already fixes the
+  // shape, but an assertion would turn any future loosening of it into silent
+  // NaN propagation through Date.UTC instead of a `false`.
+  const parts = value.slice(0, 10).split("-").map(Number);
+  const [year, month, day] = parts;
+  if (year === undefined || month === undefined || day === undefined) {
+    return false;
+  }
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day)
+  ) {
+    return false;
+  }
+
+  const asUtc = new Date(Date.UTC(year, month - 1, day));
 
   return (
     asUtc.getUTCFullYear() === year &&
-    asUtc.getUTCMonth() === month! - 1 &&
+    asUtc.getUTCMonth() === month - 1 &&
     asUtc.getUTCDate() === day
   );
 }

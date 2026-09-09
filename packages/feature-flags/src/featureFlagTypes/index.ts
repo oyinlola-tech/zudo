@@ -32,6 +32,7 @@ export type {
 
 export type {
   FeatureFlagProvider,
+  RefreshableFeatureFlagProvider,
   FeatureFlagChangeListener,
   Unsubscribe,
 } from "./featureFlagProvider.js";

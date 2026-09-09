@@ -30,6 +30,8 @@ const mockContext = (
     type: "fullstack",
   },
   projectPath: "/tmp/test-app",
+  framework: "react",
+  packageManager: "pnpm",
   language: "typescript",
   architecture: "zudojs-standard",
   features: {

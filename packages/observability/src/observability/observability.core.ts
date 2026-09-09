@@ -9,6 +9,7 @@
 import type {
   Logger,
   MetricExporter,
+  SpanExporter,
   MetricsRegistry,
   Observability,
   ObservabilityConfig,
@@ -36,7 +37,7 @@ import {
   BatchSpanProcessor,
   noopSpanExporter,
 } from "../processor/index.js";
-import { createStructureRedactor } from "../redaction/index.js";
+import { createRedactor, createStructureRedactor } from "../redaction/index.js";
 import { AlwaysOnSampler } from "../sampling/index.js";
 
 /**
@@ -49,11 +50,11 @@ interface TelemetryPipeline {
   readonly propagation: AsyncPropagationManager;
   readonly processors: readonly SpanProcessor[];
   readonly logProcessor?: BatchLogProcessor;
-  readonly metricReader?: PeriodicMetricReader;
-  /** Exporters this facade constructed, and is therefore responsible for. */
-  readonly ownedShutdown: readonly (() => Promise<void>)[];
+  readonly metricReader: PeriodicMetricReader;
   readonly config: ObservabilityConfig;
   readonly sampler: ObservabilityConfig["sampler"];
+  /** Redacts span attributes, when `config.redaction` is set. */
+  readonly redactAttribute?: (key: string, value: unknown) => unknown;
 }
 
 /**
@@ -104,6 +105,7 @@ export class DefaultObservability implements Observability {
       sampler: this.pipeline.sampler ?? new AlwaysOnSampler(),
       limits: this.pipeline.config.spanLimits,
       captureStackTraces: this.pipeline.config.captureStackTraces,
+      redactAttribute: this.pipeline.redactAttribute,
       onError: this.pipeline.config.onError,
     });
   }
@@ -122,9 +124,16 @@ export class DefaultObservability implements Observability {
     });
   }
 
-  /** Drains every buffer without shutting anything down. */
+  /**
+   * Drains every buffer without shutting anything down.
+   *
+   * A scope shares its parent's pipeline, so draining from one is both safe
+   * and what the caller asked for. Returning early because the scope does not
+   * *own* the pipeline made `obs.resource({...}).flush()` a silent no-op —
+   * the buffered records it was meant to push were still sitting in the queue
+   * when the caller went on to exit.
+   */
   async flush(): Promise<void> {
-    if (!this.ownsPipeline) return;
     await this.drain();
   }
 
@@ -136,9 +145,7 @@ export class DefaultObservability implements Observability {
     for (const processor of this.pipeline.processors) {
       if (processor.forceFlush) tasks.push(processor.forceFlush());
     }
-    if (this.pipeline.metricReader) {
-      tasks.push(this.pipeline.metricReader.collect());
-    }
+    tasks.push(this.pipeline.metricReader.collect());
     await this.reportFailures(await Promise.allSettled(tasks), "flush");
   }
 
@@ -172,24 +179,17 @@ export class DefaultObservability implements Observability {
     await this.drain();
 
     const steps: Promise<unknown>[] = [];
-    if (this.pipeline.metricReader) {
-      steps.push(this.pipeline.metricReader.shutdown());
-    }
+    steps.push(this.pipeline.metricReader.shutdown());
     if (this.pipeline.logProcessor) {
       steps.push(this.pipeline.logProcessor.shutdown());
     }
     for (const processor of this.pipeline.processors) {
       steps.push(processor.shutdown());
     }
+    // Every exporter this facade created is owned by exactly one processor or
+    // reader, which closes it in the step above; an exporter supplied by the
+    // caller is therefore never closed twice.
     await this.reportFailures(await Promise.allSettled(steps), "shutdown");
-
-    // Exporters this facade created are closed exactly once, here. Processors
-    // close the exporter they were handed, which is why an exporter supplied
-    // by the caller is never closed twice.
-    const owned = await Promise.allSettled(
-      this.pipeline.ownedShutdown.map((close) => close()),
-    );
-    await this.reportFailures(owned, "shutdown");
   }
 }
 
@@ -210,7 +210,6 @@ function buildResourceAttributes(
 
 function buildPipeline(config: ObservabilityConfig): TelemetryPipeline {
   const useConsole = config.useConsoleExporters ?? true;
-  const ownedShutdown: (() => Promise<void>)[] = [];
 
   /* ── Logging ─────────────────────────────────────────────────────────── */
 
@@ -248,13 +247,16 @@ function buildPipeline(config: ObservabilityConfig): TelemetryPipeline {
 
   /* ── Tracing ─────────────────────────────────────────────────────────── */
 
-  const spanExporter =
+  // Built only when this facade owns the processor: constructing an exporter
+  // the caller's own processors will never touch is waste at best and a
+  // second, unclosed handle at worst.
+  const ownSpanExporter = (): SpanExporter =>
     config.spanExporter ??
     (useConsole ? new ConsoleSpanExporter() : noopSpanExporter);
 
   const processors: readonly SpanProcessor[] = config.processors ?? [
     new BatchSpanProcessor({
-      exporter: spanExporter,
+      exporter: ownSpanExporter(),
       onError: config.onError,
       onDrop: (dropped) =>
         config.onError?.(
@@ -270,34 +272,41 @@ function buildPipeline(config: ObservabilityConfig): TelemetryPipeline {
   /* ── Metrics ─────────────────────────────────────────────────────────── */
 
   const metrics = new DefaultMetricsRegistry({
-    onCardinalityLimit: (name, size) =>
+    ...(config.metrics ?? {}),
+    onCardinalityLimit: (name, size) => {
+      config.metrics?.onCardinalityLimit?.(name, size);
       config.onError?.(
         new Error(
           `Metric "${name}" exceeded the registry's series limit (${size}); ` +
             `check for a high-cardinality label`,
         ),
         "MetricsRegistry",
-      ),
+      );
+    },
   });
 
   const metricExporter: MetricExporter | undefined =
     config.metricExporter ??
     (useConsole ? new ConsoleMetricExporter() : undefined);
 
-  let metricReader: PeriodicMetricReader | undefined;
+  // The reader is built whenever there is anything to export to, even at
+  // interval 0. `start()` is a no-op at 0, so periodic export stays disabled
+  // as documented — but `flush()` and `shutdown()` still collect a final
+  // snapshot and close the exporter. Skipping the reader entirely left a
+  // console exporter this facade had constructed running to the end of the
+  // process with no metric ever leaving it.
   const metricIntervalMs = config.metricExportIntervalMs ?? 60_000;
-  if (metricExporter && metricIntervalMs > 0) {
-    metricReader = new PeriodicMetricReader({
-      registry: metrics,
-      exporter: metricExporter,
-      intervalMs: metricIntervalMs,
-      onError: config.onError,
-    });
-    metricReader.start();
-  } else if (metricExporter === undefined) {
-    // Nothing to export to; keep the shape uniform for the shutdown path.
-    ownedShutdown.push(() => noopMetricExporter.shutdown());
-  }
+  const metricReader = new PeriodicMetricReader({
+    registry: metrics,
+    exporter: metricExporter ?? noopMetricExporter,
+    intervalMs: metricIntervalMs,
+    onError: config.onError,
+  });
+  metricReader.start();
+
+  const redactAttribute = config.redaction
+    ? buildAttributeRedactor(config.redaction)
+    : undefined;
 
   return {
     logger,
@@ -306,9 +315,27 @@ function buildPipeline(config: ObservabilityConfig): TelemetryPipeline {
     processors,
     logProcessor,
     metricReader,
-    ownedShutdown,
     config,
     sampler: config.sampler,
+    redactAttribute,
+  };
+}
+
+/**
+ * Builds the span-attribute redactor.
+ *
+ * A sensitive key replaces its whole value; anything else is still walked, so
+ * a token nested inside an otherwise innocuous `request` attribute is caught
+ * too.
+ */
+function buildAttributeRedactor(
+  redaction: NonNullable<ObservabilityConfig["redaction"]>,
+): (key: string, value: unknown) => unknown {
+  const leaf = createRedactor(redaction);
+  const deep = createStructureRedactor(redaction);
+  return (key, value) => {
+    const replaced = leaf(key, value);
+    return replaced === value ? deep(value) : replaced;
   };
 }
 

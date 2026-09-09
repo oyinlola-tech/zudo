@@ -154,30 +154,34 @@ function isPolicySource(
   );
 }
 
+/** Rejects a role whose grants could never match. */
+function validateRole(role: RoleDefinition): void {
+  if (!role.name || role.name.trim() === "") {
+    throw new InvalidRoleError("Role name cannot be empty");
+  }
+  for (const permission of role.permissions) {
+    if (!isValidPermission(permission)) {
+      // A malformed grant can never match, so it is a silent no-op unless
+      // it is rejected here.
+      throw new InvalidRoleError(
+        `Role "${role.name}" grants "${permission}", which is not a valid ` +
+          `"resource:action" permission`,
+      );
+    }
+  }
+}
+
 function validateRoles(roles: readonly RoleDefinition[]): void {
   const seen = new Set<string>();
 
   for (const role of roles) {
-    if (!role.name || role.name.trim() === "") {
-      throw new InvalidRoleError("Role name cannot be empty");
-    }
+    validateRole(role);
     if (seen.has(role.name)) {
       throw new InvalidRoleError(
         `Role "${role.name}" is defined more than once`,
       );
     }
     seen.add(role.name);
-
-    for (const permission of role.permissions) {
-      if (!isValidPermission(permission)) {
-        // A malformed grant can never match, so it is a silent no-op unless
-        // it is rejected here.
-        throw new InvalidRoleError(
-          `Role "${role.name}" grants "${permission}", which is not a valid ` +
-            `"resource:action" permission`,
-        );
-      }
-    }
   }
 }
 
@@ -194,7 +198,15 @@ export function createPermissionEngine(
 
   if (isRoleSource(options?.roles)) {
     const source = options.roles;
-    const memo = memoizeRoleLookup((name) => source.get(name));
+    // A role source is looked up lazily, so `validateConfiguration` has to be
+    // applied lazily too. Checking only the array form left a registry-backed
+    // engine accepting grants that can never match — the exact silent no-op
+    // the option exists to prevent.
+    const memo = memoizeRoleLookup((name) => {
+      const role = source.get(name);
+      if (role && validateConfiguration) validateRole(role);
+      return role;
+    });
     roleLookup = memo.lookup;
     invalidateRoleCache = memo.invalidate;
   } else {

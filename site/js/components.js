@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.1.0';
+  var VERSION = '1.0.0';
   var GITHUB_URL = 'https://github.com/oyinlola-tech/zudo';
   var NPM_URL = 'https://www.npmjs.com/org/zudojs';
   var TWITTER_URL = 'https://x.com/zudojs';
@@ -49,20 +49,20 @@
 
   var SEARCH_INDEX = [
     { g: 'Getting started', t: 'Installation', p: '/docs/getting-started', e: 'Install Zudo from npm. Node.js 24 or newer.' },
-    { g: 'Getting started', t: 'Your first app', p: '/docs/getting-started/first-app', e: 'Scaffold a project with the CLI and start it.' },
-    { g: 'Getting started', t: 'Project structure', p: '/docs/getting-started/project-structure', e: 'Standard layout for a Zudo application.' },
+    { g: 'Getting started', t: 'Your first app', p: '/docs/getting-started-first-app', e: 'Scaffold a project with the CLI and start it.' },
+    { g: 'Getting started', t: 'Project structure', p: '/docs/getting-started-project-structure', e: 'Standard layout for a Zudo application.' },
     { g: 'Architecture', t: 'Architecture overview', p: '/docs/architecture', e: 'Five layers, one dependency direction.' },
-    { g: 'Architecture', t: 'Module system', p: '/docs/architecture/module-system', e: 'Modules as self-contained units of functionality.' },
-    { g: 'Architecture', t: 'Runtime', p: '/docs/architecture/runtime', e: 'The application lifecycle orchestrator.' },
-    { g: 'Architecture', t: 'Adapters', p: '/docs/architecture/adapters', e: 'Boundary layer between Zudo and external platforms.' },
-    { g: 'Architecture', t: 'Dependency direction', p: '/docs/architecture/dependency-direction', e: 'Dependencies flow inward through five tiers.' },
+    { g: 'Architecture', t: 'Module system', p: '/docs/architecture-module-system', e: 'Modules as self-contained units of functionality.' },
+    { g: 'Architecture', t: 'Runtime', p: '/docs/architecture-runtime', e: 'The application lifecycle orchestrator.' },
+    { g: 'Architecture', t: 'Adapters', p: '/docs/architecture-adapters', e: 'Boundary layer between Zudo and external platforms.' },
+    { g: 'Architecture', t: 'Dependency direction', p: '/docs/architecture-dependency-direction', e: 'Dependencies flow inward through five tiers.' },
     { g: 'Concepts', t: 'Application', p: '/docs/concepts', e: 'Top-level container for modules, plugins and infrastructure.' },
-    { g: 'Concepts', t: 'Configuration', p: '/docs/concepts/configuration', e: 'Layered configuration with clear precedence.' },
-    { g: 'Concepts', t: 'Contexts', p: '/docs/concepts/contexts', e: 'AsyncLocalStorage-based context propagation.' },
-    { g: 'Concepts', t: 'Dependency injection', p: '/docs/concepts/dependency-injection', e: 'Token-based container with scoped lifecycles.' },
-    { g: 'Concepts', t: 'Lifecycle', p: '/docs/concepts/lifecycle', e: 'State machine for component lifecycle.' },
-    { g: 'Concepts', t: 'Modules', p: '/docs/concepts/modules', e: 'Primary building blocks with explicit boundaries.' },
-    { g: 'Reference', t: 'All packages', p: '/docs/packages', e: '38 packages across six categories.' },
+    { g: 'Concepts', t: 'Configuration', p: '/docs/concepts-configuration', e: 'Layered configuration with clear precedence.' },
+    { g: 'Concepts', t: 'Contexts', p: '/docs/concepts-contexts', e: 'AsyncLocalStorage-based context propagation.' },
+    { g: 'Concepts', t: 'Dependency injection', p: '/docs/concepts-dependency-injection', e: 'Token-based container with scoped lifecycles.' },
+    { g: 'Concepts', t: 'Lifecycle', p: '/docs/concepts-lifecycle', e: 'State machine for component lifecycle.' },
+    { g: 'Concepts', t: 'Modules', p: '/docs/concepts-modules', e: 'Primary building blocks with explicit boundaries.' },
+    { g: 'Reference', t: 'All packages', p: '/docs/packages', e: '39 packages across six categories.' },
     { g: 'Reference', t: 'Roadmap', p: '/docs/roadmap', e: 'Implementation status and future direction.' },
     { g: 'Reference', t: 'Package rules', p: '/docs/rules', e: 'Development standards every package follows.' },
     { g: 'Reference', t: 'Contributing', p: '/docs/contributing', e: 'How to contribute to Zudo.' },
@@ -71,7 +71,8 @@
 
   var PACKAGES = [
     ['adapters', 'Boundary layer for external platforms'], ['api', 'Transport-agnostic operations, interceptors, results'],
-    ['auth', 'JWT, sessions, password hashing, RBAC'], ['cache', 'Cache abstraction with memory adapter'],
+    ['auth', 'JWT, sessions, password hashing, RBAC'],
+    ['auth-oauth', 'Sign in with Google, GitHub, Microsoft, Apple, Discord'], ['cache', 'Cache abstraction with memory adapter'],
     ['cli', 'Command-line scaffolding and generators'], ['config', 'Layered configuration sources'],
     ['constants', 'Shared constants and enums'], ['container', 'Token-based DI container'],
     ['core', 'Application, modules, lifecycle, runtime'], ['cqrs', 'Commands, queries, handlers'],
@@ -92,7 +93,7 @@
   ];
 
   PACKAGES.forEach(function (p) {
-    SEARCH_INDEX.push({ g: 'Packages', t: '@zudojs/' + p[0], p: '/docs/packages/' + p[0], e: p[1] });
+    SEARCH_INDEX.push({ g: 'Packages', t: '@zudojs/' + p[0], p: '/docs/packages-' + p[0], e: p[1] });
   });
 
   /* ---------- helpers ---------- */
@@ -190,17 +191,17 @@
             '</div>' +
             col('Documentation', 'c-red', [
               ['Getting started', '/docs/getting-started'],
-              ['Your first app', '/docs/getting-started/first-app'],
+              ['Your first app', '/docs/getting-started-first-app'],
               ['Architecture', '/docs/architecture'],
               ['Concepts', '/docs/concepts'],
               ['Package rules', '/docs/rules'],
             ]) +
             col('Packages', 'c-blue', [
-              ['@zudojs/core', '/docs/packages/core'],
-              ['@zudojs/http', '/docs/packages/http'],
-              ['@zudojs/container', '/docs/packages/container'],
-              ['@zudojs/auth', '/docs/packages/auth'],
-              ['All 38 packages', '/docs/packages'],
+              ['@zudojs/core', '/docs/packages-core'],
+              ['@zudojs/http', '/docs/packages-http'],
+              ['@zudojs/container', '/docs/packages-container'],
+              ['@zudojs/auth', '/docs/packages-auth'],
+              ['All 39 packages', '/docs/packages'],
             ]) +
             col('Community', 'c-green', [
               ['Contributing', '/docs/contributing'],

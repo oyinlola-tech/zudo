@@ -1,5 +1,9 @@
 import type { Event } from "@zudojs/events";
 import type {
+  RuntimeFailureState,
+  RuntimeState,
+} from "../runtimeState/runtimeState.type.js";
+import type {
   RuntimeEventPayload,
   RuntimeModuleEventPayload,
   RuntimeFailureEventPayload,
@@ -50,7 +54,7 @@ export function createModuleEventPayload(
  */
 export function createFailureEventPayload(
   runtimeId: string,
-  state: string,
+  state: RuntimeState | RuntimeFailureState,
   error: Error,
   phase: string,
   failedModuleId?: string,

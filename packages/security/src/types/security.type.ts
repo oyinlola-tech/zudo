@@ -16,6 +16,15 @@ export interface HeaderSecurityConfig {
   readonly maxTotalSize?: number;
   /** Headers that should be rejected entirely. */
   readonly blockedHeaders?: readonly string[];
+  /**
+   * Reject hop-by-hop headers (default: false).
+   *
+   * `isHopByHopHeader` was exported and consulted by nothing. Set this when
+   * validating a request that has crossed a proxy: `Transfer-Encoding`,
+   * `Connection` and friends are per-hop and a forwarded one is a
+   * request-smuggling primitive.
+   */
+  readonly blockHopByHop?: boolean;
 }
 
 /** Result of header validation. */
@@ -142,10 +151,17 @@ export interface RateLimitConfig {
   readonly windowMs: number;
   /** Key generator function (defaults to IP). */
   readonly keyGenerator?: (request: RateLimitRequest) => string;
-  /** Custom handler when rate limit is exceeded. */
+  /**
+   * Custom handler when rate limit is exceeded.
+   *
+   * Receives the decision that produced the rejection, so a handler can set an
+   * accurate `Retry-After` instead of guessing. A two-parameter handler is
+   * still assignable — the third argument is simply ignored.
+   */
   readonly handler?: (
     request: RateLimitRequest,
     response: RateLimitResponse,
+    result: RateLimitResult,
   ) => void;
   /** Skip certain requests. */
   readonly skip?: (request: RateLimitRequest) => boolean;
@@ -200,24 +216,6 @@ export interface SecurityHeadersConfig {
   readonly openerPolicy?: string;
   /** Cross-Origin-Resource-Policy value. */
   readonly resourcePolicy?: string;
-}
-
-/* ─── Request Validation ───────────────────────────────────────────────── */
-
-/** Configuration for request validation. */
-export interface RequestValidationConfig {
-  /** Allowed HTTP methods. */
-  readonly allowedMethods?: readonly string[];
-  /** Maximum request line size in bytes. */
-  readonly maxRequestLineSize?: number;
-  /** Allowed hosts (empty = allow all). */
-  readonly allowedHosts?: readonly string[];
-  /** Whether to validate the Host header. */
-  readonly validateHost?: boolean;
-  /** Whether to validate Content-Length. */
-  readonly validateContentLength?: boolean;
-  /** Maximum Content-Length value. */
-  readonly maxContentLength?: number;
 }
 
 /* ─── Input Sanitization ───────────────────────────────────────────────── */

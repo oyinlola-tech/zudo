@@ -5,7 +5,7 @@ import type {
   JobName,
   JobState,
   JobPriority,
-  BackoffType,
+  BackoffStrategy,
 } from "../jobTypes/jobTypes.type.js";
 
 import type { JobOptions } from "../jobOptions/jobOptions.type.js";
@@ -52,7 +52,7 @@ export interface Job<TData = unknown> {
   readonly metadata?: Record<string, unknown>;
   /** Backoff configuration. */
   readonly backoff?: {
-    readonly type: BackoffType;
+    readonly type: BackoffStrategy;
     readonly delay: number;
     readonly maxDelay?: number;
     readonly multiplier?: number;

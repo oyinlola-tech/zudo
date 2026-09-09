@@ -8,6 +8,7 @@ export {
   DuplicatePermissionError,
   RoleNotFoundError,
   DuplicateRoleError,
+  DuplicatePolicyError,
 } from "./permissionError.access.js";
 
 export {

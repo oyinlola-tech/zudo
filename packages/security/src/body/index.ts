@@ -10,5 +10,6 @@ export {
   validateBodySize,
   getBodyLimitForContentType,
   validateBodyLimitConfig,
+  resolveBodyLimit,
   createBodySizeChecker,
 } from "./body.core.js";

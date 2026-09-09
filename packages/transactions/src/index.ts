@@ -20,5 +20,7 @@ export * from "./utils/index.js";
 
 export {
   createTransactionManager,
+  createEmitter,
+  type TransactionEmitter,
   type TransactionManagerOptions,
 } from "./manager/index.js";

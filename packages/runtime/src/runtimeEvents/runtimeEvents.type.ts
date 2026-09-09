@@ -1,3 +1,8 @@
+import type {
+  RuntimeFailureState,
+  RuntimeState,
+} from "../runtimeState/runtimeState.type.js";
+
 /**
  * Runtime lifecycle events.
  *
@@ -5,10 +10,7 @@
  * the runtime transitions through its lifecycle.
  */
 export type RuntimeEventType =
-  | "runtime.created"
   | "runtime.initializing"
-  | "runtime.initialized"
-  | "runtime.starting"
   | "runtime.running"
   | "runtime.stopping"
   | "runtime.stopped"
@@ -48,6 +50,14 @@ export interface RuntimeModuleEventPayload extends RuntimeEventPayload {
  * Payload for runtime failure events.
  */
 export interface RuntimeFailureEventPayload extends RuntimeEventPayload {
+  /**
+   * The state the runtime was in when it failed.
+   *
+   * Narrower than the base payload's `state`: this is where
+   * {@link RuntimeFailureState} is used, naming which phase failed rather
+   * than leaving the reader to parse a free-form string.
+   */
+  readonly state: RuntimeState | RuntimeFailureState;
   readonly error: Error;
   readonly phase: string;
   readonly failedModuleId?: string;
@@ -74,13 +84,27 @@ export interface RuntimeReadinessEventPayload extends RuntimeEventPayload {
 }
 
 /**
+ * Event types carrying a {@link RuntimeModuleEventPayload}.
+ */
+export type RuntimeModuleEventType =
+  | "runtime.module.initializing"
+  | "runtime.module.initialized"
+  | "runtime.module.starting"
+  | "runtime.module.started"
+  | "runtime.module.stopping"
+  | "runtime.module.stopped"
+  | "runtime.module.failed";
+
+/**
  * Maps event types to their payload types.
+ *
+ * Every entry here is emitted by the runtime. Entries for events nothing
+ * ever published (`runtime.created`, `runtime.initialized`,
+ * `runtime.starting`) were removed rather than left as names a consumer
+ * could subscribe to and never hear from.
  */
 export interface RuntimeEventMap {
-  "runtime.created": RuntimeEventPayload;
   "runtime.initializing": RuntimeEventPayload;
-  "runtime.initialized": RuntimeEventPayload;
-  "runtime.starting": RuntimeEventPayload;
   "runtime.running": RuntimeEventPayload;
   "runtime.stopping": RuntimeEventPayload;
   "runtime.stopped": RuntimeEventPayload;

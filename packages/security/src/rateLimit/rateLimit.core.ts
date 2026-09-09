@@ -7,11 +7,9 @@
 import type {
   RateLimitConfig,
   RateLimitRequest,
+  RateLimitResponse,
   RateLimitResult,
 } from "../types/security.type.js";
-
-/** Default rate limit: 100 requests per minute. */
-const DEFAULT_MAX = 100;
 
 /** Default window: 1 minute. */
 const DEFAULT_WINDOW_MS = 60_000;
@@ -47,8 +45,15 @@ export function defaultKeyGenerator(request: RateLimitRequest): string {
 /**
  * Default handler when rate limit is exceeded.
  *
+ * `Retry-After` is derived from the decision that caused the rejection. It used
+ * to be the string `"60"` regardless of configuration, so a limiter with an
+ * hour-long window told every client to come back in a minute — and they did,
+ * to another rejection.
+ *
  * @param _request - The rate limit request.
  * @param response - The rate limit response to modify.
+ * @param result - The decision being rejected, used for `Retry-After`.
+ * @param message - The message to return, from `RateLimitConfig.message`.
  */
 export function defaultHandler(
   _request: RateLimitRequest,
@@ -57,16 +62,41 @@ export function defaultHandler(
     headers: Record<string, string>;
     body?: string;
   },
+  result?: RateLimitResult,
+  message: string = DEFAULT_MESSAGE,
 ): void {
   response.statusCode = 429;
-  response.headers["Retry-After"] = "60";
-  response.headers["X-RateLimit-Remaining"] = "0";
+  response.headers["Retry-After"] = String(retryAfterSeconds(result));
+  response.headers["X-RateLimit-Remaining"] = String(result?.remaining ?? 0);
+  if (result) {
+    response.headers["X-RateLimit-Limit"] = String(result.total);
+    response.headers["X-RateLimit-Reset"] = String(
+      Math.ceil(result.resetAt.getTime() / 1000),
+    );
+  }
   response.body = JSON.stringify({
     error: {
       code: "RATE_LIMIT_EXCEEDED",
-      message: DEFAULT_MESSAGE,
+      message,
     },
   });
+}
+
+/**
+ * Whole seconds until the window frees up, as `Retry-After` requires.
+ *
+ * `RateLimitResult.resetAt` is a `Date`; putting it into a header or a JSON
+ * body directly yields an ISO string or an object where an integer count of
+ * seconds is expected. At least 1, never fractional, so a client never reads
+ * `Retry-After: 0` and retries instantly.
+ */
+export function retryAfterSeconds(
+  result?: Pick<RateLimitResult, "resetAt">,
+  now: number = Date.now(),
+): number {
+  if (!result) return Math.ceil(DEFAULT_WINDOW_MS / 1000);
+  const deltaMs = result.resetAt.getTime() - now;
+  return Math.max(1, Math.ceil(deltaMs / 1000));
 }
 
 /** Extra options accepted by {@link createRateLimiter}. */
@@ -99,7 +129,18 @@ export function createRateLimiter(config: RateLimiterOptions) {
 
   const store = new Map<string, RateLimitEntry>();
   const keyGenerator = config.keyGenerator ?? defaultKeyGenerator;
-  const handler = config.handler ?? defaultHandler;
+  // `config.message` was declared and documented but never read: the default
+  // handler always emitted the built-in string.
+  const message = config.message ?? DEFAULT_MESSAGE;
+  const handler =
+    config.handler ??
+    ((
+      request: RateLimitRequest,
+      response: RateLimitResponse,
+      result: RateLimitResult,
+    ) => {
+      defaultHandler(request, response, result, message);
+    });
   const skip = config.skip;
   const maxKeys = config.maxKeys ?? DEFAULT_MAX_KEYS;
 
@@ -199,16 +240,12 @@ export function createRateLimiter(config: RateLimiterOptions) {
    */
   function middleware(
     request: RateLimitRequest,
-    response?: {
-      statusCode: number;
-      headers: Record<string, string>;
-      body?: string;
-    },
+    response?: RateLimitResponse,
   ): RateLimitResult {
     const result = check(request);
 
     if (!result.allowed && response) {
-      handler(request, response);
+      handler(request, response, result);
     }
 
     return result;
@@ -360,5 +397,3 @@ function isPlausibleIp(value: string): boolean {
   // Any hex-and-colon string is accepted as an IPv6 candidate.
   return /^[0-9a-fA-F:]+$/.test(host) && host.includes(":");
 }
-
-export { DEFAULT_MAX, DEFAULT_WINDOW_MS };

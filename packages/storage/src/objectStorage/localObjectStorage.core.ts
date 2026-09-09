@@ -4,6 +4,7 @@
  * Filesystem-based object storage for development and testing.
  */
 
+import { createHash } from "node:crypto";
 import { readFile, stat, unlink } from "node:fs/promises";
 import type {
   ListObjectsResult,
@@ -25,6 +26,12 @@ import {
   collectStream,
   writeAtomic,
 } from "./localObjectStorage.write.js";
+import {
+  assertNotReserved,
+  readAttributes,
+  removeAttributes,
+  writeAttributes,
+} from "./localObjectStorage.sidecar.js";
 
 /** Options for the local object storage. */
 export interface LocalObjectStorageOptions {
@@ -58,13 +65,31 @@ export class LocalObjectStorage implements ObjectStorage {
 
     await writeAtomic(filePath, buffer);
 
+    // Attributes are persisted, not echoed. Returning the caller's own
+    // options while storing nothing made `put` look like it recorded a
+    // content type that `get` and `metadata` could never produce.
+    const etag = createHash("sha256").update(buffer).digest("hex");
+
+    await writeAttributes(this.basePath, key, {
+      contentType: options?.contentType,
+      cacheControl: options?.cacheControl,
+      metadata: options?.metadata,
+      etag,
+    });
+
     const stats = await stat(filePath);
     return {
       key,
-      contentType: options?.contentType,
+      ...(options?.contentType !== undefined
+        ? { contentType: options.contentType }
+        : {}),
+      ...(options?.cacheControl !== undefined
+        ? { cacheControl: options.cacheControl }
+        : {}),
       size: stats.size,
       lastModified: stats.mtime,
-      metadata: options?.metadata,
+      etag,
+      ...(options?.metadata !== undefined ? { metadata: options.metadata } : {}),
     };
   }
 
@@ -82,6 +107,7 @@ export class LocalObjectStorage implements ObjectStorage {
 
     const metadata: ObjectMetadata = {
       key,
+      ...(await readAttributes(this.basePath, key)),
       size: stats.size,
       lastModified: stats.mtime,
     };
@@ -110,6 +136,10 @@ export class LocalObjectStorage implements ObjectStorage {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
       throw error;
+    } finally {
+      // Attributes outliving their object would resurface, wrongly, on the
+      // next object stored under the same key.
+      await removeAttributes(this.basePath, key);
     }
   }
 
@@ -127,7 +157,12 @@ export class LocalObjectStorage implements ObjectStorage {
     const filePath = await this.resolve(key);
     try {
       const stats = await stat(filePath);
-      return { key, size: stats.size, lastModified: stats.mtime };
+      return {
+        key,
+        ...(await readAttributes(this.basePath, key)),
+        size: stats.size,
+        lastModified: stats.mtime,
+      };
     } catch {
       return null;
     }
@@ -142,6 +177,7 @@ export class LocalObjectStorage implements ObjectStorage {
 
   /** Resolve a key to a contained absolute path, following symlinks. */
   private async resolve(key: string): Promise<string> {
+    assertNotReserved(key);
     const filePath = resolveKeyPath(this.basePath, key);
     await assertRealPathContained(this.basePath, filePath, key);
     return filePath;

@@ -245,7 +245,60 @@ export function validateBodyLimitConfig(
     return `Body limit maxSize ${config.maxSize} exceeds maximum allowed (1GB)`;
   }
 
+  // `contentTypes` used to be declared and never looked at, here or anywhere.
+  // An entry that is not a media type would silently never match, so it is
+  // reported rather than ignored.
+  if (config.contentTypes) {
+    for (const entry of config.contentTypes) {
+      if (parseMediaType(entry) === undefined) {
+        return `Body limit contentTypes entry is not a media type: "${entry}" (expected e.g. "application/json")`;
+      }
+    }
+  }
+
   return undefined;
+}
+
+/**
+ * Resolves the body limit that applies to a content type from a rule list.
+ *
+ * This is the implementation of `BodyLimitConfig.contentTypes`, which was
+ * declared as *"Content types that use this limit (if empty, applies to all)"*
+ * and had no reader anywhere in the package — so the field could be filled in
+ * and would never change a single decision.
+ *
+ * A rule naming the content type wins over a catch-all, whatever the order in
+ * the array, so a general default can sit alongside specific overrides.
+ *
+ * @param contentType - The raw `Content-Type` header value.
+ * @param rules - Limit rules, each optionally scoped to content types.
+ * @param fallback - Limit to use when no rule applies.
+ * @returns The maximum body size in bytes.
+ */
+export function resolveBodyLimit(
+  contentType: string | undefined,
+  rules: readonly BodyLimitConfig[],
+  fallback: number = DEFAULT_MAX_BODY_SIZE,
+): number {
+  const type = parseMediaType(contentType);
+
+  if (type !== undefined) {
+    for (const rule of rules) {
+      const scoped = rule.contentTypes;
+      if (!scoped || scoped.length === 0) continue;
+      if (scoped.some((entry) => parseMediaType(entry) === type)) {
+        return rule.maxSize;
+      }
+    }
+  }
+
+  for (const rule of rules) {
+    if (!rule.contentTypes || rule.contentTypes.length === 0) {
+      return rule.maxSize;
+    }
+  }
+
+  return fallback;
 }
 
 /**

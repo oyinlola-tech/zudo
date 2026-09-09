@@ -89,6 +89,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -144,10 +145,10 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.1</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/errors</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
-          Shared error base class, error codes, error categories, severity levels, and error handling utilities. Every package in the ZudoLib framework depends on this foundation.
+          One error class, <code>BaseError</code>, that every Zudo error extends, plus ready-made errors for the usual cases and helpers that turn any thrown value into a safe API response.
         </p>
         <div class="flex flex-wrap gap-2 mt-4">
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">ERROR HIERARCHY</span>
@@ -156,1257 +157,557 @@
         </div>
       </div>
 
+      <!-- Overview -->
+      <section id="overview" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OVERVIEW</h2>
+        <p class="mb-4 leading-relaxed">
+          When something goes wrong in JavaScript you <code>throw</code> a value, usually an <code>Error</code>. A plain <code>Error</code> only carries a message and a stack trace. It cannot tell you whether the problem was the caller's fault or the server's, which HTTP status to send back, or whether the message is safe to show to a stranger.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          <code>@zudojs/errors</code> fixes that with <code>BaseError</code>. Every error built on it carries a stable <code>code</code>, a <code>category</code>, a <code>severity</code>, an HTTP <code>statusCode</code>, an <code>expose</code> flag, and a bag of <code>metadata</code>. Every other Zudo package throws these, so one <code>catch</code> block can handle all of them the same way.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          The package also ships helpers that convert <em>anything</em> that was thrown (a string, a <code>TypeError</code>, <code>undefined</code>) into a <code>BaseError</code>, and serializers that produce a client-safe JSON body from it.
+        </p>
+        <div class="grid md:grid-cols-2 gap-4 mb-4">
+          <div class="border-4 border-black p-4">
+            <div class="font-black mb-2">When you need it</div>
+            <ul class="text-sm space-y-1">
+              <li>You build an HTTP or RPC API and need consistent error responses.</li>
+              <li>You want one place to decide which error messages reach users.</li>
+              <li>You write a Zudo package or plugin and must throw the same errors the framework throws.</li>
+            </ul>
+          </div>
+          <div class="border-4 border-black p-4">
+            <div class="font-black mb-2">When you don't</div>
+            <ul class="text-sm space-y-1">
+              <li>A throw-away script where <code>throw new Error("...")</code> is enough.</li>
+              <li>You already use another framework's error hierarchy end to end.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
       <!-- Installation -->
       <section id="installation" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-        <div class="code-block mb-4"><span class="cm">// npm</span>
-npm install @zudojs/errors
-
-<span class="cm">// pnpm</span>
-pnpm add @zudojs/errors
-
-<span class="cm">// yarn</span>
-yarn add @zudojs/errors</div>
-
-        <div class="callout callout-tip">
-          <strong class="text-zudo-green">Zero Dependencies:</strong> <code>@zudojs/errors</code> is a leaf package with no external or internal dependencies. Every other package in the monorepo imports from this package.
+        <p class="mb-3">The package has no dependencies, so this is the only install step.</p>
+        <div class="code-block mb-4">$ npm install @zudojs/errors</div>
+        <div class="callout callout-note">
+          These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest <code>@zudojs</code> release.
         </div>
       </section>
 
-      <!-- What It Does -->
-      <section id="what-it-does" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHAT IT DOES</h2>
-        <p class="mb-4 leading-relaxed">
-          <code class="bg-black/5 px-1">@zudojs/errors</code> is the foundation of error handling across the entire ZudoLib framework. It provides:
+      <!-- Quick start -->
+      <section id="quick-start" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK START</h2>
+        <p class="mb-3">This example throws a ready-made error, catches it, and turns it into a JSON body you could send back from an API.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { NotFoundError, serializePublicError } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+
+<span class="kw">function</span> <span class="fn">findUser</span>(id: <span class="tp">number</span>) {
+  <span class="cmt">// Pretend the database returned nothing.</span>
+  <span class="kw">throw new</span> <span class="tp">NotFoundError</span>(<span class="str">`User ${id} was not found.`</span>, {
+    metadata: { userId: id },
+  });
+}
+
+<span class="kw">try</span> {
+  <span class="fn">findUser</span>(<span class="num">42</span>);
+} <span class="kw">catch</span> (error) {
+  <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">NotFoundError</span>) {
+    console.<span class="fn">log</span>(error.statusCode);               <span class="cmt">// 404</span>
+    console.<span class="fn">log</span>(<span class="fn">String</span>(error));
+    <span class="cmt">// NotFoundError [ERR_RESOURCE_NOT_FOUND]: User 42 was not found.</span>
+
+    console.<span class="fn">log</span>(<span class="fn">serializePublicError</span>(error));
+    <span class="cmt">// {</span>
+    <span class="cmt">//   code: "ERR_RESOURCE_NOT_FOUND",</span>
+    <span class="cmt">//   message: "User 42 was not found.",</span>
+    <span class="cmt">//   category: "resource",</span>
+    <span class="cmt">//   statusCode: 404,</span>
+    <span class="cmt">//   metadata: { userId: 42 }</span>
+    <span class="cmt">// }</span>
+  }
+}</div>
+        <p class="mb-3">You never told the error which status code to use. <code>NotFoundError</code> already knows it is a 404, that it is safe to show to clients, and that it belongs to the <code>resource</code> category. That is the whole idea: the error carries its own handling rules.</p>
+      </section>
+
+      <!-- BaseError -->
+      <section id="base-error" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">BASEERROR</h2>
+        <p class="mb-3 leading-relaxed">
+          An <em>error class</em> is a blueprint for error objects. <code>new BaseError("...")</code> makes an object that behaves like a normal <code>Error</code> (it has <code>message</code>, <code>stack</code>, and works with <code>throw</code> and <code>instanceof</code>) but with extra fields attached.
         </p>
-        <ul class="space-y-2 mb-6">
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> A <strong>BaseError</strong> class that all ZudoLib errors extend</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> An <strong>ErrorCode</strong> enum with 200+ stable string codes across every domain</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> An <strong>ErrorCategory</strong> enum with 40 categories for classification</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> An <strong>ErrorSeverity</strong> enum with 5 levels for alerting and monitoring</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Error metadata</strong> with creation, merging, sanitization, and serialization</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Domain-specific</strong> error classes (auth, validation, not-found, conflict, etc.)</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Infrastructure errors</strong> (database, HTTP, network, cache, storage, middleware, adapter)</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>System errors</strong> (crypto, runtime, logging)</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Utility functions</strong> for error normalization, serialization, type checking, and transformation</li>
-        </ul>
+        <p class="mb-3">The constructor takes a message and an optional options object. Every option has a default, so the shortest call is just the message.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { BaseError, ErrorCode, ErrorCategory, ErrorSeverity } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+
+<span class="kw">const</span> error = <span class="kw">new</span> <span class="tp">BaseError</span>(<span class="str">"Could not export the report."</span>, {
+  code: ErrorCode.OPERATION_FAILED,   <span class="cmt">// default: ErrorCode.UNKNOWN</span>
+  category: ErrorCategory.OPERATION,  <span class="cmt">// default: ErrorCategory.UNKNOWN</span>
+  severity: ErrorSeverity.WARNING,    <span class="cmt">// default: ErrorSeverity.ERROR</span>
+  statusCode: <span class="num">422</span>,                    <span class="cmt">// default: 500</span>
+  metadata: { reportId: <span class="str">"rpt_9"</span> },   <span class="cmt">// default: {}</span>
+});
+
+console.<span class="fn">log</span>(error.expose);        <span class="cmt">// true  (derived: statusCode &lt; 500)</span>
+console.<span class="fn">log</span>(error.isOperational); <span class="cmt">// true  (default)</span>
+console.<span class="fn">log</span>(error.name);          <span class="cmt">// "BaseError"</span></div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">The fields, and what they mean for an API</h3>
+        <div class="overflow-x-auto mb-4">
+        <table class="doc-table">
+          <thead><tr><th>Field</th><th>What it is</th><th>Why it matters</th></tr></thead>
+          <tbody>
+            <tr><td><code>message</code></td><td>Human-readable text.</td><td>Shown to clients only when <code>expose</code> is true.</td></tr>
+            <tr><td><code>code</code></td><td>A stable string such as <code>"ERR_NOT_FOUND"</code>.</td><td>Clients and logs match on this, not on the message, so you can reword messages freely.</td></tr>
+            <tr><td><code>statusCode</code></td><td>The HTTP status to answer with (100–599).</td><td>4xx means "the caller did something wrong"; 5xx means "we broke". Anything outside 100–599 throws a <code>RangeError</code>.</td></tr>
+            <tr><td><code>expose</code></td><td><code>true</code> if the message is safe to send to an untrusted client.</td><td>Defaults to <code>statusCode &lt; 500</code>. A 500's message often leaks internals ("connection to db.internal refused"), so it is hidden by default.</td></tr>
+            <tr><td><code>category</code></td><td>Which area failed: <code>validation</code>, <code>database</code>, <code>network</code>, and so on.</td><td>Useful for dashboards and for routing errors to the right team.</td></tr>
+            <tr><td><code>severity</code></td><td>How loud to be: <code>info</code>, <code>warning</code>, <code>error</code>, <code>critical</code>, <code>fatal</code>.</td><td>Drives log levels and alerting.</td></tr>
+            <tr><td><code>isOperational</code></td><td><code>true</code> for expected failures (bad input, missing row); <code>false</code> for bugs.</td><td>A non-operational error usually means a programmer mistake, not a user mistake.</td></tr>
+            <tr><td><code>metadata</code></td><td>A frozen, JSON-safe object of extra facts.</td><td>See <a href="#metadata" class="underline">Metadata</a>.</td></tr>
+            <tr><td><code>cause</code></td><td>The original error that led to this one, if any.</td><td>Keeps the full chain for logs.</td></tr>
+          </tbody>
+        </table>
+        </div>
 
         <div class="callout callout-note">
-          <strong class="text-zudo-blue">Core Principle:</strong> Every package in the monorepo imports its error types from <code>@zudojs/errors</code>. No package should create its own error classes that extend <code>Error</code> or <code>BaseError</code> directly.
+          <strong>In plain words:</strong> <code>statusCode</code> tells the HTTP layer what number to send. <code>expose</code> tells it whether to send your message or a generic "An unexpected error occurred." Together they let you write honest internal messages without leaking them.
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Useful methods</h3>
+        <p class="mb-3">Every <code>BaseError</code> has these methods. <code>withMetadata</code> returns a <em>copy</em>; it never changes the original.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { BaseError } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+
+<span class="kw">const</span> error = <span class="kw">new</span> <span class="tp">BaseError</span>(<span class="str">"Export failed."</span>, { statusCode: <span class="num">422</span>, metadata: { reportId: <span class="str">"rpt_9"</span> } });
+
+<span class="kw">const</span> withRequest = error.<span class="fn">withMetadata</span>({ requestId: <span class="str">"req_1"</span> });
+console.<span class="fn">log</span>(withRequest.<span class="fn">getMetadata</span>(<span class="str">"requestId"</span>)); <span class="cmt">// "req_1"</span>
+console.<span class="fn">log</span>(error.<span class="fn">getMetadata</span>(<span class="str">"requestId"</span>));       <span class="cmt">// undefined (original untouched)</span>
+
+console.<span class="fn">log</span>(error.<span class="fn">isPublic</span>());          <span class="cmt">// true  (same as error.expose)</span>
+console.<span class="fn">log</span>(error.<span class="fn">isOperationalError</span>()); <span class="cmt">// true</span>
+console.<span class="fn">log</span>(error.<span class="fn">toString</span>());          <span class="cmt">// "BaseError [ERR_UNKNOWN]: Export failed."</span></div>
+
+        <div class="callout callout-warning">
+          <strong>Common mistake:</strong> passing <code>statusCode: 0</code> or <code>200.5</code>. The constructor throws a <code>RangeError</code> for anything that is not an integer between 100 and 599, so the mistake surfaces where the error is <em>created</em>, not where it is handled.
         </div>
       </section>
 
-      <!-- Architecture Position -->
-      <section id="architecture-position" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHERE IT SITS</h2>
-        <div class="border-4 border-black p-6 space-y-3">
-          <div class="bg-zudo-red text-black p-3 font-bold text-center text-sm">APPLICATION LAYER (CQRS, Events, Modules)</div>
-          <div class="bg-white border-2 border-black p-3 font-bold text-center text-sm">FEATURE PACKAGES (http, database, cache, auth, queue)</div>
-          <div class="bg-zudo-blue text-white p-3 font-bold text-center text-sm">INFRASTRUCTURE PACKAGES (logger, container, config, middleware)</div>
-          <div class="bg-zudo-green text-black p-3 font-bold text-center text-sm">@zudojs/errors (FOUNDATION LEAF PACKAGE)</div>
-        </div>
-        <p class="mt-4 text-sm text-black/60">
-          <code>@zudojs/errors</code> is a leaf package with zero dependencies. Every other package in the monorepo imports from it. It sits at the very bottom of the dependency tree.
+      <!-- Classifying -->
+      <section id="codes-categories-severity" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CODES, CATEGORIES AND SEVERITY</h2>
+        <p class="mb-3 leading-relaxed">
+          These three enums are the vocabulary the whole framework shares. An <em>enum</em> is a fixed list of named string values; using <code>ErrorCode.NOT_FOUND</code> instead of typing <code>"ERR_NOT_FOUND"</code> means a typo becomes a compile error.
         </p>
-      </section>
+        <ul class="space-y-2 mb-4">
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>ErrorCode</strong> — the machine-readable identity of the error. Values look like <code>"ERR_VALIDATION_FAILED"</code>. You may also pass any custom string as a <code>code</code>.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>ErrorCategory</strong> — the area that failed. Values look like <code>"validation"</code>, <code>"database"</code>, <code>"rate_limit"</code>.</li>
+          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>ErrorSeverity</strong> — <code>INFO</code>, <code>WARNING</code>, <code>ERROR</code>, <code>CRITICAL</code>, <code>FATAL</code>, in increasing order.</li>
+        </ul>
+        <p class="mb-3">Helper functions let you compare and validate these values. This example checks a severity and decides whether to page someone.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  ErrorSeverity,
+  compareErrorSeverity,
+  isAlertableSeverity,
+  isErrorCategory,
+  normalizeErrorSeverity,
+} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
 
-      <!-- Dependencies -->
-      <section id="dependencies" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DEPENDENCIES</h2>
-        <div class="border-4 border-black">
-          <table class="w-full text-smw-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Package</th>
-                <th class="p-3 text-left">Version</th>
-                <th class="p-3 text-left">Purpose</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td class="p-3 font-mono text-sm" colspan="3" class="text-center text-black/40 italic">No dependencies — this is a leaf package</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="mt-4 callout callout-warning">
-          <strong class="text-zudo-yellow">Foundation Package:</strong> Every package depends on <code>@zudojs/errors</code> and pins it to an exact version (<code>0.1.0</code> today). Type guards such as <code>isBaseError</code> also recognise instances from another installed copy of the package via a <code>Symbol.for</code> brand, so a version skew between packages does not break error classification.
+console.<span class="fn">log</span>(<span class="fn">compareErrorSeverity</span>(ErrorSeverity.FATAL, ErrorSeverity.WARNING)); <span class="cmt">// 30 (positive = more severe)</span>
+console.<span class="fn">log</span>(<span class="fn">isAlertableSeverity</span>(ErrorSeverity.CRITICAL));  <span class="cmt">// true  (only CRITICAL and FATAL)</span>
+console.<span class="fn">log</span>(<span class="fn">isErrorCategory</span>(<span class="str">"database"</span>));                  <span class="cmt">// true</span>
+console.<span class="fn">log</span>(<span class="fn">normalizeErrorSeverity</span>(<span class="str">"loud"</span>));                <span class="cmt">// "error" (unknown values fall back)</span></div>
+        <div class="callout callout-tip">
+          <strong>Tip:</strong> match on <code>error.code</code> in tests and clients, never on <code>error.message</code>. Messages are for humans and will change.
         </div>
       </section>
 
-      <!-- Core API: BaseError -->
-      <section id="base-error" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CORE API — BASEERROR</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Class: BaseError</h3>
-        <p class="mb-3 text-sm">Every ZudoLib error extends this class. It provides a consistent structure for error handling, logging, HTTP responses, monitoring, and serialization.</p>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">BaseError</span> <span class="kw">extends</span> <span class="tp">Error</span> {
-  <span class="kw">readonly</span> code: <span class="tp">ErrorCode</span> | <span class="tp">string</span>;
-  <span class="kw">readonly</span> category: <span class="tp">ErrorCategory</span>;
-  <span class="kw">readonly</span> severity: <span class="tp">ErrorSeverity</span>;
-  <span class="kw">readonly</span> statusCode: <span class="tp">number</span>;
-  <span class="kw">readonly</span> expose: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> isOperational: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> metadata: <span class="tp">Readonly</span>&lt;<span class="tp">ErrorMetadata</span>&gt;;
-  <span class="kw">readonly</span> cause: <span class="tp">unknown</span>;
-
-  <span class="kw">constructor</span>(message: <span class="tp">string</span>, options?: <span class="tp">BaseErrorOptions</span>);
-
-  <span class="fn">isPublic</span>(): <span class="tp">boolean</span>;
-  <span class="fn">isOperationalError</span>(): <span class="tp">boolean</span>;
-  <span class="fn">getMetadata</span>(key: <span class="tp">string</span>): <span class="tp">ErrorMetadataValue</span> | <span class="tp">undefined</span>;
-  <span class="fn">withMetadata</span>(metadata: <span class="tp">ErrorMetadata</span>): <span class="kw">this</span>;
-  <span class="fn">toJSON</span>(): <span class="tp">SerializedBaseError</span>;
-  <span class="fn">toLogObject</span>(): <span class="tp">SerializedBaseError</span>;
-  <span class="fn">toString</span>(): <span class="tp">string</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Constructor Options</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-smw-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Option</th>
-                <th class="p-3 text-left">Type</th>
-                <th class="p-3 text-left">Default</th>
-                <th class="p-3 text-left">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">code</td>
-                <td class="p-3">ErrorCode | string</td>
-                <td class="p-3">ErrorCode.UNKNOWN</td>
-                <td class="p-3">Machine-readable error code</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">category</td>
-                <td class="p-3">ErrorCategory</td>
-                <td class="p-3">UNKNOWN</td>
-                <td class="p-3">High-level error classification</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">severity</td>
-                <td class="p-3">ErrorSeverity</td>
-                <td class="p-3">ERROR</td>
-                <td class="p-3">How seriously to treat this error</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">statusCode</td>
-                <td class="p-3">number</td>
-                <td class="p-3">500</td>
-                <td class="p-3">HTTP status code (100-599)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">expose</td>
-                <td class="p-3">boolean</td>
-                <td class="p-3">statusCode &lt; 500</td>
-                <td class="p-3">Whether message is safe for clients</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">isOperational</td>
-                <td class="p-3">boolean</td>
-                <td class="p-3">true</td>
-                <td class="p-3">Expected vs programming error</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">metadata</td>
-                <td class="p-3">ErrorMetadata</td>
-                <td class="p-3">{}</td>
-                <td class="p-3">Serializable diagnostic data</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">cause</td>
-                <td class="p-3">unknown</td>
-                <td class="p-3">undefined</td>
-                <td class="p-3">Original error that caused this one</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Creating a BaseError</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">BaseError</span>, <span class="tp">ErrorCode</span>, <span class="tp">ErrorCategory</span>, <span class="tp">ErrorSeverity</span> } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="kw">const</span> error = <span class="kw">new</span> <span class="tp">BaseError</span>(<span class="str">"Payment processing failed"</span>, {
-  code: <span class="tp">ErrorCode</span>.OPERATION_FAILED,
-  category: <span class="tp">ErrorCategory</span>.OPERATION,
-  severity: <span class="tp">ErrorSeverity</span>.ERROR,
-  statusCode: <span class="num">500</span>,
-  expose: <span class="num">false</span>,
-  isOperational: <span class="num">true</span>,
-  metadata: { orderId: <span class="str">"ord_123"</span>, amount: <span class="num">99.99</span> },
-  cause: originalError,
-});
-
-<span class="cm">// Check properties</span>
-error.isPublic();           <span class="cm">// false</span>
-error.isOperationalError(); <span class="cm">// true</span>
-error.getMetadata(<span class="str">"orderId"</span>); <span class="cm">// "ord_123"</span>
-
-<span class="cm">// Serialize for TRUSTED logging: includes `stack` and the (cycle-safe, depth-limited)</span>
-<span class="cm">// cause chain. Use serializePublicError() / ErrorHandler.toPublicResult() for clients.</span>
-console.<span class="fn">log</span>(error.<span class="fn">toJSON</span>());
-<span class="cm">// { name: "BaseError", message: "Payment processing failed",</span>
-<span class="cm">//   code: "ERR_OPERATION_FAILED", category: "operation",</span>
-<span class="cm">//   severity: "error", statusCode: 500, expose: false,</span>
-<span class="cm">//   isOperational: true, metadata: { orderId: "ord_123", amount: 99.99 }, stack: "..." }</span>
-
-<span class="cm">// Copy with extra metadata: clones the instance (works for every subclass, keeps</span>
-<span class="cm">// message, code, status, cause, stack and own fields)</span>
-<span class="kw">const</span> enriched = error.<span class="fn">withMetadata</span>({ requestId: <span class="str">"req_1"</span> });</div>
-      </section>
-
-      <!-- Error Codes -->
-      <section id="error-codes" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERROR CODES</h2>
-        <p class="mb-4">
-          The <code class="bg-black/5 px-1">ErrorCode</code> enum provides 200+ stable string codes organized by domain. Codes are intentionally stable because they are consumed by APIs, clients, logs, monitoring systems, and external integrations.
+      <!-- Ready-made errors -->
+      <section id="ready-made-errors" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">READY-MADE ERRORS</h2>
+        <p class="mb-3 leading-relaxed">
+          You rarely construct <code>BaseError</code> directly. The package ships subclasses whose code, category, severity, status and <code>expose</code> flag are already set. Each one comes with a class, a <code>create…</code> factory, an <code>is…</code> type guard, and a few named shortcuts.
         </p>
+        <p class="mb-3">This example uses the five you will reach for most in an API.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  ValidationError, requiredFieldIssue, invalidFieldIssue,
+  NotFoundError, resourceNotFoundError,
+  ConflictError, alreadyExistsError,
+  AuthenticationError, invalidCredentialsError,
+  AuthorizationError, permissionDeniedError,
+  RateLimitError, retryAfterError,
+} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
 
-        <div class="border-4 border-black">
-          <table class="w-full text-smw-full text-sm">
-            <thead class="bg-black text-white">
-              <tr><th class="p-3 text-left">Domain</th><th class="p-3 text-left">Example Codes</th></tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">General</td><td class="p-3">UNKNOWN, INTERNAL, NOT_IMPLEMENTED, SERVICE_UNAVAILABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Validation</td><td class="p-3">INVALID_INPUT, VALIDATION_FAILED, INVALID_FORMAT, MISSING_FIELD</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Auth</td><td class="p-3">UNAUTHORIZED, FORBIDDEN, ACCESS_DENIED, SESSION_EXPIRED, TOKEN_EXPIRED</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Resource</td><td class="p-3">NOT_FOUND, RESOURCE_NOT_FOUND, CONFLICT, ALREADY_EXISTS, DUPLICATE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Infrastructure</td><td class="p-3">DATABASE, NETWORK, TIMEOUT, RATE_LIMITED, CONFIGURATION</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Container</td><td class="p-3">CONTAINER_DUPLICATE_REGISTRATION, CONTAINER_CIRCULAR_DEPENDENCY</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Module/Runtime</td><td class="p-3">MODULE_NOT_FOUND, RUNTIME_BOOTSTRAP, RUNTIME_SHUTDOWN</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Event/Message</td><td class="p-3">EVENT_HANDLING_FAILED, MESSAGE_DISPATCH_FAILED, MESSAGE_TIMEOUT</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Queue/Job</td><td class="p-3">QUEUE_ERROR, JOB_TIMEOUT, JOB_CANCELLED, WORKER_ERROR</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Serialization</td><td class="p-3">SERIALIZATION_FAILED, CIRCULAR_REFERENCE, MAX_DEPTH_EXCEEDED</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Schema</td><td class="p-3">SCHEMA_VALIDATION, SCHEMA_INVALID_TYPE, SCHEMA_CIRCULAR_REFERENCE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">API/RPC</td><td class="p-3">API_ERROR, API_NOT_FOUND, RPC_PROCEDURE_NOT_FOUND, RPC_TIMEOUT</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Lifecycle</td><td class="p-3">LIFECYCLE_STATE, LIFECYCLE_TIMEOUT, LIFECYCLE_DEPENDENCY</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Adapter</td><td class="p-3">ADAPTER_NOT_FOUND, ADAPTER_CONNECTION_FAILED, ADAPTER_TIMEOUT</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Crypto</td><td class="p-3">CRYPTO, CRYPTO_KEY, CRYPTO_HASH, CRYPTO_CIPHER, CRYPTO_SIGNATURE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Scheduler</td><td class="p-3">SCHEDULER_ERROR, CRON_PARSE_ERROR, INVALID_SCHEDULE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">Plugin/Docs</td><td class="p-3">PLUGIN_ERROR, DOCUMENTATION_ERROR, DOCUMENT_PARSE</td></tr>
-            </tbody>
-          </table>
+<span class="cmt">// 400 — the caller sent bad data. `issues` lists each problem.</span>
+<span class="kw">const</span> invalid = <span class="kw">new</span> <span class="tp">ValidationError</span>(<span class="str">"Validation failed."</span>, {
+  issues: [<span class="fn">requiredFieldIssue</span>(<span class="str">"email"</span>), <span class="fn">invalidFieldIssue</span>(<span class="str">"age"</span>, <span class="str">"age must be positive"</span>, -<span class="num">1</span>)],
+});
+console.<span class="fn">log</span>(invalid.statusCode, invalid.issueCount);        <span class="cmt">// 400 2</span>
+console.<span class="fn">log</span>(invalid.<span class="fn">issuesForField</span>(<span class="str">"email"</span>)[<span class="num">0</span>].code);       <span class="cmt">// "ERR_MISSING_FIELD"</span>
+
+<span class="cmt">// 404 — the thing does not exist.</span>
+<span class="kw">const</span> missing = <span class="fn">resourceNotFoundError</span>(<span class="str">"User"</span>, <span class="num">42</span>);
+console.<span class="fn">log</span>(missing.message);                             <span class="cmt">// 'User with identifier "42" was not found.'</span>
+
+<span class="cmt">// 409 — the thing already exists.</span>
+<span class="kw">const</span> taken = <span class="fn">alreadyExistsError</span>(<span class="str">"User"</span>, <span class="str">"ann@example.com"</span>);
+console.<span class="fn">log</span>(taken.code);                                  <span class="cmt">// "ERR_ALREADY_EXISTS"</span>
+
+<span class="cmt">// 401 — we do not know who you are. 403 — we know, and the answer is no.</span>
+<span class="kw">const</span> whoAreYou = <span class="fn">invalidCredentialsError</span>();
+<span class="kw">const</span> notAllowed = <span class="fn">permissionDeniedError</span>(<span class="str">"orders:delete"</span>);
+console.<span class="fn">log</span>(whoAreYou.statusCode, notAllowed.statusCode); <span class="cmt">// 401 403</span>
+
+<span class="cmt">// 429 — slow down. retryAfterSeconds is copied into metadata and toJSON().</span>
+<span class="kw">const</span> slowDown = <span class="fn">retryAfterError</span>(<span class="num">30</span>);
+console.<span class="fn">log</span>(slowDown.<span class="fn">getRetryAfterSeconds</span>());            <span class="cmt">// 30</span></div>
+
+        <div class="callout callout-note">
+          <strong>In plain words:</strong> 401 (<code>AuthenticationError</code>) means "log in first". 403 (<code>AuthorizationError</code>) means "you are logged in but not allowed". People mix these up constantly.
         </div>
 
-        <div class="callout callout-note mt-4">
-          <strong class="text-zudo-blue">Full List:</strong> The <code>ErrorCode</code> enum contains 200+ codes. Each code is a stable string like <code>ERR_DATABASE_CONNECTION</code>. Import from <code>@zudojs/errors</code> and use the enum for type-safe error codes.
+        <h3 class="text-lg font-bold mb-3 mt-6">The full set</h3>
+        <p class="mb-3">Every family below is exported from the package root. The status and exposure listed are the defaults; you can override either through options.</p>
+        <div class="overflow-x-auto mb-4">
+        <table class="doc-table">
+          <thead><tr><th>Class</th><th>Default status</th><th>Exposed?</th><th>Shortcuts</th></tr></thead>
+          <tbody>
+            <tr><td><code>ValidationError</code></td><td>400</td><td>yes</td><td><code>createValidationIssue</code>, <code>requiredFieldIssue</code>, <code>invalidFieldIssue</code></td></tr>
+            <tr><td><code>AuthenticationError</code></td><td>401</td><td>yes</td><td><code>invalidCredentialsError</code>, <code>sessionExpiredError</code>, <code>invalidTokenError</code>, <code>expiredTokenError</code></td></tr>
+            <tr><td><code>AuthorizationError</code></td><td>403</td><td>yes</td><td><code>accessDeniedError</code>, <code>permissionDeniedError</code>, <code>resourceAccessDeniedError</code></td></tr>
+            <tr><td><code>NotFoundError</code></td><td>404</td><td>yes</td><td><code>resourceNotFoundError</code>, <code>entityNotFoundError</code>, <code>routeNotFoundError</code></td></tr>
+            <tr><td><code>ConflictError</code></td><td>409</td><td>yes</td><td><code>alreadyExistsError</code>, <code>duplicateError</code>, <code>resourceLockedError</code> (423)</td></tr>
+            <tr><td><code>RateLimitError</code></td><td>429</td><td>yes</td><td><code>retryAfterError</code>, <code>createRateLimitError(seconds)</code></td></tr>
+            <tr><td><code>DomainError</code></td><td>422</td><td>yes</td><td><code>invalidDomainState</code> (412), <code>unsupportedDomainOperation</code></td></tr>
+            <tr><td><code>ApplicationError</code></td><td>500</td><td>no</td><td><code>createApplicationError</code></td></tr>
+            <tr><td><code>ConfigurationError</code></td><td>500</td><td>no</td><td><code>missingConfigurationError</code>, <code>invalidConfigurationError</code></td></tr>
+            <tr><td><code>HttpError</code></td><td>you pass it</td><td>4xx yes, 5xx no</td><td><code>createHttpError(message, statusCode)</code>, plus one class per status (<code>BadRequestError</code>, <code>UnauthorizedError</code>, <code>PayloadTooLargeError</code>, …)</td></tr>
+            <tr><td><code>DatabaseError</code></td><td>500</td><td>no</td><td><code>databaseConnectionError</code>, <code>databaseQueryError</code>, <code>databaseTransactionError</code></td></tr>
+            <tr><td><code>TimeoutError</code></td><td>varies</td><td>request timeouts only</td><td><code>requestTimeoutError</code>, <code>databaseTimeoutError</code>, <code>serviceTimeoutError</code>, <code>lockTimeoutError</code></td></tr>
+            <tr><td><code>ExternalServiceError</code></td><td>502 (429 passes through)</td><td>no</td><td><code>service</code>, <code>responseStatus</code> options</td></tr>
+            <tr><td>Subsystem families</td><td>mostly 500/503</td><td>no</td><td><code>CacheError</code>, <code>StorageError</code>, <code>NetworkError</code>, <code>ContainerError</code>, <code>AdapterError</code>, <code>MiddlewareError</code>, <code>EventError</code>, <code>MessageError</code>, <code>QueueError</code>, <code>SchedulerError</code>, <code>PluginError</code>, <code>RPCError</code>, <code>APIError</code>, <code>SchemaError</code>, <code>SerializationError</code>, <code>LifecycleError</code>, <code>ModuleError</code>, <code>RuntimeError</code>, <code>SystemError</code>, <code>CryptoError</code>, <code>LoggingError</code></td></tr>
+          </tbody>
+        </table>
         </div>
+        <p class="mb-3 text-sm text-black/70">The subsystem families are thrown by the matching Zudo package (<code>@zudojs/cache</code> throws <code>CacheError</code>, and so on). You catch them; you rarely construct them yourself.</p>
       </section>
 
-      <!-- Error Categories -->
-      <section id="error-categories" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERROR CATEGORIES</h2>
-        <p class="mb-4">
-          Categories describe where an error originated or what subsystem is primarily responsible for handling it.
+      <!-- Custom errors -->
+      <section id="custom-errors" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WRITING YOUR OWN ERROR</h2>
+        <p class="mb-3 leading-relaxed">
+          When none of the ready-made classes fits, extend <code>BaseError</code>. <em>Extending</em> means your class inherits everything <code>BaseError</code> has and adds its own defaults. Set the classification once in the constructor so every caller gets it for free.
         </p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-smw-full text-sm">
-            <thead class="bg-black text-white">
-              <tr><th class="p-3 text-left">Category</th><th class="p-3 text-left">Type</th><th class="p-3 text-left">Includes</th></tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">VALIDATION, INPUT</td><td class="p-3">Client</td><td class="p-3">Input validation, format errors</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">AUTHENTICATION, AUTHORIZATION, PERMISSION</td><td class="p-3">Security</td><td class="p-3">Login, access control, permissions</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RESOURCE, CONFLICT, RATE_LIMIT, TIMEOUT</td><td class="p-3">Client</td><td class="p-3">Not found, duplicates, throttling</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DATABASE, CACHE, STORAGE</td><td class="p-3">Infrastructure</td><td class="p-3">Data layer failures</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">NETWORK, EXTERNAL_SERVICE, FILE_SYSTEM</td><td class="p-3">Infrastructure</td><td class="p-3">Connectivity, external APIs</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">CRYPTOGRAPHY</td><td class="p-3">Security</td><td class="p-3">Hashing, encryption, signatures</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SYSTEM, INTERNAL, CONTAINER, MODULE, RUNTIME</td><td class="p-3">Infrastructure</td><td class="p-3">Core framework failures</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EVENT, MESSAGE, MIDDLEWARE, CQRS</td><td class="p-3">Infrastructure</td><td class="p-3">Processing pipeline failures</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">QUEUE, JOB, WORKER</td><td class="p-3">Infrastructure</td><td class="p-3">Background processing</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">API, RPC, SCHEDULER, OPENAPI</td><td class="p-3">Infrastructure</td><td class="p-3">Protocol and scheduling</td></tr>
-              <tr><td class="p-3 font-mono">BUSINESS, OPERATION</td><td class="p-3">Client</td><td class="p-3">Domain rule violations</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Category Helpers</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">isErrorCategory</span>,
-  <span class="fn">isClientErrorCategory</span>,
-  <span class="fn">isInfrastructureErrorCategory</span>,
-  <span class="fn">isSecurityErrorCategory</span>,
-  <span class="fn">isPublicErrorCategory</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="fn">isErrorCategory</span>(<span class="str">"validation"</span>);       <span class="cm">// true</span>
-<span class="fn">isClientErrorCategory</span>(category);     <span class="cm">// validation, auth, resource, etc.</span>
-<span class="fn">isInfrastructureErrorCategory</span>(category); <span class="cm">// database, cache, network, etc.</span>
-<span class="fn">isSecurityErrorCategory</span>(category);   <span class="cm">// auth, permission, crypto</span>
-<span class="fn">isPublicErrorCategory</span>(category);     <span class="cm">// safe to expose to API consumers</span></div>
-      </section>
-
-      <!-- Error Severity -->
-      <section id="error-severity" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERROR SEVERITY</h2>
-        <p class="mb-4">
-          Severity describes how seriously an error should be treated by logging, monitoring, alerting, and operational tooling.
-        </p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-smw-full text-sm">
-            <thead class="bg-black text-white">
-              <tr><th class="p-3 text-left">Severity</th><th class="p-3 text-left">Priority</th><th class="p-3 text-left">Alert?</th><th class="p-3 text-left">Description</th></tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">INFO</td><td class="p-3">10</td><td class="p-3">No</td><td class="p-3">Informational, no intervention needed</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">WARNING</td><td class="p-3">20</td><td class="p-3">No</td><td class="p-3">Recoverable, may require attention</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ERROR</td><td class="p-3">30</td><td class="p-3">No</td><td class="p-3">Operation failed, requires investigation</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">CRITICAL</td><td class="p-3">40</td><td class="p-3">Yes</td><td class="p-3">Serious failure affecting major subsystem</td></tr>
-              <tr><td class="p-3 font-mono">FATAL</td><td class="p-3">50</td><td class="p-3">Yes</td><td class="p-3">Catastrophic, requires immediate intervention</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Severity Helpers</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">isErrorSeverity</span>,
-  <span class="fn">getErrorSeverityPriority</span>,
-  <span class="fn">compareErrorSeverity</span>,
-  <span class="fn">isAlertableSeverity</span>,
-  <span class="fn">isFailureSeverity</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="fn">isErrorSeverity</span>(<span class="str">"error"</span>);            <span class="cm">// true</span>
-<span class="fn">getErrorSeverityPriority</span>(severity);   <span class="cm">// 10-50</span>
-<span class="fn">compareErrorSeverity</span>(a, b);            <span class="cm">// positive if a > b</span>
-<span class="fn">isAlertableSeverity</span>(severity);         <span class="cm">// CRITICAL or FATAL</span>
-<span class="fn">isFailureSeverity</span>(severity);           <span class="cm">// ERROR, CRITICAL, or FATAL</span></div>
-      </section>
-
-      <!-- Error Metadata -->
-      <section id="error-metadata" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERROR METADATA</h2>
-        <p class="mb-4">
-          Metadata is JSON-compatible diagnostic data attached to errors. It flows through logs, APIs, queues, and monitoring systems.
-        </p>
-
-        <div class="code-block"><span class="kw">type</span> <span class="tp">ErrorMetadataPrimitive</span> = <span class="tp">string</span> | <span class="tp">number</span> | <span class="tp">boolean</span> | <span class="tp">null</span>;
-
-<span class="kw">type</span> <span class="tp">ErrorMetadataValue</span> =
-  | <span class="tp">ErrorMetadataPrimitive</span>
-  | <span class="kw">readonly</span> <span class="tp">ErrorMetadataValue</span>[]
-  | { <span class="kw">readonly</span> [key: <span class="tp">string</span>]: <span class="tp">ErrorMetadataValue</span> };
-
-<span class="kw">interface</span> <span class="tp">ErrorMetadata</span> {
-  <span class="kw">readonly</span> [key: <span class="tp">string</span>]: <span class="tp">ErrorMetadataValue</span> | <span class="tp">undefined</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Metadata Utilities</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">createErrorMetadata</span>,
-  <span class="fn">mergeErrorMetadata</span>,
-  <span class="fn">getErrorMetadataValue</span>,
-  <span class="fn">hasErrorMetadata</span>,
-  <span class="fn">omitErrorMetadata</span>,
-  <span class="fn">pickErrorMetadata</span>,
-  <span class="fn">serializeErrorMetadata</span>,
-  <span class="fn">isErrorMetadataValue</span>,
-  <span class="fn">sanitizeErrorMetadata</span>,
-  <span class="fn">redactErrorMetadata</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="cm">// Create immutable metadata (deep-frozen copy; __proto__/constructor keys are dropped)</span>
-<span class="kw">const</span> meta = <span class="fn">createErrorMetadata</span>({ userId: <span class="str">"u_123"</span>, action: <span class="str">"login"</span> });
-
-<span class="cm">// Merge multiple sources (later overrides earlier)</span>
-<span class="kw">const</span> merged = <span class="fn">mergeErrorMetadata</span>(meta, { requestId: <span class="str">"req_456"</span> });
-
-<span class="cm">// Read a value</span>
-<span class="fn">getErrorMetadataValue</span>(meta, <span class="str">"userId"</span>); <span class="cm">// "u_123"</span>
-
-<span class="cm">// Check existence</span>
-<span class="fn">hasErrorMetadata</span>(meta, <span class="str">"userId"</span>); <span class="cm">// true</span>
-
-<span class="cm">// Omit sensitive keys</span>
-<span class="kw">const</span> safe = <span class="fn">omitErrorMetadata</span>(meta, <span class="str">"password"</span>, <span class="str">"token"</span>);
-
-<span class="cm">// Pick specific keys</span>
-<span class="kw">const</span> picked = <span class="fn">pickErrorMetadata</span>(meta, [<span class="str">"userId"</span>]);
-
-<span class="cm">// Sanitize arbitrary data: drops functions, class instances, cycles and unsupported values.</span>
-<span class="cm">// It does NOT remove secrets.</span>
-<span class="kw">const</span> clean = <span class="fn">sanitizeErrorMetadata</span>({ password: <span class="str">"secret"</span>, name: <span class="str">"John"</span>, fn: () => {} });
-<span class="cm">// { password: "secret", name: "John" }</span>
-
-<span class="cm">// Redact secrets (recursive, case-insensitive key matching: password, token, secret, authorization, cookie, api-key, ...)</span>
-<span class="kw">const</span> redacted = <span class="fn">redactErrorMetadata</span>({ password: <span class="str">"secret"</span>, headers: { Authorization: <span class="str">"Bearer x"</span> }, name: <span class="str">"John"</span> });
-<span class="cm">// { password: "[REDACTED]", headers: { Authorization: "[REDACTED]" }, name: "John" }</span>
-
-<span class="cm">// Or both in one step</span>
-<span class="fn">sanitizeErrorMetadata</span>(data, { redact: <span class="kw">true</span> });</div>
-      </section>
-
-      <!-- Domain Errors -->
-      <section id="domain-errors" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DOMAIN ERRORS</h2>
-        <p class="mb-4">Pre-built error classes for common application scenarios. Each includes a class, factory function, type guard, and convenience constructors.</p>
-
-        <!-- AuthenticationError -->
-        <div class="mb-8">
-          <h3 class="text-xl font-bold mb-3 p-3 bg-zudo-red text-black border-4 border-black">AUTHENTICATION ERROR</h3>
-          <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">AuthenticationError</span>,
-  <span class="fn">createAuthenticationError</span>,
-  <span class="fn">isAuthenticationError</span>,
-  <span class="fn">invalidCredentialsError</span>,
-  <span class="fn">sessionExpiredError</span>,
-  <span class="fn">invalidTokenError</span>,
-  <span class="fn">expiredTokenError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="cm">// Generic</span>
-<span class="kw">const</span> err = <span class="fn">createAuthenticationError</span>(<span class="str">"Auth required"</span>);
-
-<span class="cm">// Convenience factories</span>
-<span class="kw">const</span> creds = <span class="fn">invalidCredentialsError</span>();      <span class="cm">// 401</span>
-<span class="kw">const</span> session = <span class="fn">sessionExpiredError</span>();           <span class="cm">// 401</span>
-<span class="kw">const</span> token = <span class="fn">invalidTokenError</span>();              <span class="cm">// 401</span>
-<span class="kw">const</span> expired = <span class="fn">expiredTokenError</span>();            <span class="cm">// 401</span>
-
-<span class="cm">// Type guard</span>
-<span class="kw">if</span> (<span class="fn">isAuthenticationError</span>(error)) {
-  console.<span class="fn">log</span>(error.statusCode); <span class="cm">// 401</span>
-}</div>
-        </div>
-
-        <!-- AuthorizationError -->
-        <div class="mb-8">
-          <h3 class="text-xl font-bold mb-3 p-3 bg-zudo-blue text-white border-4 border-black">AUTHORIZATION ERROR</h3>
-          <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">AuthorizationError</span>,
-  <span class="fn">createAuthorizationError</span>,
-  <span class="fn">isAuthorizationError</span>,
-  <span class="fn">accessDeniedError</span>,
-  <span class="fn">permissionDeniedError</span>,
-  <span class="fn">resourceAccessDeniedError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="kw">const</span> denied = <span class="fn">accessDeniedError</span>();             <span class="cm">// 403</span>
-<span class="kw">const</span> perm = <span class="fn">permissionDeniedError</span>(<span class="str">"admin:write"</span>); <span class="cm">// 403</span>
-<span class="kw">const</span> resource = <span class="fn">resourceAccessDeniedError</span>(<span class="str">"users"</span>); <span class="cm">// 403</span></div>
-        </div>
-
-        <!-- NotFoundError -->
-        <div class="mb-8">
-          <h3 class="text-xl font-bold mb-3 p-3 bg-zudo-yellow text-black border-4 border-black">NOT FOUND ERROR</h3>
-          <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">NotFoundError</span>,
-  <span class="fn">createNotFoundError</span>,
-  <span class="fn">isNotFoundError</span>,
-  <span class="fn">resourceNotFoundError</span>,
-  <span class="fn">entityNotFoundError</span>,
-  <span class="fn">routeNotFoundError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="kw">const</span> notFound = <span class="fn">createNotFoundError</span>(<span class="str">"User not found"</span>); <span class="cm">// 404</span>
-<span class="kw">const</span> user = <span class="fn">resourceNotFoundError</span>(<span class="str">"User"</span>, <span class="str">"u_123"</span>);   <span class="cm">// 404</span>
-<span class="kw">const</span> entity = <span class="fn">entityNotFoundError</span>(<span class="str">"Order"</span>, <span class="num">42</span>);       <span class="cm">// 404</span>
-<span class="kw">const</span> route = <span class="fn">routeNotFoundError</span>(<span class="str">"GET"</span>, <span class="str">"/api/v1/users"</span>); <span class="cm">// 404</span></div>
-        </div>
-
-        <!-- ValidationError -->
-        <div class="mb-8">
-          <h3 class="text-xl font-bold mb-3 p-3 bg-zudo-green text-black border-4 border-black">VALIDATION ERROR</h3>
-          <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">ValidationError</span>,
-  <span class="fn">createValidationError</span>,
-  <span class="fn">isValidationError</span>,
-  <span class="fn">createValidationIssue</span>,
-  <span class="fn">requiredFieldIssue</span>,
-  <span class="fn">invalidFieldIssue</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="kw">const</span> issues = [
-  <span class="fn">requiredFieldIssue</span>(<span class="str">"email"</span>),
-  <span class="fn">invalidFieldIssue</span>(<span class="str">"age"</span>, <span class="str">"Must be positive"</span>, -<span class="num">1</span>),
-];
-
-<span class="kw">const</span> err = <span class="fn">createValidationError</span>(<span class="str">"Validation failed"</span>, issues);
-
-err.hasIssues();    <span class="cm">// true</span>
-err.issueCount;     <span class="cm">// 2</span>
-err.issuesForField(<span class="str">"email"</span>); <span class="cm">// [{ field: "email", code: "ERR_MISSING_FIELD", ... }]</span></div>
-        </div>
-
-        <!-- ConflictError -->
-        <div class="mb-8">
-          <h3 class="text-xl font-bold mb-3 p-3 bg-black text-white border-4 border-black">CONFLICT ERROR</h3>
-          <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">ConflictError</span>,
-  <span class="fn">createConflictError</span>,
-  <span class="fn">isConflictError</span>,
-  <span class="fn">alreadyExistsError</span>,
-  <span class="fn">duplicateError</span>,
-  <span class="fn">resourceLockedError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="kw">const</span> exists = <span class="fn">alreadyExistsError</span>(<span class="str">"User"</span>, <span class="str">"john@example.com"</span>); <span class="cm">// 409</span>
-<span class="kw">const</span> dup = <span class="fn">duplicateError</span>(<span class="str">"email"</span>, <span class="str">"john@example.com"</span>);     <span class="cm">// 409</span>
-<span class="kw">const</span> locked = <span class="fn">resourceLockedError</span>(<span class="str">"Order"</span>, <span class="str">"ord_123"</span>);       <span class="cm">// 409</span></div>
-        </div>
-
-        <!-- RateLimitError -->
-        <div class="mb-8">
-          <h3 class="text-xl font-bold mb-3 p-3 bg-zudo-pink text-white border-4 border-black">RATE LIMIT ERROR</h3>
-          <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">RateLimitError</span>,
-  <span class="fn">createRateLimitError</span>,
-  <span class="fn">isRateLimitError</span>,
-  <span class="fn">retryAfterError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="kw">const</span> rateLimited = <span class="fn">createRateLimitError</span>(<span class="num">60</span>); <span class="cm">// 429, retry after 60s</span>
-
-rateLimited.getRetryAfterSeconds();      <span class="cm">// 60</span>
-rateLimited.getRetryAfterMilliseconds(); <span class="cm">// 60000</span>
-
-<span class="kw">const</span> retry = <span class="fn">retryAfterError</span>(<span class="num">30</span>); <span class="cm">// Shorthand for retry-after</span></div>
-        </div>
-
-        <!-- ApplicationError & DomainError -->
-        <div class="mb-8">
-          <h3 class="text-xl font-bold mb-3 p-3 bg-zudo-red text-black border-4 border-black">APPLICATION & DOMAIN ERRORS</h3>
-          <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">ApplicationError</span>,
-  <span class="fn">createApplicationError</span>,
-  <span class="tp">DomainError</span>,
-  <span class="fn">createDomainError</span>,
-  <span class="fn">invalidDomainState</span>,
-  <span class="fn">unsupportedDomainOperation</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="cm">// General application failure</span>
-<span class="kw">const</span> appErr = <span class="fn">createApplicationError</span>(<span class="str">"Processing failed"</span>); <span class="cm">// 500</span>
-
-<span class="cm">// Business rule violation</span>
-<span class="kw">const</span> bizErr = <span class="fn">createDomainError</span>(<span class="str">"Cannot delete active subscription"</span>); <span class="cm">// 422</span>
-
-<span class="cm">// Invalid state transition</span>
-<span class="kw">const</span> stateErr = <span class="fn">invalidDomainState</span>(<span class="str">"Cannot cancel completed order"</span>); <span class="cm">// 409</span>
-
-<span class="cm">// Unsupported operation</span>
-<span class="kw">const</span> unsupported = <span class="fn">unsupportedDomainOperation</span>(<span class="str">"Export not available"</span>); <span class="cm">// 422</span></div>
-        </div>
-      </section>
-
-      <!-- Infrastructure Errors -->
-      <section id="infrastructure-errors" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INFRASTRUCTURE ERRORS</h2>
-        <p class="mb-4">Error classes for infrastructure subsystems. These carry operation-specific diagnostic data.</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-smw-full text-sm">
-            <thead class="bg-black text-white">
-              <tr><th class="p-3 text-left">Error Class</th><th class="p-3 text-left">Category</th><th class="p-3 text-left">Diagnostic Fields</th></tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DatabaseError</td><td class="p-3">database</td><td class="p-3">operation, driver, databaseCode</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">StorageError</td><td class="p-3">storage</td><td class="p-3">operation, provider, resource</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">HttpError</td><td class="p-3">operation</td><td class="p-3">statusCode (required)</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">NetworkError</td><td class="p-3">network</td><td class="p-3">endpoint, method, responseStatus, service</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ServiceError</td><td class="p-3">service</td><td class="p-3">service, operation</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ExternalServiceError</td><td class="p-3">external_service</td><td class="p-3">service, operation, responseStatus (upstream 4xx/5xx → 502 locally, 429 passed through)</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">TimeoutError</td><td class="p-3">timeout</td><td class="p-3">operation, timeoutMs, target (only request timeouts are exposed by default)</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">HttpClientError</td><td class="p-3">network</td><td class="p-3">status, statusText, url (credentials/query stripped), request, response</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ContainerError</td><td class="p-3">container</td><td class="p-3">token</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">CacheError</td><td class="p-3">cache</td><td class="p-3">operation, key, adapter</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MiddlewareError</td><td class="p-3">middleware</td><td class="p-3">middlewareName</td></tr>
-              <tr><td class="p-3 font-mono">AdapterError</td><td class="p-3">adapter</td><td class="p-3">adapter</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Container Errors</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">ContainerError</span>,
-  <span class="tp">DuplicateRegistrationError</span>,
-  <span class="tp">RegistrationNotFoundError</span>,
-  <span class="tp">CircularDependencyError</span>,
-  <span class="tp">ProviderResolutionError</span>,
-  <span class="tp">ContainerLifecycleError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="cm">// Each has a specific error code and metadata</span>
-<span class="kw">const</span> dup = <span class="kw">new</span> <span class="tp">DuplicateRegistrationError</span>(<span class="str">"logger"</span>);
-<span class="kw">const</span> missing = <span class="kw">new</span> <span class="tp">RegistrationNotFoundError</span>(<span class="str">"database"</span>);
-<span class="kw">const</span> circular = <span class="kw">new</span> <span class="tp">CircularDependencyError</span>([<span class="str">"a"</span>, <span class="str">"b"</span>, <span class="str">"a"</span>]);</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Adapter Errors</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">AdapterError</span>,
-  <span class="tp">AdapterNotFoundError</span>,
-  <span class="tp">AdapterAlreadyRegisteredError</span>,
-  <span class="tp">AdapterNotSupportedError</span>,
-  <span class="tp">AdapterCapabilityMissingError</span>,
-  <span class="tp">AdapterConnectionError</span>,
-  <span class="tp">AdapterOperationError</span>,
-  <span class="tp">AdapterTimeoutError</span>,
-  <span class="tp">AdapterDisposeError</span>,
-  <span class="tp">AdapterInitializationError</span>,
-  <span class="tp">AdapterConfigurationError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="cm">// Connection failure: (adapterName, cause?)</span>
-<span class="kw">const</span> conn = <span class="kw">new</span> <span class="tp">AdapterConnectionError</span>(<span class="str">"postgres"</span>, originalError);
-conn.adapter; <span class="cm">// "postgres"</span>
-
-<span class="cm">// Registry misconfiguration is a server-side failure: 500, not exposed, non-operational</span>
-<span class="kw">new</span> <span class="tp">AdapterNotFoundError</span>(<span class="str">"redis"</span>).statusCode; <span class="cm">// 500</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">HTTP Errors</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">HttpError</span>, <span class="fn">createHttpError</span>, <span class="fn">isHttpError</span> } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="cm">// Generic HTTP error with any status code</span>
-<span class="kw">const</span> err = <span class="fn">createHttpError</span>(<span class="str">"Service unavailable"</span>, <span class="num">503</span>);
-
-<span class="cm">// Severity auto-inferred: 5xx = ERROR, 429 = WARNING, 4xx = INFO</span>
-err.severity; <span class="cm">// ErrorSeverity.WARNING for 429</span></div>
-      </section>
-
-      <!-- System Errors -->
-      <section id="system-errors" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SYSTEM ERRORS</h2>
-        <p class="mb-4">Low-level errors for system, cryptographic, and runtime failures.</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-smw-full text-sm">
-            <thead class="bg-black text-white">
-              <tr><th class="p-3 text-left">Error Class</th><th class="p-3 text-left">Category</th><th class="p-3 text-left">Diagnostic Fields</th></tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SystemError</td><td class="p-3">system</td><td class="p-3">operation (SystemOperation enum)</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">CryptoError</td><td class="p-3">cryptography</td><td class="p-3">operation (CryptoOperation enum), algorithm</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RuntimeError</td><td class="p-3">runtime</td><td class="p-3">phase, component</td></tr>
-              <tr><td class="p-3 font-mono">LoggingError</td><td class="p-3">logging</td><td class="p-3">—</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">CryptoError</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">CryptoError</span>,
-  <span class="fn">createCryptoError</span>,
-  <span class="fn">isCryptoError</span>,
-  <span class="tp">CryptoOperation</span>,
-  <span class="fn">cryptoHashError</span>,
-  <span class="fn">cryptoCipherError</span>,
-  <span class="fn">cryptoSignatureError</span>,
-  <span class="fn">cryptoKeyDerivationError</span>,
-  <span class="fn">cryptoKeyError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="cm">// Factories take (message?, algorithm?) — cryptoSignatureError takes (message?, operation?, algorithm?)</span>
-<span class="kw">const</span> hashErr = <span class="fn">cryptoHashError</span>(<span class="str">"Hash computation failed"</span>, <span class="str">"sha256"</span>);
-hashErr.algorithm; <span class="cm">// "sha256"</span>
-
-<span class="cm">// CryptoOperation enum values:</span>
-<span class="cm">// HASH, VERIFY_HASH, ENCRYPT, DECRYPT, SIGN, VERIFY_SIGNATURE,</span>
-<span class="cm">// KEY_GENERATION, KEY_DERIVATION, KEY_IMPORT, KEY_EXPORT,</span>
-<span class="cm">// RANDOM, ENCODE, DECODE</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">SystemError</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">SystemError</span>,
-  <span class="fn">createSystemError</span>,
-  <span class="tp">SystemOperation</span>,
-  <span class="fn">systemInitializationError</span>,
-  <span class="fn">systemStartupError</span>,
-  <span class="fn">systemShutdownError</span>,
-  <span class="fn">internalSystemError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="kw">const</span> initErr = <span class="fn">systemInitializationError</span>(<span class="str">"Failed to initialize database pool"</span>);
-<span class="kw">const</span> startupErr = <span class="fn">systemStartupError</span>(<span class="str">"Port 3000 already in use"</span>);
-<span class="kw">const</span> shutdownErr = <span class="fn">systemShutdownError</span>(<span class="str">"Graceful shutdown timed out"</span>);</div>
-      </section>
-
-      <!-- Subsystem Errors -->
-      <section id="subsystem-errors" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SUBSYSTEM ERRORS</h2>
-        <p class="mb-4">Specialized error classes for the event, message, queue, serialization, schema, API, RPC, scheduler, plugin, documentation, lifecycle, module, and HTTP-body subsystems. Each base class accepts <code>BaseErrorOptions</code> plus the extra fields listed; every extra field is also emitted by <code>toJSON()</code>. Classes that describe server-side configuration problems (missing handlers, plugin dependency cycles, scheduler state) are reported as internal 500/503 errors with <code>expose: false</code>, so component names never reach clients.</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-smw-full text-sm">
-            <thead class="bg-black text-white">
-              <tr><th class="p-3 text-left">Error Class</th><th class="p-3 text-left">Category</th><th class="p-3 text-left">Extra Fields</th></tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">EventError</td><td class="p-3">event</td><td class="p-3">eventType, eventId, handlerId, middlewareId</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MessageError</td><td class="p-3">message</td><td class="p-3">messageType, messageId, handlerId, middlewareId</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">QueueError</td><td class="p-3">queue</td><td class="p-3">queueName, jobId, workerId</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SerializationError</td><td class="p-3">operation</td><td class="p-3">format, depth, maxDepth, size, maxSize, transformerType, serializerName</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SchemaError</td><td class="p-3">validation</td><td class="p-3">issues (values redacted in exposed <code>toJSON()</code>)</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">APIError</td><td class="p-3">api</td><td class="p-3">endpoint, method</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCError</td><td class="p-3">rpc</td><td class="p-3">procedureName</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">SchedulerError</td><td class="p-3">scheduler</td><td class="p-3">jobId, scheduleId</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">PluginError</td><td class="p-3">plugin</td><td class="p-3">pluginName</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DocumentationError</td><td class="p-3">documentation</td><td class="p-3">documentId</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">LifecycleError</td><td class="p-3">system</td><td class="p-3">componentId, phase</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">ModuleError</td><td class="p-3">module</td><td class="p-3">moduleId, dependencyId</td></tr>
-              <tr ><td class="p-3 font-mono">HttpBodyError / BodyParserError / HttpFormDataError / MultipartError</td><td class="p-3">input</td><td class="p-3">(none; limit errors are 413, unsupported content type is 415)</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">EventError</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">EventError</span>,
-  <span class="fn">createEventError</span>,
-  <span class="fn">isEventError</span>,
-  <span class="fn">toEventError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="kw">const</span> eventErr = <span class="fn">createEventError</span>(<span class="str">"Handler failed"</span>, {
-  eventType: <span class="str">"user.created"</span>,
-  eventId: <span class="str">"evt_abc"</span>,
-  handlerId: <span class="str">"send-welcome-email"</span>,
-});
-
-<span class="cm">// Convert unknown error to EventError</span>
-<span class="kw">const</span> converted = <span class="fn">toEventError</span>(unknownError, {
-  eventType: <span class="str">"order.placed"</span>,
-});</div>
-      </section>
-
-      <!-- Error Utilities -->
-      <section id="error-utilities" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERROR UTILITIES</h2>
-        <p class="mb-4">Centralized error normalization, serialization, type checking, extraction, and transformation utilities.</p>
-
-        <h3 class="text-lg font-bold mb-3">ErrorHandler Class</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">ErrorHandler</span>, <span class="fn">createErrorHandler</span> } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="kw">const</span> handler = <span class="fn">createErrorHandler</span>({
-  reporter: <span class="kw">async</span> (error, context) => {
-    <span class="cm">// Send to monitoring service</span>
-    <span class="kw">await</span> <span class="fn">reportToSentry</span>(error, context);
-  },
-  defaultStatusCode: <span class="num">500</span>,
-  defaultMessage: <span class="str">"Something went wrong"</span>,
-  includeStack: <span class="num">false</span>,
-});
-
-<span class="cm">// Normalize any thrown value</span>
-<span class="kw">const</span> { error, original } = handler.<span class="fn">normalize</span>(unknownThrown);
-
-<span class="cm">// Handle: reports (reporter failures are isolated; see onReporterError) and returns</span>
-<span class="cm">// the INTERNAL result: classification fields + recursively redacted metadata, never a stack.</span>
-<span class="kw">const</span> result = <span class="kw">await</span> handler.<span class="fn">handle</span>(error, {
-  requestId: <span class="str">"req_123"</span>,
-  correlationId: <span class="str">"corr_456"</span>,
-});
-<span class="cm">// { code, message, category, severity, statusCode, isOperational, expose, requestId, metadata? }</span>
-
-<span class="cm">// Client-safe result: code, message, statusCode, ids and allow-listed `details` only.</span>
-<span class="cm">// Non-exposed errors contribute no metadata unless `publicMetadataKeys` is configured.</span>
-<span class="kw">const</span> safe = <span class="kw">await</span> handler.<span class="fn">handlePublic</span>(error, context);
-<span class="kw">const</span> safe2 = handler.<span class="fn">toPublicResult</span>(error, context); <span class="cm">// same shape, no reporting</span>
-handler.<span class="fn">serialize</span>(error, context);              <span class="cm">// alias of toPublicResult (never includes a stack)</span>
-
-<span class="cm">// Full log object (cause chain, stack when includeStack: true)</span>
-<span class="kw">const</span> log = handler.<span class="fn">toLogObject</span>(error, context);</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">ErrorSerializer Class</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">ErrorSerializer</span> } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="kw">const</span> serializer = <span class="kw">new</span> <span class="tp">ErrorSerializer</span>({
-  includeStack: <span class="num">false</span>,
-  includeCause: <span class="num">false</span>,
-  includeMetadata: <span class="num">true</span>,
-  safeMessage: <span class="str">"An unexpected error occurred"</span>,
-  redactSensitiveData: <span class="num">true</span>,
-});
-
-<span class="cm">// Internal response. includeStack / includeCause / redactSensitiveData apply at every</span>
-<span class="cm">// level of the cause chain; the stack is only included when includeStack is true.</span>
-<span class="kw">const</span> internal = serializer.<span class="fn">serialize</span>(error);
-
-<span class="cm">// Public response (safe for API clients): never a stack or cause; metadata only for</span>
-<span class="cm">// exposed errors (redacted) or via the `publicMetadataKeys` allow-list.</span>
-<span class="kw">const</span> public_ = serializer.<span class="fn">serializePublic</span>(error);
-<span class="cm">// { code: "ERR_...", message: "Safe message", category: "...", statusCode: 500 }</span>
-
-<span class="cm">// Normalize unknown and serialize</span>
-<span class="kw">const</span> safe = serializer.<span class="fn">serializeUnknownPublic</span>(unknownThrown);</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Type Checks</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">isBaseError</span>,
-  <span class="fn">toBaseError</span>,
-  <span class="fn">isErrorLike</span>,
-  <span class="fn">isOperationalError</span>,
-  <span class="fn">isExposableError</span>,
-  <span class="fn">isServerError</span>,
-  <span class="fn">isClientError</span>,
-  <span class="fn">hasErrorCategory</span>,
-  <span class="fn">hasErrorSeverity</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="fn">isBaseError</span>(error);                <span class="cm">// instanceof BaseError</span>
-<span class="fn">toBaseError</span>(unknownThrown);         <span class="cm">// Convert to BaseError</span>
-<span class="fn">isErrorLike</span>(obj);                   <span class="cm">// Has name + message</span>
-<span class="fn">isOperationalError</span>(error);          <span class="cm">// isOperational === true</span>
-<span class="fn">isExposableError</span>(error);            <span class="cm">// expose === true</span>
-<span class="fn">isServerError</span>(error);               <span class="cm">// statusCode >= 500</span>
-<span class="fn">isClientError</span>(error);               <span class="cm">// 400 <= statusCode < 500</span>
-<span class="fn">hasErrorCategory</span>(error, category); <span class="cm">// category match</span>
-<span class="fn">hasErrorSeverity</span>(error, severity); <span class="cm">// severity match</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Extraction</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">getErrorMessage</span>,
-  <span class="fn">getErrorName</span>,
-  <span class="fn">getErrorStack</span>,
-  <span class="fn">getRootCause</span>,
-  <span class="fn">getRootBaseError</span>,
-  <span class="fn">getErrorDiagnostics</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="fn">getErrorMessage</span>(unknownThrown);   <span class="cm">// Safe message extraction</span>
-<span class="fn">getErrorName</span>(unknownThrown);      <span class="cm">// Error class name</span>
-<span class="fn">getErrorStack</span>(unknownThrown);     <span class="cm">// Stack trace</span>
-<span class="fn">getRootCause</span>(error);               <span class="cm">// Deepest cause in chain</span>
-<span class="fn">getRootBaseError</span>(error);           <span class="cm">// Deepest BaseError in chain</span>
-<span class="fn">getErrorDiagnostics</span>(error);       <span class="cm">// { name, message, code, category, ... }</span></div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Transformation</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">toError</span>,
-  <span class="fn">withErrorContext</span>,
-  <span class="fn">tryCatch</span>,
-  <span class="fn">tryCatchAsync</span>,
-  <span class="fn">normalizeToBaseError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="cm">// Convert unknown to Error</span>
-<span class="kw">const</span> err = <span class="fn">toError</span>(unknownThrown);
-
-<span class="cm">// Add context to error chain</span>
-<span class="kw">const</span> contextual = <span class="fn">withErrorContext</span>(error, <span class="str">"Failed to process payment"</span>);
-
-<span class="cm">// Safe sync execution</span>
-<span class="kw">const</span> result = <span class="fn">tryCatch</span>(() => <span class="fn">riskyOperation</span>());
-<span class="kw">if</span> (!result.success) {
-  console.<span class="fn">error</span>(result.error);
+        <p class="mb-3">This example defines a 402 error for a declined payment and shows what a client would receive.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { BaseError, ErrorCategory, ErrorSeverity, serializePublicError } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+
+<span class="kw">class</span> <span class="tp">PaymentDeclinedError</span> <span class="kw">extends</span> <span class="tp">BaseError</span> {
+  <span class="kw">constructor</span>(reason: <span class="tp">string</span>) {
+    <span class="kw">super</span>(<span class="str">`Payment declined: ${reason}`</span>, {
+      code: <span class="str">"ERR_PAYMENT_DECLINED"</span>,        <span class="cmt">// custom codes are allowed</span>
+      category: ErrorCategory.BUSINESS,
+      severity: ErrorSeverity.WARNING,
+      statusCode: <span class="num">402</span>,
+      metadata: { reason },
+    });
+  }
 }
 
-<span class="cm">// Safe async execution</span>
-<span class="kw">const</span> asyncResult = <span class="kw">await</span> <span class="fn">tryCatchAsync</span>(() => <span class="fn">asyncRiskyOp</span>());
+<span class="kw">const</span> error = <span class="kw">new</span> <span class="tp">PaymentDeclinedError</span>(<span class="str">"insufficient funds"</span>);
+console.<span class="fn">log</span>(error.name);   <span class="cmt">// "PaymentDeclinedError" (set automatically)</span>
+console.<span class="fn">log</span>(error.expose); <span class="cmt">// true (402 &lt; 500)</span>
+console.<span class="fn">log</span>(<span class="fn">serializePublicError</span>(error));
+<span class="cmt">// { code: "ERR_PAYMENT_DECLINED", message: "Payment declined: insufficient funds",</span>
+<span class="cmt">//   category: "business", statusCode: 402, metadata: { reason: "insufficient funds" } }</span></div>
+        <div class="callout callout-warning">
+          <strong>Watch out:</strong> do not forget to call <code>super(...)</code> first, and do not assign to <code>this.code</code> or <code>this.statusCode</code> afterwards. They are read-only; pass them through the options object instead.
+        </div>
+      </section>
 
-<span class="cm">// Normalize any value to BaseError</span>
-<span class="kw">const</span> normalized = <span class="fn">normalizeToBaseError</span>(unknownThrown);</div>
+      <!-- Metadata -->
+      <section id="metadata" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">METADATA</h2>
+        <p class="mb-3 leading-relaxed">
+          <code>metadata</code> is where you attach facts about the failure: which user, which record, which query. It must be JSON-safe (strings, numbers, booleans, null, arrays, plain objects). The constructor deep-copies and freezes it, so later changes to your original object do not leak in, and nobody can mutate it afterwards.
+        </p>
+        <p class="mb-3">Some values are converted rather than rejected: <code>Date</code> becomes an ISO string, <code>Map</code> becomes an object, <code>bigint</code> becomes a string, and cyclic references become <code>"[Circular]"</code>. Keys named <code>__proto__</code>, <code>constructor</code> or <code>prototype</code> are always dropped.</p>
+        <p class="mb-3">Secrets are the bigger concern. The serializers redact any key whose name looks sensitive (<code>password</code>, <code>token</code>, <code>authorization</code>, <code>cookie</code>, <code>apiKey</code>, <code>ssn</code>, and similar) at every depth. You can run the same redaction yourself.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { redactErrorMetadata, isSensitiveMetadataKey } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
 
-        <h3 class="text-lg font-bold mb-3 mt-6">ErrorMapperRegistry</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">ErrorMapperRegistry</span>,
-  <span class="fn">createErrorMapperRegistry</span>,
-  <span class="fn">mapError</span>,
-  <span class="fn">mapNativeError</span>,
-  <span class="fn">createErrorMappingRule</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+<span class="kw">const</span> safe = <span class="fn">redactErrorMetadata</span>({
+  userId: <span class="num">42</span>,
+  headers: { cookie: <span class="str">"sid=abc"</span>, accept: <span class="str">"application/json"</span> },
+  refreshToken: <span class="str">"r-123"</span>,
+});
+console.<span class="fn">log</span>(safe);
+<span class="cmt">// { userId: 42, headers: { cookie: "[REDACTED]", accept: "application/json" }, refreshToken: "[REDACTED]" }</span>
+
+console.<span class="fn">log</span>(<span class="fn">isSensitiveMetadataKey</span>(<span class="str">"x-api-key"</span>)); <span class="cmt">// true</span></div>
+        <div class="callout callout-danger">
+          <strong>Danger:</strong> redaction matches on <em>key names</em>. A secret stored under an innocent key like <code>note</code> is not redacted. Never put raw credentials in metadata in the first place.
+        </div>
+      </section>
+
+      <!-- Serializing -->
+      <section id="serializing" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SERIALIZING: toJSON VS PUBLIC OUTPUT</h2>
+        <p class="mb-3 leading-relaxed">
+          <em>Serializing</em> means turning the error object into plain data that can be logged or sent over the network. There are two audiences, and the package gives you a different function for each.
+        </p>
+        <h3 class="text-lg font-bold mb-3">toJSON() — for your logs</h3>
+        <p class="mb-3 leading-relaxed">
+          <code>error.toJSON()</code> returns <em>everything</em>: name, message, all classification fields, metadata, the stack trace, and the full <code>cause</code> chain (cycle-safe, cut off after 8 levels). Because it is named <code>toJSON</code>, <code>JSON.stringify(error)</code> calls it automatically. It does <strong>not</strong> redact metadata and it does <strong>not</strong> honour <code>expose</code>. It is for trusted, internal output only.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> { NotFoundError } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+
+<span class="kw">const</span> error = <span class="kw">new</span> <span class="tp">NotFoundError</span>(<span class="str">"User 42 was not found."</span>, { metadata: { userId: <span class="num">42</span> } });
+console.<span class="fn">log</span>(error.<span class="fn">toJSON</span>());
+<span class="cmt">// {</span>
+<span class="cmt">//   name: "NotFoundError",</span>
+<span class="cmt">//   message: "User 42 was not found.",</span>
+<span class="cmt">//   code: "ERR_RESOURCE_NOT_FOUND",</span>
+<span class="cmt">//   category: "resource",</span>
+<span class="cmt">//   severity: "info",</span>
+<span class="cmt">//   statusCode: 404,</span>
+<span class="cmt">//   expose: true,</span>
+<span class="cmt">//   isOperational: true,</span>
+<span class="cmt">//   metadata: { userId: 42 },</span>
+<span class="cmt">//   stack: "NotFoundError: User 42 was not found.\n    at findUser (app.ts:4:9)"</span>
+<span class="cmt">// }</span></div>
+        <p class="mb-3">Subclasses add their own fields on top: <code>ValidationError</code> adds <code>issues</code> (with submitted values replaced by a type description when the error is exposed), and <code>RateLimitError</code> adds <code>retryAfterSeconds</code>.</p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">serializePublicError() — for clients</h3>
+        <p class="mb-3 leading-relaxed">
+          <code>serializePublicError(error)</code> returns only <code>code</code>, <code>message</code>, <code>category</code>, <code>statusCode</code>, and sometimes <code>metadata</code>. It never includes a stack or cause. If <code>expose</code> is false the message is replaced with <code>"An unexpected error occurred."</code> and metadata is left out entirely. If <code>expose</code> is true, metadata is included after redaction.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> { databaseQueryError, serializePublicError, serializeError } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+
+<span class="kw">const</span> error = <span class="fn">databaseQueryError</span>(<span class="str">"relation \"users\" does not exist"</span>, {
+  metadata: { sql: <span class="str">"SELECT * FROM users"</span>, password: <span class="str">"hunter2"</span> },
+});
+
+console.<span class="fn">log</span>(<span class="fn">serializePublicError</span>(error));
+<span class="cmt">// { code: "ERR_DATABASE_QUERY", message: "An unexpected error occurred.",</span>
+<span class="cmt">//   category: "database", statusCode: 500 }          ← no sql, no password, no stack</span>
+
+console.<span class="fn">log</span>(<span class="fn">serializeError</span>(error).metadata);
+<span class="cmt">// { sql: "SELECT * FROM users", password: "[REDACTED]", operation: "query" }</span>
+
+<span class="cmt">// Allow-list specific keys for clients even on a hidden error:</span>
+console.<span class="fn">log</span>(<span class="fn">serializePublicError</span>(error, { publicMetadataKeys: [<span class="str">"operation"</span>] }).metadata);
+<span class="cmt">// { operation: "query" }</span></div>
+        <p class="mb-3"><code>serializeError(error, options)</code> is the internal counterpart: it redacts metadata by default and leaves out the stack and cause unless you pass <code>includeStack: true</code> or <code>includeCause: true</code>. Use <code>new ErrorSerializer(options)</code> when you want to configure once and call <code>serialize</code> / <code>serializePublic</code> many times.</p>
+        <div class="callout callout-danger">
+          <strong>Danger:</strong> never do <code>res.json(error)</code> or <code>res.json(error.toJSON())</code>. That ships your stack trace and raw metadata to the client. Use <code>serializePublicError</code> or the <code>ErrorHandler</code> below.
+        </div>
+      </section>
+
+      <!-- Handling unknown errors -->
+      <section id="handling-unknown-errors" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HANDLING UNKNOWN ERRORS</h2>
+        <p class="mb-3 leading-relaxed">
+          In a <code>catch</code> block the value is typed <code>unknown</code> because JavaScript lets you throw anything: a string, <code>null</code>, a plain object, a <code>TypeError</code> from a library. <code>normalizeToBaseError</code> turns any of those into a <code>BaseError</code> so the rest of your code has one shape to deal with.
+        </p>
+        <p class="mb-3">Values that are already a <code>BaseError</code> pass through unchanged. Everything else becomes a 500 that is <strong>not exposed</strong> and <strong>not operational</strong>, with the original value kept as <code>cause</code>.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { normalizeToBaseError, isBaseError, tryCatch } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+
+<span class="kw">const</span> fromString = <span class="fn">normalizeToBaseError</span>(<span class="str">"disk full"</span>);
+console.<span class="fn">log</span>(fromString.code, fromString.statusCode, fromString.expose);
+<span class="cmt">// "ERR_INTERNAL_ERROR" 500 false</span>
+
+<span class="cmt">// tryCatch runs a function and hands back either the value or a BaseError.</span>
+<span class="kw">const</span> result = <span class="fn">tryCatch</span>(() =&gt; JSON.<span class="fn">parse</span>(<span class="str">"{not json"</span>));
+<span class="kw">if</span> (!result.success) {
+  console.<span class="fn">log</span>(<span class="fn">isBaseError</span>(result.error));      <span class="cmt">// true</span>
+  console.<span class="fn">log</span>(result.error.cause <span class="kw">instanceof</span> <span class="tp">SyntaxError</span>); <span class="cmt">// true (original kept)</span>
+}</div>
+        <p class="mb-3"><code>tryCatchAsync</code> does the same for functions that return a promise. <code>toBaseError</code>, <code>normalizeUnknownError</code> and <code>normalizeError</code> are older names for the same normalization and behave identically.</p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">ErrorHandler: normalize, report, respond in one call</h3>
+        <p class="mb-3 leading-relaxed">
+          <code>ErrorHandler</code> bundles the steps an API needs at its outermost <code>catch</code>: normalize the thrown value, send it to a <em>reporter</em> (your logger or monitoring tool), and build the response body. If the reporter itself throws, the failure is swallowed (or passed to <code>onReporterError</code>) and you still get a result.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> { ErrorHandler, NotFoundError } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+
+<span class="kw">const</span> handler = <span class="kw">new</span> <span class="tp">ErrorHandler</span>({
+  reporter: (error, context) =&gt; {
+    console.<span class="fn">error</span>(<span class="str">"[report]"</span>, error.code, context?.requestId);
+  },
+});
+
+<span class="kw">async function</span> <span class="fn">respond</span>(thrown: <span class="tp">unknown</span>) {
+  <span class="kw">const</span> body = <span class="kw">await</span> handler.<span class="fn">handlePublic</span>(thrown, { requestId: <span class="str">"req_1"</span> });
+  console.<span class="fn">log</span>(body.statusCode, body);
+}
+
+<span class="kw">await</span> <span class="fn">respond</span>(<span class="kw">new</span> <span class="tp">NotFoundError</span>(<span class="str">"User 42 was not found."</span>, { metadata: { userId: <span class="num">42</span> } }));
+<span class="cmt">// [report] ERR_RESOURCE_NOT_FOUND req_1</span>
+<span class="cmt">// 404 { code: "ERR_RESOURCE_NOT_FOUND", message: "User 42 was not found.",</span>
+<span class="cmt">//       statusCode: 404, requestId: "req_1", details: { userId: 42 } }</span>
+
+<span class="kw">await</span> <span class="fn">respond</span>(<span class="kw">new</span> <span class="tp">TypeError</span>(<span class="str">"Cannot read properties of undefined"</span>));
+<span class="cmt">// [report] ERR_INTERNAL_ERROR req_1</span>
+<span class="cmt">// 500 { code: "ERR_INTERNAL_ERROR", message: "An unexpected error occurred.",</span>
+<span class="cmt">//       statusCode: 500, requestId: "req_1" }</span></div>
+        <p class="mb-3">Use <code>handle()</code> instead of <code>handlePublic()</code> when you want the internal shape (it adds <code>category</code>, <code>severity</code>, <code>isOperational</code>, <code>expose</code> and redacted metadata). Use <code>toLogObject(error)</code> for the fullest log entry, including the cause chain.</p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Mapping third-party errors</h3>
+        <p class="mb-3">If a library throws its own error class, register a rule so it becomes the right Zudo error instead of a generic 500. <code>mapErrorType</code> matches by <code>instanceof</code>.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { createErrorMapperRegistry, mapErrorType, mapError, ValidationError } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
 
 <span class="kw">const</span> registry = <span class="fn">createErrorMapperRegistry</span>();
+registry.<span class="fn">register</span>(
+  <span class="fn">mapErrorType</span>(<span class="str">"syntax-as-validation"</span>, SyntaxError, (error) =&gt;
+    <span class="kw">new</span> <span class="tp">ValidationError</span>(<span class="str">"Body is not valid JSON."</span>, { cause: error }),
+  ),
+);
 
-<span class="cm">// Register custom mapping rules (mapper: a function, or a declarative ErrorMapping)</span>
-registry.<span class="fn">register</span>({
-  name: <span class="str">"postgres-mapper"</span>,
-  predicate: (err) => err <span class="kw">instanceof</span> Error &amp;&amp; err.message.<span class="fn">includes</span>(<span class="str">"ECONNREFUSED"</span>),
-  mapper: (err) => <span class="fn">databaseConnectionError</span>(<span class="str">"Unable to connect to the database."</span>, { cause: err }),
-});
-registry.<span class="fn">register</span>(<span class="fn">mapErrorType</span>(<span class="str">"pg"</span>, PgDatabaseError, {
-  code: <span class="tp">ErrorCode</span>.DATABASE_QUERY, category: <span class="tp">ErrorCategory</span>.DATABASE, severity: <span class="tp">ErrorSeverity</span>.ERROR,
-  statusCode: <span class="num">500</span>, expose: <span class="kw">false</span>, isOperational: <span class="kw">true</span>,
-}));
-
-<span class="cm">// Map an error using registered rules: (error, registry?, context?)</span>
-<span class="kw">const</span> mapped = <span class="fn">mapError</span>(nativeError, registry);
-
-<span class="cm">// Without a matching rule, native TypeError/RangeError/Error become</span>
-<span class="cm">// ERR_INTERNAL_ERROR (500, not exposed, non-operational) with the original as `cause`.</span></div>
+<span class="kw">const</span> mapped = <span class="fn">mapError</span>(<span class="kw">new</span> <span class="tp">SyntaxError</span>(<span class="str">"Unexpected token"</span>), registry);
+console.<span class="fn">log</span>(mapped.statusCode, mapped.code); <span class="cmt">// 400 "ERR_VALIDATION_FAILED"</span></div>
       </section>
 
-      <!-- Testing -->
-      <section id="testing" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TESTING</h2>
-        <p class="mb-4">Examples for testing error creation, type guards, and serialization with vitest.</p>
+      <!-- API reference -->
+      <section id="api-reference" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">API REFERENCE</h2>
+        <p class="mb-3">Everything below is exported from <code>@zudojs/errors</code>. The error classes themselves are listed in <a href="#ready-made-errors" class="underline">Ready-made errors</a>.</p>
 
-        <div class="code-block"><span class="kw">import</span> { <span class="fn">describe</span>, <span class="fn">it</span>, <span class="fn">expect</span> } <span class="kw">from</span> <span class="str">"vitest"</span>;
-<span class="kw">import</span> {
-  <span class="tp">BaseError</span>,
-  <span class="tp">ErrorCode</span>,
-  <span class="tp">ErrorCategory</span>,
-  <span class="tp">ErrorSeverity</span>,
-  <span class="tp">AuthenticationError</span>,
-  <span class="tp">NotFoundError</span>,
-  <span class="tp">ValidationError</span>,
-  <span class="fn">isBaseError</span>,
-  <span class="fn">isAuthenticationError</span>,
-  <span class="fn">isNotFoundError</span>,
-  <span class="fn">isValidationError</span>,
-  <span class="fn">toBaseError</span>,
-  <span class="fn">getErrorMessage</span>,
-  <span class="fn">tryCatch</span>,
-  <span class="fn">tryCatchAsync</span>,
-  <span class="tp">ErrorSerializer</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+        <h3 class="text-lg font-bold mb-3">Classes</h3>
+        <div class="overflow-x-auto mb-6">
+        <table class="doc-table">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>BaseError</code></td><td>Root error class.</td><td><code>new BaseError(message, options?)</code>. Methods: <code>isPublic</code>, <code>isOperationalError</code>, <code>getMetadata</code>, <code>withMetadata</code>, <code>toJSON</code>, <code>toLogObject</code>, <code>toString</code>.</td></tr>
+            <tr><td><code>ErrorHandler</code></td><td>Normalize + report + build a response.</td><td>Methods: <code>normalize</code>, <code>handle</code>, <code>handlePublic</code>, <code>toResult</code>, <code>toPublicResult</code>, <code>report</code>, <code>toLogObject</code>, <code>shouldExpose</code>. Also <code>createErrorHandler(options)</code>.</td></tr>
+            <tr><td><code>ErrorSerializer</code></td><td>Configurable serializer.</td><td>Methods: <code>serialize</code>, <code>serializePublic</code>, <code>serializeUnknown</code>, <code>serializeUnknownPublic</code>. Also <code>createErrorSerializer(options)</code>.</td></tr>
+            <tr><td><code>ErrorMapperRegistry</code></td><td>Holds rules that convert foreign errors.</td><td>Methods: <code>register</code>, <code>unregister</code>, <code>has</code>, <code>find</code>, <code>map</code>, <code>getRules</code>, <code>clear</code>. Also <code>createErrorMapperRegistry()</code>.</td></tr>
+          </tbody>
+        </table>
+        </div>
 
-<span class="fn">describe</span>(<span class="str">"@zudojs/errors"</span>, () => {
-  <span class="fn">it</span>(<span class="str">"creates BaseError with defaults"</span>, () => {
-    <span class="kw">const</span> error = <span class="kw">new</span> <span class="tp">BaseError</span>(<span class="str">"test"</span>);
-    <span class="fn">expect</span>(error.message).<span class="fn">toBe</span>(<span class="str">"test"</span>);
-    <span class="fn">expect</span>(error.code).<span class="fn">toBe</span>(<span class="tp">ErrorCode</span>.UNKNOWN);
-    <span class="fn">expect</span>(error.statusCode).<span class="fn">toBe</span>(<span class="num">500</span>);
-    <span class="fn">expect</span>(error.expose).<span class="fn">toBe</span>(<span class="num">false</span>);
-    <span class="fn">expect</span>(error.isOperational).<span class="fn">toBe</span>(<span class="num">true</span>);
-  });
+        <h3 class="text-lg font-bold mb-3">Functions</h3>
+        <div class="overflow-x-auto mb-6">
+        <table class="doc-table">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>serializePublicError(error, options?)</code></td><td>Client-safe object.</td><td>Honours <code>expose</code>; redacts; never includes stack or cause.</td></tr>
+            <tr><td><code>serializeError(error, options?)</code></td><td>Internal object.</td><td>Options: <code>includeStack</code>, <code>includeCause</code>, <code>includeMetadata</code>, <code>redactSensitiveData</code>, <code>safeMessage</code>, <code>publicMetadataKeys</code>, <code>sensitiveKeyPattern</code>.</td></tr>
+            <tr><td><code>normalizeToBaseError(value)</code></td><td>Any thrown value → <code>BaseError</code>.</td><td>Aliases: <code>toBaseError</code>, <code>normalizeUnknownError</code>, <code>normalizeError</code>, <code>normalizeUnknownToBaseError(value, options?)</code>.</td></tr>
+            <tr><td><code>tryCatch(fn)</code> / <code>tryCatchAsync(fn)</code></td><td>Run a function, return <code>{ success, value }</code> or <code>{ success: false, error }</code>.</td><td><code>error</code> is always a <code>BaseError</code>.</td></tr>
+            <tr><td><code>isBaseError(value)</code></td><td>Type guard.</td><td>Also recognises errors from a second installed copy of the package. Alias: <code>isHandledError</code>.</td></tr>
+            <tr><td><code>isClientError</code>, <code>isServerError</code>, <code>isExposableError</code>, <code>isOperationalError</code>, <code>hasErrorCategory</code>, <code>hasErrorSeverity</code></td><td>Boolean checks on a <code>BaseError</code>.</td><td>All return <code>false</code> for non-<code>BaseError</code> values, except <code>isServerError</code> which returns <code>true</code>.</td></tr>
+            <tr><td><code>getErrorMessage</code>, <code>getErrorName</code>, <code>getErrorStack</code>, <code>getErrorCode</code>, <code>getErrorStatusCode</code></td><td>Read a field from an unknown value with a safe fallback.</td><td>Never throw.</td></tr>
+            <tr><td><code>getRootCause(error)</code> / <code>getRootBaseError(error)</code></td><td>Walk the <code>cause</code> chain.</td><td>Cycle-safe.</td></tr>
+            <tr><td><code>withErrorContext(error, prefix)</code></td><td>Wrap in a new <code>Error</code> with a prefixed message and the original as <code>cause</code>.</td><td>Returns a plain <code>Error</code>, not a <code>BaseError</code>.</td></tr>
+            <tr><td><code>mapError(error, registry?, context?)</code></td><td>Apply registry rules, then native mapping.</td><td>Rule builders: <code>mapErrorType</code>, <code>createErrorMappingRule</code>, <code>applyErrorMapping</code>.</td></tr>
+            <tr><td><code>redactErrorMetadata</code>, <code>sanitizeErrorMetadata</code>, <code>mergeErrorMetadata</code>, <code>pickErrorMetadata</code>, <code>omitErrorMetadata</code></td><td>Metadata utilities.</td><td>All return frozen copies.</td></tr>
+            <tr><td><code>compareErrorSeverity</code>, <code>isAlertableSeverity</code>, <code>isFailureSeverity</code>, <code>normalizeErrorSeverity</code>, <code>isErrorCategory</code>, <code>normalizeErrorCategory</code></td><td>Enum helpers.</td><td>See <a href="#codes-categories-severity" class="underline">above</a>.</td></tr>
+          </tbody>
+        </table>
+        </div>
 
-  <span class="fn">it</span>(<span class="str">"creates AuthenticationError with 401"</span>, () => {
-    <span class="kw">const</span> error = <span class="kw">new</span> <span class="tp">AuthenticationError</span>();
-    <span class="fn">expect</span>(error.statusCode).<span class="fn">toBe</span>(<span class="num">401</span>);
-    <span class="fn">expect</span>(error.expose).<span class="fn">toBe</span>(<span class="num">true</span>);
-    <span class="fn">expect</span>(<span class="fn">isAuthenticationError</span>(error)).<span class="fn">toBe</span>(<span class="num">true</span>);
-  });
-
-  <span class="fn">it</span>(<span class="str">"creates ValidationError with issues"</span>, () => {
-    <span class="kw">const</span> error = <span class="kw">new</span> <span class="tp">ValidationError</span>(<span class="str">"Invalid"</span>, {
-      issues: [{ field: <span class="str">"email"</span>, message: <span class="str">"Required"</span> }],
-    });
-    <span class="fn">expect</span>(error.issueCount).<span class="fn">toBe</span>(<span class="num">1</span>);
-    <span class="fn">expect</span>(error.issuesForField(<span class="str">"email"</span>)).toHaveLength(<span class="num">1</span>);
-  });
-
-  <span class="fn">it</span>(<span class="str">"serializes error safely"</span>, () => {
-    <span class="kw">const</span> serializer = <span class="kw">new</span> <span class="tp">ErrorSerializer</span>();
-    <span class="kw">const</span> error = <span class="kw">new</span> <span class="tp">BaseError</span>(<span class="str">"test"</span>, { expose: <span class="num">false</span> });
-    <span class="kw">const</span> public_ = serializer.<span class="fn">serializePublic</span>(error);
-    <span class="fn">expect</span>(public_.message).<span class="fn">toBe</span>(<span class="str">"An unexpected error occurred"</span>);
-  });
-
-  <span class="fn">it</span>(<span class="str">"normalizes unknown errors"</span>, () => {
-    <span class="kw">const</span> result = <span class="fn">tryCatch</span>(() => { <span class="kw">throw</span> <span class="str">"string error"</span>; });
-    <span class="fn">expect</span>(result.success).<span class="fn">toBe</span>(<span class="num">false</span>);
-    <span class="fn">expect</span>(<span class="fn">isBaseError</span>(result.error)).<span class="fn">toBe</span>(<span class="num">true</span>);
-  });
-
-  <span class="fn">it</span>(<span class="str">"handles async errors"</span>, <span class="kw">async</span> () => {
-    <span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">tryCatchAsync</span>(<span class="kw">async</span> () => {
-      <span class="kw">throw</span> <span class="kw">new</span> <span class="tp">NotFoundError</span>(<span class="str">"User not found"</span>);
-    });
-    <span class="fn">expect</span>(result.success).<span class="fn">toBe</span>(<span class="num">false</span>);
-    <span class="fn">expect</span>(<span class="fn">isNotFoundError</span>(result.error)).<span class="fn">toBe</span>(<span class="num">true</span>);
-  });
-});</div>
-      </section>
-
-      <!-- Full Integration Example -->
-      <section id="full-example" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">FULL INTEGRATION EXAMPLE</h2>
-        <p class="mb-4">Complete example: HTTP error handler, CQRS error handling, and event error handling.</p>
-
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="tp">BaseError</span>,
-  <span class="tp">ErrorCode</span>,
-  <span class="tp">ErrorCategory</span>,
-  <span class="tp">ErrorSeverity</span>,
-  <span class="tp">AuthenticationError</span>,
-  <span class="tp">AuthorizationError</span>,
-  <span class="tp">NotFoundError</span>,
-  <span class="tp">ValidationError</span>,
-  <span class="tp">ConflictError</span>,
-  <span class="tp">RateLimitError</span>,
-  <span class="tp">HttpError</span>,
-  <span class="tp">EventError</span>,
-  <span class="fn">isBaseError</span>,
-  <span class="fn">toBaseError</span>,
-  <span class="fn">getErrorMessage</span>,
-  <span class="tp">ErrorHandler</span>,
-  <span class="tp">ErrorSerializer</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="cm">// 1. HTTP error handler middleware</span>
-<span class="kw">const</span> errorHandler = <span class="kw">new</span> <span class="tp">ErrorHandler</span>({
-  reporter: <span class="kw">async</span> (error) => {
-    <span class="kw">if</span> (!error.expose) {
-      <span class="kw">await</span> <span class="fn">reportToMonitoring</span>(error);
-    }
-  },
-  includeStack: <span class="num">false</span>,
-});
-
-<span class="kw">async function</span> <span class="fn">handleRequest</span>(req, res) {
-  <span class="kw">try</span> {
-    <span class="kw">const</span> user = <span class="kw">await</span> <span class="fn">authenticateUser</span>(req);
-    <span class="kw">if</span> (!user) <span class="kw">throw</span> <span class="kw">new</span> <span class="tp">AuthenticationError</span>(<span class="str">"Invalid token"</span>);
-
-    <span class="kw">const</span> order = <span class="kw">await</span> <span class="fn">createOrder</span>(req.body);
-    res.<span class="fn">json</span>({ success: <span class="num">true</span>, order });
-  } <span class="kw">catch</span> (error) {
-    <span class="kw">const</span> result = <span class="kw">await</span> errorHandler.<span class="fn">handle</span>(error, {
-      requestId: req.headers[<span class="str">"x-request-id"</span>],
-    });
-    res.<span class="fn">status</span>(result.statusCode).<span class="fn">json</span>(result);
-  }
-}
-
-<span class="cm">// 2. Domain-specific error creation</span>
-<span class="kw">async function</span> <span class="fn">createOrder</span>(data) {
-  <span class="kw">if</span> (!data.items?.length) {
-    <span class="kw">throw</span> <span class="kw">new</span> <span class="tp">ValidationError</span>(<span class="str">"Order must have items"</span>, {
-      issues: [{ field: <span class="str">"items"</span>, message: <span class="str">"Required"</span>, code: <span class="tp">ErrorCode</span>.MISSING_FIELD }],
-    });
-  }
-
-  <span class="kw">const</span> existing = <span class="kw">await</span> <span class="fn">findOrder</span>(data.id);
-  <span class="kw">if</span> (existing) {
-    <span class="kw">throw</span> <span class="kw">new</span> <span class="tp">ConflictError</span>(<span class="str">`Order ${data.id} already exists`</span>, {
-      code: <span class="tp">ErrorCode</span>.ALREADY_EXISTS,
-      metadata: { orderId: data.id },
-    });
-  }
-
-  <span class="kw">return</span> <span class="kw">await</span> <span class="fn">saveOrder</span>(data);
-}
-
-<span class="cm">// 3. Event error handling</span>
-<span class="kw">async function</span> <span class="fn">handleEvent</span>(event) {
-  <span class="kw">try</span> {
-    <span class="kw">await</span> <span class="fn">processEvent</span>(event);
-  } <span class="kw">catch</span> (error) {
-    <span class="kw">throw</span> <span class="kw">new</span> <span class="tp">EventError</span>(<span class="fn">getErrorMessage</span>(error), {
-      eventType: event.type,
-      eventId: event.id,
-      cause: error,
-    });
-  }
-}
-
-<span class="cm">// 4. Rate limiting</span>
-<span class="kw">function</span> <span class="fn">checkRateLimit</span>(userId) {
-  <span class="kw">const</span> count = <span class="fn">getRequestCount</span>(userId);
-  <span class="kw">if</span> (count > <span class="num">100</span>) {
-    <span class="kw">throw</span> <span class="kw">new</span> <span class="tp">RateLimitError</span>(<span class="str">"Rate limit exceeded"</span>, {
-      retryAfterSeconds: <span class="num">60</span>,
-      metadata: { userId, requestCount: count },
-    });
-  }
-}
-
-<span class="cm">// 5. Error serialization for API responses</span>
-<span class="kw">const</span> serializer = <span class="kw">new</span> <span class="tp">ErrorSerializer</span>({
-  redactSensitiveData: <span class="num">true</span>,
-  safeMessage: <span class="str">"An unexpected error occurred"</span>,
-});
-
-<span class="cm">// Public API response (safe for clients)</span>
-<span class="kw">const</span> publicResponse = serializer.<span class="fn">serializePublic</span>(error);
-
-<span class="cm">// Internal log entry (includes full details)</span>
-<span class="kw">const</span> logEntry = serializer.<span class="fn">serialize</span>(error);</div>
-      </section>
-
-      <!-- Connections to Other Packages -->
-      <section id="connections" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONNECTIONS TO OTHER PACKAGES</h2>
-        <p class="mb-4">Every package in the monorepo imports from <code>@zudojs/errors</code>. Key consumers:</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-smw-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Package</th>
-                <th class="p-3 text-left">Key Errors Used</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/logger</td><td class="p-3">BaseError for structured error logging</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/container</td><td class="p-3">ContainerError, DuplicateRegistrationError, CircularDependencyError</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/events</td><td class="p-3">EventError for event handling, publishing, and lifecycle failures</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/messaging</td><td class="p-3">MessageError for dispatch, validation, and serialization failures</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/http</td><td class="p-3">HttpError, HttpRouterError, HttpBodyError for HTTP failures</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/database</td><td class="p-3">DatabaseError for connection, query, and transaction failures</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/auth</td><td class="p-3">AuthenticationError, AuthorizationError for auth failures</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/queue</td><td class="p-3">QueueError, JobError, WorkerError for background processing</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/cache</td><td class="p-3">CacheError for cache operation failures</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/crypto</td><td class="p-3">CryptoError for hashing, encryption, and signature failures</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/schema</td><td class="p-3">SchemaError for schema validation and type inference failures</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/adapters</td><td class="p-3">AdapterError, AdapterNotFoundError, and 10+ adapter-specific errors</td></tr>
-              <tr><td class="p-3 font-mono">@zudojs/core</td><td class="p-3">ModuleError, RuntimeError for lifecycle and bootstrap failures</td></tr>
-            </tbody>
-          </table>
+        <h3 class="text-lg font-bold mb-3">Types and constants</h3>
+        <div class="overflow-x-auto mb-4">
+        <table class="doc-table">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>ErrorCode</code>, <code>ErrorCategory</code>, <code>ErrorSeverity</code></td><td>Enums.</td><td>String-valued; usable at runtime and as types.</td></tr>
+            <tr><td><code>BaseErrorOptions</code></td><td>Constructor options.</td><td><code>code</code>, <code>category</code>, <code>severity</code>, <code>statusCode</code>, <code>expose</code>, <code>isOperational</code>, <code>metadata</code>, <code>cause</code>.</td></tr>
+            <tr><td><code>SerializedBaseError</code></td><td>Return type of <code>toJSON()</code>.</td><td></td></tr>
+            <tr><td><code>PublicErrorResponse</code></td><td>Return type of <code>serializePublicError</code>.</td><td><code>code</code>, <code>message</code>, <code>category</code>, <code>statusCode</code>, <code>metadata?</code>.</td></tr>
+            <tr><td><code>PublicErrorHandlerResult</code></td><td>Return type of <code>handlePublic</code> / <code>toPublicResult</code>.</td><td><code>code</code>, <code>message</code>, <code>statusCode</code>, <code>requestId?</code>, <code>correlationId?</code>, <code>details?</code>.</td></tr>
+            <tr><td><code>ErrorMetadata</code>, <code>ErrorMetadataValue</code></td><td>Shape of the metadata bag.</td><td>JSON-safe values only.</td></tr>
+            <tr><td><code>ValidationIssue</code></td><td>One entry in <code>ValidationError.issues</code>.</td><td><code>message</code> plus optional <code>field</code>, <code>path</code>, <code>code</code>, <code>value</code>.</td></tr>
+            <tr><td><code>SENSITIVE_METADATA_KEY_PATTERN</code></td><td>Default regex for secret-looking keys.</td><td>Override per call with <code>sensitiveKeyPattern</code>.</td></tr>
+            <tr><td><code>REDACTED_METADATA_VALUE</code></td><td>The string <code>"[REDACTED]"</code>.</td><td></td></tr>
+            <tr><td><code>UNKNOWN_ERROR_MESSAGE</code></td><td>The string <code>"An unexpected error occurred."</code></td><td>Used when a thrown value has no message.</td></tr>
+          </tbody>
+        </table>
         </div>
       </section>
 
-      <!-- Version Compatibility -->
-      <section id="version-compatibility" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">VERSION COMPATIBILITY</h2>
-        <div class="callout callout-warning">
-          <strong class="text-zudo-yellow">Stable Versions:</strong> Sibling packages pin <code>@zudojs/errors</code> to an exact published version (<code>0.1.0</code>); this package is at <code>0.1.1</code>. Use exact versions for all internal dependencies when publishing.
-        </div>
-
-        <div class="border-4 border-black mt-4">
-          <table class="w-full text-smw-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Package</th>
-                <th class="p-3 text-left">errors v0.1.0 works with</th>
-                <th class="p-3 text-left">Stability</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/logger</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/container</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/config</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/events</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/http</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/database</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/cache</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/auth</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">@zudojs/middleware</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-              <tr><td class="p-3 font-mono">@zudojs/core</td><td class="p-3">v0.1.0</td><td class="p-3 px-3 py-1 bg-zudo-green text-black font-bold text-xs inline-block">STABLE</td></tr>
-            </tbody>
-          </table>
-        </div>
+      <!-- Common mistakes -->
+      <section id="common-mistakes" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMON MISTAKES</h2>
+        <ul class="space-y-3">
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Sending <code>error.toJSON()</code> to the client.</strong> The stack trace and raw metadata go out with it. Use <code>serializePublicError</code> or <code>ErrorHandler.handlePublic</code>.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Throwing a plain <code>Error</code> for a user mistake.</strong> It normalizes to a hidden 500, so the user sees "An unexpected error occurred." Throw <code>ValidationError</code>, <code>NotFoundError</code>, or another 4xx class instead.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Using 401 when you mean 403.</strong> 401 (<code>AuthenticationError</code>) is "not logged in"; 403 (<code>AuthorizationError</code>) is "logged in, not allowed". Clients often redirect to a login page on 401.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Expecting <code>withMetadata</code> to mutate.</strong> It returns a copy. Write <code>error = error.withMetadata({...})</code> or throw the returned value.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Putting a secret under a harmless key.</strong> Redaction is name-based. <code>metadata: { note: "pw is hunter2" }</code> is not redacted.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Matching on messages in tests.</strong> Assert on <code>error.code</code> or use the <code>is…Error</code> guards; messages are free to change.</span></li>
+        </ul>
       </section>
 
-      <!-- Improvements -->
-      <section id="improvements" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">IMPROVEMENTS & RECOMMENDATIONS</h2>
-
-        <div class="space-y-4">
-          <div class="border-l-4 border-zudo-red p-4">
-            <h4 class="font-bold mb-1">1. Add Error Aggregation</h4>
-            <p class="text-sm text-black/70">Support collecting multiple errors into an aggregate error for batch operations:</p>
-            <div class="code-block mt-2"><span class="kw">class</span> <span class="tp">AggregateError</span> <span class="kw">extends</span> <span class="tp">BaseError</span> {
-  <span class="kw">readonly</span> errors: <span class="kw">readonly</span> <span class="tp">BaseError</span>[];
-  <span class="kw">constructor</span>(errors: <span class="tp">BaseError</span>[]) { ... }
-}</div>
-          </div>
-
-          <div class="border-l-4 border-zudo-blue p-4">
-            <h4 class="font-bold mb-1">2. Add Error Recovery Helpers</h4>
-            <p class="text-sm text-black/70">Provide <code>retry()</code>, <code>fallback()</code>, and <code>escalate()</code> utilities for common recovery patterns.</p>
-          </div>
-
-          <div class="border-l-4 border-zudo-yellow p-4">
-            <h4 class="font-bold mb-1">3. Add Error Correlation</h4>
-            <p class="text-sm text-black/70">Automatically propagate correlation IDs through error chains and metadata for distributed tracing.</p>
-          </div>
-
-          <div class="border-l-4 border-zudo-green p-4">
-            <h4 class="font-bold mb-1">4. Add Error Digest</h4>
-            <p class="text-sm text-black/70">A utility that deduplicates and summarizes error frequency for monitoring dashboards.</p>
-          </div>
-
-          <div class="border-l-4 border-black p-4">
-            <h4 class="font-bold mb-1">5. Add Error Boundaries</h4>
-            <p class="text-sm text-black/70">Function wrappers that catch, classify, and route errors to appropriate handlers automatically.</p>
-          </div>
-        </div>
+      <!-- Related -->
+      <section id="related" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATED PACKAGES</h2>
+        <ul class="space-y-2">
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <span><a href="/docs/packages-http" class="underline font-bold">@zudojs/http</a> — turns these errors into real HTTP responses; the <code>statusCode</code> and <code>expose</code> rules above are what it follows.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <span><a href="/docs/packages-validation" class="underline font-bold">@zudojs/validation</a> — produces <code>ValidationError</code> with a filled <code>issues</code> list from a schema.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <span><a href="/docs/packages-logger" class="underline font-bold">@zudojs/logger</a> — where <code>toJSON()</code> / <code>toLogObject()</code> output usually ends up.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <span><a href="/docs/packages-auth" class="underline font-bold">@zudojs/auth</a> — throws <code>AuthenticationError</code> and <code>AuthorizationError</code> for you.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <span><a href="/docs/packages-database" class="underline font-bold">@zudojs/database</a> — throws <code>DatabaseError</code> and the database timeout errors.</span></li>
+        </ul>
       </section>
 
-      <!-- Quick Reference -->
-      <section id="quick-reference" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK REFERENCE</h2>
-        <div class="code-block"><span class="cm">// Import base types</span>
-<span class="kw">import</span> {
-  <span class="tp">BaseError</span>,
-  <span class="tp">ErrorCode</span>,
-  <span class="tp">ErrorCategory</span>,
-  <span class="tp">ErrorSeverity</span>,
-  <span class="tp">BaseErrorOptions</span>,
-  <span class="tp">SerializedBaseError</span>,
-  <span class="tp">ErrorMetadata</span>,
-  <span class="tp">ErrorMetadataValue</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="cm">// Import domain errors</span>
-<span class="kw">import</span> {
-  <span class="tp">AuthenticationError</span>,
-  <span class="tp">AuthorizationError</span>,
-  <span class="tp">NotFoundError</span>,
-  <span class="tp">ValidationError</span>,
-  <span class="tp">ConflictError</span>,
-  <span class="tp">RateLimitError</span>,
-  <span class="tp">ApplicationError</span>,
-  <span class="tp">DomainError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="cm">// Import infrastructure errors</span>
-<span class="kw">import</span> {
-  <span class="tp">DatabaseError</span>,
-  <span class="tp">StorageError</span>,
-  <span class="tp">HttpError</span>,
-  <span class="tp">NetworkError</span>,
-  <span class="tp">ServiceError</span>,
-  <span class="tp">ContainerError</span>,
-  <span class="tp">CacheError</span>,
-  <span class="tp">MiddlewareError</span>,
-  <span class="tp">AdapterError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="cm">// Import system errors</span>
-<span class="kw">import</span> {
-  <span class="tp">SystemError</span>,
-  <span class="tp">CryptoError</span>,
-  <span class="tp">RuntimeError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="cm">// Import utilities</span>
-<span class="kw">import</span> {
-  <span class="fn">isBaseError</span>,
-  <span class="fn">toBaseError</span>,
-  <span class="fn">getErrorMessage</span>,
-  <span class="fn">getRootCause</span>,
-  <span class="fn">tryCatch</span>,
-  <span class="fn">tryCatchAsync</span>,
-  <span class="tp">ErrorHandler</span>,
-  <span class="tp">ErrorSerializer</span>,
-  <span class="tp">ErrorMapperRegistry</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="cm">// Import convenience factories</span>
-<span class="kw">import</span> {
-  <span class="fn">invalidCredentialsError</span>,
-  <span class="fn">sessionExpiredError</span>,
-  <span class="fn">resourceNotFoundError</span>,
-  <span class="fn">entityNotFoundError</span>,
-  <span class="fn">alreadyExistsError</span>,
-  <span class="fn">permissionDeniedError</span>,
-  <span class="fn">retryAfterError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;</div>
+      <!-- EXPORT INDEX -->
+      <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/errors</code> exports from its package root at v1.0.0 &mdash; <strong>585</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <details class="border-2 border-black p-5 bg-white">
+          <summary class="font-bold cursor-pointer select-none">Show all 585 exports</summary>
+          <div class="mt-5">
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Classes <span class="text-black/40 font-normal">(66)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ApplicationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AuthenticationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AuthorizationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BadGatewayError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BaseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BodyParserError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConflictError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DomainError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DuplicateRouteParameterError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorSerializer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">GatewayTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpAdapterError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpBodyAbortedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpBodyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpBodyLimitError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpBodyParseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpClientAbortError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpClientError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpClientNetworkError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpClientTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpFormDataError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpFormDataLimitError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpFormDataParseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpResponseWriterError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpRouterError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpServerLifecycleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpServerStartError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpServerStopError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpStreamError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InternalServerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidContentLengthError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidHttpServerStateError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidRoutePatternError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LoggingError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MiddlewareError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MiddlewareNextCalledMultipleTimesError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MiddlewareTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleDependencyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLifecycleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLoadError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MultipartError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MultipartLimitError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MultipartParseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">NotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">NotImplementedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RateLimitError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RequestBodyTooLargeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ResponseAlreadySentError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RouteConflictError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RoutePatternError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeBootstrapError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeEnvironmentError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeManagerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeShutdownError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeStateError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ServiceUnavailableError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UnsupportedBodyTypeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UnsupportedResponseBodyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationError</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Functions <span class="text-black/40 font-normal">(118)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">accessDeniedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">alreadyExistsError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cacheAdapterNotConfiguredError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cacheConnectionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cacheDeserializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cacheInvalidKeyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cacheSerializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cacheTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">compareErrorSeverity</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createApplicationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createAuthenticationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createAuthorizationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createBodyParserError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConflictError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createDomainError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createErrorMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createHttpAdapterError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createHttpBodyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createHttpError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createHttpFormDataError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createHttpResponseWriterError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createHttpRouterError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createHttpServerLifecycleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createHttpStreamError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createLoggingError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createMiddlewareError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createModuleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createMultipartError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRateLimitError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRoutePatternError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRuntimeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createValidationIssue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">duplicateError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">entityNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">expiredTokenError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getErrorCategory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getErrorCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getErrorMetadataValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getErrorSeverity</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getErrorSeverityPriority</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getErrorStatusCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasErrorMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">invalidConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">invalidCredentialsError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">invalidDomainState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">invalidFieldIssue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">invalidTokenError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isAlertableSeverity</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isApplicationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isAuthenticationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isAuthorizationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isBaseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isBodyParserError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isCacheError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isClientErrorCategory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isConflictError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isDomainError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isErrorCategory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isErrorCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isErrorExposable</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isErrorMetadataValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isErrorSeverity</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isFailureSeverity</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isForbiddenMetadataKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHttpAdapterError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHttpBodyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHttpClientErrorStatus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHttpError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHttpFormDataError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHttpRedirectStatus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHttpResponseWriterError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHttpRouterError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHttpServerErrorStatus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHttpServerLifecycleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHttpStreamError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHttpSuccessStatus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isInfrastructureErrorCategory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isLoggingError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isMiddlewareError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isModuleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isMultipartError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isPublicErrorCategory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isRateLimitError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isRoutePatternError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isRuntimeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSecurityErrorCategory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSensitiveMetadataKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">mapUpstreamStatus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">mergeErrorMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">missingConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeErrorCategory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeErrorCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeErrorSeverity</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeUnknownToBaseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">omitErrorMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">permissionDeniedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">pickErrorMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">redactErrorMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">requiredFieldIssue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">resourceAccessDeniedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">resourceLockedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">resourceNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">retryAfterError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">routeNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sanitizeErrorMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">serializeErrorCause</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">serializeErrorMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sessionExpiredError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">stripUrlCredentials</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toBaseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">unsupportedDomainOperation</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Interfaces <span class="text-black/40 font-normal">(33)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ApplicationErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AuthenticationErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AuthorizationErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BaseErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BodyParserErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConflictErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DomainErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpAdapterErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpBodyErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpClientClientErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpFormDataErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpResponseWriterErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpRouterErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpServerErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpServerLifecycleErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpStreamErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LoggingErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MiddlewareErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MultipartErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">NotFoundErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RateLimitErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RedactErrorMetadataOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RoutePatternErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SanitizeErrorMetadataOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SerializedBaseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationIssue</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Type aliases <span class="text-black/40 font-normal">(2)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorMetadataPrimitive</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorMetadataValue</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Enums <span class="text-black/40 font-normal">(4)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CacheOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorCategory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorSeverity</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Constants <span class="text-black/40 font-normal">(5)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BASE_ERROR_BRAND</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_METADATA_DEPTH</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">REDACTED_METADATA_VALUE</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SENSITIVE_METADATA_KEY_PATTERN</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UNKNOWN_ERROR_MESSAGE</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Re-exported <span class="text-black/40 font-normal">(357)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIAuthenticationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIAuthorizationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIConflictError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIDuplicateOperationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIIdempotencyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIInternalError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APINotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIOperationNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIRateLimitError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APITimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIUnavailableError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIVersionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AdapterAlreadyRegisteredError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AdapterCapabilityMissingError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AdapterConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AdapterConnectionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AdapterDisposeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AdapterError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AdapterErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AdapterInitializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AdapterNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AdapterNotSupportedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AdapterOperationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AdapterTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BadRequestError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BrokenDocumentationLinkError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CircularDependencyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CircularReferenceError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ContainerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ContainerErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ContainerLifecycleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CronParseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CryptoOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DatabaseOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DeserializeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DocumentNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DocumentParseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DocumentValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DocumentationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DocumentationErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DocumentationVersionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DuplicateDocumentError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DuplicateEventDefinitionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DuplicateEventHandlerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DuplicateMessageHandlerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DuplicateRegistrationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorConstructor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorHandlerContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorHandlerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorHandlerResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorMapper</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorMapperContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorMapperPredicate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorMapperRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorMapping</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorMappingRule</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorReporter</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorReporterFailureHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorSerializerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventBusDisposedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventDefinitionNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventDeserializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventDispatchAbortedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventEmitterDisposedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventHandlerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventHandlerNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventMiddlewareError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventPublishError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventRegistryDisposedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventSerializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventSubscriptionClosedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EventTypeNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ExampleValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ExpectationFailedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ExternalServiceError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ExternalServiceErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">FailedDependencyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ForbiddenError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">GenerationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">GoneError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpClientErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpConflictError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HttpNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InternalErrorResponse</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidContentTypeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidDurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidEventError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidFrontmatterError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidHeaderError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidJobError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidMessageError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidNavigationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidScheduleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidSerializedDataError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobCancelledError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobDeserializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobDuplicateError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobMaxAttemptsError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobProcessingError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobSerializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobStalledError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">JobTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LengthRequiredError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleComponentError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleDependencyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleDisposedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleRollbackError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleStartError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleStateError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleStopError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LockedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageBusDisposedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageDeserializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageDispatchAbortedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageDispatchError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageHandlerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageHandlerNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageMiddlewareError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageSerializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageTypeNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MethodNotAllowedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">NetworkError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">NetworkErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">NormalizedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">NotAcceptableError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PayloadTooLargeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PluginAlreadyRegisteredError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PluginDependencyCycleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PluginDependencyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PluginDisposeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PluginError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PluginErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PluginInitializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PluginNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PluginRegistrationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PluginStartError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PluginStateError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PluginStopError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PluginTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PreconditionRequiredError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ProviderResolutionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PublicErrorHandlerResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PublicErrorResponse</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueueClosedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueueConnectionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueueDisposedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueueError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueueErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">QueueNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCAuthenticationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCCancelledError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCDeadlineExceededError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCDeserializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCDuplicateProcedureError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCForbiddenError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCInternalError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCInvalidRequestError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCProcedureNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCRateLimitedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCSerializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCTransportError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCUnavailableError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RPCValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RangeNotSatisfiableError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RegistrationNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RequestAbortedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RequestBodyTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RequestHeaderFieldsTooLargeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RequestTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ScheduleAlreadyExistsError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ScheduleNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerAlreadyStartedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerJobAlreadyExistsError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerJobCancelledError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerJobExecutionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerJobNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerJobTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerLockError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerNotStartedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerStoppedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchedulerStoreError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaEnumError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaLiteralError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaNumberError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaRequiredError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaStringError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaTypeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaUnionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaUnknownKeyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SerializationDepthError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SerializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SerializationErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SerializationPayloadTooLargeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SerializeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SerializerNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ServiceError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ServiceErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">StorageError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">StorageErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">StorageOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SystemError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SystemErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SystemOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TimeoutErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TimeoutOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TooEarlyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TooManyRequestsError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransformerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransformerNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">URITooLongError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UnauthorizedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UnprocessableEntityError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UnsupportedMediaTypeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UnsupportedProtocolError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UnsupportedSerializationFormatError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UpgradeRequiredError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">WorkerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">WorkerLifecycleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">WorkerNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">applyErrorMapping</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">connectionFailedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createAPIError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createAdapterError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createContainerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCryptoError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createDatabaseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createDocumentationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createErrorHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createErrorMapperRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createErrorMappingRule</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createErrorSerializer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createEventError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createEventHandlerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createExternalServiceError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createLifecycleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createMessageError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createMessageHandlerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createNetworkError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createPluginError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createQueueError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRPCError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createSchedulerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createSchemaError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createSerializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createServiceError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createStorageError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createSystemError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cryptoCipherError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cryptoHashError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cryptoKeyDerivationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cryptoKeyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cryptoSignatureError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">databaseConnectionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">databaseMigrationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">databaseQueryError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">databaseTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">databaseTransactionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">externalServiceTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">externalServiceUnavailable</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">externalServiceUnavailableError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getErrorDiagnostics</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getErrorMessage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getErrorName</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getErrorStack</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getRootBaseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getRootCause</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasErrorCategory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasErrorSeverity</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">internalSystemError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isAPIError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isAdapterError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isClientError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isContainerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isCryptoError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isDatabaseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isDocumentationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isErrorLike</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isEventError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isExposableError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isExternalServiceError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isHandledError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isLifecycleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isMessageError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isNetworkError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isOperationalError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isPluginError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isQueueError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isRPCError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSchedulerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSchemaError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSerializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isServerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isServiceError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isStorageError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSystemError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">lockTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">mapError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">mapErrorType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">mapNativeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">networkServiceUnavailableError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">networkTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeToBaseError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeUnknownError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">requestTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">serializeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">serializePublicError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">serviceInitializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">serviceOperationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">serviceTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">serviceUnavailableError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">storageDeleteError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">storageDownloadError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">storageNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">storageReadError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">storageUploadError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">storageWriteError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">systemInitializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">systemShutdownError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">systemStartupError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toEventError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toMessageError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toQueueError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toSerializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">tryCatch</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">tryCatchAsync</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withErrorContext</code></div>
+          </div>
+          </div>
+        </details>
       </section>
-
     </main>
 
     <!-- TABLE OF CONTENTS -->
     <aside class="doc-toc" aria-label="On this page">
       <div class="text-xs font-bold uppercase tracking-wider mb-4 text-black/40">On This Page</div>
+      <a href="#overview" class="toc-link">Overview</a>
       <a href="#installation" class="toc-link">Installation</a>
-      <a href="#what-it-does" class="toc-link">What It Does</a>
-      <a href="#architecture-position" class="toc-link">Where It Sits</a>
-      <a href="#dependencies" class="toc-link">Dependencies</a>
+      <a href="#quick-start" class="toc-link">Quick Start</a>
       <a href="#base-error" class="toc-link">BaseError</a>
-      <a href="#error-codes" class="toc-link">Error Codes</a>
-      <a href="#error-categories" class="toc-link">Error Categories</a>
-      <a href="#error-severity" class="toc-link">Error Severity</a>
-      <a href="#error-metadata" class="toc-link">Error Metadata</a>
-      <a href="#domain-errors" class="toc-link">Domain Errors</a>
-      <a href="#infrastructure-errors" class="toc-link">Infrastructure Errors</a>
-      <a href="#system-errors" class="toc-link">System Errors</a>
-      <a href="#subsystem-errors" class="toc-link">Subsystem Errors</a>
-      <a href="#error-utilities" class="toc-link">Error Utilities</a>
-      <a href="#testing" class="toc-link">Testing</a>
-      <a href="#full-example" class="toc-link">Full Example</a>
-      <a href="#connections" class="toc-link">Connections</a>
-      <a href="#version-compatibility" class="toc-link">Version Compat</a>
-      <a href="#improvements" class="toc-link">Improvements</a>
-      <a href="#quick-reference" class="toc-link">Quick Reference</a>
+      <a href="#codes-categories-severity" class="toc-link">Codes, Categories, Severity</a>
+      <a href="#ready-made-errors" class="toc-link">Ready-made Errors</a>
+      <a href="#custom-errors" class="toc-link">Writing Your Own Error</a>
+      <a href="#metadata" class="toc-link">Metadata</a>
+      <a href="#serializing" class="toc-link">Serializing</a>
+      <a href="#handling-unknown-errors" class="toc-link">Handling Unknown Errors</a>
+      <a href="#api-reference" class="toc-link">API Reference</a>
+      <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
+      <a href="#related" class="toc-link">Related Packages</a>
+          <a href="#export-index" class="toc-link">Complete Export Index</a>
     </aside>
 
   </div>
@@ -1420,5 +721,6 @@ registry.<span class="fn">register</span>(<span class="fn">mapErrorType</span>(<
   <script src="/js/docs.js"></script>
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 </body>
 </html>

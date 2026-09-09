@@ -1,6 +1,9 @@
 import type { ConfigValue } from "../configValue/configValue.core.js";
 
-import { isUnsafeConfigKey } from "../configValue/configValue.core.js";
+import {
+  defineConfigProperty,
+  readOwnConfigProperty,
+} from "../configValue/configValue.core.js";
 
 import type {
   ConfigSchema,
@@ -440,13 +443,45 @@ export function validateConfigValue(
 
   validateBuiltInRules(value, schema, validationContext, issues);
 
+  // An object schema carries `properties` / `additionalProperties`.
+  // Those were declared on ConfigObjectSchema but read nowhere in this
+  // function, so every nested object schema — including the ones used
+  // by ConfigResolver.resolve() and ConfigManager.resolve() — passed
+  // validation unconditionally. Delegate to validateConfigObject so
+  // nested constraints are actually enforced.
+  const objectSchema = schema as Partial<ConfigObjectSchema>;
+
+  let base: ConfigValue = value as ConfigValue;
+
+  if (
+    matchesConfigType(value, ConfigValueType.OBJECT) &&
+    (objectSchema.properties !== undefined ||
+      objectSchema.additionalProperties !== undefined)
+  ) {
+    const nested = validateConfigObject(
+      value as Readonly<Record<string, unknown>>,
+      {
+        type: ConfigValueType.OBJECT,
+        properties: objectSchema.properties ?? {},
+        additionalProperties: objectSchema.additionalProperties,
+      },
+      path,
+    );
+
+    issues.push(...nested.issues);
+
+    if (nested.value !== undefined) {
+      base = nested.value;
+    }
+  }
+
   if (schema.validate) {
-    const result = schema.validate(value as ConfigValue, validationContext);
+    const result = schema.validate(base, validationContext);
 
     appendCustomValidationResult(result, path, issues);
   }
 
-  let transformed: ConfigValue = value as ConfigValue;
+  let transformed: ConfigValue = base;
 
   const hasErrors = (): boolean =>
     issues.some((issue) => issue.severity === ConfigValidationSeverity.ERROR);
@@ -455,7 +490,7 @@ export function validateConfigValue(
   // them on invalid input would surface invalid values to callers.
   if (schema.transform && !hasErrors()) {
     try {
-      transformed = schema.transform(value as ConfigValue, validationContext);
+      transformed = schema.transform(base, validationContext);
     } catch (error) {
       issues.push(
         createConfigValidationIssue(
@@ -508,34 +543,31 @@ export function validateConfigObject(
   const result: Record<string, ConfigValue> = {};
 
   for (const [key, propertySchema] of Object.entries(schema.properties)) {
-    if (isUnsafeConfigKey(key)) {
-      continue;
-    }
-
     const propertyPath = `${path}.${key}`;
 
-    const propertyResult = validateConfigValue(value[key], propertySchema, {
-      path: propertyPath,
-      root: value,
-      parent: value,
-      key,
-    });
+    // Own-property read only: bracket access would walk the prototype
+    // chain, so a schema property named "constructor" or "toString"
+    // would validate an inherited function instead of reporting a
+    // missing value.
+    const propertyResult = validateConfigValue(
+      readOwnConfigProperty(value, key),
+      propertySchema,
+      {
+        path: propertyPath,
+        root: value,
+        parent: value,
+        key,
+      },
+    );
 
     issues.push(...propertyResult.issues);
 
     if (propertyResult.value !== undefined) {
-      result[key] = propertyResult.value;
+      defineConfigProperty(result, key, propertyResult.value);
     }
   }
 
   for (const [key, child] of Object.entries(value)) {
-    // Own "__proto__"/"constructor"/"prototype" keys (e.g. from
-    // JSON.parse of untrusted input) must never be copied onto the
-    // plain result object: assigning them would mutate its prototype.
-    if (isUnsafeConfigKey(key)) {
-      continue;
-    }
-
     if (Object.prototype.hasOwnProperty.call(schema.properties, key)) {
       continue;
     }
@@ -570,10 +602,14 @@ export function validateConfigObject(
       issues.push(...propertyResult.issues);
 
       if (propertyResult.value !== undefined) {
-        result[key] = propertyResult.value;
+        defineConfigProperty(result, key, propertyResult.value);
       }
     } else {
-      result[key] = child as ConfigValue;
+      // Own "__proto__"/"constructor"/"prototype" keys (e.g. from
+      // JSON.parse of untrusted input) are kept as own data
+      // properties: plain assignment would reach the inherited
+      // "__proto__" setter and mutate the result's prototype.
+      defineConfigProperty(result, key, child as ConfigValue);
     }
   }
 

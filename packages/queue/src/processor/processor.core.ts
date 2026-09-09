@@ -6,6 +6,8 @@ import type {
 
 import { JobError } from "@zudojs/errors";
 
+import { assertProcessor } from "./processor.type.js";
+
 /**
  * Creates a new ProcessorRegistry.
  */
@@ -19,6 +21,8 @@ export function createProcessorRegistry(): ProcessorRegistry {
       processor: Processor<TData, TResult>,
       options?: { description?: string },
     ): void {
+      assertProcessor(processor, jobName);
+
       if (processors.has(jobName)) {
         throw new JobError(
           `Processor already registered for job "${jobName}".`,

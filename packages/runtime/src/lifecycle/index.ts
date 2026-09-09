@@ -12,4 +12,5 @@ export type {
   ManagedModule,
   LifecycleManagerOptions,
   ModuleContextServices,
+  ModuleEventListener,
 } from "./lifecycle.type.js";

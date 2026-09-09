@@ -159,7 +159,19 @@ function sanitizeValue(
       ) {
         continue;
       }
-      result[key] = sanitizeValue(child, config, seen, depth + 1, maxDepth);
+      // `result[key] = …` does not create an own property for `__proto__`:
+      // it calls the inherited setter and replaces the result's prototype, so
+      // the attacker's fields resolve on the returned object while
+      // `Object.keys` shows nothing. That is exactly what happened whenever a
+      // caller set `preventPrototypePollution: false`, which is documented as
+      // "keep these keys as data", not "let them reassign a prototype".
+      // `defineProperty` always creates a real own property.
+      Object.defineProperty(result, key, {
+        value: sanitizeValue(child, config, seen, depth + 1, maxDepth),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
     }
     return result;
   } finally {

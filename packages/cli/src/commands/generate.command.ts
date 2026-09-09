@@ -22,6 +22,10 @@ import { generateModel } from "../generators/model/model.generator.js";
 import { generateDto } from "../generators/dto/dto.generator.js";
 import { generateValidator } from "../generators/validator/validator.generator.js";
 import { CLIGenerationError, CLIValidationError } from "../errors/index.js";
+import {
+  assertGeneratableName,
+  assertSafePathSegment,
+} from "../utils/utils.name.js";
 
 const VALID_SCHEMATICS = [
   "service",
@@ -46,9 +50,39 @@ interface GenerateOptions {
   readonly architecture?: string;
 }
 
+/**
+ * Resolves the directory a schematic is generated into.
+ *
+ * `moduleName` comes from `--module`, which was previously accepted,
+ * documented and then never read by any schematic. It is validated as a
+ * single safe path segment by the caller before it reaches here.
+ */
 function getBasePath(
   architecture: string | undefined,
   schematic: string,
+  moduleName?: string,
+  serviceName?: string,
+): string {
+  const root = getArchitectureRoot(architecture, schematic, serviceName);
+
+  if (moduleName !== undefined && schematic !== "module") {
+    return `${root}/modules/${moduleName}`;
+  }
+
+  return root;
+}
+
+/**
+ * Resolves the directory a schematic is generated into for an architecture.
+ *
+ * The microservice layout produced by `zudojs create` is
+ * `apps/gateway/src` plus `apps/services/<name>/src`; the previous
+ * `apps/default` root matched no directory the scaffolder ever writes.
+ */
+function getArchitectureRoot(
+  architecture: string | undefined,
+  schematic: string,
+  serviceName?: string,
 ): string {
   switch (architecture) {
     case "modular-monolith":
@@ -59,9 +93,14 @@ function getBasePath(
 
     case "microservice":
       if (schematic === "service") {
-        return "apps";
+        // A new service is a new app in the workspace.
+        return "apps/services";
       }
-      return "apps/default";
+      // `--service <name>` selects which app the schematic belongs to.
+      // Without it the gateway app — the one app always generated — is used.
+      return serviceName !== undefined
+        ? `apps/services/${serviceName}/src`
+        : "apps/gateway/src";
 
     case "monolith":
     default:
@@ -131,6 +170,20 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
     throw new CLIValidationError("Resource name is required.");
   }
 
+  // Reject names that normalize to nothing (`zudojs generate event "..."`
+  // wrote src/events/.event.ts with an anonymous export), and reject option
+  // values that are interpolated verbatim into a generated path. `--service ..`
+  // used to place files outside the schematic's base directory.
+  assertGeneratableName(name, "resource name");
+
+  if (service !== undefined) {
+    assertSafePathSegment(service, "--service");
+  }
+
+  if (moduleName !== undefined) {
+    assertSafePathSegment(moduleName, "--module");
+  }
+
   const cwd = context.cwd;
   const architecture = readZudojsArchitecture(cwd);
 
@@ -138,7 +191,8 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
     context.logger.info(`Detected architecture: ${architecture}`);
   } else {
     context.logger.warn(
-      "No zudojs.config.ts found. Run `zudojs create` first to scaffold a Zudojs project.",
+      "No Zudojs project detected (no zudojs.config.ts, .zudojs/manifest.json " +
+        "or `zudojs` field in package.json). Run `zudojs create` first.",
     );
   }
 
@@ -185,8 +239,20 @@ async function runSchematic(
   cwd: string,
 ): Promise<string[]> {
   try {
-    const basePath = getBasePath(options.architecture, schematic);
+    const basePath = getBasePath(
+      options.architecture,
+      schematic,
+      options.module,
+      options.service,
+    );
     const dryRun = options.dryRun;
+
+    // In the microservice layout `--service` selected the owning app and is
+    // already part of basePath, so it must not nest the schematic again.
+    const cqrsService =
+      options.architecture === "microservice"
+        ? undefined
+        : (options.service ?? "default");
 
     switch (schematic) {
       case "service":
@@ -200,13 +266,13 @@ async function runSchematic(
 
       case "command":
         return await generateCommand(
-          { name, service: options.service ?? "default", basePath, dryRun },
+          { name, ...(cqrsService ? { service: cqrsService } : {}), basePath, dryRun },
           cwd,
         );
 
       case "query":
         return await generateQuery(
-          { name, service: options.service ?? "default", basePath, dryRun },
+          { name, ...(cqrsService ? { service: cqrsService } : {}), basePath, dryRun },
           cwd,
         );
 

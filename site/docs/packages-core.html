@@ -85,6 +85,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -140,7 +141,7 @@
 
       <!-- HEADER -->
             <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/core</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Application lifecycle, context propagation, runtime orchestrator, and module system.
@@ -156,699 +157,502 @@
       <section id="overview" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OVERVIEW</h2>
         <p class="mb-4">
-          <code class="bg-gray-100 px-1 font-bold">@zudojs/core</code> is the heart of the Zudo framework. It ties together the container, configuration, logging, modules, and runtime into a cohesive application lifecycle. Every Zudo application starts and stops through this package.
+          An application is made of parts: a database connection, an HTTP server, a cache. Each must be set up in the right order and torn down in reverse when the process stops. <code class="bg-gray-100 px-1 font-bold">@zudojs/core</code> does that ordering for you.
         </p>
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-          <div class="border-4 border-black p-3 bg-zudo-red text-white text-center">
-            <div class="text-2xl font-black">8</div>
-            <div class="text-xs font-bold">SUBMODULES</div>
+        <p class="mb-4">
+          You describe each part as a <em>module</em>: a plain object with an <code class="bg-gray-100 px-1 font-bold">id</code>, a <code class="bg-gray-100 px-1 font-bold">name</code>, and optional hooks such as <code class="bg-gray-100 px-1 font-bold">onInitialize</code>. You hand the modules to <code class="bg-gray-100 px-1 font-bold">createApplication()</code>, which builds a <em>runtime</em> that starts them, keeps them running, and stops them cleanly on Ctrl+C.
+        </p>
+        <div class="grid md:grid-cols-2 gap-4 mb-4">
+          <div class="border-4 border-black p-4">
+            <div class="font-black text-sm mb-2">WHEN YOU NEED IT</div>
+            <ul class="text-sm space-y-1">
+              <li>• More than one thing to start and stop.</li>
+              <li>• Module B must wait until module A is ready.</li>
+              <li>• Ctrl+C or SIGTERM should shut everything down in order.</li>
+            </ul>
           </div>
-          <div class="border-4 border-black p-3 bg-zudo-blue text-white text-center">
-            <div class="text-2xl font-black">6</div>
-            <div class="text-xs font-bold">ERROR TYPES</div>
+          <div class="border-4 border-black p-4">
+            <div class="font-black text-sm mb-2">WHEN YOU DON'T</div>
+            <ul class="text-sm space-y-1">
+              <li>• A one-file script that runs and exits.</li>
+              <li>• You only need a container, logger, or config: see <a href="#related" class="underline">Related</a> for the smaller packages.</li>
+            </ul>
           </div>
-          <div class="border-4 border-black p-3 bg-zudo-yellow text-center">
-            <div class="text-2xl font-black">10</div>
-            <div class="text-xs font-bold">MODULE STATES</div>
-          </div>
-          <div class="border-4 border-black p-3 bg-zudo-green text-black text-center">
-            <div class="text-2xl font-black">6</div>
-            <div class="text-xs font-bold">RUNTIME STATES</div>
-          </div>
-        </div>
-        <h3 class="text-xl font-black mt-6 mb-3">Submodule Architecture</h3>
-        <div class="code-block">
-<span class="cm">// @zudojs/core re-exports 8 submodules</span>
-contracts   <span class="cm">← Adapter, Handler, Disposable interfaces</span>
-errors      <span class="cm">← FrameworkError and core exception types</span>
-logging     <span class="cm">← Logger interface, BaseLogger, ConsoleLogger</span>
-lifecycle   <span class="cm">← LifecycleManager, hooks, scopes</span>
-context     <span class="cm">← ExecutionContext, ContextProvider, snapshots</span>
-configuration<span class="cm"> ← ConfigurationManager, sources, schemas</span>
-modules     <span class="cm">← Module system (definition, registry, loader, lifecycle, deps)</span>
-runtime     <span class="cm">← Runtime state machine, bootstrap, shutdown, environment</span>
         </div>
       </section>
 
       <!-- ==================== INSTALLATION ==================== -->
       <section id="installation" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-        <div class="code-block">
-npm install @zudojs/core
+        <p class="mb-4">Install the package. Its dependencies <code class="bg-gray-100 px-1 font-bold">@zudojs/errors</code> and <code class="bg-gray-100 px-1 font-bold">@zudojs/constants</code> come with it. Everything is imported from the package root.</p>
+        <div class="code-block mb-4">$ npm install @zudojs/core</div>
+        <div class="callout callout-note mb-6">
+          <p class="text-sm">These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest @zudojs release.</p>
+        </div>
+      </section>
 
-<span class="cm">// Import everything</span>
-<span class="kw">import</span> { Application, createRuntime } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+      <!-- ==================== QUICK START ==================== -->
+      <section id="quick-start" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK START</h2>
+        <p class="mb-4">This defines one module, builds an application around it, starts it, and shuts it down. Save it as <code class="bg-gray-100 px-1 font-bold">app.ts</code> and run <code class="bg-gray-100 px-1 font-bold">npx tsx app.ts</code>.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { createApplication, defineModule } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+<span class="kw">import type</span> { Module } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
 
-<span class="cm">// Import specific submodules</span>
-<span class="kw">import</span> { Logger, LogLevel } <span class="kw">from</span> <span class="str">"@zudojs/core/logging"</span>;
-<span class="kw">import</span> { Module, BaseModule } <span class="kw">from</span> <span class="str">"@zudojs/core/modules"</span>;
-<span class="kw">import</span> { Runtime, RuntimeState } <span class="kw">from</span> <span class="str">"@zudojs/core/runtime"</span>;
+<span class="kw">const</span> users = <span class="fn">defineModule</span>({
+  id: <span class="str">"users"</span>,
+  name: <span class="str">"Users"</span>,
+  factory: (): <span class="tp">Module</span> =&gt; ({
+    id: <span class="str">"users"</span>,
+    name: <span class="str">"Users"</span>,
+    onInitialize: (context) =&gt; { context.logger.<span class="fn">info</span>(<span class="str">"users: initialized"</span>); },
+    onShutdown: (context) =&gt; { context.logger.<span class="fn">info</span>(<span class="str">"users: shutting down"</span>); },
+  }),
+});
+
+<span class="kw">const</span> app = <span class="kw">await</span> <span class="fn">createApplication</span>({
+  modules: [users],
+  runtime: { name: <span class="str">"my-service"</span>, mode: <span class="str">"development"</span> },
+});
+
+<span class="kw">await</span> app.<span class="fn">start</span>();
+console.<span class="fn">log</span>(app.state);   <span class="cmt">// "running"</span>
+<span class="kw">await</span> app.<span class="fn">shutdown</span>();
+console.<span class="fn">log</span>(app.state);   <span class="cmt">// "stopped"</span></div>
+        <p class="mb-4">
+          <strong>What you should see.</strong> The default logger prints one JSON line per call. Around your two <code class="bg-gray-100 px-1 font-bold">console.log</code> lines you also get the runtime's own progress lines. Yours look like this (the id is a random UUID):
+        </p>
+        <div class="code-block mb-4">{"level":"info","message":"users: initialized","timestamp":"2026-09-09T10:00:00.000Z","context":{"executionId":"my-service-3f2b1c9e-7a4d-4e8b-9c1f-2d5a6b7c8d9e","runtimeId":"my-service-3f2b1c9e-7a4d-4e8b-9c1f-2d5a6b7c8d9e","moduleId":"users","module":"Users"}}
+running
+{"level":"info","message":"users: shutting down","timestamp":"2026-09-09T10:00:00.010Z","context":{"executionId":"my-service-3f2b1c9e-7a4d-4e8b-9c1f-2d5a6b7c8d9e","runtimeId":"my-service-3f2b1c9e-7a4d-4e8b-9c1f-2d5a6b7c8d9e","moduleId":"users","module":"Users"}}
+stopped</div>
+      </section>
+
+      <!-- ==================== MODULES ==================== -->
+      <section id="modules" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MODULES</h2>
+        <p class="mb-4">
+          A <em>module definition</em> (from <code class="bg-gray-100 px-1 font-bold">defineModule</code>) describes a module and holds a <code class="bg-gray-100 px-1 font-bold">factory</code> that creates the real module object. The definition is registered once; the factory runs on every start, so a restart gets fresh instances.
+        </p>
+        <p class="mb-4">A module may implement any of four hooks. Only these names are called, in this order:</p>
+        <div class="overflow-x-auto mb-4">
+        <table class="doc-table">
+          <thead><tr><th>Hook</th><th>When it runs</th><th>Typical work</th></tr></thead>
+          <tbody>
+            <tr><td><code>onInitialize(context)</code></td><td>On start, dependencies first</td><td>Open connections</td></tr>
+            <tr><td><code>onReady(context)</code></td><td>After every module initialized</td><td>Start listening or polling</td></tr>
+            <tr><td><code>onShutdown(context)</code></td><td>On stop, dependents first</td><td>Stop accepting work</td></tr>
+            <tr><td><code>onDestroy(context)</code></td><td>After every module shut down</td><td>Close connections</td></tr>
+          </tbody>
+        </table>
+        </div>
+
+        <h3 class="text-xl font-black mt-6 mb-3">Dependencies and the context</h3>
+        <p class="mb-4">
+          List the ids that must be ready first in <code class="bg-gray-100 px-1 font-bold">dependencies</code>. The runtime sorts modules accordingly, and a module may only look at the modules it declared, through <code class="bg-gray-100 px-1 font-bold">context.getModuleContext(id)</code>. Here <code class="bg-gray-100 px-1 font-bold">orders</code> depends on <code class="bg-gray-100 px-1 font-bold">users</code> and reads its name.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> { createApplication, defineModule } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+<span class="kw">import type</span> { Module } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">const</span> users = <span class="fn">defineModule</span>({
+  id: <span class="str">"users"</span>,
+  name: <span class="str">"Users"</span>,
+  factory: (): <span class="tp">Module</span> =&gt; ({ id: <span class="str">"users"</span>, name: <span class="str">"Users"</span> }),
+});
+
+<span class="kw">const</span> orders = <span class="fn">defineModule</span>({
+  id: <span class="str">"orders"</span>,
+  name: <span class="str">"Orders"</span>,
+  dependencies: [<span class="str">"users"</span>],
+  factory: (): <span class="tp">Module</span> =&gt; ({
+    id: <span class="str">"orders"</span>,
+    name: <span class="str">"Orders"</span>,
+    dependencies: [<span class="str">"users"</span>],
+    onInitialize: (context) =&gt; {
+      console.<span class="fn">log</span>(context.<span class="fn">getModuleContext</span>(<span class="str">"users"</span>)?.name);   <span class="cmt">// "Users"</span>
+      console.<span class="fn">log</span>(context.<span class="fn">getConfig</span>(<span class="str">"orders.limit"</span>));            <span class="cmt">// undefined (no config yet)</span>
+    },
+  }),
+});
+
+<span class="kw">const</span> app = <span class="kw">await</span> <span class="fn">createApplication</span>({ modules: [orders, users], logger: { level: <span class="str">"warn"</span> } });
+<span class="kw">await</span> app.<span class="fn">start</span>();
+<span class="kw">await</span> app.<span class="fn">shutdown</span>();</div>
+        <p class="mb-4">
+          Listing order does not matter; <code class="bg-gray-100 px-1 font-bold">users</code> still initializes first. A dependency that was never registered makes <code class="bg-gray-100 px-1 font-bold">start()</code> throw <code class="bg-gray-100 px-1 font-bold">MissingModuleDependencyError</code>; a cycle throws <code class="bg-gray-100 px-1 font-bold">CircularModuleDependencyError</code>.
+        </p>
+        <p class="mb-4">Every hook receives a <code class="bg-gray-100 px-1 font-bold">ModuleContext</code>:</p>
+        <div class="overflow-x-auto mb-4">
+        <table class="doc-table">
+          <thead><tr><th>Member</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><code>id</code>, <code>name</code>, <code>options</code></td><td>The module's identity and the <code>options</code> from its definition</td></tr>
+            <tr><td><code>logger</code></td><td>Logger that tags every line with the module id</td></tr>
+            <tr><td><code>getConfig(path)</code>, <code>requireConfig(path)</code></td><td>Read a config value by dotted path; <code>require</code> throws if missing</td></tr>
+            <tr><td><code>getModuleContext(id)</code>, <code>hasModule(id)</code></td><td>Reach a declared dependency; undeclared ids throw / return <code>false</code></td></tr>
+            <tr><td><code>application</code></td><td><code>ApplicationContext</code>: <code>getContainer()</code>, <code>getConfiguration()</code>, <code>getModules()</code>, <code>getLogger()</code></td></tr>
+          </tbody>
+        </table>
+        </div>
+        <div class="callout callout-warning mb-4">
+          <p class="text-sm font-bold mb-1">COMMON MISTAKE</p>
+          <p class="text-sm">Hooks named <code>initialize</code>, <code>start</code>, <code>stop</code>, or <code>setup</code> on a module are silently ignored. Prefer a class? Extend <code>BaseModule</code> and pass <code>factory: () =&gt; new MyModule()</code>.</p>
         </div>
       </section>
 
       <!-- ==================== APPLICATION ==================== -->
       <section id="application" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">APPLICATION</h2>
-        <p class="mb-4">The top-level entry point. Manages the full application lifecycle from creation to disposal.</p>
-
-        <h3 class="text-xl font-black mt-6 mb-3">ApplicationState</h3>
-        <div class="code-block">
-<span class="kw">type</span> <span class="tp">ApplicationState</span> =
-  | <span class="str">"created"</span>       <span class="cm">// just instantiated</span>
-  | <span class="str">"initializing"</span>  <span class="cm">// lifecycle.initialize() in progress</span>
-  | <span class="str">"initialized"</span>   <span class="cm">// ready to start</span>
-  | <span class="str">"starting"</span>      <span class="cm">// lifecycle.start() in progress</span>
-  | <span class="str">"running"</span>       <span class="cm">// fully operational</span>
-  | <span class="str">"stopping"</span>      <span class="cm">// lifecycle.stop() in progress</span>
-  | <span class="str">"stopped"</span>       <span class="cm">// gracefully shut down</span>
-  | <span class="str">"failed"</span>;       <span class="cm">// unrecoverable error</span>
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Creating & Using an Application</h3>
-        <div class="code-block">
-<span class="kw">import</span> { Application } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
-
-<span class="cm">// Static factory — creates and initializes</span>
-<span class="kw">const</span> app = <span class="kw">await</span> Application.<span class="fn">CREATE</span>({
-  context: applicationContext,
-  lifecycle: lifecycleManager,
-  runtime: runtime,
-});
-
-console.<span class="fn">log</span>(app.state);  <span class="cm">// "initialized"</span>
-
-<span class="cm">// Start the application</span>
-<span class="kw">await</span> app.<span class="fn">start</span>();
-console.<span class="fn">log</span>(app.state);  <span class="cm">// "running"</span>
-
-<span class="cm">// Stop gracefully</span>
-<span class="kw">await</span> app.<span class="fn">stop</span>();
-console.<span class="fn">log</span>(app.state);  <span class="cm">// "stopped"</span>
-
-<span class="cm">// Or use shutdown (calls stop internally)</span>
-<span class="kw">await</span> app.<span class="fn">shutdown</span>();
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">State Transitions</h3>
-        <div class="border-4 border-black">
-        <table class="w-full text-smw-full text-sm">
-          <thead class="bg-black text-white"><tr><th class="p-3 text-left">Current State</th><th class="p-3 text-left">Allowed Transitions</th></tr></thead>
+        <p class="mb-4">
+          <code class="bg-gray-100 px-1 font-bold">createApplication(options)</code> wires the container, configuration, logger, module registry and runtime, and returns an <code class="bg-gray-100 px-1 font-bold">Application</code> in state <code class="bg-gray-100 px-1 font-bold">"initialized"</code>.
+        </p>
+        <div class="overflow-x-auto mb-4">
+        <table class="doc-table">
+          <thead><tr><th>Option</th><th>What it does</th><th>Default</th></tr></thead>
           <tbody>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold">created</td><td class="px-4 py-2">→ initializing</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold">initializing</td><td class="px-4 py-2">→ initialized, failed</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold">initialized</td><td class="px-4 py-2">→ starting</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold">starting</td><td class="px-4 py-2">→ running, failed</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold">running</td><td class="px-4 py-2">→ stopping</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold">stopping</td><td class="px-4 py-2">→ stopped, failed</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold">stopped</td><td class="px-4 py-2">—</td></tr>
-            <tr class="bg-gray-50"><td class="px-4 py-2 font-bold">failed</td><td class="px-4 py-2">→ stopping</td></tr>
+            <tr><td><code>modules</code></td><td>Module definitions to register</td><td><code>[]</code></td></tr>
+            <tr><td><code>runtime</code></td><td><code>RuntimeOptions</code>: name, mode, signals, timeouts (see <a href="#runtime" class="underline">Runtime</a>)</td><td><code>{}</code></td></tr>
+            <tr><td><code>participants</code></td><td>App-level start/stop hooks that are not modules (see <a href="#lifecycle" class="underline">Lifecycle</a>)</td><td><code>[]</code></td></tr>
+            <tr><td><code>logger</code></td><td>A <code>Logger</code>, or <code>LoggerOptions</code> for the built-in <code>ConsoleLogger</code></td><td>JSON, level <code>info</code></td></tr>
+            <tr><td><code>configuration</code>, <code>container</code></td><td>Your own <code>ConfigurationManager</code> / <code>Container</code></td><td>Created empty</td></tr>
+            <tr><td><code>autoStart</code></td><td>Call <code>start()</code> before returning</td><td><code>false</code></td></tr>
           </tbody>
         </table>
         </div>
-      </section>
+        <p class="mb-4">
+          <code class="bg-gray-100 px-1 font-bold">stop()</code> shuts modules down but lets you <code class="bg-gray-100 px-1 font-bold">start()</code> again with fresh instances. <code class="bg-gray-100 px-1 font-bold">shutdown()</code> stops and releases everything; after it the app cannot start again. This restarts once, then shuts down.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> { createApplication, defineModule } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+<span class="kw">import type</span> { Module } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
 
-      <!-- ==================== CONTRACTS ==================== -->
-      <section id="contracts" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONTRACTS</h2>
-        <p class="mb-4">Core interfaces that define the boundaries between Zudo and external systems.</p>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Adapter</h3>
-        <div class="code-block">
-<span class="kw">interface</span> <span class="tp">Adapter</span>&lt;TOptions = unknown&gt; <span class="kw">extends</span> <span class="tp">Disposable</span> {
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="kw">readonly</span> options?: TOptions;
-  <span class="fn">initialize</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt; | <span class="tp">void</span>;
-  <span class="fn">start</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt; | <span class="tp">void</span>;
-  <span class="fn">stop</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt; | <span class="tp">void</span>;
-}
-        </div>
-        <p class="text-sm text-gray-600 mb-4">Examples: Fastify adapter, Prisma adapter, Redis adapter, Kafka adapter.</p>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Handler</h3>
-        <div class="code-block">
-<span class="kw">interface</span> <span class="tp">Handler</span>&lt;TInput = unknown, TOutput = unknown&gt; {
-  <span class="fn">handle</span>(input: TInput): <span class="tp">Promise</span>&lt;TOutput&gt; | TOutput;
-}
-
-<span class="cm">// Convert a function into a Handler</span>
-<span class="kw">const</span> handler = <span class="fn">createHandler</span>(<span class="kw">async</span> (req) =&gt; {
-  <span class="kw">return</span> { status: <span class="num">200</span>, body: <span class="str">"ok"</span> };
+<span class="kw">const</span> cache = <span class="fn">defineModule</span>({
+  id: <span class="str">"cache"</span>,
+  name: <span class="str">"Cache"</span>,
+  factory: (): <span class="tp">Module</span> =&gt; ({ id: <span class="str">"cache"</span>, name: <span class="str">"Cache"</span> }),
 });
-        </div>
+<span class="kw">const</span> app = <span class="kw">await</span> <span class="fn">createApplication</span>({ modules: [cache], logger: { level: <span class="str">"warn"</span> } });
 
-        <h3 class="text-xl font-black mt-6 mb-3">Disposable</h3>
-        <div class="code-block">
-<span class="kw">interface</span> <span class="tp">Disposable</span> {
-  <span class="fn">dispose</span>(): <span class="tp">void</span>;
-}
-        </div>
-      </section>
-
-      <!-- ==================== LOGGING ==================== -->
-      <section id="logging" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">LOGGING</h2>
-        <p class="mb-4">Structured logging interface with child context support.</p>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Logger Interface</h3>
-        <div class="code-block">
-<span class="kw">type</span> <span class="tp">LogLevel</span> = <span class="str">"trace"</span> | <span class="str">"debug"</span> | <span class="str">"info"</span> | <span class="str">"warn"</span> | <span class="str">"error"</span> | <span class="str">"fatal"</span>;
-
-<span class="kw">interface</span> <span class="tp">Logger</span> {
-  <span class="fn">trace</span>(message: <span class="tp">string</span>, context?: <span class="tp">LogContext</span>): <span class="tp">void</span>;
-  <span class="fn">debug</span>(message: <span class="tp">string</span>, context?: <span class="tp">LogContext</span>): <span class="tp">void</span>;
-  <span class="fn">INFO</span>(message: <span class="tp">string</span>, context?: <span class="tp">LogContext</span>): <span class="tp">void</span>;
-  <span class="fn">warn</span>(message: <span class="tp">string</span>, context?: <span class="tp">LogContext</span>): <span class="tp">void</span>;
-  <span class="fn">error</span>(message: <span class="tp">string</span>, error?: <span class="tp">unknown</span>, context?: <span class="tp">LogContext</span>): <span class="tp">void</span>;
-  <span class="fn">fatal</span>(message: <span class="tp">string</span>, error?: <span class="tp">unknown</span>, context?: <span class="tp">LogContext</span>): <span class="tp">void</span>;
-  <span class="fn">child</span>(context: <span class="tp">LogContext</span>): <span class="tp">Logger</span>;
-}
-
-<span class="kw">type</span> <span class="tp">LogContext</span> = <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;;
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">BaseLogger (Abstract)</h3>
-        <div class="code-block">
-<span class="cm">// Extend BaseLogger to create custom transports</span>
-<span class="kw">class</span> <span class="tp">ConsoleLogger</span> <span class="kw">extends</span> <span class="tp">BaseLogger</span> {
-  <span class="kw">protected</span> <span class="fn">write</span>(level: <span class="tp">LogLevel</span>, msg: <span class="tp">string</span>, ctx?: <span class="tp">LogContext</span>, err?: <span class="tp">unknown</span>): <span class="tp">void</span> {
-    console[level](<span class="str">`[${level}]`</span>, msg, ctx ?? {}, err ?? <span class="str">""</span>);
-  }
-
-  <span class="kw">protected</span> <span class="fn">createChild</span>(context: <span class="tp">LogContext</span>): <span class="tp">Logger</span> {
-    <span class="kw">return new</span> <span class="fn">ConsoleLogger</span>(context);
-  }
-}
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">LogEntry</h3>
-        <div class="code-block">
-<span class="kw">interface</span> <span class="tp">LogEntry</span> {
-  <span class="kw">readonly</span> level: <span class="tp">LogLevel</span>;
-  <span class="kw">readonly</span> message: <span class="tp">string</span>;
-  <span class="kw">readonly</span> context?: <span class="tp">LogContext</span>;
-  <span class="kw">readonly</span> timestamp: <span class="tp">Date</span>;
-  <span class="kw">readonly</span> error?: <span class="tp">unknown</span>;
-}
-        </div>
-      </section>
-
-      <!-- ==================== CONTEXT ==================== -->
-      <section id="context" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">EXECUTION CONTEXT</h2>
-        <p class="mb-4">Propagates request-scoped data through async call chains using <code class="bg-gray-100 px-1 font-bold">AsyncLocalStorage</code>.</p>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Context Types</h3>
-        <div class="code-block">
-<span class="kw">type</span> <span class="tp">ContextType</span> =
-  | <span class="str">"http"</span> | <span class="str">"rpc"</span> | <span class="str">"message"</span> | <span class="str">"job"</span> | <span class="str">"cli"</span> | <span class="str">"worker"</span> | <span class="str">"unknown"</span>;
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Creating & Using Context</h3>
-        <div class="code-block">
-<span class="kw">import</span> { createContext, ContextProvider } <span class="kw">from</span> <span class="str">"@zudojs/core/context"</span>;
-
-<span class="cm">// Create a context for an HTTP request</span>
-<span class="kw">const</span> ctx = <span class="fn">createContext</span>({
-  application: appContext,
-  type: <span class="str">"http"</span>,
-  id: <span class="str">"req_abc123"</span>,  <span class="cm">// optional — auto-generated UUID if omitted</span>
-});
-
-console.<span class="fn">log</span>(ctx.<span class="fn">getId</span>());     <span class="cm">// "req_abc123"</span>
-console.<span class="fn">log</span>(ctx.<span class="fn">getType</span>());   <span class="cm">// "http"</span>
-
-<span class="cm">// Store request-scoped values</span>
-ctx.<span class="fn">set</span>(<span class="str">"userId"</span>, <span class="str">"usr_123"</span>);
-<span class="kw">const</span> userId = ctx.<span class="fn">get</span>&lt;<span class="tp">string</span>&gt;(<span class="str">"userId"</span>);  <span class="cm">// "usr_123"</span>
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">ContextProvider</h3>
-        <div class="code-block">
-<span class="kw">import</span> { createContextProvider } <span class="kw">from</span> <span class="str">"@zudojs/core/context"</span>;
-
-<span class="kw">const</span> provider = <span class="fn">createContextProvider</span>();
-
-<span class="cm">// Run code within a context</span>
-provider.<span class="fn">run</span>(ctx, () =&gt; {
-  <span class="cm">// Context is available here</span>
-  <span class="kw">const</span> current = provider.<span class="fn">require</span>();
-  console.<span class="fn">log</span>(current.<span class="fn">getId</span>());
-});
-
-<span class="cm">// Check if context is active</span>
-provider.<span class="fn">has</span>()  <span class="cm">// false (outside run)</span>
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Context Snapshot</h3>
-        <div class="code-block">
-<span class="cm">// Capture and restore context state</span>
-<span class="kw">import</span> { createSnapshot } <span class="kw">from</span> <span class="str">"@zudojs/core/context"</span>;
-
-<span class="kw">const</span> snapshot = <span class="fn">createSnapshot</span>(ctx);
-<span class="cm">// Later... restore the snapshot</span>
-        </div>
+<span class="kw">await</span> app.<span class="fn">start</span>();
+<span class="kw">await</span> app.<span class="fn">stop</span>();
+console.<span class="fn">log</span>(app.state);                                           <span class="cmt">// "stopped"</span>
+<span class="kw">await</span> app.<span class="fn">start</span>();                                                <span class="cmt">// new runtime</span>
+console.<span class="fn">log</span>(app.applicationRuntime?.<span class="fn">requireModule</span>(<span class="str">"cache"</span>).name); <span class="cmt">// "Cache"</span>
+<span class="kw">await</span> app.<span class="fn">shutdown</span>();</div>
+        <p class="mb-4">
+          <code class="bg-gray-100 px-1 font-bold">app.state</code> is one of <code class="bg-gray-100 px-1 font-bold">created</code>, <code class="bg-gray-100 px-1 font-bold">initializing</code>, <code class="bg-gray-100 px-1 font-bold">initialized</code>, <code class="bg-gray-100 px-1 font-bold">starting</code>, <code class="bg-gray-100 px-1 font-bold">running</code>, <code class="bg-gray-100 px-1 font-bold">stopping</code>, <code class="bg-gray-100 px-1 font-bold">stopped</code>, <code class="bg-gray-100 px-1 font-bold">failed</code>. <code class="bg-gray-100 px-1 font-bold">start()</code> while running is a no-op; from <code class="bg-gray-100 px-1 font-bold">failed</code> it throws <code class="bg-gray-100 px-1 font-bold">InvalidStateError</code>. <code class="bg-gray-100 px-1 font-bold">app.applicationRuntime</code> is the current runtime; <code class="bg-gray-100 px-1 font-bold">app.applicationContext</code> holds the shared services.
+        </p>
       </section>
 
       <!-- ==================== LIFECYCLE ==================== -->
       <section id="lifecycle" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">LIFECYCLE</h2>
-        <p class="mb-4">State machine for managing component lifetimes with hooks and dependency ordering.</p>
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">LIFECYCLE PARTICIPANTS</h2>
+        <p class="mb-4">
+          A <em>lifecycle participant</em> is something that must start before any module and stop after all of them, such as an HTTP server. It is a plain object with a <code class="bg-gray-100 px-1 font-bold">name</code> and any of <code class="bg-gray-100 px-1 font-bold">initialize</code>, <code class="bg-gray-100 px-1 font-bold">start</code>, <code class="bg-gray-100 px-1 font-bold">stop</code>, <code class="bg-gray-100 px-1 font-bold">dispose</code>. Participants live on the app's <code class="bg-gray-100 px-1 font-bold">Lifecycle</code>; modules live in the runtime. This records the order.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> { createApplication, defineModule } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+<span class="kw">import type</span> { Module } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
 
-        <h3 class="text-xl font-black mt-6 mb-3">Lifecycle Phases</h3>
-        <div class="border-4 border-black">
-        <table class="w-full text-smw-full text-sm mb-4">
-          <thead class="bg-black text-white"><tr><th class="p-3 text-left">Phase</th><th class="p-3 text-left">Description</th></tr></thead>
-          <tbody>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold">initialize</td><td class="px-4 py-2">Component is being set up</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold">start</td><td class="px-4 py-2">Component begins accepting work</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold">ready</td><td class="px-4 py-2">Component is fully operational</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold">stop</td><td class="px-4 py-2">Component is shutting down</td></tr>
-            <tr class="bg-gray-50"><td class="px-4 py-2 font-bold">dispose</td><td class="px-4 py-2">Component is being destroyed</td></tr>
-          </tbody>
-        </table>
-        </div>
+<span class="kw">const</span> events: string[] = [];
+<span class="kw">const</span> app = <span class="kw">await</span> <span class="fn">createApplication</span>({
+  logger: { level: <span class="str">"warn"</span> },
+  participants: [{
+    name: <span class="str">"http"</span>,
+    start: () =&gt; { events.<span class="fn">push</span>(<span class="str">"http:start"</span>); },
+    stop: () =&gt; { events.<span class="fn">push</span>(<span class="str">"http:stop"</span>); },
+  }],
+  modules: [<span class="fn">defineModule</span>({
+    id: <span class="str">"users"</span>,
+    name: <span class="str">"Users"</span>,
+    factory: (): <span class="tp">Module</span> =&gt; ({
+      id: <span class="str">"users"</span>,
+      name: <span class="str">"Users"</span>,
+      onInitialize: () =&gt; { events.<span class="fn">push</span>(<span class="str">"users:initialize"</span>); },
+      onShutdown: () =&gt; { events.<span class="fn">push</span>(<span class="str">"users:shutdown"</span>); },
+    }),
+  })],
+});
 
-        <h3 class="text-xl font-black mt-6 mb-3">LifecycleManager</h3>
-        <div class="code-block">
-<span class="cm">// The LifecycleManager orchestrates startup/shutdown order</span>
-<span class="kw">import</span> { LifecycleManager } <span class="kw">from</span> <span class="str">"@zudojs/core/lifecycle"</span>;
-
-<span class="cm">// Components register with the manager</span>
-manager.<span class="fn">register</span>(componentA);
-manager.<span class="fn">register</span>(componentB);
-
-<span class="cm">// Initialize in dependency order</span>
-<span class="kw">await</span> manager.<span class="fn">initialize</span>();
-
-<span class="cm">// Start in dependency order</span>
-<span class="kw">await</span> manager.<span class="fn">start</span>();
-
-<span class="cm">// Stop in reverse dependency order</span>
-<span class="kw">await</span> manager.<span class="fn">stop</span>();
-        </div>
+<span class="kw">await</span> app.<span class="fn">start</span>();
+<span class="kw">await</span> app.<span class="fn">shutdown</span>();
+console.<span class="fn">log</span>(events);   <span class="cmt">// [ "http:start", "users:initialize", "users:shutdown", "http:stop" ]</span></div>
+        <p class="mb-4">
+          <code class="bg-gray-100 px-1 font-bold">Lifecycle</code> also works alone: <code class="bg-gray-100 px-1 font-bold">new Lifecycle()</code>, <code class="bg-gray-100 px-1 font-bold">register(participant)</code>, then <code class="bg-gray-100 px-1 font-bold">initialize()</code>, <code class="bg-gray-100 px-1 font-bold">start()</code>, <code class="bg-gray-100 px-1 font-bold">stop()</code>, <code class="bg-gray-100 px-1 font-bold">dispose()</code>. Stop runs in reverse registration order and continues past a failing participant unless you pass <code class="bg-gray-100 px-1 font-bold">{ continueOnShutdownError: false }</code>.
+        </p>
       </section>
 
-      <!-- ==================== MODULES ==================== -->
-      <section id="modules" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MODULE SYSTEM</h2>
-        <p class="mb-4">The module system lets you split your application into independently manageable units with their own lifecycle, dependencies, and configuration.</p>
+      <!-- ==================== BUILDING BLOCKS ==================== -->
+      <section id="building-blocks" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">BUILDING BLOCKS</h2>
+        <p class="mb-4">The runtime is assembled from four smaller pieces. Each is exported so you can use it directly.</p>
 
-        <h3 class="text-xl font-black mt-6 mb-3">Module Interface</h3>
-        <div class="code-block">
-<span class="kw">interface</span> <span class="tp">Module</span> <span class="kw">extends</span> <span class="tp">ModuleLifecycle</span> {
-  <span class="kw">readonly</span> id: <span class="tp">ModuleId</span>;         <span class="cm">// unique string identifier</span>
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;        <span class="cm">// human-readable name</span>
-  <span class="kw">readonly</span> version?: <span class="tp">string</span>;    <span class="cm">// semantic version</span>
-  <span class="kw">readonly</span> dependencies?: <span class="kw">readonly</span> <span class="tp">ModuleId</span>[];  <span class="cm">// other module IDs</span>
-  <span class="kw">readonly</span> options?: <span class="tp">ModuleOptions</span>;
-  <span class="kw">readonly</span> scope?: <span class="tp">LifecycleScope</span>;
-  <span class="fn">attach</span>?(application: <span class="tp">unknown</span>): <span class="tp">void</span>;
+        <h3 class="text-xl font-black mt-6 mb-3">Container</h3>
+        <p class="mb-4">
+          A <em>dependency container</em> is a box you register values in under a <em>token</em> (a named key) so other code can ask for them by token instead of creating them. A <em>provider</em> says how to make the value: <code class="bg-gray-100 px-1 font-bold">{ useValue }</code>, <code class="bg-gray-100 px-1 font-bold">{ useClass }</code>, or <code class="bg-gray-100 px-1 font-bold">{ useFactory }</code>. This registers a config object and a database built from it.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> { Container, createToken } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">const</span> PortToken = <span class="fn">createToken</span>&lt;number&gt;(<span class="str">"Port"</span>);
+<span class="kw">const</span> UrlToken = <span class="fn">createToken</span>&lt;string&gt;(<span class="str">"Url"</span>);
+
+<span class="kw">const</span> container = <span class="kw">new</span> <span class="tp">Container</span>();
+container.<span class="fn">register</span>(PortToken, { useValue: <span class="num">5432</span> });
+container.<span class="fn">register</span>(UrlToken, { useFactory: (c) =&gt; <span class="str">`postgres://localhost:${c.resolve(PortToken)}`</span> });
+
+console.<span class="fn">log</span>(container.<span class="fn">resolve</span>(UrlToken));   <span class="cmt">// "postgres://localhost:5432"</span></div>
+        <p class="mb-4">
+          The optional third argument to <code class="bg-gray-100 px-1 font-bold">register</code> is the scope: <code class="bg-gray-100 px-1 font-bold">"singleton"</code> (default), <code class="bg-gray-100 px-1 font-bold">"transient"</code> (new per <code class="bg-gray-100 px-1 font-bold">resolve</code>), or <code class="bg-gray-100 px-1 font-bold">"scoped"</code> (one per execution context). Unknown tokens throw <code class="bg-gray-100 px-1 font-bold">ProviderNotFoundError</code>; registering twice throws <code class="bg-gray-100 px-1 font-bold">ProviderAlreadyRegisteredError</code>.
+        </p>
+
+        <h3 class="text-xl font-black mt-6 mb-3">Configuration</h3>
+        <p class="mb-4">
+          Values come from <em>sources</em>: objects with a <code class="bg-gray-100 px-1 font-bold">name</code>, <code class="bg-gray-100 px-1 font-bold">type</code>, <code class="bg-gray-100 px-1 font-bold">priority</code>, and a <code class="bg-gray-100 px-1 font-bold">load()</code> returning <code class="bg-gray-100 px-1 font-bold">{ path, value }</code> entries; higher priority wins. Register sources, build a manager, and pass it as <code class="bg-gray-100 px-1 font-bold">configuration</code> to <code class="bg-gray-100 px-1 font-bold">createApplication</code>, which initializes it for you. Modules then use <code class="bg-gray-100 px-1 font-bold">context.getConfig(path)</code>.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  createConfigurationManager, createConfigurationRegistry, createConfigurationSource,
+} <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">const</span> registry = <span class="fn">createConfigurationRegistry</span>();
+registry.<span class="fn">registerSource</span>(<span class="fn">createConfigurationSource</span>({
+  name: <span class="str">"defaults"</span>,
+  type: <span class="str">"default"</span>,
+  priority: <span class="num">0</span>,
+  load: <span class="kw">async</span> () =&gt; [{ path: <span class="str">"http.port"</span>, value: <span class="num">3000</span> }],
+}));
+
+<span class="kw">const</span> configuration = <span class="fn">createConfigurationManager</span>({ registry });
+<span class="kw">await</span> configuration.<span class="fn">initialize</span>();
+console.<span class="fn">log</span>(configuration.<span class="fn">get</span>(<span class="str">"http.port"</span>));      <span class="cmt">// 3000</span>
+console.<span class="fn">log</span>(configuration.<span class="fn">get</span>(<span class="str">"http.host"</span>));      <span class="cmt">// undefined</span>
+configuration.<span class="fn">require</span>(<span class="str">"http.host"</span>);                 <span class="cmt">// throws ConfigurationMissingError</span></div>
+        <p class="mb-4">Keys such as <code class="bg-gray-100 px-1 font-bold">password</code> and <code class="bg-gray-100 px-1 font-bold">secret</code> are masked in configuration error messages. For environment, file and schema sources use <a href="/docs/packages-config" class="underline">@zudojs/config</a>.</p>
+
+        <h3 class="text-xl font-black mt-6 mb-3">Logging</h3>
+        <p class="mb-4">
+          <code class="bg-gray-100 px-1 font-bold">ConsoleLogger</code> has six levels (<code class="bg-gray-100 px-1 font-bold">trace</code> to <code class="bg-gray-100 px-1 font-bold">fatal</code>) and prints JSON unless <code class="bg-gray-100 px-1 font-bold">structured: false</code>. <code class="bg-gray-100 px-1 font-bold">child(fields)</code> returns a logger that adds those fields to every line. Any object with the six level methods and <code class="bg-gray-100 px-1 font-bold">child()</code> counts as a <code class="bg-gray-100 px-1 font-bold">Logger</code>.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> { ConsoleLogger } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">const</span> logger = <span class="kw">new</span> <span class="tp">ConsoleLogger</span>({ level: <span class="str">"info"</span>, structured: <span class="kw">false</span>, timestamps: <span class="kw">false</span> });
+logger.<span class="fn">info</span>(<span class="str">"invoice sent"</span>, { invoiceId: <span class="num">42</span> });   <span class="cmt">// INFO: invoice sent invoiceId=42</span>
+logger.<span class="fn">child</span>({ module: <span class="str">"users"</span> }).<span class="fn">warn</span>(<span class="str">"slow query"</span>); <span class="cmt">// WARN: slow query module=users</span>
+logger.<span class="fn">error</span>(<span class="str">"failed"</span>, <span class="kw">new</span> <span class="tp">Error</span>(<span class="str">"boom"</span>));            <span class="cmt">// error object is the 2nd argument</span></div>
+        <p class="mb-4">An unknown level throws <code class="bg-gray-100 px-1 font-bold">InvalidArgumentError</code>. Secrets are not masked by default; pass <code class="bg-gray-100 px-1 font-bold">redact: createLogRedactor()</code> to hide keys like <code class="bg-gray-100 px-1 font-bold">password</code>.</p>
+
+        <h3 class="text-xl font-black mt-6 mb-3">Execution context</h3>
+        <p class="mb-4">
+          An <em>execution context</em> is a small read-only record of "what is happening now": an <code class="bg-gray-100 px-1 font-bold">executionId</code>, an optional <code class="bg-gray-100 px-1 font-bold">operation</code>, tracing ids, and <code class="bg-gray-100 px-1 font-bold">metadata</code>. A <code class="bg-gray-100 px-1 font-bold">ContextStorage</code> makes it readable from any function called inside <code class="bg-gray-100 px-1 font-bold">run()</code>, even across <code class="bg-gray-100 px-1 font-bold">await</code>, without passing it around.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> { createExecutionContext, getDefaultContextStorage } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+
+<span class="kw">const</span> storage = <span class="fn">getDefaultContextStorage</span>();
+<span class="kw">async function</span> <span class="fn">saveOrder</span>(): Promise&lt;void&gt; {
+  <span class="kw">await</span> Promise.<span class="fn">resolve</span>();
+  console.<span class="fn">log</span>(storage.<span class="fn">require</span>().operation);   <span class="cmt">// "checkout"</span>
 }
 
-<span class="kw">interface</span> <span class="tp">ModuleLifecycle</span> {
-  <span class="fn">onInitialize</span>?(context: <span class="tp">ModuleContext</span>): <span class="tp">void</span> | <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">onReady</span>?(context: <span class="tp">ModuleContext</span>): <span class="tp">void</span> | <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">onShutdown</span>?(context: <span class="tp">ModuleContext</span>): <span class="tp">void</span> | <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-  <span class="fn">onDestroy</span>?(context: <span class="tp">ModuleContext</span>): <span class="tp">void</span> | <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
-}
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">BaseModule (Abstract Class)</h3>
-        <div class="code-block">
-<span class="kw">import</span> { BaseModule, ModuleContext } <span class="kw">from</span> <span class="str">"@zudojs/core/modules"</span>;
-
-<span class="kw">class</span> <span class="tp">AuthModule</span> <span class="kw">extends</span> <span class="tp">BaseModule</span> {
-  <span class="kw">readonly</span> id = <span class="str">"auth"</span>;
-  <span class="kw">readonly</span> name = <span class="str">"Authentication Module"</span>;
-  <span class="kw">readonly</span> dependencies = [<span class="str">"config"</span>, <span class="str">"logger"</span>];
-
-  <span class="kw">async</span> <span class="fn">onInitialize</span>(ctx: <span class="tp">ModuleContext</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt; {
-    <span class="cm">// Set up JWT provider, session store</span>
-  }
-
-  <span class="kw">async</span> <span class="fn">onReady</span>(ctx: <span class="tp">ModuleContext</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt; {
-    <span class="cm">// Start accepting auth requests</span>
-  }
-
-  <span class="kw">async</span> <span class="fn">onShutdown</span>(ctx: <span class="tp">ModuleContext</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt; {
-    <span class="cm">// Flush session store</span>
-  }
-}
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">ModuleDefinition</h3>
-        <div class="code-block">
-<span class="kw">import</span> { defineModule } <span class="kw">from</span> <span class="str">"@zudojs/core/modules"</span>;
-
-<span class="kw">const</span> AuthModuleDef = <span class="fn">defineModule</span>({
-  id: <span class="str">"auth"</span>,
-  name: <span class="str">"Authentication"</span>,
-  version: <span class="str">"0.0.1"</span>,
-  factory: (opts) =&gt; <span class="kw">new</span> <span class="fn">AuthModule</span>(opts),
-  dependencies: [<span class="str">"config"</span>, <span class="str">"logger"</span>],
-  autoLoad: <span class="kw">true</span>,
-  multiInstance: <span class="kw">false</span>,
-  metadata: {
-    author: <span class="str">"Zudo Team"</span>,
-    description: <span class="str">"Handles JWT and session authentication"</span>,
-  },
-});
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Module Lifecycle States</h3>
-        <div class="code-block">
-<span class="kw">type</span> <span class="tp">ModuleLifecyclePhase</span> =
-  | <span class="str">"created"</span> | <span class="str">"initializing"</span> | <span class="str">"initialized"</span>
-  | <span class="str">"starting"</span> | <span class="str">"started"</span>
-  | <span class="str">"stopping"</span> | <span class="str">"stopped"</span>
-  | <span class="str">"destroying"</span> | <span class="str">"destroyed"</span>
-  | <span class="str">"failed"</span>;
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Module Registry</h3>
-        <div class="code-block">
-<span class="kw">import</span> { ModuleRegistry } <span class="kw">from</span> <span class="str">"@zudojs/core/modules"</span>;
-
-<span class="cm">// Register modules</span>
-registry.<span class="fn">register</span>(AuthModuleDef);
-registry.<span class="fn">registerMany</span>([UserModuleDef, PaymentModuleDef]);
-
-<span class="cm">// Query</span>
-registry.<span class="fn">get</span>(<span class="str">"auth"</span>)         <span class="cm">// → ModuleRegistration | undefined</span>
-registry.<span class="fn">has</span>(<span class="str">"auth"</span>)         <span class="cm">// true</span>
-registry.<span class="fn">getLoadedModules</span>()  <span class="cm">// all loaded Module instances</span>
-
-<span class="cm">// Subscribe to changes</span>
-registry.<span class="fn">subscribe</span>((event) =&gt; {
-  console.<span class="fn">log</span>(event.type);  <span class="cm">// "registered" | "replaced" | "unregistered" | "state-changed"</span>
-});
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Module Dependency Graph</h3>
-        <div class="code-block">
-<span class="cm">// Automatic topological sorting of module dependencies</span>
-<span class="cm">// A → B → C means C initializes first, A starts first</span>
-
-<span class="cm">// Invalid dependencies are caught:</span>
-<span class="cm">// - Circular dependencies</span>
-<span class="cm">// - Missing dependencies</span>
-<span class="cm">// - Duplicate dependency declarations</span>
-<span class="cm">// - Self-dependency</span>
-        </div>
-      </section>
-
-      <!-- ==================== CONFIGURATION ==================== -->
-      <section id="configuration" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONFIGURATION</h2>
-        <p class="mb-4">Layered configuration with multiple sources, schemas, and validation.</p>
-
-        <h3 class="text-xl font-black mt-6 mb-3">ConfigurationManager</h3>
-        <div class="code-block">
-<span class="kw">import</span> { ConfigurationManager, createConfigurationManager } <span class="kw">from</span> <span class="str">"@zudojs/core/configuration"</span>;
-
-<span class="kw">const</span> config = <span class="fn">createConfigurationManager</span>();
-
-<span class="cm">// Load from multiple sources</span>
-<span class="kw">await</span> config.<span class="fn">load</span>();
-
-<span class="cm">// Access typed values</span>
-<span class="kw">const</span> port = config.<span class="fn">get</span>&lt;<span class="tp">number</span>&gt;(<span class="str">"server.port"</span>);
-<span class="kw">const</span> dbUrl = config.<span class="fn">get</span>&lt;<span class="tp">string</span>&gt;(<span class="str">"database.url"</span>);
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Configuration Sources</h3>
-        <div class="code-block">
-<span class="cm">// Environment variables</span>
-<span class="cm">// JSON/YAML files</span>
-<span class="cm">// Remote config services</span>
-<span class="cm">// Command-line arguments</span>
-<span class="cm">// Default values</span>
-
-<span class="cm">// Sources have priority ordering — later sources override earlier ones</span>
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Schema Validation</h3>
-        <div class="code-block">
-<span class="cm">// Configuration is validated against schemas</span>
-<span class="cm">// Invalid config fails fast at startup</span>
-<span class="cm">// Sensitive values (password, secret, token) are auto-redacted</span>
-        </div>
+<span class="kw">await</span> storage.<span class="fn">run</span>(<span class="fn">createExecutionContext</span>({ operation: <span class="str">"checkout"</span> }), <span class="fn">saveOrder</span>);
+console.<span class="fn">log</span>(storage.<span class="fn">get</span>());   <span class="cmt">// undefined (outside run)</span></div>
+        <p class="mb-4">
+          <code class="bg-gray-100 px-1 font-bold">require()</code> outside <code class="bg-gray-100 px-1 font-bold">run()</code> throws <code class="bg-gray-100 px-1 font-bold">ExecutionContextNotFoundError</code>. The runtime runs every module hook inside a context whose <code class="bg-gray-100 px-1 font-bold">module</code> is the module id; the default logger adds its <code class="bg-gray-100 px-1 font-bold">executionId</code> to each line, and <code class="bg-gray-100 px-1 font-bold">"scoped"</code> providers resolve once per context.
+        </p>
       </section>
 
       <!-- ==================== RUNTIME ==================== -->
       <section id="runtime" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RUNTIME</h2>
-        <p class="mb-4">The runtime orchestrates the full application lifecycle — from bootstrap to shutdown — managing modules, configuration, and logging.</p>
-
-        <h3 class="text-xl font-black mt-6 mb-3">RuntimeState</h3>
-        <div class="code-block">
-<span class="kw">enum</span> <span class="tp">RuntimeState</span> {
-  CREATED      = <span class="str">"created"</span>,
-  BOOTSTRAPPING= <span class="str">"bootstrapping"</span>,
-  READY        = <span class="str">"ready"</span>,
-  STOPPING     = <span class="str">"stopping"</span>,
-  STOPPED      = <span class="str">"stopped"</span>,
-  FAILED       = <span class="str">"failed"</span>,
-}
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Runtime Transitions</h3>
-        <div class="border-4 border-black">
-        <table class="w-full text-smw-full text-sm mb-4">
-          <thead class="bg-black text-white"><tr><th class="p-3 text-left">From</th><th class="p-3 text-left">To</th></tr></thead>
+        <p class="mb-4">
+          The <em>runtime</em> is the engine that loads, initializes and starts modules, then stops and destroys them. It is single-use: its <code class="bg-gray-100 px-1 font-bold">state</code> goes <code class="bg-gray-100 px-1 font-bold">created</code> → <code class="bg-gray-100 px-1 font-bold">bootstrapping</code> → <code class="bg-gray-100 px-1 font-bold">ready</code> → <code class="bg-gray-100 px-1 font-bold">stopping</code> → <code class="bg-gray-100 px-1 font-bold">stopped</code>, or <code class="bg-gray-100 px-1 font-bold">failed</code>. That is why the application makes a new one per restart. Configure it with the <code class="bg-gray-100 px-1 font-bold">runtime</code> option:
+        </p>
+        <div class="overflow-x-auto mb-4">
+        <table class="doc-table">
+          <thead><tr><th>Option</th><th>What it does</th><th>Default</th></tr></thead>
           <tbody>
-            <tr class="border-b border-black/10"><td class="px-4 py-2">created</td><td class="px-4 py-2">→ bootstrapping</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2">bootstrapping</td><td class="px-4 py-2">→ ready, failed</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2">ready</td><td class="px-4 py-2">→ stopping</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2">stopping</td><td class="px-4 py-2">→ stopped, failed</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2">stopped</td><td class="px-4 py-2">— (terminal)</td></tr>
-            <tr class="bg-gray-50"><td class="px-4 py-2">failed</td><td class="px-4 py-2">— (terminal)</td></tr>
+            <tr><td><code>name</code>, <code>mode</code></td><td>Service name; <code>"development"</code>, <code>"test"</code> or <code>"production"</code></td><td><code>"application"</code>, <code>"development"</code></td></tr>
+            <tr><td><code>startup.timeoutMs</code>, <code>shutdown.timeoutMs</code></td><td>Abort with <code>RuntimeTimeoutError</code> after this long (<code>0</code> = no limit)</td><td><code>0</code>, <code>30000</code></td></tr>
+            <tr><td><code>startup.continueOnInitializeError</code>, <code>continueOnStartError</code></td><td>Keep going when a module throws; report it in <code>getStatus().bootstrap</code> instead</td><td><code>false</code></td></tr>
+            <tr><td><code>signals.handleSigint</code>, <code>handleSigterm</code>, <code>handleSighup</code></td><td>Stop gracefully on the OS signal</td><td><code>true</code>, <code>true</code>, <code>false</code></td></tr>
+            <tr><td><code>signals.handleUncaughtException</code>, <code>handleUnhandledRejection</code></td><td>Mark the runtime failed and stop it</td><td><code>true</code></td></tr>
+            <tr><td><code>diagnostics.startupLogging</code>, <code>shutdownLogging</code></td><td>Print the runtime's own progress lines</td><td><code>true</code></td></tr>
           </tbody>
         </table>
         </div>
-        </table>
+        <p class="mb-4">With <code class="bg-gray-100 px-1 font-bold">continueOnStartError</code> on, a broken module does not stop the app. This starts a module whose <code class="bg-gray-100 px-1 font-bold">onReady</code> throws and reads the report.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { createApplication, defineModule } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
+<span class="kw">import type</span> { Module } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
 
-        <h3 class="text-xl font-black mt-6 mb-3">RUNTIME UTILITIES</h3>
-        <div class="code-block">
-<span class="kw">import</span> {
-  isRuntimeReady, isRuntimeFailed, isRuntimeTerminal,
-  isRuntimeTransitioning, canStartRuntime, canStopRuntime,
-  getRuntimeStateLabel, getNextRuntimeStates
-} <span class="kw">from</span> <span class="str">"@zudojs/core/runtime"</span>;
-
-<span class="fn">isRuntimeReady</span>(RuntimeState.READY)        <span class="cm">// true</span>
-<span class="fn">isRuntimeTerminal</span>(RuntimeState.STOPPED)   <span class="cm">// true</span>
-<span class="fn">canStartRuntime</span>(RuntimeState.CREATED)     <span class="cm">// true</span>
-<span class="fn">canStopRuntime</span>(RuntimeState.READY)        <span class="cm">// true</span>
-<span class="fn">getRuntimeStateLabel</span>(RuntimeState.BOOTSTRAPPING) <span class="cm">// "Bootstrapping"</span>
-<span class="fn">getNextRuntimeStates</span>(RuntimeState.CREATED)  <span class="cm">// [BOOTSTRAPPING]</span>
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Runtime Context & Environment</h3>
-        <div class="code-block">
-<span class="kw">import</span> {
-  createRuntimeContext, createRuntimeEnvironment,
-  detectRuntimeEngine, detectPlatform, detectCI, detectContainer
-} <span class="kw">from</span> <span class="str">"@zudojs/core/runtime"</span>;
-
-<span class="kw">const</span> ctx = <span class="fn">createRuntimeContext</span>({ <span class="cm">/* deps */</span> });
-<span class="kw">const</span> env = <span class="fn">createRuntimeEnvironment</span>();
-
-<span class="fn">detectRuntimeEngine</span>()   <span class="cm">// "node" | "deno" | "bun" | "browser"</span>
-<span class="fn">detectPlatform</span>()        <span class="cm">// "linux" | "darwin" | "win32" | ...</span>
-<span class="fn">detectCI</span>()              <span class="cm">// true if running in CI</span>
-<span class="fn">detectContainer</span>()       <span class="cm">// true if running in Docker/K8s</span>
-        </div>
-
-        <h3 class="text-xl font-black mt-6 mb-3">Runtime Options</h3>
-        <div class="code-block">
-<span class="kw">import</span> { resolveRuntimeOptions, RuntimeMode } <span class="kw">from</span> <span class="str">"@zudojs/core/runtime"</span>;
-
-<span class="kw">const</span> options = <span class="fn">resolveRuntimeOptions</span>({
-  mode: RuntimeMode.PRODUCTION,
-  startup: { timeout: <span class="num">30000</span> },
-  shutdown: { timeout: <span class="num">15000</span>, graceful: <span class="kw">true</span> },
-  signal: { handlers: [<span class="str">"SIGTERM"</span>, <span class="str">"SIGINT"</span>] },
+<span class="kw">const</span> app = <span class="kw">await</span> <span class="fn">createApplication</span>({
+  logger: { level: <span class="str">"fatal"</span> },
+  runtime: { mode: <span class="str">"test"</span>, startup: { continueOnStartError: <span class="kw">true</span> } },
+  autoStart: <span class="kw">true</span>,
+  modules: [<span class="fn">defineModule</span>({
+    id: <span class="str">"bad"</span>,
+    name: <span class="str">"Bad"</span>,
+    factory: (): <span class="tp">Module</span> =&gt; ({
+      id: <span class="str">"bad"</span>,
+      name: <span class="str">"Bad"</span>,
+      onReady: () =&gt; { <span class="kw">throw new</span> <span class="tp">Error</span>(<span class="str">"bad start"</span>); },
+    }),
+  })],
 });
-        </div>
 
-        <h3 class="text-xl font-black mt-6 mb-3">Bootstrap & Shutdown Pipelines</h3>
-        <div class="code-block">
-<span class="cm">// Bootstrap pipeline: register → load → initialize → start</span>
-<span class="cm">// Shutdown pipeline: stop → destroy → cleanup</span>
-
-<span class="cm">// Each phase has configurable timeout and error handling</span>
-<span class="cm">// Failures are aggregated into structured error objects</span>
+<span class="kw">const</span> report = app.applicationRuntime!.<span class="fn">getStatus</span>().bootstrap!;
+console.<span class="fn">log</span>(app.state, report.success);      <span class="cmt">// "running" false</span>
+console.<span class="fn">log</span>(report.errors[<span class="num">0</span>]?.moduleName);    <span class="cmt">// "bad"</span>
+<span class="kw">await</span> app.<span class="fn">shutdown</span>();</div>
+        <p class="mb-4">
+          Without the flag, <code class="bg-gray-100 px-1 font-bold">start()</code> throws a <code class="bg-gray-100 px-1 font-bold">RuntimeError</code>, already-initialized modules are rolled back, and the app ends in <code class="bg-gray-100 px-1 font-bold">failed</code>. Other runtime members: <code class="bg-gray-100 px-1 font-bold">getModule(id)</code>, <code class="bg-gray-100 px-1 font-bold">requireModule(id)</code>, <code class="bg-gray-100 px-1 font-bold">getUptime()</code>, <code class="bg-gray-100 px-1 font-bold">identity</code>, <code class="bg-gray-100 px-1 font-bold">environment</code>.
+        </p>
+        <div class="callout callout-note mb-4">
+          <p class="text-sm font-bold mb-1">MANUAL WIRING</p>
+          <p class="text-sm"><code>createRuntime(dependencies, options)</code> and <code>Application.create({ lifecycle, runtime })</code> let you assemble the graph yourself from <code>ApplicationContext</code>, <code>createModuleRegistry</code>, <code>createModuleLoader</code> and <code>createModuleLifecycleManager</code>. <code>packages/core/tests/application.test.ts</code> shows the full recipe.</p>
         </div>
       </section>
 
-      <!-- ==================== ERRORS ==================== -->
-      <section id="errors" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERRORS</h2>
-        <p class="mb-4">All errors extend <code class="bg-gray-100 px-1 font-bold">FrameworkError</code> (which extends <code class="bg-gray-100 px-1 font-bold">ApplicationError</code> from <code class="bg-gray-100 px-1 font-bold">@zudojs/errors</code>).</p>
+      <!-- ==================== API REFERENCE ==================== -->
+      <section id="api-reference" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">API REFERENCE</h2>
+        <p class="mb-4">All names are imported from <code class="bg-gray-100 px-1 font-bold">"@zudojs/core"</code>. Only exports a typical user calls or configures are listed.</p>
 
-        <div class="border-4 border-black">
-        <table class="w-full text-smw-full text-sm">
-          <thead class="bg-black text-white"><tr><th class="p-3 text-left">Error</th><th class="p-3 text-left">When Thrown</th></tr></thead>
+        <h3 class="text-xl font-black mt-6 mb-3">Functions</h3>
+        <div class="overflow-x-auto mb-4">
+        <table class="doc-table">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold text-zudo-red">FrameworkError</td><td class="px-4 py-2">Base error for all core framework errors</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold text-zudo-red">InvalidArgumentError</td><td class="px-4 py-2">Invalid function arguments</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold text-zudo-red">InvalidStateError</td><td class="px-4 py-2">Operation invalid in current state</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold text-zudo-red">ProviderNotFoundError</td><td class="px-4 py-2">DI token not registered</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold text-zudo-red">ConfigurationNotFoundError</td><td class="px-4 py-2">Config key not found</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold text-zudo-red">ExecutionContextNotFoundError</td><td class="px-4 py-2">No active context in current async scope</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold text-zudo-red">AdapterNotFoundError</td><td class="px-4 py-2">Requested adapter not registered</td></tr>
-            <tr class="bg-gray-50"><td class="px-4 py-2 font-bold text-zudo-red">RuntimeError</td><td class="px-4 py-2">Runtime startup/shutdown failure</td></tr>
+            <tr><td><code>createApplication(options?)</code></td><td>Wires everything; returns an initialized <code>Application</code></td><td>Async, restartable</td></tr>
+            <tr><td><code>defineModule(options)</code></td><td>Frozen <code>ModuleDefinition</code></td><td>Throws <code>InvalidModuleDefinitionError</code> on bad input</td></tr>
+            <tr><td><code>moduleToDefinition(module, factory?)</code></td><td>Definition from an existing module instance</td><td></td></tr>
+            <tr><td><code>createToken&lt;T&gt;(description)</code></td><td>Unique container token</td><td>Strings and classes work too</td></tr>
+            <tr><td><code>createConfigurationRegistry()</code>, <code>createConfigurationSource(options)</code>, <code>createConfigurationManager(options?)</code></td><td>Configuration pipeline</td><td><code>registerSource()</code>; manager has <code>initialize()</code>, <code>get()</code>, <code>require()</code>, <code>reload()</code>, <code>on()</code></td></tr>
+            <tr><td><code>createExecutionContext(input?)</code>, <code>deriveExecutionContext(parent, overrides)</code></td><td>New / modified context records</td><td>Immutable</td></tr>
+            <tr><td><code>getDefaultContextStorage()</code>, <code>createContextStorage()</code></td><td>Shared / private <code>ContextStorage</code></td><td></td></tr>
+            <tr><td><code>createLogRedactor(options?)</code></td><td>Redaction hook for <code>LoggerOptions.redact</code></td><td></td></tr>
+            <tr><td><code>createRuntime(dependencies, options?)</code>, <code>resolveRuntimeOptions(options)</code></td><td>Manual runtime; fill in defaults</td><td>See Runtime</td></tr>
+            <tr><td><code>createHandler(fn)</code></td><td>Wraps a function as a <code>Handler</code> with <code>handle()</code></td><td>Used by adapters</td></tr>
+          </tbody>
+        </table>
+        </div>
+
+        <h3 class="text-xl font-black mt-6 mb-3">Classes</h3>
+        <div class="overflow-x-auto mb-4">
+        <table class="doc-table">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>Application</code></td><td><code>start()</code>, <code>stop()</code>, <code>shutdown()</code>, <code>state</code>, <code>applicationRuntime</code>, <code>applicationContext</code></td><td><code>Application.create()</code> for manual wiring</td></tr>
+            <tr><td><code>ApplicationContext</code></td><td><code>getContainer()</code>, <code>getConfiguration()</code>, <code>getModules()</code>, <code>getLogger()</code>, <code>getContextStorage()</code></td><td><code>context.application</code> in hooks</td></tr>
+            <tr><td><code>Lifecycle</code>, <code>LifecycleManager</code></td><td>Ordered initialize/start/stop/dispose over participants</td><td><code>register()</code></td></tr>
+            <tr><td><code>BaseModule</code></td><td>Abstract module with no-op hooks</td><td>Set <code>id</code> and <code>name</code></td></tr>
+            <tr><td><code>Container</code></td><td><code>register()</code>, <code>resolve()</code>, <code>has()</code>, <code>unregister()</code>, <code>createScope()</code></td><td></td></tr>
+            <tr><td><code>ConsoleLogger</code></td><td>JSON or plain-text <code>Logger</code></td><td><code>child()</code></td></tr>
+            <tr><td><code>ContextStorage</code></td><td><code>run()</code>, <code>runDerived()</code>, <code>get()</code>, <code>require()</code>, <code>has()</code>, <code>capture()</code></td><td>Wraps <code>AsyncLocalStorage</code></td></tr>
+          </tbody>
+        </table>
+        </div>
+
+        <h3 class="text-xl font-black mt-6 mb-3">Types and constants</h3>
+        <div class="overflow-x-auto mb-4">
+        <table class="doc-table">
+          <thead><tr><th>Name</th><th>What it is</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>Module</code>, <code>ModuleContext</code>, <code>ModuleDefinition</code></td><td>Module object, hook argument, <code>defineModule</code> result</td><td><code>dependencies</code> may be ids or <code>{ id, optional, version }</code></td></tr>
+            <tr><td><code>CreateApplicationOptions</code>, <code>ApplicationState</code></td><td>Options and the eight states</td><td></td></tr>
+            <tr><td><code>LifecycleParticipant</code></td><td><code>{ name, initialize?, start?, stop?, dispose? }</code></td><td></td></tr>
+            <tr><td><code>Token</code>, <code>Provider</code>, <code>Scope</code></td><td>Container vocabulary</td><td></td></tr>
+            <tr><td><code>Logger</code>, <code>LoggerOptions</code>, <code>LogLevel</code></td><td>Logging contract</td><td><code>LogLevel</code> is also a constant object</td></tr>
+            <tr><td><code>RuntimeOptions</code>, <code>Runtime</code>, <code>RuntimeStatus</code>, <code>RuntimeState</code></td><td>Runtime config, instance, <code>getStatus()</code> result, state enum</td><td><code>DEFAULT_RUNTIME_OPTIONS</code> holds defaults</td></tr>
+            <tr><td><code>ExecutionContext</code></td><td>The context record</td><td></td></tr>
+            <tr><td><code>Adapter</code>, <code>Handler</code>, <code>Disposable</code></td><td>Contracts shared with other packages</td><td></td></tr>
+          </tbody>
+        </table>
+        </div>
+
+        <h3 class="text-xl font-black mt-6 mb-3">Errors</h3>
+        <p class="mb-4">All extend <code class="bg-gray-100 px-1 font-bold">FrameworkError</code>, which extends <code class="bg-gray-100 px-1 font-bold">ApplicationError</code> from <a href="/docs/packages-errors" class="underline">@zudojs/errors</a>.</p>
+        <div class="overflow-x-auto mb-4">
+        <table class="doc-table">
+          <thead><tr><th>Name</th><th>When it is thrown</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>InvalidStateError</code></td><td><code>start()</code>/<code>stop()</code> from a state that forbids it</td><td></td></tr>
+            <tr><td><code>InvalidArgumentError</code></td><td>Bad option, e.g. unknown log level</td><td></td></tr>
+            <tr><td><code>ProviderNotFoundError</code>, <code>ProviderAlreadyRegisteredError</code></td><td>Container token missing / duplicated</td><td></td></tr>
+            <tr><td><code>ConfigurationMissingError</code></td><td><code>require(path)</code> on a missing value</td><td>Extends <code>ConfigurationError</code></td></tr>
+            <tr><td><code>ExecutionContextNotFoundError</code></td><td><code>storage.require()</code> outside <code>run()</code></td><td></td></tr>
+            <tr><td><code>ModuleNotFoundError</code>, <code>DuplicateModuleError</code>, <code>MissingModuleDependencyError</code>, <code>CircularModuleDependencyError</code>, <code>InvalidModuleDefinitionError</code></td><td>Module registration and dependency problems</td><td>All extend <code>ModuleError</code></td></tr>
+            <tr><td><code>RuntimeError</code>, <code>RuntimeStartError</code>, <code>RuntimeStopError</code>, <code>RuntimeTimeoutError</code></td><td>Runtime start/stop failures and timeouts</td><td><code>isRuntimeError(e)</code></td></tr>
           </tbody>
         </table>
         </div>
       </section>
 
-      <!-- ==================== TESTING ==================== -->
-      <section id="testing" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TESTING</h2>
-        <div class="code-block">
-<span class="kw">import</span> { describe, it, expect, beforeEach } <span class="kw">from</span> <span class="str">"vitest"</span>;
-<span class="kw">import</span> { Application, createContextProvider, createContext } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
-<span class="kw">import</span> { BaseModule, ModuleContext } <span class="kw">from</span> <span class="str">"@zudojs/core/modules"</span>;
-
-<span class="fn">describe</span>(<span class="str">"AuthModule"</span>, () =&gt; {
-  <span class="kw">let</span> app: <span class="tp">APPLICATION</span>;
-
-  <span class="fn">beforeEach</span>(<span class="kw">async</span> () =&gt; {
-    app = <span class="kw">await</span> Application.<span class="fn">CREATE</span>({
-      <span class="cm">// inject test dependencies</span>
-    });
-  });
-
-  <span class="fn">it</span>(<span class="str">"should initialize modules in order"</span>, <span class="kw">async</span> () =&gt; {
-    <span class="kw">await</span> app.<span class="fn">start</span>();
-    <span class="fn">expect</span>(app.state).<span class="fn">toBe</span>(<span class="str">"running"</span>);
-  });
-
-  <span class="fn">it</span>(<span class="str">"should propagate context"</span>, () =&gt; {
-    <span class="kw">const</span> provider = <span class="fn">createContextProvider</span>();
-    <span class="kw">const</span> ctx = <span class="fn">createContext</span>({ application: appCtx, type: <span class="str">"http"</span> });
-
-    provider.<span class="fn">run</span>(ctx, () =&gt; {
-      <span class="fn">expect</span>(provider.<span class="fn">has</span>()).<span class="fn">toBe</span>(<span class="kw">true</span>);
-      <span class="fn">expect</span>(provider.<span class="fn">require</span>().<span class="fn">getType</span>()).<span class="fn">toBe</span>(<span class="str">"http"</span>);
-    });
-  });
-
-  <span class="fn">afterEach</span>(<span class="kw">async</span> () =&gt; {
-    <span class="kw">await</span> app.<span class="fn">stop</span>();
-  });
-});
-        </div>
-      </section>
-
-      <!-- ==================== CONNECTIONS ==================== -->
-      <section id="connections" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONNECTIONS TO OTHER PACKAGES</h2>
-        <div class="border-4 border-black">
-        <table class="w-full text-smw-full text-sm">
-          <thead class="bg-black text-white"><tr><th class="p-3 text-left">Package</th><th class="p-3 text-left">Relationship</th></tr></thead>
-          <tbody>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold">@zudojs/errors</td><td class="px-4 py-2">Dependency — FrameworkError extends ApplicationError</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold">@zudojs/constants</td><td class="px-4 py-2">Dependency — LifecycleState, time constants</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold">@zudojs/messaging</td><td class="px-4 py-2">Dependency — inter-module messaging</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold">@zudojs/container</td><td class="px-4 py-2">Consumer — DI container for module dependencies</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold">@zudojs/config</td><td class="px-4 py-2">Consumer — configuration sources and schemas</td></tr>
-            <tr class="border-b border-black/10 bg-gray-50"><td class="px-4 py-2 font-bold">@zudojs/logger</td><td class="px-4 py-2">Consumer — structured logging transports</td></tr>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold">@zudojs/events</td><td class="px-4 py-2">Consumer — event bus for module communication</td></tr>
-            <tr class="bg-gray-50"><td class="px-4 py-2 font-bold">@zudojs/http</td><td class="px-4 py-2">Consumer — HTTP adapter lifecycle</td></tr>
-          </tbody>
-        </table>
-        </div>
-      </section>
-
-      <!-- ==================== VERSION COMPATIBILITY ==================== -->
-      <section id="version-compatibility" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">VERSION COMPATIBILITY</h2>
-        <div class="border-4 border-black">
-        <table class="w-full text-smw-full text-sm">
-          <thead class="bg-black text-white"><tr><th class="p-3 text-left">@zudojs/core</th><th class="p-3 text-left">TypeScript</th><th class="p-3 text-left">Node.js</th><th class="p-3 text-left">Module</th></tr></thead>
-          <tbody>
-            <tr class="border-b border-black/10"><td class="px-4 py-2 font-bold">1.0.x</td><td class="px-4 py-2">5.x – 7.x</td><td class="px-4 py-2">≥ 24.0</td><td class="px-4 py-2">ESM</td></tr>
-          </tbody>
-        </table>
-        </div>
-      </section>
-
-      <!-- ==================== IMPROVEMENTS ==================== -->
-      <section id="improvements" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">POTENTIAL IMPROVEMENTS</h2>
-        <ul class="space-y-2 text-sm">
-          <li class="border-l-4 border-zudo-red pl-3"><strong>Hot module reload:</strong> Replace modules without full runtime restart</li>
-          <li class="border-l-4 border-zudo-blue pl-3"><strong>Module health checks:</strong> Per-module health status and readiness probes</li>
-          <li class="border-l-4 border-zudo-yellow pl-3"><strong>Configuration hot reload:</strong> Detect config file changes and notify modules</li>
-          <li class="border-l-4 border-zudo-green pl-3"><strong>Context propagation middleware:</strong> Auto-inject context into HTTP/message handlers</li>
-          <li class="border-l-4 border-black pl-3"><strong>Module versioning:</strong> Runtime compatibility checks between module versions</li>
+      <!-- ==================== COMMON MISTAKES ==================== -->
+      <section id="common-mistakes" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMON MISTAKES</h2>
+        <ul class="space-y-3 text-sm">
+          <li class="border-l-4 border-zudo-red pl-3"><strong>Passing a module object as a definition.</strong> <code>modules: [{ id, name }]</code> is rejected; <code>modules</code> takes definitions. Wrap it: <code>defineModule({ id, name, factory: () =&gt; module })</code>.</li>
+          <li class="border-l-4 border-zudo-blue pl-3"><strong>Old hook names.</strong> <code>setup</code>, <code>initialize</code>, <code>start</code>, <code>stop</code> on a module never run. Use <code>onInitialize</code>, <code>onReady</code>, <code>onShutdown</code>, <code>onDestroy</code>.</li>
+          <li class="border-l-4 border-zudo-yellow pl-3"><strong>Undeclared dependency.</strong> <code>context.getModuleContext("db")</code> throws <code>MissingModuleDependencyError</code> unless <code>"db"</code> is in the definition's <code>dependencies</code>.</li>
+          <li class="border-l-4 border-zudo-green pl-3"><strong><code>start()</code> after <code>shutdown()</code>.</strong> Shutdown disposes the lifecycle, so it throws. Use <code>stop()</code> when you mean to start again.</li>
+          <li class="border-l-4 border-black pl-3"><strong>Expecting a throw with <code>continueOnStartError</code>.</strong> The app stays <code>running</code>; the failure is only in <code>applicationRuntime.getStatus().bootstrap.errors</code>. Check it.</li>
         </ul>
       </section>
 
-      <!-- ==================== QUICK REFERENCE ==================== -->
-      <section id="quick-reference" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK REFERENCE</h2>
-        <div class="code-block">
-<span class="cm">// ─── Application ───</span>
-<span class="kw">import</span> { Application } <span class="kw">from</span> <span class="str">"@zudojs/core"</span>;
-
-<span class="cm">// ─── Contracts ───</span>
-<span class="kw">import</span> { Adapter, Handler, createHandler, Disposable } <span class="kw">from</span> <span class="str">"@zudojs/core/contracts"</span>;
-
-<span class="cm">// ─── Logging ───</span>
-<span class="kw">import</span> { Logger, LogLevel, BaseLogger, LogEntry, LogContext } <span class="kw">from</span> <span class="str">"@zudojs/core/logging"</span>;
-
-<span class="cm">// ─── Lifecycle ───</span>
-<span class="kw">import</span> { LifecycleManager } <span class="kw">from</span> <span class="str">"@zudojs/core/lifecycle"</span>;
-
-<span class="cm">// ─── Context ───</span>
-<span class="kw">import</span> { createContext, createContextProvider, ContextType } <span class="kw">from</span> <span class="str">"@zudojs/core/context"</span>;
-
-<span class="cm">// ─── Configuration ───</span>
-<span class="kw">import</span> { ConfigurationManager, createConfigurationManager } <span class="kw">from</span> <span class="str">"@zudojs/core/configuration"</span>;
-
-<span class="cm">// ─── Modules ───</span>
-<span class="kw">import</span> {
-  Module, BaseModule, ModuleId, ModuleDefinition, defineModule,
-  ModuleRegistry, ModuleContext, isModule, createModule
-} <span class="kw">from</span> <span class="str">"@zudojs/core/modules"</span>;
-
-<span class="cm">// ─── Runtime ───</span>
-<span class="kw">import</span> {
-  Runtime, RuntimeState, createRuntime,
-  isRuntimeReady, isRuntimeTerminal, getRuntimeStateLabel,
-  createRuntimeContext, createRuntimeEnvironment
-} <span class="kw">from</span> <span class="str">"@zudojs/core/runtime"</span>;
-
-<span class="cm">// ─── Errors ───</span>
-<span class="kw">import</span> { FrameworkError, ErrorCode } <span class="kw">from</span> <span class="str">"@zudojs/core/errors"</span>;
-        </div>
+      <!-- ==================== RELATED ==================== -->
+      <section id="related" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATED PACKAGES</h2>
+        <ul class="space-y-2 text-sm">
+          <li>• <a href="/docs/packages-container" class="font-bold underline">@zudojs/container</a> — a standalone dependency container with more features than the one bundled here.</li>
+          <li>• <a href="/docs/packages-config" class="font-bold underline">@zudojs/config</a> — environment, file and schema-validated sources for <code>ConfigurationManager</code>.</li>
+          <li>• <a href="/docs/packages-logger" class="font-bold underline">@zudojs/logger</a> — transports and formatting beyond <code>ConsoleLogger</code>; same <code>Logger</code> interface.</li>
+          <li>• <a href="/docs/packages-http" class="font-bold underline">@zudojs/http</a> — an HTTP server you wire in as a participant or module.</li>
+          <li>• <a href="/docs/packages-errors" class="font-bold underline">@zudojs/errors</a> — the <code>ApplicationError</code> base every core error extends.</li>
+        </ul>
       </section>
 
+      <!-- EXPORT INDEX -->
+      <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/core</code> exports from its package root at v1.0.0 &mdash; <strong>431</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <details class="border-2 border-black p-5 bg-white">
+          <summary class="font-bold cursor-pointer select-none">Show all 431 exports</summary>
+          <div class="mt-5">
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Classes <span class="text-black/40 font-normal">(3)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Application</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ApplicationContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DefaultModuleContext</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Functions <span class="text-black/40 font-normal">(14)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createApplication</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createModuleContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createModuleMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">deepFreezeModuleOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">defineModule</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getModuleMetadataSummary</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isModuleContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isModuleDefinition</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isModuleDeprecated</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isModuleEnabledForEnvironment</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isModuleExperimental</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">mergeModuleMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">moduleToDefinition</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeDependencies</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Interfaces <span class="text-black/40 font-normal">(12)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ApplicationContextOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ApplicationOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CreateApplicationOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CreateModuleContextOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DefineModuleOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleContextDependencies</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleContextInfo</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleDefinition</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleDependencyDefinition</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleMetadataOptions</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Type aliases <span class="text-black/40 font-normal">(6)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ApplicationState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleCategory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleContextResolver</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleEnvironment</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleFactory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeFactory</code></div>
+          </div>
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Re-exported <span class="text-black/40 font-normal">(396)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Adapter</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AdapterNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BaseConfigurationSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BaseLogger</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BaseModule</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CircularModuleDependencyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ClassProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Configuration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationConflictError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationEntrySource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationErrorIssue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationEventListener</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationEventSubscription</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationEventType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationEventTypeValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationFailedEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationInitializingEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationLifecycleEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationLoadError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationLoadResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationLoadedEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationLoader</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationLoaderOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationManagerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationManagerResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationManagerState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationMissingError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationPathError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationProviderOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationReadyEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationRedactor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationRedactorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationReloadedEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationReloadingEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationSchemaError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationSchemaOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationSchemaRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationSection</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationSectionOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationSensitivity</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationSourceEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationSourceError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationSourceOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationSourceType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationTypeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationValidatedEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationValidationContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationValidationIssue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationValidationOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationValidationReport</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationValidationResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationValidator</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationValueSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConsoleLogger</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Constructor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConstructorToken</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Container</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ContainerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ContainerScope</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Context</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ContextKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ContextProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ContextSnapshot</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ContextStorage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ContextType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ContextValueStore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ContextValues</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CreateContextOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CreateExecutionContextInput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_LOGGER_OPTIONS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_LOG_LEVEL</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_REDACTION_VALUE</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_RUNTIME_OPTIONS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_SENSITIVE_PATTERNS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DefaultConfigurationProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DefaultContextProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DefaultModuleRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DefaultRuntime</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DefaultRuntimeBootstrap</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DefaultRuntimeEnvironment</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DefaultRuntimeShutdown</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DependencyResolutionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Disposable</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DuplicateModuleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ErrorCodeType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ExecutionContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ExecutionContextNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ExecutionContextOverrides</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">FactoryProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">FrameworkError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">FrameworkErrorJSON</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Handler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HandlerFunction</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidArgumentError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidModuleDefinitionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidModuleDependencyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidModuleInstanceError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidModuleStateError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidProviderError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidRuntimeStateError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidRuntimeTransitionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidStateError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Lifecycle</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleComponent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleHook</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleManagerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleParticipant</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleRegistration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleScope</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleScopeOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleScopeState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LifecycleState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LogContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LogEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LogError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LogErrorSerializationOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LogLevel</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LogLevelOption</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LogLevelPriority</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LogLevelType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LogRedactionHook</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LogRedactorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Logger</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LoggerContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LoggerFactory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LoggerFactoryOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LoggerImplementation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LoggerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ManagedLifecycleComponent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MissingEnvironmentVariableError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MissingModuleDependencyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Module</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleDependencies</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleDependency</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleDependencyGraph</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleDependencyInput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleDependencyNode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleDependencyNodeInput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleErrorCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleErrorCodeType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleErrorDetails</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleInstantiationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLifecycle</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLifecycleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLifecycleHookName</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLifecycleHooks</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLifecycleManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLifecycleOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLifecyclePhase</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLifecycleResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLifecycleSkip</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLifecycleState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLifecycleStep</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLoadError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLoadResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLoader</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleLoaderOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleOperationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleOperationInProgressError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleRegisterOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleRegistration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleRegistrationState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleRegistryEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleRegistryEventType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleRegistryListener</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleRegistryOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ModuleVersionMismatchError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">OnDestroy</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">OnInitialize</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">OnStart</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">OnStop</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Provider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ProviderAlreadyRegisteredError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ProviderNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RedactedConfiguration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ResolvedRuntimeOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Runtime</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeBootstrap</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeBootstrapDependencies</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeBootstrapErrorInfo</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeBootstrapOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeBootstrapPhase</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeBootstrapResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeCancellationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeDependencies</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeDependencyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeDiagnosticsOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeEngine</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeEngineInfo</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeEnvironment</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeEnvironmentInfo</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeEnvironmentOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeEnvironmentOverrides</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeEnvironmentSummary</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeEnvironmentVariables</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeErrorCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeErrorJSON</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeErrorMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeErrorPhase</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeExecutionContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeExecutionMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeHostInfo</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeIdentity</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeInitializationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeLifecycleState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeLoadError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeMode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeNotReadyError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimePlatform</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeProcessEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeProcessInfo</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeRole</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeShutdown</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeShutdownConfig</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeShutdownDependencies</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeShutdownErrorInfo</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeShutdownOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeShutdownPhase</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeShutdownResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeSignalHandlers</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeSignalManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeSignalManagerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeSignalOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeSignalTarget</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeStartError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeStartupOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeStateSnapshot</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeStateTransition</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeStatus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeStopError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeTerminationSignal</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeTimeoutOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeTiming</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RuntimeUnsupportedOperationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">STARTABLE_RUNTIME_STATES</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">STOPPABLE_RUNTIME_STATES</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Scope</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TERMINAL_RUNTIME_STATES</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TRANSITIONAL_RUNTIME_STATES</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TimeoutAwareOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Token</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValueProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">applyConfigurationSchemaDefaults</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">applyConfigurationSourceEntries</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertRuntimeMode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertRuntimeRole</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertRuntimeState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertRuntimeTransition</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">canStartRuntime</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">canStopRuntime</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">canTransitionRuntime</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfiguration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationEventBase</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationFailedEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationInitializingEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationLoadedEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationLoader</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationReadyEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationRedactor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationReloadedEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationReloadingEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationSchemaRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationValidatedEvent</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createContextKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createContextProvider</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createContextSnapshot</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createContextStorage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createContextValues</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createExecutionContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createExecutionId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createLogRedactor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createLoggerContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createModule</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createModuleDependency</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createModuleDependencyGraph</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createModuleLifecycleManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createModuleLoader</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createModuleRegistry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRuntime</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRuntimeContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRuntimeEnvironment</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRuntimeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRuntimeExecutionContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRuntimeId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRuntimeIdentity</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRuntimeStateSnapshot</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createRuntimeStateTransition</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createToken</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">defaultContextStorage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">deleteContextValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">deriveContextSnapshot</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">deriveExecutionContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">describeConfigurationCause</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">describeToken</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">detectCI</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">detectContainer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">detectHostInfo</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">detectPlatform</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">detectProcessInfo</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">detectRuntimeEngine</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">findModuleDependencyCycle</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getContextValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getDefaultContextStorage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getExecutionDuration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getLifecycleErrorCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getNextRuntimeStates</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getRuntimeStateLabel</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getRuntimeStates</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasContextValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasDestroyHook</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasInitializeHook</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasModuleDependencyCycle</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasModuleErrorCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasModuleVersionConstraint</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasRuntimeErrorCode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasStartHook</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">hasStopHook</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isLogLevel</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isModule</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isModuleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isModuleRegistration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isOptionalModuleDependency</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isRuntimeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isRuntimeFailed</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isRuntimeMode</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isRuntimeReady</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isRuntimeRole</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isRuntimeState</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isRuntimeTerminal</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isRuntimeTransitioning</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">loggerContextFromExecution</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeConfigurationPath</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeModuleDependencies</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeModuleDependency</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">redactConfiguration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">requireConfigurationPath</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">requireContextValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">resolveLogLevel</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">resolveModuleShutdownOrder</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">resolveModuleStartupOrder</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">resolveRuntimeOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">restoreContextSnapshot</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">safeLogStringify</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sanitizeLogValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">satisfiesModuleVersionConstraint</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">serializeLogError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">setContextValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">shouldLog</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sortConfigurationSources</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toModuleError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toRuntimeError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateConfiguration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateConfigurationOrThrow</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateModuleDependencies</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateModuleDependencyGraph</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateRuntimeOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withExecutionMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withRuntimeTimeout</code></div>
+          </div>
+          </div>
+        </details>
+      </section>
     </main>
 
     <!-- TABLE OF CONTENTS -->
     <aside class="doc-toc" aria-label="On this page">
       <div class="p-4 text-xs font-bold uppercase text-black/40 tracking-wider">On this page</div>
-      <a href="#overview" class="toc-link">OVERVIEW</a>
-      <a href="#installation" class="toc-link">INSTALLATION</a>
-      <a href="#application" class="toc-link">APPLICATION</a>
-      <a href="#contracts" class="toc-link">CONTRACTS</a>
-      <a href="#logging" class="toc-link">LOGGING</a>
-      <a href="#context" class="toc-link">Context</a>
-      <a href="#lifecycle" class="toc-link">LIFECYCLE</a>
-      <a href="#modules" class="toc-link">MODULES</a>
-      <a href="#configuration" class="toc-link">CONFIGURATION</a>
-      <a href="#runtime" class="toc-link">RUNTIME</a>
-      <a href="#errors" class="toc-link">ERRORS</a>
-      <a href="#testing" class="toc-link">TESTING</a>
-      <a href="#connections" class="toc-link">Connections</a>
-      <a href="#version-compatibility" class="toc-link">Version Compat</a>
-      <a href="#improvements" class="toc-link">Improvements</a>
-      <a href="#quick-reference" class="toc-link">QUICK REFERENCE</a>
+      <a href="#overview" class="toc-link">Overview</a>
+      <a href="#installation" class="toc-link">Installation</a>
+      <a href="#quick-start" class="toc-link">Quick Start</a>
+      <a href="#modules" class="toc-link">Modules</a>
+      <a href="#application" class="toc-link">Application</a>
+      <a href="#lifecycle" class="toc-link">Lifecycle Participants</a>
+      <a href="#building-blocks" class="toc-link">Building Blocks</a>
+      <a href="#runtime" class="toc-link">Runtime</a>
+      <a href="#api-reference" class="toc-link">API Reference</a>
+      <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
+      <a href="#related" class="toc-link">Related</a>
+          <a href="#export-index" class="toc-link">Complete Export Index</a>
     </aside>
 
   </div>
@@ -862,5 +666,6 @@ registry.<span class="fn">subscribe</span>((event) =&gt; {
   <script src="/js/docs.js"></script>
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 </body>
 </html>

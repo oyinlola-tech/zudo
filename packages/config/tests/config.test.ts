@@ -11,12 +11,17 @@ import {
   ConfigSourceType,
   createConfigSource,
   createMemoryConfigSource,
+  loadConfigSource,
+  loadConfigSourceStrict,
   sortConfigSources,
 } from "../src/configSource/configSource.core.js";
+
+import { createEnvironmentConfigSource } from "../src/configSource/configSource.environment.js";
 
 import {
   createConfigLoader,
   loadConfiguration,
+  sourceResultsToEntries,
 } from "../src/configLoader/configLoader.core.js";
 
 import { createConfigStore } from "../src/configStore/configStore.factory.js";
@@ -34,7 +39,10 @@ import {
   configValueToString,
 } from "../src/configValue/configValue.core.js";
 
-import { redactConfigValue } from "../src/configEntry/configEntry.type.js";
+import {
+  redactConfigValue,
+  serializeConfigEntry,
+} from "../src/configEntry/configEntry.type.js";
 
 import type { ConfigValue } from "../src/configValue/configValue.core.js";
 
@@ -205,10 +213,10 @@ describe("ConfigSchema validation", () => {
     const result = validateConfigObject(
       { name: "test", port: 3000 },
       {
-        type: "object",
+        type: ConfigValueType.OBJECT,
         properties: {
-          name: { type: "string" },
-          port: { type: "number" },
+          name: { type: ConfigValueType.STRING },
+          port: { type: ConfigValueType.NUMBER },
         },
       },
     );
@@ -220,9 +228,9 @@ describe("ConfigSchema validation", () => {
     const result = validateConfigObject(
       { name: 42 },
       {
-        type: "object",
+        type: ConfigValueType.OBJECT,
         properties: {
-          name: { type: "string" },
+          name: { type: ConfigValueType.STRING },
         },
       },
     );
@@ -613,10 +621,7 @@ describe("Finding 8: autoLoad", () => {
 
     const manager = createConfigManager({ sources: [source] });
 
-    const [first, second] = await Promise.all([
-      manager.load(),
-      manager.load(),
-    ]);
+    const [first, second] = await Promise.all([manager.load(), manager.load()]);
 
     expect(loadCount).toBe(1);
     expect(first).toBe(second);
@@ -858,8 +863,295 @@ describe("Finding 17: toObject returns a defensive snapshot", () => {
 
     snapshot.obj.nested.a = 42;
 
+    expect((store.get("obj") as { nested: { a: number } }).nested.a).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round 8 audit
+// ---------------------------------------------------------------------------
+
+describe("CONFIG-01: hostile keys never reach an inherited setter", () => {
+  const polluted = (): Record<string, ConfigValue> =>
+    JSON.parse('{"safe":1,"__proto__":{"isAdmin":true}}') as Record<
+      string,
+      ConfigValue
+    >;
+
+  it("keeps a literal __proto__ config key as an own property", () => {
+    const store = createConfigStore();
+    store.set("__proto__", { isAdmin: true });
+    store.set("safe", 1);
+
+    const object = store.toObject();
+
+    expect(Object.getPrototypeOf(object)).toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(object, "__proto__")).toBe(
+      true,
+    );
+    expect(({} as Record<string, unknown>).isAdmin).toBeUndefined();
+    expect(object["safe"]).toBe(1);
+  });
+
+  it("does not pollute through toSafeObject", () => {
+    const store = createConfigStore();
+    store.set("__proto__", { isAdmin: true });
+
+    const safe = store.toSafeObject();
+
+    expect(Object.getPrototypeOf(safe)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).isAdmin).toBeUndefined();
+  });
+
+  it("does not pollute through getObjectByPrefix", () => {
+    const store = createConfigStore();
+    store.set("app.__proto__", { isAdmin: true });
+
+    const scoped = store.getObjectByPrefix("app");
+
+    expect(Object.getPrototypeOf(scoped)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).isAdmin).toBeUndefined();
+  });
+
+  it("does not pollute through resolver.pick", () => {
+    const store = createConfigStore();
+    store.set("__proto__", { isAdmin: true });
+
+    const picked = createConfigResolver(store).pick(["__proto__"]);
+
+    expect(Object.getPrototypeOf(picked)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).isAdmin).toBeUndefined();
+  });
+
+  it("does not pollute when a source ships a __proto__ payload", async () => {
+    const result = await loadConfiguration([
+      createMemoryConfigSource(polluted(), { name: "hostile" }),
+    ]);
+
+    const object = result.store.toObject();
+
+    expect(Object.getPrototypeOf(object)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).isAdmin).toBeUndefined();
+    expect(object["safe"]).toBe(1);
+  });
+});
+
+describe("CONFIG-02: object schemas enforce their properties", () => {
+  const schema = {
+    type: ConfigValueType.OBJECT,
+    properties: {
+      host: { type: ConfigValueType.STRING, required: true },
+      port: { type: ConfigValueType.NUMBER, min: 1 },
+    },
+    additionalProperties: false,
+  } as const;
+
+  it("rejects a nested value that violates the property schema", () => {
+    const result = validateConfigValue({ host: 42 }, schema);
+
+    expect(result.valid).toBe(false);
+    expect(result.value).toBeUndefined();
+    expect(result.issues.some((issue) => issue.code === "TYPE_MISMATCH")).toBe(
+      true,
+    );
+  });
+
+  it("rejects a missing required nested property", () => {
+    const result = validateConfigValue({ port: 8080 }, schema);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues.some((issue) => issue.code === "REQUIRED")).toBe(true);
+  });
+
+  it("rejects unknown properties when additionalProperties is false", () => {
+    const result = validateConfigValue({ host: "db", rogue: 1 }, schema);
+
+    expect(result.valid).toBe(false);
     expect(
-      (store.get("obj") as { nested: { a: number } }).nested.a,
-    ).toBe(1);
+      result.issues.some((issue) => issue.code === "UNKNOWN_PROPERTY"),
+    ).toBe(true);
+  });
+
+  it("accepts a conforming nested value", () => {
+    const result = validateConfigValue({ host: "db", port: 5432 }, schema);
+
+    expect(result.valid).toBe(true);
+    expect(result.value).toEqual({ host: "db", port: 5432 });
+  });
+
+  it("makes the resolver reject an invalid nested object", () => {
+    const store = createConfigStore();
+    store.set("db", { host: 42 });
+
+    const resolver = createConfigResolver(store, { strict: true });
+
+    expect(() => resolver.resolve("db", schema)).toThrow();
+  });
+});
+
+describe("CONFIG-03: schema properties are read as own properties", () => {
+  it("reports a missing 'constructor' property instead of the inherited one", () => {
+    const result = validateConfigObject(
+      {},
+      {
+        type: ConfigValueType.OBJECT,
+        properties: {
+          constructor: { type: ConfigValueType.STRING, required: true },
+        },
+      },
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.issues.some((issue) => issue.code === "REQUIRED")).toBe(true);
+    expect(result.issues.some((issue) => issue.code === "TYPE_MISMATCH")).toBe(
+      false,
+    );
+  });
+});
+
+describe("CONFIG-04: initialValues reach a supplied store", () => {
+  it("seeds a store passed by the caller", () => {
+    const store = createConfigStore();
+
+    const manager = createConfigManager({
+      store,
+      initialValues: { "app.env": "test" },
+    });
+
+    expect(manager.get("app.env")).toBe("test");
+    expect(store.get("app.env")).toBe("test");
+  });
+});
+
+describe("CONFIG-05: manager name is wired through", () => {
+  it("exposes the configured name in status", () => {
+    const manager = createConfigManager({ name: "billing" });
+
+    expect(manager.name).toBe("billing");
+    expect(manager.getStatus().name).toBe("billing");
+  });
+
+  it("defaults the name", () => {
+    expect(createConfigManager().name).toBe("config");
+  });
+});
+
+describe("CONFIG-06: sourceResultsToEntries preserves sensitivity", () => {
+  it("marks entries listed in sensitiveKeys as sensitive", () => {
+    const source = createMemoryConfigSource({}, { name: "vault" });
+
+    const entries = sourceResultsToEntries(
+      [
+        {
+          source: "vault",
+          type: ConfigSourceType.CUSTOM,
+          values: { "db.password": "s3cret", "db.host": "localhost" },
+          sensitiveKeys: ["db.password"],
+        },
+      ],
+      [source],
+    );
+
+    const password = entries.find((entry) => entry.key === "db.password");
+    const host = entries.find((entry) => entry.key === "db.host");
+
+    expect(password?.sensitive).toBe(true);
+    expect(host?.sensitive).toBe(false);
+    expect(serializeConfigEntry(password!)["value"]).toBe("[REDACTED]");
+  });
+});
+
+describe("CONFIG-07: strict source loading propagates failures", () => {
+  const failing: ConfigSource = {
+    name: "boom",
+    type: ConfigSourceType.CUSTOM,
+    priority: 0,
+    optional: true,
+    load: async () => {
+      throw new Error("source exploded");
+    },
+  };
+
+  it("loadConfigSourceStrict rethrows even for optional sources", async () => {
+    await expect(loadConfigSourceStrict(failing)).rejects.toThrow(
+      "source exploded",
+    );
+  });
+
+  it("loadConfigSource still swallows failures for optional sources", async () => {
+    await expect(loadConfigSource(failing)).resolves.toBeUndefined();
+  });
+
+  it("routes loader failures to onSourceError", async () => {
+    const seen: string[] = [];
+
+    const loader = createConfigLoader({
+      sources: [failing],
+      onSourceError: (source) => {
+        seen.push(source.name);
+      },
+    });
+
+    await loader.load();
+
+    expect(seen).toEqual(["boom"]);
+  });
+});
+
+describe("CONFIG-08: environment configuration source", () => {
+  const env = {
+    APP__DB__HOST: "localhost",
+    APP__DB__PASSWORD: "s3cret",
+    APP__DEBUG: "false",
+    APP__EMPTY: "",
+    APP__MISSING: undefined,
+    OTHER__IGNORED: "nope",
+  };
+
+  it("reads prefixed variables and maps them to dotted keys", async () => {
+    const result = await loadConfiguration([
+      createEnvironmentConfigSource({ prefix: "APP__", env }),
+    ]);
+
+    expect(result.store.get("db.host")).toBe("localhost");
+    expect(result.store.get("debug")).toBe("false");
+    expect(result.store.get("empty")).toBe("");
+    expect(result.store.has("missing")).toBe(false);
+    expect(result.store.has("other.ignored")).toBe(false);
+  });
+
+  it('parses "false" as false rather than a truthy string', async () => {
+    const result = await loadConfiguration([
+      createEnvironmentConfigSource({ prefix: "APP__", env }),
+    ]);
+
+    const resolver = createConfigResolver(result.store);
+
+    expect(resolver.boolean("debug")).toBe(false);
+  });
+
+  it("marks secret-shaped variables sensitive and redacts them", async () => {
+    const result = await loadConfiguration([
+      createEnvironmentConfigSource({ prefix: "APP__", env }),
+    ]);
+
+    expect(result.store.getEntry("db.password")?.sensitive).toBe(true);
+    expect(result.store.toSafeObject()["db.password"]).toBe("[REDACTED]");
+    expect(result.store.toSafeObject()["db.host"]).toBe("localhost");
+  });
+
+  it("does not pollute prototypes from a hostile variable name", async () => {
+    const result = await loadConfiguration([
+      createEnvironmentConfigSource({
+        prefix: "APP__",
+        env: { APP____PROTO__: "x" },
+        keyMapper: (name) => name.toLowerCase(),
+      }),
+    ]);
+
+    expect(({} as Record<string, unknown>).isAdmin).toBeUndefined();
+    expect(Object.getPrototypeOf(result.store.toObject())).toBe(
+      Object.prototype,
+    );
   });
 });

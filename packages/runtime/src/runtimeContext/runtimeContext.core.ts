@@ -1,10 +1,7 @@
-import type { Environment } from "@zudojs/constants";
-
 import type {
   RuntimeContext,
   RuntimeContextDependencies,
   RuntimeContextState,
-  RuntimeIdentity,
 } from "./runtimeContext.type.js";
 
 import { createStatus } from "../runtimeState/runtimeState.core.js";
@@ -41,9 +38,14 @@ export function createRuntimeContext(
  * Returns a context reflecting the current runtime state.
  *
  * `createRuntimeContext` captures the dependencies that never change for
- * the life of a runtime; the lifecycle-dependent fields (`state`, `status`,
- * `health`, `ready`, `startedAt`) are layered on top of that base each time
- * the context is read, so callers never observe a stale snapshot.
+ * the life of a runtime; the lifecycle-dependent fields are layered on top
+ * of that base each time the context is read, so callers never observe a
+ * stale snapshot.
+ *
+ * Every field of {@link RuntimeContextState} is applied. Previously only
+ * `startedAt` was, so `stoppedAt`, `failedAt` and `error` were computed by
+ * the runtime, passed in here, and silently dropped — the context claimed
+ * a clean runtime on the failure path.
  */
 export function withRuntimeContextState(
   base: RuntimeContext,
@@ -56,27 +58,8 @@ export function withRuntimeContextState(
     health: state.health,
     ready: state.ready,
     ...(state.startedAt !== undefined && { startedAt: state.startedAt }),
-  });
-}
-
-/**
- * Creates runtime identity information.
- */
-export function createRuntimeIdentity(
-  runtimeId: string,
-  environment: Environment,
-  applicationName: string,
-  applicationVersion: string,
-): RuntimeIdentity {
-  return Object.freeze({
-    runtimeId,
-    environment,
-    applicationName,
-    applicationVersion,
-    hostname:
-      typeof process !== "undefined"
-        ? (process.env.HOSTNAME ?? "unknown")
-        : "unknown",
-    processId: typeof process !== "undefined" ? process.pid : 0,
+    ...(state.stoppedAt !== undefined && { stoppedAt: state.stoppedAt }),
+    ...(state.failedAt !== undefined && { failedAt: state.failedAt }),
+    ...(state.error !== undefined && { error: state.error }),
   });
 }

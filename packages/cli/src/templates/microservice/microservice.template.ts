@@ -17,6 +17,7 @@
  * ├── infrastructure/
  * ├── package.json
  * ├── pnpm-workspace.yaml
+ * ├── zudojs.config.ts
  * ├── docker-compose.yml
  * └── README.md
  * ```
@@ -24,6 +25,15 @@
 
 import type { ScaffoldOptions } from "../../types/index.js";
 import { ZUDOJS_PACKAGES_VERSION } from "../../constants/index.js";
+import { normalizeName } from "../../utils/utils.name.js";
+import {
+  RUNTIME_APP_DEPENDENCIES,
+  moduleSpec,
+  renderAppFile,
+  renderModuleFile,
+  renderServerFile,
+  renderZudojsConfig,
+} from "../shared/index.js";
 
 /** Default service names used when none are provided. */
 export const DEFAULT_MICROSERVICE_SERVICES = [
@@ -33,16 +43,43 @@ export const DEFAULT_MICROSERVICE_SERVICES = [
   "notification",
 ] as const;
 
+/**
+ * The gateway app is always generated at `apps/gateway`, so "gateway" is a
+ * reserved name: a service called `gateway` would produce a second, competing
+ * gateway at `apps/services/gateway`.
+ */
+export const RESERVED_MICROSERVICE_APP_NAMES = ["gateway"] as const;
+
+/**
+ * Normalizes a requested service list into the service apps generated under
+ * `apps/services/`. Reserved names and duplicates are dropped; an empty list
+ * falls back to DEFAULT_MICROSERVICE_SERVICES.
+ */
+export function resolveMicroserviceServices(
+  requested: readonly string[],
+): readonly string[] {
+  const normalized = requested
+    .map((service) => normalizeName(service))
+    .filter(
+      (service) =>
+        service.length > 0 &&
+        !RESERVED_MICROSERVICE_APP_NAMES.some(
+          (reserved) => reserved === service,
+        ),
+    );
+
+  const unique = [...new Set(normalized)];
+
+  return unique.length > 0 ? unique : [...DEFAULT_MICROSERVICE_SERVICES];
+}
+
 export function generateMicroserviceFiles(
   options: ScaffoldOptions,
 ): Record<string, string> {
   const nameSlug = options.projectName
     .replace(/[^a-z0-9-]+/gi, "-")
     .toLowerCase();
-  const services =
-    options.services.length > 0
-      ? options.services
-      : DEFAULT_MICROSERVICE_SERVICES;
+  const services = resolveMicroserviceServices(options.services);
 
   const files: Record<string, string> = {};
 
@@ -82,6 +119,7 @@ export function generateMicroserviceFiles(
         name: nameSlug,
         version: "0.1.0",
         private: true,
+        type: "module",
         description: `Microservice architecture built with Zudojs framework`,
         zudojs: {
           projectType: "backend",
@@ -139,6 +177,12 @@ ${composeServices}
 volumes:
   ${services.map((s) => `${s}-data:`).join("\n  ")}
 `;
+
+  files["zudojs.config.ts"] = renderZudojsConfig({
+    projectName: nameSlug,
+    projectType: "backend",
+    architecture: "microservice",
+  });
 
   files[".env.example"] = `NODE_ENV=development
 PORT=3000
@@ -215,16 +259,15 @@ MIT
 
   // Gateway service
   const gatewayDeps = [
+    ...RUNTIME_APP_DEPENDENCIES,
     "@zudojs/http",
     "@zudojs/config",
-    "@zudojs/logger",
-    "@zudojs/runtime",
   ];
 
   files["apps/gateway/package.json"] =
     JSON.stringify(
       {
-        name: "@zudojs/gateway",
+        name: `${nameSlug}-gateway`,
         version: "0.1.0",
         private: true,
         type: "module",
@@ -235,7 +278,7 @@ MIT
           typecheck: "tsc --noEmit",
         },
         dependencies: Object.fromEntries(
-          gatewayDeps.map((d) => [d, ZUDOJS_PACKAGES_VERSION]),
+          [...new Set(gatewayDeps)].map((d) => [d, ZUDOJS_PACKAGES_VERSION]),
         ),
         devDependencies: appDevDeps,
       },
@@ -263,61 +306,36 @@ CMD ["node", "dist/server.js"]
 `;
 
   files["apps/gateway/src/index.ts"] =
-    `export { createGateway } from "./app.js";
+    `export { createApp } from "./app.js";
 `;
 
-  files["apps/gateway/src/app.ts"] = `import { logger } from "@zudojs/logger";
+  const gatewayModule = moduleSpec("gateway", "./modules/index.js");
 
-export async function createGateway() {
-  const log = logger.child({ service: "gateway" });
-  log.info("Gateway starting...");
+  files["apps/gateway/src/app.ts"] = renderAppFile({
+    applicationName: `${nameSlug}-gateway`,
+    modules: [gatewayModule],
+    port: 3000,
+  });
 
-  return {
-    listen: async () => {
-      log.info("Gateway listening on port 3000");
-    },
-    stop: async () => {
-      log.info("Gateway shutting down...");
-    },
-  };
-}
-`;
+  files["apps/gateway/src/modules/gateway.module.ts"] = renderModuleFile({
+    module: gatewayModule,
+  });
 
-  files["apps/gateway/src/server.ts"] =
-    `import { createGateway } from "./app.js";
-import { createRuntime } from "@zudojs/runtime";
+  files["apps/gateway/src/modules/index.ts"] =
+    `export { ${gatewayModule.className} } from "./gateway.module.js";\n`;
 
-const app = await createGateway();
-
-const runtime = createRuntime({
-  onShutdown: async () => {
-    await app.stop();
-  },
-});
-
-await runtime.start();
-await app.listen();
-
-process.on("SIGTERM", async () => {
-  await runtime.stop();
-  process.exit(0);
-});
-`;
+  files["apps/gateway/src/server.ts"] = renderServerFile();
 
   // Generate each service
   const serviceDeps = [
-    "@zudojs/core",
-    "@zudojs/runtime",
-    "@zudojs/container",
+    ...RUNTIME_APP_DEPENDENCIES,
     "@zudojs/config",
-    "@zudojs/logger",
     "@zudojs/errors",
-    "@zudojs/constants",
     "@zudojs/http",
   ];
 
   if (options.enableCQRS) {
-    serviceDeps.push("@zudojs/cqrs", "@zudojs/events");
+    serviceDeps.push("@zudojs/cqrs");
   }
 
   for (const svc of services) {
@@ -328,7 +346,7 @@ process.on("SIGTERM", async () => {
     files[`apps/services/${svcName}/package.json`] =
       JSON.stringify(
         {
-          name: `@zudojs/${nameSlug}-${svcName}`,
+          name: `${nameSlug}-${svcName}`,
           version: "0.1.0",
           private: true,
           type: "module",
@@ -395,48 +413,21 @@ CMD ["node", "dist/server.js"]
       `export { createApp } from "./app.js";
 `;
 
-    files[`apps/services/${svcName}/src/app.ts`] =
-      `import { logger } from "@zudojs/logger";
-import { createContainer } from "@zudojs/container";
+    const svcModule = moduleSpec(svcName, "./modules/index.js");
 
-export async function createApp() {
-  const log = logger.child({ service: "${svcName}" });
-  const container = createContainer();
+    files[`apps/services/${svcName}/src/app.ts`] = renderAppFile({
+      applicationName: `${nameSlug}-${svcName}`,
+      modules: [svcModule],
+      port,
+    });
 
-  log.info("${svcName} v0.1.0 starting...");
+    files[`apps/services/${svcName}/src/modules/${svcName}.module.ts`] =
+      renderModuleFile({ module: svcModule });
 
-  return {
-    container,
-    listen: async () => {
-      log.info("Listening on port ${port}");
-    },
-    stop: async () => {
-      log.info("Shutting down...");
-    },
-  };
-}
-`;
+    files[`apps/services/${svcName}/src/modules/index.ts`] =
+      `export { ${svcModule.className} } from "./${svcName}.module.js";\n`;
 
-    files[`apps/services/${svcName}/src/server.ts`] =
-      `import { createApp } from "./app.js";
-import { createRuntime } from "@zudojs/runtime";
-
-const app = await createApp();
-
-const runtime = createRuntime({
-  onShutdown: async () => {
-    await app.stop();
-  },
-});
-
-await runtime.start();
-await app.listen();
-
-process.on("SIGTERM", async () => {
-  await runtime.stop();
-  process.exit(0);
-});
-`;
+    files[`apps/services/${svcName}/src/server.ts`] = renderServerFile();
 
     for (const dir of svcDirs) {
       files[`apps/services/${svcName}/src/${dir}/index.ts`] = "";

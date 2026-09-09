@@ -21,8 +21,14 @@ import {
   createParticipant,
 } from "../transaction/transaction.participant.js";
 import { internals } from "../transaction/transaction.internal.js";
-import { TransactionPropagationError } from "../transactionErrors/transactionError.types.js";
+import {
+  SavepointError,
+  TransactionCapabilityError,
+  TransactionPropagationError,
+} from "../transactionErrors/transactionError.types.js";
 import { assertAdapterSupports } from "./manager.capabilities.js";
+import type { TransactionEmitter } from "./manager.events.js";
+import { noopEmitter, TRANSACTION_EVENTS } from "./manager.events.js";
 
 /** Everything a propagation branch may need. */
 export interface PropagationContext {
@@ -30,6 +36,8 @@ export interface PropagationContext {
   readonly opts: TransactionOptions | undefined;
   readonly adapter: TransactionAdapter;
   readonly hooks: TransactionHooks | undefined;
+  /** Lifecycle event emitter. Defaults to discarding events. */
+  readonly emit?: TransactionEmitter;
 }
 
 /**
@@ -44,6 +52,7 @@ export async function beginRoot(
   parentId?: string,
 ): Promise<Transaction> {
   const { adapter, hooks, opts } = context;
+  const emit = context.emit ?? noopEmitter;
   assertAdapterSupports(adapter, opts);
 
   const transaction = createTransaction(opts, parentId, "root");
@@ -54,9 +63,11 @@ export async function beginRoot(
     internals(transaction)._transition("active");
   } catch (error) {
     internals(transaction)._transition("failed");
+    emit(TRANSACTION_EVENTS.FAILED, transaction, error);
     throw error;
   }
 
+  emit(TRANSACTION_EVENTS.STARTED, transaction);
   if (hooks?.afterBegin) await hooks.afterBegin({ transaction });
   return transaction;
 }
@@ -73,10 +84,13 @@ async function beginSavepoint(
   context: PropagationContext,
 ): Promise<Transaction> {
   const { adapter, hooks, opts } = context;
+  const emit = context.emit ?? noopEmitter;
 
   if (!adapter.capabilities.savepoints || !adapter.createSavepoint) {
-    throw new TransactionPropagationError(
-      "Nested transactions require savepoint support",
+    // A missing capability is a configuration mismatch, not a propagation
+    // rule violation, and TransactionCapabilityError names what is missing.
+    throw new TransactionCapabilityError(
+      "savepoints, required by nested transactions",
     );
   }
 
@@ -92,9 +106,14 @@ async function beginSavepoint(
     internals(child)._transition("active");
   } catch (error) {
     internals(child)._transition("failed");
-    throw error;
+    emit(TRANSACTION_EVENTS.FAILED, child, error);
+    throw new SavepointError(
+      `Failed to create savepoint "${savepoint}"`,
+      error,
+    );
   }
 
+  emit(TRANSACTION_EVENTS.STARTED, child);
   if (hooks?.afterBegin) await hooks.afterBegin({ transaction: child });
   return child;
 }

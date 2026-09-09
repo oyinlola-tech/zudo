@@ -15,6 +15,8 @@ import { readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { extname, join, resolve, sep } from "node:path";
 
+import { applyHeadersToResponse } from "../helpers/index.js";
+
 export interface StaticMiddlewareOptions {
   readonly root: string;
   readonly index?: string | string[];
@@ -269,17 +271,13 @@ export function createStaticMiddleware(
 
     const ifNoneMatch = context.request.headers["if-none-match"];
     if (ifNoneMatch === etag) {
-      return {
-        ...context.response,
-        status: 304,
-        headers: responseHeaders,
-      } as unknown as ResponseContext;
+      return applyHeadersToResponse(context.response, responseHeaders).setStatus(
+        304,
+      );
     }
 
-    return {
-      ...context.response,
-      body: fileData,
-      headers: responseHeaders,
-    } as unknown as ResponseContext;
+    return applyHeadersToResponse(context.response, responseHeaders).setBody(
+      fileData,
+    );
   };
 }

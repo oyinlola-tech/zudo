@@ -14,7 +14,11 @@ import type { NamedMessageHandler } from "../messageHandler/messageHandlerType.t
 
 import type { Message } from "../message/messageType.type.js";
 
-import { DuplicateMessageHandlerError } from "@zudojs/errors";
+import {
+  createMessageError,
+  DuplicateMessageHandlerError,
+  ErrorCode,
+} from "@zudojs/errors";
 
 /**
  * In-memory store for registered message handlers.
@@ -28,7 +32,6 @@ export class HandlerRegistryStore {
     this.options = {
       allowDuplicateHandlerIds: false,
       allowMultipleHandlers: true,
-      requireTypeRegistration: false,
       ...options,
     };
   }
@@ -37,6 +40,7 @@ export class HandlerRegistryStore {
     handler: NamedMessageHandler<TMessage, TResult>,
   ): void {
     this.validateNotDuplicate(handler.id);
+    this.validateSingleHandlerPerType(handler);
     const entry: RegisteredHandler<TMessage, TResult> = {
       handler,
       registeredAt: new Date(),
@@ -51,6 +55,36 @@ export class HandlerRegistryStore {
       this.handlers.has(handlerId)
     ) {
       throw new DuplicateMessageHandlerError(handlerId);
+    }
+  }
+
+  /**
+   * Rejects a second handler for a type when the registry is single-handler.
+   *
+   * `allowMultipleHandlers` was stored and never read, so a registry created
+   * with `allowMultipleHandlers: false` silently fanned a command out to
+   * every handler that had claimed its type.
+   *
+   * @throws {MessageError} when the type already has a handler.
+   */
+  private validateSingleHandlerPerType<TMessage extends Message, TResult>(
+    handler: NamedMessageHandler<TMessage, TResult>,
+  ): void {
+    if (this.options.allowMultipleHandlers !== false) return;
+
+    for (const messageType of handler.messageTypes) {
+      const existing = this.handlersByType.get(messageType);
+      const taken = existing && existing.size > 0 ? [...existing][0] : undefined;
+      if (taken !== undefined) {
+        throw createMessageError(
+          `Message type "${messageType}" already has handler "${taken}" and the registry does not allow multiple handlers.`,
+          {
+            code: ErrorCode.CONFLICT,
+            messageType,
+            handlerId: handler.id,
+          },
+        );
+      }
     }
   }
 

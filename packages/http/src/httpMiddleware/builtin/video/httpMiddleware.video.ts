@@ -13,6 +13,8 @@ import type {
 
 import type { HttpResponseContext as ResponseContext } from "../../../httpResponse/httpResponse.context.js";
 
+import { applyHeadersToResponse } from "../helpers/index.js";
+
 export interface VideoCompressionOptions {
   readonly bitrate?: string;
   readonly preset?:
@@ -130,11 +132,7 @@ export function createVideoCompressionMiddleware(
         headers.get("cache-control") ?? "public, max-age=86400",
       );
 
-      return {
-        ...response,
-        body: compressed,
-        headers,
-      } as unknown as ResponseContext;
+      return applyHeadersToResponse(response, headers).setBody(compressed);
     } catch {
       return response;
     }

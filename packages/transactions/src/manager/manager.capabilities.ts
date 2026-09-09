@@ -10,14 +10,23 @@
 
 import type { TransactionOptions } from "../transactionTypes/transaction.interface.js";
 import type { TransactionAdapter } from "../transactionTypes/transactionAdapter.js";
-import { TransactionAdapterError } from "../transactionErrors/transactionError.types.js";
+import {
+  TransactionCapabilityError,
+  TransactionIsolationError,
+} from "../transactionErrors/transactionError.types.js";
 
 /**
  * Assert that an adapter can honour the options a transaction requests.
  *
  * @param adapter - The adapter about to begin the transaction.
  * @param options - The requested options.
- * @throws {TransactionAdapterError} when a requested capability is missing.
+ * A capability mismatch is a configuration error, not an adapter fault, so it
+ * no longer shares `TransactionAdapterError` with genuine driver failures:
+ * `TransactionIsolationError` names the level, `TransactionCapabilityError`
+ * names the capability.
+ *
+ * @throws {TransactionIsolationError} when the isolation level is unsupported.
+ * @throws {TransactionCapabilityError} when another capability is missing.
  */
 export function assertAdapterSupports(
   adapter: TransactionAdapter,
@@ -31,15 +40,11 @@ export function assertAdapterSupports(
     options.isolation !== undefined &&
     !capabilities.isolationLevels.includes(options.isolation)
   ) {
-    throw new TransactionAdapterError(
-      `Adapter does not support isolation level "${options.isolation}"`,
-    );
+    throw new TransactionIsolationError(options.isolation);
   }
 
   if (options.readOnly === true && !capabilities.readOnlyTransactions) {
-    throw new TransactionAdapterError(
-      "Adapter does not support read-only transactions",
-    );
+    throw new TransactionCapabilityError("read-only transactions");
   }
 
   if (
@@ -47,8 +52,6 @@ export function assertAdapterSupports(
     options.timeout > 0 &&
     !capabilities.timeouts
   ) {
-    throw new TransactionAdapterError(
-      "Adapter does not support transaction timeouts",
-    );
+    throw new TransactionCapabilityError("transaction timeouts");
   }
 }

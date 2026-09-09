@@ -9,7 +9,7 @@
  */
 
 import type { FeatureFlag } from "../featureFlagTypes/featureFlag.interface.js";
-import type { FeatureFlagProvider } from "../featureFlagTypes/featureFlagProvider.js";
+import type { RefreshableFeatureFlagProvider } from "../featureFlagTypes/featureFlagProvider.js";
 
 /** Options for the environment provider. */
 export interface EnvironmentProviderOptions {
@@ -36,11 +36,11 @@ function parseEnvValue(raw: string): boolean | string | number {
  * Create an environment-variable feature flag provider.
  *
  * @param options - Configuration options.
- * @returns A FeatureFlagProvider that reads from environment variables.
+ * @returns A provider that reads from environment variables.
  */
 export function createEnvironmentProvider(
   options: EnvironmentProviderOptions = {},
-): FeatureFlagProvider {
+): RefreshableFeatureFlagProvider {
   const prefix = options.prefix ?? "FEATURE_";
   const env =
     options.env ?? (typeof process !== "undefined" ? process.env : {});

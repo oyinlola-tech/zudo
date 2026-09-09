@@ -13,6 +13,7 @@ export {
 
 export type {
   RuntimeEventType,
+  RuntimeModuleEventType,
   RuntimeEventPayload,
   RuntimeModuleEventPayload,
   RuntimeFailureEventPayload,

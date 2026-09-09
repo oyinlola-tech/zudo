@@ -52,6 +52,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -107,10 +108,10 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/messaging</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
-          In-process message bus infrastructure with handlers, middleware, and publish/subscribe patterns. The foundational layer that CQRS and Events build upon.
+          An in-process message bus: one part of your program sends a named message, other parts handle it and send an answer back, all without the two sides knowing about each other.
         </p>
         <div class="flex flex-wrap gap-2 mt-4">
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">MESSAGING</span>
@@ -120,723 +121,500 @@
         </div>
       </div>
 
+      <!-- Overview -->
+      <section id="overview" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OVERVIEW</h2>
+        <p class="mb-4 leading-relaxed">
+          When one part of an app needs another part to do something, the simplest option is a direct function call. That works until the two parts live in different modules, or until three other parts also want to react. Then every caller has to import every listener, and the code becomes a tangle.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          A <em>message bus</em> breaks that tangle. Senders hand a <em>message</em> (a small named object with data) to the bus. The bus looks up the <em>handlers</em> that registered for that message's type, runs them, and hands their return values back to the sender. Sender and handlers only share the message type string, such as <code class="bg-black/5 px-1">"order.placed"</code>.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          <code class="bg-black/5 px-1">@zudojs/messaging</code> is that bus, kept inside a single Node.js process. It has no network, no queue and no persistence. It is the generic layer; <a href="/docs/packages-events" class="text-zudo-blue underline">@zudojs/events</a> and <a href="/docs/packages-cqrs" class="text-zudo-blue underline">@zudojs/cqrs</a> use the same vocabulary for more specific jobs (see <a href="#messaging-vs-events" class="text-zudo-blue underline">Messaging vs Events</a>).
+        </p>
+
+        <div class="grid md:grid-cols-2 gap-4 mb-4">
+          <div class="border-2 border-black p-4">
+            <div class="font-bold mb-2">Reach for it when</div>
+            <ul class="text-sm space-y-1 list-disc pl-5">
+              <li>Modules in one process need to talk without importing each other.</li>
+              <li>You want a request/response shape: the handler's return value matters.</li>
+              <li>You want to add logging or timing around every message in one place.</li>
+              <li>You are building a higher-level bus of your own and need the plumbing.</li>
+            </ul>
+          </div>
+          <div class="border-2 border-black p-4">
+            <div class="font-bold mb-2">Skip it when</div>
+            <ul class="text-sm space-y-1 list-disc pl-5">
+              <li>A plain function call would do. Two modules that already import each other do not need a bus.</li>
+              <li>You are announcing "something happened" to many listeners. Use <a href="/docs/packages-events" class="text-zudo-blue underline">@zudojs/events</a>.</li>
+              <li>Work must survive a restart or run on another machine. Use <a href="/docs/packages-queue" class="text-zudo-blue underline">@zudojs/queue</a>.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
       <!-- Installation -->
       <section id="installation" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-        <div class="code-block mb-4"><span class="cm">// npm</span>
-npm install @zudojs/messaging
-
-<span class="cm">// pnpm</span>
-pnpm add @zudojs/messaging
-
-<span class="cm">// yarn</span>
-yarn add @zudojs/messaging</div>
+        <p class="mb-3">Install the package. It pulls in <code class="bg-black/5 px-1">@zudojs/errors</code> and <code class="bg-black/5 px-1">@zudojs/constants</code> on its own; you do not need to add them.</p>
+        <div class="code-block mb-4">$ npm install @zudojs/messaging</div>
 
         <div class="callout callout-note">
-          <strong class="text-zudo-blue">Peer Dependencies:</strong> @zudojs/messaging depends on @zudojs/errors and @zudojs/constants. All at version 0.1.0.
+          <strong class="text-zudo-blue">Source of truth:</strong> These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest @zudojs release.
         </div>
+        <p class="text-sm text-black/60">Requires Node.js 24 or newer and an ES-module project (<code class="bg-black/5 px-1">"type": "module"</code> in package.json).</p>
       </section>
 
-      <!-- What It Does -->
-      <section id="what-it-does" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHAT IT DOES</h2>
-        <p class="mb-4 leading-relaxed">
-          <code class="bg-black/5 px-1">@zudojs/messaging</code> is the core messaging infrastructure for Zudojs. It provides:
-        </p>
-        <ul class="space-y-2 mb-6">
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> An <strong>in-process message bus</strong> for dispatching messages between components</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> A <strong>publish/subscribe pattern</strong> where handlers subscribe to message types</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Typed message payloads</strong> with Message&lt;TPayload&gt; generic contracts</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> A <strong>handler registry</strong> for managing handler registration and resolution</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> A <strong>middleware pipeline</strong> that intercepts dispatch with cross-cutting concerns</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Dispatcher coordination</strong> that validates, contextualizes, and routes messages</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Context propagation</strong> carrying correlationId, causationId, signal, and state</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Timeout handling</strong> and <strong>abort support</strong> via AbortSignal integration</li>
-        </ul>
+      <!-- Quick Start -->
+      <section id="quick-start" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK START</h2>
+        <p class="mb-3">This creates a bus, registers one handler for the type <code class="bg-black/5 px-1">"user.created"</code>, sends a message of that type, and prints what came back.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createMessageBus</span> } <span class="kw">from</span> <span class="str">"@zudojs/messaging"</span>;
 
-        <div class="callout callout-tip">
-          <strong class="text-zudo-green">Core Principle:</strong> Messages are the fundamental unit of communication. @zudojs/messaging provides the primitives that @zudojs/cqrs (commands/queries) and @zudojs/events (domain events) specialize into higher-level patterns.
-        </div>
-      </section>
+<span class="kw">const</span> bus = <span class="fn">createMessageBus</span>();
 
-      <!-- Architecture Position -->
-      <section id="architecture-position" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHERE IT SITS</h2>
-        <div class="border-4 border-black p-6 space-y-3">
-          <div class="bg-zudo-red text-black p-3 font-bold text-center text-sm">APPLICATION LAYER (CQRS, Modules, Handlers)</div>
-          <div class="bg-white border-2 border-black p-3 font-bold text-center text-sm">MESSAGING LAYER (@zudojs/messaging)</div>
-          <div class="bg-zudo-blue text-white p-3 font-bold text-center text-sm">EVENT BUS (@zudojs/events)</div>
-          <div class="bg-black text-white p-3 font-bold text-center text-sm">ADAPTER LAYER (@zudojs/adapters, External Platforms)</div>
-        </div>
-        <p class="mt-4 text-sm text-black/60">
-          Messaging sits below the application layer. Commands and queries flow through the messaging bus. The event bus wraps messaging for domain event patterns. Adapters sit below for external platform integration.
-        </p>
-      </section>
+<span class="cmt">// 1. Register a handler. It runs whenever a "user.created" message arrives.</span>
+bus.<span class="fn">on</span>(<span class="str">"user.created"</span>, <span class="kw">async</span> (message) =&gt; {
+  console.<span class="fn">log</span>(<span class="str">"New user:"</span>, message.payload);
+  <span class="kw">return</span> <span class="str">"welcome email queued"</span>;
+}, { id: <span class="str">"send-welcome-email"</span> });
 
-      <!-- Dependencies -->
-      <section id="dependencies" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DEPENDENCIES</h2>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Package</th>
-                <th class="p-3 text-left">Version</th>
-                <th class="p-3 text-left">Purpose</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono text-sm">@zudojs/errors</td>
-                <td class="p-3">0.1.0</td>
-                <td class="p-3">Message error hierarchy (MessageError, MessageDispatchError, etc.)</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono text-sm">@zudojs/constants</td>
-                <td class="p-3">0.1.0</td>
-                <td class="p-3">Branded types (MessageId, CorrelationId, MessageCausationId)</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="mt-4 callout callout-warning">
-          <strong class="text-zudo-yellow">Version Lock:</strong> All internal dependencies use <code>workspace:*</code> in development. When published, they use exact version <code>0.1.0</code>. Always use matching versions across the ecosystem.
-        </div>
-      </section>
-
-      <!-- Core API: Message -->
-      <section id="core-message" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CORE MESSAGE</h2>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: Message</h3>
-        <p class="mb-3 text-sm">The base shape for all messages flowing through the bus:</p>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Message</span>&lt;<span class="tp">TPayload</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> id: <span class="tp">MessageId</span>;
-  <span class="kw">readonly</span> type: <span class="tp">MessageType</span>;
-  <span class="kw">readonly</span> payload: <span class="tp">TPayload</span>;
-  <span class="kw">readonly</span> timestamp: <span class="tp">MessageTimestamp</span>;
-  <span class="kw">readonly</span> source?: <span class="tp">MessageSource</span>;
-  <span class="kw">readonly</span> correlationId?: <span class="tp">MessageCorrelationId</span>;
-  <span class="kw">readonly</span> causationId?: <span class="tp">MessageCausationId</span>;
-  <span class="kw">readonly</span> metadata?: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: MessageInput</h3>
-        <p class="mb-3 text-sm">The input shape when creating messages (id and timestamp are auto-generated):</p>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">MessageInput</span>&lt;<span class="tp">TPayload</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> id?: <span class="tp">MessageId</span>;
-  <span class="kw">readonly</span> type: <span class="tp">MessageType</span>;
-  <span class="kw">readonly</span> payload: <span class="tp">TPayload</span>;
-  <span class="kw">readonly</span> timestamp?: <span class="tp">MessageTimestamp</span> | <span class="tp">number</span>;
-  <span class="kw">readonly</span> source?: <span class="tp">MessageSource</span>;
-  <span class="kw">readonly</span> correlationId?: <span class="tp">MessageCorrelationId</span>;
-  <span class="kw">readonly</span> causationId?: <span class="tp">MessageCausationId</span>;
-  <span class="kw">readonly</span> metadata?: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Type Alias: MessageId</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">MessageId</span> = <span class="tp">Brand</span>&lt;<span class="tp">string</span>, <span class="str">"MessageId"</span>&gt;;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Factory Functions</h3>
-        <div class="code-block"><span class="cm">// Create an immutable message from input</span>
-<span class="kw">const</span> msg = <span class="fn">createMessage</span>({
-  type: <span class="str">"order.created"</span>,
-  payload: { orderId: <span class="str">"ord-001"</span>, total: <span class="num">99.99</span> },
+<span class="cmt">// 2. Send a message. send() builds the Message object for you.</span>
+<span class="kw">const</span> result = <span class="kw">await</span> bus.<span class="fn">send</span>({
+  type: <span class="str">"user.created"</span>,
+  payload: { id: <span class="str">"u-1"</span>, email: <span class="str">"ada@example.com"</span> },
 });
 
-<span class="cm">// Create a derived message preserving correlation</span>
-<span class="kw">const</span> derived = <span class="fn">createDerivedMessage</span>(originalMsg, {
-  type: <span class="str">"order.confirmed"</span>,
-  payload: { orderId: <span class="str">"ord-001"</span> },
-});
+console.<span class="fn">log</span>(result.success); <span class="cmt">// true</span>
+console.<span class="fn">log</span>(result.value);   <span class="cmt">// "welcome email queued"</span>
 
-<span class="cm">// Type guard</span>
-<span class="fn">isMessage</span>(value); <span class="cm">// boolean</span>
-
-<span class="cm">// Accessors</span>
-<span class="fn">getMessageType</span>(msg);   <span class="cm">// "order.created"</span>
-<span class="fn">getMessagePayload</span>(msg); <span class="cm">// { orderId: "ord-001", total: 99.99 }</span>
-<span class="fn">describeMessage</span>(msg);   <span class="cm">// "order.created (msg:uuid)"</span></div>
-      </section>
-
-      <!-- Message Context -->
-      <section id="message-context" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MESSAGE CONTEXT</h2>
-        <p class="mb-4">
-          The <code class="bg-black/5 px-1">MessageContext</code> carries correlation and causation identifiers through the dispatch chain, enabling distributed tracing and message lineage.
-        </p>
-
-        <h3 class="text-lg font-bold mb-3">Interface: MessageContext</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">MessageContext</span> {
-  <span class="kw">readonly</span> message: <span class="tp">Message</span>;
-  <span class="kw">readonly</span> correlationId: <span class="tp">MessageCorrelationId</span>;
-  <span class="kw">readonly</span> causationId: <span class="tp">MessageCausationId</span>;
-  <span class="kw">readonly</span> headers: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;;
-  <span class="kw">readonly</span> signal: <span class="tp">AbortSignal</span>;
-  <span class="kw">readonly</span> state: <span class="tp">Map</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;;
-  <span class="kw">readonly</span> startedAt: <span class="tp">Date</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: MessageContextOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">MessageContextOptions</span> {
-  <span class="kw">readonly</span> correlationId?: <span class="tp">MessageCorrelationId</span>;
-  <span class="kw">readonly</span> causationId?: <span class="tp">MessageCausationId</span>;
-  <span class="kw">readonly</span> headers?: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;;
-  <span class="kw">readonly</span> signal?: <span class="tp">AbortSignal</span>;
-  <span class="kw">readonly</span> state?: <span class="tp">Map</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Factory Function</h3>
-        <div class="code-block"><span class="kw">const</span> ctx = <span class="fn">createMessageContext</span>(message, {
-  correlationId: <span class="str">"corr-123"</span>,
-  headers: { traceId: <span class="str">"trace-456"</span> },
-});</div>
-      </section>
-
-      <!-- Message Handlers -->
-      <section id="message-handlers" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MESSAGE HANDLERS</h2>
-
-        <h3 class="text-lg font-bold mb-3">Type: MessageHandler</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">MessageHandler</span>&lt;<span class="tp">TMessage</span> <span class="kw">extends</span> <span class="tp">Message</span> = <span class="tp">Message</span>, <span class="tp">TResult</span> = <span class="tp">unknown</span>&gt; = (
-  message: <span class="tp">TMessage</span>,
-  context: <span class="tp">MessageContext</span>,
-) =&gt; <span class="tp">Promise</span>&lt;<span class="tp">TResult</span>&gt; | <span class="tp">TResult</span>;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: NamedMessageHandler</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">NamedMessageHandler</span>&lt;<span class="tp">TMessage</span> <span class="kw">extends</span> <span class="tp">Message</span> = <span class="tp">Message</span>, <span class="tp">TResult</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> id: <span class="tp">string</span>;
-  <span class="kw">readonly</span> name: <span class="tp">string</span>;
-  <span class="kw">readonly</span> handler: <span class="tp">MessageHandler</span>&lt;<span class="tp">TMessage</span>, <span class="tp">TResult</span>&gt;;
-  <span class="kw">readonly</span> messageTypes: <span class="kw">readonly</span> <span class="tp">string</span>[];
-  <span class="kw">readonly</span> priority?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> enabled?: <span class="tp">boolean</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: HandlerResult</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">HandlerResult</span>&lt;<span class="tp">TResult</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> value: <span class="tp">TResult</span>;
-  <span class="kw">readonly</span> metadata?: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Type: MessageHandlerLike</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">MessageHandlerLike</span> =
-  | <span class="tp">MessageHandler</span>
-  | { <span class="fn">handle</span>: <span class="tp">MessageHandler</span> };</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Type: MessageHandlerFactory</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">MessageHandlerFactory</span>&lt;<span class="tp">TMessage</span> <span class="kw">extends</span> <span class="tp">Message</span> = <span class="tp">Message</span>, <span class="tp">TResult</span> = <span class="tp">unknown</span>&gt; = (
-  options?: <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;,
-) =&gt; <span class="tp">NamedMessageHandler</span>&lt;<span class="tp">TMessage</span>, <span class="tp">TResult</span>&gt;;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Function: resolveMessageHandler</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">resolveMessageHandler</span>(
-  handler: <span class="tp">MessageHandlerLike</span>,
-): <span class="tp">MessageHandler</span>;</div>
-      </section>
-
-      <!-- Handler Registry -->
-      <section id="handler-registry" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HANDLER REGISTRY</h2>
-        <p class="mb-4">
-          The <code class="bg-black/5 px-1">HandlerRegistryStore</code> manages message handler registration and resolution. It supports both single-handler (commands/queries) and multi-handler (events) dispatch models.
-        </p>
-
-        <h3 class="text-lg font-bold mb-3">Class: HandlerRegistryStore</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Method</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">register()</td>
-                <td class="p-3">register(handler: NamedMessageHandler): void</td>
-                <td class="p-3">Registers a handler. Throws on duplicate ID.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">unregister()</td>
-                <td class="p-3">unregister(handlerId: string): boolean</td>
-                <td class="p-3">Removes a handler. Returns true if found.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">resolve()</td>
-                <td class="p-3">resolve(messageType: string, options?: HandlerQueryOptions): NamedMessageHandler[]</td>
-                <td class="p-3">Returns handlers for a message type, sorted by priority.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">get()</td>
-                <td class="p-3">get(handlerId: string): NamedMessageHandler | undefined</td>
-                <td class="p-3">Retrieves a handler by ID.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">has()</td>
-                <td class="p-3">has(handlerId: string): boolean</td>
-                <td class="p-3">True if handler is registered.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">getHandlerIds()</td>
-                <td class="p-3">getHandlerIds(): string[]</td>
-                <td class="p-3">All registered handler IDs.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">getRegisteredTypes()</td>
-                <td class="p-3">getRegisteredTypes(): string[]</td>
-                <td class="p-3">All message types with registered handlers.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">size</td>
-                <td class="p-3">get size(): number</td>
-                <td class="p-3">Total number of registered handlers.</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">clear()</td>
-                <td class="p-3">clear(): void</td>
-                <td class="p-3">Removes all handlers and type indexes.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: HandlerRegistryOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">HandlerRegistryOptions</span> {
-  <span class="kw">readonly</span> allowDuplicateHandlerIds?: <span class="tp">boolean</span>;   <span class="cm">// default: false</span>
-  <span class="kw">readonly</span> allowMultipleHandlers?: <span class="tp">boolean</span>;    <span class="cm">// default: true</span>
-  <span class="kw">readonly</span> requireTypeRegistration?: <span class="tp">boolean</span>;  <span class="cm">// default: false</span>
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: RegisteredHandler</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RegisteredHandler</span> {
-  <span class="kw">readonly</span> handler: <span class="tp">NamedMessageHandler</span>;
-  <span class="kw">readonly</span> registeredAt: <span class="tp">Date</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: HandlerQueryOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">HandlerQueryOptions</span> {
-  <span class="kw">readonly</span> includeDisabled?: <span class="tp">boolean</span>;  <span class="cm">// default: false</span>
-  <span class="kw">readonly</span> maxPriority?: <span class="tp">number</span>;       <span class="cm">// no limit by default</span>
-}</div>
-      </section>
-
-      <!-- Message Middleware -->
-      <section id="message-middleware" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MESSAGE MIDDLEWARE</h2>
-        <p class="mb-4">
-          Middleware wraps message dispatch with cross-cutting concerns like logging, validation, timeouts, and error handling.
-        </p>
-
-        <h3 class="text-lg font-bold mb-3">Type: MessageMiddleware</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">MessageMiddleware</span>&lt;<span class="tp">TMessage</span> <span class="kw">extends</span> <span class="tp">Message</span> = <span class="tp">Message</span>, <span class="tp">TResult</span> = <span class="tp">unknown</span>&gt; = (
-  context: <span class="tp">MessageMiddlewareContext</span>&lt;<span class="tp">TMessage</span>&gt;,
-  next: <span class="tp">MessageMiddlewareNext</span>&lt;<span class="tp">TResult</span>&gt;,
-) =&gt; <span class="tp">Promise</span>&lt;<span class="tp">TResult</span>&gt;;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: MessageMiddlewareContext</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">MessageMiddlewareContext</span>&lt;<span class="tp">TMessage</span> <span class="kw">extends</span> <span class="tp">Message</span> = <span class="tp">Message</span>&gt; {
-  <span class="kw">readonly</span> message: <span class="tp">TMessage</span>;
-  <span class="kw">readonly</span> context: <span class="tp">MessageContext</span>;
-  <span class="kw">readonly</span> signal: <span class="tp">AbortSignal</span>;
-  <span class="kw">readonly</span> metadata: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;;
-  <span class="kw">readonly</span> executionId: <span class="tp">string</span>;
-  <span class="kw">readonly</span> startedAt: <span class="tp">Date</span>;
-  <span class="kw">readonly</span> state: <span class="tp">Map</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Type: MessageMiddlewareNext</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">MessageMiddlewareNext</span>&lt;<span class="tp">TResult</span> = <span class="tp">unknown</span>&gt; = () =&gt; <span class="tp">Promise</span>&lt;<span class="tp">TResult</span>&gt;;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: MessageMiddlewareObject</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">MessageMiddlewareObject</span>&lt;<span class="tp">TMessage</span> <span class="kw">extends</span> <span class="tp">Message</span> = <span class="tp">Message</span>, <span class="tp">TResult</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> handle: <span class="tp">MessageMiddleware</span>&lt;<span class="tp">TMessage</span>, <span class="tp">TResult</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Type: MessageMiddlewareLike</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">MessageMiddlewareLike</span> =
-  | <span class="tp">MessageMiddleware</span>
-  | <span class="tp">MessageMiddlewareObject</span>;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: MessageMiddlewareOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">MessageMiddlewareOptions</span> {
-  <span class="kw">readonly</span> id?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> description?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> priority?: <span class="tp">number</span>;    <span class="cm">// default: 100</span>
-  <span class="kw">readonly</span> enabled?: <span class="tp">boolean</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: RegisteredMessageMiddleware</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">RegisteredMessageMiddleware</span> {
-  <span class="kw">readonly</span> id: <span class="tp">string</span>;
-  <span class="kw">readonly</span> description?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> priority: <span class="tp">number</span>;
-  <span class="kw">readonly</span> enabled: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> middleware: <span class="tp">MessageMiddlewareLike</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: MessageMiddlewareExecution</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">MessageMiddlewareExecution</span>&lt;<span class="tp">TResult</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> middlewareId: <span class="tp">string</span>;
-  <span class="kw">readonly</span> result: <span class="tp">TResult</span>;
-  <span class="kw">readonly</span> duration: <span class="tp">number</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: MessageMiddlewarePipelineResult</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">MessageMiddlewarePipelineResult</span>&lt;<span class="tp">TResult</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> result: <span class="tp">TResult</span>;
-  <span class="kw">readonly</span> executions: <span class="kw">readonly</span> <span class="tp">MessageMiddlewareExecution</span>[];
-  <span class="kw">readonly</span> duration: <span class="tp">number</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: MessageMiddlewarePipelineOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">MessageMiddlewarePipelineOptions</span> {
-  <span class="kw">readonly</span> signal?: <span class="tp">AbortSignal</span>;
-  <span class="kw">readonly</span> metadata?: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;&gt;;
-  <span class="kw">readonly</span> state?: <span class="tp">Map</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Function: runMessagePipeline</h3>
-        <div class="code-block"><span class="kw">function</span> <span class="fn">runMessagePipeline</span>&lt;<span class="tp">TResult</span>&gt;(
-  middlewareList: <span class="kw">readonly</span> <span class="tp">MessageMiddlewareLike</span>[],
-  handler: (message: <span class="tp">Message</span>, context: <span class="tp">MessageMiddlewareContext</span>) =&gt; <span class="tp">Promise</span>&lt;<span class="tp">TResult</span>&gt;,
-  message: <span class="tp">Message</span>,
-  options?: <span class="tp">MessageMiddlewarePipelineOptions</span>,
-): <span class="tp">Promise</span>&lt;<span class="tp">MessageMiddlewarePipelineResult</span>&lt;<span class="tp">TResult</span>&gt;&gt;;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Middleware Pipeline</h3>
-        <div class="code-block"><span class="cm">// Logging middleware</span>
-bus.<span class="fn">use</span>(<span class="kw">async</span> (ctx, next) => {
-  console.<span class="fn">log</span>(<span class="str">`→ ${ctx.message.type}`</span>);
-  <span class="kw">const</span> start = performance.<span class="fn">now</span>();
-  <span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">next</span>();
-  console.<span class="fn">log</span>(<span class="str">`← ${ctx.message.type} in ${performance.<span class="fn">now</span>() - start}ms`</span>);
-  <span class="kw">return</span> result;
-});
-
-<span class="cm">// Validation middleware</span>
-bus.<span class="fn">use</span>(<span class="kw">async</span> (ctx, next) => {
-  <span class="kw">if</span> (!ctx.message.payload) {
-    <span class="kw">throw new</span> <span class="tp">Error</span>(<span class="str">"Payload required"</span>);
-  }
-  <span class="kw">return</span> <span class="fn">next</span>();
-});</div>
-      </section>
-
-      <!-- Dispatcher -->
-      <section id="dispatcher" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DISPATCHER</h2>
-        <p class="mb-4">
-          The <code class="bg-black/5 px-1">Dispatcher</code> is the core coordination point that validates messages, creates context, runs middleware, and invokes handlers.
-        </p>
-
-        <h3 class="text-lg font-bold mb-3">Interface: Dispatcher</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">Dispatcher</span> {
-  <span class="fn">dispatch</span>&lt;<span class="tp">TPayload</span>, <span class="tp">TResult</span>&gt;(
-    message: <span class="tp">Message</span>&lt;<span class="tp">TPayload</span>&gt;,
-    options?: <span class="tp">DispatchOptions</span>&lt;<span class="tp">TResult</span>&gt;,
-  ): <span class="tp">Promise</span>&lt;<span class="tp">DispatchResult</span>&lt;<span class="tp">TResult</span>&gt;&gt;;
-
-  <span class="fn">use</span>&lt;<span class="tp">TMessage</span> <span class="kw">extends</span> <span class="tp">Message</span>, <span class="tp">TResult</span>&gt;(
-    middleware: <span class="tp">MessageMiddlewareLike</span>&lt;<span class="tp">TMessage</span>, <span class="tp">TResult</span>&gt;,
-    options?: { priority?: <span class="tp">number</span> },
-  ): <span class="tp">void</span>;
-
-  <span class="fn">removeMiddleware</span>(middlewareId: <span class="tp">string</span>): <span class="tp">boolean</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Class: DefaultDispatcher</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">DefaultDispatcher</span> <span class="kw">implements</span> <span class="tp">Dispatcher</span> {
-  <span class="kw">constructor</span>(registry?: <span class="tp">HandlerRegistryStore</span>);
-  <span class="fn">dispatch</span>&lt;<span class="tp">TPayload</span>, <span class="tp">TResult</span>&gt;(
-    message: <span class="tp">Message</span>&lt;<span class="tp">TPayload</span>&gt;,
-    options?: <span class="tp">DispatchOptions</span>&lt;<span class="tp">TResult</span>&gt;,
-  ): <span class="tp">Promise</span>&lt;<span class="tp">DispatchResult</span>&lt;<span class="tp">TResult</span>&gt;&gt;;
-  <span class="fn">use</span>(middleware: <span class="tp">MessageMiddlewareLike</span>): <span class="tp">void</span>;
-  <span class="fn">removeMiddleware</span>(middlewareId: <span class="tp">string</span>): <span class="tp">boolean</span>;
-  <span class="fn">getRegistry</span>(): <span class="tp">HandlerRegistryStore</span>;
-  <span class="fn">dispose</span>(): <span class="tp">void</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: DispatchResult</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">DispatchResult</span>&lt;<span class="tp">TResult</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> success: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> value?: <span class="tp">TResult</span>;
-  <span class="kw">readonly</span> error?: <span class="tp">Error</span>;
-  <span class="kw">readonly</span> message: <span class="tp">Message</span>;
-  <span class="kw">readonly</span> context: <span class="tp">MessageContext</span>;
-  <span class="kw">readonly</span> handlerResults: <span class="kw">readonly</span> <span class="tp">HandlerExecutionResult</span>[];
-  <span class="kw">readonly</span> middlewareResult?: <span class="tp">MessageMiddlewarePipelineResult</span>;
-  <span class="kw">readonly</span> duration: <span class="tp">number</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: HandlerExecutionResult</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">HandlerExecutionResult</span>&lt;<span class="tp">TResult</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> handlerId: <span class="tp">string</span>;
-  <span class="kw">readonly</span> success: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> value?: <span class="tp">TResult</span>;
-  <span class="kw">readonly</span> error?: <span class="tp">Error</span>;
-  <span class="kw">readonly</span> duration: <span class="tp">number</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: DispatchOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">DispatchOptions</span>&lt;<span class="tp">TResult</span> = <span class="tp">unknown</span>&gt; {
-  <span class="kw">readonly</span> context?: <span class="tp">MessageContextOptions</span>;
-  <span class="kw">readonly</span> middleware?: <span class="kw">readonly</span> <span class="tp">MessageMiddlewareLike</span>[];
-  <span class="kw">readonly</span> timeout?: <span class="tp">number</span>;   <span class="cm">// ms, 0 = no timeout</span>
-  <span class="kw">readonly</span> signal?: <span class="tp">AbortSignal</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Factory Function</h3>
-        <div class="code-block"><span class="kw">const</span> dispatcher = <span class="fn">createDispatcher</span>();</div>
-      </section>
-
-      <!-- Message Bus -->
-      <section id="message-bus" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MESSAGE BUS</h2>
-        <p class="mb-4">
-          The <code class="bg-black/5 px-1">MessageBus</code> is the primary API surface for sending messages. It wraps the dispatcher with publish semantics and convenience methods.
-        </p>
-
-        <h3 class="text-lg font-bold mb-3">Interface: MessageBus</h3>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Method</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">dispatch()</td>
-                <td class="p-3">dispatch&lt;TPayload, TResult&gt;(message: Message&lt;TPayload&gt;, options?: DispatchOptions&lt;TResult&gt;): Promise&lt;DispatchResult&lt;TResult&gt;&gt;</td>
-                <td class="p-3">Dispatches a message to registered handlers.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">send()</td>
-                <td class="p-3">send&lt;TPayload, TResult&gt;(input: MessageInput&lt;TPayload&gt;, options?: DispatchOptions&lt;TResult&gt;): Promise&lt;DispatchResult&lt;TResult&gt;&gt;</td>
-                <td class="p-3">Creates and dispatches a message from input.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">on()</td>
-                <td class="p-3">on(messageType: string, handler: MessageHandler, options?: { id?: string; priority?: number }): void</td>
-                <td class="p-3">Registers a handler for a message type.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">addHandler()</td>
-                <td class="p-3">addHandler(handler: NamedMessageHandler): void</td>
-                <td class="p-3">Registers a named handler object.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">off()</td>
-                <td class="p-3">off(handlerId: string): boolean</td>
-                <td class="p-3">Removes a handler by ID.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">use()</td>
-                <td class="p-3">use(middleware: MessageMiddlewareLike, options?: { priority?: number }): void</td>
-                <td class="p-3">Adds middleware to the bus.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">hasHandlers()</td>
-                <td class="p-3">hasHandlers(messageType: string): boolean</td>
-                <td class="p-3">Checks if handlers exist for a type.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">handlerCount</td>
-                <td class="p-3">get handlerCount(): number</td>
-                <td class="p-3">Total number of registered handlers.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">dispose()</td>
-                <td class="p-3">dispose(): void</td>
-                <td class="p-3">Disposes the bus and releases resources.</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">disposed</td>
-                <td class="p-3">get disposed(): boolean</td>
-                <td class="p-3">Whether the bus has been disposed.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Class: InMemoryMessageBus</h3>
-        <div class="code-block"><span class="kw">class</span> <span class="tp">InMemoryMessageBus</span> <span class="kw">implements</span> <span class="tp">MessageBus</span> {
-  <span class="kw">constructor</span>(options?: <span class="tp">MessageBusOptions</span>);
-  <span class="cm">// ... implements all MessageBus methods</span>
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Interface: MessageBusOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">MessageBusOptions</span> {
-  <span class="kw">readonly</span> allowDuplicateHandlers?: <span class="tp">boolean</span>;   <span class="cm">// default: false</span>
-  <span class="kw">readonly</span> allowMultipleHandlers?: <span class="tp">boolean</span>;    <span class="cm">// default: true</span>
-  <span class="kw">readonly</span> middleware?: <span class="kw">readonly</span> <span class="tp">MessageMiddlewareLike</span>[];
-  <span class="kw">readonly</span> defaultTimeout?: <span class="tp">number</span>;             <span class="cm">// default: 0 (no timeout)</span>
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Factory Function</h3>
-        <div class="code-block"><span class="kw">const</span> bus = <span class="fn">createMessageBus</span>({
-  allowMultipleHandlers: <span class="num">true</span>,
-  defaultTimeout: <span class="num">5000</span>,
-});</div>
-      </section>
-
-      <!-- Error Hierarchy -->
-      <section id="errors" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERROR HIERARCHY</h2>
-        <p class="mb-4">All error types are defined in <code class="bg-black/5 px-1">@zudojs/errors</code> and re-exported by this package.</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Error</th>
-                <th class="p-3 text-left">When Thrown</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MessageError</td><td class="p-3">Base error for all messaging-related issues</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MessageDispatchError</td><td class="p-3">General dispatch failure (e.g. bus disposed)</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">InvalidMessageError</td><td class="p-3">Message failed validation (missing type, empty payload)</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MessageTypeNotFoundError</td><td class="p-3">No handlers registered for the message type</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MessageHandlerError</td><td class="p-3">A handler threw during dispatch</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MessageHandlerNotFoundError</td><td class="p-3">Handler ID not found in registry</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DuplicateMessageHandlerError</td><td class="p-3">Handler with same ID already registered</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MessageDispatchAbortedError</td><td class="p-3">Dispatch was aborted via AbortSignal</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MessageBusDisposedError</td><td class="p-3">Attempting to use a disposed bus</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MessageTimeoutError</td><td class="p-3">Dispatch exceeded timeout limit</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MessageMiddlewareError</td><td class="p-3">A middleware threw during pipeline execution</td></tr>
-              <tr><td class="p-3 font-mono">MessageValidationError</td><td class="p-3">Message failed schema validation</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Error Handling Pattern</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">isMessageError</span>,
-  <span class="tp">MessageHandlerError</span>,
-  <span class="tp">MessageTimeoutError</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/messaging"</span>;
-
-<span class="kw">try</span> {
-  <span class="kw">const</span> result = <span class="kw">await</span> bus.<span class="fn">dispatch</span>(message, { timeout: <span class="num">5000</span> });
-  <span class="kw">if</span> (!result.success) {
-    console.<span class="fn">error</span>(<span class="str">"Dispatch failed:"</span>, result.error);
-  }
-} <span class="kw">catch</span> (error) {
-  <span class="kw">if</span> (<span class="fn">isMessageError</span>(error)) {
-    console.<span class="fn">error</span>(<span class="str">`Messaging error [${error.code}]: ${error.message}`</span>);
-    <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">MessageTimeoutError</span>) {
-      <span class="cm">// Handle timeout specifically</span>
-    }
-  }
-}</div>
-      </section>
-
-      <!-- Full Integration Example -->
-      <section id="full-example" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">FULL INTEGRATION EXAMPLE</h2>
-        <p class="mb-4">Complete working example: create a bus, register handlers, add middleware, and dispatch messages.</p>
-
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">createMessageBus</span>,
-  <span class="fn">createMessage</span>,
-  <span class="fn">createMessageContext</span>,
-  <span class="fn">describeMessage</span>,
-  <span class="fn">isMessage</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/messaging"</span>;
-
-<span class="cm">// 1. Create the message bus</span>
-<span class="kw">const</span> bus = <span class="fn">createMessageBus</span>({
-  allowMultipleHandlers: <span class="num">true</span>,
-  defaultTimeout: <span class="num">10000</span>,
-});
-
-<span class="cm">// 2. Add logging middleware</span>
-bus.<span class="fn">use</span>(<span class="kw">async</span> (ctx, next) => {
-  <span class="kw">const</span> start = performance.<span class="fn">now</span>();
-  console.<span class="fn">log</span>(<span class="str">`[MW] → ${ctx.message.type}`</span>, {
-    correlationId: ctx.context.correlationId,
-  });
-
-  <span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">next</span>();
-
-  <span class="kw">const</span> duration = performance.<span class="fn">now</span>() - start;
-  console.<span class="fn">log</span>(<span class="str">`[MW] ← ${ctx.message.type} (${duration.toFixed(2)}ms)`</span>);
-  <span class="kw">return</span> result;
-});
-
-<span class="cm">// 3. Add validation middleware</span>
-bus.<span class="fn">use</span>(<span class="kw">async</span> (ctx, next) => {
-  <span class="kw">if</span> (!ctx.message.payload || <span class="kw">typeof</span> ctx.message.payload !== <span class="str">"object"</span>) {
-    <span class="kw">throw new</span> <span class="tp">Error</span>(<span class="str">"Invalid payload"</span>);
-  }
-  <span class="kw">return</span> <span class="fn">next</span>();
-});
-
-<span class="cm">// 4. Register handler for "order.created"</span>
-bus.<span class="fn">on</span>(<span class="str">"order.created"</span>, <span class="kw">async</span> (message, ctx) => {
-  console.<span class="fn">log</span>(<span class="str">`Processing order: ${message.payload.orderId}`</span>);
-  console.<span class="fn">log</span>(<span class="str">`  correlation: ${ctx.correlationId}`</span>);
-  <span class="kw">return</span> { status: <span class="str">"processed"</span>, orderId: message.payload.orderId };
-});
-
-<span class="cm">// 5. Register handler for "order.confirmed"</span>
-bus.<span class="fn">on</span>(<span class="str">"order.confirmed"</span>, <span class="kw">async</span> (message) => {
-  console.<span class="fn">log</span>(<span class="str">`Order confirmed: ${message.payload.orderId}`</span>);
-});
-
-<span class="cm">// 6. Dispatch using send() — creates message automatically</span>
-<span class="kw">const</span> result = <span class="kw">await</span> bus.<span class="fn">send</span>(
-  {
-    type: <span class="str">"order.created"</span>,
-    payload: { orderId: <span class="str">"ord-001"</span>, total: <span class="num">99.99</span> },
-    correlationId: <span class="str">"req-abc-123"</span>,
-  },
-  { timeout: <span class="num">5000</span> },
-);
-
-console.<span class="fn">log</span>(<span class="str">"Dispatch result:"</span>, result.success, result.value);
-
-<span class="cm">// 7. Dispatch using dispatch() — with a pre-created message</span>
-<span class="kw">const</span> msg = <span class="fn">createMessage</span>({
-  type: <span class="str">"order.confirmed"</span>,
-  payload: { orderId: <span class="str">"ord-001"</span> },
-});
-
-<span class="kw">await</span> bus.<span class="fn">dispatch</span>(msg);
-
-<span class="cm">// 8. Check handler status</span>
-console.<span class="fn">log</span>(<span class="str">"Handlers registered:"</span>, bus.handlerCount);
-console.<span class="fn">log</span>(<span class="str">"Has order.created handlers:"</span>, bus.<span class="fn">hasHandlers</span>(<span class="str">"order.created"</span>));
-
-<span class="cm">// 9. Cleanup</span>
+<span class="cmt">// 3. Release the bus when you are done with it.</span>
 bus.<span class="fn">dispose</span>();</div>
+        <p class="mb-3">What you should see, in order: <code class="bg-black/5 px-1">New user: { id: 'u-1', email: 'ada@example.com' }</code>, then <code class="bg-black/5 px-1">true</code>, then <code class="bg-black/5 px-1">welcome email queued</code>.</p>
+        <div class="callout callout-tip">
+          <strong class="text-zudo-green">Tip:</strong> Always pass an <code>id</code> when you call <code>on()</code>. Without one the bus makes an id from the type and the current millisecond, so two handlers registered in the same millisecond collide and the second throws <code>DuplicateMessageHandlerError</code>.
+        </div>
       </section>
 
+      <!-- Messages -->
+      <section id="messages" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MESSAGES</h2>
+        <p class="mb-4 leading-relaxed">
+          A <em>message</em> is a frozen object with four required fields: a unique <code class="bg-black/5 px-1">id</code>, a <code class="bg-black/5 px-1">type</code> string, a <code class="bg-black/5 px-1">payload</code> (any data you like) and a <code class="bg-black/5 px-1">timestamp</code>. The type is the address: handlers register for a type, and the bus routes by it. Dotted names like <code class="bg-black/5 px-1">"order.placed"</code> are the convention.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          Optional fields describe where the message came from: <code class="bg-black/5 px-1">source</code> (which subsystem made it), <code class="bg-black/5 px-1">correlationId</code> and <code class="bg-black/5 px-1">causationId</code> (explained under <a href="#context" class="text-zudo-blue underline">Context</a>) and free-form <code class="bg-black/5 px-1">metadata</code>.
+        </p>
+        <p class="mb-3">This builds a message by hand and prints the fields the factory filled in for you.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createMessage</span>, <span class="fn">describeMessage</span>, <span class="fn">toCorrelationId</span> } <span class="kw">from</span> <span class="str">"@zudojs/messaging"</span>;
+
+<span class="kw">const</span> message = <span class="fn">createMessage</span>({
+  type: <span class="str">"order.placed"</span>,
+  payload: { orderId: <span class="str">"ord-001"</span>, total: <span class="num">4999</span> },
+  source: <span class="str">"checkout"</span>,
+  correlationId: <span class="fn">toCorrelationId</span>(<span class="str">"req-abc"</span>),
+});
+
+console.<span class="fn">log</span>(message.id);                 <span class="cmt">// "msg:6f1c…" — a fresh random id</span>
+console.<span class="fn">log</span>(message.timestamp);          <span class="cmt">// the Date it was created</span>
+console.<span class="fn">log</span>(<span class="fn">describeMessage</span>(message)); <span class="cmt">// "order.placed (msg:6f1c…)"</span>
+console.<span class="fn">log</span>(Object.<span class="fn">isFrozen</span>(message));  <span class="cmt">// true — messages cannot be edited after creation</span></div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Branded ids</h3>
+        <p class="mb-4 leading-relaxed">
+          <code class="bg-black/5 px-1">MessageId</code>, <code class="bg-black/5 px-1">MessageCorrelationId</code> and <code class="bg-black/5 px-1">MessageCausationId</code> are <em>branded</em> strings: at runtime they are ordinary strings, but TypeScript refuses to accept a plain <code class="bg-black/5 px-1">string</code> where one is expected. This stops you from passing a user id where a message id belongs.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          <code class="bg-black/5 px-1">createMessageId()</code> mints a new id. When the id already exists as a string (from a database row, a log line, a network frame), wrap it with <code class="bg-black/5 px-1">toMessageId</code>, <code class="bg-black/5 px-1">toCorrelationId</code> or <code class="bg-black/5 px-1">toCausationId</code>. All three throw a <code class="bg-black/5 px-1">TypeError</code> on an empty or blank string, and <code class="bg-black/5 px-1">createMessage</code> throws the same on an empty <code class="bg-black/5 px-1">type</code>.
+        </p>
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out:</strong> <code>correlationId: "req-abc"</code> as a bare string is a compile error. Write <code>correlationId: toCorrelationId("req-abc")</code>.
+        </div>
+      </section>
+
+      <!-- Handlers -->
+      <section id="handlers" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HANDLERS</h2>
+        <p class="mb-4 leading-relaxed">
+          A <em>handler</em> is a function that receives a message and a <code class="bg-black/5 px-1">MessageContext</code>, does some work, and returns a value (or a promise of one). Registering a handler is the "subscribe" half of publish/subscribe: you tell the bus "call me for this type".
+        </p>
+        <p class="mb-4 leading-relaxed">
+          Several handlers may register for the same type. The bus runs them one after another, lowest <code class="bg-black/5 px-1">priority</code> number first (default 100). With one handler, <code class="bg-black/5 px-1">result.value</code> is that handler's return value. With several, it is an array of their return values in run order.
+        </p>
+        <p class="mb-3">This registers two handlers for one type, sends a message, then removes one handler. The payload type annotation on the parameter is what gives you <code class="bg-black/5 px-1">message.payload.orderId</code> without a cast.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createMessageBus</span>, <span class="kw">type</span> <span class="tp">Message</span> } <span class="kw">from</span> <span class="str">"@zudojs/messaging"</span>;
+
+<span class="kw">type</span> <span class="tp">OrderPlaced</span> = { orderId: <span class="tp">string</span>; total: <span class="tp">number</span> };
+
+<span class="kw">const</span> bus = <span class="fn">createMessageBus</span>();
+
+bus.<span class="fn">on</span>(<span class="str">"order.placed"</span>, <span class="kw">async</span> (message: <span class="tp">Message</span>&lt;<span class="tp">OrderPlaced</span>&gt;) =&gt; {
+  <span class="kw">return</span> <span class="str">`reserved stock for ${message.payload.orderId}`</span>;
+}, { id: <span class="str">"reserve-stock"</span>, priority: <span class="num">10</span> });
+
+bus.<span class="fn">on</span>(<span class="str">"order.placed"</span>, <span class="kw">async</span> (message: <span class="tp">Message</span>&lt;<span class="tp">OrderPlaced</span>&gt;) =&gt; {
+  <span class="kw">return</span> <span class="str">`charged ${message.payload.total}`</span>;
+}, { id: <span class="str">"charge-card"</span>, priority: <span class="num">20</span> });
+
+<span class="kw">const</span> result = <span class="kw">await</span> bus.<span class="fn">send</span>({
+  type: <span class="str">"order.placed"</span>,
+  payload: { orderId: <span class="str">"ord-001"</span>, total: <span class="num">4999</span> },
+});
+
+console.<span class="fn">log</span>(result.value);
+<span class="cmt">// ["reserved stock for ord-001", "charged 4999"]</span>
+console.<span class="fn">log</span>(result.handlerResults.<span class="fn">map</span>((r) =&gt; r.handlerId));
+<span class="cmt">// ["reserve-stock", "charge-card"]</span>
+
+console.<span class="fn">log</span>(bus.<span class="fn">off</span>(<span class="str">"charge-card"</span>));           <span class="cmt">// true — it was found and removed</span>
+console.<span class="fn">log</span>(bus.<span class="fn">hasHandlers</span>(<span class="str">"order.placed"</span>)); <span class="cmt">// true — reserve-stock is still registered</span>
+console.<span class="fn">log</span>(bus.handlerCount);                 <span class="cmt">// 1</span></div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Named handler objects</h3>
+        <p class="mb-3"><code class="bg-black/5 px-1">on()</code> wraps your function in a <code class="bg-black/5 px-1">NamedMessageHandler</code> behind the scenes. Build one yourself with <code class="bg-black/5 px-1">addHandler()</code> when a single handler should answer several types, or when you want to ship it disabled. This fragment assumes the <code class="bg-black/5 px-1">bus</code> from the example above.</p>
+        <div class="code-block mb-4">bus.<span class="fn">addHandler</span>({
+  id: <span class="str">"audit-log"</span>,
+  name: <span class="str">"Audit log"</span>,
+  messageTypes: [<span class="str">"order.placed"</span>, <span class="str">"order.cancelled"</span>],
+  priority: <span class="num">1</span>,
+  enabled: <span class="kw">true</span>,
+  handler: <span class="kw">async</span> (message) =&gt; {
+    console.<span class="fn">log</span>(<span class="str">"audit:"</span>, message.type);
+  },
+});</div>
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out:</strong> Handler ids must be unique across the whole bus. Registering the same id twice throws <code>DuplicateMessageHandlerError</code> immediately, unless you created the bus with <code>allowDuplicateHandlers: true</code>.
+        </div>
+      </section>
+
+      <!-- Dispatching -->
+      <section id="dispatching" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SENDING AND RESULTS</h2>
+        <p class="mb-4 leading-relaxed">
+          <em>Dispatching</em> is the "publish" half: the bus takes a message, runs middleware, runs the matching handlers, and returns a <code class="bg-black/5 px-1">DispatchResult</code>. Two methods do it. <code class="bg-black/5 px-1">send(input)</code> builds the message from plain input first. <code class="bg-black/5 px-1">dispatch(message)</code> takes a message you already created, for example one from <code class="bg-black/5 px-1">createDerivedMessage</code>.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          A failing handler does <strong>not</strong> make <code class="bg-black/5 px-1">dispatch</code> throw. Instead the result comes back with <code class="bg-black/5 px-1">success: false</code> and the problem in <code class="bg-black/5 px-1">result.error</code>, wrapped in a <code class="bg-black/5 px-1">MessageHandlerError</code> that names the handler. Dispatching to a type with no handlers also succeeds; <code class="bg-black/5 px-1">value</code> is an empty array.
+        </p>
+        <p class="mb-3">This shows both outcomes side by side.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createMessageBus</span>, <span class="fn">createMessage</span>, <span class="tp">MessageHandlerError</span> } <span class="kw">from</span> <span class="str">"@zudojs/messaging"</span>;
+
+<span class="kw">const</span> bus = <span class="fn">createMessageBus</span>();
+
+bus.<span class="fn">on</span>(<span class="str">"payment.charge"</span>, <span class="kw">async</span> () =&gt; {
+  <span class="kw">throw new</span> <span class="tp">Error</span>(<span class="str">"card declined"</span>);
+}, { id: <span class="str">"charge"</span> });
+
+<span class="kw">const</span> failed = <span class="kw">await</span> bus.<span class="fn">dispatch</span>(<span class="fn">createMessage</span>({ type: <span class="str">"payment.charge"</span>, payload: {} }));
+
+console.<span class="fn">log</span>(failed.success);                               <span class="cmt">// false</span>
+console.<span class="fn">log</span>(failed.error <span class="kw">instanceof</span> <span class="tp">MessageHandlerError</span>);  <span class="cmt">// true</span>
+console.<span class="fn">log</span>(failed.error?.message);
+<span class="cmt">// 'Handler "charge" failed: card declined'</span>
+
+<span class="kw">const</span> nobody = <span class="kw">await</span> bus.<span class="fn">send</span>({ type: <span class="str">"nobody.listens"</span>, payload: {} });
+
+console.<span class="fn">log</span>(nobody.success, nobody.value); <span class="cmt">// true []</span>
+console.<span class="fn">log</span>(nobody.duration &gt;= <span class="num">0</span>);          <span class="cmt">// true — every result carries its duration in ms</span></div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">What does throw</h3>
+        <p class="mb-4 leading-relaxed">
+          Only two things reject the promise instead of returning a result: using a bus after <code class="bg-black/5 px-1">dispose()</code> throws <code class="bg-black/5 px-1">MessageBusDisposedError</code>, and passing a <code class="bg-black/5 px-1">signal</code> that is already aborted throws <code class="bg-black/5 px-1">MessageDispatchAbortedError</code>. (<code class="bg-black/5 px-1">send()</code> with an empty <code class="bg-black/5 px-1">type</code> also rejects, with the <code class="bg-black/5 px-1">TypeError</code> from <code class="bg-black/5 px-1">createMessage</code>.) Wrap those calls in <code class="bg-black/5 px-1">try</code>/<code class="bg-black/5 px-1">catch</code> if they can happen in your code.
+        </p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Timeouts and cancellation</h3>
+        <p class="mb-4 leading-relaxed">
+          Pass <code class="bg-black/5 px-1">{ timeout: 5000 }</code> to one dispatch, or <code class="bg-black/5 px-1">defaultTimeout</code> to <code class="bg-black/5 px-1">createMessageBus</code>, and the bus starts a timer that aborts an <code class="bg-black/5 px-1">AbortSignal</code>. You can also pass your own <code class="bg-black/5 px-1">signal</code>. Handlers that have not started yet are skipped and the result fails with <code class="bg-black/5 px-1">MessageDispatchAbortedError</code> inside a <code class="bg-black/5 px-1">MessageHandlerError</code>.
+        </p>
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out:</strong> A handler that is already running is not interrupted. Long handlers should check <code>context.signal.aborted</code> between steps and stop themselves. The bus never throws <code>MessageTimeoutError</code>; that class is exported for your own code to use.
+        </div>
+      </section>
+
+      <!-- Middleware -->
+      <section id="middleware" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MIDDLEWARE</h2>
+        <p class="mb-4 leading-relaxed">
+          <em>Middleware</em> is a function that runs around every dispatch. It receives a context and a <code class="bg-black/5 px-1">next</code> function; calling <code class="bg-black/5 px-1">next()</code> continues to the following middleware and finally to the handlers. Whatever <code class="bg-black/5 px-1">next()</code> resolves to becomes <code class="bg-black/5 px-1">result.value</code>, so you can log, time, or even replace the answer in one place.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          Register bus-wide middleware with <code class="bg-black/5 px-1">bus.use()</code> or the <code class="bg-black/5 px-1">middleware</code> option of <code class="bg-black/5 px-1">createMessageBus</code>. Middleware for one dispatch only goes in <code class="bg-black/5 px-1">DispatchOptions.middleware</code> and runs after the bus-wide ones. Order is registration order.
+        </p>
+        <p class="mb-3">This logs when each message starts and how long it took.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createMessageBus</span> } <span class="kw">from</span> <span class="str">"@zudojs/messaging"</span>;
+
+<span class="kw">const</span> bus = <span class="fn">createMessageBus</span>();
+
+bus.<span class="fn">use</span>(<span class="kw">async</span> (ctx, next) =&gt; {
+  <span class="kw">const</span> started = performance.<span class="fn">now</span>();
+  console.<span class="fn">log</span>(<span class="str">`→ ${ctx.message.type} [${ctx.context.correlationId}]`</span>);
+  <span class="kw">try</span> {
+    <span class="kw">return await</span> <span class="fn">next</span>();
+  } <span class="kw">finally</span> {
+    console.<span class="fn">log</span>(<span class="str">`← ${ctx.message.type} in ${(performance.<span class="fn">now</span>() - started).<span class="fn">toFixed</span>(<span class="num">1</span>)}ms`</span>);
+  }
+});
+
+bus.<span class="fn">on</span>(<span class="str">"ping"</span>, <span class="kw">async</span> () =&gt; <span class="str">"pong"</span>, { id: <span class="str">"ping"</span> });
+
+<span class="kw">const</span> result = <span class="kw">await</span> bus.<span class="fn">send</span>({ type: <span class="str">"ping"</span>, payload: <span class="kw">null</span> });
+console.<span class="fn">log</span>(result.value); <span class="cmt">// "pong"</span></div>
+        <p class="mb-3">What you should see: <code class="bg-black/5 px-1">→ ping [msg:…]</code>, then <code class="bg-black/5 px-1">← ping in 0.2ms</code>, then <code class="bg-black/5 px-1">pong</code>. The correlation id defaults to the message id because none was set.</p>
+        <p class="mb-4 leading-relaxed">
+          The middleware context (<code class="bg-black/5 px-1">MessageMiddlewareContext</code>) exposes <code class="bg-black/5 px-1">message</code>, the dispatch <code class="bg-black/5 px-1">context</code>, the abort <code class="bg-black/5 px-1">signal</code>, an <code class="bg-black/5 px-1">executionId</code>, and a shared <code class="bg-black/5 px-1">state</code> Map you can use to pass values between middleware. A middleware can also be an object with a <code class="bg-black/5 px-1">handle</code> method.
+        </p>
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out:</strong> If middleware throws, the dispatch result is <code>success: false</code> and <code>result.error</code> is exactly what you threw (not wrapped). Calling <code>next()</code> twice throws <code>"next() called multiple times"</code>. The <code>priority</code> option on <code>use()</code> is accepted but not applied yet; order is registration order.
+        </div>
+      </section>
+
+      <!-- Context -->
+      <section id="context" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONTEXT, CORRELATION AND CAUSATION</h2>
+        <p class="mb-4 leading-relaxed">
+          Every handler receives a <code class="bg-black/5 px-1">MessageContext</code> as its second argument. It holds the <code class="bg-black/5 px-1">message</code>, a <code class="bg-black/5 px-1">correlationId</code>, a <code class="bg-black/5 px-1">causationId</code>, an abort <code class="bg-black/5 px-1">signal</code>, a <code class="bg-black/5 px-1">state</code> Map and <code class="bg-black/5 px-1">startedAt</code>.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          A <em>correlation id</em> is a label shared by every message that belongs to one bigger operation, such as one HTTP request. A <em>causation id</em> is the id of the single message that directly caused this one. Together they let you trace "why did this happen?" through a chain of messages. If you set neither, both default to the message's own id.
+        </p>
+        <p class="mb-3"><code class="bg-black/5 px-1">createDerivedMessage</code> builds a follow-up message that inherits the parent's correlation id and records the parent as its cause.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createMessage</span>, <span class="fn">createDerivedMessage</span>, <span class="fn">toCorrelationId</span> } <span class="kw">from</span> <span class="str">"@zudojs/messaging"</span>;
+
+<span class="kw">const</span> placed = <span class="fn">createMessage</span>({
+  type: <span class="str">"order.placed"</span>,
+  payload: { orderId: <span class="str">"ord-001"</span> },
+  correlationId: <span class="fn">toCorrelationId</span>(<span class="str">"req-abc"</span>),
+});
+
+<span class="kw">const</span> paid = <span class="fn">createDerivedMessage</span>(placed, {
+  type: <span class="str">"order.paid"</span>,
+  payload: { orderId: <span class="str">"ord-001"</span> },
+});
+
+console.<span class="fn">log</span>(paid.correlationId);              <span class="cmt">// "req-abc" — inherited</span>
+console.<span class="fn">log</span>(paid.causationId === placed.id);  <span class="cmt">// true — placed caused paid</span></div>
+        <p class="mb-3">Inside a handler, read the ids from the context. This handler dispatches a follow-up on the same bus, keeping the chain intact.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createMessageBus</span>, <span class="fn">createDerivedMessage</span> } <span class="kw">from</span> <span class="str">"@zudojs/messaging"</span>;
+
+<span class="kw">const</span> bus = <span class="fn">createMessageBus</span>();
+
+bus.<span class="fn">on</span>(<span class="str">"order.placed"</span>, <span class="kw">async</span> (message, context) =&gt; {
+  console.<span class="fn">log</span>(<span class="str">"correlation:"</span>, context.correlationId);
+  <span class="kw">await</span> bus.<span class="fn">dispatch</span>(<span class="fn">createDerivedMessage</span>(message, { type: <span class="str">"order.paid"</span>, payload: message.payload }));
+}, { id: <span class="str">"take-payment"</span> });
+
+bus.<span class="fn">on</span>(<span class="str">"order.paid"</span>, <span class="kw">async</span> (message, context) =&gt; {
+  console.<span class="fn">log</span>(<span class="str">"caused by:"</span>, context.causationId);
+}, { id: <span class="str">"ship-order"</span> });
+
+<span class="kw">await</span> bus.<span class="fn">send</span>({ type: <span class="str">"order.placed"</span>, payload: { orderId: <span class="str">"ord-001"</span> } });
+<span class="cmt">// correlation: msg:…  (the order.placed id, since none was set)</span>
+<span class="cmt">// caused by:   msg:…  (the same id — order.placed caused order.paid)</span></div>
+        <div class="callout callout-note">
+          <strong class="text-zudo-blue">In plain words:</strong> The bus builds each handler's context from the message itself. Ids or headers passed through <code>DispatchOptions.context</code> show up in middleware and in <code>result.context</code>, but not inside handlers. If a handler needs an id, put it on the message.
+        </div>
+      </section>
+
+      <!-- Messaging vs Events -->
+      <section id="messaging-vs-events" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MESSAGING VS EVENTS</h2>
+        <p class="mb-4 leading-relaxed">
+          Both packages route named objects to registered functions inside one process, and neither depends on the other. The difference is intent. A <em>message</em> here is a request that expects an answer: the sender awaits <code class="bg-black/5 px-1">result.value</code>. An <em>event</em> in <a href="/docs/packages-events" class="text-zudo-blue underline">@zudojs/events</a> is a fact that already happened; the publisher does not want a return value, only that listeners are told.
+        </p>
+        <div class="overflow-x-auto mb-4">
+          <table class="doc-table">
+            <thead><tr><th>Question</th><th>@zudojs/messaging</th><th>@zudojs/events</th></tr></thead>
+            <tbody>
+              <tr><td>Unit</td><td><code>Message</code> with a <code>type</code></td><td><code>Event</code> with a <code>type</code></td></tr>
+              <tr><td>Sending</td><td><code>bus.send()</code> / <code>bus.dispatch()</code></td><td><code>bus.publish()</code> / <code>bus.emit()</code></td></tr>
+              <tr><td>Return value</td><td>Handler results come back in <code>result.value</code></td><td>Handlers return nothing useful; you get an emit result</td></tr>
+              <tr><td>Listening</td><td><code>on()</code>, <code>addHandler()</code></td><td><code>on()</code>, <code>once()</code>, <code>onAny()</code></td></tr>
+              <tr><td>When one listener fails</td><td>Dispatch stops; <code>success: false</code></td><td>Configurable: stop, or continue and report</td></tr>
+              <tr><td>Lifecycle</td><td><code>dispose()</code> only</td><td><code>start()</code> / <code>stop()</code>, event registration</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="mb-4 leading-relaxed">
+          Rule of thumb: "please do X and tell me the outcome" is a message; "X happened" is an event. <a href="/docs/packages-cqrs" class="text-zudo-blue underline">@zudojs/cqrs</a> goes one step further and splits messages into commands (change something) and queries (read something).
+        </p>
+      </section>
+
+      <!-- Lower-level pieces -->
+      <section id="lower-level" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">LOWER-LEVEL PIECES</h2>
+        <p class="mb-4 leading-relaxed">
+          <code class="bg-black/5 px-1">createMessageBus</code> is enough for almost everything. The parts it is built from are exported too, for people writing their own bus on top of this package:
+        </p>
+        <ul class="space-y-2 mb-4 text-sm">
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span><span><code class="bg-black/5 px-1">HandlerRegistryStore</code> keeps the handlers. <code class="bg-black/5 px-1">register()</code>, <code class="bg-black/5 px-1">unregister()</code>, <code class="bg-black/5 px-1">resolve(type)</code> (sorted by priority, disabled handlers left out), <code class="bg-black/5 px-1">get()</code>, <code class="bg-black/5 px-1">has()</code>, <code class="bg-black/5 px-1">getHandlerIds()</code>, <code class="bg-black/5 px-1">getRegisteredTypes()</code>, <code class="bg-black/5 px-1">size</code>, <code class="bg-black/5 px-1">clear()</code>.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span><span><code class="bg-black/5 px-1">createDispatcher(registry?)</code> returns a <code class="bg-black/5 px-1">Dispatcher</code> (class <code class="bg-black/5 px-1">DefaultDispatcher</code>) that runs middleware and handlers for one message. The bus adds timeouts, <code class="bg-black/5 px-1">on()</code>/<code class="bg-black/5 px-1">off()</code> and the disposed flag on top.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span><span><code class="bg-black/5 px-1">runMessagePipeline(middleware, handler, message, options?)</code> runs a middleware chain around any async function and returns <code class="bg-black/5 px-1">{ result, executions, duration }</code>.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span><span><code class="bg-black/5 px-1">createMessageContext(message, options?)</code> and <code class="bg-black/5 px-1">resolveMessageHandler(handlerLike)</code> are the small helpers the dispatcher uses internally.</span></li>
+        </ul>
+        <p class="mb-3">This wires a registry and dispatcher by hand, which is exactly what <code class="bg-black/5 px-1">createMessageBus</code> does for you.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">HandlerRegistryStore</span>, <span class="fn">createDispatcher</span>, <span class="fn">createMessage</span> } <span class="kw">from</span> <span class="str">"@zudojs/messaging"</span>;
+
+<span class="kw">const</span> registry = <span class="kw">new</span> <span class="tp">HandlerRegistryStore</span>();
+registry.<span class="fn">register</span>({
+  id: <span class="str">"greet"</span>,
+  name: <span class="str">"Greeter"</span>,
+  messageTypes: [<span class="str">"greet"</span>],
+  handler: <span class="kw">async</span> (message) =&gt; <span class="str">`hello ${message.payload}`</span>,
+});
+
+<span class="kw">const</span> dispatcher = <span class="fn">createDispatcher</span>(registry);
+<span class="kw">const</span> result = <span class="kw">await</span> dispatcher.<span class="fn">dispatch</span>(<span class="fn">createMessage</span>({ type: <span class="str">"greet"</span>, payload: <span class="str">"Ada"</span> }));
+
+console.<span class="fn">log</span>(result.value);                    <span class="cmt">// "hello Ada"</span>
+console.<span class="fn">log</span>(registry.<span class="fn">getRegisteredTypes</span>()); <span class="cmt">// ["greet"]</span></div>
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Not implemented yet:</strong> <code>Dispatcher.removeMiddleware()</code> always returns <code>false</code>, and the registry options <code>allowMultipleHandlers</code> and <code>requireTypeRegistration</code> are stored but not enforced.
+        </div>
+      </section>
+
+      <!-- API Reference -->
+      <section id="api-reference" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">API REFERENCE</h2>
+        <p class="mb-4 text-sm text-black/60">Everything below is exported from <code class="bg-black/5 px-1">@zudojs/messaging</code>.</p>
+
+        <h3 class="text-lg font-bold mb-3">Functions</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>createMessageBus(options?)</code></td><td>Creates an in-memory <code>MessageBus</code>.</td><td>Options: <code>allowDuplicateHandlers</code>, <code>allowMultipleHandlers</code>, <code>middleware</code>, <code>defaultTimeout</code>.</td></tr>
+              <tr><td><code>createMessage(input)</code></td><td>Builds a frozen <code>Message</code>; fills <code>id</code> and <code>timestamp</code>.</td><td>Throws <code>TypeError</code> on empty <code>type</code>.</td></tr>
+              <tr><td><code>createDerivedMessage(parent, input)</code></td><td>Builds a follow-up message that inherits correlation and records causation.</td><td>Explicit ids in <code>input</code> win.</td></tr>
+              <tr><td><code>createMessageId()</code></td><td>Mints a new random <code>MessageId</code>.</td><td>Format <code>msg:&lt;uuid&gt;</code>.</td></tr>
+              <tr><td><code>toMessageId(s)</code>, <code>toCorrelationId(s)</code>, <code>toCausationId(s)</code></td><td>Brand an existing string as an id.</td><td>Throw <code>TypeError</code> on blank input.</td></tr>
+              <tr><td><code>isMessage(value)</code></td><td>Type guard: does this look like a <code>Message</code>?</td><td>Checks <code>id</code>, <code>type</code>, <code>timestamp</code>, <code>payload</code>.</td></tr>
+              <tr><td><code>getMessageType(m)</code>, <code>getMessagePayload(m)</code>, <code>describeMessage(m)</code></td><td>Small accessors.</td><td><code>describeMessage</code> returns <code>"type (id)"</code>.</td></tr>
+              <tr><td><code>createMessageContext(message, options?)</code></td><td>Builds a <code>MessageContext</code>.</td><td>Ids fall back to the message id.</td></tr>
+              <tr><td><code>createDispatcher(registry?)</code></td><td>Creates a <code>Dispatcher</code>.</td><td>Makes its own registry if none given.</td></tr>
+              <tr><td><code>runMessagePipeline(middleware, handler, message, options?)</code></td><td>Runs a middleware chain around a function.</td><td>Returns <code>{ result, executions, duration }</code>.</td></tr>
+              <tr><td><code>resolveMessageHandler(h)</code></td><td>Turns a function or <code>{ handle }</code> object into a function.</td><td></td></tr>
+              <tr><td><code>isMessageError(e)</code>, <code>toMessageError(e)</code>, <code>createMessageError()</code>, <code>createMessageHandlerError()</code></td><td>Error helpers re-exported from <code>@zudojs/errors</code>.</td><td>See that package's page.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3">Classes</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>InMemoryMessageBus</code></td><td>The bus <code>createMessageBus</code> returns.</td><td>Methods: <code>send</code>, <code>dispatch</code>, <code>on</code>, <code>addHandler</code>, <code>off</code>, <code>use</code>, <code>hasHandlers</code>, <code>dispose</code>; getters <code>handlerCount</code>, <code>disposed</code>.</td></tr>
+              <tr><td><code>HandlerRegistryStore</code></td><td>In-memory store of named handlers.</td><td>See <a href="#lower-level" class="text-zudo-blue underline">Lower-level pieces</a>.</td></tr>
+              <tr><td><code>DefaultDispatcher</code></td><td>Runs middleware and handlers for one message.</td><td>Also has <code>getRegistry()</code> and <code>dispose()</code>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3">Types</h3>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>Message&lt;TPayload&gt;</code>, <code>MessageInput&lt;TPayload&gt;</code></td><td>A message, and the input <code>createMessage</code> accepts.</td><td>Input may omit <code>id</code> and <code>timestamp</code>.</td></tr>
+              <tr><td><code>MessageId</code>, <code>MessageCorrelationId</code>, <code>MessageCausationId</code></td><td>Branded id strings.</td><td>Build with the <code>to…</code> helpers.</td></tr>
+              <tr><td><code>MessageHandler</code>, <code>NamedMessageHandler</code>, <code>MessageHandlerLike</code></td><td>Handler function; handler with id, name, types, priority; either form.</td><td><code>HandlerResult</code> and <code>MessageHandlerFactory</code> are also exported.</td></tr>
+              <tr><td><code>MessageContext</code>, <code>MessageContextOptions</code></td><td>What handlers receive as their second argument.</td><td></td></tr>
+              <tr><td><code>MessageMiddleware</code>, <code>MessageMiddlewareLike</code>, <code>MessageMiddlewareContext</code>, <code>MessageMiddlewareNext</code></td><td>Middleware function shape and its context.</td><td>Pipeline result types: <code>MessageMiddlewarePipelineResult</code>, <code>MessageMiddlewareExecution</code>.</td></tr>
+              <tr><td><code>MessageBus</code>, <code>MessageBusOptions</code></td><td>The bus interface and its options.</td><td></td></tr>
+              <tr><td><code>Dispatcher</code>, <code>DispatchOptions</code>, <code>DispatchResult</code>, <code>HandlerExecutionResult</code></td><td>Dispatch interface, per-call options, and the result shape.</td><td><code>DispatchOptions</code>: <code>context</code>, <code>middleware</code>, <code>timeout</code>, <code>signal</code>.</td></tr>
+              <tr><td><code>HandlerRegistryOptions</code>, <code>RegisteredHandler</code>, <code>HandlerQueryOptions</code></td><td>Registry configuration and lookup types.</td><td></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="text-lg font-bold mb-3">Errors</h3>
+        <p class="mb-3 text-sm">All error classes live in <code class="bg-black/5 px-1">@zudojs/errors</code> and are re-exported here. Only the first four are raised by this package; the rest are exported so your own code and other packages can share one hierarchy.</p>
+        <div class="overflow-x-auto mb-6">
+          <table class="doc-table">
+            <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>MessageHandlerError</code></td><td>A handler threw.</td><td>Appears in <code>result.error</code>; has <code>handlerId</code>, <code>cause</code>.</td></tr>
+              <tr><td><code>DuplicateMessageHandlerError</code></td><td>Handler id already registered.</td><td>Thrown by <code>on()</code> / <code>addHandler()</code>.</td></tr>
+              <tr><td><code>MessageBusDisposedError</code></td><td>Bus used after <code>dispose()</code>.</td><td>Rejects the dispatch promise.</td></tr>
+              <tr><td><code>MessageDispatchAbortedError</code></td><td>Signal aborted before or between handlers.</td><td>Rejects if aborted up front; otherwise wrapped in <code>MessageHandlerError</code>.</td></tr>
+              <tr><td><code>MessageError</code>, <code>MessageDispatchError</code>, <code>InvalidMessageError</code>, <code>MessageTypeNotFoundError</code>, <code>MessageHandlerNotFoundError</code>, <code>MessageTimeoutError</code>, <code>MessageMiddlewareError</code>, <code>MessageValidationError</code></td><td>Shared hierarchy for messaging errors.</td><td>Not thrown by this package itself.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Common Mistakes -->
+      <section id="common-mistakes" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMON MISTAKES</h2>
+        <ul class="space-y-4">
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Registering handlers without an <code>id</code></strong> → two registrations in the same millisecond get the same generated id and the second throws <code>DuplicateMessageHandlerError</code>. → Always pass an <code>id</code> in the options of <code>on()</code>.
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Checking for a thrown error instead of <code>result.success</code></strong> → a failing handler never throws from <code>send()</code>, so your <code>catch</code> block stays silent and the failure is missed. → Read <code>result.success</code> and <code>result.error</code> after every dispatch.
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Passing a plain string as <code>correlationId</code></strong> → TypeScript rejects it because the type is branded. → Wrap it: <code>toCorrelationId("req-abc")</code>.
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Expecting a timeout to stop a running handler</strong> → the timer only aborts a signal; the handler keeps going and <code>MessageTimeoutError</code> is never raised. → Check <code>context.signal.aborted</code> inside long handlers.
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Expecting <code>result.value</code> to always be a single value</strong> → with two or more handlers it is an array in priority order, and with none it is <code>[]</code>. → Check <code>result.handlerResults.length</code> when the handler count can vary.
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Using a bus after <code>dispose()</code></strong> → every <code>send</code>/<code>dispatch</code> rejects with <code>MessageBusDisposedError</code> and all handlers are gone. → Dispose once, at shutdown, and check <code>bus.disposed</code> if unsure.
+          </li>
+        </ul>
+      </section>
+
+      <!-- Related -->
+      <section id="related" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATED PACKAGES</h2>
+        <ul class="space-y-3">
+          <li><a href="/docs/packages-events" class="font-bold text-zudo-blue underline">@zudojs/events</a> — announce facts to many listeners with start/stop lifecycle and configurable error handling.</li>
+          <li><a href="/docs/packages-cqrs" class="font-bold text-zudo-blue underline">@zudojs/cqrs</a> — commands and queries with their own buses, when you want the read/write split made explicit.</li>
+          <li><a href="/docs/packages-queue" class="font-bold text-zudo-blue underline">@zudojs/queue</a> — background jobs with retries and dead-letter handling, when work must outlive the current request.</li>
+          <li><a href="/docs/packages-errors" class="font-bold text-zudo-blue underline">@zudojs/errors</a> — the error classes this package re-exports, with codes and serialisation.</li>
+          <li><a href="/docs/packages-testing" class="font-bold text-zudo-blue underline">@zudojs/testing</a> — a test message bus and fixtures for asserting what was sent.</li>
+        </ul>
+      </section>
+
+      <!-- EXPORT INDEX -->
+      <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/messaging</code> exports from its package root at v1.0.0 &mdash; <strong>69</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <details class="border-2 border-black p-5 bg-white">
+          <summary class="font-bold cursor-pointer select-none">Show all 69 exports</summary>
+          <div class="mt-5">
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Re-exported <span class="text-black/40 font-normal">(69)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DefaultDispatcher</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DispatchOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DispatchResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Dispatcher</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DuplicateMessageHandlerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HandlerExecutionResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HandlerQueryOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HandlerRegistryOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HandlerRegistryStore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">HandlerResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InMemoryMessageBus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InvalidMessageError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Message</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageBus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageBusDisposedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageBusOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageCausationId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageContextOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageCorrelationId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageDispatchAbortedError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageDispatchError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageHandlerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageHandlerFactory</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageHandlerLike</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageHandlerNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageInput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageMiddlewareContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageMiddlewareError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageMiddlewareExecution</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageMiddlewareLike</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageMiddlewareNext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageMiddlewareObject</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageMiddlewareOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageMiddlewarePipelineOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageMiddlewarePipelineResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessagePayload</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageTimeoutError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageTimestamp</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageTypeNotFoundError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MessageValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">NamedMessageHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RegisteredHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RegisteredMessageMiddleware</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createDerivedMessage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createDispatcher</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createMessage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createMessageBus</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createMessageContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createMessageError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createMessageHandlerError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createMessageId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">describeMessage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getMessagePayload</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getMessageType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isMessage</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isMessageError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">resolveMessageHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">runMessagePipeline</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toCausationId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toCorrelationId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toMessageError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toMessageId</code></div>
+          </div>
+          </div>
+        </details>
+      </section>
     </main>
 
     <!-- TABLE OF CONTENTS -->
     <aside class="doc-toc" aria-label="On this page">
       <div class="text-xs font-bold uppercase tracking-wider mb-4 text-black/40">On This Page</div>
+      <a href="#overview" class="toc-link">Overview</a>
       <a href="#installation" class="toc-link">Installation</a>
-      <a href="#what-it-does" class="toc-link">What It Does</a>
-      <a href="#architecture-position" class="toc-link">Where It Sits</a>
-      <a href="#dependencies" class="toc-link">Dependencies</a>
-      <a href="#core-message" class="toc-link">Core Message</a>
-      <a href="#message-context" class="toc-link">Message Context</a>
-      <a href="#message-handlers" class="toc-link">Message Handlers</a>
-      <a href="#handler-registry" class="toc-link">Handler Registry</a>
-      <a href="#message-middleware" class="toc-link">Message Middleware</a>
-      <a href="#dispatcher" class="toc-link">Dispatcher</a>
-      <a href="#message-bus" class="toc-link">Message Bus</a>
-      <a href="#errors" class="toc-link">Errors</a>
-      <a href="#full-example" class="toc-link">Full Example</a>
+      <a href="#quick-start" class="toc-link">Quick Start</a>
+      <a href="#messages" class="toc-link">Messages</a>
+      <a href="#handlers" class="toc-link">Handlers</a>
+      <a href="#dispatching" class="toc-link">Sending and Results</a>
+      <a href="#middleware" class="toc-link">Middleware</a>
+      <a href="#context" class="toc-link">Context</a>
+      <a href="#messaging-vs-events" class="toc-link">Messaging vs Events</a>
+      <a href="#lower-level" class="toc-link">Lower-level Pieces</a>
+      <a href="#api-reference" class="toc-link">API Reference</a>
+      <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
+      <a href="#related" class="toc-link">Related</a>
+          <a href="#export-index" class="toc-link">Complete Export Index</a>
     </aside>
 
   </div>
@@ -848,5 +626,6 @@ bus.<span class="fn">dispose</span>();</div>
   <script src="/js/docs.js"></script>
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 </body>
 </html>

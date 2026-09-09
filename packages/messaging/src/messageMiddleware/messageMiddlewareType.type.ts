@@ -109,6 +109,7 @@ export interface RegisteredMessageMiddleware<
  * Execution record for a single middleware.
  */
 export interface MessageMiddlewareExecution<TResult = unknown> {
+  /** The id of the middleware this record describes. */
   readonly middlewareId: string;
   readonly result: TResult;
   readonly duration: number;
@@ -130,4 +131,10 @@ export interface MessageMiddlewarePipelineOptions {
   readonly signal?: AbortSignal;
   readonly metadata?: Readonly<Record<string, unknown>>;
   readonly state?: Map<string, unknown>;
+
+  /**
+   * Identifiers parallel to the middleware list, used to label the execution
+   * records. Positions without an id fall back to a synthesised one.
+   */
+  readonly middlewareIds?: readonly string[];
 }

@@ -394,9 +394,34 @@ describe("Cookie Security", () => {
       expect(result.cookies[0]?.value).toBe("value");
     });
 
-    it("rejects cookies with semicolons in value", () => {
+    it("cannot carry a semicolon through a value: it is a delimiter", () => {
+      // A `;` splits the header before anything else looks at it, so
+      // "name=val;ue" is two fragments, not one cookie with a `;` in its
+      // value. The previous version of this test asserted only
+      // `errors.length > 0` and so passed on the *framing* error for the
+      // second fragment while claiming to prove a value rule.
       const result = parseCookieHeader("name=val;ue");
-      expect(result.errors.length).toBeGreaterThan(0);
+      expect(result.cookies.map((c) => c.name)).toEqual(["name"]);
+      expect(result.cookies[0]?.value).toBe("val");
+      expect(result.errors).toContain(
+        'Cookie 1: missing equals sign in "ue"',
+      );
+      // The actual value rule lives here, and is what serializeCookie uses.
+      expect(validateCookieValue("val;ue")).toBe(
+        "Cookie value cannot contain semicolons",
+      );
+    });
+
+    it("rejects a cookie whose name is not an RFC 6265 token", () => {
+      const result = parseCookieHeader("a(b)=1; ok=2");
+      expect(result.cookies.map((c) => c.name)).toEqual(["ok"]);
+      expect(result.errors.join(" ")).toContain("invalid characters");
+    });
+
+    it("rejects a control character in a parsed value", () => {
+      const result = parseCookieHeader("sid=a\r\nSet-Cookie: evil=1");
+      expect(result.cookies).toHaveLength(0);
+      expect(result.errors.join(" ")).toContain("control characters");
     });
 
     it("rejects empty cookie names", () => {
@@ -596,7 +621,7 @@ describe("CORS", () => {
 describe("CSRF", () => {
   describe("generateCsrfToken", () => {
     it("generates a valid token", () => {
-      const token = generateCsrfToken("secret123");
+      const token = generateCsrfToken("csrf-test-secret-0123456789abcdef");
       expect(token).toBeDefined();
       expect(typeof token).toBe("string");
       expect(token.split(":")).toHaveLength(3);
@@ -605,25 +630,25 @@ describe("CSRF", () => {
 
   describe("validateCsrfToken", () => {
     it("validates a correct token", () => {
-      const token = generateCsrfToken("secret123");
-      expect(validateCsrfToken(token, "secret123")).toBe(true);
+      const token = generateCsrfToken("csrf-test-secret-0123456789abcdef");
+      expect(validateCsrfToken(token, "csrf-test-secret-0123456789abcdef")).toBe(true);
     });
 
     it("rejects token with wrong secret", () => {
-      const token = generateCsrfToken("secret123");
-      expect(validateCsrfToken(token, "wrong-secret")).toBe(false);
+      const token = generateCsrfToken("csrf-test-secret-0123456789abcdef");
+      expect(validateCsrfToken(token, "csrf-wrong-secret-0123456789abcdef")).toBe(false);
     });
 
     it("rejects malformed token", () => {
-      expect(validateCsrfToken("not-a-token", "secret")).toBe(false);
+      expect(validateCsrfToken("not-a-token", "csrf-test-secret-0123456789abcdef")).toBe(false);
     });
 
     it("rejects expired token", () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2025-01-01T00:00:00Z"));
-      const token = generateCsrfToken("secret123", 10);
+      const token = generateCsrfToken("csrf-test-secret-0123456789abcdef", 10);
       vi.setSystemTime(new Date("2025-01-01T00:01:00Z"));
-      expect(validateCsrfToken(token, "secret123")).toBe(false);
+      expect(validateCsrfToken(token, "csrf-test-secret-0123456789abcdef")).toBe(false);
       vi.useRealTimers();
     });
   });
@@ -1004,14 +1029,19 @@ describe("Input Sanitization", () => {
 
   describe("sanitizeObject", () => {
     it("removes prototype pollution keys", () => {
-      const result = sanitizeObject({
-        name: "test",
-        __proto__: { polluted: true },
-      });
-      expect(Object.prototype.hasOwnProperty.call(result, "__proto__")).toBe(
-        false,
-      );
+      // `__proto__:` in an object literal is the prototype *setter*, so the
+      // literal never has a `__proto__` own key and the old version of this
+      // test passed whether or not the guard existed. JSON.parse is the only
+      // way to build the own property an attacker actually sends.
+      const hostile = JSON.parse(
+        '{"name":"test","__proto__":{"polluted":true},"constructor":{"c":1},"prototype":{"p":1}}',
+      ) as Record<string, unknown>;
+      expect(Object.keys(hostile)).toContain("__proto__");
+
+      const result = sanitizeObject(hostile);
+      expect(Object.keys(result)).toEqual(["name"]);
       expect(result.name).toBe("test");
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     });
 
     it("sanitizes string values", () => {

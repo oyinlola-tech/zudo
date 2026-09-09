@@ -252,7 +252,12 @@ export class OpenAPIRegistryImpl implements OpenAPIRegistry {
   }
 
   public generate(): OpenAPIDocument {
-    const paths: Record<string, OpenAPIPathItem> = {};
+    // A `Map` rather than an object literal: a route registered at the path
+    // `__proto__` assigned to a literal sets the object's prototype instead
+    // of adding an entry, so the path disappears from the document with no
+    // error raised anywhere. `Object.fromEntries` defines own properties and
+    // has no such hole.
+    const paths = new Map<string, OpenAPIPathItem>();
 
     for (const route of this.routes.values()) {
       const operation: OpenAPIOperation = Object.freeze({
@@ -262,10 +267,17 @@ export class OpenAPIRegistryImpl implements OpenAPIRegistry {
       // Operations keep their own parameters. Hoisting them to the path item
       // makes them apply to every method on that path, so two methods with
       // different parameters overwrote one another.
-      paths[route.path] = Object.freeze({
-        ...(paths[route.path] ?? {}),
-        [route.method]: operation,
-      });
+      //
+      // The method is lower-cased here as well as in the cache key: a path
+      // item field is defined in lower case, and `GET` would emit a field no
+      // consumer recognises while still colliding on the key.
+      paths.set(
+        route.path,
+        Object.freeze({
+          ...(paths.get(route.path) ?? {}),
+          [route.method.toLowerCase()]: operation,
+        }),
+      );
     }
 
     const components: Record<string, unknown> = {};
@@ -291,7 +303,7 @@ export class OpenAPIRegistryImpl implements OpenAPIRegistry {
       ...(this.servers.length > 0
         ? { servers: Object.freeze([...this.servers]) }
         : {}),
-      paths: Object.freeze(paths),
+      paths: Object.freeze(Object.fromEntries(paths)),
       ...(Object.keys(components).length > 0
         ? { components: Object.freeze(components) }
         : {}),

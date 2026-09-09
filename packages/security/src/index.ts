@@ -9,7 +9,7 @@
  *
  * @example
  * ```ts
- * import { validateHeaders, validateUrl, generateSecurityHeaders } from '@zudojs/security';
+ * import { validateHeaders, validateRequestTarget, generateSecurityHeaders } from '@zudojs/security';
  *
  * // Validate request headers
  * const result = validateHeaders(request.headers);
@@ -17,8 +17,10 @@
  *   throw new Error(result.errors.join(', '));
  * }
  *
- * // Validate URL
- * const urlResult = validateUrl(request.url);
+ * // Validate the request target. Node's `request.url` is origin-form
+ * // ("/users?page=1"), which has no scheme — `validateUrl` needs an absolute
+ * // URL and reports every such target as malformed.
+ * const targetResult = validateRequestTarget(request.url);
  *
  * // Add security headers
  * const headers = generateSecurityHeaders();
@@ -44,7 +46,6 @@ export type {
   RateLimitResponse,
   RateLimitResult,
   SecurityHeadersConfig,
-  RequestValidationConfig,
   InputSanitizationConfig,
 } from "./types/security.type.js";
 
@@ -73,6 +74,7 @@ export {
   containsTraversal,
   fullyDecodeUri,
 } from "./url/index.js";
+export type { RequestTargetConfig } from "./url/index.js";
 
 /* ─── Body Validation ────────────────────────────────────────────────────── */
 export {
@@ -83,6 +85,7 @@ export {
   validateBodySize,
   getBodyLimitForContentType,
   validateBodyLimitConfig,
+  resolveBodyLimit,
   createBodySizeChecker,
 } from "./body/index.js";
 
@@ -116,13 +119,23 @@ export {
   extractCsrfTokenFromHeaders,
   extractCsrfTokenFromCookies,
   generateCsrfCookie,
+  createCsrfProtection,
+  MIN_CSRF_SECRET_LENGTH,
 } from "./csrf/index.js";
-export type { CsrfTokenOptions, CsrfCookieOptions } from "./csrf/index.js";
+export type {
+  CsrfTokenOptions,
+  CsrfCookieOptions,
+  CsrfProtection,
+  CsrfProtectionOptions,
+  IssuedCsrfToken,
+  CsrfVerifiableRequest,
+} from "./csrf/index.js";
 
 /* ─── Rate Limiting ──────────────────────────────────────────────────────── */
 export {
   defaultKeyGenerator,
   defaultHandler,
+  retryAfterSeconds,
   createRateLimiter,
   extractClientIp,
 } from "./rateLimit/index.js";

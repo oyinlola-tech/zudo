@@ -52,7 +52,6 @@ export interface LifecycleManagerOptions {
 export class LifecycleManager {
   private readonly _ctx: LifecycleManagerContext;
   private _startPromise?: Promise<void>;
-  private _shutdownPromise?: Promise<void>;
   private _removeSignalHandlers?: () => void;
 
   constructor(options: LifecycleManagerOptions = {}) {
@@ -67,6 +66,7 @@ export class LifecycleManager {
       componentStates: new Map(),
       results: new Map(),
       startTime: 0,
+      controller: new AbortController(),
     };
 
     if (options.handleSignals !== false) {
@@ -112,11 +112,9 @@ export class LifecycleManager {
    * Idempotent — returns the same promise if called multiple times.
    */
   public async shutdown(): Promise<void> {
-    if (this._shutdownPromise) {
-      return this._shutdownPromise;
-    }
-    this._shutdownPromise = performShutdown(this._ctx);
-    return this._shutdownPromise;
+    // performShutdown is itself single-flight, so a shutdown started by
+    // startup rollback and one started here are the SAME run.
+    return performShutdown(this._ctx);
   }
 
   /** Returns the current application state. */
@@ -154,9 +152,15 @@ export class LifecycleManager {
     return status;
   }
 
-  /** Disposes the lifecycle manager and cleans up resources. */
+  /**
+   * Disposes the lifecycle manager and cleans up resources.
+   *
+   * This removes signal handlers and listeners only; it does NOT run
+   * component teardown — call `shutdown()` first for that.
+   */
   public dispose(): void {
     this._removeSignalHandlers?.();
+    this._removeSignalHandlers = undefined;
     this._ctx.events.clear();
   }
 }

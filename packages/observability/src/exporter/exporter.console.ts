@@ -42,14 +42,29 @@ export interface ConsoleExporterOptions {
  *
  * Cycles become `"[Circular]"`, BigInts become their decimal string, and a
  * value that defeats serialization entirely falls back to `String(value)`.
+ *
+ * "Cycle" means an ancestor, not "seen before". A `WeakSet` of every object
+ * already visited also matches a value referenced twice from different
+ * branches — `{ user, actor: user }` — and silently replaced the second copy
+ * with `[Circular]`, losing real telemetry that was never circular. The
+ * replacer's `this` is the object currently being serialized, which is what
+ * lets the ancestor chain be tracked exactly.
  */
 export function safeStringify(value: unknown, pretty = false): string {
-  const seen = new WeakSet<object>();
+  const ancestors: unknown[] = [];
   try {
     return (
       JSON.stringify(
         value,
-        (_key, entry: unknown) => {
+        function replacer(this: unknown, _key: string, entry: unknown): unknown {
+          // Unwind to the holder of the value being visited.
+          while (
+            ancestors.length > 0 &&
+            ancestors[ancestors.length - 1] !== this
+          ) {
+            ancestors.pop();
+          }
+
           if (typeof entry === "bigint") return entry.toString();
           if (typeof entry === "function") return "[Function]";
           if (typeof entry === "symbol") return entry.toString();
@@ -61,8 +76,8 @@ export function safeStringify(value: unknown, pretty = false): string {
             };
           }
           if (typeof entry === "object" && entry !== null) {
-            if (seen.has(entry)) return "[Circular]";
-            seen.add(entry);
+            if (ancestors.includes(entry)) return "[Circular]";
+            ancestors.push(entry);
           }
           return entry;
         },

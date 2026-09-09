@@ -9,6 +9,7 @@ import {
   mergeBarrelExport,
 } from "../../utils/utils.fileSystem.js";
 import { CLIGenerationError } from "../../errors/index.js";
+import { assertGeneratableName, toPascalCase } from "../../utils/utils.name.js";
 
 export interface GenerateServiceOptions {
   readonly name: string;
@@ -21,10 +22,8 @@ export async function generateService(
   cwd: string,
 ): Promise<string[]> {
   const basePath = options.basePath ?? "services";
-  const name = options.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
-  const namePascal = name
-    .replace(/-([a-z])/g, (_, c) => c.toUpperCase())
-    .replace(/^./, (c) => c.toUpperCase());
+  const name = assertGeneratableName(options.name, "service name");
+  const namePascal = toPascalCase(name);
 
   const files: Record<string, string> = {
     [`${basePath}/${name}/${name}.service.ts`]: `import { createLogger } from "@zudojs/logger";

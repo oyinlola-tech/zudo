@@ -29,14 +29,6 @@ export interface DependencyResolutionResult {
 }
 
 /**
- * A group of modules that can be initialized concurrently.
- */
-export interface ParallelModuleGroup {
-  readonly modules: readonly string[];
-  readonly depth: number;
-}
-
-/**
  * Error information for circular dependencies.
  */
 export interface CircularDependencyInfo {

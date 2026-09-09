@@ -12,6 +12,7 @@ export {
   DuplicatePermissionError,
   RoleNotFoundError,
   DuplicateRoleError,
+  DuplicatePolicyError,
   InvalidPermissionError,
   InvalidRoleError,
   CircularRoleInheritanceError,

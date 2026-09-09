@@ -39,6 +39,11 @@ export interface TracerOptions {
   readonly limits?: SpanLimits;
   /** Record `exception.stacktrace` on `recordError`. Default: `true`. */
   readonly captureStackTraces?: boolean;
+  /**
+   * Redacts every span attribute and event attribute before it is recorded.
+   * Supply one whenever spans can carry request data.
+   */
+  readonly redactAttribute?: (key: string, value: unknown) => unknown;
   /** Reports a processor failure that would otherwise be swallowed. */
   readonly onError?: (error: unknown, source: string) => void;
 }
@@ -53,6 +58,7 @@ export class DefaultTracer implements Tracer {
   private readonly sampler: Sampler;
   private readonly limits?: SpanLimits;
   private readonly captureStackTraces: boolean;
+  private readonly redactAttribute?: (key: string, value: unknown) => unknown;
   private readonly onError?: (error: unknown, source: string) => void;
 
   constructor(options?: TracerOptions) {
@@ -62,6 +68,7 @@ export class DefaultTracer implements Tracer {
     this.sampler = options?.sampler ?? new AlwaysOnSampler();
     this.limits = options?.limits;
     this.captureStackTraces = options?.captureStackTraces ?? true;
+    this.redactAttribute = options?.redactAttribute;
     this.onError = options?.onError;
   }
 
@@ -86,6 +93,7 @@ export class DefaultTracer implements Tracer {
       resource: this.resource,
       limits: this.limits,
       captureStackTraces: this.captureStackTraces,
+      redactAttribute: this.redactAttribute,
       recording,
       // Only a sampled span reaches the processors; a RECORD_ONLY span is
       // readable in-process but is not exported.

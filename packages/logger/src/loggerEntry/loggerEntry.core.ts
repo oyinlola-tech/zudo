@@ -4,13 +4,7 @@
 
 import type { LoggerLevel } from "../loggerLevel/loggerLevel.type.js";
 
-import type {
-  LogMetadata,
-  LoggerEntry,
-  LoggerEntryInput,
-} from "./loggerEntry.type.js";
-
-import { loggerLevelNameFallback } from "./loggerEntryHelpers/loggerEntryHelpers.serialize.js";
+import type { LogMetadata, LoggerEntry } from "./loggerEntry.type.js";
 
 import { createLoggerEntry } from "./loggerEntryCreate.js";
 

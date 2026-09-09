@@ -10,14 +10,55 @@ npm install @zudojs/storage
 
 ## Quick Start
 
+Object storage, locking and health checking need no driver, so this runs as
+written:
+
 ```typescript
-import { BaseRepository, LocalObjectStorage } from "@zudojs/storage";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { InMemoryLockManager, LocalObjectStorage } from "@zudojs/storage";
+
+const files = new LocalObjectStorage(await mkdtemp(join(tmpdir(), "uploads-")));
+
+// Attributes are persisted, so `get` and `list` report them too.
+await files.put("avatars/u_1.png", new TextEncoder().encode("PNG…"), {
+  contentType: "image/png",
+  metadata: { uploadedBy: "u_1" },
+});
+
+const avatar = await files.metadata("avatars/u_1.png");
+console.log(avatar?.contentType, avatar?.metadata, avatar?.etag);
+
+const page = await files.list("avatars/", { maxKeys: 50 });
+console.log(page.objects.map((object) => object.key), page.isTruncated);
+
+// A lock hands back a fence token: pass it to the resource you protect and
+// reject writes carrying a stale one, in case the lock expired mid-work.
+const locks = new InMemoryLockManager();
+const lock = await locks.acquire("billing:u_1", { ttl: 5_000 });
+try {
+  console.log("holding lock", lock.lockId, "fence", lock.fence);
+} finally {
+  await lock.release();
+}
+```
+
+### Repositories
+
+`BaseRepository` builds parameterised SQL against any `Database` you supply —
+the package ships the contract, your driver supplies the connection:
+
+```typescript
+import { BaseRepository } from "@zudojs/storage";
 import type { Database } from "@zudojs/storage";
 
 interface User extends Record<string, unknown> {
   id: string;
   email: string;
 }
+
+declare const database: Database;
 
 // Pass `columns` so a request body cannot introduce a column name of its own.
 const users = new BaseRepository<User, string>(database, {
@@ -27,9 +68,6 @@ const users = new BaseRepository<User, string>(database, {
 
 const user = await users.findById("u_1");
 const page = await users.findAll({ orderBy: "email", limit: 20, offset: 0 });
-
-const files = new LocalObjectStorage("/var/data/uploads");
-await files.put("avatars/u_1.png", bytes, { contentType: "image/png" });
 ```
 
 ## Features
@@ -47,6 +85,11 @@ await files.put("avatars/u_1.png", bytes, { contentType: "image/png" });
 - Every SQL identifier — table, primary key, column, sort column — is validated
   before it reaches a query. `limit` and `offset` are bound as parameters.
   Supply `columns` to narrow writes and filters to an explicit allowlist.
+- `LocalObjectStorage` persists `contentType`, `cacheControl` and user
+  metadata alongside the object and computes a SHA-256 `etag`, so `get`,
+  `metadata` and `list` report what was stored rather than nothing. The
+  attributes live under the reserved `.zudo-object-meta` directory, which is
+  excluded from listings and refused as an object key.
 - `LocalObjectStorage` resolves its base path once and checks containment by
   path rather than by string prefix, then verifies the real path so a symlink
   inside the store cannot redirect a read or write out of it.

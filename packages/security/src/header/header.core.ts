@@ -148,18 +148,28 @@ export function validateHeaders(
       continue;
     }
 
+    if (config?.blockHopByHop === true && isHopByHopHeader(name)) {
+      errors.push(
+        `Header "${name}" is hop-by-hop and must not be forwarded (RFC 9110 s7.6.1)`,
+      );
+      continue;
+    }
+
     // Validate values (may be array for Set-Cookie, etc.)
     const values = Array.isArray(value) ? value : [value];
 
     for (const v of values) {
+      // Size is accumulated whether or not the value is otherwise valid.
+      // Skipping invalid values under-counted exactly the headers most likely
+      // to breach `maxTotalSize`, so an oversized header could evade the total
+      // bound by also being malformed.
+      totalSize +=
+        Buffer.byteLength(name, "utf8") + Buffer.byteLength(v, "utf8");
+
       const valueError = validateHeaderValue(name, v, config);
       if (valueError) {
         errors.push(valueError);
-        continue;
       }
-
-      totalSize +=
-        Buffer.byteLength(name, "utf8") + Buffer.byteLength(v, "utf8");
     }
   }
 

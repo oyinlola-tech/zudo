@@ -1,6 +1,6 @@
 import type { QueueName } from "../jobTypes/jobTypes.type.js";
 
-import type { Queue, QueueOptions, QueueStats } from "./queue.type.js";
+import type { Queue, QueueOptions } from "./queue.type.js";
 
 import { createInMemoryQueue } from "../inMemoryQueue/index.js";
 

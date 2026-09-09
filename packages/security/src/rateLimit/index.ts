@@ -5,6 +5,7 @@
 export {
   defaultKeyGenerator,
   defaultHandler,
+  retryAfterSeconds,
   createRateLimiter,
   extractClientIp,
 } from "./rateLimit.core.js";

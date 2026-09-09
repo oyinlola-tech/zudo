@@ -20,7 +20,6 @@ export type {
   RateLimitResponse,
   RateLimitResult,
   SecurityHeadersConfig,
-  RequestValidationConfig,
   InputSanitizationConfig,
 } from "./security.type.js";
 

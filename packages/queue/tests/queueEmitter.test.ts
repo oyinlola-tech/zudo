@@ -6,7 +6,6 @@ import { createInMemoryQueueEventEmitter } from "../src/queueEmitter/queueEmitte
 
 import {
   createQueueName,
-  createJobName,
   JobState,
 } from "../src/jobTypes/jobTypes.type.js";
 

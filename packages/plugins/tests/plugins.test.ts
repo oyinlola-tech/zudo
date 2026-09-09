@@ -20,6 +20,12 @@ import {
   createUnhealthyHealth,
   buildDiagnosticReport,
 } from "../src/index.js";
+import { parseVersion, compareVersions } from "../src/index.js";
+import type {
+  PluginState,
+  SemVer,
+  PluginLifecycleEvent,
+} from "../src/index.js";
 
 describe("isValidTransition", () => {
   it("allows registered -> installing", () => {
@@ -45,7 +51,7 @@ describe("isValidTransition", () => {
 
 describe("VALID_STATE_TRANSITIONS", () => {
   it("contains all states", () => {
-    const states = [
+    const states: PluginState[] = [
       "registered",
       "installing",
       "installed",
@@ -274,9 +280,7 @@ describe("PluginManager", () => {
       },
     });
 
-    const context = createPluginContext({
-      metadata: { name: "@zudojs/test" },
-    });
+    const context = createPluginContext({ name: "@zudojs/test" });
     await manager.start(context);
 
     expect(order).toEqual(["b", "a", "b-start", "a-start"]);
@@ -292,7 +296,11 @@ describe("PluginManager", () => {
       manager.register({
         metadata: { name: "@zudojs/test" },
       });
-    }).toThrow();
+    }).toThrow(PluginAlreadyRegisteredError);
+
+    // The first registration must survive the rejected duplicate rather
+    // than being overwritten by it.
+    expect(manager.list()).toHaveLength(1);
   });
 });
 
@@ -446,9 +454,7 @@ describe("PluginManager.diagnostics", () => {
       dependencies: [{ name: "@zudojs/a" }],
     });
 
-    const context = createPluginContext({
-      metadata: { name: "@zudojs/test" },
-    });
+    const context = createPluginContext({ name: "@zudojs/test" });
     await manager.start(context);
 
     const report = manager.diagnostics();
@@ -466,12 +472,157 @@ describe("PluginManager.diagnostics", () => {
       },
     });
 
-    const context = createPluginContext({
-      metadata: { name: "@zudojs/test" },
-    });
+    const context = createPluginContext({ name: "@zudojs/test" });
     await manager.start(context).catch(() => {});
 
     const report = manager.diagnostics();
     expect(report.failed).toBe(1);
+  });
+});
+
+/* ─── Audit round 9: capabilities that were declared but never wired ─────── */
+
+describe("plugin:registered (round 9)", () => {
+  it("emits PLUGIN_EVENTS.REGISTERED through the manager's event sink", () => {
+    const seen: Array<{ event: string; payload: unknown }> = [];
+
+    const manager = new PluginManager({
+      events: {
+        on() {},
+        off() {},
+        emit(event, payload) {
+          seen.push({ event, payload });
+        },
+      },
+    });
+
+    manager.register({ metadata: { name: "@zudojs/a", version: "1.2.3" } });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.event).toBe(PLUGIN_EVENTS.REGISTERED);
+
+    const payload = seen[0]?.payload as PluginLifecycleEvent;
+    expect(payload.plugin.name).toBe("@zudojs/a");
+    expect(payload.plugin.version).toBe("1.2.3");
+    expect(payload.state).toBe("registered");
+    expect(typeof payload.timestamp).toBe("number");
+  });
+
+  it("does not emit when registration is rejected", () => {
+    const seen: string[] = [];
+    const manager = new PluginManager({
+      allowedCapabilities: [],
+      events: {
+        on() {},
+        off() {},
+        emit(event) {
+          seen.push(event);
+        },
+      },
+    });
+
+    expect(() =>
+      manager.register({
+        metadata: { name: "@zudojs/a", capabilities: ["fs"] },
+      }),
+    ).toThrow(/not granted/);
+
+    expect(seen).toEqual([]);
+  });
+
+  it("a throwing listener does not fail the registration", () => {
+    const errors: string[] = [];
+    const manager = new PluginManager({
+      onError: (_error, name) => errors.push(name),
+      events: {
+        on() {},
+        off() {},
+        emit() {
+          throw new Error("listener exploded");
+        },
+      },
+    });
+
+    expect(() =>
+      manager.register({ metadata: { name: "@zudojs/a" } }),
+    ).not.toThrow();
+
+    expect(manager.has("@zudojs/a")).toBe(true);
+    expect(errors).toEqual(["@zudojs/a"]);
+  });
+});
+
+describe("plugin context identity (round 9)", () => {
+  it("gives each plugin a context naming that plugin, not the host", async () => {
+    const seen: string[] = [];
+
+    const manager = new PluginManager();
+
+    manager.register({
+      metadata: { name: "@zudojs/a" },
+      async start(context) {
+        seen.push(context.plugin.name);
+      },
+    });
+
+    manager.register({
+      metadata: { name: "@zudojs/b" },
+      async start(context) {
+        seen.push(context.plugin.name);
+      },
+    });
+
+    await manager.start(createPluginContext({ name: "@zudojs/host" }));
+
+    expect(seen.sort()).toEqual(["@zudojs/a", "@zudojs/b"]);
+  });
+
+  it("createPluginContext takes the metadata itself, not a wrapper", () => {
+    const context = createPluginContext({ name: "@zudojs/a", version: "1.0.0" });
+
+    expect(context.plugin.name).toBe("@zudojs/a");
+    expect(context.plugin.version).toBe("1.0.0");
+  });
+});
+
+describe("SemVer is nameable by consumers (round 9)", () => {
+  it("parseVersion's result can be passed straight to compareVersions", () => {
+    const a: SemVer | undefined = parseVersion("1.2.3");
+    const b: SemVer | undefined = parseVersion("1.10.0");
+
+    if (a === undefined || b === undefined) {
+      throw new Error("parseVersion rejected a valid semantic version.");
+    }
+
+    expect(compareVersions(a, b)).toBeLessThan(0);
+    expect(compareVersions(a, a)).toBe(0);
+  });
+});
+
+describe("isValidTransition governs the lifecycle (round 9)", () => {
+  it("the controller rejects exactly what isValidTransition rejects", async () => {
+    const registry = new PluginRegistryImpl();
+    const controller = new LifecycleController();
+
+    registry.register({ metadata: { name: "@zudojs/a" } });
+    const registered = registry.get("@zudojs/a");
+
+    if (!registered) {
+      throw new Error("register() did not store the plugin.");
+    }
+
+    expect(isValidTransition("registered", "starting")).toBe(false);
+
+    await expect(
+      controller.start(registered, createPluginContext({ name: "@zudojs/a" })),
+    ).rejects.toThrow(PluginStateError);
+
+    // And it permits exactly what the predicate permits.
+    expect(isValidTransition("registered", "installing")).toBe(true);
+    await controller.install(
+      registered,
+      createPluginContext({ name: "@zudojs/a" }),
+    );
+    expect(registered.state).toBe("installed");
   });
 });

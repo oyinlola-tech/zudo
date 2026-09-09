@@ -6,11 +6,12 @@ import type { LoggerLevel } from "../../loggerLevel/loggerLevel.type.js";
 
 import type { LogMetadata } from "../../loggerEntry/loggerEntry.type.js";
 
-import type { LoggerContext } from "../../loggerContext/loggerContext.core.js";
+import type {
+  LoggerContext,
+  LoggerContextStorage,
+} from "../../loggerContext/loggerContext.core.js";
 
 import { createLoggerContext } from "../../loggerContext/loggerContext.core.js";
-
-import { createLoggerContextStorage } from "../../loggerContext/loggerContextStorage.js";
 
 import type {
   ChildLoggerOptions,
@@ -23,9 +24,16 @@ import type { Logger } from "./loggerCore.type.js";
  * Logger wrapper that provides scoped context.
  */
 export class ContextLogger implements Logger {
+  /**
+   * @param storage The context storage the WRAPPED logger reads from.
+   *   This used to be created fresh inside `run()`, so the scoped
+   *   context was written into a throwaway stack and never reached the
+   *   entry — withContext() silently produced context-free logs.
+   */
   constructor(
     private readonly logger: Logger,
     private readonly context: LoggerContext,
+    private readonly storage: LoggerContextStorage,
   ) {}
 
   get name(): string {
@@ -69,7 +77,11 @@ export class ContextLogger implements Logger {
   }
 
   child(options?: ChildLoggerOptions): Logger {
-    return new ContextLogger(this.logger.child(options), this.context);
+    return new ContextLogger(
+      this.logger.child(options),
+      this.context,
+      this.storage,
+    );
   }
 
   withContext(context: LoggerContext): Logger {
@@ -80,6 +92,7 @@ export class ContextLogger implements Logger {
         ...context.identifiers,
         metadata: context.metadata,
       }),
+      this.storage,
     );
   }
 
@@ -104,7 +117,6 @@ export class ContextLogger implements Logger {
   }
 
   private run(callback: () => void): void {
-    const storage = createLoggerContextStorage();
-    storage.run(this.context, callback);
+    this.storage.run(this.context, callback);
   }
 }

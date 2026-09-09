@@ -20,7 +20,6 @@ import {
   sortCommands,
 } from "../src/cliCommand/cliCommand.validator.js";
 import {
-  CommandNotFoundError,
   DuplicateCommandError,
   InvalidCommandNameError,
 } from "../src/cliError/index.js";
@@ -204,7 +203,7 @@ describe("CLICommandBuilder", () => {
       .build();
 
     expect(cmd.options).toHaveLength(1);
-    expect(cmd.options![0].name).toBe("outDir");
+    expect(cmd.options?.[0]?.name).toBe("outDir");
   });
 
   it("builds a command with arguments", () => {
@@ -215,7 +214,7 @@ describe("CLICommandBuilder", () => {
       .build();
 
     expect(cmd.arguments).toHaveLength(1);
-    expect(cmd.arguments![0].name).toBe("script");
+    expect(cmd.arguments?.[0]?.name).toBe("script");
   });
 
   it("builds a command with sub-commands", () => {
@@ -439,7 +438,7 @@ describe("sortCommands", () => {
   it("does not mutate original array", () => {
     const commands = [createTestCommand("b"), createTestCommand("a")];
     sortCommands(commands);
-    expect(commands[0].name).toBe("b");
+    expect(commands[0]?.name).toBe("b");
   });
 
   it("returns empty array for empty input", () => {

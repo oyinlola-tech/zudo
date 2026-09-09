@@ -28,6 +28,12 @@ const OPERATIONS = [
 /** A path segment that still uses `:name` rather than `{name}`. */
 const COLON_SEGMENT = /(^|\/):[^/]+/;
 
+/** Leading URI scheme of a non-local `$ref`, when it has one. */
+const URI_SCHEME = /^([A-Za-z][A-Za-z0-9+.-]*):/;
+
+/** Schemes a `$ref` resolver may reasonably be pointed at. */
+const FETCHABLE_SCHEMES = new Set(["http", "https"]);
+
 /** The result of validating a document. */
 export interface OpenAPIValidationResult {
   readonly valid: boolean;
@@ -346,12 +352,16 @@ export class OpenAPIValidatorImpl implements OpenAPIValidator {
       Object.keys(document.components?.securitySchemes ?? {}),
     );
 
+    /** Every scheme some requirement actually names. */
+    const required = new Set<string>();
+
     const check = (
       requirements: readonly Readonly<Record<string, readonly string[]>>[],
       path: readonly (string | number)[],
     ): void => {
       for (const requirement of requirements) {
         for (const name of Object.keys(requirement)) {
+          required.add(name);
           if (!schemes.has(name)) {
             error(
               collector,
@@ -373,10 +383,33 @@ export class OpenAPIValidatorImpl implements OpenAPIValidator {
         check(operation.security, ["paths", path, method, "security"]);
       }
     }
+
+    // The mirror image, and the more dangerous direction: a declared scheme
+    // that nothing requires. Viewers render the lock, generated clients offer
+    // the credential field, and every operation is in fact unauthenticated.
+    for (const name of schemes) {
+      if (!required.has(name)) {
+        warn(
+          collector,
+          ["components", "securitySchemes", name],
+          `Security scheme "${name}" is declared but no operation or ` +
+            `document-level requirement uses it, so nothing it describes is ` +
+            `actually required.`,
+        );
+      }
+    }
   }
 
   /**
-   * Checks that every local `$ref` resolves inside the document.
+   * Checks every `$ref`: that a local one resolves, and that a non-local one
+   * is at least not a scheme a resolver should never be pointed at.
+   *
+   * A `$ref` is an instruction to whatever dereferences the document. A
+   * `file:///etc/passwd` or `http://169.254.169.254/...` reference turns any
+   * downstream tool — a bundler, a mock server, a client generator — into an
+   * arbitrary-file-read or SSRF primitive on behalf of whoever supplied the
+   * spec. Accepting those silently, as a check that only looked at refs
+   * starting with `#` did, is the whole vulnerability.
    */
   private validateReferences(
     document: OpenAPIDocument,
@@ -397,13 +430,7 @@ export class OpenAPIValidatorImpl implements OpenAPIValidator {
       const record = value as Record<string, unknown>;
       const ref = record["$ref"];
       if (typeof ref === "string") {
-        if (ref.startsWith("#") && !resolvePointer(document, ref)) {
-          error(
-            collector,
-            path,
-            `Reference "${ref}" does not resolve within the document.`,
-          );
-        }
+        this.validateReference(document, ref, path, collector);
         return;
       }
 
@@ -415,6 +442,45 @@ export class OpenAPIValidatorImpl implements OpenAPIValidator {
     walk(document.paths ?? {}, ["paths"]);
     walk(document.components ?? {}, ["components"]);
   }
+
+  private validateReference(
+    document: OpenAPIDocument,
+    ref: string,
+    path: readonly (string | number)[],
+    collector: Collector,
+  ): void {
+    if (ref.startsWith("#")) {
+      if (!resolvePointer(document, ref)) {
+        error(
+          collector,
+          path,
+          `Reference "${ref}" does not resolve within the document.`,
+        );
+      }
+      return;
+    }
+
+    const scheme = URI_SCHEME.exec(ref)?.[1]?.toLowerCase();
+
+    if (scheme !== undefined && !FETCHABLE_SCHEMES.has(scheme)) {
+      error(
+        collector,
+        path,
+        `Reference "${ref}" uses the "${scheme}:" scheme. Only local ` +
+          `references and http(s) URLs are allowed; a resolver following ` +
+          `this would read from outside the document.`,
+      );
+      return;
+    }
+
+    warn(
+      collector,
+      path,
+      `Reference "${ref}" points outside the document. Whatever dereferences ` +
+        `this specification will fetch it — bundle the target into ` +
+        `components instead if the source is not fully trusted.`,
+    );
+  }
 }
 
 /** Resolves a local JSON Pointer, returning whether the target exists. */
@@ -425,7 +491,17 @@ function resolvePointer(document: OpenAPIDocument, ref: string): boolean {
 
   let current: unknown = document;
   for (const rawSegment of pointer.slice(1).split("/")) {
-    const segment = unescapeJsonPointerSegment(decodeURIComponent(rawSegment));
+    // A stray or truncated percent-escape makes `decodeURIComponent` throw a
+    // `URIError`. Letting that escape turned `validate()` — whose entire job
+    // is to report problems rather than raise them — into a crash on a
+    // hand-crafted `$ref`.
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(rawSegment);
+    } catch {
+      return false;
+    }
+    const segment = unescapeJsonPointerSegment(decoded);
     if (typeof current !== "object" || current === null) return false;
     if (Array.isArray(current)) {
       const index = Number(segment);

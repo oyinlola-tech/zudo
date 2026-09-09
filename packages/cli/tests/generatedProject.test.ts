@@ -11,6 +11,7 @@ import { generateModularMonolithFiles } from "../src/templates/modular-monolith/
 import { generateMicroserviceFiles } from "../src/templates/microservice/index.js";
 import { InfrastructureGenerator } from "../src/generators/infrastructure/infrastructure.generator.js";
 import { writeFileTree } from "../src/utils/utils.fileSystem.js";
+import { ZUDOJS_PACKAGES_VERSION } from "../src/constants/index.js";
 import type { ScaffoldOptions } from "../src/types/index.js";
 
 vi.mock("../src/utils/utils.fileSystem.js", () => ({
@@ -85,10 +86,13 @@ describe.each(allTemplates)("%s template", (_name, generate) => {
       };
       const deps = pkg.dependencies ?? {};
       if (Object.keys(deps).length === 0) continue;
-      expect(deps["@zudojs/runtime"], path).toBe("0.1.0");
+      // Compared against the constant the templates stamp in, so the pin
+      // tracks the published framework version instead of a literal that
+      // silently goes stale at the next release.
+      expect(deps["@zudojs/runtime"], path).toBe(ZUDOJS_PACKAGES_VERSION);
       for (const [dep, version] of Object.entries(deps)) {
         if (dep.startsWith("@zudojs/")) {
-          expect(version, `${path} → ${dep}`).toBe("0.1.0");
+          expect(version, `${path} → ${dep}`).toBe(ZUDOJS_PACKAGES_VERSION);
         }
       }
     }
@@ -151,8 +155,13 @@ describe("microservice template", () => {
     expect(files["README.md"]).toContain("**gateway** - Port 3000");
     expect(files["README.md"]).toContain("**identity** - Port 3001");
     expect(files["README.md"]).toContain("**billing** - Port 3002");
-    expect(files["apps/services/identity/src/app.ts"]).toContain("port 3001");
-    expect(files["apps/services/billing/src/app.ts"]).toContain("port 3002");
+    expect(files["apps/gateway/src/app.ts"]).toContain("metadata: { port: 3000 }");
+    expect(files["apps/services/identity/src/app.ts"]).toContain(
+      "metadata: { port: 3001 }",
+    );
+    expect(files["apps/services/billing/src/app.ts"]).toContain(
+      "metadata: { port: 3002 }",
+    );
     expect(files["apps/services/identity/Dockerfile"]).toContain("EXPOSE 3001");
   });
 
@@ -178,6 +187,8 @@ describe("microservice template", () => {
   it("emits service source files without stray leading spaces", () => {
     const app = files["apps/services/identity/src/app.ts"]!;
     for (const line of app.split("\n")) {
+      // " * ..." is a JSDoc continuation line, not stray indentation.
+      if (line.startsWith(" *")) continue;
       expect(/^ [^ ]/.test(line), JSON.stringify(line)).toBe(false);
     }
   });

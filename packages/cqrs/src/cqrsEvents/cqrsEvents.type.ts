@@ -120,8 +120,17 @@ export function createCqrsEvent<TPayload extends Record<string, unknown>>(
     metadata: input.metadata,
   });
 
+  // A CQRS domain event type is a durable identifier: it is written
+  // into event streams and matched by aggregate reducers, so
+  // "UserCreated" must survive round-tripping verbatim. The base
+  // event factory lower-cases and collapses separators for bus
+  // routing, which is right for pub/sub topics but destructive for
+  // domain names (it also collides "UserCreated" with "usercreated").
+  // Routing still works: the registry normalizes the lookup key on
+  // both registration and dispatch.
   const event: CqrsEvent<TPayload> = {
     ...base,
+    type: input.type.trim() as typeof base.type,
     aggregateId: input.aggregateId,
     aggregateType: input.aggregateType,
     version: input.version,

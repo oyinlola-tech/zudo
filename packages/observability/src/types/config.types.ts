@@ -4,6 +4,7 @@
 
 import type { LogLevel, Logger, LogExporter } from "./logging.types.js";
 import type { MetricsRegistry, MetricExporter } from "./metrics.types.js";
+import type { MetricsRegistryOptions } from "../metrics/metrics.registry.js";
 import type {
   Tracer,
   SpanExporter,
@@ -71,9 +72,12 @@ export interface RedactionConfig {
    */
   readonly patterns?: readonly RegExp[];
   /**
-   * `"contains"` (the default) matches a field whose name *contains* a
-   * listed term, so `userPassword` and `x-api-key` are caught. `"exact"`
-   * matches only whole names.
+   * `"contains"` (the default) matches on word boundaries: a field is
+   * sensitive when any run of its words spells a listed term, so
+   * `userPassword`, `x-api-key` and `accessToken` are all caught while
+   * `shippingAddress` and `authorId` — which a raw substring test redacts
+   * because they contain `pin` and `auth` — are not. `"exact"` matches only
+   * whole names.
    */
   readonly matchMode?: RedactionMatchMode;
   /** Custom redaction function, consulted before the field list. */
@@ -112,7 +116,18 @@ export interface ObservabilityConfig {
   readonly metricExporter?: MetricExporter;
   readonly sampler?: Sampler;
   readonly processors?: readonly SpanProcessor[];
+  /**
+   * Redacts sensitive fields from log contexts *and* from span attributes and
+   * span event attributes. Omit it and neither is redacted.
+   */
   readonly redaction?: RedactionConfig;
+  /**
+   * Metrics registry tuning: the series cap that bounds cardinality, and the
+   * histogram bucket boundaries. Without this the defaults were unreachable
+   * from the facade, so an application could not lower the 10,000-series cap
+   * that is its only protection against a label carrying a user ID.
+   */
+  readonly metrics?: MetricsRegistryOptions;
   readonly resource?: Record<string, unknown>;
   /** Caps on what a single span may accumulate. */
   readonly spanLimits?: SpanLimits;

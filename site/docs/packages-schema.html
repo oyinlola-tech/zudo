@@ -52,6 +52,7 @@
       <a href="/docs/packages-adapters" class="sidebar-item">adapters</a>
       <a href="/docs/packages-api" class="sidebar-item">api</a>
       <a href="/docs/packages-auth" class="sidebar-item">auth</a>
+      <a href="/docs/packages-auth-oauth" class="sidebar-item">auth-oauth</a>
       <a href="/docs/packages-cache" class="sidebar-item">cache</a>
       <a href="/docs/packages-cli" class="sidebar-item">cli</a>
       <a href="/docs/packages-config" class="sidebar-item">config</a>
@@ -107,11 +108,10 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v0.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/schema</h1>
-        <p class="text-lg text-lg text-black/70 leading-relaxed max-w-2xl">
-          Type-safe schema definition, runtime validation, parsing, and transformation engine. Define data contracts, validate input, transform output, and infer TypeScript types — all from a single schema definition.
+        <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
+          Describe the shape of your data once, then use that description to check incoming values, clean them up, and get matching TypeScript types.
         </p>
         <div class="flex flex-wrap gap-2 mt-4">
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">SCHEMA</span>
@@ -122,1004 +122,556 @@
         </div>
       </div>
 
+      <!-- Overview -->
+      <section id="overview" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OVERVIEW</h2>
+        <p class="mb-4 leading-relaxed">
+          Data that arrives from outside your program is untrusted. A request body, a query string, a JSON file, an environment variable: any of them can be missing a field, hold the wrong type, or contain nonsense. Your code has to check all of it before using it.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          A <em>schema</em> is a description of what a value is allowed to look like. "An object with a <code class="bg-black/5 px-1">name</code> that is a string of at least two characters, and an <code class="bg-black/5 px-1">email</code> that looks like an email address." You write that description once with <code class="bg-black/5 px-1">@zudojs/schema</code>, and the package turns it into three things: a runtime check, a cleaned-up copy of the value, and a TypeScript type.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          When a value does not match, you do not get a vague "invalid input". You get a list of <em>issues</em>, each one saying which field failed, why, and what was expected.
+        </p>
+
+        <div class="grid md:grid-cols-2 gap-4 mb-4">
+          <div class="border-4 border-black p-4">
+            <div class="font-black mb-2">When you need it</div>
+            <ul class="space-y-1 text-sm">
+              <li>Checking request bodies, query strings, or form data.</li>
+              <li>Reading config or JSON files you did not write.</li>
+              <li>Turning strings from a URL into numbers and booleans.</li>
+              <li>Keeping one source of truth for a type and its runtime check.</li>
+            </ul>
+          </div>
+          <div class="border-4 border-black p-4">
+            <div class="font-black mb-2">When you don't</div>
+            <ul class="space-y-1 text-sm">
+              <li>Values your own code built and already typed.</li>
+              <li>A single <code class="bg-black/5 px-1">typeof x === "string"</code> check.</li>
+              <li>Async checks like "does this user exist in the database" (schemas are synchronous).</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
       <!-- Installation -->
       <section id="installation" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-        <div class="code-block mb-4"><span class="cm">// npm</span>
-npm install @zudojs/schema
-
-<span class="cm">// pnpm</span>
-pnpm add @zudojs/schema
-
-<span class="cm">// yarn</span>
-yarn add @zudojs/schema</div>
+        <p class="mb-3 text-sm">Install the package. It pulls in its own runtime dependencies (<code class="bg-black/5 px-1">@zudojs/errors</code>, <code class="bg-black/5 px-1">@zudojs/constants</code>, <code class="bg-black/5 px-1">@zudojs/types</code>) automatically.</p>
+        <div class="code-block mb-4">$ npm install @zudojs/schema</div>
 
         <div class="callout callout-note">
-          <strong class="text-zudo-blue">Peer Dependencies:</strong> @zudojs/schema depends on @zudojs/errors, @zudojs/constants, and @zudojs/types. All at version 0.1.0.
+          <strong class="text-zudo-blue">Note:</strong> These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest @zudojs release.
         </div>
       </section>
 
-      <!-- What It Does -->
-      <section id="what-it-does" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHAT IT DOES</h2>
+      <!-- Quick Start -->
+      <section id="quick-start" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK START</h2>
+        <p class="mb-3 text-sm">This defines a user schema, checks a good value, then checks a bad one and prints what went wrong.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { schema } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
+
+<span class="kw">const</span> UserSchema = schema.<span class="fn">object</span>({
+  name: schema.<span class="fn">string</span>().<span class="fn">min</span>(<span class="num">2</span>),
+  email: schema.<span class="fn">string</span>().<span class="fn">email</span>(),
+  age: schema.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">min</span>(<span class="num">0</span>).<span class="fn">optional</span>(),
+});
+
+<span class="cmt">// A good value: parse() returns a typed copy.</span>
+<span class="kw">const</span> user = UserSchema.<span class="fn">parse</span>({ name: <span class="str">"Ada"</span>, email: <span class="str">"ada@example.com"</span> });
+console.<span class="fn">log</span>(user);
+<span class="cmt">// { name: "Ada", email: "ada@example.com", age: undefined }</span>
+
+<span class="cmt">// A bad value: safeParse() reports issues instead of throwing.</span>
+<span class="kw">const</span> result = UserSchema.<span class="fn">safeParse</span>({ name: <span class="str">"A"</span>, email: <span class="str">"nope"</span> });
+<span class="kw">if</span> (!result.success) {
+  <span class="kw">for</span> (<span class="kw">const</span> issue <span class="kw">of</span> result.issues) {
+    console.<span class="fn">log</span>(issue.path.<span class="fn">join</span>(<span class="str">"."</span>), issue.code, issue.message);
+  }
+}
+<span class="cmt">// name too_small String must be at least 2 characters</span>
+<span class="cmt">// email invalid_format Invalid email format</span></div>
+        <p class="text-sm">You should see the parsed user printed first, then two lines describing the two problems with the second value.</p>
+      </section>
+
+      <!-- Parse vs safeParse -->
+      <section id="parse-vs-safeparse" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">PARSE VS VALIDATE</h2>
         <p class="mb-4 leading-relaxed">
-          <code class="bg-black/5 px-1">@zudojs/schema</code> is the data contract layer for the Zudojs ecosystem. It provides:
+          <em>Validating</em> answers a yes/no question: does this value match the schema? <em>Parsing</em> goes one step further: it validates, and then hands you a new value that is guaranteed to match. That new value may differ from the input. Unknown object keys are dropped, <code class="bg-black/5 px-1">.trim()</code> removes whitespace, defaults are filled in.
         </p>
-        <ul class="space-y-2 mb-6">
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Type-safe schema definition</strong> — build schemas that mirror your TypeScript types</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Runtime validation and parsing</strong> — validate unknown input and get typed output</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Transform and coerce</strong> — convert input data during parsing (e.g. string → number)</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Refine with custom checks</strong> — add business logic validation on top of type checks</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Structured error reporting</strong> — issues include path, code, expected/received values</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Abort-early and limits</strong> — maxDepth, maxIssues, abortEarly options for control</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Recursive schemas via lazy</strong> — define self-referencing structures like trees</li>
-          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Discriminated unions</strong> — type-safe tagged unions with a discriminator key</li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Object shape manipulation</strong> — pick, omit, partial, required, extend, merge</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Fluent chainable API</strong> — build schemas with method chaining</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>The <code>schema</code> namespace</strong> — clean single import for all schema creators</li>
+        <p class="mb-4 leading-relaxed">
+          Every schema has two methods that do this. They run the same checks; they differ only in how they report failure.
+        </p>
+        <ul class="space-y-2 mb-4 text-sm">
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><code class="bg-black/5 px-1">parse(input)</code> returns the parsed value, or <strong>throws</strong> a <code class="bg-black/5 px-1">SchemaError</code>. Use it when a bad value means "stop here".</span></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <span><code class="bg-black/5 px-1">safeParse(input)</code> never throws. It returns <code class="bg-black/5 px-1">{ success: true, data }</code> or <code class="bg-black/5 px-1">{ success: false, issues }</code>. Use it when you want to show the errors to someone.</span></li>
         </ul>
+        <p class="mb-3 text-sm">Both accept <code class="bg-black/5 px-1">unknown</code>, so you can pass the raw result of <code class="bg-black/5 px-1">JSON.parse</code> straight in. This catches the thrown error from <code class="bg-black/5 px-1">parse()</code>.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { schema } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
+<span class="kw">import</span> { SchemaError } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+
+<span class="kw">const</span> AgeSchema = schema.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">min</span>(<span class="num">0</span>);
+<span class="kw">const</span> fromTheWire: <span class="tp">unknown</span> = JSON.<span class="fn">parse</span>(<span class="str">'"forty"'</span>);
+
+<span class="kw">try</span> {
+  AgeSchema.<span class="fn">parse</span>(fromTheWire);
+} <span class="kw">catch</span> (error) {
+  <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">SchemaError</span>) {
+    console.<span class="fn">log</span>(error.message, error.issues.length);
+    <span class="cmt">// Validation failed 1</span>
+  }
+}</div>
+        <div class="callout callout-tip">
+          <strong class="text-zudo-green">Tip:</strong> <code class="bg-black/5 px-1">SchemaError</code> lives in <code class="bg-black/5 px-1">@zudojs/errors</code>, not in this package. Import it from there.
+        </div>
+      </section>
+
+      <!-- Reading issues -->
+      <section id="reading-issues" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">READING A VALIDATION ISSUE</h2>
+        <p class="mb-4 leading-relaxed">
+          An <em>issue</em> is one plain object describing one problem. A failed <code class="bg-black/5 px-1">safeParse</code> gives you an array of them in <code class="bg-black/5 px-1">result.issues</code>; a thrown <code class="bg-black/5 px-1">SchemaError</code> carries the same array in <code class="bg-black/5 px-1">error.issues</code>.
+        </p>
+        <p class="mb-3 text-sm">Here is the single issue produced by checking a nested email field.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { schema } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
+
+<span class="kw">const</span> ProfileSchema = schema.<span class="fn">object</span>({
+  user: schema.<span class="fn">object</span>({ email: schema.<span class="fn">string</span>().<span class="fn">email</span>() }),
+});
+
+<span class="kw">const</span> result = ProfileSchema.<span class="fn">safeParse</span>({ user: { email: <span class="str">"not-an-email"</span> } });
+<span class="kw">if</span> (!result.success) console.<span class="fn">log</span>(result.issues[<span class="num">0</span>]);
+<span class="cmt">// {</span>
+<span class="cmt">//   code: "invalid_format",</span>
+<span class="cmt">//   path: ["user", "email"],</span>
+<span class="cmt">//   message: "Invalid email format",</span>
+<span class="cmt">//   expected: "email"</span>
+<span class="cmt">// }</span></div>
+
+        <table class="doc-table mb-4">
+          <thead><tr><th>Field</th><th>What it tells you</th></tr></thead>
+          <tbody>
+            <tr><td><code class="bg-black/5 px-1">code</code></td><td>A short machine-readable reason, always present. Examples: <code class="bg-black/5 px-1">invalid_type</code>, <code class="bg-black/5 px-1">required</code>, <code class="bg-black/5 px-1">too_small</code>, <code class="bg-black/5 px-1">too_large</code>, <code class="bg-black/5 px-1">invalid_format</code>, <code class="bg-black/5 px-1">invalid_enum</code>, <code class="bg-black/5 px-1">unknown_keys</code>, <code class="bg-black/5 px-1">custom</code> (a refine failed), <code class="bg-black/5 px-1">coercion_failed</code>.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">path</code></td><td>Where the problem is. An array of keys and array indexes, starting from the top of the value. <code class="bg-black/5 px-1">[]</code> means the whole value. <code class="bg-black/5 px-1">["tags", 1]</code> means the second item of <code class="bg-black/5 px-1">tags</code>.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">message</code></td><td>A human-readable sentence you can show as-is.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">expected</code>, <code class="bg-black/5 px-1">received</code></td><td>Optional. What the schema wanted and what it got, as strings.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">details</code></td><td>Optional extra data. A failed union puts each branch's issues here.</td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout callout-note">
+          <strong class="text-zudo-blue">In plain words:</strong> read <code class="bg-black/5 px-1">path</code> to find the field, <code class="bg-black/5 px-1">code</code> to decide how to handle it in code, and <code class="bg-black/5 px-1">message</code> to tell a person.
+        </div>
+      </section>
+
+      <!-- Building blocks -->
+      <section id="building-blocks" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">BUILDING BLOCKS</h2>
+        <p class="mb-4 leading-relaxed">
+          Everything starts from the <code class="bg-black/5 px-1">schema</code> object. Each function on it builds a schema for one kind of value, and most return an object with extra methods that tighten the rule. Calling one of those methods returns a <em>new</em> schema; the original is never changed.
+        </p>
+        <p class="mb-3 text-sm">The two schemas you will use most are <code class="bg-black/5 px-1">string()</code> and <code class="bg-black/5 px-1">number()</code>.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { schema } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
+
+<span class="kw">const</span> Username = schema.<span class="fn">string</span>().<span class="fn">trim</span>().<span class="fn">toLowerCase</span>().<span class="fn">min</span>(<span class="num">3</span>).<span class="fn">max</span>(<span class="num">20</span>);
+console.<span class="fn">log</span>(Username.<span class="fn">parse</span>(<span class="str">"  Ada  "</span>));   <span class="cmt">// "ada"</span>
+
+<span class="kw">const</span> Percent = schema.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">min</span>(<span class="num">0</span>).<span class="fn">max</span>(<span class="num">100</span>);
+console.<span class="fn">log</span>(Percent.<span class="fn">safeParse</span>(<span class="num">101</span>).success); <span class="cmt">// false</span>
+
+<span class="kw">const</span> Role = schema.<span class="fn">enum</span>([<span class="str">"admin"</span>, <span class="str">"user"</span>]);
+console.<span class="fn">log</span>(Role.<span class="fn">parse</span>(<span class="str">"admin"</span>));         <span class="cmt">// "admin"</span></div>
+
+        <table class="doc-table mb-4">
+          <thead><tr><th>Schema</th><th>Accepts</th><th>Rule methods</th></tr></thead>
+          <tbody>
+            <tr><td><code class="bg-black/5 px-1">schema.string()</code></td><td>Strings. Max 255 characters unless you set <code class="bg-black/5 px-1">.max()</code>.</td><td><code class="bg-black/5 px-1">min</code>, <code class="bg-black/5 px-1">max</code>, <code class="bg-black/5 px-1">length</code>, <code class="bg-black/5 px-1">regex</code>, <code class="bg-black/5 px-1">email</code>, <code class="bg-black/5 px-1">url</code>, <code class="bg-black/5 px-1">uuid</code>, <code class="bg-black/5 px-1">uuidv4</code>, <code class="bg-black/5 px-1">datetime</code>, <code class="bg-black/5 px-1">date</code>, <code class="bg-black/5 px-1">time</code>, <code class="bg-black/5 px-1">ipv4</code>, <code class="bg-black/5 px-1">ipv6</code>, <code class="bg-black/5 px-1">phone</code>, <code class="bg-black/5 px-1">hexColor</code>, <code class="bg-black/5 px-1">trim</code>, <code class="bg-black/5 px-1">toLowerCase</code>, <code class="bg-black/5 px-1">toUpperCase</code></td></tr>
+            <tr><td><code class="bg-black/5 px-1">schema.number()</code></td><td>Numbers. <code class="bg-black/5 px-1">NaN</code> is rejected.</td><td><code class="bg-black/5 px-1">min</code>, <code class="bg-black/5 px-1">max</code>, <code class="bg-black/5 px-1">gt</code>, <code class="bg-black/5 px-1">lt</code>, <code class="bg-black/5 px-1">int</code>, <code class="bg-black/5 px-1">positive</code>, <code class="bg-black/5 px-1">negative</code>, <code class="bg-black/5 px-1">finite</code>, <code class="bg-black/5 px-1">safe</code>, <code class="bg-black/5 px-1">multipleOf</code></td></tr>
+            <tr><td><code class="bg-black/5 px-1">schema.boolean()</code></td><td><code class="bg-black/5 px-1">true</code> or <code class="bg-black/5 px-1">false</code>.</td><td><code class="bg-black/5 px-1">coerce()</code> also accepts <code class="bg-black/5 px-1">"true"</code>, <code class="bg-black/5 px-1">"false"</code>, <code class="bg-black/5 px-1">1</code>, <code class="bg-black/5 px-1">0</code></td></tr>
+            <tr><td><code class="bg-black/5 px-1">schema.literal(v)</code></td><td>Exactly the value <code class="bg-black/5 px-1">v</code> (string, number, boolean or null).</td><td>none</td></tr>
+            <tr><td><code class="bg-black/5 px-1">schema.enum([...])</code></td><td>One of the listed strings or numbers.</td><td><code class="bg-black/5 px-1">getValues()</code></td></tr>
+            <tr><td><code class="bg-black/5 px-1">schema.bigint()</code>, <code class="bg-black/5 px-1">schema.symbol()</code></td><td>A bigint / a symbol.</td><td>none</td></tr>
+            <tr><td><code class="bg-black/5 px-1">schema.null()</code>, <code class="bg-black/5 px-1">schema.undefined()</code></td><td>Exactly <code class="bg-black/5 px-1">null</code> / exactly <code class="bg-black/5 px-1">undefined</code>.</td><td>none</td></tr>
+            <tr><td><code class="bg-black/5 px-1">schema.any()</code>, <code class="bg-black/5 px-1">schema.unknown()</code></td><td>Anything at all (typed <code class="bg-black/5 px-1">any</code> / <code class="bg-black/5 px-1">unknown</code>).</td><td>none</td></tr>
+            <tr><td><code class="bg-black/5 px-1">schema.never()</code></td><td>Nothing; every value fails.</td><td>none</td></tr>
+          </tbody>
+        </table>
+
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out:</strong> <code class="bg-black/5 px-1">schema.string().trim()</code> changes the output, not the check. <code class="bg-black/5 px-1">min(3)</code> is measured after trimming, so <code class="bg-black/5 px-1">"  ab  "</code> fails.
+        </div>
+      </section>
+
+      <!-- Objects and arrays -->
+      <section id="objects-and-arrays" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OBJECTS AND ARRAYS</h2>
+        <p class="mb-4 leading-relaxed">
+          <code class="bg-black/5 px-1">schema.object({ ... })</code> takes a <em>shape</em>: a plain object whose values are schemas. Every key in the shape is required unless its schema is optional or has a default. <code class="bg-black/5 px-1">schema.array(item)</code> checks every element against one item schema.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          By default an object schema <strong>strips</strong> keys it does not know about. Call <code class="bg-black/5 px-1">.strict()</code> to reject them, or <code class="bg-black/5 px-1">.passthrough()</code> to keep them.
+        </p>
+        <p class="mb-3 text-sm">This builds a post with a list of tags, then derives smaller schemas from it.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { schema } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
+
+<span class="kw">const</span> PostSchema = schema.<span class="fn">object</span>({
+  id: schema.<span class="fn">string</span>().<span class="fn">uuid</span>(),
+  title: schema.<span class="fn">string</span>().<span class="fn">min</span>(<span class="num">1</span>),
+  tags: schema.<span class="fn">array</span>(schema.<span class="fn">string</span>()).<span class="fn">max</span>(<span class="num">5</span>),
+});
+
+console.<span class="fn">log</span>(PostSchema.<span class="fn">parse</span>({
+  id: <span class="str">"550e8400-e29b-41d4-a716-446655440000"</span>,
+  title: <span class="str">"Hello"</span>,
+  tags: [<span class="str">"intro"</span>],
+  extra: <span class="kw">true</span>,          <span class="cmt">// unknown key: dropped</span>
+}));
+<span class="cmt">// { id: "550e8400-e29b-41d4-a716-446655440000", title: "Hello", tags: ["intro"] }</span>
+
+<span class="cmt">// Derived schemas</span>
+<span class="kw">const</span> NewPost   = PostSchema.<span class="fn">omit</span>([<span class="str">"id"</span>]);       <span class="cmt">// no id yet</span>
+<span class="kw">const</span> PostPatch = PostSchema.<span class="fn">partial</span>();          <span class="cmt">// every key optional</span>
+<span class="kw">const</span> Titled    = PostSchema.<span class="fn">pick</span>([<span class="str">"title"</span>]);    <span class="cmt">// only title</span>
+<span class="kw">const</span> Strict    = PostSchema.<span class="fn">strict</span>();           <span class="cmt">// extra keys now fail</span>
+
+console.<span class="fn">log</span>(Strict.<span class="fn">safeParse</span>({
+  id: <span class="str">"550e8400-e29b-41d4-a716-446655440000"</span>, title: <span class="str">"Hi"</span>, tags: [], extra: <span class="num">1</span>,
+}).success);
+<span class="cmt">// false</span></div>
+
+        <table class="doc-table mb-4">
+          <thead><tr><th>Method</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><code class="bg-black/5 px-1">.pick(keys)</code> / <code class="bg-black/5 px-1">.omit(keys)</code></td><td>New object schema with only / without those keys.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">.partial()</code> / <code class="bg-black/5 px-1">.required()</code></td><td>Make every key optional / make every key required again.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">.extend(other)</code> / <code class="bg-black/5 px-1">.merge(other)</code></td><td>Add another object schema's keys (same thing; later keys win).</td></tr>
+            <tr><td><code class="bg-black/5 px-1">.strip()</code> / <code class="bg-black/5 px-1">.strict()</code> / <code class="bg-black/5 px-1">.passthrough()</code></td><td>Drop / reject / keep unknown keys.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">.shape</code></td><td>The shape you passed in, for reading.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">schema.array(item)</code></td><td>Methods: <code class="bg-black/5 px-1">.min()</code>, <code class="bg-black/5 px-1">.max()</code>, <code class="bg-black/5 px-1">.length()</code>, <code class="bg-black/5 px-1">.nonempty()</code>. Max 1000 items unless you set <code class="bg-black/5 px-1">.max()</code>.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">schema.tuple([a, b])</code></td><td>Fixed-length array; position 0 must match <code class="bg-black/5 px-1">a</code>, position 1 must match <code class="bg-black/5 px-1">b</code>.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">schema.record(value)</code></td><td>Object with any string keys, every value matching <code class="bg-black/5 px-1">value</code>.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">schema.map(key, value)</code>, <code class="bg-black/5 px-1">schema.set(item)</code></td><td>A real <code class="bg-black/5 px-1">Map</code> / <code class="bg-black/5 px-1">Set</code> instance with checked entries.</td></tr>
+          </tbody>
+        </table>
 
         <div class="callout callout-tip">
-          <strong class="text-zudo-green">Core Principle:</strong> Define a schema once, get runtime validation, TypeScript type inference, and structured errors — all from the same source of truth.
+          <strong class="text-zudo-green">Tip:</strong> Keys named <code class="bg-black/5 px-1">__proto__</code>, <code class="bg-black/5 px-1">constructor</code> and <code class="bg-black/5 px-1">prototype</code> are always rejected in input. This blocks prototype-pollution attacks without any work on your side.
         </div>
       </section>
 
-      <!-- Where It Sits -->
-      <section id="architecture-position" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">WHERE IT SITS</h2>
-        <div class="border-4 border-black p-6 space-y-3">
-          <div class="bg-zudo-red text-black p-3 font-bold text-center text-sm">APPLICATION LAYER (CQRS, HTTP, Modules)</div>
-          <div class="bg-zudo-blue text-white p-3 font-bold text-center text-sm">SCHEMA LAYER (@zudojs/schema)</div>
-          <div class="grid grid-cols-6 gap-2 text-xs font-bold text-center">
-            <div class="bg-black text-white p-2">Primitives</div>
-            <div class="bg-black text-white p-2">Structures</div>
-            <div class="bg-black text-white p-2">Composition</div>
-            <div class="bg-black text-white p-2">Modifiers</div>
-            <div class="bg-black text-white p-2">Coercion</div>
-            <div class="bg-black text-white p-2">Inference</div>
-          </div>
-          <div class="bg-white border-2 border-black p-3 font-bold text-center text-sm">FOUNDATION (@zudojs/errors, @zudojs/constants, @zudojs/types)</div>
-        </div>
-        <p class="mt-4 text-sm text-black/60">
-          Schema sits between application code and the foundation layer. Application code (HTTP handlers, CQRS commands, modules) uses schemas to validate and parse input. Schemas depend only on the error, constants, and types packages.
+      <!-- Optional, nullable, default -->
+      <section id="optional-and-default" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OPTIONAL, NULLABLE, DEFAULT</h2>
+        <p class="mb-4 leading-relaxed">
+          Three wrappers change what a schema accepts when the value is absent. <em>Optional</em> also accepts <code class="bg-black/5 px-1">undefined</code>. <em>Nullable</em> also accepts <code class="bg-black/5 px-1">null</code>. <em>Default</em> replaces <code class="bg-black/5 px-1">undefined</code> with a value you choose, then checks that value.
         </p>
-      </section>
+        <p class="mb-4 leading-relaxed">
+          There are two ways to apply them. <code class="bg-black/5 px-1">string()</code>, <code class="bg-black/5 px-1">number()</code> and the <code class="bg-black/5 px-1">coerce</code> schemas have <code class="bg-black/5 px-1">.optional()</code>, <code class="bg-black/5 px-1">.nullable()</code> and <code class="bg-black/5 px-1">.default()</code> methods. Every other schema (objects, arrays, enums, literals, unions) does not, so you wrap it with <code class="bg-black/5 px-1">schema.optional(x)</code>, <code class="bg-black/5 px-1">schema.nullable(x)</code> or <code class="bg-black/5 px-1">schema.default(x, value)</code>.
+        </p>
+        <p class="mb-3 text-sm">Both forms are shown here. Missing keys get their default; an absent optional key is allowed.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { schema } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
 
-      <!-- Dependencies -->
-      <section id="dependencies" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DEPENDENCIES</h2>
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Package</th>
-                <th class="p-3 text-left">Version</th>
-                <th class="p-3 text-left">Purpose</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono text-sm">@zudojs/errors</td>
-                <td class="p-3">0.1.0</td>
-                <td class="p-3">SchemaError for parse failures</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono text-sm">@zudojs/constants</td>
-                <td class="p-3">0.1.0</td>
-                <td class="p-3">SchemaIssueCode enum, string format patterns, default limits</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono text-sm">@zudojs/types</td>
-                <td class="p-3">0.1.0</td>
-                <td class="p-3">Type guards and utility types</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+<span class="kw">const</span> SettingsSchema = schema.<span class="fn">object</span>({
+  theme: schema.<span class="fn">string</span>().<span class="fn">default</span>(<span class="str">"light"</span>),                     <span class="cmt">// method form</span>
+  role: schema.<span class="fn">default</span>(schema.<span class="fn">enum</span>([<span class="str">"admin"</span>, <span class="str">"user"</span>]), <span class="str">"user"</span>), <span class="cmt">// wrapper form</span>
+  nickname: schema.<span class="fn">string</span>().<span class="fn">optional</span>(),
+  avatar: schema.<span class="fn">nullable</span>(schema.<span class="fn">string</span>().<span class="fn">url</span>()),
+  tags: schema.<span class="fn">default</span>(schema.<span class="fn">array</span>(schema.<span class="fn">string</span>()), []),
+});
 
-        <div class="mt-4 callout callout-warning">
-          <strong class="text-zudo-yellow">Version Lock:</strong> All internal dependencies use <code>workspace:*</code> in development. When published, they use exact version <code>0.1.0</code>. Always use matching versions across the ecosystem.
+console.<span class="fn">log</span>(SettingsSchema.<span class="fn">parse</span>({ avatar: <span class="kw">null</span> }));
+<span class="cmt">// { theme: "light", role: "user", nickname: undefined, avatar: null, tags: [] }</span></div>
+
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out:</strong> a default runs only for <code class="bg-black/5 px-1">undefined</code>. Passing <code class="bg-black/5 px-1">null</code> to a defaulted string schema is still an error; add <code class="bg-black/5 px-1">nullable</code> if you want both.
         </div>
       </section>
 
-      <!-- Core: Schema Abstract Class -->
-      <section id="core" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CORE</h2>
+      <!-- Refine and transform -->
+      <section id="refine-and-transform" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">REFINE AND TRANSFORM</h2>
+        <p class="mb-4 leading-relaxed">
+          Built-in rules cover types and sizes. For anything else, <em>refine</em> adds your own check: a function that gets the already-valid value and returns <code class="bg-black/5 px-1">true</code> or <code class="bg-black/5 px-1">false</code>, plus the message to report when it returns <code class="bg-black/5 px-1">false</code>.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          <em>Transform</em> changes the output. Its function receives the valid value and returns something new, possibly of a different type. The schema's output type follows whatever you return.
+        </p>
+        <p class="mb-3 text-sm">Like the wrappers above, <code class="bg-black/5 px-1">.refine()</code> and <code class="bg-black/5 px-1">.transform()</code> are methods on <code class="bg-black/5 px-1">string()</code> and <code class="bg-black/5 px-1">number()</code>; for everything else use <code class="bg-black/5 px-1">schema.refine(x, check, message)</code> and <code class="bg-black/5 px-1">schema.transform(x, fn)</code>.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { schema } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Abstract Class: Schema&lt;TOutput, TInput&gt;</h3>
-        <p class="mb-3 text-sm">All schema types extend this base class. It defines the parsing pipeline: Input → validate → Output.</p>
-        <div class="code-block"><span class="kw">abstract class</span> <span class="tp">Schema</span>&lt;<span class="tp">TOutput</span>, <span class="tp">TInput</span> = <span class="tp">TOutput</span>&gt; {
-  <span class="kw">readonly</span> _type: <span class="tp">string</span>;
+<span class="cmt">// Refine: a string that must start with "USR_"</span>
+<span class="kw">const</span> UserId = schema.<span class="fn">string</span>().<span class="fn">refine</span>((v) =&gt; v.<span class="fn">startsWith</span>(<span class="str">"USR_"</span>), <span class="str">"Must start with USR_"</span>);
+console.<span class="fn">log</span>(UserId.<span class="fn">safeParse</span>(<span class="str">"abc"</span>));
+<span class="cmt">// { success: false, issues: [{ code: "custom", path: [], message: "Must start with USR_" }] }</span>
 
-  <span class="cm">/** Parse input — throws SchemaError on failure. */</span>
-  <span class="fn">parse</span>(input: <span class="tp">TInput</span>, options?: <span class="tp">SchemaParseOptions</span>): <span class="tp">TOutput</span>;
+<span class="cmt">// Transform: a string becomes its length</span>
+<span class="kw">const</span> Length = schema.<span class="fn">string</span>().<span class="fn">transform</span>((v) =&gt; v.length);
+console.<span class="fn">log</span>(Length.<span class="fn">parse</span>(<span class="str">"hello"</span>)); <span class="cmt">// 5</span>
 
-  <span class="cm">/** Parse input — returns SchemaResult (never throws). */</span>
-  <span class="fn">safeParse</span>(input: <span class="tp">TInput</span>, options?: <span class="tp">SchemaParseOptions</span>): <span class="tp">SchemaResult</span>&lt;<span class="tp">TOutput</span>&gt;;
+<span class="cmt">// Refine on an object: two fields must agree</span>
+<span class="kw">const</span> Range = schema.<span class="fn">refine</span>(
+  schema.<span class="fn">object</span>({ from: schema.<span class="fn">number</span>(), to: schema.<span class="fn">number</span>() }),
+  (r) =&gt; r.from &lt;= r.to,
+  <span class="str">"from must not be greater than to"</span>,
+);
+console.<span class="fn">log</span>(Range.<span class="fn">safeParse</span>({ from: <span class="num">5</span>, to: <span class="num">1</span> }).success); <span class="cmt">// false</span></div>
 
-  <span class="cm">/** Attach a description for documentation. */</span>
-  <span class="fn">describe</span>(description: <span class="tp">string</span>): <span class="kw">this</span>;
-
-  <span class="cm">/** Attach an example value. */</span>
-  <span class="fn">example</span>(value: <span class="tp">unknown</span>): <span class="kw">this</span>;
-
-  <span class="cm">/** Attach a title. */</span>
-  <span class="fn">title</span>(title: <span class="tp">string</span>): <span class="kw">this</span>;
-
-  <span class="cm">/** Mark as deprecated. */</span>
-  <span class="fn">deprecated</span>(): <span class="kw">this</span>;
-
-  <span class="cm">/** Get current metadata. */</span>
-  <span class="fn">getMetadata</span>(): <span class="tp">SchemaMetadata</span> | <span class="tp">undefined</span>;
-
-  <span class="cm">/** Runtime no-op — returns TOutput (for type inference). */</span>
-  <span class="fn">_output</span>(): <span class="tp">TOutput</span>;
-
-  <span class="cm">/** Runtime no-op — returns TInput (for type inference). */</span>
-  <span class="fn">_input</span>(): <span class="tp">TInput</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">SchemaIssue</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">SchemaIssue</span> {
-  <span class="kw">readonly</span> code: <span class="tp">SchemaIssueCode</span> | <span class="tp">string</span>;
-  <span class="kw">readonly</span> path: <span class="kw">readonly</span> (<span class="tp">string</span> | <span class="tp">number</span>)[];
-  <span class="kw">readonly</span> message: <span class="tp">string</span>;
-  <span class="kw">readonly</span> expected?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> received?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> input?: <span class="tp">unknown</span>;
-  <span class="kw">readonly</span> details?: <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Result Types</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">SchemaSuccess</span>&lt;<span class="tp">T</span>&gt; {
-  <span class="kw">readonly</span> success: <span class="num">true</span>;
-  <span class="kw">readonly</span> data: <span class="tp">T</span>;
-}
-
-<span class="kw">interface</span> <span class="tp">SchemaFailure</span> {
-  <span class="kw">readonly</span> success: <span class="num">false</span>;
-  <span class="kw">readonly</span> issues: <span class="kw">readonly</span> <span class="tp">SchemaIssue</span>[];
-}
-
-<span class="kw">type</span> <span class="tp">SchemaResult</span>&lt;<span class="tp">T</span>&gt; = <span class="tp">SchemaSuccess</span>&lt;<span class="tp">T</span>&gt; | <span class="tp">SchemaFailure</span>;</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">SchemaParseOptions</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">SchemaParseOptions</span> {
-  <span class="kw">readonly</span> abortEarly?: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> maxDepth?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> maxIssues?: <span class="tp">number</span>;
-  <span class="kw">readonly</span> path?: <span class="kw">readonly</span> (<span class="tp">string</span> | <span class="tp">number</span>)[];
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">SchemaParseContext</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">SchemaParseContext</span> {
-  <span class="kw">readonly</span> issues: <span class="tp">SchemaIssue</span>[];
-  <span class="kw">readonly</span> options: <span class="tp">SchemaParseOptions</span>;
-  <span class="kw">readonly</span> seen: <span class="tp">WeakSet</span>&lt;<span class="tp">object</span>&gt;;
-  <span class="kw">readonly</span> depth: <span class="tp">number</span>;
-  <span class="kw">readonly</span> path: (<span class="tp">string</span> | <span class="tp">number</span>)[];
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">SchemaMetadata</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">SchemaMetadata</span> {
-  <span class="kw">readonly</span> description?: <span class="tp">string</span>;
-  <span class="kw">readonly</span> example?: <span class="tp">unknown</span>;
-  <span class="kw">readonly</span> deprecated?: <span class="tp">boolean</span>;
-  <span class="kw">readonly</span> title?: <span class="tp">string</span>;
-}</div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">SchemaPathSegment</h3>
-        <div class="code-block"><span class="kw">type</span> <span class="tp">SchemaPathSegment</span> = <span class="tp">string</span> | <span class="tp">number</span>;</div>
-      </section>
-
-      <!-- Result Helpers -->
-      <section id="result-helpers" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RESULT HELPERS</h2>
-        <p class="mb-4">Functions for creating and inspecting schema results.</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Signature</th>
-                <th class="p-3 text-left">Returns</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">schemaSuccess</td>
-                <td class="p-3">schemaSuccess&lt;T&gt;(data: T): SchemaSuccess&lt;T&gt;</td>
-                <td class="p-3">A success result with the data</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">schemaFailure</td>
-                <td class="p-3">schemaFailure(issues: SchemaIssue[]): SchemaFailure</td>
-                <td class="p-3">A failure result with the issues</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">isSchemaSuccess</td>
-                <td class="p-3">isSchemaSuccess&lt;T&gt;(result): result is SchemaSuccess&lt;T&gt;</td>
-                <td class="p-3">Type guard for success</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">isSchemaFailure</td>
-                <td class="p-3">isSchemaFailure&lt;T&gt;(result): result is SchemaFailure</td>
-                <td class="p-3">Type guard for failure</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">unwrapSchemaResult</td>
-                <td class="p-3">unwrapSchemaResult&lt;T&gt;(result): T</td>
-                <td class="p-3">Returns data on success, throws on failure</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">import</span> {
-  <span class="fn">schemaSuccess</span>,
-  <span class="fn">schemaFailure</span>,
-  <span class="fn">isSchemaSuccess</span>,
-  <span class="fn">unwrapSchemaResult</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
-
-<span class="kw">const</span> result = schema.<span class="fn">string</span>().<span class="fn">parse</span>(<span class="str">"hello"</span>);
-<span class="cm">// Or use safeParse for non-throwing</span>
-<span class="kw">const</span> safe = schema.<span class="fn">string</span>().<span class="fn">safeParse</span>(<span class="num">42</span>);
-
-<span class="kw">if</span> (<span class="fn">isSchemaSuccess</span>(safe)) {
-  console.<span class="fn">log</span>(safe.data); <span class="cm">// never reached</span>
-} <span class="kw">else</span> {
-  console.<span class="fn">log</span>(safe.issues); <span class="cm">// [{ code: "invalid_type", ... }]</span>
-}</div>
-      </section>
-
-      <!-- Context Helpers -->
-      <section id="context-helpers" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CONTEXT HELPERS</h2>
-        <p class="mb-4">Internal context functions used by schema implementations for recursive parsing.</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Function</th>
-                <th class="p-3 text-left">Purpose</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">createParseContext</td>
-                <td class="p-3">Creates a fresh context from options (issues array, WeakSet for cycle detection)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">childContext</td>
-                <td class="p-3">Creates a child context with a deeper path segment (for nested objects/arrays)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">addIssue</td>
-                <td class="p-3">Pushes an issue into the context. Respects maxIssues limit.</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">isMaxDepthExceeded</td>
-                <td class="p-3">Checks whether the context has exceeded maximum depth</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">shouldAbortEarly</td>
-                <td class="p-3">Returns true if abortEarly option is set</td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out:</strong> <code class="bg-black/5 px-1">.refine()</code> returns a plain <code class="bg-black/5 px-1">Schema</code>, so you cannot chain <code class="bg-black/5 px-1">.transform()</code> after it. Wrap instead: <code class="bg-black/5 px-1">schema.transform(UserId, fn)</code>. A transform that throws is reported as a <code class="bg-black/5 px-1">transform_failed</code> issue.
         </div>
       </section>
 
-      <!-- Primitives -->
-      <section id="primitives" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">PRIMITIVES</h2>
+      <!-- Combining schemas -->
+      <section id="combining-schemas" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMBINING SCHEMAS</h2>
+        <p class="mb-4 leading-relaxed">
+          A <em>union</em> means "one of these". The value is tried against each member in order and the first match wins. A <em>discriminated union</em> is a union of objects that all carry a tag field (the discriminator); the tag picks the member directly, which is faster and gives clearer errors.
+        </p>
+        <p class="mb-4 leading-relaxed">
+          An <em>intersection</em> means "both of these"; two object schemas are merged into one result. A <em>lazy</em> schema wraps a function that returns the real schema, which lets a schema refer to itself for trees and nested comments.
+        </p>
+        <p class="mb-3 text-sm">This shows all four. The lazy tree needs an explicit type annotation because TypeScript cannot infer a self-referencing type.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { schema, <span class="kw">type</span> <span class="tp">Schema</span> } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
 
-        <!-- StringSchema -->
-        <div id="string-schema" class="mb-10">
-          <h3 class="text-xl font-bold mb-3 p-3 bg-zudo-red text-black border-4 border-black">StringSchema</h3>
-          <p class="mb-3">Schema for string values with constraints, format validation, and transformations.</p>
+<span class="kw">const</span> Id = schema.<span class="fn">union</span>([schema.<span class="fn">string</span>(), schema.<span class="fn">number</span>()]);
+console.<span class="fn">log</span>(Id.<span class="fn">parse</span>(<span class="num">42</span>), Id.<span class="fn">parse</span>(<span class="str">"abc"</span>)); <span class="cmt">// 42 "abc"</span>
 
-          <div class="code-block"><span class="kw">class</span> <span class="tp">StringSchema</span> <span class="kw">extends</span> <span class="tp">Schema</span>&lt;<span class="tp">string</span>&gt; {
-  <span class="fn">min</span>(min: <span class="tp">number</span>): <span class="tp">StringSchema</span>;
-  <span class="fn">max</span>(max: <span class="tp">number</span>): <span class="tp">StringSchema</span>;
-  <span class="fn">length</span>(length: <span class="tp">number</span>): <span class="tp">StringSchema</span>;
-  <span class="fn">regex</span>(pattern: <span class="tp">RegExp</span>): <span class="tp">StringSchema</span>;
-  <span class="fn">email</span>(): <span class="tp">StringSchema</span>;
-  <span class="fn">url</span>(): <span class="tp">StringSchema</span>;
-  <span class="fn">uuid</span>(): <span class="tp">StringSchema</span>;
-  <span class="fn">uuidv4</span>(): <span class="tp">StringSchema</span>;
-  <span class="fn">datetime</span>(): <span class="tp">StringSchema</span>;
-  <span class="fn">date</span>(): <span class="tp">StringSchema</span>;
-  <span class="fn">ipv4</span>(): <span class="tp">StringSchema</span>;
-  <span class="fn">hexColor</span>(): <span class="tp">StringSchema</span>;
-  <span class="fn">trim</span>(): <span class="tp">StringSchema</span>;
-  <span class="fn">toLowerCase</span>(): <span class="tp">StringSchema</span>;
-  <span class="fn">toUpperCase</span>(): <span class="tp">StringSchema</span>;
-  <span class="fn">optional</span>(): <span class="tp">Schema</span>&lt;<span class="tp">string</span> | <span class="tp">undefined</span>&gt;;
-  <span class="fn">nullable</span>(): <span class="tp">Schema</span>&lt;<span class="tp">string</span> | <span class="tp">null</span>&gt;;
-  <span class="fn">default</span>(value: <span class="tp">string</span> | (() =&gt; <span class="tp">string</span>)): <span class="tp">Schema</span>&lt;<span class="tp">string</span>&gt;;
-  <span class="fn">refine</span>(check: (v: <span class="tp">string</span>) =&gt; <span class="tp">boolean</span>, msg: <span class="tp">string</span>): <span class="tp">Schema</span>&lt;<span class="tp">string</span>&gt;;
-  <span class="fn">transform</span>&lt;<span class="tp">T</span>&gt;(fn: (v: <span class="tp">string</span>) =&gt; <span class="tp">T</span>): <span class="tp">TransformSchema</span>&lt;<span class="tp">string</span>, <span class="tp">T</span>&gt;;
-}</div>
-
-          <div class="callout callout-tip mt-4">
-            <strong class="text-zudo-green">Factory:</strong> <code>stringSchema()</code> or <code>schema.string()</code>
-          </div>
-        </div>
-
-        <!-- NumberSchema -->
-        <div id="number-schema" class="mb-10">
-          <h3 class="text-xl font-bold mb-3 p-3 bg-zudo-blue text-white border-4 border-black">NumberSchema</h3>
-          <p class="mb-3">Schema for number values with constraints.</p>
-
-          <div class="code-block"><span class="kw">class</span> <span class="tp">NumberSchema</span> <span class="kw">extends</span> <span class="tp">Schema</span>&lt;<span class="tp">number</span>&gt; {
-  <span class="fn">min</span>(min: <span class="tp">number</span>): <span class="tp">NumberSchema</span>;
-  <span class="fn">max</span>(max: <span class="tp">number</span>): <span class="tp">NumberSchema</span>;
-  <span class="fn">int</span>(): <span class="tp">NumberSchema</span>;
-  <span class="fn">positive</span>(): <span class="tp">NumberSchema</span>;
-  <span class="fn">negative</span>(): <span class="tp">NumberSchema</span>;
-  <span class="fn">finite</span>(): <span class="tp">NumberSchema</span>;
-  <span class="fn">multipleOf</span>(n: <span class="tp">number</span>): <span class="tp">NumberSchema</span>;
-  <span class="fn">gt</span>(n: <span class="tp">number</span>): <span class="tp">NumberSchema</span>;
-  <span class="fn">lt</span>(n: <span class="tp">number</span>): <span class="tp">NumberSchema</span>;
-  <span class="fn">optional</span>(): <span class="tp">Schema</span>&lt;<span class="tp">number</span> | <span class="tp">undefined</span>&gt;;
-  <span class="fn">nullable</span>(): <span class="tp">Schema</span>&lt;<span class="tp">number</span> | <span class="tp">null</span>&gt;;
-  <span class="fn">default</span>(value: <span class="tp">number</span> | (() =&gt; <span class="tp">number</span>)): <span class="tp">Schema</span>&lt;<span class="tp">number</span>&gt;;
-  <span class="fn">refine</span>(check: (v: <span class="tp">number</span>) =&gt; <span class="tp">boolean</span>, msg: <span class="tp">string</span>): <span class="tp">Schema</span>&lt;<span class="tp">number</span>&gt;;
-  <span class="fn">transform</span>&lt;<span class="tp">T</span>&gt;(fn: (v: <span class="tp">number</span>) =&gt; <span class="tp">T</span>): <span class="tp">TransformSchema</span>&lt;<span class="tp">number</span>, <span class="tp">T</span>&gt;;
-}</div>
-
-          <div class="callout callout-tip mt-4">
-            <strong class="text-zudo-green">Factory:</strong> <code>numberSchema()</code> or <code>schema.number()</code>
-          </div>
-        </div>
-
-        <!-- BooleanSchema -->
-        <div id="boolean-schema" class="mb-10">
-          <h3 class="text-xl font-bold mb-3 p-3 bg-zudo-yellow text-black border-4 border-black">BooleanSchema</h3>
-          <p class="mb-3">Schema for boolean values with optional coercion.</p>
-
-          <div class="code-block"><span class="kw">class</span> <span class="tp">BooleanSchema</span> <span class="kw">extends</span> <span class="tp">Schema</span>&lt;<span class="tp">boolean</span>&gt; {
-  <span class="fn">coerce</span>(): <span class="tp">BooleanSchema</span>;
-}
-
-<span class="cm">// Coercion: "true" → true, "false" → false, 1 → true, 0 → false</span></div>
-
-          <div class="callout callout-tip mt-4">
-            <strong class="text-zudo-green">Factory:</strong> <code>booleanSchema()</code> or <code>schema.boolean()</code>
-          </div>
-        </div>
-
-        <!-- Other Primitives -->
-        <div id="other-primitives" class="mb-10">
-          <h3 class="text-xl font-bold mb-3 p-3 bg-zudo-green text-black border-4 border-black">Other Primitives</h3>
-
-          <div class="border-4 border-black">
-            <table class="w-full text-sm">
-              <thead class="bg-black text-white">
-                <tr>
-                  <th class="p-3 text-left">Schema</th>
-                  <th class="p-3 text-left">Accepts</th>
-                  <th class="p-3 text-left">Factory</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr class="border-b-2 border-black/10">
-                  <td class="p-3 font-mono">LiteralSchema&lt;T&gt;</td>
-                  <td class="p-3">Exact value match (string, number, boolean, null)</td>
-                  <td class="p-3">literalSchema(value) / schema.literal(value)</td>
-                </tr>
-                <tr class="border-b-2 border-black/10">
-                  <td class="p-3 font-mono">NullSchema</td>
-                  <td class="p-3">Only null</td>
-                  <td class="p-3">nullSchema() / schema.null()</td>
-                </tr>
-                <tr class="border-b-2 border-black/10">
-                  <td class="p-3 font-mono">UndefinedSchema</td>
-                  <td class="p-3">Only undefined</td>
-                  <td class="p-3">undefinedSchema() / schema.undefined()</td>
-                </tr>
-                <tr class="border-b-2 border-black/10">
-                  <td class="p-3 font-mono">AnySchema</td>
-                  <td class="p-3">Any value (no validation)</td>
-                  <td class="p-3">anySchema() / schema.any()</td>
-                </tr>
-                <tr class="border-b-2 border-black/10">
-                  <td class="p-3 font-mono">UnknownSchema</td>
-                  <td class="p-3">Any value (no validation)</td>
-                  <td class="p-3">unknownSchema() / schema.unknown()</td>
-                </tr>
-                <tr>
-                  <td class="p-3 font-mono">NeverSchema</td>
-                  <td class="p-3">Never accepts any value</td>
-                  <td class="p-3">neverSchema() / schema.never()</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- Structures -->
-      <section id="structures" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">STRUCTURES</h2>
-
-        <!-- ObjectSchema -->
-        <div id="object-schema" class="mb-10">
-          <h3 class="text-xl font-bold mb-3 p-3 bg-zudo-red text-black border-4 border-black">ObjectSchema</h3>
-          <p class="mb-3">Schema for object values with a defined shape. Supports composition methods for shape manipulation.</p>
-
-          <div class="code-block"><span class="kw">class</span> <span class="tp">ObjectSchema</span>&lt;<span class="tp">TOutput</span>&gt; <span class="kw">extends</span> <span class="tp">Schema</span>&lt;<span class="tp">TOutput</span>&gt; {
-  <span class="fn">pick</span>&lt;<span class="tp">K</span> <span class="kw">extends keyof</span> <span class="tp">TOutput</span>&gt;(keys: <span class="tp">K</span>[]): <span class="tp">ObjectSchema</span>&lt;<span class="tp">Pick</span>&lt;<span class="tp">TOutput</span>, <span class="tp">K</span>&gt;&gt;;
-  <span class="fn">omit</span>&lt;<span class="tp">K</span> <span class="kw">extends keyof</span> <span class="tp">TOutput</span>&gt;(keys: <span class="tp">K</span>[]): <span class="tp">ObjectSchema</span>&lt;<span class="tp">Omit</span>&lt;<span class="tp">TOutput</span>, <span class="tp">K</span>&gt;&gt;;
-  <span class="fn">partial</span>(): <span class="tp">ObjectSchema</span>&lt;<span class="tp">Partial</span>&lt;<span class="tp">TOutput</span>&gt;&gt;;
-  <span class="fn">required</span>(): <span class="tp">ObjectSchema</span>&lt;<span class="tp">Required</span>&lt;<span class="tp">TOutput</span>&gt;&gt;;
-  <span class="fn">extend</span>&lt;<span class="tp">E</span>&gt;(other: <span class="tp">ObjectSchema</span>&lt;<span class="tp">E</span>&gt;): <span class="tp">ObjectSchema</span>&lt;<span class="tp">TOutput</span> &amp; <span class="tp">E</span>&gt;;
-  <span class="fn">merge</span>&lt;<span class="tp">E</span>&gt;(other: <span class="tp">ObjectSchema</span>&lt;<span class="tp">E</span>&gt;): <span class="tp">ObjectSchema</span>&lt;<span class="tp">TOutput</span> &amp; <span class="tp">E</span>&gt;;
-  <span class="fn">strip</span>(): <span class="tp">ObjectSchema</span>&lt;<span class="tp">TOutput</span>&gt;;
-  <span class="fn">strict</span>(): <span class="tp">ObjectSchema</span>&lt;<span class="tp">TOutput</span>&gt;;
-  <span class="fn">passthrough</span>(): <span class="tp">ObjectSchema</span>&lt;<span class="tp">TOutput</span>&gt;;
-}</div>
-
-          <div class="callout callout-tip mt-4">
-            <strong class="text-zudo-green">Factory:</strong> <code>objectSchema(shape)</code> or <code>schema.object(shape)</code>
-          </div>
-        </div>
-
-        <!-- OptionalSchema -->
-        <div id="optional-schema" class="mb-10">
-          <h3 class="text-xl font-bold mb-3 p-3 bg-zudo-blue text-white border-4 border-black">OptionalSchema</h3>
-          <p class="mb-3">Wrapper that marks an inner schema as optional (accepts undefined).</p>
-          <div class="code-block"><span class="kw">class</span> <span class="tp">OptionalSchema</span>&lt;<span class="tp">T</span>&gt; <span class="kw">extends</span> <span class="tp">Schema</span>&lt;<span class="tp">T</span> | <span class="tp">undefined</span>&gt; {
-  <span class="kw">readonly</span> _inner: <span class="tp">Schema</span>&lt;<span class="tp">T</span>&gt;;
-}</div>
-        </div>
-
-        <!-- ArraySchema -->
-        <div id="array-schema" class="mb-10">
-          <h3 class="text-xl font-bold mb-3 p-3 bg-zudo-yellow text-black border-4 border-black">ArraySchema</h3>
-          <p class="mb-3">Schema for array values with item validation and length constraints.</p>
-
-          <div class="code-block"><span class="kw">class</span> <span class="tp">ArraySchema</span>&lt;<span class="tp">TOutput</span>&gt; <span class="kw">extends</span> <span class="tp">Schema</span>&lt;<span class="tp">TOutput</span>[]&gt; {
-  <span class="fn">min</span>(min: <span class="tp">number</span>): <span class="tp">ArraySchema</span>&lt;<span class="tp">TOutput</span>&gt;;
-  <span class="fn">max</span>(max: <span class="tp">number</span>): <span class="tp">ArraySchema</span>&lt;<span class="tp">TOutput</span>&gt;;
-  <span class="fn">length</span>(length: <span class="tp">number</span>): <span class="tp">ArraySchema</span>&lt;<span class="tp">TOutput</span>&gt;;
-  <span class="fn">nonempty</span>(): <span class="tp">ArraySchema</span>&lt;<span class="tp">TOutput</span>&gt;;
-}</div>
-
-          <div class="callout callout-tip mt-4">
-            <strong class="text-zudo-green">Factory:</strong> <code>arraySchema(itemSchema)</code> or <code>schema.array(itemSchema)</code>
-          </div>
-        </div>
-
-        <!-- Other Structures -->
-        <div id="other-structures" class="mb-10">
-          <h3 class="text-xl font-bold mb-3 p-3 bg-zudo-green text-black border-4 border-black">Other Structures</h3>
-
-          <div class="border-4 border-black">
-            <table class="w-full text-sm">
-              <thead class="bg-black text-white">
-                <tr>
-                  <th class="p-3 text-left">Schema</th>
-                  <th class="p-3 text-left">Purpose</th>
-                  <th class="p-3 text-left">Factory</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr class="border-b-2 border-black/10">
-                  <td class="p-3 font-mono">TupleSchema</td>
-                  <td class="p-3">Fixed-length arrays with per-position types</td>
-                  <td class="p-3">tupleSchema(schemas) / schema.tuple(schemas)</td>
-                </tr>
-                <tr class="border-b-2 border-black/10">
-                  <td class="p-3 font-mono">RecordSchema</td>
-                  <td class="p-3">Objects with string keys and typed values</td>
-                  <td class="p-3">recordSchema(valueSchema) / schema.record(valueSchema)</td>
-                </tr>
-                <tr class="border-b-2 border-black/10">
-                  <td class="p-3 font-mono">MapSchema</td>
-                  <td class="p-3">Map objects with typed keys and values</td>
-                  <td class="p-3">mapSchema(keySchema, valueSchema) / schema.map(key, value)</td>
-                </tr>
-                <tr>
-                  <td class="p-3 font-mono">SetSchema</td>
-                  <td class="p-3">Set objects with typed values</td>
-                  <td class="p-3">setSchema(valueSchema) / schema.set(valueSchema)</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- Composition -->
-      <section id="composition" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMPOSITION</h2>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Schema</th>
-                <th class="p-3 text-left">Purpose</th>
-                <th class="p-3 text-left">Factory</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">UnionSchema</td>
-                <td class="p-3">Accepts values matching any of the provided schemas</td>
-                <td class="p-3">unionSchema(schemas) / schema.union(schemas)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">DiscriminatedUnionSchema</td>
-                <td class="p-3">Type-safe tagged union using a discriminator key</td>
-                <td class="p-3">schema.union(schemas) — auto-detected with discriminator</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">IntersectionSchema</td>
-                <td class="p-3">Accepts values matching all schemas, merging results</td>
-                <td class="p-3">intersectionSchema(left, right) / schema.intersection(left, right)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">LazySchema</td>
-                <td class="p-3">Defers schema creation for recursive data structures</td>
-                <td class="p-3">lazySchema(factory) / schema.lazy(factory)</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">EnumSchema</td>
-                <td class="p-3">Constrains to a fixed set of allowed values</td>
-                <td class="p-3">enumSchema(values) / schema.enum(values)</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Union Example</h3>
-        <div class="code-block"><span class="kw">const</span> status = schema.<span class="fn">union</span>([
-  schema.<span class="fn">literal</span>(<span class="str">"active"</span>),
-  schema.<span class="fn">literal</span>(<span class="str">"inactive"</span>),
-  schema.<span class="fn">literal</span>(<span class="str">"pending"</span>),
+<span class="kw">const</span> Shape = schema.<span class="fn">discriminatedUnion</span>(<span class="str">"kind"</span>, [
+  schema.<span class="fn">object</span>({ kind: schema.<span class="fn">literal</span>(<span class="str">"circle"</span>), radius: schema.<span class="fn">number</span>() }),
+  schema.<span class="fn">object</span>({ kind: schema.<span class="fn">literal</span>(<span class="str">"square"</span>), side: schema.<span class="fn">number</span>() }),
 ]);
+console.<span class="fn">log</span>(Shape.<span class="fn">parse</span>({ kind: <span class="str">"circle"</span>, radius: <span class="num">2</span> })); <span class="cmt">// { kind: "circle", radius: 2 }</span>
+console.<span class="fn">log</span>(Shape.variants);                                <span class="cmt">// ["circle", "square"]</span>
 
-<span class="kw">type</span> <span class="tp">Status</span> = <span class="tp">Infer</span>&lt;<span class="kw">typeof</span> status&gt;;
-<span class="cm">// "active" | "inactive" | "pending"</span></div>
+<span class="kw">const</span> Timestamps = schema.<span class="fn">object</span>({ createdAt: schema.<span class="fn">string</span>().<span class="fn">datetime</span>() });
+<span class="kw">const</span> Named = schema.<span class="fn">object</span>({ name: schema.<span class="fn">string</span>() });
+<span class="kw">const</span> Both = schema.<span class="fn">intersection</span>(Named, Timestamps);
+console.<span class="fn">log</span>(Both.<span class="fn">parse</span>({ name: <span class="str">"a"</span>, createdAt: <span class="str">"2026-01-01T00:00:00Z"</span> }));
+<span class="cmt">// { name: "a", createdAt: "2026-01-01T00:00:00Z" }</span>
 
-        <h3 class="text-lg font-bold mb-3 mt-6">Lazy (Recursive) Example</h3>
-        <div class="code-block"><span class="kw">interface</span> <span class="tp">TreeNode</span> {
-  value: <span class="tp">number</span>;
-  children: <span class="tp">TreeNode</span>[];
-}
+<span class="kw">type</span> <span class="tp">TreeNode</span> = { name: <span class="tp">string</span>; children: <span class="tp">TreeNode</span>[] };
+<span class="kw">const</span> Tree: <span class="tp">Schema</span>&lt;<span class="tp">TreeNode</span>&gt; = schema.<span class="fn">lazy</span>(() =&gt;
+  schema.<span class="fn">object</span>({ name: schema.<span class="fn">string</span>(), children: schema.<span class="fn">array</span>(Tree) }),
+);
+console.<span class="fn">log</span>(Tree.<span class="fn">parse</span>({ name: <span class="str">"root"</span>, children: [{ name: <span class="str">"leaf"</span>, children: [] }] }).children.length);
+<span class="cmt">// 1</span></div>
 
-<span class="kw">const</span> TreeSchema: <span class="tp">Schema</span>&lt;<span class="tp">TreeNode</span>&gt; = schema.<span class="fn">lazy</span>(() =&gt;
-  schema.<span class="fn">object</span>({
-    value: schema.<span class="fn">number</span>(),
-    children: schema.<span class="fn">array</span>(TreeSchema),
-  })
-);</div>
-      </section>
-
-      <!-- Modifiers -->
-      <section id="modifiers" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MODIFIERS</h2>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Schema</th>
-                <th class="p-3 text-left">Purpose</th>
-                <th class="p-3 text-left">Factory</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">OptionalModifierSchema</td>
-                <td class="p-3">Wraps a schema to accept undefined</td>
-                <td class="p-3">optionalSchema(schema) / schema.optional(schema)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">NullableModifierSchema</td>
-                <td class="p-3">Wraps a schema to accept null</td>
-                <td class="p-3">nullableSchema(schema) / schema.nullable(schema)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">DefaultSchema</td>
-                <td class="p-3">Applies a default value when input is undefined</td>
-                <td class="p-3">defaultSchema(schema, value) / schema.default(schema, value)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">RefineSchema</td>
-                <td class="p-3">Adds custom synchronous validation logic</td>
-                <td class="p-3">refineSchema(schema, check, msg) / schema.refine(schema, check, msg)</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">TransformModifierSchema</td>
-                <td class="p-3">Applies a transformation function to validated output</td>
-                <td class="p-3">transformSchema(schema, fn) / schema.transform(schema, fn)</td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="callout callout-note">
+          <strong class="text-zudo-blue">Note:</strong> every member of a discriminated union must declare the tag with <code class="bg-black/5 px-1">schema.literal(...)</code> or <code class="bg-black/5 px-1">schema.enum([...])</code>, and no two members may share a tag value. Otherwise building the schema throws.
         </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Chained Modifiers</h3>
-        <p class="mb-3 text-sm">Primitive and structure schemas also expose modifier methods directly:</p>
-        <div class="code-block"><span class="cm">// Chained on StringSchema</span>
-schema.<span class="fn">string</span>().<span class="fn">min</span>(<span class="num">1</span>).<span class="fn">max</span>(<span class="num">100</span>).<span class="fn">trim</span>().<span class="fn">optional</span>();
-
-<span class="cm">// Chained on NumberSchema</span>
-schema.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">min</span>(<span class="num">0</span>).<span class="fn">default</span>(<span class="num">0</span>);
-
-<span class="cm">// Refine + Transform</span>
-schema.<span class="fn">string</span>().<span class="fn">email</span>().<span class="fn">refine</span>(
-  (v) =&gt; !v.<span class="fn">includes</span>(<span class="str">"test"</span>),
-  <span class="str">"Test emails not allowed"</span>
-).<span class="fn">transform</span>((v) =&gt; v.<span class="fn">toLowerCase</span>());</div>
       </section>
 
       <!-- Coercion -->
       <section id="coercion" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COERCION</h2>
-        <p class="mb-4">Explicit coercion schemas — convert string/number inputs to the expected type. Useful for HTTP query parameters and form data.</p>
+        <p class="mb-4 leading-relaxed">
+          Query strings and form fields always arrive as text. <code class="bg-black/5 px-1">"3"</code> is not the number 3, so <code class="bg-black/5 px-1">schema.number()</code> rejects it. The <code class="bg-black/5 px-1">schema.coerce</code> schemas convert first, then check. They are deliberately strict: an empty string is not zero, and <code class="bg-black/5 px-1">"1e999"</code> is not a number.
+        </p>
+        <p class="mb-3 text-sm">This parses page settings from a URL query.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { schema } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
 
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Schema</th>
-                <th class="p-3 text-left">Coerces From</th>
-                <th class="p-3 text-left">Factory</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">CoerceNumberSchema</td>
-                <td class="p-3">string → number via Number()</td>
-                <td class="p-3">coerceNumberSchema() / schema.coerce.number()</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">CoerceBooleanSchema</td>
-                <td class="p-3">"true"/"1"/1 → true, "false"/"0"/0 → false</td>
-                <td class="p-3">coerceBooleanSchema() / schema.coerce.boolean()</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">CoerceStringSchema</td>
-                <td class="p-3">any non-null → String()</td>
-                <td class="p-3">coerceStringSchema() / schema.coerce.string()</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">CoerceBigIntSchema</td>
-                <td class="p-3">number/string → BigInt()</td>
-                <td class="p-3">coerceBigIntSchema() / schema.coerce.bigint()</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example: Query Params</h3>
-        <div class="code-block"><span class="kw">const</span> QuerySchema = schema.<span class="fn">object</span>({
-  page: schema.coerce.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">min</span>(<span class="num">1</span>).<span class="fn">default</span>(<span class="num">1</span>),
-  limit: schema.coerce.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">min</span>(<span class="num">1</span>).<span class="fn">max</span>(<span class="num">100</span>).<span class="fn">default</span>(<span class="num">20</span>),
-  active: schema.coerce.<span class="fn">boolean</span>().<span class="fn">default</span>(<span class="num">true</span>),
-});
-
-<span class="cm">// From URL query strings (all strings)</span>
-<span class="kw">const</span> result = QuerySchema.<span class="fn">parse</span>({
-  page: <span class="str">"3"</span>,
-  limit: <span class="str">"50"</span>,
-  active: <span class="str">"true"</span>,
-});
-<span class="cm">// { page: 3, limit: 50, active: true }</span></div>
-      </section>
-
-      <!-- Type Inference -->
-      <section id="type-inference" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TYPE INFERENCE</h2>
-        <p class="mb-4">Extract TypeScript types from schemas — the single source of truth for both runtime validation and compile-time types.</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Type</th>
-                <th class="p-3 text-left">Purpose</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">Infer&lt;TSchema&gt;</td>
-                <td class="p-3">Infers the output type of a schema</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">SchemaInput&lt;TSchema&gt;</td>
-                <td class="p-3">Infers the input type (before transforms)</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">SchemaOutput&lt;TSchema&gt;</td>
-                <td class="p-3">Alias for Infer — the output type</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Example</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">schema</span>, <span class="kw">type</span> <span class="tp">Infer</span> } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
-
-<span class="kw">const</span> UserSchema = schema.<span class="fn">object</span>({
-  id: schema.<span class="fn">string</span>().<span class="fn">uuid</span>(),
-  name: schema.<span class="fn">string</span>().<span class="fn">min</span>(<span class="num">2</span>).<span class="fn">max</span>(<span class="num">100</span>),
-  email: schema.<span class="fn">string</span>().<span class="fn">email</span>(),
-  age: schema.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">min</span>(<span class="num">0</span>).<span class="fn">optional</span>(),
-});
-
-<span class="kw">type</span> <span class="tp">User</span> = <span class="tp">Infer</span>&lt;<span class="kw">typeof</span> UserSchema&gt;;
-<span class="cm">// {
-</span><span class="cm">//   id: string;
-</span><span class="cm">//   name: string;
-</span><span class="cm">//   email: string;
-</span><span class="cm">//   age?: number;
-</span><span class="cm">// }</span></div>
-      </section>
-
-      <!-- Schema Namespace -->
-      <section id="schema-namespace" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SCHEMA NAMESPACE</h2>
-        <p class="mb-4">The <code class="bg-black/5 px-1">schema</code> object is the primary entry point — a single import for all schema creators.</p>
-
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">schema</span> } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
-
-<span class="cm">// Primitives</span>
-schema.<span class="fn">string</span>();
-schema.<span class="fn">number</span>();
-schema.<span class="fn">boolean</span>();
-
-<span class="cm">// Sentinels</span>
-schema.<span class="fn">null</span>();
-schema.<span class="fn">undefined</span>();
-schema.<span class="fn">any</span>();
-schema.<span class="fn">unknown</span>();
-schema.<span class="fn">never</span>();
-
-<span class="cm">// Literals and enums</span>
-schema.<span class="fn">literal</span>(<span class="str">"hello"</span>);
-schema.<span class="fn">enum</span>([<span class="str">"a"</span>, <span class="str">"b"</span>, <span class="str">"c"</span>]);
-
-<span class="cm">// Structures</span>
-schema.<span class="fn">object</span>({ ... });
-schema.<span class="fn">array</span>(schema.<span class="fn">string</span>());
-schema.<span class="fn">tuple</span>([schema.<span class="fn">string</span>(), schema.<span class="fn">number</span>()]);
-schema.<span class="fn">record</span>(schema.<span class="fn">string</span>());
-schema.<span class="fn">map</span>(schema.<span class="fn">string</span>(), schema.<span class="fn">number</span>());
-schema.<span class="fn">set</span>(schema.<span class="fn">string</span>());
-
-<span class="cm">// Composition</span>
-schema.<span class="fn">union</span>([...]);
-schema.<span class="fn">intersection</span>(left, right);
-schema.<span class="fn">lazy</span>(() =&gt; ...);
-
-<span class="cm">// Modifiers</span>
-schema.<span class="fn">optional</span>(innerSchema);
-schema.<span class="fn">nullable</span>(innerSchema);
-schema.<span class="fn">default</span>(innerSchema, value);
-schema.<span class="fn">refine</span>(innerSchema, check, msg);
-schema.<span class="fn">transform</span>(innerSchema, fn);
-
-<span class="cm">// Coercion</span>
-schema.coerce.<span class="fn">string</span>();
-schema.coerce.<span class="fn">number</span>();
-schema.coerce.<span class="fn">boolean</span>();
-schema.coerce.<span class="fn">bigint</span>();</div>
-      </section>
-
-      <!-- Error Hierarchy -->
-      <section id="errors" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERROR HIERARCHY</h2>
-        <p class="mb-4">All error types are defined in <code class="bg-black/5 px-1">@zudojs/errors</code> and re-exported by this package.</p>
-
-        <div class="border-4 border-black">
-          <table class="w-full text-sm">
-            <thead class="bg-black text-white">
-              <tr>
-                <th class="p-3 text-left">Error / Code</th>
-                <th class="p-3 text-left">When</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">SchemaError</td>
-                <td class="p-3">Thrown by parse() when validation fails</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">INVALID_TYPE</td>
-                <td class="p-3">Input is wrong type</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">REQUIRED</td>
-                <td class="p-3">Required field missing</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">INVALID_LITERAL</td>
-                <td class="p-3">Value doesn't match literal</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">INVALID_ENUM</td>
-                <td class="p-3">Value not in allowed set</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">INVALID_UNION</td>
-                <td class="p-3">No union variant matched</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">INVALID_FORMAT</td>
-                <td class="p-3">String format validation failed (email, url, uuid, etc.)</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">TOO_SMALL / TOO_LARGE</td>
-                <td class="p-3">Value outside min/max bounds</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">INVALID_LENGTH</td>
-                <td class="p-3">String or array length mismatch</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">UNKNOWN_KEYS</td>
-                <td class="p-3">Object has unknown keys in strict mode</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">CUSTOM</td>
-                <td class="p-3">Refine check failed</td>
-              </tr>
-              <tr class="border-b-2 border-black/10">
-                <td class="p-3 font-mono">TRANSFORM_FAILED</td>
-                <td class="p-3">Transform function threw</td>
-              </tr>
-              <tr>
-                <td class="p-3 font-mono">COERCION_FAILED</td>
-                <td class="p-3">Coercion could not convert input</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <h3 class="text-lg font-bold mb-3 mt-6">Error Handling Pattern</h3>
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">schema</span> } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
-
-<span class="cm">// Using safeParse (non-throwing)</span>
-<span class="kw">const</span> result = schema.<span class="fn">string</span>().<span class="fn">email</span>().<span class="fn">safeParse</span>(<span class="str">"not-an-email"</span>);
-
-<span class="kw">if</span> (!result.success) {
-  <span class="kw">for</span> (<span class="kw">const</span> issue <span class="kw">of</span> result.issues) {
-    console.<span class="fn">error</span>(<span class="str">`[${issue.code}] ${issue.message}`</span>);
-    <span class="kw">if</span> (issue.path.length &gt; <span class="num">0</span>) {
-      console.<span class="fn">error</span>(<span class="str">`  at: ${issue.path.join(".")}`</span>);
-    }
-  }
-}
-
-<span class="cm">// Using parse (throwing)</span>
-<span class="kw">try</span> {
-  <span class="kw">const</span> data = schema.<span class="fn">string</span>().<span class="fn">email</span>().<span class="fn">parse</span>(input);
-} <span class="kw">catch</span> (error) {
-  <span class="cm">// error is SchemaError</span>
-}</div>
-      </section>
-
-      <!-- Full Integration Example -->
-      <section id="full-example" class="mb-12">
-        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">FULL INTEGRATION EXAMPLE</h2>
-        <p class="mb-4">Complete working example: define schemas, parse and validate, use safeParse for error handling, transform and refine, use union/discriminated union, coerce from strings, and infer TypeScript types.</p>
-
-        <div class="code-block"><span class="kw">import</span> { <span class="tp">schema</span>, <span class="kw">type</span> <span class="tp">Infer</span> } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
-
-<span class="cm">// 1. Define schemas</span>
-<span class="kw">const</span> RoleSchema = schema.<span class="fn">enum</span>([<span class="str">"admin"</span>, <span class="str">"user"</span>, <span class="str">"guest"</span>]);
-
-<span class="kw">const</span> UserSchema = schema.<span class="fn">object</span>({
-  id: schema.<span class="fn">string</span>().<span class="fn">uuid</span>(),
-  name: schema.<span class="fn">string</span>().<span class="fn">min</span>(<span class="num">2</span>).<span class="fn">max</span>(<span class="num">100</span>).<span class="fn">trim</span>(),
-  email: schema.<span class="fn">string</span>().<span class="fn">email</span>().<span class="fn">toLowerCase</span>(),
-  role: RoleSchema.<span class="fn">default</span>(<span class="str">"user"</span>),
-  age: schema.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">min</span>(<span class="num">0</span>).<span class="fn">max</span>(<span class="num">150</span>).<span class="fn">optional</span>,
-  tags: schema.<span class="fn">array</span>(schema.<span class="fn">string</span>().<span class="fn">min</span>(<span class="num">1</span>)).<span class="fn">default</span>([]),
-});
-
-<span class="cm">// 2. Infer TypeScript types</span>
-<span class="kw">type</span> <span class="tp">User</span> = <span class="tp">Infer</span>&lt;<span class="kw">typeof</span> UserSchema&gt;;
-<span class="cm">// {
-</span><span class="cm">//   id: string;
-</span><span class="cm">//   name: string;
-</span><span class="cm">//   email: string;
-</span><span class="cm">//   role: "admin" | "user" | "guest";
-</span><span class="cm">//   age?: number;
-</span><span class="cm">//   tags: string[];
-</span><span class="cm">// }</span>
-
-<span class="cm">// 3. Parse and validate</span>
-<span class="kw">const</span> user = UserSchema.<span class="fn">parse</span>({
-  id: <span class="str">"550e8400-e29b-41d4-a716-446655440000"</span>,
-  name: <span class="str">"  Alice Johnson  "</span>,
-  email: <span class="str">"ALICE@EXAMPLE.COM"</span>,
-});
-<span class="cm">// user.name === "Alice Johnson" (trimmed)
-</span><span class="cm">// user.email === "alice@example.com" (lowercased)
-</span><span class="cm">// user.role === "user" (default applied)
-</span><span class="cm">// user.tags === [] (default applied)</span>
-
-<span class="cm">// 4. safeParse for error handling</span>
-<span class="kw">const</span> result = UserSchema.<span class="fn">safeParse</span>({
-  id: <span class="str">"not-a-uuid"</span>,
-  name: <span class="str">"A"</span>,
-  email: <span class="str">"invalid"</span>,
-});
-
-<span class="kw">if</span> (!result.success) {
-  <span class="kw">for</span> (<span class="kw">const</span> issue <span class="kw">of</span> result.issues) {
-    console.<span class="fn">error</span>(<span class="str">`[${issue.code}] ${issue.message}`</span>);
-  }
-}
-
-<span class="cm">// 5. Transform and refine</span>
-<span class="kw">const</span> CreateUserSchema = UserSchema.<span class="fn">refine</span>(
-  (u) =&gt; u.age === <span class="kw">undefined</span> || u.age &gt;= <span class="num">18</span>,
-  <span class="str">"Must be 18 or older"</span>
-).<span class="fn">transform</span>((u) =&gt; ({
-  ...u,
-  createdAt: <span class="kw">new</span> <span class="fn">Date</span>(),
-}));
-
-<span class="cm">// 6. Coerce from strings (query params)</span>
 <span class="kw">const</span> QuerySchema = schema.<span class="fn">object</span>({
   page: schema.coerce.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">min</span>(<span class="num">1</span>).<span class="fn">default</span>(<span class="num">1</span>),
-  active: schema.coerce.<span class="fn">boolean</span>().<span class="fn">default</span>(<span class="num">true</span>),
+  limit: schema.coerce.<span class="fn">number</span>().<span class="fn">int</span>().<span class="fn">max</span>(<span class="num">100</span>).<span class="fn">default</span>(<span class="num">20</span>),
+  active: schema.coerce.<span class="fn">boolean</span>().<span class="fn">default</span>(<span class="kw">true</span>),
 });
 
-<span class="kw">const</span> query = QuerySchema.<span class="fn">parse</span>({ page: <span class="str">"5"</span>, active: <span class="str">"false"</span> });
-<span class="cm">// { page: 5, active: false }</span>
+console.<span class="fn">log</span>(QuerySchema.<span class="fn">parse</span>({ page: <span class="str">"3"</span>, active: <span class="str">"no"</span> }));
+<span class="cmt">// { page: 3, limit: 20, active: false }</span></div>
 
-<span class="cm">// 7. Union and discriminated union</span>
-<span class="kw">const</span> ShapeSchema = schema.<span class="fn">union</span>([
-  schema.<span class="fn">object</span>({ type: schema.<span class="fn">literal</span>(<span class="str">"circle"</span>), radius: schema.<span class="fn">number</span>().<span class="fn">positive</span>() }),
-  schema.<span class="fn">object</span>({ type: schema.<span class="fn">literal</span>(<span class="str">"rect"</span>), w: schema.<span class="fn">number</span>().<span class="fn">positive</span>(), h: schema.<span class="fn">number</span>().<span class="fn">positive</span>() }),
-]);
-
-<span class="kw">type</span> <span class="tp">Shape</span> = <span class="tp">Infer</span>&lt;<span class="kw">typeof</span> ShapeSchema&gt;;
-<span class="cm">// { type: "circle"; radius: number }
-</span><span class="cm">// | { type: "rect"; w: number; h: number }</span></div>
+        <table class="doc-table mb-4">
+          <thead><tr><th>Schema</th><th>Converts</th><th>Extra methods</th></tr></thead>
+          <tbody>
+            <tr><td><code class="bg-black/5 px-1">schema.coerce.number()</code></td><td>Numeric strings like <code class="bg-black/5 px-1">"42"</code>, <code class="bg-black/5 px-1">"3.14"</code>, <code class="bg-black/5 px-1">"-1e3"</code>. Rejects <code class="bg-black/5 px-1">""</code>, hex, and anything non-finite.</td><td><code class="bg-black/5 px-1">int</code>, <code class="bg-black/5 px-1">min</code>, <code class="bg-black/5 px-1">max</code>, <code class="bg-black/5 px-1">positive</code>, <code class="bg-black/5 px-1">pipe(numberSchema)</code>, <code class="bg-black/5 px-1">optional</code>, <code class="bg-black/5 px-1">nullable</code>, <code class="bg-black/5 px-1">default</code>, <code class="bg-black/5 px-1">refine</code></td></tr>
+            <tr><td><code class="bg-black/5 px-1">schema.coerce.boolean()</code></td><td><code class="bg-black/5 px-1">"true"/"1"/"yes"/"on"</code> and <code class="bg-black/5 px-1">1</code> to true; <code class="bg-black/5 px-1">"false"/"0"/"no"/"off"/""</code> and <code class="bg-black/5 px-1">0</code> to false. Case and spaces ignored.</td><td><code class="bg-black/5 px-1">optional</code>, <code class="bg-black/5 px-1">nullable</code>, <code class="bg-black/5 px-1">default</code></td></tr>
+            <tr><td><code class="bg-black/5 px-1">schema.coerce.string()</code></td><td>Numbers, booleans, bigints and valid <code class="bg-black/5 px-1">Date</code>s (as ISO). Rejects objects and symbols.</td><td><code class="bg-black/5 px-1">min</code>, <code class="bg-black/5 px-1">max</code>, <code class="bg-black/5 px-1">regex</code>, <code class="bg-black/5 px-1">pipe(stringSchema)</code>, <code class="bg-black/5 px-1">optional</code>, <code class="bg-black/5 px-1">nullable</code>, <code class="bg-black/5 px-1">default</code></td></tr>
+            <tr><td><code class="bg-black/5 px-1">schema.coerce.bigint()</code></td><td>Safe integers and digit-only strings.</td><td><code class="bg-black/5 px-1">optional</code>, <code class="bg-black/5 px-1">nullable</code></td></tr>
+          </tbody>
+        </table>
       </section>
 
+      <!-- Type inference -->
+      <section id="type-inference" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">TYPE INFERENCE</h2>
+        <p class="mb-4 leading-relaxed">
+          You never write a TypeScript type by hand for a schema. <code class="bg-black/5 px-1">Infer&lt;typeof MySchema&gt;</code> reads the output type straight from it, so the type and the runtime check can never drift apart.
+        </p>
+        <p class="mb-3 text-sm">This derives a type and uses it for a function parameter.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { schema, <span class="kw">type</span> <span class="tp">Infer</span> } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
+
+<span class="kw">const</span> UserSchema = schema.<span class="fn">object</span>({
+  name: schema.<span class="fn">string</span>(),
+  role: schema.<span class="fn">enum</span>([<span class="str">"admin"</span>, <span class="str">"user"</span>] <span class="kw">as const</span>),
+  age: schema.<span class="fn">number</span>().<span class="fn">optional</span>(),
+});
+
+<span class="kw">type</span> <span class="tp">User</span> = <span class="tp">Infer</span>&lt;<span class="kw">typeof</span> UserSchema&gt;;
+<span class="cmt">// { name: string; role: "admin" | "user"; age: number | undefined }</span>
+
+<span class="kw">function</span> <span class="fn">greet</span>(user: <span class="tp">User</span>): <span class="tp">string</span> {
+  <span class="kw">return</span> <span class="str">`Hi ${user.name} (${user.role})`</span>;
+}
+console.<span class="fn">log</span>(<span class="fn">greet</span>(UserSchema.<span class="fn">parse</span>({ name: <span class="str">"Ada"</span>, role: <span class="str">"admin"</span> })));
+<span class="cmt">// Hi Ada (admin)</span></div>
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out:</strong> without <code class="bg-black/5 px-1">as const</code> on an enum's list, TypeScript widens the values to <code class="bg-black/5 px-1">string</code> and the inferred type loses the union. Runtime checking is unaffected either way.
+        </div>
+
+        <p class="text-sm mb-3">Two related helpers exist. <code class="bg-black/5 px-1">SchemaOutput&lt;T&gt;</code> is the same as <code class="bg-black/5 px-1">Infer&lt;T&gt;</code>. <code class="bg-black/5 px-1">SchemaInput&lt;T&gt;</code> gives the type <em>before</em> a transform runs, which is only different for transform schemas.</p>
+      </section>
+
+      <!-- Parse options -->
+      <section id="parse-options" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">PARSE OPTIONS</h2>
+        <p class="mb-3 text-sm">Both <code class="bg-black/5 px-1">parse</code> and <code class="bg-black/5 px-1">safeParse</code> take an optional second argument. This stops at the first issue instead of collecting all of them.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { schema } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
+
+<span class="kw">const</span> S = schema.<span class="fn">object</span>({ name: schema.<span class="fn">string</span>(), age: schema.<span class="fn">number</span>() });
+<span class="kw">const</span> result = S.<span class="fn">safeParse</span>({ name: <span class="num">1</span>, age: <span class="str">"x"</span> }, { abortEarly: <span class="kw">true</span> });
+<span class="kw">if</span> (!result.success) console.<span class="fn">log</span>(result.issues.length); <span class="cmt">// 1</span></div>
+
+        <table class="doc-table mb-4">
+          <thead><tr><th>Option</th><th>What it does</th><th>Default</th></tr></thead>
+          <tbody>
+            <tr><td><code class="bg-black/5 px-1">abortEarly</code></td><td>Stop after the first issue.</td><td><code class="bg-black/5 px-1">false</code></td></tr>
+            <tr><td><code class="bg-black/5 px-1">maxDepth</code></td><td>Fail with <code class="bg-black/5 px-1">max_depth_exceeded</code> when nesting goes deeper than this. Circular input always fails with <code class="bg-black/5 px-1">circular_reference</code>.</td><td><code class="bg-black/5 px-1">100</code></td></tr>
+            <tr><td><code class="bg-black/5 px-1">maxIssues</code></td><td>Stop recording issues after this many.</td><td>unlimited</td></tr>
+            <tr><td><code class="bg-black/5 px-1">path</code></td><td>Prefix for every issue path (useful when you validate one part of a bigger value).</td><td><code class="bg-black/5 px-1">[]</code></td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- API reference -->
+      <section id="api-reference" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">API REFERENCE</h2>
+        <p class="mb-4 text-sm">Everything below is importable from <code class="bg-black/5 px-1">@zudojs/schema</code>. Each <code class="bg-black/5 px-1">schema.x()</code> also has a standalone twin named <code class="bg-black/5 px-1">xSchema()</code> (for example <code class="bg-black/5 px-1">stringSchema()</code>, <code class="bg-black/5 px-1">objectSchema()</code>, <code class="bg-black/5 px-1">coerceNumberSchema()</code>); they are the same functions.</p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">The <code class="bg-black/5 px-1">schema</code> namespace</h3>
+        <table class="doc-table mb-4">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code class="bg-black/5 px-1">string, number, boolean, bigint, symbol</code></td><td>One primitive value.</td><td>See <a href="#building-blocks" class="underline">Building blocks</a> for rule methods.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">null, undefined, any, unknown, never</code></td><td>Sentinel values.</td><td></td></tr>
+            <tr><td><code class="bg-black/5 px-1">literal(v), enum(values)</code></td><td>Exactly one value / one of a list.</td><td></td></tr>
+            <tr><td><code class="bg-black/5 px-1">object, array, tuple, record, map, set</code></td><td>Structures.</td><td>See <a href="#objects-and-arrays" class="underline">Objects and arrays</a>.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">union, discriminatedUnion, intersection, lazy</code></td><td>Combine schemas.</td><td><code class="bg-black/5 px-1">union([])</code> throws.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">optional(s), nullable(s), default(s, v)</code></td><td>Wrappers for absent values.</td><td>Work on any schema.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">refine(s, check, msg), transform(s, fn)</code></td><td>Custom check / change output.</td><td>Work on any schema.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">coerce.string, .number, .boolean, .bigint</code></td><td>Convert text before checking.</td><td></td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Every schema (class <code class="bg-black/5 px-1">Schema</code>)</h3>
+        <table class="doc-table mb-4">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code class="bg-black/5 px-1">parse(input, options?)</code></td><td>Returns the parsed value or throws <code class="bg-black/5 px-1">SchemaError</code>.</td><td><code class="bg-black/5 px-1">input</code> is <code class="bg-black/5 px-1">unknown</code>.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">safeParse(input, options?)</code></td><td>Returns <code class="bg-black/5 px-1">SchemaResult</code>; never throws for invalid input.</td><td>A bug inside your refine/transform still throws.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">describe(text), title(text), example(v), deprecated()</code></td><td>Attach documentation metadata.</td><td>Mutate and return the same schema.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">getMetadata()</code></td><td>Read the metadata back.</td><td>Returns <code class="bg-black/5 px-1">SchemaMetadata | undefined</code>.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">_type</code></td><td>Name of the schema kind, e.g. <code class="bg-black/5 px-1">"string"</code>.</td><td>For debugging.</td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Result helpers</h3>
+        <table class="doc-table mb-4">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code class="bg-black/5 px-1">isSchemaSuccess(r)</code>, <code class="bg-black/5 px-1">isSchemaFailure(r)</code></td><td>Type guards for a <code class="bg-black/5 px-1">SchemaResult</code>.</td><td>Same as checking <code class="bg-black/5 px-1">r.success</code>.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">unwrapSchemaResult(r)</code></td><td>Returns <code class="bg-black/5 px-1">r.data</code> or throws a plain <code class="bg-black/5 px-1">Error</code> listing the messages.</td><td>Not a <code class="bg-black/5 px-1">SchemaError</code>.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">schemaSuccess(data)</code>, <code class="bg-black/5 px-1">schemaFailure(issues)</code></td><td>Build a result by hand.</td><td>Useful in tests.</td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Types</h3>
+        <table class="doc-table mb-4">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code class="bg-black/5 px-1">Infer&lt;S&gt;</code>, <code class="bg-black/5 px-1">SchemaOutput&lt;S&gt;</code></td><td>Output type of a schema.</td><td>Identical.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">SchemaInput&lt;S&gt;</code></td><td>Input type (before transform).</td><td></td></tr>
+            <tr><td><code class="bg-black/5 px-1">SchemaIssue</code></td><td>One problem: <code class="bg-black/5 px-1">code</code>, <code class="bg-black/5 px-1">path</code>, <code class="bg-black/5 px-1">message</code>, optional <code class="bg-black/5 px-1">expected</code>, <code class="bg-black/5 px-1">received</code>, <code class="bg-black/5 px-1">input</code>, <code class="bg-black/5 px-1">details</code>.</td><td></td></tr>
+            <tr><td><code class="bg-black/5 px-1">SchemaResult&lt;T&gt;</code>, <code class="bg-black/5 px-1">SchemaSuccess&lt;T&gt;</code>, <code class="bg-black/5 px-1">SchemaFailure</code></td><td>What <code class="bg-black/5 px-1">safeParse</code> returns.</td><td></td></tr>
+            <tr><td><code class="bg-black/5 px-1">SchemaParseOptions</code></td><td>Second argument of <code class="bg-black/5 px-1">parse</code>/<code class="bg-black/5 px-1">safeParse</code>.</td><td>See <a href="#parse-options" class="underline">Parse options</a>.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">SchemaMetadata</code>, <code class="bg-black/5 px-1">SchemaShape</code>, <code class="bg-black/5 px-1">SchemaPathSegment</code></td><td>Metadata object; an object shape; one path element (<code class="bg-black/5 px-1">string | number</code>).</td><td></td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Errors and constants</h3>
+        <table class="doc-table mb-4">
+          <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code class="bg-black/5 px-1">SchemaError</code></td><td>Thrown by <code class="bg-black/5 px-1">parse()</code>; has <code class="bg-black/5 px-1">.issues</code> and <code class="bg-black/5 px-1">.hasIssues()</code>.</td><td>Import from <code class="bg-black/5 px-1">@zudojs/errors</code>. Status code 400.</td></tr>
+            <tr><td><code class="bg-black/5 px-1">SchemaIssueCode</code></td><td>Object of every issue code string.</td><td>Import from <code class="bg-black/5 px-1">@zudojs/constants</code>.</td></tr>
+          </tbody>
+        </table>
+
+        <p class="text-sm">The package also exports the low-level pieces used to write a custom <code class="bg-black/5 px-1">Schema</code> subclass: <code class="bg-black/5 px-1">createParseContext</code>, <code class="bg-black/5 px-1">childContext</code>, <code class="bg-black/5 px-1">addIssue</code>, <code class="bg-black/5 px-1">failValidation</code>, <code class="bg-black/5 px-1">rethrowUnexpected</code>, <code class="bg-black/5 px-1">enterComposite</code>, <code class="bg-black/5 px-1">leaveComposite</code>, <code class="bg-black/5 px-1">isMaxDepthExceeded</code>, <code class="bg-black/5 px-1">shouldAbortEarly</code>, <code class="bg-black/5 px-1">SchemaValidationSignal</code> and the individual schema classes. You will not need them for everyday use.</p>
+      </section>
+
+      <!-- Common mistakes -->
+      <section id="common-mistakes" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMON MISTAKES</h2>
+        <ul class="space-y-3 text-sm">
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Calling <code class="bg-black/5 px-1">.optional()</code> on an object, array or enum schema.</strong> TypeScript reports that the method does not exist. Wrap it instead: <code class="bg-black/5 px-1">schema.optional(schema.array(schema.string()))</code>.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <span><strong>Chaining <code class="bg-black/5 px-1">.transform()</code> after <code class="bg-black/5 px-1">.refine()</code>.</strong> <code class="bg-black/5 px-1">.refine()</code> returns a base <code class="bg-black/5 px-1">Schema</code> with no chain methods. Use <code class="bg-black/5 px-1">schema.transform(refined, fn)</code>.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <span><strong>Using <code class="bg-black/5 px-1">schema.number()</code> for query-string values.</strong> <code class="bg-black/5 px-1">"3"</code> is a string, so it fails with <code class="bg-black/5 px-1">invalid_type</code>. Use <code class="bg-black/5 px-1">schema.coerce.number()</code>.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <span><strong>Expecting extra keys to survive.</strong> Objects strip unknown keys by default, so <code class="bg-black/5 px-1">parse()</code> returns a smaller object than you passed in. Call <code class="bg-black/5 px-1">.passthrough()</code> to keep them or <code class="bg-black/5 px-1">.strict()</code> to reject them.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Importing <code class="bg-black/5 px-1">SchemaError</code> from <code class="bg-black/5 px-1">@zudojs/schema</code>.</strong> It is not exported there; import it from <code class="bg-black/5 px-1">@zudojs/errors</code>.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <span><strong>Forgetting the type annotation on a lazy schema.</strong> TypeScript errors with "implicitly has type any". Declare it as <code class="bg-black/5 px-1">const Tree: Schema&lt;TreeNode&gt; = schema.lazy(...)</code>.</span></li>
+        </ul>
+      </section>
+
+      <!-- Related -->
+      <section id="related" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATED PACKAGES</h2>
+        <ul class="space-y-2 text-sm">
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><a href="/docs/packages-errors" class="underline font-bold">@zudojs/errors</a> — home of <code class="bg-black/5 px-1">SchemaError</code> and the shared error base classes.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <span><a href="/docs/packages-api" class="underline font-bold">@zudojs/api</a> — attach a schema to an operation's <code class="bg-black/5 px-1">input</code> so it is checked before your handler runs.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <span><a href="/docs/packages-http" class="underline font-bold">@zudojs/http</a> — where request bodies and query strings come from; parse them with a schema first.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <span><a href="/docs/packages-openapi" class="underline font-bold">@zudojs/openapi</a> — turns schemas and their <code class="bg-black/5 px-1">describe()</code> metadata into API documentation.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><a href="/docs/packages-constants" class="underline font-bold">@zudojs/constants</a> — <code class="bg-black/5 px-1">SchemaIssueCode</code> and the default size limits.</span></li>
+        </ul>
+      </section>
+
+      <!-- EXPORT INDEX -->
+      <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/schema</code> exports from its package root at v1.0.0 &mdash; <strong>93</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <details class="border-2 border-black p-5 bg-white">
+          <summary class="font-bold cursor-pointer select-none">Show all 93 exports</summary>
+          <div class="mt-5">
+          <div class="mb-5">
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Re-exported <span class="text-black/40 font-normal">(93)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AnySchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ArraySchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BigIntSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">BooleanSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CoerceBigIntSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CoerceBooleanSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CoerceNumberSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">CoerceStringSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DefaultSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DiscriminatedUnionSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">EnumSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Infer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">IntersectionSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LazySchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">LiteralSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MapSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">NeverSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">NullSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">NullableModifierSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">NumberSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ObjectSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">OptionalModifierSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">OptionalSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RecordSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RefineSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Schema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaFailure</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaInput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaIssue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaOutput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaParseContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaParseOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaPathSegment</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaShape</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaSuccess</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SchemaValidationSignal</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SetSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">StringSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SymbolSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransformModifierSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TransformSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TupleSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UndefinedSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UnionSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UnknownSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">addIssue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">anySchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">arraySchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">bigintSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">booleanSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">childContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">coerceBigIntSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">coerceBooleanSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">coerceNumberSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">coerceStringSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createParseContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">defaultSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">discriminatedUnionSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">enterComposite</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">enumSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">failValidation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">intersectionSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isMaxDepthExceeded</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSchemaFailure</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSchemaSuccess</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">lazySchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">leaveComposite</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">literalSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">mapSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">neverSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">nullSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">nullableSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">numberSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">objectSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">optionalSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">recordSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">refineSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">rethrowUnexpected</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">schema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">schemaFailure</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">schemaSuccess</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">setSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">shouldAbortEarly</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">stringSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">symbolSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">transformSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">tupleSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">undefinedSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">unionSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">unknownSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">unwrapSchemaResult</code></div>
+          </div>
+          </div>
+        </details>
+      </section>
     </main>
 
     <!-- TABLE OF CONTENTS -->
     <aside class="doc-toc" aria-label="On this page">
       <div class="text-xs font-bold uppercase tracking-wider mb-4 text-black/40">On This Page</div>
+      <a href="#overview" class="toc-link">Overview</a>
       <a href="#installation" class="toc-link">Installation</a>
-      <a href="#what-it-does" class="toc-link">What It Does</a>
-      <a href="#architecture-position" class="toc-link">Where It Sits</a>
-      <a href="#dependencies" class="toc-link">Dependencies</a>
-      <a href="#core" class="toc-link">Core</a>
-      <a href="#result-helpers" class="toc-link">Result Helpers</a>
-      <a href="#context-helpers" class="toc-link">Context Helpers</a>
-      <a href="#primitives" class="toc-link">Primitives</a>
-      <a href="#string-schema" class="toc-link">StringSchema</a>
-      <a href="#number-schema" class="toc-link">NumberSchema</a>
-      <a href="#boolean-schema" class="toc-link">BooleanSchema</a>
-      <a href="#other-primitives" class="toc-link">Other Primitives</a>
-      <a href="#structures" class="toc-link">Structures</a>
-      <a href="#object-schema" class="toc-link">ObjectSchema</a>
-      <a href="#optional-schema" class="toc-link">OptionalSchema</a>
-      <a href="#array-schema" class="toc-link">ArraySchema</a>
-      <a href="#other-structures" class="toc-link">Other Structures</a>
-      <a href="#composition" class="toc-link">Composition</a>
-      <a href="#modifiers" class="toc-link">Modifiers</a>
+      <a href="#quick-start" class="toc-link">Quick Start</a>
+      <a href="#parse-vs-safeparse" class="toc-link">Parse vs Validate</a>
+      <a href="#reading-issues" class="toc-link">Reading an Issue</a>
+      <a href="#building-blocks" class="toc-link">Building Blocks</a>
+      <a href="#objects-and-arrays" class="toc-link">Objects and Arrays</a>
+      <a href="#optional-and-default" class="toc-link">Optional, Nullable, Default</a>
+      <a href="#refine-and-transform" class="toc-link">Refine and Transform</a>
+      <a href="#combining-schemas" class="toc-link">Combining Schemas</a>
       <a href="#coercion" class="toc-link">Coercion</a>
       <a href="#type-inference" class="toc-link">Type Inference</a>
-      <a href="#schema-namespace" class="toc-link">Schema Namespace</a>
-      <a href="#errors" class="toc-link">Errors</a>
-      <a href="#full-example" class="toc-link">Full Example</a>
+      <a href="#parse-options" class="toc-link">Parse Options</a>
+      <a href="#api-reference" class="toc-link">API Reference</a>
+      <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
+      <a href="#related" class="toc-link">Related</a>
+          <a href="#export-index" class="toc-link">Complete Export Index</a>
     </aside>
 
   </div>
@@ -1132,5 +684,6 @@ schema.coerce.<span class="fn">bigint</span>();</div>
   <script src="/js/docs.js"></script>
   <script src="/js/components.js"></script>
   <script src="/js/playground.js"></script>
+  <script src="/js/effects.js" defer></script>
 </body>
 </html>

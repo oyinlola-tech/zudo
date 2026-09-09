@@ -87,7 +87,32 @@ function safeUrl(value: string): string {
   if (/^\s*(javascript|vbscript):/i.test(trimmed)) {
     throw new TypeError(`Refusing to render a "${trimmed.split(":")[0]}:" URL`);
   }
-  return escapeHtml(trimmed);
+  // Attributes are always double-quoted here, so a single quote (common in
+  // data URIs) can stay as-is.
+  return trimmed
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Guards the one place caller-supplied text reaches the page unescaped.
+ *
+ * A `<style>` element ends at the first `</style`, whatever the CSS around it
+ * says, so `customCss` containing that sequence closes the block early and
+ * everything after it is parsed as HTML — a script tag included. There is no
+ * escape that keeps the CSS valid, so this refuses rather than mangles.
+ */
+function safeCss(css: string | undefined): string {
+  if (css === undefined) return "";
+  if (/<\/\s*style/i.test(css)) {
+    throw new TypeError(
+      "customCss may not contain a closing </style> tag: it would end the " +
+        "style block and let the rest be parsed as HTML.",
+    );
+  }
+  return css;
 }
 
 const THEME_CSS = `
@@ -137,7 +162,7 @@ function head(options: OpenAPIUIOptions, title: string, extra: string): string {
     `<meta name="viewport" content="width=device-width,initial-scale=1">` +
     `<meta name="theme-color" content="#1A1A2E">` +
     `<title>${escapeHtml(title)}</title>${favicon}${extra}` +
-    `<style>${THEME_CSS}${options.customCss ?? ""}</style></head>`
+    `<style>${THEME_CSS}${safeCss(options.customCss)}</style></head>`
   );
 }
 

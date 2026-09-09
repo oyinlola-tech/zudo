@@ -35,6 +35,15 @@
 
 import type { ScaffoldOptions } from "../../types/index.js";
 import { ZUDOJS_PACKAGES_VERSION } from "../../constants/index.js";
+import { normalizeName } from "../../utils/utils.name.js";
+import {
+  RUNTIME_APP_DEPENDENCIES,
+  moduleSpec,
+  renderAppFile,
+  renderModuleFile,
+  renderServerFile,
+  renderZudojsConfig,
+} from "../shared/index.js";
 
 export function generateModularMonolithFiles(
   options: ScaffoldOptions,
@@ -42,23 +51,22 @@ export function generateModularMonolithFiles(
   const nameSlug = options.projectName
     .replace(/[^a-z0-9-]+/gi, "-")
     .toLowerCase();
-  const modules =
+  // Normalized: each name becomes a directory segment and a class name.
+  const modules = (
     options.services.length > 0
       ? options.services
-      : ["identity", "enrollment", "assessment"];
+      : ["identity", "enrollment", "assessment"]
+  )
+    .map((m) => normalizeName(m))
+    .filter((m) => m.length > 0);
 
   const deps = [
-    "@zudojs/core",
-    "@zudojs/runtime",
-    "@zudojs/container",
+    ...RUNTIME_APP_DEPENDENCIES,
     "@zudojs/config",
-    "@zudojs/logger",
     "@zudojs/errors",
-    "@zudojs/constants",
     "@zudojs/types",
     "@zudojs/validation",
     "@zudojs/cqrs",
-    "@zudojs/events",
     "@zudojs/messaging",
     "@zudojs/http",
   ];
@@ -94,7 +102,7 @@ export function generateModularMonolithFiles(
           test: "vitest run",
         },
         dependencies: Object.fromEntries(
-          deps.map((d) => [d, ZUDOJS_PACKAGES_VERSION]),
+          [...new Set(deps)].map((d) => [d, ZUDOJS_PACKAGES_VERSION]),
         ),
         devDependencies: devDeps,
       },
@@ -120,6 +128,12 @@ export function generateModularMonolithFiles(
   "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }
 `;
+
+  files["zudojs.config.ts"] = renderZudojsConfig({
+    projectName: nameSlug,
+    projectType: "backend",
+    architecture: "modular-monolith",
+  });
 
   files[".env.example"] = `NODE_ENV=development
 PORT=3000
@@ -157,46 +171,16 @@ MIT
   files["src/index.ts"] = `export { createApp } from "./app.js";
 `;
 
-  files["src/app.ts"] = `import { logger } from "@zudojs/logger";
-import { createContainer } from "@zudojs/container";
+  const moduleSpecs = modules.map((m) =>
+    moduleSpec(m, `./modules/${m}/index.js`),
+  );
 
-export async function createApp() {
-  const log = logger.child({ service: "app" });
-  const container = createContainer();
+  files["src/app.ts"] = renderAppFile({
+    applicationName: nameSlug,
+    modules: moduleSpecs,
+  });
 
-  log.info("${nameSlug} v0.1.0 starting...");
-
-  return {
-    container,
-    listen: async () => {
-      log.info("Server started");
-    },
-    stop: async () => {
-      log.info("Shutting down...");
-    },
-  };
-}
-`;
-
-  files["src/server.ts"] = `import { createApp } from "./app.js";
-import { createRuntime } from "@zudojs/runtime";
-
-const app = await createApp();
-
-const runtime = createRuntime({
-  onShutdown: async () => {
-    await app.stop();
-  },
-});
-
-await runtime.start();
-await app.listen();
-
-process.on("SIGTERM", async () => {
-  await runtime.stop();
-  process.exit(0);
-});
-`;
+  files["src/server.ts"] = renderServerFile();
 
   const sharedDirs = [
     "configs",
@@ -229,33 +213,17 @@ process.on("SIGTERM", async () => {
     modules.map((m) => `export * from "./${m}/index.js";`).join("\n") + "\n";
 
   // Generate each module with CQRS structure
-  for (const mod of modules) {
-    const modName = mod!;
-    const modNamePascal = modName
-      .replace(/-([a-z])/g, (_m: string, c: string) => c.toUpperCase())
-      .replace(/^./, (c: string) => c.toUpperCase());
+  for (const spec of moduleSpecs) {
+    files[`src/modules/${spec.name}/index.ts`] =
+      `export { ${spec.className} } from "./${spec.name}.module.js";\n`;
 
-    files[`src/modules/${modName}/index.ts`] =
-      `export { ${modNamePascal}Module } from "./${modName}.module.js";
-`;
-
-    files[`src/modules/${modName}/${modName}.module.ts`] =
-      `import { logger } from "@zudojs/logger";
-
-export class ${modNamePascal}Module {
-  private readonly log = logger.child({ module: "${modName}" });
-
-  id = "${modName}-module";
-
-  initialize() {
-    this.log.info("${modName} module initialized");
-  }
-}
-`;
+    files[`src/modules/${spec.name}/${spec.name}.module.ts`] = renderModuleFile({
+      module: spec,
+    });
 
     // CQRS structure
-    files[`src/modules/${modName}/commands/index.ts`] = ``;
-    files[`src/modules/${modName}/queries/index.ts`] = ``;
+    files[`src/modules/${spec.name}/commands/index.ts`] = ``;
+    files[`src/modules/${spec.name}/queries/index.ts`] = ``;
   }
 
   files["tests/index.ts"] = `import { describe, it, expect } from "vitest";

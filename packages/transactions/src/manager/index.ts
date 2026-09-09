@@ -16,3 +16,5 @@ export {
 export type { PropagationContext } from "./manager.propagation.js";
 export { assertAdapterSupports } from "./manager.capabilities.js";
 export { withRetry } from "./manager.retry.js";
+export { createEmitter } from "./manager.events.js";
+export type { TransactionEmitter } from "./manager.events.js";

@@ -110,19 +110,31 @@ export function createPipeline<TContext, TResult>(
       }
 
       let advanced = false;
-      let downstream: TResult | undefined;
+      // Boxed rather than a bare `TResult | undefined`, so "the downstream
+      // chain produced a value" is distinguishable from "it produced
+      // `undefined`" without an assertion.
+      let downstream: { readonly value: TResult } | undefined;
       try {
         return await mw.handler(context, async () => {
           advanced = true;
-          downstream = await dispatch(i + 1);
-          return downstream;
+          const value = await dispatch(i + 1);
+          downstream = { value };
+          return value;
         });
       } catch (error) {
         if (isFatal(error)) throw error;
+        if (advanced && downstream === undefined) {
+          // next() was entered but never produced a result — the middleware
+          // caught the downstream failure and threw something of its own.
+          // There is no downstream result to keep and no step left to
+          // continue to, so returning `undefined` as if it were a `TResult`
+          // would report a successful run that never happened.
+          throw error;
+        }
         errors.push({ name: mw.name, error });
         // The chain already ran past this middleware, so its downstream
         // result stands; otherwise pick up at the next middleware.
-        return advanced ? (downstream as TResult) : dispatch(i + 1);
+        return downstream ? downstream.value : dispatch(i + 1);
       }
     }
 

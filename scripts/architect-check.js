@@ -4,7 +4,7 @@
  * Validates:
  * 1. No package depends on a package from a higher tier.
  * 2. No circular dependencies exist.
- * 3. All @zudojs/* dependencies use exact versions (not wildcards).
+ * 3. All internal @zudojs/* dependencies use the "workspace:*" protocol.
  *
  * Run with: node architect:check.js
  */
@@ -13,60 +13,11 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { TIERS, packageNameToKey } from "./package-tiers.js";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packagesDir = join(__dirname, "..", "packages");
 
-// Tier definitions: each package maps to its allowed dependency tiers.
-// Tier 0 = leaf, Tier 1 = foundation, Tier 2 = application, Tier 3 = transport, Tier 4 = dev experience
-const TIERS = {
-  errors: 0,
-  types: 0,
-  constants: 1,
-  container: 1,
-  logger: 1,
-  crypto: 1,
-  validation: 1,
-  schema: 1,
-  config: 1,
-  middleware: 1,
-  serialization: 1,
-  events: 1,
-  messaging: 1,
-  lifecycle: 1,
-  transactions: 1,
-  permissions: 1,
-  featureFlags: 1,
-  plugins: 1,
-  security: 1,
-  tenancy: 1,
-  docs: 1,
-  cache: 1,
-  storage: 1,
-  adapters: 1,
-  queue: 1,
-  scheduler: 1,
-  database: 1,
-  observability: 1,
-  core: 2,
-  cqrs: 2,
-  auth: 2,
-  runtime: 2,
-  openapi: 2,
-  rpc: 2,
-  api: 2,
-  http: 3,
-  cli: 3,
-  testing: 4,
-};
-
-// Convert package name to key used in TIERS
-function packageNameToKey(name) {
-  return name
-    .replace(/^@oyinlola141\/zudojs-/, "")
-    .replace(/^@zudojs\//, "")
-    .replace(/^zudojs-/, "")
-    .replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
-}
 
 // Read all package directories
 function getPackages() {
@@ -92,17 +43,29 @@ function getPackages() {
   return packages;
 }
 
-// Check for wildcard versions
-function checkWildcardVersions(packages) {
+// Check that internal dependencies use the workspace protocol.
+//
+// Internal deps must be "workspace:*". A hand-written version range makes
+// pnpm resolve the sibling from the npm registry instead of from source,
+// so local changes are invisible to dependents and the build validates a
+// published artifact rather than the working tree. pnpm rewrites
+// "workspace:*" to the concrete version at publish time.
+function checkWorkspaceProtocol(packages) {
   const errors = [];
 
   for (const pkg of packages) {
-    const allDeps = { ...pkg.dependencies, ...pkg.peerDependencies };
+    const allDeps = {
+      ...pkg.dependencies,
+      ...pkg.peerDependencies,
+      ...pkg.devDependencies,
+    };
 
     for (const [depName, version] of Object.entries(allDeps)) {
-      if (depName.startsWith("@zudojs/") && version === "*") {
+      if (!depName.startsWith("@zudojs/") && depName !== "zudojs-cli") continue;
+
+      if (!String(version).startsWith("workspace:")) {
         errors.push(
-          `Wildcard version in ${pkg.name}: ${depName}: "${version}". Use exact version "0.1.0".`,
+          `${pkg.name}: ${depName} is "${version}". Internal dependencies must use "workspace:*".`,
         );
       }
     }
@@ -197,15 +160,15 @@ function main() {
   const packages = getPackages();
   console.log(`Found ${packages.length} packages.\n`);
 
-  const wildcardErrors = checkWildcardVersions(packages);
+  const versionErrors = checkWorkspaceProtocol(packages);
   const tierViolations = checkTierViolations(packages);
   const cycles = checkCircularDependencies(packages);
 
   let hasErrors = false;
 
-  if (wildcardErrors.length > 0) {
-    console.log("❌ Wildcard Version Errors:");
-    for (const error of wildcardErrors) {
+  if (versionErrors.length > 0) {
+    console.log("❌ Internal Dependency Protocol Errors:");
+    for (const error of versionErrors) {
       console.log(`  - ${error}`);
     }
     console.log();
@@ -232,7 +195,7 @@ function main() {
 
   if (!hasErrors) {
     console.log("✅ All architecture checks passed.");
-    console.log("   - No wildcard versions");
+    console.log("   - All internal dependencies use workspace:*");
     console.log("   - No tier violations");
     console.log("   - No circular dependencies");
     process.exit(0);

@@ -2,7 +2,7 @@ import type { Plugin } from "../pluginTypes/plugin.type.js";
 import type { PluginContext } from "../pluginTypes/pluginContext.type.js";
 import type { PluginState } from "../pluginTypes/pluginState.type.js";
 import type { RegisteredPlugin } from "../pluginRegistry/pluginRegistry.core.js";
-import { VALID_STATE_TRANSITIONS } from "../pluginTypes/pluginState.type.js";
+import { isValidTransition } from "../pluginTypes/pluginState.type.js";
 import {
   PluginDisposeError,
   PluginStateError,
@@ -333,7 +333,10 @@ export class LifecycleController {
   }
 
   private canTransition(from: PluginState, to: PluginState): boolean {
-    return VALID_STATE_TRANSITIONS[from]?.includes(to) ?? false;
+    // Delegates to the exported predicate rather than re-deriving it:
+    // two copies of the transition rule can disagree, and the public
+    // `isValidTransition` must describe what the controller actually does.
+    return isValidTransition(from, to);
   }
 
   private ensureTransition(

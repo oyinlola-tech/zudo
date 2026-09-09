@@ -1,5 +1,10 @@
 import type { ConfigurationManager, Module, ModuleContext } from "@zudojs/core";
 
+import type {
+  RuntimeModuleEventPayload,
+  RuntimeModuleEventType,
+} from "../runtimeEvents/runtimeEvents.type.js";
+
 /**
  * Lifecycle hook phases for modules.
  */
@@ -72,11 +77,32 @@ export interface ModuleContextServices {
 }
 
 /**
+ * Receives a per-module lifecycle event.
+ */
+export type ModuleEventListener = (
+  type: RuntimeModuleEventType,
+  payload: RuntimeModuleEventPayload,
+) => void;
+
+/**
  * Options for lifecycle management.
  */
 export interface LifecycleManagerOptions {
   readonly shutdownTimeout?: number;
   readonly continueOnFailure?: boolean;
+  /**
+   * Receives one event per module per lifecycle phase.
+   *
+   * The lifecycle is the only layer that knows which module is running,
+   * so it is the only layer that can populate a
+   * {@link RuntimeModuleEventPayload}. Without this the runtime published
+   * two phase-wide events with no module on them, and every
+   * `runtime.module.*` entry in `RuntimeEventMap` named a payload nothing
+   * produced.
+   */
+  readonly onModuleEvent?: ModuleEventListener;
+  /** Runtime identifier stamped onto emitted module events. */
+  readonly runtimeId?: string;
   /**
    * Whether modules at the same dependency depth are initialized
    * concurrently. Defaults to `false`. Modules within a depth group do

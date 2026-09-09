@@ -7,11 +7,18 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CLIContext } from "../cliType/cliType.type.js";
+import { CLIValidationError } from "../errors/index.js";
 
 interface DoctorCheck {
   readonly name: string;
   readonly passed: boolean;
   readonly message: string;
+  /**
+   * Whether a failed check is fatal. Advisory checks (a missing lock file in
+   * a project created with `--no-install`, for example) are reported as
+   * warnings and do not fail the command.
+   */
+  readonly severity: "error" | "warning";
 }
 
 export async function runDoctorCommand(context: CLIContext): Promise<void> {
@@ -34,7 +41,11 @@ export async function runDoctorCommand(context: CLIContext): Promise<void> {
     context.logger.info(`${symbol} ${check.name}: ${check.message}`);
 
     if (!check.passed) {
-      errors.push(`${check.name}: ${check.message}`);
+      if (check.severity === "warning") {
+        warnings.push(`${check.name}: ${check.message}`);
+      } else {
+        errors.push(`${check.name}: ${check.message}`);
+      }
     }
   }
 
@@ -54,7 +65,11 @@ export async function runDoctorCommand(context: CLIContext): Promise<void> {
     }
     context.logger.info("");
     context.logger.info("Please fix the errors above before deploying.");
-    return;
+    // Throwing is what gives `zudojs doctor` a non-zero exit code; returning
+    // here would report success to CI while diagnostics failed.
+    throw new CLIValidationError(
+      `Zudojs doctor found ${errors.length} problem(s): ${errors.join("; ")}`,
+    );
   }
 
   context.logger.info("");
@@ -67,6 +82,7 @@ function checkNodeVersion(): DoctorCheck {
   const passed = major >= 24;
   return {
     name: "Node.js version",
+    severity: "error",
     passed,
     message: passed
       ? `Node.js ${version} (✓ meets minimum v24)`
@@ -84,6 +100,7 @@ function checkPackageManager(cwd: string): DoctorCheck {
 
   return {
     name: "Package manager",
+    severity: "warning",
     passed,
     message: passed ? `Detected: ${manager}` : "No lock file found",
   };
@@ -95,6 +112,7 @@ function checkTypeScriptConfig(cwd: string): DoctorCheck {
     existsSync(join(cwd, "tsconfig.base.json"));
   return {
     name: "TypeScript configuration",
+    severity: "error",
     passed,
     message: passed ? "tsconfig.json found" : "No tsconfig.json found",
   };
@@ -116,7 +134,12 @@ function checkZudojsConfig(cwd: string): DoctorCheck {
         : "Zudojs config in package.json";
   }
 
-  return { name: "Zudojs configuration", passed, message };
+  return {
+    name: "Zudojs configuration",
+    severity: "error",
+    passed,
+    message,
+  };
 }
 
 function checkZudojsInPackageJson(cwd: string): boolean {
@@ -138,6 +161,7 @@ function checkDependencies(context: CLIContext): DoctorCheck {
   if (!existsSync(pkgPath)) {
     return {
       name: "Dependencies",
+      severity: "error",
       passed: false,
       message: "No package.json found",
     };
@@ -155,6 +179,7 @@ function checkDependencies(context: CLIContext): DoctorCheck {
     const passed = zudojsDeps.length > 0;
     return {
       name: "Zudojs dependencies",
+      severity: "warning",
       passed,
       message: passed
         ? `${zudojsDeps.length} Zudojs packages installed`
@@ -163,6 +188,7 @@ function checkDependencies(context: CLIContext): DoctorCheck {
   } catch {
     return {
       name: "Dependencies",
+      severity: "error",
       passed: false,
       message: "Failed to read package.json",
     };
@@ -176,6 +202,7 @@ function checkArchitectureViolations(cwd: string): DoctorCheck {
   if (!existsSync(srcDir)) {
     return {
       name: "Architecture",
+      severity: "warning",
       passed: true,
       message: "No src/ directory (not a Zudojs project?)",
     };
@@ -234,6 +261,7 @@ function checkArchitectureViolations(cwd: string): DoctorCheck {
 
   return {
     name: "Architecture",
+    severity: "warning",
     passed: violations.length === 0,
     message:
       violations.length === 0

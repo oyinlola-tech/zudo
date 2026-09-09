@@ -61,11 +61,15 @@ describe("prototype safety", () => {
 
   it("drops prototype-bearing keys while parsing JSON", () => {
     const parsed = safeJsonParse<Record<string, unknown>>(
-      '{"ok":1,"__proto__":{"isAdmin":true}}',
+      '{"ok":1,"__proto__":{"isAdmin":true},"constructor":{"c":1},"prototype":{"p":1}}',
       {},
     );
 
     expect(parsed.ok).toBe(1);
+    // The old body checked only that Object.prototype was clean, which a
+    // plain JSON.parse with no reviver also satisfies — the reviver itself
+    // went unexercised. Assert the keys are actually gone, all three of them.
+    expect(Object.getOwnPropertyNames(parsed)).toEqual(["ok"]);
     expect(({} as { isAdmin?: boolean }).isAdmin).toBeUndefined();
   });
 

@@ -131,19 +131,6 @@ export class TenantAlreadyExistsError extends TenantError {
 }
 
 /**
- * Tenant provisioning failed.
- */
-export class TenantProvisioningError extends TenantError {
-  constructor(tenantId: string, cause?: unknown) {
-    super(`Provisioning failed for tenant "${tenantId}"`, {
-      code: ErrorCode.OPERATION_FAILED,
-      cause,
-      metadata: { tenantId },
-    });
-  }
-}
-
-/**
  * Tenant isolation violation detected.
  */
 export class TenantIsolationError extends TenantError {

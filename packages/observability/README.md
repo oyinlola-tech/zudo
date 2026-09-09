@@ -70,8 +70,11 @@ active, so logs and traces line up without threading IDs by hand.
 
 ## Redaction
 
-Redaction is off unless you configure it, and on once you do — the logger
-applies it to every record before any transport sees it.
+Redaction is off unless you configure it, and on once you do. The logger
+applies it to every record before any transport sees it, and the tracer
+applies it to every span attribute and span event attribute before any
+processor or exporter sees it — a `Bearer` token attached to a span is
+redacted the same way one written to a log field is.
 
 ```typescript
 const obs = createObservability({
@@ -80,7 +83,9 @@ const obs = createObservability({
     // Defaults cover passwords, tokens, cookies, keys and card numbers.
     fields: ["password", "token", "ssn"],
     patterns: [/^x-.*-secret$/i],
-    matchMode: "contains", // "userPassword" and "x-api-key" both match
+    // "contains" (the default) matches on word boundaries: "userPassword"
+    // and "x-api-key" match, "shippingAddress" and "authorId" do not.
+    matchMode: "contains",
     replacement: "[REDACTED]",
   },
 });
@@ -125,10 +130,25 @@ increment — throw a `MetricValueError` rather than being silently dropped.
 
 **Cardinality.** The registry caps the number of distinct series (default
 10,000). A label carrying a user ID is the usual way to blow past that, and
-the cap turns an unbounded memory leak into a reported error.
+the cap turns an unbounded memory leak into a reported error. Lower it — or
+set the histogram boundaries used registry-wide — through `metrics`:
+
+```typescript
+const obs = createObservability({
+  serviceName: "api",
+  metrics: { maxSeries: 2_000 },
+  onError: (error, source) => report(error, source), // cardinality is reported here
+});
+```
+
+One metric name may only ever be one type: registering `counter("latency")`
+and then `histogram("latency")` throws, because a document carrying the same
+name as two types is rejected wholesale by OTLP and Prometheus.
 
 Metrics are exported by a `PeriodicMetricReader`, which the facade starts for
-you when a `metricExporter` is configured:
+you when a `metricExporter` is configured. `metricExportIntervalMs: 0`
+disables the periodic export while still collecting a final snapshot on
+`flush()` and `shutdown()`:
 
 ```typescript
 const obs = createObservability({
@@ -239,7 +259,8 @@ sharing the parent's logger, registry, processors and exporters:
 const podScoped = obs.resource({ "k8s.pod": process.env.POD_NAME });
 ```
 
-Shut down the root; a scope does not own the pipeline.
+Shut down the root; a scope does not own the pipeline. `flush()` works from
+either, because the buffers it drains are the shared ones.
 
 ## Disabling telemetry
 

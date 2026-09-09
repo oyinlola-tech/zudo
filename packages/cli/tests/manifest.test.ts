@@ -4,11 +4,8 @@
  * Tests for ManifestManager.
  */
 
-import { describe, it, expect, vi } from "vitest";
-import {
-  ManifestManager,
-  type ZudojsManifest,
-} from "../src/manifest/manifestManager.core.js";
+import { describe, it, expect } from "vitest";
+import { ManifestManager } from "../src/manifest/manifestManager.core.js";
 
 describe("ManifestManager", () => {
   it("creates a manifest file", async () => {
