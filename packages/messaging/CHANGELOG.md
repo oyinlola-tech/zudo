@@ -1,5 +1,25 @@
 # @zudojs/messaging
 
+## 0.2.0
+
+### Minor Changes
+
+- [`3bb30e4`](https://github.com/oyinlola-tech/zudo/commit/3bb30e4a278fe969c64a0c2cf31097f309ff427d) Thanks [@oyinlola-tech](https://github.com/oyinlola-tech)! - Add branded-id helpers and guard use of a disposed message bus.
+
+  **New helpers `toMessageId`, `toCorrelationId` and `toCausationId`** convert a
+  `string` into the corresponding branded id type. The branded types previously
+  had no public constructor, so callers had to reach for a cast to produce one.
+
+  **Using a disposed bus now throws `MessageBusDisposedError`** (from
+  `@zudojs/errors`) instead of proceeding against torn-down state. Code that
+  published or dispatched after `dispose()` previously got undefined behaviour and
+  will now get a clear error.
+
+### Patch Changes
+
+- Updated dependencies [[`262a376`](https://github.com/oyinlola-tech/zudo/commit/262a3769459162696c5d914f0b6fc9fb4a6bbbf5)]:
+  - @zudojs/errors@0.2.0
+
 ## 1.0.0
 
 ### Major Changes
