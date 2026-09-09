@@ -62,7 +62,11 @@ export interface SemVer {
 const SEMVER_PATTERN =
   /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
 
-const RANGE_PATTERN = /^\s*(\^|~|>=|<=|>|<|=)?\s*(.+?)\s*$/;
+// The input is already trimmed, so the outer `\s*` are unnecessary, and
+// `(\S.*)` rather than `(.+?)\s*$`: `.` matches spaces too, so a lazy group
+// followed by `\s*$` lets the engine split a whitespace run at every
+// position before giving up.
+const RANGE_PATTERN = /^(\^|~|>=|<=|>|<|=)?\s*(\S.*)$/;
 
 /**
  * Parses a semantic version, returning `undefined` if it is not one.

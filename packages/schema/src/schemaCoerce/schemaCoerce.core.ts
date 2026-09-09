@@ -57,7 +57,7 @@ export class CoerceNumberSchema extends Schema<number> {
         // of which a caller sending a decimal parameter intended.
         if (
           Number.isFinite(num) &&
-          /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i.test(trimmed)
+          /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(trimmed)
         ) {
           return num;
         }

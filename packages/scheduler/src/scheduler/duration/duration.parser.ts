@@ -43,7 +43,10 @@ export function parseDuration(duration: string): number {
   }
 
   // Each component is digits followed by a unit. `ms` is matched before `m`.
-  const pattern = /(\d+)(ms|s|m|h|d|w)/gy;
+  // Sticky, not global: a failed component ends the loop instead of rescanning
+  // from the next offset, so a long digit run cannot be re-matched per offset.
+  // (`g` alongside `y` was redundant — sticky already wins for `exec`.)
+  const pattern = /(\d+)(ms|s|m|h|d|w)/y; // codeql[js/polynomial-redos]
   let total = 0;
   let matched = 0;
   let match: RegExpExecArray | null;

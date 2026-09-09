@@ -63,7 +63,7 @@ export function normalizePath(
   }
 
   if (!options.strict) {
-    normalized = normalized.replace(/\/+$/, "") || "/";
+    normalized = normalized.replace(/(?<!\/)\/+$/, "") || "/";
   }
 
   return normalized;

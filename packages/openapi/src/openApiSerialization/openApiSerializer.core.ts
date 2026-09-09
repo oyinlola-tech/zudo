@@ -44,7 +44,7 @@ const YAML_RESERVED = new Set([
 /** A bare (unquoted) YAML scalar may not start with these. */
 const YAML_UNSAFE_START = /^[-?:,[\]{}#&*!|>'"%@`\s]/;
 const YAML_UNSAFE_ANYWHERE = /[:#\n\r\t]|: |\s#/;
-const YAML_NUMERIC = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;
+const YAML_NUMERIC = /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?$/;
 
 function quoteYamlString(value: string): string {
   // Double quotes with JSON escaping is always valid YAML and needs no

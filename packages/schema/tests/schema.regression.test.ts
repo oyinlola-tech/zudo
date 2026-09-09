@@ -265,7 +265,9 @@ describe("SCM-06: a /g pattern is not order-dependent", () => {
   });
 
   it("bounds input length before running a pattern", () => {
-    const s = z.string().regex(/^(a+)+$/);
+    // The catastrophic pattern is the point of the test: it proves the length
+    // bound runs first, so the regex never sees the 200k-character input.
+    const s = z.string().regex(/^(a+)+$/); // codeql[js/redos]
     const result = s.safeParse("a".repeat(200_000));
     expect(result.success).toBe(false);
     expect(issuesOf(result)[0]?.code).toBe("too_large");

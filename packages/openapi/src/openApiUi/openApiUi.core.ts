@@ -175,7 +175,7 @@ export function renderOpenAPIUI(options: OpenAPIUIOptions): string {
   const renderer = options.renderer ?? "swagger";
 
   if (renderer === "redoc") {
-    const base = (options.assetsBaseUrl ?? REDOC_ASSETS).replace(/\/+$/, "");
+    const base = (options.assetsBaseUrl ?? REDOC_ASSETS).replace(/(?<!\/)\/+$/, "");
     return (
       head(options, title, "") +
       `<body>${header(options, title)}` +
@@ -185,7 +185,7 @@ export function renderOpenAPIUI(options: OpenAPIUIOptions): string {
     );
   }
 
-  const base = (options.assetsBaseUrl ?? SWAGGER_ASSETS).replace(/\/+$/, "");
+  const base = (options.assetsBaseUrl ?? SWAGGER_ASSETS).replace(/(?<!\/)\/+$/, "");
   const config = {
     url: options.specUrl,
     dom_id: "#zudo-openapi",

@@ -40,6 +40,9 @@ pnpm -r --filter "./packages/**" run build
 echo "==> Verifying every declared entry point resolves"
 node scripts/check-exports.js
 
+echo "==> Verifying every entry point imports in a real consumer install"
+node scripts/check-consumer-imports.mjs
+
 echo "==> Typechecking"
 pnpm -r run typecheck
 

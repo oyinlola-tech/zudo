@@ -73,7 +73,7 @@ export function toNumber(value: unknown, fallback = NaN): number {
   if (typeof value === "string") {
     const trimmed = value.trim();
     if (trimmed.length === 0) return fallback;
-    if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/u.test(trimmed)) {
+    if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/u.test(trimmed)) {
       return fallback;
     }
 

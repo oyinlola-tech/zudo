@@ -12,7 +12,8 @@
  * this package.
  */
 
-import { PrismaClient, type Prisma } from "@prisma/client";
+import { createRequire } from "node:module";
+import type { Prisma } from "@prisma/client";
 import { DatabaseError, DatabaseOperation } from "@zudojs/errors";
 import type {
   DatabaseClient as DatabaseClientContract,
@@ -492,6 +493,63 @@ type DatabaseErrorMetadata = NonNullable<
   ConstructorParameters<typeof DatabaseError>[1]
 >["metadata"];
 
+type PrismaClientConstructor = new (config: {
+  adapter: PrismaDriverAdapterLike;
+  log: readonly { emit: string; level: string }[];
+}) => PrismaClientLike;
+
+const requirePeer = createRequire(import.meta.url);
+
+let cachedPrismaClientConstructor: PrismaClientConstructor | undefined;
+
+/**
+ * Resolves the generated `PrismaClient` constructor on first use.
+ *
+ * The lookup is deliberately lazy. `@prisma/client` is a peer dependency, and
+ * until the consumer runs `prisma generate` the installed package is a stub
+ * that exports no `PrismaClient`. A static value import therefore made merely
+ * importing `@zudojs/database` fail with a bare `SyntaxError` — including for
+ * consumers who pass their own client through `options.prisma`, or whose
+ * generated client lives in a custom output directory (the Prisma 7 default)
+ * and so never needs this constructor at all.
+ *
+ * @throws {DatabaseError} when no generated client can be resolved.
+ */
+function resolvePrismaClientConstructor(): PrismaClientConstructor {
+  if (cachedPrismaClientConstructor) return cachedPrismaClientConstructor;
+
+  const guidance =
+    "Install it and run `prisma generate`, or pass an already-constructed client as `prisma` in the DatabaseClient options.";
+
+  let module: { PrismaClient?: unknown };
+  try {
+    module = requirePeer("@prisma/client") as { PrismaClient?: unknown };
+  } catch {
+    throw new DatabaseError(
+      `DatabaseClient could not load the "@prisma/client" peer dependency. ${guidance}`,
+      {
+        code: "ERR_DATABASE_CONNECTION",
+        operation: DatabaseOperation.CONNECT,
+        isOperational: false,
+      },
+    );
+  }
+
+  if (typeof module.PrismaClient !== "function") {
+    throw new DatabaseError(
+      `"@prisma/client" is installed but exports no PrismaClient, which means the client has not been generated yet. ${guidance}`,
+      {
+        code: "ERR_DATABASE_CONNECTION",
+        operation: DatabaseOperation.CONNECT,
+        isOperational: false,
+      },
+    );
+  }
+
+  cachedPrismaClientConstructor = module.PrismaClient as PrismaClientConstructor;
+  return cachedPrismaClientConstructor;
+}
+
 /**
  * Builds a Prisma client from the supplied options.
  *
@@ -518,10 +576,7 @@ function createPrismaClient(options: DatabaseClientOptions): PrismaClientLike {
     : [{ emit: "stdout", level: "error" }];
 
   try {
-    const Constructor = PrismaClient as unknown as new (config: {
-      adapter: PrismaDriverAdapterLike;
-      log: readonly { emit: string; level: string }[];
-    }) => PrismaClientLike;
+    const Constructor = resolvePrismaClientConstructor();
     return new Constructor({ adapter: options.adapter, log });
   } catch (error) {
     throw normalizeDatabaseError(error, {

@@ -417,11 +417,40 @@
     });
   }
 
+  /* ---------- vercel analytics + speed insights ---------- */
+
+  /*
+   * Plain-HTML integration per Vercel docs — no package, no build step.
+   *   Web Analytics : https://vercel.com/docs/analytics/quickstart  (framework: html)
+   *   Speed Insights: https://vercel.com/docs/speed-insights/quickstart (framework: html)
+   *
+   * The queue stubs (window.va / window.si) must exist before the remote scripts
+   * load so any early calls are buffered rather than thrown away. Both endpoints
+   * are served by Vercel itself at /_vercel/* and only exist on a deployment, so
+   * we skip injection on localhost to avoid two guaranteed 404s while developing.
+   */
+  function injectVercelInsights() {
+    var host = window.location.hostname;
+    if (host === 'localhost' || host === '127.0.0.1' || host === '' || host === '::1') return;
+
+    window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+    window.si = window.si || function () { (window.siq = window.siq || []).push(arguments); };
+
+    ['/_vercel/insights/script.js', '/_vercel/speed-insights/script.js'].forEach(function (src) {
+      if (document.querySelector('script[src="' + src + '"]')) return;
+      var s = document.createElement('script');
+      s.src = src;
+      s.defer = true;
+      document.body.appendChild(s);
+    });
+  }
+
   function init() {
     renderHeader();
     renderFooter();
     renderSearch();
     initCopyButtons();
+    injectVercelInsights();
     var main = document.querySelector('main');
     if (main && !main.id) main.id = 'main';
   }
