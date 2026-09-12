@@ -7,7 +7,14 @@ import { getDefaultContextStorage } from "../context/provider/defaultContextStor
 
 export interface ApplicationContextOptions {
   readonly container: Container;
-  readonly configuration: Configuration;
+  /**
+   * The application configuration, or a function returning the
+   * current one. Pass a function (for example
+   * `() => manager.getConfiguration()`) so that
+   * `getConfiguration()` reflects configuration reloads instead of
+   * the snapshot taken when the context was created.
+   */
+  readonly configuration: Configuration | (() => Configuration);
   readonly modules: ModuleRegistry;
   readonly logger: Logger;
   /**
@@ -26,14 +33,18 @@ export interface ApplicationContextOptions {
  */
 export class ApplicationContext {
   private readonly container: Container;
-  private readonly configuration: Configuration;
+  private readonly configuration: () => Configuration;
   private readonly modules: ModuleRegistry;
   private readonly logger: Logger;
   private readonly contextStorage: ContextStorage;
 
   public constructor(options: ApplicationContextOptions) {
     this.container = options.container;
-    this.configuration = options.configuration;
+    const configuration = options.configuration;
+    this.configuration =
+      typeof configuration === "function"
+        ? configuration
+        : () => configuration;
     this.modules = options.modules;
     this.logger = options.logger;
     this.contextStorage = options.contextStorage ?? getDefaultContextStorage();
@@ -48,9 +59,13 @@ export class ApplicationContext {
 
   /**
    * Application configuration.
+   *
+   * When the context was created with a configuration accessor
+   * (as `createApplication` does), this returns the configuration
+   * manager's current configuration, including reloads.
    */
   public getConfiguration(): Configuration {
-    return this.configuration;
+    return this.configuration();
   }
 
   /**

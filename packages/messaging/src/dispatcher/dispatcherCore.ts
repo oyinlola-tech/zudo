@@ -5,6 +5,7 @@
  */
 
 import type { Message } from "../message/messageType.type.js";
+import type { MessageContext } from "../messageContext/messageContextType.type.js";
 
 import type {
   MessageMiddlewareLike,
@@ -67,7 +68,7 @@ export class DefaultDispatcher implements Dispatcher {
     this.validateNotDisposed(message);
     const timeout = options.timeout ?? 0;
     const controller = new AbortController();
-    const signal = this.resolveSignal(options.signal, controller);
+    const { signal, release } = this.resolveSignal(options.signal, controller);
     const context = createMessageContext(message, {
       ...options.context,
       signal,
@@ -90,14 +91,19 @@ export class DefaultDispatcher implements Dispatcher {
     try {
       const run = runMessagePipeline(
         allMiddleware,
+        // Handlers receive the same context the middleware saw: the one
+        // built from `DispatchOptions.context` (headers, state, correlation
+        // overrides) plus anything a middleware put into `state`. A fresh
+        // context per handler used to drop all of that on the floor.
         async (msg, mwCtx) =>
-          this.executeHandlers(msg, handlers, handlerResults, mwCtx.signal),
+          this.executeHandlers(msg, handlers, handlerResults, mwCtx.context),
         message,
         {
           signal: context.signal,
-          metadata: options.context?.headers as Record<string, unknown>,
-          state: options.context?.state,
+          metadata: context.headers,
+          state: context.state,
           middlewareIds,
+          context,
         },
       );
 
@@ -134,6 +140,9 @@ export class DefaultDispatcher implements Dispatcher {
       };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      // Detach from the caller's signal, otherwise a long-lived signal
+      // shared across dispatches accumulates one listener per dispatch.
+      release();
     }
   }
 
@@ -182,27 +191,38 @@ export class DefaultDispatcher implements Dispatcher {
   private resolveSignal(
     signal: AbortSignal | undefined,
     controller: AbortController,
-  ): AbortSignal {
+  ): { signal: AbortSignal; release: () => void } {
     if (signal?.aborted) throw new MessageDispatchAbortedError();
-    if (signal) {
-      signal.addEventListener("abort", () => controller.abort(signal.reason), {
-        once: true,
-      });
+    if (!signal) {
+      return { signal: controller.signal, release: () => {} };
     }
-    return controller.signal;
+    const onAbort = () => controller.abort(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    return {
+      signal: controller.signal,
+      release: () => signal.removeEventListener("abort", onAbort),
+    };
   }
 
   private async executeHandlers<TResult>(
     message: Message,
     handlers: readonly NamedMessageHandler<Message, unknown>[],
     handlerResults: HandlerExecutionResult[],
-    signal: AbortSignal,
+    context: MessageContext,
   ): Promise<TResult> {
     const results: TResult[] = [];
     for (const handler of handlers) {
+      // A dispatch cancelled between handlers is reported as an abort, not
+      // as a failure of the handler that never got to run.
+      if (context.signal.aborted) {
+        throw new MessageDispatchAbortedError(undefined, {
+          messageType: message.type,
+          messageId: message.id,
+        });
+      }
       const start = performance.now();
       try {
-        const result = await this.executeHandler(handler, message, signal);
+        const result = await this.executeHandler(handler, message, context);
         results.push(result as TResult);
         handlerResults.push({
           handlerId: handler.id,
@@ -228,11 +248,9 @@ export class DefaultDispatcher implements Dispatcher {
   private async executeHandler(
     handler: NamedMessageHandler<Message, unknown>,
     message: Message,
-    signal: AbortSignal,
+    context: MessageContext,
   ): Promise<unknown> {
     try {
-      if (signal.aborted) throw new MessageDispatchAbortedError();
-      const context = createMessageContext(message, { signal });
       return await handler.handler(message, context);
     } catch (error) {
       throw new MessageHandlerError(

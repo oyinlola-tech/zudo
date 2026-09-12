@@ -16,6 +16,8 @@ import { DEFAULT_RESPONSE_STATUS } from "./core/httpResponse.type.js";
 
 import { getStatusText } from "./core/httpResponse.statusText.js";
 
+import { assertSafeRedirect } from "../httpRedirect/http.redirect.js";
+
 export class HttpResponseContext {
   private _status: number;
   private _statusText: string;
@@ -119,10 +121,21 @@ export class HttpResponseContext {
     return this;
   }
 
+  /**
+   * Redirects to `url`.
+   *
+   * The destination goes through `assertSafeRedirect`: a `javascript:` or
+   * `data:` URL, a scheme-relative `//evil.com`, or a value carrying a
+   * control character throws instead of being emitted as `Location`. An
+   * absolute `http(s)` URL and a same-origin path reference are accepted.
+   *
+   * @throws {TypeError} If the destination is not a safe redirect target.
+   */
   redirect(url: string, status = 302): this {
+    const location = assertSafeRedirect(url);
     this._status = status;
     this._statusText = getStatusText(status);
-    this._headers["location"] = url;
+    this._headers["location"] = location;
     return this;
   }
 

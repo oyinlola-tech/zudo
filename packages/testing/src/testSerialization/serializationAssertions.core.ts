@@ -7,6 +7,7 @@
 import { JSONSerializer } from "@zudojs/serialization";
 
 import { findDifference } from "../assertions/deepEqual.core.js";
+import { describeValue } from "../assertions/deepEqual.describe.js";
 
 const defaultSerializer = new JSONSerializer();
 
@@ -105,8 +106,12 @@ export function assertTypePreservesRoundTrip<T>(
   const restored = serializer.deserialize<T>(json, { preserveTypes: true });
 
   if (!checker(restored)) {
+    // Rendered with `describeValue`, not `JSON.stringify`: the values this
+    // helper exists for (BigInt, Map, Set, circular graphs) are exactly the
+    // ones `JSON.stringify` refuses, so the failure used to surface as a
+    // TypeError from the message itself rather than as the assertion.
     throw new Error(
-      `Type preservation failed for ${description}: ${JSON.stringify(value)} → ${JSON.stringify(restored)}`,
+      `Type preservation failed for ${description}: ${describeValue(value)} → ${describeValue(restored)}`,
     );
   }
 }

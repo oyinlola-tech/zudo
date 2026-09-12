@@ -69,6 +69,9 @@ export interface ZudojsLoggerContext {
   drainDispatches(): Promise<void>;
 }
 
+/** Upper bound on dispatch failures retained between two flushes. */
+const MAX_RETAINED_DISPATCH_FAILURES = 32;
+
 /**
  * Logger implementation.
  */
@@ -76,7 +79,10 @@ export class ZudojsLogger implements Logger, ZudojsLoggerContext {
   private _configuration: LoggerConfiguration;
   private readonly _contextStorage: LoggerContextStorage;
   private _disposed = false;
+  private _closing: Promise<void> | undefined;
   private readonly _pending = new Set<Promise<void>>();
+  private readonly _dispatchFailures: unknown[] = [];
+  private _droppedFailures = 0;
 
   constructor(
     options: LoggerOptions = {},
@@ -146,7 +152,13 @@ export class ZudojsLogger implements Logger, ZudojsLoggerContext {
     return flushLogger(this);
   }
   close(): Promise<void> {
-    return closeLogger(this);
+    // Concurrent callers share one closure: two overlapping close() calls
+    // used to drain and close every transport twice.
+    if (this._closing) return this._closing;
+    this._closing = closeLogger(this).finally(() => {
+      this._closing = undefined;
+    });
+    return this._closing;
   }
 
   assertActive(): void {
@@ -177,11 +189,24 @@ export class ZudojsLogger implements Logger, ZudojsLoggerContext {
   }
 
   trackDispatch(dispatch: Promise<void>): void {
-    // dispatchEntry routes its own failures through handleError, so a
-    // rejection here is unexpected; swallow it to keep an unawaited log
-    // call from crashing the process, and keep the entry drainable.
+    // A dispatch rejects only when handleError threw — i.e. when
+    // `throwTransportErrors` is on and an asynchronous transport failed.
+    // Nothing can throw from the log call that started it, so the failure
+    // is kept (bounded) and surfaced by the next flush()/close(); it was
+    // previously swallowed outright, which made the option a no-op for
+    // every asynchronous transport.
     const tracked = dispatch
-      .catch(() => {})
+      .then(
+        () => {},
+        (error: unknown) => {
+          if (!this._configuration.throwTransportErrors) return;
+          if (this._dispatchFailures.length < MAX_RETAINED_DISPATCH_FAILURES) {
+            this._dispatchFailures.push(error);
+          } else {
+            this._droppedFailures += 1;
+          }
+        },
+      )
       .finally(() => {
         this._pending.delete(tracked);
       });
@@ -195,6 +220,18 @@ export class ZudojsLogger implements Logger, ZudojsLoggerContext {
     while (this._pending.size > 0) {
       await Promise.all([...this._pending]);
     }
+
+    if (this._dispatchFailures.length === 0) return;
+
+    const failures = this._dispatchFailures.splice(0);
+    const dropped = this._droppedFailures;
+    this._droppedFailures = 0;
+
+    if (failures.length === 1 && dropped === 0) throw failures[0];
+    throw new AggregateError(
+      failures,
+      `${failures.length + dropped} log dispatch(es) failed since the last flush.`,
+    );
   }
 }
 

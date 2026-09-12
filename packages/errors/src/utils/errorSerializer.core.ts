@@ -4,8 +4,10 @@
 
 import { BaseError } from "../base/core/baseError.core.js";
 import {
+  isSensitiveMetadataKey,
   pickErrorMetadata,
   redactErrorMetadata,
+  REDACTED_METADATA_VALUE,
 } from "../base/core/errorMetadata.core.js";
 import type { ErrorMetadata } from "../base/core/errorMetadata.type.js";
 import type { SerializedBaseError } from "../base/types/baseError.type.js";
@@ -116,10 +118,16 @@ export class ErrorSerializer {
       return this.serializeLevel(record);
     }
 
-    // Native error shape: { name, message, stack?, cause? }
+    // Native error shape: { name, message, stack?, cause? } — or an
+    // arbitrary plain object that was thrown/attached as a cause. The
+    // latter reaches here by reference and used to be copied verbatim, so
+    // `redactSensitiveData` did not apply to it.
     const { stack, cause: nested, ...rest } = record;
+    const fields = this.redactSensitiveData
+      ? redactCauseFields(rest, this.sensitiveKeyPattern, new WeakSet([record]))
+      : rest;
     return {
-      ...rest,
+      ...fields,
       ...(this.includeStack && stack !== undefined ? { stack } : {}),
       ...(nested !== undefined ? { cause: this.serializeCause(nested) } : {}),
     };
@@ -153,6 +161,63 @@ export class ErrorSerializer {
     return redactErrorMetadata(metadata, {
       sensitiveKeyPattern: this.sensitiveKeyPattern,
     });
+  }
+}
+
+/** Plain objects (Object.prototype or null prototype) are walked; anything else is kept as-is. */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object") return false;
+  const proto = Object.getPrototypeOf(value) as object | null;
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * Redacts sensitive keys inside a non-BaseError cause without changing its
+ * shape: primitives, dates and class instances are kept, plain objects and
+ * arrays are walked, cycles stop at "[Circular]".
+ */
+function redactCauseFields(
+  fields: Record<string, unknown>,
+  pattern: RegExp | undefined,
+  seen: WeakSet<object> = new WeakSet(),
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const key of Object.keys(fields)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype")
+      continue;
+    const value = fields[key];
+    const sensitive =
+      pattern === undefined
+        ? isSensitiveMetadataKey(key)
+        : isSensitiveMetadataKey(key, pattern);
+    result[key] = sensitive
+      ? REDACTED_METADATA_VALUE
+      : redactCauseValue(value, pattern, seen);
+  }
+  return result;
+}
+
+function redactCauseValue(
+  value: unknown,
+  pattern: RegExp | undefined,
+  seen: WeakSet<object>,
+): unknown {
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return "[Circular]";
+    seen.add(value);
+    try {
+      return value.map((entry) => redactCauseValue(entry, pattern, seen));
+    } finally {
+      seen.delete(value);
+    }
+  }
+  if (!isPlainRecord(value)) return value;
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+  try {
+    return redactCauseFields(value, pattern, seen);
+  } finally {
+    seen.delete(value);
   }
 }
 

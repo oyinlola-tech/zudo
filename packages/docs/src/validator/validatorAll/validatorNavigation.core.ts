@@ -60,11 +60,15 @@ export function validateNavigation(
         continue;
       }
 
-      if (visited.has(node)) continue;
+      // The same node object mounted in two places is still the document
+      // appearing twice in the navigation, so the duplicate check runs on
+      // every visit; only the per-node checks and the descent are skipped
+      // for a node already seen.
+      const firstVisit = !visited.has(node);
       visited.add(node);
 
       if (node.documentId) {
-        if (!registeredIds.has(node.documentId)) {
+        if (firstVisit && !registeredIds.has(node.documentId)) {
           issues.push({
             severity: "error",
             code: "NAVIGATION_UNKNOWN_DOCUMENT",
@@ -82,7 +86,7 @@ export function validateNavigation(
           });
         }
         seenIds.add(node.documentId);
-      } else if (!node.children || node.children.length === 0) {
+      } else if (firstVisit && (!node.children || node.children.length === 0)) {
         issues.push({
           severity: "warning",
           code: "NAVIGATION_EMPTY_ITEM",
@@ -90,7 +94,7 @@ export function validateNavigation(
         });
       }
 
-      if (node.children) {
+      if (firstVisit && node.children) {
         walk(node.children, [...ancestors, node]);
       }
     }

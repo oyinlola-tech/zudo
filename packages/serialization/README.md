@@ -81,7 +81,9 @@ RPC peer or a request body.
   is plain `JSON.parse`, where `__proto__` survives as an inert own property and
   never reaches the prototype — but do not spread or deep-merge such an object
   into another without screening its keys.
-- **Input is size-bounded** by `maxSize`, and depth-bounded by `maxDepth`.
+- **Input is size-bounded** by `maxSize`, and depth-bounded by `maxDepth`. On
+  the `preserveTypes` path the depth limit defaults to 128; on the fast path it
+  is enforced whenever you set it, per call or as an instance default.
 - **An unrecognised `$type` tag is treated as ordinary data**, so a peer cannot
   stop the consumer with `{"$type":"anything"}` and your own records may carry a
   `$type` field. Pass `strict: true` to make an unknown tag an error instead.

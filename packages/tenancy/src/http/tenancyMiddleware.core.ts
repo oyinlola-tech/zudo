@@ -70,6 +70,17 @@ export interface ResolveTenantMiddlewareOptions {
    * billing or reactivation.
    */
   readonly allowInactive?: boolean;
+  /**
+   * Let a request that resolves to no tenant at all continue without one.
+   * Defaults to false, which answers 404.
+   *
+   * This is what makes `createRequireTenantMiddleware({ requirement:
+   * "optional" })` reachable: without it the resolve middleware refuses every
+   * tenant-less request before the requirement is consulted. A resolution
+   * that *was* produced is still checked in full — an unknown, untrusted or
+   * suspended tenant is refused whether or not this is set.
+   */
+  readonly optional?: boolean;
   /** Reads verified token claims for the JWT resolver. */
   readonly getClaims?: (
     context: HttpMiddlewareContext,
@@ -128,6 +139,8 @@ export function createResolveTenantMiddleware(
     }
 
     if (!resolution) {
+      if (options.optional) return next();
+
       return options.notFoundResponse
         ? {
             status: 404,

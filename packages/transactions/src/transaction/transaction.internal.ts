@@ -36,6 +36,14 @@ export interface TransactionInternals {
   _markTimedOut(): void;
   /** The reason supplied to `markRollbackOnly`, if any. */
   _getRollbackOnlyReason(): unknown;
+  /**
+   * Take the failures collected from `afterCommit` callbacks.
+   *
+   * The transaction stays committed when a callback throws — nothing can
+   * undo the adapter commit — but the failures used to vanish without a
+   * trace. The manager drains them and reports them to `hooks.onError`.
+   */
+  _drainCallbackErrors(): unknown[];
 }
 
 /**
@@ -84,6 +92,23 @@ export interface SavepointHandle {
   readonly parent: unknown;
   /** The savepoint name created on that handle. */
   readonly savepoint: string;
+}
+
+/**
+ * Resolve the adapter connection a transaction runs on.
+ *
+ * A savepoint's handle names its parent connection; a participant's handle
+ * is the joined transaction's. A savepoint opened inside another savepoint
+ * used to be created against the outer *savepoint handle* rather than the
+ * connection, which no adapter can act on.
+ *
+ * @param transaction - Any transaction created by this package.
+ * @returns The connection-level adapter handle.
+ */
+export function connectionHandle(transaction: Transaction): unknown {
+  const handle = internals(transaction)._getHandle();
+  const savepoint = asSavepointHandle(handle);
+  return savepoint ? savepoint.parent : handle;
 }
 
 /**

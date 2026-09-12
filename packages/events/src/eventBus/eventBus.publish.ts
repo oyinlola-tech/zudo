@@ -99,8 +99,17 @@ export async function busPublish<TEvent extends Event>(
     metadata: options.metadata,
   });
 
+  /**
+   * The emit result is captured here, at the terminal, rather
+   * than read back from the pipeline's return value: a middleware
+   * that awaits next() and returns nothing (or something else)
+   * has still dispatched the handlers, and their outcome must not
+   * be reported as a short-circuit.
+   */
+  let emitResult: EventEmitResult<TEvent> | undefined;
+
   const terminal = async (): Promise<EventEmitResult<TEvent>> => {
-    return deps.emitter.emit(event, {
+    const result = await deps.emitter.emit(event, {
       mode: options.mode,
 
       errorMode: options.errorMode,
@@ -109,9 +118,11 @@ export async function busPublish<TEvent extends Event>(
 
       metadata: options.metadata,
     });
-  };
 
-  let emitResult: EventEmitResult<TEvent> | undefined;
+    emitResult = result;
+
+    return result;
+  };
 
   let middlewareExecutions:
     | readonly {
@@ -132,12 +143,8 @@ export async function busPublish<TEvent extends Event>(
     );
 
     middlewareExecutions = pipelineResult.executions;
-
-    if (isEventEmitResult(pipelineResult.result)) {
-      emitResult = pipelineResult.result as EventEmitResult<TEvent>;
-    }
   } else {
-    emitResult = await terminal();
+    await terminal();
   }
 
   deps.notify({

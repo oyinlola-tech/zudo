@@ -289,6 +289,12 @@ export class DatabaseClient
 
   /**
    * Runs a callback inside a Prisma interactive transaction.
+   *
+   * When `options.signal` aborts, the abort is raised *inside* the
+   * transaction callback so Prisma rolls the transaction back; the caller
+   * is released at the same moment. Racing only the outer promise let the
+   * callback finish and the transaction commit after the caller had
+   * already been told it was aborted.
    */
   public async transaction<TResult>(
     callback: TransactionCallback<DatabaseTransactionContext, TResult>,
@@ -303,7 +309,8 @@ export class DatabaseClient
     try {
       return await raceAbort(
         this.prisma.$transaction(
-          async (transaction) => callback(transaction),
+          async (transaction) =>
+            raceAbort(callback(transaction), options.signal),
           transactionOptions,
         ),
         options.signal,

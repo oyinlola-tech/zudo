@@ -123,9 +123,15 @@ function isNonPublicIpv6(raw: string): boolean {
  */
 export function isBlockedFetchHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
-  const bare = host.startsWith("[") && host.endsWith("]")
+  const unbracketed = host.startsWith("[") && host.endsWith("]")
     ? host.slice(1, -1)
     : host;
+  // A trailing dot marks a fully-qualified name (`localhost.`,
+  // `metadata.google.internal.`). DNS resolves it to the same address as
+  // the undotted form, but the WHATWG parser keeps the dot on domain
+  // hosts, so without stripping it every name-based rule below was one
+  // character away from being bypassed.
+  const bare = unbracketed.replace(/\.+$/, "");
   if (BLOCKED_HOST_NAMES.has(bare)) return true;
   for (const suffix of BLOCKED_HOST_SUFFIXES) {
     if (bare.endsWith(suffix)) return true;

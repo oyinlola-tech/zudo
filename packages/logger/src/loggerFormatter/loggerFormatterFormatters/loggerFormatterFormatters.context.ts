@@ -25,6 +25,15 @@ export function formatContext(entry: LoggerEntry): string {
       continue;
     }
 
+    // Context identifiers are also flattened into metadata; skip the ones
+    // the metadata block already prints so a line never repeats itself.
+    if (
+      Object.hasOwn(entry.metadata, key) &&
+      entry.metadata[key] === value
+    ) {
+      continue;
+    }
+
     values.push(`${escapeLogText(key)}=${escapeLogText(String(value))}`);
   }
 

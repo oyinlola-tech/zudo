@@ -1,5 +1,22 @@
 # @zudojs/permissions
 
+## 1.1.0
+
+### Minor Changes
+
+- Audit round 9 — authorization fixes.
+
+  - A deny rule is no longer overridden by an allowing policy. `deny-overrides` said any applicable deny wins, yet a policy allowing `post:*` cancelled a `deny post:update` rule. A check the rules denied now stays denied, with `reason: "rule_deny"` (previously `"no_matching_rule"`) and the rule's name in `decision.policy`.
+  - Cache keys escape `|` (and `\`) inside actor and resource ids. Actor `u|post:read` checking `x:y` used to share a key with actor `u` checking `post:read` on resource `x:y`, so one actor's cached decision could answer for another. Ids without those characters produce the same keys as before.
+  - An `Ability` now reads a live policy registry. It captured the policy list when it was created, so a policy defined (or removed) afterwards was enforced by `engine.can()` and ignored by `ability.can()` for the same actor.
+  - `createRoleRegistry().define()`, `createPolicyRegistry().define()` and the inline `roles` array copy the `permissions`, `inherits` and `rules` arrays they are given. Mutating the caller's array after registration no longer widens a role or re-scopes a policy behind validation.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/http@1.1.0
+
 ## 0.1.1
 
 ### Patch Changes

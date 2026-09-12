@@ -73,6 +73,12 @@ not capture a shorter-lived dependency.
 `options.scope` you pass — a value provider can only ever return the one
 instance you gave it.
 
+A `useExisting` alias never becomes a second owner of its target's instance:
+a `SINGLETON` or `SCOPED` target is disposed exactly once by whoever created
+it, and a `SCOPED` alias of a `SINGLETON` leaves the singleton alive when the
+scope is disposed. Only a `TRANSIENT` target captured by a cached alias is
+tracked (and disposed) through the alias.
+
 Tracking covers **every** `SINGLETON`/`SCOPED` instance the container
 creates — including ones created transitively as dependencies of another
 resolution — not just the value returned by the `resolve()` call.
@@ -141,7 +147,13 @@ which case the later registration wins. Use `container.replace()` to
 intentionally swap a registration.
 
 Replacing or removing a registration **evicts and disposes** its cached
-singleton, so the next `resolve()` uses the new provider.
+singleton — and evicts any cached `useExisting` alias of it — so the next
+`resolve()` of either token uses the new provider.
+
+`DuplicateRegistrationError`, `CircularDependencyError`,
+`RegistrationNotFoundError` and `ProviderResolutionError` are defined in
+`@zudojs/errors` and re-exported from this package, so `instanceof` checks
+need only one import.
 
 ## Resolution options
 
@@ -201,6 +213,10 @@ await container.dispose();
 - Disposal is terminal: the container is marked disposed even if some
   instances fail to dispose, and every failure is reported in the thrown
   `AggregateError`. `dispose()` is idempotent; any use after disposal throws.
+  The container counts as disposed from the moment `dispose()` is called —
+  a `resolve()` racing the disposal throws rather than creating an instance
+  nobody will clean up — and concurrent `dispose()` calls all settle when
+  the one disposal finishes.
 - `clearSingletons()` evicts and disposes cached singletons without
   disposing the container.
 

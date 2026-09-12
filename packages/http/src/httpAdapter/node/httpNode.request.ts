@@ -22,6 +22,8 @@ import type { NodeRequestOptions } from "./httpNode.type.js";
 
 import { removePort, extractPort } from "./httpNode.server.js";
 
+import { decodeQueryComponent } from "../../httpQuery/http.query.js";
+
 /* -------------------------------------------------------------------------- */
 /* Proxy Trust                                                                */
 /* -------------------------------------------------------------------------- */
@@ -185,6 +187,16 @@ export function getNodeRemoteAddress(
   return getClientIp(proxyRequest, trustProxy) ?? peer;
 }
 
+/**
+ * Parses the request-target's query string into a flat record.
+ *
+ * Every value is attacker-controlled. `decodeURIComponent` throws on a
+ * malformed sequence such as `%E0`, and this ran before the adapter's
+ * try/catch, so one such request tore the connection down instead of being
+ * answered. Decoding is delegated to the query module's non-throwing
+ * decoder, which also gives `+` its form-encoding meaning. A pair is split on
+ * its **first** `=` so `a=b=c` keeps the value `b=c`.
+ */
 export function parseNodeQuery(
   request: IncomingMessage,
 ): Readonly<Record<string, string>> {
@@ -200,7 +212,12 @@ export function parseNodeQuery(
     return Object.freeze({});
   }
 
-  const queryString = url.slice(questionIndex + 1);
+  const hashIndex = url.indexOf("#", questionIndex + 1);
+
+  const queryString = url.slice(
+    questionIndex + 1,
+    hashIndex === -1 ? undefined : hashIndex,
+  );
 
   if (!queryString) {
     return Object.freeze({});
@@ -209,11 +226,20 @@ export function parseNodeQuery(
   const params: Record<string, string> = {};
 
   for (const pair of queryString.split("&")) {
-    const [key, value] = pair.split("=");
+    if (pair === "") {
+      continue;
+    }
+
+    const separator = pair.indexOf("=");
+
+    const rawKey = separator === -1 ? pair : pair.slice(0, separator);
+
+    const rawValue = separator === -1 ? "" : pair.slice(separator + 1);
+
+    const key = decodeQueryComponent(rawKey);
 
     if (key) {
-      params[decodeURIComponent(key)] =
-        value !== undefined ? decodeURIComponent(value) : "";
+      params[key] = decodeQueryComponent(rawValue);
     }
   }
 

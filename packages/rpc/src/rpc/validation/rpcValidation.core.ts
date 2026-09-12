@@ -12,6 +12,7 @@ import type { Schema, SchemaIssue } from "@zudojs/schema";
 import type { RPCRequest } from "../types/rpcRequest.type.js";
 
 import {
+  RPCInternalError,
   RPCInvalidRequestError,
   RPCValidationError,
 } from "../errors/rpc.errors.js";
@@ -207,8 +208,13 @@ export function parseInput<T>(
  * Parses a handler's result against its output schema.
  *
  * An invalid output is a server defect rather than a caller mistake, so
- * the issues describe internal shape and stay server-side: the thrown
- * error carries no issue detail.
+ * it is thrown as an `RPCInternalError` (`expose: false`): the server
+ * answers with the generic internal error and hands the detail — the
+ * failing paths and codes — to `onInternalError`. Throwing a validation
+ * error here told the caller *its* request was invalid, with an empty
+ * issue list, for a fault that is entirely the handler's.
+ *
+ * @throws {RPCInternalError}
  */
 export function parseOutput<T>(
   schema: RPCSchema<T>,
@@ -221,9 +227,12 @@ export function parseOutput<T>(
     return result.data;
   }
 
-  throw new RPCValidationError(
-    `Procedure "${procedureName}" produced a response that does not match its output schema.`,
-    undefined,
+  const where = toValidationIssues(result.issues)
+    .map((issue) => `${issue.path || "(root)"}: ${issue.code}`)
+    .join(", ");
+
+  throw new RPCInternalError(
+    `Procedure "${procedureName}" produced a response that does not match its output schema at ${where}.`,
     procedureName,
   );
 }

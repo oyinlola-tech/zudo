@@ -1,5 +1,14 @@
 # @zudojs/validation
 
+## 1.0.1
+
+### Patch Changes
+
+- - `any()` with no validators no longer echoes the rejected value in its `received` field, matching `first()` and the package's rule that issues never carry the input.
+  - `getSerializationDepth` counts an empty object or array as one level, so it agrees with `assertDepthWithinLimit`: a value now always passes the depth guard at exactly its measured depth (`getSerializationDepth({})` is `1`, not `0`).
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

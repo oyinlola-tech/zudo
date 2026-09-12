@@ -12,6 +12,7 @@ import {
   emitComponentFailed,
   recordResult,
   transitionComponent,
+  wasAttempted,
 } from "./lifecycleManager.context.js";
 
 /** Shutdown phases in execution order. */
@@ -50,6 +51,21 @@ async function runShutdown(ctx: LifecycleManagerContext): Promise<void> {
   ctx.events.emit("application:stopping", {});
 
   const deadline = Date.now() + ctx.shutdownTimeout;
+
+  // A startup stage still executing must settle before its components
+  // are stopped, otherwise `stop()` overlaps the component's own
+  // `start()`. Startup itself refuses to launch further stages once
+  // `shutdownPromise` is set, so this wait is bounded by one stage.
+  if (ctx.inFlight !== undefined) {
+    await raceDeadline(
+      ctx,
+      ctx.inFlight.then(
+        () => undefined,
+        () => undefined,
+      ),
+      Math.max(deadline - Date.now(), 1),
+    );
+  }
 
   // The shutdown deadline used to be checked only BETWEEN the two
   // phases, so a single hook that never settled hung shutdown (and the
@@ -122,7 +138,16 @@ async function raceDeadline(
   void phase.catch(() => {});
 }
 
-/** Executes a single shutdown phase across all registered components. */
+/**
+ * Executes a single shutdown phase across all registered components.
+ *
+ * A hook only runs for components that reached the matching startup
+ * phase: `stop()` when `start` ran, `dispose()` when `initialize` ran.
+ * Rollback after an early failure — and `shutdown()` on a manager that
+ * was never started — used to call `stop()` on components that had
+ * never started; a real server's `close()` throws in that situation
+ * and the phantom failure was then recorded against the component.
+ */
 async function executeShutdownPhase(
   ctx: LifecycleManagerContext,
   phase: LifecyclePhase,
@@ -134,10 +159,13 @@ async function executeShutdownPhase(
     ctx.controller.signal,
   );
 
-  const failureState =
-    phase === LifecyclePhase.STOP
-      ? LifecycleState.STOPPED
-      : LifecycleState.DISPOSED;
+  const isStop = phase === LifecyclePhase.STOP;
+  const prerequisite = isStop
+    ? LifecyclePhase.START
+    : LifecyclePhase.INITIALIZE;
+  const successState = isStop
+    ? LifecycleState.STOPPED
+    : LifecycleState.DISPOSED;
 
   for (const stage of plan.stages) {
     const stageRegs = stage.components
@@ -146,15 +174,35 @@ async function executeShutdownPhase(
 
     if (stageRegs.length === 0) continue;
 
+    const runnable: typeof stageRegs = [];
+
     for (const reg of stageRegs) {
-      transitionComponent(ctx, reg.id, LifecycleState.STOPPING);
+      if (!wasAttempted(ctx, reg.id, prerequisite)) {
+        // Never reached the phase this hook undoes. It still ends up
+        // DISPOSED so status reflects the teardown.
+        if (!isStop) {
+          transitionComponent(ctx, reg.id, LifecycleState.DISPOSED);
+        }
+        continue;
+      }
+
+      runnable.push(reg);
+
+      // Only the stop phase moves a component into STOPPING; dispose
+      // runs from STOPPED (or FAILED) and transitions straight to
+      // DISPOSED.
+      if (isStop) {
+        transitionComponent(ctx, reg.id, LifecycleState.STOPPING);
+      }
       ctx.events.emit("component:stopping", {
         component: { componentId: reg.id },
       });
     }
 
+    if (runnable.length === 0) continue;
+
     const results = await ctx.executor.executeStage(
-      stageRegs,
+      runnable,
       phase,
       context,
       ctx.concurrency,
@@ -168,7 +216,7 @@ async function executeShutdownPhase(
       recordResult(ctx, result);
 
       if (result.success) {
-        transitionComponent(ctx, result.id, failureState);
+        transitionComponent(ctx, result.id, successState);
         ctx.events.emit("component:stopped", {
           component: { componentId: result.id, duration: result.duration },
         });

@@ -5,7 +5,7 @@
  */
 
 import { LifecyclePhase, LifecycleState } from "@zudojs/constants";
-import { LifecycleStartError } from "@zudojs/errors";
+import { LifecycleComponentError, LifecycleStartError } from "@zudojs/errors";
 import { buildExecutionPlan } from "../lifecyclePlan/lifecyclePlan.core.js";
 import { createLifecycleContext } from "../lifecycleContext/lifecycleContext.type.js";
 import type { LifecycleManagerContext } from "./lifecycleManager.context.js";
@@ -13,8 +13,11 @@ import {
   transitionComponent,
   transitionComponentBatch,
   emitComponentFailed,
+  failComponent,
+  markAttempted,
   recordResult,
 } from "./lifecycleManager.context.js";
+import type { ExecutionResult } from "../lifecycleExecutor/lifecycleExecutor.core.js";
 import { performShutdown } from "./lifecycleManager.shutdown.js";
 import type { LifecycleEventType } from "../lifecycleEvents/lifecycleEvents.core.js";
 
@@ -94,6 +97,7 @@ export async function performStartup(
     if (failedInit) {
       throw new LifecycleStartError(failedInit.id, failedInit.error);
     }
+    assertNotShuttingDown(ctx, LifecyclePhase.INITIALIZE);
     ctx.state.transition(LifecycleState.INITIALIZED);
     ctx.events.emit("application:initialized", {
       duration: Date.now() - ctx.startTime,
@@ -104,6 +108,7 @@ export async function performStartup(
     if (failedStart) {
       throw new LifecycleStartError(failedStart.id, failedStart.error);
     }
+    assertNotShuttingDown(ctx, LifecyclePhase.START);
     ctx.state.transition(LifecycleState.STARTED);
 
     // A failing `ready` hook on a critical component used to be
@@ -113,6 +118,7 @@ export async function performStartup(
     if (failedReady) {
       throw new LifecycleStartError(failedReady.id, failedReady.error);
     }
+    assertNotShuttingDown(ctx, LifecyclePhase.READY);
 
     ctx.state.transition(LifecycleState.READY);
     ctx.events.emit("application:ready", {
@@ -122,7 +128,10 @@ export async function performStartup(
     // Rollback happens on exactly one path, so a completed teardown is
     // never re-entered and its DISPOSED state is never overwritten
     // with FAILED.
+    // When the failure IS a requested shutdown, the teardown already
+    // owns the application state.
     if (
+      ctx.shutdownPromise === undefined &&
       ctx.state.state !== LifecycleState.FAILED &&
       ctx.state.state !== LifecycleState.DISPOSED
     ) {
@@ -135,6 +144,32 @@ export async function performStartup(
   }
 }
 
+/**
+ * Throws when a shutdown has been requested while startup is running.
+ *
+ * Startup used to keep launching later stages after `shutdown()` had
+ * already torn everything down: a component started that way was
+ * never stopped, and the eventual failure was an opaque
+ * LifecycleStateError from the DISPOSED → INITIALIZED transition.
+ */
+function assertNotShuttingDown(
+  ctx: LifecycleManagerContext,
+  phase: LifecyclePhase,
+): void {
+  if (ctx.shutdownPromise !== undefined) {
+    throw new LifecycleStartError(
+      "application",
+      new LifecycleComponentError(
+        "application",
+        phase,
+        new Error(
+          "Startup was cancelled because shutdown was requested while the application was starting.",
+        ),
+      ),
+    );
+  }
+}
+
 /** Identifies the critical component that aborted a phase. */
 interface PhaseFailure {
   readonly id: string;
@@ -144,6 +179,24 @@ interface PhaseFailure {
 /**
  * Executes a single startup phase across all registered components.
  * Returns the failure of the first critical component, or undefined.
+ *
+ * Two bookkeeping rules apply to every stage:
+ *
+ * - A component that FAILED an earlier phase, or whose dependency has
+ *   failed, does not enter this phase. It used to have `start()` and
+ *   `ready()` invoked after its own `initialize()` had thrown, and its
+ *   dependents were started as if the dependency were healthy —
+ *   silently voiding the `dependsOn` contract. A skipped dependent is
+ *   recorded as FAILED with a LifecycleComponentError naming the
+ *   failed dependency, and its own `critical` flag decides whether
+ *   startup aborts.
+ *
+ * - Every result of a stage is recorded, transitioned and announced
+ *   before a critical failure aborts the phase. Returning on the first
+ *   failed result dropped the results of siblings in the same stage,
+ *   which were then left in INITIALIZING / STARTING forever (no
+ *   transition leads out of those states except to their success or
+ *   FAILED) even after rollback had disposed them.
  */
 async function executePhase(
   ctx: LifecycleManagerContext,
@@ -167,24 +220,84 @@ async function executePhase(
 
     if (stageRegs.length === 0) continue;
 
+    assertNotShuttingDown(ctx, phase);
+
+    const runnable: typeof stageRegs = [];
+    let criticalFailure: PhaseFailure | undefined;
+
+    for (const reg of stageRegs) {
+      if (ctx.componentStates.get(reg.id)?.state === LifecycleState.FAILED) {
+        // Already failed in an earlier phase; nothing more to run.
+        continue;
+      }
+
+      const failedDependency = reg.dependsOn.find(
+        (dep) =>
+          ctx.componentStates.get(dep)?.state === LifecycleState.FAILED,
+      );
+
+      if (failedDependency === undefined) {
+        runnable.push(reg);
+        continue;
+      }
+
+      const skipped: ExecutionResult = {
+        id: reg.id,
+        phase,
+        duration: 0,
+        success: false,
+        error: new LifecycleComponentError(
+          reg.id,
+          phase,
+          new Error(
+            `Component "${reg.id}" was not started because its dependency "${failedDependency}" failed.`,
+          ),
+        ),
+      };
+
+      recordResult(ctx, skipped);
+      failComponent(ctx, reg.id);
+      emitComponentFailed(ctx, skipped);
+
+      if (reg.critical) {
+        criticalFailure ??= { id: reg.id, error: skipped.error };
+      }
+    }
+
+    if (criticalFailure) {
+      ctx.state.forceState(LifecycleState.FAILED);
+      return criticalFailure;
+    }
+
+    if (runnable.length === 0) continue;
+
     transitionComponentBatch(
       ctx,
-      stageRegs.map((r) => r.id),
+      runnable.map((r) => r.id),
       EXECUTING_STATE[phase],
     );
 
-    for (const reg of stageRegs) {
+    for (const reg of runnable) {
+      markAttempted(ctx, reg.id, phase);
       ctx.events.emit(events.begin, {
         component: { componentId: reg.id },
       });
     }
 
-    const results = await ctx.executor.executeStage(
-      stageRegs,
+    const pending = ctx.executor.executeStage(
+      runnable,
       phase,
       context,
       ctx.concurrency,
     );
+    ctx.inFlight = pending;
+
+    let results: readonly ExecutionResult[];
+    try {
+      results = await pending;
+    } finally {
+      ctx.inFlight = undefined;
+    }
 
     for (const result of results) {
       recordResult(ctx, result);
@@ -193,8 +306,7 @@ async function executePhase(
         transitionComponent(ctx, result.id, LifecycleState.FAILED);
         emitComponentFailed(ctx, result);
         if (ctx.registry.get(result.id)?.critical) {
-          ctx.state.forceState(LifecycleState.FAILED);
-          return { id: result.id, error: result.error };
+          criticalFailure ??= { id: result.id, error: result.error };
         }
       } else {
         transitionComponent(ctx, result.id, SUCCESS_STATE[phase]);
@@ -202,6 +314,11 @@ async function executePhase(
           component: { componentId: result.id, duration: result.duration },
         });
       }
+    }
+
+    if (criticalFailure) {
+      ctx.state.forceState(LifecycleState.FAILED);
+      return criticalFailure;
     }
   }
 

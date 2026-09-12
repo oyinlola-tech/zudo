@@ -119,6 +119,66 @@ export class ModuleLoader {
   ): Promise<ModuleLoadResult> {
     const closure = this.collectClosure(requested);
 
+    const loaded: Module[] = [];
+    const alreadyLoaded: Module[] = [];
+    const order: ModuleId[] = [];
+
+    /*
+     * Instances may declare dependencies of their own
+     * (Module.dependencies) that the definition does not list.
+     * Those are only known after instantiation, so the closure is
+     * extended and loaded in rounds until nothing new appears.
+     */
+    let pending = new Set<ModuleId>(closure.keys());
+    while (pending.size > 0) {
+      const graph = this.createGraph([...closure.values()]);
+      const roundOrder = resolveModuleStartupOrder(graph).filter((id) =>
+        pending.has(id),
+      );
+      const discovered: ModuleId[] = [];
+
+      for (const moduleId of roundOrder) {
+        const registration = this.registry.get(moduleId);
+        if (!registration)
+          throw new ModuleLoadError(
+            moduleId,
+            new Error(
+              `Module "${moduleId}" disappeared from the registry during loading.`,
+            ),
+          );
+        order.push(moduleId);
+
+        let instance: Module;
+        if (registration.state === "loaded" && registration.instance) {
+          instance = registration.instance;
+          alreadyLoaded.push(instance);
+        } else {
+          instance = await this.instantiate(registration.definition);
+          loaded.push(instance);
+        }
+
+        for (const dependencyId of instance.dependencies ?? []) {
+          if (closure.has(dependencyId)) continue;
+          if (!this.registry.has(dependencyId))
+            throw new MissingModuleDependencyError(moduleId, dependencyId);
+          discovered.push(dependencyId);
+        }
+      }
+
+      const extra = this.collectClosure(discovered);
+      pending = new Set();
+      for (const [id, definition] of extra) {
+        if (closure.has(id)) continue;
+        closure.set(id, definition);
+        pending.add(id);
+      }
+    }
+
+    /*
+     * Skipped modules are determined after loading so that an
+     * autoLoad:false module pulled in by an instance-declared
+     * dependency is reported as loaded, not skipped.
+     */
     const skipped: ModuleId[] = [];
     if (options.reportSkipped) {
       for (const definition of this.registry.getDefinitions()) {
@@ -126,37 +186,6 @@ export class ModuleLoader {
           skipped.push(definition.id);
         }
       }
-    }
-
-    if (closure.size === 0)
-      return {
-        loaded: [],
-        alreadyLoaded: [],
-        skipped: Object.freeze([...skipped]),
-        order: [],
-      };
-
-    const graph = this.createGraph([...closure.values()]);
-    const order = resolveModuleStartupOrder(graph);
-    const loaded: Module[] = [];
-    const alreadyLoaded: Module[] = [];
-
-    for (const moduleId of order) {
-      const registration = this.registry.get(moduleId);
-      if (!registration)
-        throw new ModuleLoadError(
-          moduleId,
-          new Error(
-            `Module "${moduleId}" disappeared from the registry during loading.`,
-          ),
-        );
-      if (registration.state === "loaded" && registration.instance) {
-        alreadyLoaded.push(registration.instance);
-        continue;
-      }
-
-      const instance = await this.instantiate(registration.definition);
-      loaded.push(instance);
     }
 
     return {
@@ -245,9 +274,17 @@ export class ModuleLoader {
          */
         moduleContexts: (dependencyId: ModuleId) =>
           this.contexts.get(dependencyId),
-        declaredDependencies: this.registry
-          .getDependencies(moduleId)
-          .map((dependency) => dependency.id),
+        /*
+         * Dependencies declared by the instance itself
+         * (Module.dependencies) are honoured alongside the
+         * definition's, matching the lifecycle ordering.
+         */
+        declaredDependencies: [
+          ...this.registry
+            .getDependencies(moduleId)
+            .map((dependency) => dependency.id),
+          ...(module.dependencies ?? []),
+        ],
       });
 
       this.contexts.set(moduleId, context);

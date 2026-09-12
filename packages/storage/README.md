@@ -92,7 +92,9 @@ const page = await users.findAll({ orderBy: "email", limit: 20, offset: 0 });
   excluded from listings and refused as an object key.
 - `LocalObjectStorage` resolves its base path once and checks containment by
   path rather than by string prefix, then verifies the real path so a symlink
-  inside the store cannot redirect a read or write out of it.
+  inside the store cannot redirect a read or write out of it. A base directory
+  that is itself reached through a symlink (macOS's `tmpdir()`, a mounted
+  volume) is fine: containment is checked against its real location.
 - `ConnectionPool` reserves a slot before awaiting the factory, so concurrent
   `acquire()` calls cannot overshoot `max`, and ignores a connection released
   twice rather than handing it to two callers.

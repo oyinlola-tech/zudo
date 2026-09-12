@@ -135,7 +135,12 @@ export async function createApplication(
 
   const context = new ApplicationContext({
     container,
-    configuration: configuration.getConfiguration(),
+    /*
+     * An accessor rather than a snapshot: after
+     * `configuration.reload()` the application context must hand
+     * out the reloaded configuration, not the one captured here.
+     */
+    configuration: () => configuration.getConfiguration(),
     modules: moduleRegistry,
     logger,
     contextStorage,

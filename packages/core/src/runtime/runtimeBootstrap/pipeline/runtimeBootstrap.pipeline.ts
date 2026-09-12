@@ -92,7 +92,10 @@ export async function executeBootstrapPipeline(
     await runLifecyclePhase(
       "initializing",
       "initialized",
-      () => services.moduleLifecycle.initialize(),
+      () =>
+        services.moduleLifecycle.initialize(
+          phaseOptions(options.continueOnInitializeError),
+        ),
       services.moduleLifecycle,
       options.continueOnInitializeError,
       (count) => {
@@ -110,7 +113,10 @@ export async function executeBootstrapPipeline(
     await runLifecyclePhase(
       "starting",
       "started",
-      () => services.moduleLifecycle.start(),
+      () =>
+        services.moduleLifecycle.start(
+          phaseOptions(options.continueOnStartError),
+        ),
       services.moduleLifecycle,
       options.continueOnStartError,
       (count) => {
@@ -127,6 +133,22 @@ export async function executeBootstrapPipeline(
       log,
     );
   }
+}
+
+/**
+ * Per-phase options handed to the ModuleLifecycleManager.
+ *
+ * The runtime's continueOn*Error flag can only relax the manager: when
+ * it is on, the manager must keep going too (otherwise it would roll
+ * every module back and throw, and the runtime would report READY
+ * with nothing running). When it is off the manager keeps its own
+ * setting; a permissive manager then returns the failures and the
+ * runtime throws and unwinds.
+ */
+function phaseOptions(
+  continueOnError: boolean,
+): { readonly continueOnError?: boolean } {
+  return continueOnError ? { continueOnError: true } : {};
 }
 
 async function loadModules(

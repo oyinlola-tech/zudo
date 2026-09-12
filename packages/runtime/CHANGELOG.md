@@ -1,5 +1,24 @@
 # @zudojs/runtime
 
+## 1.1.0
+
+### Minor Changes
+
+- - **`runtimeId` is now actually generated when omitted.** It was documented as auto-generated, but nothing generated it: an omitted id reached `runtime.context.runtimeId`, every event payload and every log line as `undefined`. `resolveRuntimeOptions()` now fills in `rt_<32 hex>` via `createRuntimeId()`; an explicit id is honoured as before.
+  - **`stop()` during `start()` no longer throws.** Calling `stop()` while startup was in flight threw `RuntimeStateError` ("cannot stop a runtime in state initializing"), so a SIGTERM arriving while modules were still coming up was logged as "Shutdown failed" and the runtime carried on to `running`. `stop()` now waits for the in-flight start to settle (bounded by `startupTimeout`) and then shuts the runtime down.
+  - **Removing the last readiness check restores readiness.** A running runtime whose only (failing) check was removed stayed at `ready: false` / `readiness.state: "degraded"` while `health.state` — which sees no checks — reported `healthy`. `ReadinessTracker.removeCheck()` now returns to `ready` when the last check is removed from a degraded tracker.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/config@1.0.1
+  - @zudojs/container@1.1.0
+  - @zudojs/core@1.1.0
+  - @zudojs/errors@1.0.1
+  - @zudojs/events@1.0.1
+  - @zudojs/logger@1.1.0
+  - @zudojs/constants@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

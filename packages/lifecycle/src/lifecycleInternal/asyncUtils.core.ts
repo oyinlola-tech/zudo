@@ -66,12 +66,25 @@ export async function withAbort<T>(
 
     signal.addEventListener("abort", onAbort, { once: true });
 
-    fn(signal)
+    // A synchronously throwing `fn` rejected via the Promise executor
+    // but skipped both `.then` branches, so its abort listener was
+    // never removed and accumulated on a long-lived signal.
+    let operation: Promise<T>;
+
+    try {
+      operation = fn(signal);
+    } catch (error) {
+      signal.removeEventListener("abort", onAbort);
+      reject(error);
+      return;
+    }
+
+    operation
       .then((result) => {
         signal.removeEventListener("abort", onAbort);
         resolve(result);
       })
-      .catch((error) => {
+      .catch((error: unknown) => {
         signal.removeEventListener("abort", onAbort);
         reject(error);
       });

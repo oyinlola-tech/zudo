@@ -103,6 +103,15 @@ the transaction.
 - Committing a transaction that is not active throws rather than silently
   doing nothing. Only an already-committed transaction is a no-op.
 - A `nested` transaction rolls back to its savepoint, never to the connection.
+  Savepoints are always created on the connection, including when the
+  enclosing scope is itself a savepoint or a participant.
+- `begin()` and `run()` both honour `timeout`; completing a transaction through
+  `manager.commit()` / `manager.rollback()` releases its timer and registry entry.
+- Failures thrown by `afterCommit` callbacks never undo the commit; they are
+  reported to `hooks.onError` as an `AggregateError`.
+- `retry` replays only attempts that opened their own transaction. An attempt
+  that joined an enclosing transaction has marked it rollback-only and is not
+  replayed.
 
 ## Use Cases
 

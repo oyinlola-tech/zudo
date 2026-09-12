@@ -20,8 +20,10 @@ export function assertThrows(
   fn: () => unknown,
   expectedMessage?: string,
 ): Error {
+  let returned: unknown;
+
   try {
-    fn();
+    returned = fn();
   } catch (error) {
     if (expectedMessage !== undefined) {
       const message = error instanceof Error ? error.message : String(error);
@@ -34,7 +36,27 @@ export function assertThrows(
     return error instanceof Error ? error : new Error(String(error));
   }
 
+  if (isThenable(returned)) {
+    // An async function never throws synchronously; its failure is a
+    // rejection. Reporting "did not throw" was misleading, and the
+    // rejected promise nobody awaited surfaced as an unhandled rejection
+    // blamed on whichever test happened to be running.
+    void returned.then(undefined, () => undefined);
+
+    throw new Error(
+      "assertThrows received a function that returned a promise; use assertRejects for async functions.",
+    );
+  }
+
   throw new Error("Expected function to throw, but it did not.");
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === "object" || typeof value === "function") &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
 }
 
 /**

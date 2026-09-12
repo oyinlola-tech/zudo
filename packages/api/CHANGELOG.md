@@ -1,5 +1,16 @@
 # @zudojs/api
 
+## 1.0.1
+
+### Patch Changes
+
+- - `APIExecutor` runs a hand-rolled operation whose handler returns synchronously instead of failing with "promise.then is not a function" reported as an internal error of the operation.
+  - README: `BaseError.toJSON()` serializes `cause` (message and stack), so `result.error` must not be passed to `res.json()` as-is; the section now says which fields a transport may expose.
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/schema@1.0.1
+  - @zudojs/constants@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

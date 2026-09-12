@@ -66,8 +66,14 @@ assertResponseBody(response, { id: "u_1", roles: new Set(["admin"]) });
 - `cleanup.dispose()` rejects with an `AggregateError` when any cleanup fails,
   after running them all.
 - `mockResolvedValue` and `mockRejectedValue` return promises; `results` stays
-  aligned index-for-index with `calls`.
+  aligned index-for-index with `calls`, even when the implementation throws
+  (the slot holds `undefined` and the thrown value lands in `errors`).
 - Spies forward their receiver, so a method reading `this` still works.
+- `assertThrows` is for synchronous code. Handing it an async function throws
+  "use assertRejects" instead of a misleading "did not throw", and the
+  rejection is handled rather than leaked.
+- `findByMetadata` and the structural assertions compare `Set` members and
+  `Map` keys by value, so `new Set([{ id: 1 }])` matches `new Set([{ id: 1 }])`.
 
 ## Use Cases
 

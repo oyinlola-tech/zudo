@@ -103,7 +103,7 @@ onInitialize → onReady → onShutdown → onDestroy
 
 `createConfigurationManager({ registry, schemas, loaderOptions, validationOptions, redactorOptions })` loads registered sources by priority, deep-merges them, applies schema defaults, validates, and exposes an immutable `Configuration`.
 
-- `manager.on(event, listener)` / `manager.off(...)` receive `initializing`, `loaded`, `validated`, `ready`, `failed`, `reloading`, and `reloaded` events.
+- `manager.on(type, listener)` / `manager.off(...)` receive the `configuration.initializing`, `configuration.loaded`, `configuration.validated`, `configuration.ready`, `configuration.failed`, `configuration.reloading`, and `configuration.reloaded` events (`"*"` subscribes to all of them).
 - `manager.getSection(name)` returns a scoped configuration for a registered section; `manager.reload()` keeps programmatic defaults and serialises overlapping reloads.
 - Values are deep-frozen; `toObject()` returns an independent deep copy. Path lookups never walk the prototype chain, and `getNumber` accepts only plain decimal numbers.
 - Secrets never reach errors or logs: validation, load, and source errors pass through the redactor, which matches whole key words (`password`, `secret`, `token`, `pwd`, `passphrase`, `auth`, `dsn`, `credential`, ...).
@@ -120,7 +120,7 @@ onInitialize → onReady → onShutdown → onDestroy
 
 ## Execution context
 
-There is one execution-context model: the immutable `ExecutionContext` (`createExecutionContext`, `deriveExecutionContext`, `withExecutionMetadata`) propagated by `ContextStorage`, which wraps `AsyncLocalStorage`. `run(context, fn)` and `runDerived(overrides, fn)` establish a context for the callback and everything it awaits, `runWithValues(values, fn)` adds request-scoped values, and `capture()` / `runSnapshot(snapshot, fn)` carry a context across queue or timer boundaries. `getDefaultContextStorage()` is the process-wide instance every component uses unless another is injected.
+There is one execution-context model: the immutable `ExecutionContext` (`createExecutionContext`, `deriveExecutionContext`, `withExecutionMetadata`) propagated by `ContextStorage`, which wraps `AsyncLocalStorage`. `run(context, fn)` and `runDerived(overrides, fn)` establish a context for the callback and everything it awaits, `runWithValues(context, values, fn)` additionally binds a `ContextValues` collection (read back with `getValues()`), and `capture()` / `runSnapshot(snapshot, fn)` carry a context across queue or timer boundaries. `getDefaultContextStorage()` is the process-wide instance every component uses unless another is injected.
 
 Propagation is real at runtime:
 

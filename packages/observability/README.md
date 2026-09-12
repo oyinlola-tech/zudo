@@ -98,9 +98,11 @@ obs.logger.info("login", {
 ```
 
 Traversal handles the shapes secrets actually arrive in: arrays, nested
-objects, and cyclic graphs (a request object in a log context becomes
-`[CIRCULAR]` rather than a stack overflow). Class instances — `Error`, `Date`,
-`Map` — are left intact instead of being flattened to `{}`.
+objects, instances of your own classes (a DTO carrying a `password` field is
+redacted and keeps its prototype), and cyclic graphs (a request object in a log
+context becomes `[CIRCULAR]` rather than a stack overflow). Built-ins —
+`Error`, `Date`, `Map`, `Set`, typed arrays, `URL` — are left intact instead of
+being flattened to `{}`.
 
 `redactObject`, `redactValue` and `createStructureRedactor` are exported for
 use outside the logger.

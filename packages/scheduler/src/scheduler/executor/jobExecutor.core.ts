@@ -18,6 +18,7 @@ import {
   DEFAULT_JOB_TIMEOUT,
   DEFAULT_MAX_RETRIES,
   DEFAULT_RETRY_DELAY,
+  MAX_TIMER_DELAY,
 } from "../constants/schedulerConstants.core.js";
 
 /** Marker attached to the rejection a timeout produces, carrying its budget. */
@@ -111,7 +112,13 @@ export class JobExecutor {
     signal: AbortSignal,
     data: unknown,
   ): Promise<void> {
-    const timeout = job.options?.timeout ?? DEFAULT_JOB_TIMEOUT;
+    // A job registered straight into a `JobRegistry` skips `define()`'s
+    // validation; clamp so an oversized budget waits, rather than being
+    // silently reduced to 1ms by the timer subsystem.
+    const timeout = Math.min(
+      job.options?.timeout ?? DEFAULT_JOB_TIMEOUT,
+      MAX_TIMER_DELAY,
+    );
 
     // A dedicated controller per attempt, chained to the caller's signal, so a
     // timeout actually aborts the handler instead of only rejecting the

@@ -11,18 +11,26 @@ npm install @zudojs/http
 ## Quick Start
 
 ```typescript
-import { createHTTPServer } from "@zudojs/http";
+import {
+  createHttpServer,
+  createNodeHttpAdapter,
+  createResponseContext,
+} from "@zudojs/http";
 
-const server = createHTTPServer({
-  handler: {
-    async fetch(request) {
-      return new Response("Hello from Zudojs");
-    },
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 3000 }),
+  handler: async (request) => {
+    return createResponseContext().text(`Hello from Zudojs (${request.path})`);
   },
 });
 
 await server.start();
 ```
+
+A handler receives an `HttpRequestContext` and may return an
+`HttpResponseContext`, a plain `{ status, headers, body }` object, or any JSON
+value (which is sent as `application/json`). Throwing an `HttpError` created by
+`notFound()`, `unauthorized()` and friends answers with that error's status.
 
 ## Features
 

@@ -1,5 +1,12 @@
 # @zudojs/constants
 
+## 1.0.1
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+
 > Note: this changelog was corrected. An earlier revision contained an
 > erroneous `1.0.0` entry (describing a package rename) that never shipped —
 > the package has never been published above `0.1.x`.

@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.0.0';
+  var VERSION = '1.1.0';
   var GITHUB_URL = 'https://github.com/oyinlola-tech/zudo';
   var NPM_URL = 'https://www.npmjs.com/org/zudojs';
   var TWITTER_URL = 'https://x.com/zudojs';
@@ -64,6 +64,7 @@
     { g: 'Concepts', t: 'Modules', p: '/docs/concepts-modules', e: 'Primary building blocks with explicit boundaries.' },
     { g: 'Reference', t: 'All packages', p: '/docs/packages', e: '39 packages across six categories.' },
     { g: 'Reference', t: 'Roadmap', p: '/docs/roadmap', e: 'Implementation status and future direction.' },
+    { g: 'Reference', t: 'Changelog', p: '/docs/changelog', e: 'What changed in each release, package by package.' },
     { g: 'Reference', t: 'Package rules', p: '/docs/rules', e: 'Development standards every package follows.' },
     { g: 'Reference', t: 'Contributing', p: '/docs/contributing', e: 'How to contribute to Zudo.' },
     { g: 'Reference', t: 'Sponsors', p: '/sponsors', e: 'Support the ecosystem.' },
@@ -206,6 +207,7 @@
             col('Community', 'c-green', [
               ['Contributing', '/docs/contributing'],
               ['Roadmap', '/docs/roadmap'],
+              ['Changelog', '/docs/changelog'],
               ['Sponsors', '/sponsors'],
               ['Report an issue', GITHUB_URL + '/issues', true],
               ['Discussions', GITHUB_URL + '/discussions', true],

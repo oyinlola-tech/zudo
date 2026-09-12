@@ -79,6 +79,12 @@ const bus = createMessageBus({ allowMultipleHandlers: false });
 `DispatchResult.handlerResults` records every handler that ran, including the
 one that failed, with its real duration.
 
+Handlers receive the dispatch context as their second argument: the
+`headers`, `state` and correlation/causation overrides passed through
+`DispatchOptions.context`, plus anything a middleware stored in
+`context.state`. A dispatch cancelled through its `AbortSignal` between
+handlers fails with `MessageDispatchAbortedError`.
+
 ## Timeouts
 
 `timeout` is honoured by the dispatcher itself, so it applies whether you hold

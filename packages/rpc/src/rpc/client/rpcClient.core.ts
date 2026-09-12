@@ -143,8 +143,14 @@ export class RPCClient {
         metadata: options.metadata,
       });
 
+      // The transport is told the deadline as well as given the signal:
+      // `RPCTransportRequestOptions.timeout` exists so a transport can set
+      // its own socket or request timeout, and it was never populated.
       const races: Promise<RPCResponse>[] = [
-        this.transport.send(request, { signal: controller.signal }),
+        this.transport.send(request, {
+          signal: controller.signal,
+          ...(timeoutMs > 0 ? { timeout: timeoutMs } : {}),
+        }),
         this.abortPromise(controller.signal, procedure),
       ];
 
@@ -283,8 +289,19 @@ export class RPCClient {
     const code = response.error?.code;
 
     switch (code) {
-      case "RPC_TIMEOUT":
-        return new RPCTimeoutError(0, procedure);
+      case "RPC_TIMEOUT": {
+        // The constructor derives its message from a duration the wire
+        // does not carry; keep the type and restore the server's message
+        // rather than reporting "timed out after 0ms".
+        const timeout = new RPCTimeoutError(0, procedure);
+        Object.defineProperty(timeout, "message", {
+          value: message,
+          enumerable: false,
+          configurable: true,
+          writable: true,
+        });
+        return timeout;
+      }
       case "RPC_CANCELLED":
         return new RPCCancelledError(message, procedure);
       case "RPC_UNAVAILABLE":

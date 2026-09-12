@@ -53,6 +53,10 @@ export function createBufferedLoggerTransport(
         /* deliberate no-op */
       }
     }, flushInterval);
+    // A pending flush is housekeeping, not work: left referenced it kept a
+    // finished process alive for a full `flushInterval`. close() flushes
+    // whatever is buffered, so nothing is lost by letting the loop exit.
+    timer.unref?.();
   };
 
   const buffered: LoggerTransport = {

@@ -109,8 +109,7 @@ export class AdapterRegistry {
       return false;
     }
     this.adapters.delete(key);
-    await adapter.stop?.();
-    await adapter.dispose?.();
+    await this.teardown(adapter);
     return true;
   }
 
@@ -242,8 +241,7 @@ export class AdapterRegistry {
     const failures: unknown[] = [];
     for (const adapter of adapters) {
       try {
-        await adapter.stop?.();
-        await adapter.dispose?.();
+        await this.teardown(adapter);
       } catch (error) {
         failures.push(error);
       }
@@ -255,6 +253,41 @@ export class AdapterRegistry {
         "One or more adapters failed to dispose.",
       );
     }
+  }
+
+  /**
+   * Stops, then disposes, one adapter.
+   *
+   * `dispose()` runs even when `stop()` throws: the adapter has already
+   * left the registry by the time this is called, so skipping disposal
+   * would orphan its connections and timers with nothing left holding a
+   * reference to release them. A `stop()` failure is still reported — on
+   * its own when disposal succeeds, alongside the disposal error when
+   * both fail.
+   */
+  private async teardown(adapter: Adapter): Promise<void> {
+    let stopError: unknown;
+    let stopFailed = false;
+    try {
+      await adapter.stop?.();
+    } catch (error) {
+      stopFailed = true;
+      stopError = error;
+    }
+
+    try {
+      await adapter.dispose?.();
+    } catch (error) {
+      if (stopFailed) {
+        throw new AggregateError(
+          [stopError, error],
+          `Adapter "${adapter.name}" failed to stop and to dispose.`,
+        );
+      }
+      throw error;
+    }
+
+    if (stopFailed) throw stopError;
   }
 
   /**

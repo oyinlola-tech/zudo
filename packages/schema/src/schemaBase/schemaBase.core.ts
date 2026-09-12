@@ -14,6 +14,7 @@ import type {
 import { createParseContext } from "./schemaBase.context.js";
 import { schemaSuccess, schemaFailure } from "./schemaBase.result.js";
 import { SchemaValidationSignal } from "./schemaBase.context.js";
+import { describeThrown } from "./schemaBase.describe.js";
 import { SchemaError } from "@zudojs/errors";
 
 /**
@@ -147,20 +148,5 @@ export abstract class Schema<TOutput, TInput = TOutput> {
   /** Returns the current metadata. */
   public getMetadata(): SchemaMetadata | undefined {
     return this._metadata;
-  }
-}
-
-/**
- * Produces a safe message for an arbitrary thrown value. `String(value)` throws
- * for null-prototype objects and objects whose `toString` throws, which would
- * turn a schema failure into an unrelated TypeError.
- */
-function describeThrown(value: unknown): string {
-  if (value instanceof Error) return value.message;
-  if (typeof value === "string") return value;
-  try {
-    return String(value);
-  } catch {
-    return "Schema parsing failed.";
   }
 }

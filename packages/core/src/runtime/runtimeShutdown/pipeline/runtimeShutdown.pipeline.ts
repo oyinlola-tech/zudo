@@ -78,7 +78,7 @@ export async function executeShutdownPipeline(
     await runShutdownPhase(
       "stopping",
       "stopped",
-      () => moduleLifecycle.stop(),
+      () => moduleLifecycle.stop(phaseOptions(options.continueOnStopError)),
       moduleLifecycle,
       options.continueOnStopError,
       (count) => {
@@ -96,7 +96,8 @@ export async function executeShutdownPipeline(
     await runShutdownPhase(
       "destroying",
       "destroyed",
-      () => moduleLifecycle.destroy(),
+      () =>
+        moduleLifecycle.destroy(phaseOptions(options.continueOnDestroyError)),
       moduleLifecycle,
       options.continueOnDestroyError,
       (count) => {
@@ -109,6 +110,17 @@ export async function executeShutdownPipeline(
       log,
     );
   }
+}
+
+/**
+ * Per-phase options for the ModuleLifecycleManager: the runtime flag
+ * relaxes the manager when on and leaves its own setting when off
+ * (see the bootstrap pipeline for the rationale).
+ */
+function phaseOptions(
+  continueOnError: boolean,
+): { readonly continueOnError?: boolean } {
+  return continueOnError ? { continueOnError: true } : {};
 }
 
 async function runShutdownPhase(

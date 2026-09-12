@@ -65,6 +65,7 @@ export class LifecycleManager {
         options.shutdownTimeout ?? LIFECYCLE_DEFAULT_SHUTDOWN_TIMEOUT,
       componentStates: new Map(),
       results: new Map(),
+      attempted: new Map(),
       startTime: 0,
       controller: new AbortController(),
     };

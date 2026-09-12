@@ -1,5 +1,20 @@
 # @zudojs/plugins
 
+## 1.1.0
+
+### Minor Changes
+
+- Restart safety and semver ordering fixes (audit round 9).
+
+  - `PluginManager.start()` now throws `PluginStateError` when a plugin in the startup order has already been disposed (after `stop()` or a rolled-back startup). It used to skip disposed plugins silently, so a second `start()` resolved with nothing running, and a still-registered dependent could be started on top of dependencies that had been disposed. Unregister and re-register the disposed plugins, or use a new manager.
+  - `compareVersions` (and therefore `satisfiesVersion` / dependency version checks) compares prerelease identifiers per the semver specification: numeric identifiers compare numerically and rank below alphanumeric ones. `1.0.0-alpha.10` was sorted before `1.0.0-alpha.9`.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/constants@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

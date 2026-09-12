@@ -17,7 +17,12 @@ export interface PathContext {
 
 /** Options for the path resolver. */
 export interface PathResolverOptions {
-  /** Prefix to strip (e.g. "/tenant"). */
+  /**
+   * Prefix to strip (e.g. "/tenant").
+   *
+   * When set, only paths under the prefix name a tenant; any other path
+   * resolves to nothing.
+   */
   readonly prefix?: string;
   readonly priority?: number;
 }
@@ -44,13 +49,18 @@ export function createPathResolver(
       let segments = path.split("/").filter(Boolean);
 
       if (prefix) {
+        // A prefix scopes this resolver to the routes mounted under it. A
+        // path outside the prefix must not name a tenant at all: otherwise
+        // `/health` resolves tenant "health" and `/admin/...` resolves
+        // whatever tenant happens to be called "admin".
         const prefixSegments = prefix.split("/").filter(Boolean);
         if (
-          segments.slice(0, prefixSegments.length).join("/") ===
+          segments.slice(0, prefixSegments.length).join("/") !==
           prefixSegments.join("/")
         ) {
-          segments = segments.slice(prefixSegments.length);
+          return undefined;
         }
+        segments = segments.slice(prefixSegments.length);
       }
 
       if (segments.length === 0) return undefined;

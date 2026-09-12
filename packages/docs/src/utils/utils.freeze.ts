@@ -23,8 +23,9 @@ export function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
 
 /**
  * Returns a deep-frozen copy of `value`, leaving the caller's object
- * untouched. Falls back to freezing a shallow copy when the value
- * cannot be structurally cloned (e.g. contains functions).
+ * untouched. Falls back to a recursive copy of plain objects, arrays and
+ * Dates when the value cannot be structurally cloned (e.g. contains
+ * functions); those are kept by reference.
  */
 export function deepFreezeClone<T>(value: T): T {
   let copy: T;
@@ -32,15 +33,41 @@ export function deepFreezeClone<T>(value: T): T {
   try {
     copy = structuredClone(value);
   } catch {
-    copy = shallowCopy(value);
+    copy = deepCopy(value, new WeakMap<object, unknown>());
   }
 
   return deepFreeze(copy);
 }
 
-function shallowCopy<T>(value: T): T {
-  if (Array.isArray(value)) return [...value] as T;
-  if (isPlainObject(value)) return { ...value } as T;
+/**
+ * Recursive fallback for values `structuredClone` rejects. A shallow copy
+ * was not enough: `deepFreeze` then walked into the caller's nested
+ * objects and froze them in place.
+ */
+function deepCopy<T>(value: T, seen: WeakMap<object, unknown>): T {
+  if (typeof value !== "object" || value === null) return value;
+  if (seen.has(value)) return seen.get(value) as T;
+
+  if (value instanceof Date) {
+    return new Date(value.getTime()) as T;
+  }
+
+  if (Array.isArray(value)) {
+    const copy: unknown[] = [];
+    seen.set(value, copy);
+    for (const item of value) copy.push(deepCopy(item, seen));
+    return copy as T;
+  }
+
+  if (isPlainObject(value)) {
+    const copy: Record<string, unknown> = {};
+    seen.set(value, copy);
+    for (const [key, item] of Object.entries(value)) {
+      copy[key] = deepCopy(item, seen);
+    }
+    return copy as T;
+  }
+
   return value;
 }
 

@@ -115,6 +115,20 @@ export interface ModuleLifecycleOptions {
   readonly contextStorage?: ContextStorage;
 }
 
+/**
+ * Per-call overrides accepted by the ModuleLifecycleManager phase
+ * methods (initialize/start/stop/destroy).
+ */
+export interface ModuleLifecyclePhaseOptions {
+  /**
+   * Overrides the manager's continueOn*Error setting for this one
+   * phase run. The runtime passes its own startup/shutdown flags
+   * here so a hand-assembled manager cannot disagree with the
+   * runtime that drives it.
+   */
+  readonly continueOnError?: boolean;
+}
+
 import { ModuleOperationError } from "../moduleError/moduleError.lifecycle.js";
 
 /**

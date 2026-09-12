@@ -8,12 +8,12 @@
 
 import type { DocumentationNode } from "../docsTypes/index.js";
 
-const CALLOUT_LABELS: Record<string, string> = {
-  note: "NOTE",
-  warning: "WARNING",
-  tip: "TIP",
-  danger: "DANGER",
-};
+const CALLOUT_LABELS: ReadonlyMap<string, string> = new Map([
+  ["note", "NOTE"],
+  ["warning", "WARNING"],
+  ["tip", "TIP"],
+  ["danger", "DANGER"],
+]);
 
 /**
  * Converts a list of documentation nodes to markdown.
@@ -77,7 +77,12 @@ export function nodesToMarkdown(nodes: readonly DocumentationNode[]): string {
         break;
 
       case "callout": {
-        const label = CALLOUT_LABELS[node.kind] ?? singleLine(String(node.kind)).toUpperCase();
+        // A Map, not a plain-object lookup: a kind of "constructor" coming
+        // from untrusted JSON must not resolve to Object.prototype.constructor
+        // and print a function's source as the label.
+        const label =
+          CALLOUT_LABELS.get(node.kind) ??
+          singleLine(String(node.kind)).toUpperCase();
         const [first = "", ...rest] = node.value.split(/\r?\n/);
         lines.push(`> **${label}:** ${first}`);
         for (const line of rest) {

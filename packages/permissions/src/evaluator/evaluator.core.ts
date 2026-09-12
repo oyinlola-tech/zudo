@@ -17,6 +17,7 @@ import type {
   ExplainStep,
   ExplainResult,
   AuthorizationOptions,
+  RuleEvaluation,
 } from "../permissionTypes/index.js";
 import { parsePermissionSafe, matches } from "../permission/permission.core.js";
 import { InvalidPermissionError } from "../permissionErrors/index.js";
@@ -262,7 +263,7 @@ export async function evaluate(
     }
   }
 
-  const decision = combine(ruleResult.allowed, outcome.decision, permissionStr);
+  const decision = combine(ruleResult, outcome.decision, permissionStr);
 
   /* ── Cache write ─────────────────────────────────────────────────────── */
 
@@ -284,16 +285,31 @@ export async function evaluate(
  *
  * A denying policy always wins. An allowing policy can grant access the rules
  * did not, which is what makes a policy an ABAC escape hatch rather than a
- * filter — but it can never override a denial.
+ * filter — but it can never override a denial, and that includes a denial
+ * the *rules* produced. "The rules did not allow" covers two cases: no rule
+ * matched, and a deny rule matched. Treating them alike let an allowing
+ * policy for `post:*` cancel a `deny post:update` rule — the exact inversion
+ * of `deny-overrides`.
  */
 function combine(
-  ruleAllowed: boolean,
+  ruleResult: RuleEvaluation,
   policyDecision: PermissionDecision | null,
   permissionStr: string,
 ): PermissionDecision {
   if (policyDecision && !policyDecision.allowed) return policyDecision;
 
-  if (ruleAllowed) {
+  const denyRule =
+    !ruleResult.allowed && ruleResult.matchedRule?.effect === "deny"
+      ? ruleResult.matchedRule
+      : undefined;
+  if (denyRule) {
+    return denied("rule_deny", {
+      matchedPermission: permissionStr,
+      ...(denyRule.name ? { policy: denyRule.name } : {}),
+    });
+  }
+
+  if (ruleResult.allowed) {
     return Object.freeze({
       allowed: true,
       reason: "role_permission",

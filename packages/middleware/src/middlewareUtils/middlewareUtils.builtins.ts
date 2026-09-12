@@ -20,8 +20,13 @@ export interface LoggingContext {
 /** Longest field value written into a log line before truncation. */
 const MAX_LOG_FIELD_LENGTH = 256;
 
-/** Control characters, which are what let a value break out of its log line. */
-const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F]/g;
+/**
+ * Characters that let a value break out of its log line: the C0 and C1
+ * control ranges, plus the Unicode line and paragraph separators, which
+ * JavaScript and many log viewers treat as line terminators even though
+ * they are not control characters.
+ */
+const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/g;
 
 /**
  * Make a caller-supplied value safe to write into a single-line log.
@@ -39,7 +44,10 @@ export function sanitizeLogValue(
     if (char === "\n") return "\\n";
     if (char === "\r") return "\\r";
     if (char === "\t") return "\\t";
-    return `\\x${char.charCodeAt(0).toString(16).padStart(2, "0")}`;
+    const code = char.charCodeAt(0);
+    return code <= 0xff
+      ? `\\x${code.toString(16).padStart(2, "0")}`
+      : `\\u${code.toString(16).padStart(4, "0")}`;
   });
   return escaped.length > maxLength
     ? `${escaped.slice(0, maxLength)}…`

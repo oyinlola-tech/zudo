@@ -6,6 +6,8 @@
 
 import type { LogMetadata, LogValue, LoggerContext } from "@zudojs/logger";
 
+import { deepEqual } from "../assertions/deepEqual.core.js";
+
 /** Merges two logger contexts, preserving the nested shape. */
 export function mergeLoggerContext(
   base: LoggerContext | undefined,
@@ -38,10 +40,15 @@ export function mergeContext(
   };
 }
 
-/** Structural comparison, so object metadata can actually be matched. */
+/**
+ * Structural comparison, so object metadata can actually be matched.
+ *
+ * Uses the same walker as the assertions. The previous
+ * `JSON.stringify` comparison matched any two `Map`s or `Set`s (both
+ * render as `{}`), dropped `undefined` values, and treated key order as
+ * significant, so `findByMetadata` could both match what it should not
+ * and miss what it should find.
+ */
 export function deepMatches(actual: unknown, expected: unknown): boolean {
-  if (Object.is(actual, expected)) return true;
-  if (typeof actual !== "object" || typeof expected !== "object") return false;
-  if (actual === null || expected === null) return false;
-  return JSON.stringify(actual) === JSON.stringify(expected);
+  return deepEqual(actual, expected);
 }

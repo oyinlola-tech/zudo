@@ -19,9 +19,11 @@ export interface LoginAttemptRecord {
 /**
  * Store backing failed-attempt lockout and login rate limiting.
  *
- * Keys are the *submitted* identifier, not a resolved user id, so unknown
- * and known accounts are throttled identically and the endpoint stays free
- * of an existence oracle. The in-memory implementation
+ * Keys are the *submitted* identifier — trimmed, NFKC-normalised and
+ * lower-cased by `createAuthService()` so that case and whitespace variants
+ * of one email share a budget — not a resolved user id, so unknown and
+ * known accounts are throttled identically and the endpoint stays free of
+ * an existence oracle. The in-memory implementation
  * (`createMemoryLoginAttemptStore`) is per-process; back this with Redis to
  * make limits hold across instances.
  */

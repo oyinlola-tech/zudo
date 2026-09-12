@@ -95,6 +95,8 @@ export class OpenAPIManager {
   private readonly cacheTtlMs: number;
   private readonly now: () => number;
   private readonly logo: OpenAPILogo | undefined;
+  /** True when `branding` was a caller-supplied logo rather than the default. */
+  private readonly customLogo: boolean;
 
   private cachedDocument?: OpenAPIDocument;
   private cachedAt = 0;
@@ -124,6 +126,8 @@ export class OpenAPIManager {
         : options.branding === true || options.branding === undefined
           ? zudoLogo()
           : options.branding;
+    this.customLogo =
+      typeof options.branding === "object" && options.branding !== null;
 
     if (options.info) this.registry.setInfo(options.info);
     for (const server of options.servers ?? []) this.registry.addServer(server);
@@ -216,6 +220,11 @@ export class OpenAPIManager {
    * Safe to call repeatedly: routes are replaced rather than re-added.
    */
   public generate(validate = false): OpenAPIDocument {
+    // The scanner is the source of truth for routes. Re-setting on top of
+    // the previous route set kept routes that had since been removed or
+    // hidden, so `removeRoute()` had no effect once a document had been
+    // generated.
+    this.registry.clearRoutes();
     for (const route of this.scanner.scan()) {
       this.registry.setRoute(route);
     }
@@ -346,12 +355,17 @@ export class OpenAPIManager {
           ? `${info.title} · API reference`
           : undefined,
       ...options,
+      // Precedence: an explicit page logo, then the manager's `branding`
+      // (a custom logo is used as-is; `false` renders none), then the
+      // page's own default wordmark.
       logo:
         options.logo !== undefined
           ? options.logo
           : this.logo === undefined
             ? false
-            : undefined,
+            : this.customLogo
+              ? this.logo
+              : undefined,
     });
     return Object.freeze({
       status: 200 as const,

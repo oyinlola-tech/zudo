@@ -81,11 +81,27 @@ function jsLiteral(value: unknown): string {
     .replace(/\u2029/g, "\\u2029");
 }
 
-/** Rejects URLs that could execute script when placed in `src`/`href`. */
+/**
+ * Rejects URLs that could execute script when placed in `src`/`href`.
+ *
+ * The scheme is read after stripping ASCII control characters, because the
+ * URL parser browsers apply does the same: `java\nscript:alert(1)` is a
+ * `javascript:` URL to every browser and nothing to a regex that only
+ * looks at the string as written. `data:` is accepted for images only —
+ * the assets base is interpolated into `<script src>`, where a
+ * `data:text/javascript,` base would run inline.
+ */
 function safeUrl(value: string): string {
   const trimmed = value.trim();
-  if (/^\s*(javascript|vbscript):/i.test(trimmed)) {
-    throw new TypeError(`Refusing to render a "${trimmed.split(":")[0]}:" URL`);
+  const normalized = trimmed.replace(/[\u0000-\u0020\u007f]/g, "");
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(normalized)?.[1]?.toLowerCase();
+  if (scheme === "javascript" || scheme === "vbscript") {
+    throw new TypeError(`Refusing to render a "${scheme}:" URL`);
+  }
+  if (scheme === "data" && !/^data:image\//i.test(normalized)) {
+    throw new TypeError(
+      'Refusing to render a non-image "data:" URL; only data:image/* is allowed.',
+    );
   }
   // Attributes are always double-quoted here, so a single quote (common in
   // data URIs) can stay as-is.

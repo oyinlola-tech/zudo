@@ -195,7 +195,19 @@ export function createStaticMiddleware(
       return next();
     }
 
-    const url = new URL(context.request.url);
+    /*
+     * `context.request.url` is the request-target as the adapter received
+     * it — `/pub/app.js`, not an absolute URL — so it must be parsed against
+     * a base. `new URL(url)` alone threw `Invalid URL` for every request the
+     * Node adapter delivered, and the middleware answered 500 to all of them.
+     */
+    let url: URL;
+
+    try {
+      url = new URL(context.request.url, "http://zudojs.invalid");
+    } catch {
+      return next();
+    }
 
     const decodedPathname = decodePathname(url.pathname);
 

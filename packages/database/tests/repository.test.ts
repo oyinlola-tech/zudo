@@ -221,10 +221,10 @@ describe("BaseRepository", () => {
         AND: [{ age: 1 }, { deletedAt: null }],
       });
 
+      // `update` takes a WhereUniqueInput: the id must stay a top-level key
+      // (see DB-R9-02), so the soft-delete flag sits beside it, not in AND.
       await repo.update("u1", { name: "B" });
-      expect(filterOf(calls.at(-1))).toEqual({
-        AND: [{ id: "u1" }, { deletedAt: null }],
-      });
+      expect(filterOf(calls.at(-1))).toEqual({ id: "u1", deletedAt: null });
 
       await repo.findPaginated({ age: 2 });
       const paginated = calls.filter((call) => call.method === "findMany");

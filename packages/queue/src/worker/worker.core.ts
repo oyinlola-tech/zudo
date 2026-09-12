@@ -1,3 +1,4 @@
+import type { Job } from "../job/job.type.js";
 import type { Queue } from "../queue/queue.type.js";
 
 import type {
@@ -36,6 +37,7 @@ export function createWorker<TData>(
   const drainTimeout = options?.drainTimeout ?? DEFAULT_DRAIN_TIMEOUT_MS;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let activeJobs = 0;
+  let polling = false;
   let abortController: AbortController | null = null;
 
   const onError =
@@ -46,9 +48,19 @@ export function createWorker<TData>(
       });
     });
 
+  /**
+   * Arms the next poll. At most one timer is ever armed: a delayed poll
+   * already pending is left alone, while an immediate poll (capacity just
+   * freed up, or a job was just dispatched) supersedes it.
+   */
   const scheduleNextPoll = (delay: number): void => {
     if (state !== WorkerState.RUNNING) {
       return;
+    }
+
+    if (pollTimer !== null) {
+      if (delay > 0) return;
+      clearTimeout(pollTimer);
     }
 
     pollTimer = setTimeout(runPoll, delay);
@@ -61,40 +73,21 @@ export function createWorker<TData>(
    * fatal, would take down the whole application.
    */
   const runPoll = (): void => {
+    pollTimer = null;
     void poll().catch((error: unknown) => {
       onError(error);
       scheduleNextPoll(pollInterval);
     });
   };
 
-  const poll = async (): Promise<void> => {
-    if (state !== WorkerState.RUNNING || abortController?.signal.aborted) {
-      return;
-    }
-
-    if (activeJobs >= concurrency) {
-      scheduleNextPoll(pollInterval);
-      return;
-    }
-
-    const job = await queue.claimNextJob();
-    if (!job) {
-      scheduleNextPoll(pollInterval);
-      return;
-    }
-
-    const proc = queue.getProcessor(job.name);
-    if (!proc) {
-      // Claimed but unrunnable: release it rather than stranding it in
-      // `active` where nothing would ever pick it up again.
-      await queue.releaseJob(job.id);
-      scheduleNextPoll(pollInterval);
-      return;
-    }
-
-    activeJobs++;
-    stats.processed++;
-
+  /**
+   * Runs one claimed job to completion and frees its concurrency slot.
+   *
+   * Deliberately not awaited by `poll`: awaiting it there serialised the
+   * worker, so `concurrency` was reported by `getStats()` and honoured by
+   * nothing.
+   */
+  const runClaimedJob = async (job: Job<TData>): Promise<void> => {
     try {
       // Dispatch through the queue rather than invoking the processor
       // directly. The queue owns job state, retry, dead-lettering and
@@ -120,9 +113,52 @@ export function createWorker<TData>(
       onError(error);
     } finally {
       activeJobs--;
-      // Poll again immediately while there is capacity, but yield to the
-      // event loop first so a saturated queue cannot starve timers.
+      // A slot just opened: poll again immediately, yielding to the event
+      // loop first so a saturated queue cannot starve timers.
       scheduleNextPoll(0);
+    }
+  };
+
+  const poll = async (): Promise<void> => {
+    if (
+      polling ||
+      state !== WorkerState.RUNNING ||
+      abortController?.signal.aborted
+    ) {
+      return;
+    }
+
+    polling = true;
+    try {
+      if (activeJobs >= concurrency) {
+        scheduleNextPoll(pollInterval);
+        return;
+      }
+
+      const job = await queue.claimNextJob();
+      if (!job) {
+        scheduleNextPoll(pollInterval);
+        return;
+      }
+
+      const proc = queue.getProcessor(job.name);
+      if (!proc) {
+        // Claimed but unrunnable: release it rather than stranding it in
+        // `active` where nothing would ever pick it up again.
+        await queue.releaseJob(job.id);
+        scheduleNextPoll(pollInterval);
+        return;
+      }
+
+      activeJobs++;
+      stats.processed++;
+      void runClaimedJob(job);
+
+      // Capacity may remain: look for more work now, not after this job
+      // settles.
+      scheduleNextPoll(0);
+    } finally {
+      polling = false;
     }
   };
 
@@ -177,8 +213,12 @@ export function createWorker<TData>(
 
       state = WorkerState.DRAINING;
       clearPollTimer();
-      abortController?.abort();
 
+      // Graceful means graceful: in-flight jobs get `drainTimeout` to
+      // finish on their own. Aborting them up front — as this once did —
+      // made `stop()` indistinguishable from `forceStop()` for any
+      // processor that honours its signal, and turned every routine
+      // shutdown into a batch of failed jobs.
       const deadline = Date.now() + Math.max(0, drainTimeout);
 
       while (activeJobs > 0 && Date.now() < deadline) {
@@ -192,6 +232,7 @@ export function createWorker<TData>(
             { workerId: id },
           ),
         );
+        abortController?.abort();
       }
 
       clearPollTimer();

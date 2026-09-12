@@ -240,8 +240,13 @@ export class ContainerResolver {
     state.path.push(token);
     state.pathSet.add(token);
     let value: T;
+    let owned: boolean;
     try {
-      value = this.createInstance(registration, state, nextAncestor);
+      ({ value, owned } = this.createInstance(
+        registration,
+        state,
+        nextAncestor,
+      ));
     } finally {
       state.path.pop();
       state.pathSet.delete(token);
@@ -260,7 +265,12 @@ export class ContainerResolver {
       fromCache: false,
       path: currentPath,
     };
-    state.onInstanceCreated?.(result);
+    // A `useExisting` alias of a cached (SINGLETON/SCOPED) target does not
+    // own the instance it hands out — the target's own creation already
+    // reported it. Reporting it again registered a second owner for the same
+    // object: the container disposed it twice, and a SCOPED alias let a
+    // scope dispose a container-owned singleton.
+    if (owned) state.onInstanceCreated?.(result);
     return result;
   }
 
@@ -268,11 +278,12 @@ export class ContainerResolver {
     registration: ContainerRegistration<T>,
     state: ResolutionState,
     singletonAncestor: Token<unknown> | undefined,
-  ): T {
+  ): { value: T; owned: boolean } {
     const provider = normalizeProvider(registration.provider);
     const token = getRegistrationToken(registration);
     try {
-      if (isValueProvider(provider)) return provider.useValue;
+      if (isValueProvider(provider))
+        return { value: provider.useValue, owned: true };
       if (isExistingProvider(provider)) {
         const target = unwrapToken(provider.useExisting);
         if (
@@ -284,8 +295,17 @@ export class ContainerResolver {
               `"${describeToken(token)}" is not registered.`,
           );
         }
-        return this.resolveInternal(target, state, singletonAncestor)
-          .value as T;
+        const resolved = this.resolveInternal(
+          target,
+          state,
+          singletonAncestor,
+        );
+        // Only a TRANSIENT target has no owner of its own; a cached alias
+        // of it is the one place the instance can be tracked.
+        return {
+          value: resolved.value as T,
+          owned: resolved.scope === Scope.TRANSIENT,
+        };
       }
       if (isFactoryProvider(provider)) {
         const deps = provider.inject ?? [];
@@ -300,7 +320,7 @@ export class ContainerResolver {
             describeToken(token),
             registration.scope,
           );
-        return produced;
+        return { value: produced, owned: true };
       }
       if (isClassProvider(provider)) {
         const deps = provider.inject ?? [];
@@ -310,7 +330,7 @@ export class ContainerResolver {
               .value,
         );
         const ctor = provider.useClass as new (...ctorArgs: unknown[]) => T;
-        return new ctor(...args);
+        return { value: new ctor(...args), owned: true };
       }
       throw new Error("Unsupported container provider.");
     } catch (error) {
@@ -376,7 +396,9 @@ export class ContainerResolver {
     switch (event.operation) {
       case RegistryOperation.REPLACE:
       case RegistryOperation.REMOVE: {
-        this.evictSingleton(unwrapToken(event.token));
+        const token = unwrapToken(event.token);
+        this.evictSingleton(token);
+        this.evictAliasesOf(token);
         break;
       }
       case RegistryOperation.CLEAR:
@@ -393,6 +415,39 @@ export class ContainerResolver {
     if (!this.singletonCache.has(token)) return;
     this.singletonCache.delete(token);
     this.onSingletonEvicted?.(token);
+  }
+
+  /**
+   * Evicts every cached singleton whose `useExisting` chain ends at `target`.
+   *
+   * A cached alias holds the target's instance under its own token, so
+   * evicting the target alone left the alias serving the old — by now
+   * disposed — instance after `replace()`/`remove()`.
+   */
+  private evictAliasesOf(target: Token<unknown>): void {
+    for (const cached of [...this.singletonCache.keys()]) {
+      if (cached === target) continue;
+      if (this.aliasChainReaches(cached, target)) this.evictSingleton(cached);
+    }
+  }
+
+  private aliasChainReaches(
+    token: Token<unknown>,
+    target: Token<unknown>,
+  ): boolean {
+    const visited = new Set<Token<unknown>>();
+    let current: Token<unknown> = token;
+    for (;;) {
+      const registration = this.registry.get(current);
+      if (!registration) return false;
+      const provider = normalizeProvider(registration.provider);
+      if (!isExistingProvider(provider)) return false;
+      const next = unwrapToken(provider.useExisting);
+      if (next === target) return true;
+      if (visited.has(next)) return false;
+      visited.add(next);
+      current = next;
+    }
   }
 }
 

@@ -8,6 +8,7 @@ import type { OpenAPIValidationIssue } from "../openApiErrors/openApiError.types
 import { OpenAPIValidationError } from "../openApiErrors/openApiError.types.js";
 import {
   MAX_OPERATION_ID_LENGTH,
+  PATH_TEMPLATE_PARAMETER,
   RESPONSE_KEY_PATTERN,
   SUPPORTED_OPENAPI_VERSIONS,
 } from "../openApiConstants/openApiConstants.core.js";
@@ -143,8 +144,26 @@ export class OpenAPIValidatorImpl implements OpenAPIValidator {
   }
 
   private validatePaths(document: OpenAPIDocument, collector: Collector): void {
+    /** Paths seen so far, keyed by their template with parameter names erased. */
+    const shapes = new Map<string, string>();
+
     for (const [path, pathItem] of Object.entries(document.paths ?? {})) {
       if (!pathItem) continue;
+
+      // "/users/{id}" and "/users/{userId}" have the same hierarchy and
+      // differ only in template names; the specification forbids both
+      // existing, since a router cannot tell them apart.
+      const shape = path.replace(PATH_TEMPLATE_PARAMETER, "{}");
+      const twin = shapes.get(shape);
+      if (twin !== undefined && twin !== path) {
+        error(
+          collector,
+          ["paths", path],
+          `Path "${path}" is identical to "${twin}" apart from its template parameter names; such paths must not both exist.`,
+        );
+      } else {
+        shapes.set(shape, path);
+      }
 
       if (!path.startsWith("/")) {
         error(
@@ -238,45 +257,49 @@ export class OpenAPIValidatorImpl implements OpenAPIValidator {
       );
     }
 
-    const parameters: readonly OpenAPIParameter[] = [
-      ...(pathItem.parameters ?? []),
-      ...(operation.parameters ?? []),
-    ];
+    // Uniqueness is per list: the specification forbids duplicates within
+    // the path item's list and within the operation's list, while an
+    // operation-level parameter *overrides* a path-level one with the same
+    // name and location. Treating that override as a duplicate rejected
+    // legal documents.
+    const parameters = new Map<string, OpenAPIParameter>();
+    for (const list of [pathItem.parameters, operation.parameters]) {
+      const seen = new Set<string>();
+      for (const parameter of list ?? []) {
+        if (!parameter.name) {
+          error(
+            collector,
+            [...base, "parameters"],
+            "Every parameter must have a name.",
+          );
+          continue;
+        }
 
-    const seen = new Set<string>();
-    for (const parameter of parameters) {
-      if (!parameter.name) {
-        error(
-          collector,
-          [...base, "parameters"],
-          "Every parameter must have a name.",
-        );
-        continue;
-      }
+        const key = `${parameter.in}:${parameter.name}`;
+        if (seen.has(key)) {
+          error(
+            collector,
+            [...base, "parameters"],
+            `Duplicate parameter "${parameter.name}" in "${parameter.in}".`,
+          );
+        }
+        seen.add(key);
+        parameters.set(key, parameter);
 
-      const key = `${parameter.in}:${parameter.name}`;
-      if (seen.has(key)) {
-        error(
-          collector,
-          [...base, "parameters"],
-          `Duplicate parameter "${parameter.name}" in "${parameter.in}".`,
-        );
-      }
-      seen.add(key);
-
-      if (parameter.in === "path" && parameter.required !== true) {
-        error(
-          collector,
-          [...base, "parameters"],
-          `Path parameter "${parameter.name}" must be required.`,
-        );
+        if (parameter.in === "path" && parameter.required !== true) {
+          error(
+            collector,
+            [...base, "parameters"],
+            `Path parameter "${parameter.name}" must be required.`,
+          );
+        }
       }
     }
 
     // The classic OpenAPI mistake: a templated path with no matching
     // parameter, or a path parameter that no template slot refers to.
     const declaredPathParameters = new Set(
-      parameters
+      [...parameters.values()]
         .filter((parameter) => parameter.in === "path")
         .map((parameter) => parameter.name),
     );
@@ -511,7 +534,10 @@ function resolvePointer(document: OpenAPIDocument, ref: string): boolean {
       current = current[index];
       continue;
     }
-    if (!(segment in (current as Record<string, unknown>))) return false;
+    // Own properties only: `in` walks the prototype chain, so a reference
+    // to `#/components/schemas/constructor` resolved to
+    // `Object.prototype.constructor` and validated as present.
+    if (!Object.prototype.hasOwnProperty.call(current, segment)) return false;
     current = (current as Record<string, unknown>)[segment];
   }
   return current !== undefined;

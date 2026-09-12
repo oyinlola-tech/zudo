@@ -90,6 +90,7 @@ export class ConfigurationManager {
   private loadResult: ConfigurationLoadResult | undefined;
   private validationReport: ConfigurationValidationReport | undefined;
   private missingSetConfigurationWarned = false;
+  private inFlightReload: Promise<ConfigurationManagerResult> | undefined;
   private stateValue: ConfigurationManagerState =
     ConfigurationManagerState.CREATED;
 
@@ -207,10 +208,28 @@ export class ConfigurationManager {
     }
   }
 
+  /**
+   * Reloads configuration from the registered sources.
+   *
+   * Overlapping calls are serialised: a reload requested while one
+   * is already in progress shares that in-flight reload instead of
+   * failing with InvalidStateError. A manager that is not ready yet
+   * is initialized instead.
+   */
   public async reload(): Promise<ConfigurationManagerResult> {
+    if (this.inFlightReload) return this.inFlightReload;
+
     if (this.stateValue !== ConfigurationManagerState.READY)
       return this.initialize();
 
+    const reload = this.performReload().finally(() => {
+      this.inFlightReload = undefined;
+    });
+    this.inFlightReload = reload;
+    return reload;
+  }
+
+  private async performReload(): Promise<ConfigurationManagerResult> {
     const previousConfiguration = this.configuration as Configuration;
     const previousLoadResult = this.loadResult;
     const previousValidation = this.validationReport;

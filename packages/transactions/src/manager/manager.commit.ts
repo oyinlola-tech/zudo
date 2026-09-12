@@ -159,6 +159,20 @@ export async function commitTransaction(
   }
 
   emit(TRANSACTION_EVENTS.COMMITTED, transaction);
+
+  // afterCommit callbacks that threw did not undo the commit, but they
+  // used to fail silently. Report them without changing the outcome.
+  const callbackErrors = internals(transaction)._drainCallbackErrors();
+  if (callbackErrors.length > 0 && hooks?.onError) {
+    await hooks.onError({
+      transaction,
+      error: new AggregateError(
+        callbackErrors,
+        "after-commit callback failures",
+      ),
+    });
+  }
+
   if (hooks?.afterCommit) await hooks.afterCommit({ transaction });
 }
 

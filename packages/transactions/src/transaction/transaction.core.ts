@@ -61,6 +61,7 @@ export function createTransaction(
   let timedOut = false;
   const afterCommitCallbacks: Array<() => Promise<void>> = [];
   const afterRollbackCallbacks: Array<() => Promise<void>> = [];
+  let callbackErrors: unknown[] = [];
   let handle: unknown;
 
   const transition = createTransitionFunction(
@@ -124,7 +125,9 @@ export function createTransaction(
       transition("committing");
       transition("committed");
       afterRollbackCallbacks.length = 0;
-      await runCallbacks(afterCommitCallbacks);
+      // The commit stands whatever the callbacks do; their failures are
+      // kept for the manager to report instead of being dropped.
+      callbackErrors = await runCallbacks(afterCommitCallbacks);
     },
 
     async rollback(reason?: unknown): Promise<void> {
@@ -177,5 +180,6 @@ export function createTransaction(
       timedOut = true;
     },
     _getRollbackOnlyReason: (): unknown => rollbackOnlyReason,
+    _drainCallbackErrors: (): unknown[] => callbackErrors.splice(0),
   });
 }

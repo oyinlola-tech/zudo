@@ -1,5 +1,27 @@
 # @zudojs/http
 
+## 1.1.0
+
+### Minor Changes
+
+- - `NodeHttpAdapter` no longer drops the connection when a query string contains malformed percent-encoding (`/?a=%E0`); the raw value is kept. Query pairs are split on the first `=` (`a=b=c` keeps `b=c`) and `+` decodes to a space. A request whose context cannot be created is answered `400 Bad Request` instead of a socket reset.
+  - `serializeResponseCookie()` (used by `response.cookie()`) now validates the cookie name, enforces the `__Host-`/`__Secure-` prefix rules, rejects `;` and control characters in `Domain`/`Path`, and percent-encodes a value that is not made of RFC 6265 `cookie-octet`s, so a value like `x; Domain=evil.com` can no longer inject attributes. Valid values are emitted unchanged.
+  - `HttpResponseContext.redirect()` and `redirectResponse()` refuse unsafe destinations (`javascript:`, `data:`, scheme-relative `//evil.com`, control characters) by throwing a `TypeError`; path references and absolute `http(s)` URLs are unchanged.
+  - `RouteDispatcher` merges the cookies, status text and metadata of a response context returned by a route handler; previously only status, headers and body survived.
+  - An `HttpError` thrown from a handler (or middleware) — `notFound()`, `unauthorized()`, … — is answered with its own status, its exposed message/code and its headers (e.g. `WWW-Authenticate`) by the default error path of `NodeHttpAdapter` and `BaseHttpAdapter`, including when it is wrapped by the middleware pipeline. Non-exposed errors and plain `Error`s still get a generic body.
+  - `NodeHttpAdapter.stop()` removes the `clientError` listener it installed, so an externally supplied `http.Server` no longer accumulates one listener per restart.
+  - `HttpClient` can retry a request that carries a body (`retryMethods: ["POST"]`); the first retry used to fail with "Request object that has already been used".
+  - `createStaticMiddleware()` parses the adapter's request-target (`/pub/app.js`) correctly; it used to throw `Invalid URL` and answer 500 for every request delivered by `NodeHttpAdapter`.
+  - README quick start rewritten against the real API (`createHttpServer` + `createNodeHttpAdapter`); `createHTTPServer` and `{ fetch }` handlers never existed.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/core@1.1.0
+  - @zudojs/errors@1.0.1
+  - @zudojs/logger@1.1.0
+  - @zudojs/security@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

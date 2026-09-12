@@ -20,6 +20,9 @@ const DEFAULT_MESSAGE = "Too many requests";
 /** Default cap on tracked keys before least-recently-seen eviction. */
 const DEFAULT_MAX_KEYS = 100_000;
 
+/** Largest delay `setInterval` honours without overflowing to 1 ms. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+
 /**
  * In-memory rate limit store.
  *
@@ -144,8 +147,11 @@ export function createRateLimiter(config: RateLimiterOptions) {
   const skip = config.skip;
   const maxKeys = config.maxKeys ?? DEFAULT_MAX_KEYS;
 
-  // Cleanup old entries periodically. Bounded so a very short window does not
-  // schedule a near-continuous timer.
+  // Cleanup old entries periodically. Bounded below so a very short window
+  // does not schedule a near-continuous timer, and above because Node stores
+  // timer delays as a signed 32-bit integer: a delay past 2^31 - 1 ms (about
+  // 24.8 days) is silently replaced with 1 ms, so a month-long window used to
+  // sweep the whole store a thousand times a second.
   const cleanupInterval = setInterval(
     () => {
       const cutoff = Date.now() - config.windowMs;
@@ -155,7 +161,7 @@ export function createRateLimiter(config: RateLimiterOptions) {
         }
       }
     },
-    Math.max(config.windowMs, 1_000),
+    Math.min(Math.max(config.windowMs, 1_000), MAX_TIMER_DELAY_MS),
   );
 
   // Allow cleanup to not keep process alive
@@ -168,17 +174,19 @@ export function createRateLimiter(config: RateLimiterOptions) {
    *
    * Without this, a caller rotating the key (a spoofed forwarding header, a
    * per-request identifier) grows the map without limit between sweeps.
+   *
+   * The store is kept in recency order — `check` re-inserts an entry on every
+   * hit — so the oldest key is always the first one iterated and eviction is
+   * O(1). It used to copy and sort the whole map on every new key past the
+   * cap, which turned the defence against key rotation into an O(n log n)
+   * cost per rotated request: the attack it was meant to bound became the
+   * cheapest way to burn the CPU.
    */
   function evictIfNeeded(): void {
-    if (store.size <= maxKeys) return;
-
-    const entries = [...store.entries()].sort(
-      (a, b) => a[1].lastSeen - b[1].lastSeen,
-    );
-    const excess = store.size - maxKeys;
-    for (let i = 0; i < excess; i++) {
-      const entry = entries[i];
-      if (entry) store.delete(entry[0]);
+    while (store.size > maxKeys) {
+      const oldest = store.keys().next();
+      if (oldest.done) break;
+      store.delete(oldest.value);
     }
   }
 
@@ -205,6 +213,10 @@ export function createRateLimiter(config: RateLimiterOptions) {
       entry = { timestamps: [], lastSeen: now };
       store.set(key, entry);
       evictIfNeeded();
+    } else {
+      // Move to the most-recent end so eviction order stays least-recent-first.
+      store.delete(key);
+      store.set(key, entry);
     }
 
     // Prune everything that has slid out of the window.

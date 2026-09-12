@@ -128,7 +128,7 @@ export async function runMessagePipeline<TResult>(
 
   const context: MessageMiddlewareContext<Message> = {
     message,
-    context: {
+    context: options.context ?? {
       message,
       correlationId:
         message.correlationId ??

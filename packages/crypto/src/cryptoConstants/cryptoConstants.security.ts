@@ -46,6 +46,14 @@ export const PASSWORD_HASH = Object.freeze({
      */
     MAX_SCRYPT_MEMORY_BYTES: 1024 * 1024 * 1024,
     MAX_PBKDF2_ITERATIONS: 10_000_000,
+    /**
+     * Upper bound on the output length of `derivePbkdf2` / `deriveScrypt`
+     * (and the provider's `deriveKey`). PBKDF2 cost scales linearly with
+     * the number of output blocks, so an unbounded `keyLength` multiplies
+     * the iteration count by an attacker-chosen factor. Password hashes
+     * are bounded separately by `MAX_KEY_BYTES`.
+     */
+    MAX_DERIVED_KEY_BYTES: 1024,
   }),
 } as const);
 

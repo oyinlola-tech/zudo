@@ -20,7 +20,10 @@ import {
   createNonTransactional,
   createParticipant,
 } from "../transaction/transaction.participant.js";
-import { internals } from "../transaction/transaction.internal.js";
+import {
+  connectionHandle,
+  internals,
+} from "../transaction/transaction.internal.js";
 import {
   SavepointError,
   TransactionCapabilityError,
@@ -98,7 +101,9 @@ async function beginSavepoint(
   if (hooks?.beforeBegin) await hooks.beforeBegin({ transaction: child });
 
   const savepoint = `sp_${child.id}`;
-  const parentHandle = internals(parent)._getHandle();
+  // Always the connection: a nested run inside another nested run must
+  // create its savepoint on the connection, not on the outer savepoint.
+  const parentHandle = connectionHandle(parent);
 
   try {
     await adapter.createSavepoint(parentHandle, savepoint);

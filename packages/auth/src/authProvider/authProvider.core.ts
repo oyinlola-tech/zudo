@@ -29,6 +29,8 @@ import {
   verifyAccessToken,
   verifyRefreshToken,
 } from "../authToken/authToken.core.js";
+import { assertTokenSecrets } from "../authToken/authToken.signing.js";
+import { assertPositiveSeconds } from "../authSession/authSession.core.js";
 import {
   AccountDeactivatedError,
   AccountLockedError,
@@ -56,6 +58,20 @@ const DEFAULT_MAX_FAILED_ATTEMPTS = 5;
 const DEFAULT_LOCKOUT_SECONDS = 900;
 const DEFAULT_MAX_ATTEMPTS_PER_WINDOW = 20;
 const DEFAULT_WINDOW_SECONDS = 60;
+
+/**
+ * The key under which an identifier's login attempts are counted.
+ *
+ * Identifiers are emails or usernames, which consumers almost always
+ * resolve case-insensitively. Counting the raw string gave
+ * `alice@example.com`, `Alice@example.com` and ` alice@example.com` three
+ * independent attempt budgets against one account — a lockout bypass that
+ * cost the attacker nothing. Trimming, NFKC-folding and lower-casing keeps
+ * unknown and known identifiers throttled identically while closing that.
+ */
+export function throttleKey(identifier: string): string {
+  return String(identifier).normalize("NFKC").trim().toLowerCase();
+}
 
 /** User lookup function provided by the consumer, keyed by login identifier. */
 export type UserLookup = (identifier: string) => Promise<AuthUser | null>;
@@ -177,6 +193,14 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
     fallbackAdminRole,
   } = config;
 
+  // Fail at construction, not at the first login: a bad secret or a NaN
+  // lifetime (`Number(process.env.X)` with X unset) otherwise surfaced as
+  // a runtime error on the request path — or, for the session TTL, not at
+  // all, because a NaN idle timeout produced sessions that never expired.
+  assertTokenSecrets(tokenConfig);
+  assertPositiveSeconds(sessionTtlSeconds, "sessionTtlSeconds");
+  assertPositiveSeconds(absoluteSessionTtlSeconds, "absoluteSessionTtlSeconds");
+
   const maxFailedAttempts =
     loginThrottle?.maxFailedAttempts ?? DEFAULT_MAX_FAILED_ATTEMPTS;
   const lockoutSeconds =
@@ -188,14 +212,15 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
   /** Throw if the identifier is locked out or over its attempt budget. */
   async function enforceThrottle(identifier: string): Promise<void> {
     if (!loginThrottle) return;
+    const key = throttleKey(identifier);
     const now = Date.now();
-    const current = await loginThrottle.store.get(identifier);
+    const current = await loginThrottle.store.get(key);
     if (current.lockedUntil !== undefined && current.lockedUntil > now) {
       throw new AccountLockedError(undefined, {
         retryAfterSeconds: Math.ceil((current.lockedUntil - now) / 1000),
       });
     }
-    const updated = await loginThrottle.store.recordAttempt(identifier);
+    const updated = await loginThrottle.store.recordAttempt(key);
     if (updated.attempts > maxAttemptsPerWindow) {
       throw new AuthRateLimitError(undefined, {
         retryAfterSeconds: windowSeconds,
@@ -206,12 +231,10 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
   /** Record a failed authentication and lock the identifier if warranted. */
   async function recordFailure(identifier: string): Promise<void> {
     if (!loginThrottle) return;
-    const updated = await loginThrottle.store.recordFailure(identifier);
+    const key = throttleKey(identifier);
+    const updated = await loginThrottle.store.recordFailure(key);
     if (updated.failures >= maxFailedAttempts) {
-      await loginThrottle.store.lock(
-        identifier,
-        Date.now() + lockoutSeconds * 1000,
-      );
+      await loginThrottle.store.lock(key, Date.now() + lockoutSeconds * 1000);
     }
   }
 
@@ -287,7 +310,7 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
 
       // The credentials were correct, so the attempt counter is cleared even
       // if the account turns out to be unusable.
-      await loginThrottle?.store.reset(identifier);
+      await loginThrottle?.store.reset(throttleKey(identifier));
 
       // Account state is only disclosed once the password has been proven,
       // so it cannot be probed without a valid credential.

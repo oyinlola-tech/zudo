@@ -1,5 +1,17 @@
 # @zudojs/events
 
+## 1.0.1
+
+### Patch Changes
+
+- - A middleware that awaits `next()` but does not return its result no longer makes `publish()` report `shortCircuited: true` with no handlers, no errors and no `onError` call; the real handler outcome is reported.
+  - `stripUndefinedValues()` / `createEventPayload({ stripUndefined })` copy a `__proto__` key as data instead of swapping the result's prototype.
+  - `bus.unregister(type, { removeHandlers: true })` also removes disabled handlers subscribed to exactly that type.
+  - `bus.dispose()` succeeds (and the bus reaches `DISPOSED`) even when its registry was disposed first.
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/constants@1.0.1
+
 ## Unreleased
 
 ### Fixes

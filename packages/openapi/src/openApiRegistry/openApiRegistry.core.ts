@@ -126,6 +126,21 @@ export class OpenAPIRegistryImpl implements OpenAPIRegistry {
     });
   }
 
+  /** Removes a route. Returns whether one was registered. */
+  public removeRoute(method: string, path: string): boolean {
+    return this.routes.delete(OpenAPIRegistryImpl.routeKey({ method, path }));
+  }
+
+  /**
+   * Drops every registered route while keeping components, servers, tags
+   * and security. `OpenAPIManager.generate()` rebuilds the route set from
+   * its scanner on each call; without this a route removed from the
+   * scanner lived on in the registry and in every later document.
+   */
+  public clearRoutes(): void {
+    this.routes.clear();
+  }
+
   private static register<T>(
     map: Map<string, T>,
     section: ComponentSection,

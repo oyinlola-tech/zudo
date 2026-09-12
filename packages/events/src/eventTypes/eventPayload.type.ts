@@ -290,15 +290,14 @@ function freezeRecursively(value: unknown, visited: WeakSet<object>): void {
 export function stripUndefinedValues<T extends ObjectEventPayload>(
   payload: T,
 ): T {
-  const result: Record<string, unknown> = {};
-
-  for (const [key, value] of Object.entries(payload)) {
-    if (value !== undefined) {
-      result[key] = value;
-    }
-  }
-
-  return result as T;
+  /**
+   * Object.fromEntries defines every entry as an own data
+   * property, so a key such as "__proto__" (e.g. from JSON.parse)
+   * is copied as data instead of replacing the result's prototype.
+   */
+  return Object.fromEntries(
+    Object.entries(payload).filter(([, value]) => value !== undefined),
+  ) as T;
 }
 
 /**

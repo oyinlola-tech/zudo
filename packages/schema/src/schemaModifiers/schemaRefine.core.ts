@@ -7,6 +7,7 @@
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
 import { addIssue, failValidation } from "../schemaBase/index.js";
+import { describeThrown } from "../schemaBase/schemaBase.describe.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
 /**
@@ -35,7 +36,7 @@ export class RefineSchema<T> extends Schema<T> {
       addIssue(ctx, {
         code: SchemaIssueCode.REFINE_FAILED,
         path: [...ctx.path],
-        message: `Refinement threw: ${error instanceof Error ? error.message : String(error)}`,
+        message: `Refinement threw: ${describeThrown(error)}`,
       });
       failValidation();
     }

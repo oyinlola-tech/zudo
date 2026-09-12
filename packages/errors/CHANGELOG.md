@@ -1,5 +1,12 @@
 # @zudojs/errors
 
+## 1.0.1
+
+### Patch Changes
+
+- - A `sensitiveKeyPattern` carrying the `g` or `y` flag (passed to `redactErrorMetadata`, `sanitizeErrorMetadata`, `isSensitiveMetadataKey`, `ErrorSerializer` or `ErrorHandler`) no longer redacts on one call and leaks the same key on the next.
+  - `ErrorSerializer` (and therefore `serializeError`/`ErrorHandler.toLogObject`) now applies `redactSensitiveData` to plain-object causes, which were previously copied verbatim into the serialized cause chain; the cause's shape (dates, arrays, class instances) is preserved and cycles stop at `"[Circular]"`.
+
 ## 0.2.0
 
 ### Minor Changes

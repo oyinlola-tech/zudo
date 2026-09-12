@@ -7,6 +7,7 @@
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
 import { addIssue, failValidation } from "../schemaBase/index.js";
+import { describeValue } from "../schemaBase/schemaBase.describe.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
 /**
@@ -26,7 +27,7 @@ export class EnumSchema<T extends string | number> extends Schema<T> {
         path: [...ctx.path],
         message: `Expected one of ${this._values.map((v) => JSON.stringify(v)).join(", ")}`,
         expected: this._values.map((v) => JSON.stringify(v)).join(", "),
-        received: JSON.stringify(input),
+        received: describeValue(input),
       });
       failValidation();
     }

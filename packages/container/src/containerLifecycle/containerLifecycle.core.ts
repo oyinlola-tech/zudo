@@ -197,6 +197,9 @@ export class ContainerLifecycle {
    */
   async dispose(owner?: ContainerLifecycleOwner): Promise<void> {
     if (this.disposed) return;
+    // Mark before the first await: an instance tracked while disposal is in
+    // flight would be dropped by `shutdown()` without ever being disposed.
+    if (owner === undefined) this.disposed = true;
     const tracked = [...this.instances.values()].reverse();
     const selected = owner
       ? tracked.filter((entry) => entry.owner === owner)
@@ -215,7 +218,6 @@ export class ContainerLifecycle {
         if (this.options.failFast) break;
       }
     }
-    if (owner === undefined) this.disposed = true;
     if (errors.length > 0)
       throw new ContainerDisposalError(errors, failedTokens);
   }

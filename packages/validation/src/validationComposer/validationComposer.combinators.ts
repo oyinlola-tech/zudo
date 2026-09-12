@@ -45,18 +45,10 @@ export function any<T>(
       if (result.success) return result;
       issues.push(...result.issues);
     }
-    return failure(
-      issues.length > 0
-        ? issues
-        : [
-            {
-              path: [],
-              code: "no_validator_succeeded",
-              message: "No validation rule accepted the value.",
-              received: value,
-            },
-          ],
-    );
+    // Never echo the rejected value: issues flow into a 400 response and
+    // into logs, so `received` would hand back the password or token that
+    // was just refused.
+    return failure(issues.length > 0 ? issues : [noValidatorSucceeded()]);
   };
 }
 

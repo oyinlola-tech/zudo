@@ -492,7 +492,11 @@ function withDeadline<T>(
 
     signal?.addEventListener("abort", onAbort, { once: true });
 
-    promise.then(
+    // `Promise.resolve` rather than `promise.then`: a hand-rolled operation
+    // whose handler returns synchronously is a legal JavaScript caller, and
+    // calling `.then` on its plain value failed with "promise.then is not a
+    // function" reported as an internal error of the operation.
+    Promise.resolve(promise).then(
       (value) => {
         cleanup();
         resolve(value);

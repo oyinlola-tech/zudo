@@ -17,10 +17,12 @@ import {
 import type { ModuleDependencyGraph } from "../moduleDependency/moduleDependency.type.js";
 import type {
   ModuleLifecycleOptions,
+  ModuleLifecyclePhaseOptions,
   ModuleLifecycleResult,
   ModuleLifecycleState,
   LifecycleStateMap,
 } from "./moduleLifecycle.type.js";
+import type { ModuleDependency } from "../moduleDependency/moduleDependency.type.js";
 import { ModuleLifecycleError } from "./moduleLifecycle.type.js";
 import type { ContextStorage } from "../../context/provider/contextStorage.storage.js";
 import { getDefaultContextStorage } from "../../context/provider/defaultContextStorage.storage.js";
@@ -65,7 +67,9 @@ export class ModuleLifecycleManager {
     this.contextStorage = options.contextStorage ?? getDefaultContextStorage();
   }
 
-  public async initialize(): Promise<ModuleLifecycleResult> {
+  public async initialize(
+    options: ModuleLifecyclePhaseOptions = {},
+  ): Promise<ModuleLifecycleResult> {
     return this.runExclusive(async () => {
       ensureStateSynchronized(this.registry, this.states);
       try {
@@ -74,7 +78,7 @@ export class ModuleLifecycleManager {
           "initialize",
           "initializing",
           "initialized",
-          this.options.continueOnInitializeError,
+          options.continueOnError ?? this.options.continueOnInitializeError,
           this.registry,
           this.loader,
           this.states,
@@ -87,7 +91,9 @@ export class ModuleLifecycleManager {
     });
   }
 
-  public async start(): Promise<ModuleLifecycleResult> {
+  public async start(
+    options: ModuleLifecyclePhaseOptions = {},
+  ): Promise<ModuleLifecycleResult> {
     return this.runExclusive(async () => {
       ensureStateSynchronized(this.registry, this.states);
       try {
@@ -96,7 +102,7 @@ export class ModuleLifecycleManager {
           "start",
           "starting",
           "started",
-          this.options.continueOnStartError,
+          options.continueOnError ?? this.options.continueOnStartError,
           this.registry,
           this.loader,
           this.states,
@@ -109,7 +115,9 @@ export class ModuleLifecycleManager {
     });
   }
 
-  public async stop(): Promise<ModuleLifecycleResult> {
+  public async stop(
+    options: ModuleLifecyclePhaseOptions = {},
+  ): Promise<ModuleLifecycleResult> {
     return this.runExclusive(async () => {
       ensureStateSynchronized(this.registry, this.states);
       return executeLifecyclePhase(
@@ -117,7 +125,7 @@ export class ModuleLifecycleManager {
         "stop",
         "stopping",
         "stopped",
-        this.options.continueOnStopError,
+        options.continueOnError ?? this.options.continueOnStopError,
         this.registry,
         this.loader,
         this.states,
@@ -126,7 +134,9 @@ export class ModuleLifecycleManager {
     });
   }
 
-  public async destroy(): Promise<ModuleLifecycleResult> {
+  public async destroy(
+    options: ModuleLifecyclePhaseOptions = {},
+  ): Promise<ModuleLifecycleResult> {
     return this.runExclusive(async () => {
       ensureStateSynchronized(this.registry, this.states);
       return executeLifecyclePhase(
@@ -134,7 +144,7 @@ export class ModuleLifecycleManager {
         "destroy",
         "destroying",
         "destroyed",
-        this.options.continueOnDestroyError,
+        options.continueOnError ?? this.options.continueOnDestroyError,
         this.registry,
         this.loader,
         this.states,
@@ -325,12 +335,25 @@ export class ModuleLifecycleManager {
     for (const registration of this.registry.getAll()) {
       if (registration.definition.id === moduleId) continue;
       if (registration.state !== "loaded") continue;
-      const dependsOnModule = this.registry
-        .getDependencies(registration.definition.id)
-        .some((dependency) => dependency.id === moduleId);
+      const dependsOnModule = this.resolveDependencies(registration).some(
+        (dependency) => dependency.id === moduleId,
+      );
       if (dependsOnModule) dependents.push(registration.definition.id);
     }
     return dependents;
+  }
+
+  /**
+   * Dependencies of a registered module: those declared on the
+   * definition plus any the loaded instance declares itself
+   * (`Module.dependencies`, e.g. via the BaseModule constructor).
+   * Instance-declared dependencies are required; a definition
+   * entry for the same id wins so optional/version flags survive.
+   */
+  private resolveDependencies(
+    registration: ModuleRegistration,
+  ): readonly ModuleDependency[] {
+    return resolveRegistrationDependencies(this.registry, registration);
   }
 
   public async startApplication(): Promise<{
@@ -376,27 +399,33 @@ export class ModuleLifecycleManager {
     return isModuleDestroyed(moduleId, this.states);
   }
 
+  /**
+   * Builds the dependency graph over the loaded modules only.
+   *
+   * Lifecycle phases run for loaded modules, so a registered but
+   * unloaded definition (autoLoad: false) must not be able to
+   * break them with a missing or circular dependency of its own.
+   * Dependencies of a loaded module that are not loaded are kept
+   * as edges so the ordering reports them as missing.
+   */
   private createGraph(): ModuleDependencyGraph {
-    const nodes = this.registry.getAll().map((r) => ({
-      id: r.definition.id,
-      dependencies: this.registry.getDependencies(r.definition.id),
-      version: r.definition.version,
-    }));
+    const nodes = this.registry
+      .getAll()
+      .filter((r) => r.state === "loaded")
+      .map((r) => ({
+        id: r.definition.id,
+        dependencies: this.resolveDependencies(r),
+        version: r.definition.version,
+      }));
     return createModuleDependencyGraph(nodes);
   }
 
   private getStartupOrder(): readonly ModuleId[] {
-    const order = resolveModuleStartupOrder(this.createGraph());
-    return Object.freeze(
-      order.filter((id) => this.registry.get(id)?.state === "loaded"),
-    );
+    return resolveModuleStartupOrder(this.createGraph());
   }
 
   private getShutdownOrder(): readonly ModuleId[] {
-    const order = resolveModuleShutdownOrder(this.createGraph());
-    return Object.freeze(
-      order.filter((id) => this.registry.get(id)?.state === "loaded"),
-    );
+    return resolveModuleShutdownOrder(this.createGraph());
   }
 
   private async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
@@ -413,6 +442,31 @@ export class ModuleLifecycleManager {
       this.operation = undefined;
     }
   }
+}
+
+/**
+ * Resolves the dependencies of a registration: definition-declared
+ * dependencies plus the ids the loaded instance declares through
+ * `Module.dependencies`. Shared by the lifecycle manager and the
+ * loader so both agree on the graph.
+ */
+export function resolveRegistrationDependencies(
+  registry: ModuleRegistry,
+  registration: ModuleRegistration,
+): readonly ModuleDependency[] {
+  const declared = registry.getDependencies(registration.definition.id);
+  const instanceDependencies = registration.instance?.dependencies ?? [];
+  if (instanceDependencies.length === 0) return declared;
+
+  const seen = new Set(declared.map((dependency) => dependency.id));
+  const merged: ModuleDependency[] = [...declared];
+  for (const id of instanceDependencies) {
+    if (typeof id !== "string" || id.length === 0 || seen.has(id)) continue;
+    if (id === registration.definition.id) continue;
+    seen.add(id);
+    merged.push(Object.freeze({ id, optional: false }));
+  }
+  return Object.freeze(merged);
 }
 
 /** Creates a module lifecycle manager. */

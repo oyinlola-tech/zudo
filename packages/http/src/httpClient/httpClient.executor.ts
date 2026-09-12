@@ -116,10 +116,23 @@ async function executeOnce(
 
   const signal = combineAbortSignals(context.config.signal, controller?.signal);
 
+  /*
+   * A `Request` body can be dispatched once. Every attempt used to be built
+   * from `context.request` itself, which consumed its body on the first try
+   * and made the first *retry* of any body-bearing request fail with
+   * "Request object that has already been used" — so `retryMethods: ["POST"]`
+   * could never retry. Each attempt now works on a clone, and the original
+   * is left untouched for the next one.
+   */
+  const attemptRequest =
+    context.request.body !== null && !context.request.bodyUsed
+      ? context.request.clone()
+      : context.request;
+
   const request =
-    signal === context.request.signal
-      ? context.request
-      : new Request(context.request, { signal });
+    signal === attemptRequest.signal
+      ? attemptRequest
+      : new Request(attemptRequest, { signal });
 
   try {
     const raw = await fetchFollowingRedirects(request, client);

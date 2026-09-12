@@ -63,6 +63,23 @@ export function assertTokenSecrets(config: TokenConfig): void {
       "TokenConfig.clockToleranceSeconds must be between 0 and 300 seconds.",
     );
   }
+  // A NaN TTL (`Number(process.env.X)` with X unset) minted tokens whose
+  // `exp` serialised as `null`, which every verifier then rejected as
+  // "Invalid payload" — a misconfiguration that only surfaced as a mystery
+  // at first login. Zero and negative TTLs are deliberately still accepted:
+  // they mint already-expired tokens, which is a documented way to test
+  // expiry handling.
+  assertFiniteTtl(config.accessTtl, "accessTtl");
+  assertFiniteTtl(config.refreshTtl, "refreshTtl");
+}
+
+function assertFiniteTtl(value: unknown, field: string): void {
+  if (value === undefined) return;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new AuthConfigurationError(
+      `TokenConfig.${field} must be a finite number of seconds; got ${String(value)}.`,
+    );
+  }
 }
 
 function assertSecret(secret: unknown, field: string): void {

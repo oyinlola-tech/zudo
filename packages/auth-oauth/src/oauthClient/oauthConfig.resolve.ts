@@ -74,6 +74,28 @@ function boundedInt(
 }
 
 /**
+ * Reject anything that is not a list of RFC 6749 §3.3 scope-tokens.
+ *
+ * Applied to `config.scopes` and to the per-request `scopes` override on
+ * {@link createAuthorizationUrl}, which previously skipped it — so a blank
+ * or space-containing entry reached the `scope` parameter untouched.
+ *
+ * @throws {OAuthConfigurationError} On a non-string or malformed entry.
+ */
+export function assertScopes(scopes: readonly unknown[]): void {
+  if (!Array.isArray(scopes)) {
+    throw new OAuthConfigurationError("scopes must be an array of scope-tokens.");
+  }
+  for (const scope of scopes) {
+    if (typeof scope !== "string" || !/^[\x21\x23-\x5B\x5D-\x7E]+$/.test(scope)) {
+      throw new OAuthConfigurationError(
+        "Each scope must be a non-empty RFC 6749 scope-token.",
+      );
+    }
+  }
+}
+
+/**
  * Strip a URL's fragment and normalise scheme/host casing for comparison.
  */
 function canonicalRedirect(url: URL): string {
@@ -115,13 +137,7 @@ export function resolveConfig(config: OAuthConfig): ResolvedOAuthConfig {
     config.scopes !== undefined && config.scopes.length > 0
       ? config.scopes
       : preset.defaultScopes;
-  for (const scope of scopes) {
-    if (typeof scope !== "string" || !/^[\x21\x23-\x5B\x5D-\x7E]+$/.test(scope)) {
-      throw new OAuthConfigurationError(
-        "Each scope must be a non-empty RFC 6749 scope-token.",
-      );
-    }
-  }
+  assertScopes(scopes);
 
   const fetchImpl = config.fetch ?? globalThis.fetch;
   if (typeof fetchImpl !== "function") {

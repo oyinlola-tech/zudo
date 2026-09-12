@@ -132,6 +132,13 @@ export function traverse(
     if (depth > deepest) deepest = depth;
     if (!isContainer(value)) continue;
 
+    // A container occupies the level below the one it sits at, so an empty
+    // `{}` at depth d reaches d + 1 — the same level at which the depth
+    // guard below refuses to descend into it. Reporting only leaf depths
+    // made `getSerializationDepth({})` 0 while `assertDepthWithinLimit({},
+    // 0)` threw.
+    if (depth + 1 > deepest) deepest = depth + 1;
+
     if (onPath.has(value)) {
       if (visitor.failOnCycle) {
         throw new TraversalLimitError("cycle", path, depth);

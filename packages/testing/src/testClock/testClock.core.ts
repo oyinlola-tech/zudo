@@ -104,6 +104,14 @@ export function createTestClock(
       (duration.hours ?? 0) * 3_600_000 +
       (duration.days ?? 0) * 86_400_000;
 
+    // Validated like `advance`: a NaN or Infinity component silently turned
+    // the clock into `Invalid Date` and every later assertion on it lied.
+    if (!Number.isFinite(ms)) {
+      throw new TypeError(
+        `Cannot add ${JSON.stringify(duration)} to the clock: the duration is not finite.`,
+      );
+    }
+
     currentTime += ms;
   };
 

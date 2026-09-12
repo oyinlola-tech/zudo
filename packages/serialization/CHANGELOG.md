@@ -1,5 +1,15 @@
 # @zudojs/serialization
 
+## 1.0.1
+
+### Patch Changes
+
+- - `JSONSerializer.serialize` / `deserialize` (and `createSerializer("json")`) honour an explicit `maxDepth` on the fast path too. It was only read when `preserveTypes` was on, so a per-call or per-instance depth limit was silently ignored for plain JSON.
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/validation@1.0.1
+  - @zudojs/constants@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

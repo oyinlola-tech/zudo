@@ -137,4 +137,9 @@ export interface MessageMiddlewarePipelineOptions {
    * records. Positions without an id fall back to a synthesised one.
    */
   readonly middlewareIds?: readonly string[];
+  /**
+   * Message context to expose as `MessageMiddlewareContext.context`.
+   * When omitted one is derived from the message and the options above.
+   */
+  readonly context?: MessageContext;
 }

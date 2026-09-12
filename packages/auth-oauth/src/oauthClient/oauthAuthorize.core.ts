@@ -17,6 +17,7 @@ import type {
 } from "../oauthTypes/index.js";
 import {
   assertRedirectUriAllowed,
+  assertScopes,
   resolveAuthorizeUrl,
   resolveConfig,
 } from "./oauthConfig.resolve.js";
@@ -83,10 +84,11 @@ export function createAuthorizationUrl(
   assertValidCodeVerifier(codeVerifier);
   const codeChallenge = deriveCodeChallenge(codeVerifier);
 
-  const scopes =
-    options.scopes !== undefined && options.scopes.length > 0
-      ? options.scopes
-      : resolved.scopes;
+  let scopes: readonly string[] = resolved.scopes;
+  if (options.scopes !== undefined && options.scopes.length > 0) {
+    assertScopes(options.scopes);
+    scopes = options.scopes;
+  }
 
   const params = new URLSearchParams(url.search);
   for (const [key, value] of Object.entries(resolved.preset.authorizeParams ?? {})) {

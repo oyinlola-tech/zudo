@@ -1,5 +1,15 @@
 # @zudojs/adapters
 
+## 1.0.1
+
+### Patch Changes
+
+- - `AdapterRegistry.disposeAll()` and `removeAndDispose()` now always call `dispose()`, even when `stop()` throws. Previously a failing `stop()` skipped disposal and the adapter, already unregistered, kept its connections and timers open. The `stop()` error is still reported; when both fail an `AggregateError` carries both.
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/lifecycle@1.1.0
+  - @zudojs/constants@1.0.1
+
 ## 0.1.2
 
 ### Patch Changes

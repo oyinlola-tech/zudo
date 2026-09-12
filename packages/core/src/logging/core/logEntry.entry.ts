@@ -244,7 +244,18 @@ export function sanitizeLogValue(
 
     const result: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(objectValue)) {
-      result[key] = sanitizeLogValue(item, seen, depth + 1);
+      /*
+       * Assigning result["__proto__"] would replace the prototype
+       * (and drop the value from serialized output) instead of
+       * storing the key, so own "__proto__" keys — as produced by
+       * JSON.parse on untrusted input — are defined explicitly.
+       */
+      Object.defineProperty(result, key, {
+        value: sanitizeLogValue(item, seen, depth + 1),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
     return result;
   } finally {

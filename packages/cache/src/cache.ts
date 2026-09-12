@@ -182,8 +182,14 @@ export class CacheService implements CacheHealthChecker {
           ? { metadata: options.metadata }
           : {}),
       });
-      if (result.success && options?.tags && options.tags.length > 0)
-        await this.tagStore.add(fullKey, options.tags, this.tagScope(options));
+      if (result.success) {
+        // The entry now carries exactly the tags of this write. Mappings
+        // left over from an earlier write would let `invalidateByTag` on a
+        // tag the entry no longer has delete the new value.
+        this.tagStore.removeKey(fullKey);
+        if (options?.tags && options.tags.length > 0)
+          await this.tagStore.add(fullKey, options.tags, this.tagScope(options));
+      }
       return result;
     } catch (error) {
       if (this.failSilently) return { success: false, key, expiresAt: null };

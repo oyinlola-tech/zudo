@@ -1,5 +1,13 @@
 # @zudojs/auth-oauth
 
+## 1.1.1
+
+### Patch Changes
+
+- - **SSRF guard: trailing-dot hostnames were not blocked.** `https://metadata.google.internal./…`, `https://localhost./…` and any `*.internal.` / `*.local.` / `*.localhost.` name with a trailing dot passed `assertSafeUrl(…, "fetch")` and `isBlockedFetchHost()`, because the WHATWG URL parser keeps the dot on domain hosts and DNS resolves the dotted and undotted forms identically. Trailing dots are now stripped before the name-based rules run.
+  - A timeout that fires while the response body is streaming, or a transport failure mid-body, escaped as a raw `DOMException` / transport error. Both now surface as the documented `OAuthNetworkError`.
+  - The per-request `scopes` override on `createAuthorizationUrl()` is validated with the same RFC 6749 scope-token rule as `config.scopes`; a blank, space-containing or non-string entry now throws `OAuthConfigurationError` instead of reaching the `scope` parameter.
+
 ## 1.1.0
 
 ### Minor Changes

@@ -50,9 +50,14 @@ export function createEntry(
     ? contextToLogMetadata(activeContext)
     : {};
 
+  // Per-call `options.context` flows into metadata exactly like the ambient
+  // context does. It used to reach only `entry.context.metadata`, which the
+  // text formatters never print, so `log(level, msg, { context })` silently
+  // dropped the data from every text-shaped line.
   const rawMetadata = {
     ...configuration.metadata,
     ...contextMetadata,
+    ...(options.context ?? {}),
     ...(options.metadata ?? {}),
   };
 
@@ -81,8 +86,12 @@ export function createEntry(
     level,
     message,
     metadata,
+    // `LoggerEntryContext` declares the correlation identifiers, but they
+    // were never copied here, so a transport reading `entry.context.requestId`
+    // always saw `undefined`.
     context: context
       ? {
+          ...context.identifiers,
           metadata: redactLogValue(
             context.metadata,
             isSecret,

@@ -191,7 +191,9 @@ import { assertDatabaseHealth, checkDatabaseHealth, createLockManager } from "@z
 const locks = createLockManager(client);
 
 // Advisory lock (FNV-1a 64 key, transaction-scoped). `timeoutMs` becomes
-// `SET LOCAL lock_timeout`; the transaction timeout is raised to cover it.
+// `SET LOCAL lock_timeout` (at least 1 ms; PostgreSQL treats 0 as "no
+// timeout", so 0 is rejected — use `noWait` to fail immediately); the
+// transaction timeout is raised to cover it.
 await locks.withAdvisoryLock("reports:nightly", async (tx) => {
   await tx.$executeRawUnsafe("REFRESH MATERIALIZED VIEW nightly_report");
 }, { timeoutMs: 10_000 });
@@ -233,7 +235,7 @@ await assertDatabaseHealth(client); // throws DatabaseUnhealthyError with the re
 - PostgreSQL only. Migration, seed, and lock helpers emit PostgreSQL SQL; other dialects throw `UnsupportedDialectError`.
 - No savepoints or nested transactions. Prisma interactive transactions are used as-is.
 - Connection pooling is handled by the driver adapter, not by this package.
-- `timeoutMs` and `signal` on repository operations are client-side only; the database query is not cancelled server-side.
+- `timeoutMs` and `signal` on repository operations are client-side only; the database query is not cancelled server-side. A `signal` passed to `transaction()` / `withTransaction()` does roll the transaction back: the abort is raised inside the Prisma callback.
 - The cache is not transaction-aware. Do not populate it from inside a transaction that may roll back.
 
 ## Use Cases

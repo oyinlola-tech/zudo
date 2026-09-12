@@ -146,8 +146,10 @@ export class LocalObjectStorage implements ObjectStorage {
   async exists(key: string): Promise<boolean> {
     const filePath = await this.resolve(key);
     try {
-      await stat(filePath);
-      return true;
+      // A directory created for a nested key ("a/b.txt" creates "a/") is
+      // not an object: `get("a")` returns null, so `exists("a")` must not
+      // claim otherwise.
+      return (await stat(filePath)).isFile();
     } catch {
       return false;
     }
@@ -157,6 +159,7 @@ export class LocalObjectStorage implements ObjectStorage {
     const filePath = await this.resolve(key);
     try {
       const stats = await stat(filePath);
+      if (!stats.isFile()) return null;
       return {
         key,
         ...(await readAttributes(this.basePath, key)),

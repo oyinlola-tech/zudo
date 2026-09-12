@@ -1,5 +1,20 @@
 # @zudojs/tenancy
 
+## 1.1.0
+
+### Minor Changes
+
+- - `createPathResolver({ prefix })` no longer names a tenant for paths outside the prefix. Previously `/health` resolved to a tenant called `health`, and `/admin/...` to whichever tenant was called `admin`.
+  - `createResolveTenantMiddleware` accepts `optional: true`, letting a request that resolves to no tenant proceed without one. This makes `createRequireTenantMiddleware({ requirement: "optional" })` reachable; the default remains a `404`, and a tenant that was named but is unknown, untrusted or suspended is still refused.
+  - `requireCurrentTenant`, `runAs` (context manager) and `requireActive` (tenant manager) no longer depend on `this`, so they work when destructured off the manager instead of throwing a `TypeError`.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/http@1.1.0
+  - @zudojs/constants@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

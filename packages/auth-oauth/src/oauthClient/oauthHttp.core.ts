@@ -15,6 +15,7 @@
  */
 
 import {
+  OAuthError,
   OAuthNetworkError,
   OAuthProviderError,
   OAuthResponseError,
@@ -124,15 +125,7 @@ export async function requestProviderValue(
       signal: AbortSignal.timeout(resolved.timeoutMs),
     });
   } catch (cause) {
-    const name =
-      cause instanceof Error ? cause.name : "";
-    const timedOut = name === "TimeoutError" || name === "AbortError";
-    throw new OAuthNetworkError(
-      timedOut
-        ? `The ${request.label} request timed out after ${resolved.timeoutMs}ms.`
-        : `The ${request.label} request could not be completed.`,
-      { cause },
-    );
+    throw toNetworkError(cause, request.label, resolved.timeoutMs);
   }
 
   if (response.status >= 300 && response.status < 400) {
@@ -142,7 +135,16 @@ export async function requestProviderValue(
     );
   }
 
-  const text = await readCappedText(response, resolved.maxResponseBytes);
+  let text: string;
+  try {
+    text = await readCappedText(response, resolved.maxResponseBytes);
+  } catch (cause) {
+    // The timeout signal also aborts the body stream, and a transport can
+    // fail mid-body. Both surfaced here as a raw `DOMException` /
+    // transport error rather than the documented `OAuthNetworkError`.
+    if (cause instanceof OAuthError) throw cause;
+    throw toNetworkError(cause, request.label, resolved.timeoutMs);
+  }
 
   if (!response.ok) {
     let code: string | undefined;
@@ -175,6 +177,22 @@ export async function requestProviderValue(
     );
   }
   return payload;
+}
+
+/** Wrap a transport or timeout failure in the documented error type. */
+function toNetworkError(
+  cause: unknown,
+  label: string,
+  timeoutMs: number,
+): OAuthNetworkError {
+  const name = cause instanceof Error ? cause.name : "";
+  const timedOut = name === "TimeoutError" || name === "AbortError";
+  return new OAuthNetworkError(
+    timedOut
+      ? `The ${label} request timed out after ${timeoutMs}ms.`
+      : `The ${label} request could not be completed.`,
+    { cause },
+  );
 }
 
 /** Build the `Authorization: Basic` header for client authentication. */

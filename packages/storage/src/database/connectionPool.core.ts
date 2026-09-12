@@ -133,9 +133,12 @@ export class ConnectionPool {
     }
 
     // A connection past `maxLifetime` is retired on the way back rather than
-    // parked for the next caller to discover.
+    // parked for the next caller to discover. Retiring it frees a slot, and
+    // a parked waiter is the caller entitled to it: without a replacement
+    // the waiter would sit out `acquireTimeout` next to an empty pool.
     if (this.isOverLifetime(connection)) {
       await this.close(connection);
+      await this.replenishForWaiters();
       return;
     }
 
@@ -256,6 +259,47 @@ export class ConnectionPool {
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }
+  }
+
+  /**
+   * Produce a fresh connection for the longest-waiting caller when a slot is
+   * free, so a retirement never strands a waiter beside spare capacity.
+   */
+  private async replenishForWaiters(): Promise<void> {
+    if (
+      this.closed ||
+      this.waitQueue.size === 0 ||
+      this.total() >= this.options.max
+    ) {
+      return;
+    }
+
+    this.pending++;
+    let conn: Connection;
+    try {
+      conn = await this.create();
+    } catch (error) {
+      this.waitQueue.rejectOne(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+      return;
+    } finally {
+      this.pending--;
+    }
+
+    if (this.closed) {
+      await this.close(conn);
+      return;
+    }
+
+    if (this.waitQueue.handOff(conn)) {
+      this.inUse.add(conn);
+      return;
+    }
+
+    const age = this.ages.get(conn);
+    if (age) age.idleSince = Date.now();
+    this.available.push(conn);
   }
 
   /** Whether an idle connection should be discarded instead of reused. */

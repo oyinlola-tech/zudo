@@ -98,7 +98,36 @@ export function compareVersions(a: SemVer, b: SemVer): number {
   if (a.prerelease === undefined) return 1;
   if (b.prerelease === undefined) return -1;
 
-  return a.prerelease < b.prerelease ? -1 : 1;
+  return comparePrerelease(a.prerelease, b.prerelease);
+}
+
+/**
+ * Compares two prerelease strings identifier by identifier, as semver
+ * specifies: numeric identifiers compare numerically and rank below
+ * alphanumeric ones, and a longer identifier list ranks higher when the
+ * shared prefix is equal. A plain string comparison put `alpha.10`
+ * before `alpha.9`.
+ */
+function comparePrerelease(a: string, b: string): number {
+  const left = a.split(".");
+  const right = b.split(".");
+  const length = Math.min(left.length, right.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const x = left[index]!;
+    const y = right[index]!;
+    if (x === y) continue;
+
+    const xNumeric = /^\d+$/.test(x);
+    const yNumeric = /^\d+$/.test(y);
+
+    if (xNumeric && yNumeric) return Number(x) - Number(y);
+    if (xNumeric) return -1;
+    if (yNumeric) return 1;
+    return x < y ? -1 : 1;
+  }
+
+  return left.length - right.length;
 }
 
 /**

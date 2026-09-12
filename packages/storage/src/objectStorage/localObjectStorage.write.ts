@@ -38,10 +38,14 @@ export async function collectStream(
 
       total += value.length;
       if (total > maxBytes) {
-        throw new StorageError(
+        const error = new StorageError(
           `Object exceeds the maximum size of ${maxBytes} bytes`,
           { code: "STORAGE_OBJECT_TOO_LARGE", statusCode: 413 },
         );
+        // Tell the producer to stop: releasing the lock alone leaves the
+        // source (a file handle, a socket) open and still pulling.
+        await reader.cancel(error).catch(() => undefined);
+        throw error;
       }
       chunks.push(value);
     }

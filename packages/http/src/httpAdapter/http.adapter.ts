@@ -27,6 +27,8 @@ import { writeResponse } from "../httpResponse/httpResponse.writer.js";
 
 import type { HttpResponseWriter } from "../httpResponse/httpResponse.writer.js";
 
+import { resolveErrorResponse } from "./httpAdapter.errorResponse.js";
+
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -267,11 +269,13 @@ export abstract class BaseHttpAdapter implements HttpAdapter {
 
       mergeResponseContext(response, context);
     } else {
-      response.internalServerError();
+      const resolved = resolveErrorResponse(error);
 
-      response.json({
-        error: "Internal Server Error",
-      });
+      for (const [name, value] of Object.entries(resolved.headers)) {
+        response.setHeader(name, value);
+      }
+
+      response.setStatus(resolved.status).json(resolved.body);
     }
 
     await this.write(input, response);

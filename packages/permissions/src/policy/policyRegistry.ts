@@ -49,7 +49,15 @@ export function createPolicyRegistry(
       if (policies.has(definition.name) && !allowOverride) {
         throw new DuplicatePolicyError(definition.name);
       }
-      policies.set(definition.name, Object.freeze({ ...definition }));
+      // Copy the permission list: a caller mutating the array it passed in
+      // must not re-scope the policy after registration.
+      policies.set(
+        definition.name,
+        Object.freeze({
+          ...definition,
+          permissions: Object.freeze([...definition.permissions]),
+        }),
+      );
     },
 
     get(name: string): PermissionPolicyDefinition | undefined {

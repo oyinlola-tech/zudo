@@ -1,5 +1,38 @@
 # @zudojs/testing
 
+## 1.1.0
+
+### Minor Changes
+
+- Audit round 9 fixes:
+
+  - `SpyLogger.findByMetadata()` compares structurally (same walker as the assertions) instead of by `JSON.stringify`. It no longer matches any `Map`/`Set` against any other, no longer ignores `undefined` properties, and now matches objects regardless of key order.
+  - `assertThrows()` given an async function (or any function returning a promise) now throws "returned a promise; use assertRejects" and handles the rejection, instead of reporting "did not throw" and leaking an unhandled rejection.
+  - `CleanupManager.dispose()` called while a previous `dispose()` is still running now shares that run (and its `AggregateError`) instead of resolving immediately before the resources were released.
+  - `SpyLogger.child({ metadata, level })` now records the child metadata on every call the child writes (call metadata still wins) and honours a child `level` override, matching the real logger.
+  - `deepEqual` / `findDifference` / `assertResponseBody` and friends compare `Set` members and `Map` keys structurally, so `new Set([{ id: 1 }])` equals `new Set([{ id: 1 }])`.
+  - `TestClock.add()` throws a `TypeError` for a non-finite duration instead of silently setting the clock to `Invalid Date`.
+  - `MockFn.results` stays aligned with `calls` when the implementation throws (the slot holds `undefined`), and the new `MockFn.errors` array records the thrown values in call order.
+  - `assertTypePreservesRoundTrip()` renders its failure message with `describeValue`, so a failing check on a `BigInt`, `Map` or circular value throws the assertion error rather than a `TypeError` from `JSON.stringify`.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/config@1.0.1
+  - @zudojs/container@1.1.0
+  - @zudojs/errors@1.0.1
+  - @zudojs/events@1.0.1
+  - @zudojs/http@1.1.0
+  - @zudojs/logger@1.1.0
+  - @zudojs/messaging@1.0.1
+  - @zudojs/middleware@1.0.1
+  - @zudojs/queue@1.1.0
+  - @zudojs/security@1.0.1
+  - @zudojs/serialization@1.0.1
+  - @zudojs/storage@1.1.0
+  - @zudojs/validation@1.0.1
+  - @zudojs/constants@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

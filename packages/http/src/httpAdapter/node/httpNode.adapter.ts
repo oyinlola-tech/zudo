@@ -52,6 +52,8 @@ import { NodeResponseWriter } from "./httpNode.response.js";
 
 import { createNodeRequestContext } from "./httpNode.request.js";
 
+import { resolveErrorResponse } from "../httpAdapter.errorResponse.js";
+
 import {
   isIncomingMessage,
   isServerResponse,
@@ -97,6 +99,16 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
   private server: Server | undefined;
 
   private ownsServer = false;
+
+  /**
+   * The `clientError` listener installed by `start()`, kept so `stop()` can
+   * remove it. On an externally supplied server the instance survives a
+   * stop/start cycle, and re-adding the listener on every start leaked one
+   * per restart.
+   */
+  private clientErrorListener:
+    | ((error: Error, socket: import("node:net").Socket) => void)
+    | undefined;
 
   constructor(options: NodeAdapterOptions = {}) {
     super({
@@ -232,7 +244,23 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
 
     const response = input.response;
 
-    const context = this.createRequest(request);
+    let context: HttpRequestContext;
+
+    try {
+      context = this.createRequest(request);
+    } catch (error) {
+      /*
+       * The request could not even be described (an unparseable request
+       * target, a header the context refuses). It is the client's fault, so
+       * answer 400 rather than letting the rejection destroy the socket
+       * without a response.
+       */
+      this.emitAdapterError(error);
+
+      await this.writeBadRequest(response);
+
+      return;
+    }
 
     try {
       await this.attachNodeBody(request, context);
@@ -345,11 +373,37 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
       }
     }
 
-    context.internalServerError().json({
-      error: "Internal Server Error",
-    });
+    /*
+     * A thrown `HttpError` (or one buried under the middleware pipeline's
+     * wrappers) is answered with its own status, exposed message and headers;
+     * anything else stays a generic 500.
+     */
+    const resolved = resolveErrorResponse(error);
+
+    for (const [name, value] of Object.entries(resolved.headers)) {
+      context.setHeader(name, value);
+    }
+
+    context.setStatus(resolved.status).json(resolved.body);
 
     await this.writeNodeResponse(response, context);
+  }
+
+  private async writeBadRequest(response: ServerResponse): Promise<void> {
+    if (response.headersSent) {
+      response.destroy();
+
+      return;
+    }
+
+    const context = createResponseContext();
+
+    context.setHeader("connection", "close");
+
+    await this.writeNodeResponse(
+      response,
+      context.setStatus(400).json({ error: "Bad Request" }),
+    );
   }
 
   private async writeNodeResponse(
@@ -433,7 +487,11 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
       maxConnections: this.maxConnections,
     });
 
-    this.server.on("clientError", (error, socket) => {
+    if (this.clientErrorListener) {
+      this.server.off("clientError", this.clientErrorListener);
+    }
+
+    this.clientErrorListener = (error, socket) => {
       this.emitAdapterError(error);
 
       if (socket.writable) {
@@ -441,7 +499,9 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
       }
 
       socket.destroy();
-    });
+    };
+
+    this.server.on("clientError", this.clientErrorListener);
 
     await listen(this.server, this.port, this.host);
 
@@ -466,6 +526,12 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
     }
 
     await closeServer(this.server, { graceMs: this.shutdownGraceMs });
+
+    if (this.clientErrorListener) {
+      this.server.off("clientError", this.clientErrorListener);
+
+      this.clientErrorListener = undefined;
+    }
 
     if (this.ownsServer) {
       this.server = undefined;

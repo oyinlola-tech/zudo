@@ -172,7 +172,11 @@ context.metadata; // read-only snapshot keyed by key name
 
 ## Errors
 
-`normalizeAPIError(error, operationName?)` converts anything thrown into an `APIError`. Non-API errors become an `APIInternalError` with a generic message and the original on `cause` — the internal message is deliberately not copied onto the wrapper, because `BaseError.toJSON()` serializes `message`, `stack` and `cause` regardless of `expose`.
+`normalizeAPIError(error, operationName?)` converts anything thrown into an `APIError`. Non-API errors become an `APIInternalError` with a generic message and the original on `cause`, so `result.error.message` never carries a driver or library message.
+
+`cause` is there for logging, and `BaseError.toJSON()` (the logging form, also used by `JSON.stringify`) serializes it — message and stack included — regardless of `expose`. Do not hand `result.error` to `res.json()` as-is: pick the fields a client may see (`code`, `statusCode`, and `message` only when `expose` is true), or run it through `ErrorSerializer` from `@zudojs/errors`.
+
+Handlers are expected to return a promise, but a hand-rolled operation whose handler returns synchronously is executed the same way.
 
 ## License
 

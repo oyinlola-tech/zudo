@@ -76,6 +76,7 @@ export class Container implements ContainerLike {
   readonly #liveScopes = new Set<ContainerScopeContext>();
   #started = false;
   #disposed = false;
+  #disposing: Promise<void> | undefined;
 
   constructor(options: ContainerOptions = {}) {
     this.options = resolveContainerOptions(options);
@@ -323,9 +324,25 @@ export class Container implements ContainerLike {
    * Disposal is terminal: the container is marked disposed even when some
    * instances fail to dispose; every failure is reported in the thrown
    * AggregateError. Idempotent.
+   *
+   * The container is marked disposed *before* any cleanup runs, so a
+   * `resolve()` racing the disposal throws instead of creating a singleton
+   * that would be tracked after the disposal snapshot and then silently
+   * dropped. Concurrent `dispose()` calls share the in-flight disposal and
+   * settle only when it has finished.
    */
-  async dispose(): Promise<void> {
-    if (this.#disposed) return;
+  dispose(): Promise<void> {
+    if (this.#disposing) return this.#disposing;
+    if (this.#disposed) return Promise.resolve();
+    this.#disposed = true;
+    this.#started = false;
+    this.#disposing = this.runDispose().finally(() => {
+      this.#disposing = undefined;
+    });
+    return this.#disposing;
+  }
+
+  private async runDispose(): Promise<void> {
     const failures: unknown[] = [];
     for (const scope of [...this.#liveScopes]) {
       try {
@@ -344,8 +361,6 @@ export class Container implements ContainerLike {
     }
     this.#lifecycle.shutdown();
     this.#resolver.clearSingletonCache();
-    this.#disposed = true;
-    this.#started = false;
     if (failures.length > 0)
       throw new AggregateError(
         failures,

@@ -69,11 +69,26 @@ export class ReadinessTracker {
     const existed = this.checks.delete(name);
     this.checkFns.delete(name);
 
-    if (existed) {
+    if (!existed) {
+      return false;
+    }
+
+    if (
+      this.autoMarkReady &&
+      this.checks.size === 0 &&
+      this.state === "degraded"
+    ) {
+      // `degraded` is only ever entered from `ready` because a check
+      // failed. Removing the last check leaves nothing failing, so the
+      // tracker returns to ready — otherwise `evaluateReadiness()` (which
+      // only acts when checks exist) left it stuck at `ready: false` while
+      // the derived health, seeing no checks, reported `healthy`.
+      this.markReady("All readiness checks removed.");
+    } else {
       this.evaluateReadiness();
     }
 
-    return existed;
+    return true;
   }
 
   /**

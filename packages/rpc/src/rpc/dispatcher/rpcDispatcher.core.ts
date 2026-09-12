@@ -84,7 +84,13 @@ export class RPCDispatcher {
   /**
    * Dispatches an RPC request.
    */
-  async dispatch(request: RPCRequest): Promise<RPCResponse> {
+  async dispatch(input: RPCRequest): Promise<RPCResponse> {
+    // Tolerate a frame without `metadata`: the field is optional when a
+    // request is built by hand or decoded from JSON, and everything below
+    // — deadline reading, the context's `metadata` — reads it as an object.
+    const request: RPCRequest =
+      input.metadata === undefined ? { ...input, metadata: {} } : input;
+
     const procedure = this.registry.require(request.procedure);
 
     const controller = new AbortController();

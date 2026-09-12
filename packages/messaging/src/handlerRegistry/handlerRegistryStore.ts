@@ -40,7 +40,16 @@ export class HandlerRegistryStore {
     handler: NamedMessageHandler<TMessage, TResult>,
   ): void {
     this.validateNotDuplicate(handler.id);
-    this.validateSingleHandlerPerType(handler);
+    // Replacing a handler id must drop the old entry from the type index
+    // first, or the replacement keeps receiving the old handler's types.
+    const previous = this.handlers.get(handler.id);
+    if (previous !== undefined) this.removeHandlerFromTypeIndex(previous);
+    try {
+      this.validateSingleHandlerPerType(handler);
+    } catch (error) {
+      if (previous !== undefined) this.indexHandlerTypes(previous.handler);
+      throw error;
+    }
     const entry: RegisteredHandler<TMessage, TResult> = {
       handler,
       registeredAt: new Date(),

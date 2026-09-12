@@ -151,8 +151,8 @@ const engine = createPermissionEngine({
 
 Policies run highest priority first and stop at the first denial. A policy
 that throws, or exceeds `policyTimeout`, denies. A denying policy always wins;
-an allowing one can grant access the rules did not, but never overrides a
-denial.
+an allowing one can grant access the rules did not decide, but never overrides
+a denial — from another policy or from a deny rule that applied.
 
 `policyTimeout: 0` means "expire immediately", not "no timeout" — omit it to
 disable.
@@ -177,6 +177,9 @@ const engine = createPermissionEngine({ roles, policies });
 
 roles.define({ name: "auditor", permissions: ["audit:read"] });
 engine.invalidateRoles(); // pick up the change
+
+policies.define({ name: "lockdown", permissions: ["*:*"], evaluate: () => ({ allowed: false }) });
+// enforced by the next check — through the engine or an existing Ability
 
 roles.require("auditor"); // throws RoleNotFoundError when unregistered
 ```
@@ -225,7 +228,8 @@ await engine.invalidateActor("user_1");
 
 Keys include the actor, the permission and the resource id (from
 `resource.id`, or `options.resourceId`), so two resources never share one
-decision.
+decision. A `|` inside an actor or resource id is escaped, so two different
+(actor, permission, resource) triples can never share a key either.
 
 A check is cached only when the key can describe it completely:
 
@@ -265,6 +269,7 @@ Every failure denies:
 | Unknown role on the actor   | denied; reported to `onError`; other roles still apply |
 | Malformed permission string | denied, `reason: "invalid_permission"`                 |
 | Condition throws            | rule does not apply                                    |
+| A deny rule applies         | denied, `reason: "rule_deny"`, even if a policy allows |
 | Policy throws or times out  | denied, `reason: "policy_error:<name>"`                |
 | Role inheritance cycle      | denied; reported to `onError`                          |
 | Role source throws          | denied; reported to `onError`                          |

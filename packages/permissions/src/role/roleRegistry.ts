@@ -38,6 +38,25 @@ export interface RoleRegistry {
 }
 
 /**
+ * Copy a role definition so it no longer shares arrays with the caller.
+ *
+ * `Object.freeze({ ...definition })` froze the wrapper and kept the caller's
+ * `permissions`, `inherits` and `rules` arrays by reference — so pushing
+ * `"*:*"` onto an array *after* `define()` had validated it widened the role
+ * in silence.
+ */
+export function freezeRoleDefinition(definition: RoleDefinition): RoleDefinition {
+  return Object.freeze({
+    ...definition,
+    permissions: Object.freeze([...definition.permissions]),
+    ...(definition.inherits
+      ? { inherits: Object.freeze([...definition.inherits]) }
+      : {}),
+    ...(definition.rules ? { rules: Object.freeze([...definition.rules]) } : {}),
+  });
+}
+
+/**
  * Create a role registry.
  *
  * Pass it straight to `createPermissionEngine({ roles: registry })`.
@@ -81,7 +100,7 @@ export function createRoleRegistry(
         throw new DuplicateRoleError(definition.name);
       }
 
-      roles.set(definition.name, Object.freeze({ ...definition }));
+      roles.set(definition.name, freezeRoleDefinition(definition));
     },
 
     get(name: string): RoleDefinition | undefined {

@@ -15,8 +15,10 @@ import { tmpdir } from "node:os";
 
 import { ConnectionPool } from "../src/database/index.js";
 import { LocalObjectStorage, SIDECAR_DIR } from "../src/objectStorage/index.js";
+import { collectStream } from "../src/objectStorage/localObjectStorage.write.js";
+import { BaseRepository } from "../src/repository/index.js";
 import { JsonSerializer } from "../src/serialization/index.js";
-import type { Connection } from "../src/types/storage.type.js";
+import type { Connection, Database } from "../src/types/storage.type.js";
 
 /** A connection that records whether it was closed. */
 function makeConnection(id: string, closed: string[]): Connection {
@@ -348,5 +350,191 @@ describe("JsonSerializer format handling", () => {
     expect(() =>
       serializer.deserialize(new Uint8Array([123, 125]), "binary"),
     ).toThrow(/supports "json" only/);
+  });
+});
+
+/* ─── STORAGE-R9-01: a base directory behind a symlink refused every key ── */
+
+describe("STORAGE-R9-01", () => {
+  it("accepts keys when the store's base directory is itself a symlink", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zudo-r9-symbase-"));
+    await mkdir(join(root, "real"));
+    await symlink(join(root, "real"), join(root, "link"));
+
+    // macOS's tmpdir (/var → /private/var), mounted volumes and deploy
+    // slots all reach the store through a link; the README's own quick
+    // start constructs the store exactly this way.
+    const storage = new LocalObjectStorage(join(root, "link"));
+    await storage.put("a.txt", new TextEncoder().encode("hello"));
+
+    expect(await storage.exists("a.txt")).toBe(true);
+    const object = await storage.get("a.txt");
+    expect(new TextDecoder().decode(await object!.arrayBuffer())).toBe("hello");
+    expect((await readdir(join(root, "real"))).sort()).toEqual(
+      [".zudo-object-meta", "a.txt"].sort(),
+    );
+
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("still refuses a symlink inside a symlinked base that points outside", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zudo-r9-symbase-"));
+    await mkdir(join(root, "real"));
+    await mkdir(join(root, "outside"));
+    await writeFile(join(root, "outside", "secret.txt"), "secret");
+    await symlink(join(root, "real"), join(root, "link"));
+    await symlink(
+      join(root, "outside", "secret.txt"),
+      join(root, "real", "escape.txt"),
+    );
+
+    const storage = new LocalObjectStorage(join(root, "link"));
+    await expect(storage.get("escape.txt")).rejects.toThrow(
+      /Path traversal detected/,
+    );
+
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
+/* ─── STORAGE-R9-02: release() retired a connection and stranded waiters ── */
+
+describe("STORAGE-R9-02", () => {
+  it("hands a parked waiter a fresh connection when the released one is retired", async () => {
+    const closed: string[] = [];
+    let created = 0;
+    const pool = new ConnectionPool(
+      async () => makeConnection(`c${++created}`, closed),
+      { min: 0, max: 1, maxLifetime: 30, acquireTimeout: 400 },
+    );
+
+    const first = await pool.acquire();
+    await sleep(45); // outlive maxLifetime while held
+
+    const waiting = pool.acquire();
+    await sleep(5);
+    expect(pool.getStats().waiting).toBe(1);
+
+    const started = Date.now();
+    await pool.release(first);
+    const second = await waiting;
+
+    expect(closed).toEqual(["c1"]);
+    expect(second.id).toBe("c2");
+    expect(Date.now() - started).toBeLessThan(200);
+    expect(pool.getStats()).toEqual({
+      total: 1,
+      idle: 0,
+      active: 1,
+      waiting: 0,
+    });
+
+    await pool.release(second);
+    await pool.drain(10);
+  });
+
+  it("rejects the waiter with the factory error instead of letting it time out", async () => {
+    const closed: string[] = [];
+    let created = 0;
+    const pool = new ConnectionPool(
+      async () => {
+        created++;
+        if (created > 1) throw new Error("database unreachable");
+        return makeConnection("c1", closed);
+      },
+      { min: 0, max: 1, maxLifetime: 30, acquireTimeout: 400 },
+    );
+
+    const first = await pool.acquire();
+    await sleep(45);
+    const waiting = pool.acquire();
+    await sleep(5);
+
+    await pool.release(first);
+    await expect(waiting).rejects.toThrow(/database unreachable/);
+    expect(pool.getStats().total).toBe(0);
+
+    await pool.drain(10);
+  });
+});
+
+/* ─── STORAGE-R9-03: update() resolved undefined for a missing row ─────── */
+
+describe("STORAGE-R9-03", () => {
+  interface User extends Record<string, unknown> {
+    id: string;
+    email: string;
+  }
+
+  function databaseReturning(rows: readonly User[]): Database {
+    return {
+      query: async () => ({ rows, rowCount: rows.length, fields: [] }),
+    } as unknown as Database;
+  }
+
+  it("throws NotFoundError when the update matches no row", async () => {
+    const users = new BaseRepository<User, string>(databaseReturning([]), {
+      tableName: "users",
+    });
+
+    await expect(users.update("missing", { email: "x@y.z" })).rejects.toMatchObject({
+      name: "NotFoundError",
+      code: "STORAGE_ENTITY_NOT_FOUND",
+    });
+  });
+
+  it("returns the updated row when one is returned", async () => {
+    const row: User = { id: "u1", email: "new@y.z" };
+    const users = new BaseRepository<User, string>(databaseReturning([row]), {
+      tableName: "users",
+    });
+
+    expect(await users.update("u1", { email: "new@y.z" })).toEqual(row);
+  });
+});
+
+/* ─── STORAGE-R9-04: exists()/metadata() reported directories as objects ── */
+
+describe("STORAGE-R9-04", () => {
+  let root: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "zudo-r9-dir-"));
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("does not report the directory created for a nested key as an object", async () => {
+    const storage = new LocalObjectStorage(root);
+    await storage.put("a/b.txt", new TextEncoder().encode("x"));
+
+    expect(await storage.exists("a/b.txt")).toBe(true);
+    expect(await storage.exists("a")).toBe(false);
+    expect(await storage.metadata("a")).toBeNull();
+    expect(await storage.get("a")).toBeNull();
+  });
+});
+
+/* ─── STORAGE-R9-05: an oversized stream was abandoned, not cancelled ───── */
+
+describe("STORAGE-R9-05", () => {
+  it("cancels the source stream when the byte budget is exceeded", async () => {
+    let cancelReason: unknown;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(10));
+      },
+      cancel(reason) {
+        cancelReason = reason;
+      },
+    });
+
+    await expect(collectStream(stream, 15)).rejects.toMatchObject({
+      code: "STORAGE_OBJECT_TOO_LARGE",
+    });
+    expect(cancelReason).toMatchObject({ code: "STORAGE_OBJECT_TOO_LARGE" });
+    expect(stream.locked).toBe(false);
   });
 });

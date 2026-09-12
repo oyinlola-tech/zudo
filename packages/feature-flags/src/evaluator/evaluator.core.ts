@@ -30,6 +30,26 @@ export interface EvaluateFlagOptions {
   readonly dependenciesSatisfied?: boolean;
 }
 
+/**
+ * Whether an `expiresAt` lies in the past.
+ *
+ * The type says `Date`, but a flag loaded from JSON — which is what every
+ * remote provider hands over — carries an ISO string, and `"2020-01-01" <
+ * new Date()` is always `false`. A flag that had expired at the source
+ * therefore never expired here. Anything `Date` can parse is honoured; a
+ * value it cannot parse is treated as no expiry.
+ */
+function isExpired(expiresAt: unknown): boolean {
+  if (expiresAt === undefined || expiresAt === null) return false;
+  const time =
+    expiresAt instanceof Date
+      ? expiresAt.getTime()
+      : typeof expiresAt === "string" || typeof expiresAt === "number"
+        ? new Date(expiresAt).getTime()
+        : Number.NaN;
+  return !Number.isNaN(time) && time < Date.now();
+}
+
 /** The evaluation reason a matching rule of each type produces. */
 function reasonFor(type: FeatureFlagRule["type"]): FeatureFlagEvaluationReason {
   switch (type) {
@@ -82,7 +102,7 @@ export function evaluateFlag<
     };
   }
 
-  if (flag.metadata?.expiresAt && flag.metadata.expiresAt < new Date()) {
+  if (isExpired(flag.metadata?.expiresAt)) {
     return {
       key: flag.key,
       value: flag.defaultValue as TValue,

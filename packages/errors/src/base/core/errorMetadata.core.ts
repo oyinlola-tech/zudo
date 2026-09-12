@@ -30,12 +30,24 @@ export function isForbiddenMetadataKey(key: string): boolean {
   return FORBIDDEN_METADATA_KEYS.has(key);
 }
 
+/**
+ * Returns a copy of `pattern` without the `g` and `y` flags.
+ *
+ * Those flags make `RegExp.prototype.test` advance `lastIndex`, so a shared
+ * sensitive-key pattern would redact a key on one call and let the same key
+ * through on the next. Every key check in this module goes through here.
+ */
+function statelessPattern(pattern: RegExp): RegExp {
+  if (!pattern.global && !pattern.sticky) return pattern;
+  return new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, ""));
+}
+
 /** Returns whether a metadata key looks like it carries a secret. */
 export function isSensitiveMetadataKey(
   key: string,
   pattern: RegExp = SENSITIVE_METADATA_KEY_PATTERN,
 ): boolean {
-  return pattern.test(key);
+  return statelessPattern(pattern).test(key);
 }
 
 /** Returns whether a value is a plain object (Object.prototype or null prototype). */
@@ -360,7 +372,9 @@ export function redactErrorMetadata(
 ): Readonly<ErrorMetadata> {
   if (metadata === undefined || metadata === null) return Object.freeze({});
 
-  const pattern = options.sensitiveKeyPattern ?? SENSITIVE_METADATA_KEY_PATTERN;
+  const pattern = statelessPattern(
+    options.sensitiveKeyPattern ?? SENSITIVE_METADATA_KEY_PATTERN,
+  );
   const extraKeys = new Set((options.keys ?? []).map((key) => key.toLowerCase()));
   const replacement = options.replacement ?? REDACTED_METADATA_VALUE;
 

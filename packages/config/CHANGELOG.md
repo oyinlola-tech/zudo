@@ -1,5 +1,14 @@
 # @zudojs/config
 
+## 1.0.1
+
+### Patch Changes
+
+- - A string schema `pattern` carrying the `g` or `y` flag now validates the same value consistently; `lastIndex` state made the same schema alternate between accepting and rejecting identical input.
+  - An array schema's `items.transform` (and `items.default`) now reaches the returned value from `validateConfigValue` / `validateConfigObject` / `manager.validate()`; item results were previously consulted for issues only and the untransformed array was returned as valid.
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+
 ## 1.0.0
 
 ### Major Changes

@@ -30,7 +30,9 @@ export function createRPCContext(
 
   const context = {
     request,
-    metadata: request.metadata,
+    // A frame decoded from JSON may omit `metadata`; middleware reads
+    // `context.metadata.userId` and the like without guarding.
+    metadata: request.metadata ?? {},
     signal,
     state,
     get<T>(key: string): T | undefined {

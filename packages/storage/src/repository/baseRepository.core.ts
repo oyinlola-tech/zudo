@@ -124,7 +124,17 @@ export class BaseRepository<
     const result = await this.database.query<Entity>(
       buildUpdate(this.table, id as QueryParameter, changes),
     );
-    return result.rows[0]!;
+    const updated = result.rows[0];
+    if (updated === undefined) {
+      // `RETURNING *` yields no row when nothing matched. The declared
+      // return type is `Entity`; resolving `undefined` here while the
+      // zero-change path throws made "missing" depend on the payload.
+      throw new NotFoundError(`Entity not found: ${String(id)}`, {
+        code: "STORAGE_ENTITY_NOT_FOUND",
+        statusCode: 404,
+      });
+    }
+    return updated;
   }
 
   /**

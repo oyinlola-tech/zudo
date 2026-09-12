@@ -1,5 +1,19 @@
 # @zudojs/queue
 
+## 1.1.0
+
+### Minor Changes
+
+- - `createWorker()` now honours `WorkerOptions.concurrency`: jobs are dispatched in parallel up to the limit. Previously the worker awaited each job before polling again, so it ran one job at a time whatever `concurrency` said.
+  - `Worker.stop()` is now graceful as documented: in-flight jobs get `drainTimeout` to finish and are only aborted when it elapses. Previously `stop()` aborted every running job immediately, making it indistinguishable from `forceStop()` for processors that honour their signal.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/serialization@1.0.1
+  - @zudojs/constants@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

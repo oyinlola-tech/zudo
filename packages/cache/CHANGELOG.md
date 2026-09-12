@@ -1,5 +1,14 @@
 # @zudojs/cache
 
+## 1.0.1
+
+### Patch Changes
+
+- - `set()` on an existing key now replaces the key's tag mappings instead of accumulating them. Previously `set("k", v, { tags: ["a"] })` followed by `set("k", v2, { tags: ["b"] })` left `k` reachable by `invalidateByTag(["a"])`, so a stale tag could delete the new value.
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/serialization@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

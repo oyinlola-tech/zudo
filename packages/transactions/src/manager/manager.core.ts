@@ -19,6 +19,7 @@ import type {
 } from "../transactionTypes/transactionHooks.js";
 import { getDefaultContext } from "../context/context.core.js";
 import { internals } from "../transaction/transaction.internal.js";
+import { isTerminal } from "../transaction/transactionStateMachine.js";
 import { TransactionRollbackError } from "../transactionErrors/transactionError.types.js";
 import { commitTransaction, rollbackTransaction } from "./manager.commit.js";
 import {
@@ -44,6 +45,11 @@ export interface TransactionManagerOptions {
   readonly onEvent?: TransactionEventHandler;
 }
 
+/** Whether a transaction can no longer change state. */
+function isFinished(transaction: Transaction): boolean {
+  return isTerminal(transaction.state);
+}
+
 /**
  * Create a transaction manager.
  */
@@ -52,18 +58,45 @@ export function createTransactionManager(options: TransactionManagerOptions) {
   const context = options.context ?? getDefaultContext();
   const emit = createEmitter(options.onEvent);
 
-  /** Arms the timeout, returning a disposer that always clears the timer. */
-  function armTimeout(transaction: Transaction): () => void {
+  /** Timers armed for owned transactions, cleared when they complete. */
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /** Whether the manager completes this handle (root or savepoint). */
+  function owns(transaction: Transaction): boolean {
+    return transaction.kind === "root" || transaction.kind === "savepoint";
+  }
+
+  /**
+   * Arms the timeout for an owned transaction.
+   *
+   * `begin()` used to validate `timeout` against the adapter's capabilities
+   * and then ignore it — only `run()` armed a timer — so a transaction
+   * opened by hand never timed out.
+   */
+  function armTimeout(transaction: Transaction): void {
     const timeout = transaction.options.timeout;
-    if (!timeout || timeout <= 0) return () => {};
+    if (!timeout || timeout <= 0) return;
 
     const timer = setTimeout(() => {
+      timers.delete(transaction.id);
       internals(transaction)._markTimedOut();
       transaction.markRollbackOnly("timeout");
       emit(TRANSACTION_EVENTS.TIMED_OUT, transaction);
     }, timeout);
 
-    return () => clearTimeout(timer);
+    timers.set(transaction.id, timer);
+  }
+
+  /** Clears the timer and registry entry of a completed owned transaction. */
+  function release(transaction: Transaction): void {
+    if (!owns(transaction)) return;
+
+    const timer = timers.get(transaction.id);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timers.delete(transaction.id);
+    }
+    registry?.unregister(transaction.id);
   }
 
   return {
@@ -88,8 +121,9 @@ export function createTransactionManager(options: TransactionManagerOptions) {
         emit,
       });
 
-      if (transaction.kind === "root" || transaction.kind === "savepoint") {
+      if (owns(transaction)) {
         registry?.register(transaction);
+        armTimeout(transaction);
       }
 
       return transaction;
@@ -106,11 +140,24 @@ export function createTransactionManager(options: TransactionManagerOptions) {
       callback: (transaction: Transaction) => Promise<T>,
       opts?: TransactionOptions,
     ): Promise<T> {
-      return withRetry(opts?.retry, async () => {
+      // A failed attempt that only JOINED an enclosing transaction has not
+      // been rolled back — it marked the enclosing transaction rollback-only
+      // — so replaying it would repeat its side effects inside a transaction
+      // that can no longer commit. Retry only attempts this call owned.
+      let joined = false;
+      const retry = opts?.retry;
+      const retryOptions =
+        retry === undefined
+          ? undefined
+          : {
+              ...retry,
+              shouldRetry: (error: unknown, attempt: number): boolean =>
+                !joined && (retry.shouldRetry?.(error, attempt) ?? true),
+            };
+
+      return withRetry(retryOptions, async () => {
         const transaction = await this.begin(opts);
-        const owned =
-          transaction.kind === "root" || transaction.kind === "savepoint";
-        const disposeTimeout = owned ? armTimeout(transaction) : () => {};
+        joined = transaction.kind === "participant";
 
         const body = async (): Promise<T> => {
           try {
@@ -130,8 +177,7 @@ export function createTransactionManager(options: TransactionManagerOptions) {
             }
             throw error;
           } finally {
-            disposeTimeout();
-            if (owned) registry?.unregister(transaction.id);
+            release(transaction);
           }
         };
 
@@ -141,14 +187,28 @@ export function createTransactionManager(options: TransactionManagerOptions) {
       });
     },
 
-    /** Commit a transaction. Participants and committed transactions are no-ops. */
+    /**
+     * Commit a transaction. Participants and committed transactions are no-ops.
+     *
+     * Completing a transaction opened with `begin()` also releases its
+     * timeout timer and registry entry; both used to be released only by
+     * `run()`, so hand-managed transactions stayed in the registry forever.
+     */
     async commit(transaction: Transaction): Promise<void> {
-      return commitTransaction(transaction, adapter, hooks, emit);
+      try {
+        await commitTransaction(transaction, adapter, hooks, emit);
+      } finally {
+        if (isFinished(transaction)) release(transaction);
+      }
     },
 
     /** Roll back a transaction, or mark the joined transaction rollback-only. */
     async rollback(transaction: Transaction, reason?: unknown): Promise<void> {
-      return rollbackTransaction(transaction, adapter, reason, hooks, emit);
+      try {
+        await rollbackTransaction(transaction, adapter, reason, hooks, emit);
+      } finally {
+        if (isFinished(transaction)) release(transaction);
+      }
     },
 
     /** The transaction in scope for the current async execution, if any. */

@@ -146,6 +146,13 @@ export class Scheduler {
   /** Bounded ring of execution records, newest last. */
   private readonly executionHistory: JobExecution[] = [];
 
+  /**
+   * Final state of schedules that have been retired, so a handle to a
+   * one-shot that already fired reports "completed" instead of the "active"
+   * it was created with. Bounded to {@link MAX_SCHEDULES} entries.
+   */
+  private readonly retiredStates = new Map<string, Schedule["state"]>();
+
   private running = false;
 
   private timer?: ReturnType<typeof setTimeout>;
@@ -268,9 +275,17 @@ export class Scheduler {
         job.id,
       );
     }
-    if (job.options?.timeout !== undefined && job.options.timeout <= 0) {
+    if (
+      job.options?.timeout !== undefined &&
+      (!Number.isFinite(job.options.timeout) ||
+        job.options.timeout <= 0 ||
+        job.options.timeout > MAX_TIMER_DELAY)
+    ) {
+      // `Infinity` and anything past the 32-bit timer ceiling are clamped
+      // by Node to 1ms, so a job declared with "no timeout" was failing on
+      // its first millisecond.
       throw new InvalidJobError(
-        `Job "${job.id}" timeout must be positive, got ${job.options.timeout}.`,
+        `Job "${job.id}" timeout must be a positive number no greater than ${MAX_TIMER_DELAY}ms, got ${job.options.timeout}.`,
         job.id,
       );
     }
@@ -408,7 +423,9 @@ export class Scheduler {
     // cancel actually reach the queue instead of mutating a detached copy.
     return new ScheduleHandleImpl(scheduleId, "active", {
       setState: (state) => this.setScheduleState(scheduleId, state),
-      getState: () => this.schedules.get(scheduleId)?.schedule.state,
+      getState: () =>
+        this.schedules.get(scheduleId)?.schedule.state ??
+        this.retiredStates.get(scheduleId),
       getNextRun: () => this.schedules.get(scheduleId)?.schedule.nextRunAt,
       abortRunning: () => this.abortSchedule(scheduleId),
     });
@@ -423,22 +440,67 @@ export class Scheduler {
 
     if (state === "cancelled" || state === "completed") {
       // Held-back runs belong to a schedule that no longer exists.
-      record.pendingRuns = 0;
-      this.pending.delete(record);
-      this.queue.remove(scheduleId);
-      this.schedules.delete(scheduleId);
+      this.retire(record, state, { dropPending: true });
     } else if (state === "paused") {
       this.queue.remove(scheduleId);
     } else if (state === "active") {
       // Resuming: recompute from now so a schedule paused across its fire time
       // does not immediately fire for every occurrence it missed.
-      const next = record.trigger.next(this.clock.now());
-      if (next && !Number.isNaN(next.getTime())) {
-        record.schedule = { ...record.schedule, nextRunAt: next };
-        this.queue.remove(scheduleId);
-        this.queue.enqueue(record.schedule);
-        this.rearm();
+      const now = this.clock.now();
+      let next = record.trigger.next(now);
+
+      if (next === null) {
+        // The fire time passed while paused. A one-shot used to stay "active"
+        // here with nothing ever able to dispatch it; apply the misfire
+        // policy exactly as `scheduleJob` does for a fire time already past.
+        const misfire = record.options.misfire ?? DEFAULT_MISFIRE_POLICY;
+        const isRecurring =
+          record.schedule.type === "interval" ||
+          record.schedule.type === "cron";
+
+        if (misfire === "skip" || isRecurring) {
+          // Nothing left to fire: retire it rather than leaking an entry.
+          this.retire(record, "completed", { dropPending: true });
+          return;
+        }
+        next = now;
       }
+
+      if (Number.isNaN(next.getTime())) return;
+
+      record.schedule = { ...record.schedule, nextRunAt: next };
+      this.queue.remove(scheduleId);
+      this.queue.enqueue(record.schedule);
+      this.rearm();
+    }
+  }
+
+  /**
+   * Drops a schedule that will never fire again, remembering why.
+   *
+   * Runs already held back by `overlap: "queue"` or a concurrency ceiling
+   * are kept by default: they are fire times that have arrived, and a
+   * one-shot retired at dispatch still owes them. Only a cancel, or a
+   * misfire policy that says skip, discards them.
+   */
+  private retire(
+    record: ScheduleRecord,
+    state: "completed" | "cancelled",
+    options?: { readonly dropPending?: boolean },
+  ): void {
+    record.schedule = { ...record.schedule, state };
+    if (options?.dropPending === true) {
+      record.pendingRuns = 0;
+      this.pending.delete(record);
+    }
+    this.queue.remove(record.schedule.id);
+    this.schedules.delete(record.schedule.id);
+
+    this.retiredStates.set(record.schedule.id, state);
+    while (this.retiredStates.size > MAX_SCHEDULES) {
+      const oldest = this.retiredStates.keys().next().value;
+      if (oldest === undefined) break;
+      this.retiredStates.delete(oldest);
     }
   }
 
@@ -511,12 +573,8 @@ export class Scheduler {
 
     if (!isRecurring) {
       // One-shot: retire it rather than leaking the entry.
-      record.schedule = {
-        ...record.schedule,
-        state: "completed",
-        lastRunAt: this.clock.now(),
-      };
-      this.schedules.delete(record.schedule.id);
+      record.schedule = { ...record.schedule, lastRunAt: this.clock.now() };
+      this.retire(record, "completed");
       return;
     }
 
@@ -531,8 +589,7 @@ export class Scheduler {
 
     if (!next || Number.isNaN(next.getTime())) {
       // A trigger with no further fire time is finished.
-      record.schedule = { ...record.schedule, state: "completed" };
-      this.schedules.delete(record.schedule.id);
+      this.retire(record, "completed");
       return;
     }
 
@@ -643,6 +700,9 @@ export class Scheduler {
         else this.runningByJob.set(job.id, remaining);
 
         this.drainPending();
+        // Capacity freed: a schedule held back by the ceiling is waiting for
+        // exactly this moment, and no timer is armed for it.
+        this.rearm();
       });
 
     this.inFlight.add(execution);
@@ -740,6 +800,14 @@ export class Scheduler {
    */
   private calculateDelay(): number {
     if (this.queue.isEmpty) {
+      return MAX_TIMER_DELAY;
+    }
+
+    // At the ceiling a due schedule cannot be dispatched, and arming a
+    // zero-delay timer for it spun the event loop — about a tick per
+    // millisecond — until an execution finished. The finishing execution
+    // re-arms the timer, so waiting here loses nothing.
+    if (this.inFlight.size >= this.maxConcurrency) {
       return MAX_TIMER_DELAY;
     }
 

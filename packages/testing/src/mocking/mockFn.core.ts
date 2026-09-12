@@ -24,8 +24,14 @@ export interface MockFn<
 > {
   (...args: TArgs): TResult;
   readonly calls: readonly TArgs[];
-  /** Result of each call, aligned index-for-index with {@link calls}. */
+  /**
+   * Result of each call, aligned index-for-index with {@link calls}. A
+   * call whose implementation threw occupies its slot with `undefined`;
+   * the thrown value is in {@link errors}.
+   */
   readonly results: readonly TResult[];
+  /** Values thrown by the implementation, in call order. */
+  readonly errors: readonly unknown[];
   readonly invoked: boolean;
   readonly callCount: number;
   mockReturnValue: (value: TResult) => void;
@@ -61,6 +67,7 @@ export function createMockFn<
 >(defaultReturnValue?: TResult): MockFn<TArgs, TResult> {
   const calls: TArgs[] = [];
   const results: TResult[] = [];
+  const errors: unknown[] = [];
 
   const initialMode: MockMode =
     arguments.length > 0
@@ -93,7 +100,16 @@ export function createMockFn<
 
   const mock = ((...args: TArgs): TResult => {
     calls.push(args);
-    const result = produce(args);
+    let result: TResult;
+    try {
+      result = produce(args);
+    } catch (error) {
+      // Keep `results` aligned with `calls` even when the implementation
+      // throws; otherwise every later result shifts one index left.
+      results.push(undefined as TResult);
+      errors.push(error);
+      throw error;
+    }
     results.push(result);
     return result;
   }) as MockFn<TArgs, TResult>;
@@ -105,6 +121,11 @@ export function createMockFn<
 
   Object.defineProperty(mock, "results", {
     get: () => results,
+    enumerable: true,
+  });
+
+  Object.defineProperty(mock, "errors", {
+    get: () => errors,
     enumerable: true,
   });
 
@@ -137,12 +158,14 @@ export function createMockFn<
   mock.mockReset = (): void => {
     calls.length = 0;
     results.length = 0;
+    errors.length = 0;
     mode = initialMode;
   };
 
   mock.mockClear = (): void => {
     calls.length = 0;
     results.length = 0;
+    errors.length = 0;
   };
 
   return mock;

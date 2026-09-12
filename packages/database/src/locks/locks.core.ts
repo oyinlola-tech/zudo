@@ -37,6 +37,10 @@ export interface DatabaseLockOptions {
    * transaction timeout. When it exceeds Prisma's 5 s default and
    * `transaction.timeoutMs` is not set, the transaction timeout is raised
    * automatically (see `resolveLockTransactionOptions`).
+   *
+   * Must be a positive number: PostgreSQL treats `lock_timeout = 0` as
+   * "disabled" (wait forever), so `0` is rejected. Use `noWait` to fail
+   * immediately instead.
    */
   readonly timeoutMs?: number;
 
@@ -335,9 +339,7 @@ export function resolveLockTransactionOptions(
 ): TransactionOptions | undefined {
   const { timeoutMs, transaction } = options;
   if (timeoutMs === undefined) return transaction;
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
-    throw new TypeError("Lock timeoutMs must be a non-negative finite number.");
-  }
+  validateLockTimeout(timeoutMs);
 
   const explicit = transaction?.timeoutMs;
   if (explicit !== undefined) {
@@ -364,12 +366,23 @@ async function applyLockTimeout(
   timeoutMs: number | undefined,
 ): Promise<void> {
   if (timeoutMs === undefined) return;
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
-    throw new TypeError("Lock timeoutMs must be a non-negative finite number.");
-  }
+  validateLockTimeout(timeoutMs);
   await transaction.$executeRawUnsafe(
     `SET LOCAL lock_timeout = ${Math.floor(timeoutMs)}`,
   );
+}
+
+/**
+ * Rejects lock timeouts PostgreSQL would silently disable. `lock_timeout`
+ * is "no timeout" at `0`, and `Math.floor` turns any value below 1 ms into
+ * `0`, so anything under one millisecond is refused.
+ */
+function validateLockTimeout(timeoutMs: number): void {
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 1) {
+    throw new TypeError(
+      "Lock timeoutMs must be a finite number of at least 1 ms; PostgreSQL treats lock_timeout = 0 as disabled. Use noWait to fail immediately.",
+    );
+  }
 }
 
 function validateCallback(callback: unknown): void {

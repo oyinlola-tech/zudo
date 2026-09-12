@@ -79,6 +79,12 @@ strips and re-sets the header at the edge.
   a schema name, or a path. `tenantKey` escapes its segments as well.
 - Non-active tenants are refused during resolution. Pass `allowInactive` on
   routes that exist to serve suspended tenants.
+- A request that resolves to no tenant at all is answered `404`. Pass
+  `optional: true` to `createResolveTenantMiddleware` on routes where a tenant
+  may be absent; a tenant that _was_ named but is unknown, untrusted or
+  suspended is still refused.
+- `createPathResolver({ prefix })` only names a tenant for paths under the
+  prefix; `/health` never resolves to a tenant called `health`.
 
 ## Use Cases
 

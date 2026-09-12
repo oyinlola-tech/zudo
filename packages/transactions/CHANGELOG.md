@@ -1,5 +1,23 @@
 # @zudojs/transactions
 
+## 1.1.0
+
+### Minor Changes
+
+- Nesting, timeout and retry fixes (audit round 9).
+
+  - `nested` propagation now works inside a joined (participant) scope; it used to throw `TypeError: Transaction was not created by @zudojs/transactions`.
+  - A savepoint opened inside another savepoint is created, rolled back to and released on the connection; it used to receive the outer savepoint handle, which no adapter can act on.
+  - `begin()` honours `timeout`: a hand-managed transaction is marked timed-out and rollback-only when the deadline passes and `commit()` then rejects with `TransactionTimeoutError`. Only `run()` armed the timer before, although `begin()` validated the option against the adapter.
+  - `manager.commit()` and `manager.rollback()` release the transaction's timeout timer and registry entry once it reaches a terminal state; hand-managed transactions used to stay in the registry forever.
+  - Failures thrown by `afterCommit` callbacks are reported to `hooks.onError` as an `AggregateError` (the commit itself stands); they used to be discarded.
+  - `run()` with `retry` no longer replays an attempt that only joined an enclosing transaction: that attempt has already marked the enclosing transaction rollback-only, so a replay repeated its side effects to no effect. Owned (root and savepoint) transactions retry as before.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

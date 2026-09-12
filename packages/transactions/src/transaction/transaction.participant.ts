@@ -19,7 +19,7 @@ import type {
   TransactionState,
 } from "../transactionTypes/transactionState.js";
 import { createTransaction } from "./transaction.core.js";
-import { internals } from "./transaction.internal.js";
+import { attachInternals, internals } from "./transaction.internal.js";
 
 /**
  * Create a handle that joins an in-progress transaction.
@@ -28,7 +28,7 @@ import { internals } from "./transaction.internal.js";
  * @returns A participant handle delegating to `parent`.
  */
 export function createParticipant(parent: Transaction): Transaction {
-  return Object.freeze({
+  const participant: Transaction = {
     get id(): string {
       return parent.id;
     },
@@ -77,7 +77,31 @@ export function createParticipant(parent: Transaction): Transaction {
     afterRollback(callback: () => Promise<void>): void {
       parent.afterRollback(callback);
     },
-  }) as Transaction;
+  };
+
+  // A participant owns nothing, but the manager still has to reach the
+  // adapter handle of the transaction it joined: a `nested` run inside a
+  // participant scope used to throw "Transaction was not created by
+  // @zudojs/transactions" because the frozen participant carried no
+  // internals at all. Reads delegate to the joined transaction; writes
+  // are refused, since only the owner may drive its state.
+  const refuse = (): never => {
+    throw new TypeError(
+      "A participant does not own the transaction it joined and cannot modify it.",
+    );
+  };
+
+  attachInternals(participant, {
+    _setHandle: refuse,
+    _getHandle: (): unknown => internals(parent)._getHandle(),
+    _transition: refuse,
+    _markTimedOut: refuse,
+    _getRollbackOnlyReason: (): unknown =>
+      internals(parent)._getRollbackOnlyReason(),
+    _drainCallbackErrors: (): unknown[] => [],
+  });
+
+  return Object.freeze(participant);
 }
 
 /**

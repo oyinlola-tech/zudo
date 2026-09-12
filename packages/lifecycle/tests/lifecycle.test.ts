@@ -806,12 +806,16 @@ describe("LIFECYCLE-09: shutdown is single-flight across callers", () => {
   it("runs teardown once when startup rollback and shutdown() overlap", async () => {
     const manager = new LifecycleManager({ handleSignals: false });
     let stops = 0;
+    let disposes = 0;
 
     manager.register({
       name: "db",
       start: async () => {},
       stop: async () => {
         stops += 1;
+      },
+      dispose: async () => {
+        disposes += 1;
       },
     });
     manager.register(
@@ -829,7 +833,12 @@ describe("LIFECYCLE-09: shutdown is single-flight across callers", () => {
 
     await Promise.all([start, shutdown]);
 
-    expect(stops).toBe(1);
+    // Teardown ran exactly once. shutdown() arrived during the
+    // initialize phase, so db never started and (round 9) is not
+    // stopped; it was initialized, so it is disposed once.
+    expect(disposes).toBe(1);
+    expect(stops).toBe(0);
+    expect(manager.state).toBe(LifecycleState.DISPOSED);
     manager.dispose();
   });
 });

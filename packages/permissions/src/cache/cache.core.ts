@@ -18,16 +18,30 @@ interface CacheEntry {
 /** Separates the actor id from the rest of the key. */
 const KEY_DELIMITER = "|";
 
+/**
+ * Escape a caller-supplied segment so it cannot forge a delimiter.
+ *
+ * Actor and resource ids are opaque strings and may contain `|`. Without
+ * escaping, actor `u|post:read` checking `x:y` produced the same key as
+ * actor `u` checking `post:read` on resource `x:y` — one actor's cached
+ * decision answering for another. Ids without `|` or `\` are unchanged, so
+ * existing keys keep their shape.
+ */
+function escapeSegment(segment: string): string {
+  return segment.replace(/[\\|]/g, (char) => `\\${char}`);
+}
+
 /** Prefix identifying an actor's cache entries. */
 function actorPrefix(actorId: string): string {
-  return `actor:${actorId}${KEY_DELIMITER}`;
+  return `actor:${escapeSegment(actorId)}${KEY_DELIMITER}`;
 }
 
 /**
  * Generate a cache key for a permission check.
  *
  * The actor id is delimited, so invalidating actor `1` cannot also clear
- * actors `10` and `123`.
+ * actors `10` and `123`, and a delimiter inside an id is escaped so two
+ * different (actor, permission, resource) triples can never share a key.
  */
 export function permissionCacheKey(
   actorId: string,
@@ -35,7 +49,9 @@ export function permissionCacheKey(
   resourceId?: string,
 ): string {
   const base = `${actorPrefix(actorId)}${permission}`;
-  return resourceId ? `${base}${KEY_DELIMITER}${resourceId}` : base;
+  return resourceId
+    ? `${base}${KEY_DELIMITER}${escapeSegment(resourceId)}`
+    : base;
 }
 
 /** Options for {@link createMemoryPermissionCache}. */

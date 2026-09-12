@@ -1,5 +1,15 @@
 # @zudojs/schema
 
+## 1.0.1
+
+### Patch Changes
+
+- - A missing object key is only reported as `required` when its schema actually rejects `undefined`. `schema.undefined()`, a union containing it, and `refine`/`transform`/`lazy` wrapped around an optional schema now accept an absent key (a `transform` default is applied); `.required()` still forces the key.
+  - `safeParse` no longer throws a `TypeError` while building an issue message: a BigInt or circular value against a literal/enum schema, a null-prototype discriminator value, and a `refine`/`transform` that throws a value `String()` cannot render are all reported as ordinary issues.
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/constants@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

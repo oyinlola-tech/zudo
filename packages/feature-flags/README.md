@@ -60,6 +60,9 @@ interface FeatureFlag {
 }
 ```
 
+`expiresAt` may also arrive as an ISO string or a timestamp — a flag loaded
+from JSON does — and expires the flag just the same.
+
 ## Rules
 
 | Type         | Matches when                                    |
@@ -130,7 +133,13 @@ const provider = createCachedProvider(
 ```
 
 `createMemoryProvider` returns a typed provider with `set`, `delete` and
-`setAll`, and it announces every change to subscribers.
+`setAll`, and it announces every change to subscribers. `createCachedProvider`
+and `createCompositeProvider` forward those announcements — the cache is
+dropped first, and the composite announces its merged view — so the stack
+above still propagates a change made to `remoteProvider`.
+
+`createEnvironmentProvider` parses `true`/`false` and numbers; anything else,
+including an empty `FEATURE_X=`, stays a string.
 
 ## Change propagation
 
@@ -150,6 +159,10 @@ changes.
 | Flag archived or expired         | `expired`, the declared default                        |
 | Dependency not satisfied         | `dependency_disabled`, the declared default            |
 | Provider unreachable             | `error`, reported to `onError`; never enabled          |
+
+"Unreachable" covers both `getAll()` and a `get()` for a flag not yet loaded:
+a lookup the store could not answer is `error`, never `not_found`, and does
+not throw `FeatureFlagNotFoundError` under `throwOnMissing`.
 
 An unreachable store never enables a flag. Set `throwOnProviderError: true`
 to own the failure yourself instead.

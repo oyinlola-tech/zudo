@@ -1,5 +1,17 @@
 # @zudojs/messaging
 
+## 1.0.1
+
+### Patch Changes
+
+- - Handlers now receive the dispatch context: `DispatchOptions.context` (headers, correlation/causation overrides, `state`) and anything a middleware stored in `context.state` reach the handler instead of a fresh empty context.
+  - A caller-provided `AbortSignal` no longer accumulates one `abort` listener per dispatch; the listener is removed when the dispatch settles.
+  - Re-registering a handler id (`allowDuplicateHandlerIds`) re-indexes its message types, so the replacement no longer receives the old handler's types and a single-handler registry can replace a handler for the same type.
+  - A dispatch cancelled through its `AbortSignal` between handlers fails with `MessageDispatchAbortedError` rather than a `MessageHandlerError` blamed on the handler that never ran.
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/constants@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

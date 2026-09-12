@@ -70,7 +70,12 @@ next begins, so a plugin may rely on its dependencies being installed by
 the time its own `initialize` runs.
 
 If any phase throws, `manager.start` stops and disposes everything it had
-already brought up, then rethrows. `manager.stop` continues past a failing
+already brought up, then rethrows. A disposed plugin cannot be brought back:
+calling `manager.start` again after `manager.stop`, or after a rolled-back
+startup, throws `PluginStateError` rather than silently starting nothing (or
+starting still-registered dependents on top of disposed dependencies).
+Unregister the disposed plugins and register fresh instances, or create a
+new manager. `manager.stop` continues past a failing
 plugin so one bad `stop` cannot strand the rest; those failures are
 reported through the `onError` option (and logged to `console.error` if you
 do not supply one) rather than swallowed.

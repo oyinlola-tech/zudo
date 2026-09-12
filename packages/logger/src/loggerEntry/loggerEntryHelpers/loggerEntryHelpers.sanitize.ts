@@ -98,7 +98,14 @@ export function createSecretMatcher(
     return () => false;
   }
 
-  const pattern = options.pattern ?? DEFAULT_LOGGER_SECRET_PATTERN;
+  // Copy the pattern without `g`/`y`: those flags make `test()` advance
+  // `lastIndex`, so a shared pattern would match a secret-named field on
+  // one entry and let it through unredacted on the next.
+  const configured = options.pattern ?? DEFAULT_LOGGER_SECRET_PATTERN;
+  const pattern =
+    configured.global || configured.sticky
+      ? new RegExp(configured.source, configured.flags.replace(/[gy]/gu, ""))
+      : configured;
 
   const exact = new Set((options.keys ?? []).map((key) => key.toLowerCase()));
 

@@ -1,5 +1,15 @@
 # @zudojs/docs
 
+## 1.0.1
+
+### Patch Changes
+
+- - `nodesToMarkdown` no longer resolves an unknown callout `kind` such as `"constructor"` through `Object.prototype`; the label is the upper-cased kind instead of a function's source text.
+  - `deepFreezeClone` (and therefore `createDocument` and the registry) no longer freezes the caller's nested objects in place when the value cannot be structured-cloned; the fallback now copies plain objects, arrays and Dates recursively.
+  - `validateNavigation` reports `NAVIGATION_DUPLICATE_DOCUMENT` when the same navigation node object is mounted in more than one place.
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+
 ## 1.0.0
 
 ### Major Changes

@@ -292,7 +292,14 @@ export function contextMiddleware(
  * `acquire` must resolve to a release function.
  */
 export interface CqrsLock {
-  acquire(key: string): (() => void) | Promise<() => void>;
+  /**
+   * The release function may be synchronous or return a promise; the
+   * middleware awaits it. A rejected release surfaces as a `CqrsError`
+   * (when the handler succeeded) rather than an unhandled rejection.
+   */
+  acquire(
+    key: string,
+  ): (() => void | Promise<void>) | Promise<() => void | Promise<void>>;
 }
 
 /**
@@ -346,11 +353,36 @@ export function lockMiddleware(
       );
     }
 
+    // `release()` may be asynchronous (a Redis DEL, say). It used to be
+    // called and dropped, so a rejected release was an unhandled promise
+    // rejection — which terminates the process under Node's defaults.
+    let result: unknown;
+
     try {
-      return await next(request, context);
-    } finally {
-      release();
+      result = await next(request, context);
+    } catch (error) {
+      try {
+        await release();
+      } catch {
+        // The handler's failure is the one the caller needs to see.
+      }
+
+      throw error;
     }
+
+    try {
+      await release();
+    } catch (error) {
+      throw new CqrsError(`CQRS lock release failed (key "${key}").`, {
+        cause: error,
+        metadata: {
+          lockKey: key,
+          requestType: getRequestType(request),
+        },
+      });
+    }
+
+    return result;
   };
 }
 

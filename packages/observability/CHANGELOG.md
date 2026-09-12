@@ -1,5 +1,13 @@
 # @zudojs/observability
 
+## 1.0.1
+
+### Patch Changes
+
+- - Redaction now covers instances of user-defined classes (DTOs, request models) nested in log contexts and span attributes. Their own enumerable fields are what exporters serialize, so a `password` field on a class instance previously reached the exporter unredacted. Built-ins (`Date`, `Error`, `Map`, `Set`, typed arrays, `URL`) are still left intact, and redacted instances keep their prototype.
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+
 ## 1.0.0
 
 ### Major Changes

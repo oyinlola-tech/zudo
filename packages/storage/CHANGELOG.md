@@ -1,5 +1,22 @@
 # @zudojs/storage
 
+## 1.1.0
+
+### Minor Changes
+
+- - `LocalObjectStorage` now works when its base directory is reached through a symlink (macOS `tmpdir()`, mounted volumes). Containment compares the real path of the base with the real path of the target; previously every key was rejected as a path traversal.
+  - `ConnectionPool.release()` no longer strands a parked waiter when the released connection is retired for exceeding `maxLifetime`: a fresh connection is created and handed to the waiter, or the waiter is rejected with the factory's error instead of timing out.
+  - `BaseRepository.update()` throws `NotFoundError` (`STORAGE_ENTITY_NOT_FOUND`) when no row matched, instead of resolving `undefined` typed as the entity.
+  - `LocalObjectStorage.exists()` returns `false` and `metadata()` returns `null` for the directory created by a nested key (`put("a/b.txt")` no longer makes `exists("a")` true).
+  - An oversized streamed `put()` now cancels the source stream when the byte budget is exceeded, instead of only releasing the reader.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/serialization@1.0.1
+  - @zudojs/constants@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

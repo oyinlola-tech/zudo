@@ -1,5 +1,18 @@
 # @zudojs/crypto
 
+## 1.1.0
+
+### Minor Changes
+
+- - `derivePbkdf2`, `deriveScrypt`, `validatePbkdf2Options`, `validateScryptOptions` and the Node provider's `deriveKey` now enforce the upper bounds in `PASSWORD_HASH.LIMITS` (scrypt cost ≤ 2^20, block size ≤ 32, parallelization ≤ 16, `128 * cost * blockSize` ≤ 1 GiB, PBKDF2 iterations ≤ 10 000 000). Previously the scrypt memory "bound" was computed from the requested cost, so a cost read from configuration could allocate gigabytes or run for minutes.
+  - New `PASSWORD_HASH.LIMITS.MAX_DERIVED_KEY_BYTES` (1024) caps `keyLength` for key derivation; password hashes keep their separate 64-byte bound.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/constants@1.0.1
+
 > Note: this changelog was corrected. An earlier revision opened with a
 > `1.0.0` entry (describing a package rename) that never shipped; the
 > package is published at `0.1.0`. The `0.1.1`/`0.1.2` entries below

@@ -378,6 +378,18 @@ export class DefaultRuntime implements Runtime {
       return this.stopPromise;
     }
 
+    if (this.startPromise) {
+      // A stop requested while startup is in flight — typically a SIGTERM
+      // arriving while modules are still coming up — waits for startup to
+      // settle and then shuts down whatever it produced. Previously this
+      // threw `RuntimeStateError` ("cannot stop a runtime in state
+      // initializing"), so the signal handler logged "Shutdown failed" and
+      // the runtime carried on to `running` as if nothing had happened.
+      // Startup is bounded by `startupTimeout`, so this wait is too.
+      await this.startPromise.catch(() => undefined);
+      return this.stop();
+    }
+
     if (this._state === "created") {
       this._state = "stopped";
       this._stoppedAt = new Date();

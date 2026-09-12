@@ -2,8 +2,15 @@ import type { ResolvedRuntimeOptions } from "./runtimeOptions.type.js";
 
 import { DEFAULT_RUNTIME_OPTIONS } from "./runtimeOptions.type.js";
 
+import { createRuntimeId } from "../runtimeContext/runtimeContext.factory.js";
+
 /**
  * Resolves runtime options with defaults applied.
+ *
+ * `runtimeId` is documented as "auto-generated if not provided", but until
+ * this generated one nothing did: `DEFAULT_RUNTIME_OPTIONS` has no entry
+ * for it, so an omitted id reached every event payload, log line and
+ * `runtime.context.runtimeId` as `undefined`.
  */
 export function resolveRuntimeOptions(
   options: ResolvedRuntimeOptions,
@@ -17,6 +24,7 @@ export function resolveRuntimeOptions(
 
   return Object.freeze({
     ...DEFAULT_RUNTIME_OPTIONS,
+    runtimeId: createRuntimeId(),
     ...provided,
   }) as ResolvedRuntimeOptions;
 }

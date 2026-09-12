@@ -8,8 +8,11 @@
  *     (`headers: [{ authorization: "Bearer …" }]`);
  *   - traversal is cycle-aware and depth-capped, because a request object in
  *     a log context is a graph, not a tree;
- *   - class instances are not walked as plain objects, so an `Error` or a
- *     `Date` survives instead of collapsing to `{}`;
+ *   - built-ins such as `Error`, `Date`, `Map` and `Set` are left intact
+ *     instead of collapsing to `{}`, while an instance of a user-defined
+ *     class is walked like a plain object — its own fields are what an
+ *     exporter serializes, so a DTO carrying a `password` must not slip
+ *     past the field list;
  *   - matching is substring-based by default, so `userPassword` and
  *     `x-api-key` are caught, not just the exact names in the list.
  */
@@ -173,9 +176,48 @@ function isPlainContainer(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object") return false;
   if (Array.isArray(value)) return false;
   const prototype = Object.getPrototypeOf(value) as object | null;
-  // Walk plain objects and null-prototype bags; leave Error, Date, Map, Set,
-  // Buffer and every other class instance intact.
   return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Built-ins whose contents are not key/value fields: they are left intact
+ * rather than walked, because rebuilding them field by field would collapse
+ * a `Date` or a `Map` to `{}`.
+ */
+function isOpaqueBuiltin(value: object): boolean {
+  return (
+    value instanceof Date ||
+    value instanceof RegExp ||
+    value instanceof Error ||
+    value instanceof Map ||
+    value instanceof Set ||
+    value instanceof WeakMap ||
+    value instanceof WeakSet ||
+    value instanceof Promise ||
+    value instanceof ArrayBuffer ||
+    ArrayBuffer.isView(value) ||
+    value instanceof Number ||
+    value instanceof String ||
+    value instanceof Boolean ||
+    (typeof URL !== "undefined" && value instanceof URL) ||
+    (typeof URLSearchParams !== "undefined" && value instanceof URLSearchParams)
+  );
+}
+
+/**
+ * True for an instance of a user-defined class (a DTO, a request model).
+ *
+ * Its own enumerable fields are exactly what `JSON.stringify` — and so every
+ * exporter — writes out, so a `password` field on a class instance leaked
+ * through a redactor that only walked plain objects. Such an instance is
+ * walked like a plain object and rebuilt on the same prototype, so
+ * `instanceof` and any `toJSON` it defines survive.
+ */
+function isWalkableInstance(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object") return false;
+  if (Array.isArray(value) || isPlainContainer(value)) return false;
+  if (isOpaqueBuiltin(value)) return false;
+  return Object.keys(value).length > 0;
 }
 
 function walk(
@@ -194,10 +236,12 @@ function walk(
     return result;
   }
 
-  if (isPlainContainer(value)) {
+  if (isPlainContainer(value) || isWalkableInstance(value)) {
     if (seen.has(value)) return CIRCULAR_MARKER;
     seen.add(value);
-    const result: Record<string, unknown> = {};
+    const result: Record<string, unknown> = Object.create(
+      Object.getPrototypeOf(value) as object | null,
+    ) as Record<string, unknown>;
     for (const [key, entry] of Object.entries(value)) {
       const redacted = redactField(key, entry, compiled);
       // A field the matcher replaced is done — never walk into it, or a

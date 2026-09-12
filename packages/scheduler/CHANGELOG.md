@@ -1,5 +1,20 @@
 # @zudojs/scheduler
 
+## 1.1.0
+
+### Minor Changes
+
+- - A scheduler at its `maxConcurrency` ceiling no longer spins a zero-delay tick loop while a due schedule waits; the timer is re-armed when an execution finishes.
+  - Resuming a paused one-shot schedule whose fire time has passed now applies the misfire policy (`run-once`/`catch-up` fire it, `skip` retires it) instead of leaving it active forever with nothing able to dispatch it.
+  - `define()` rejects a non-finite `timeout` or one above `MAX_TIMER_DELAY`, and the executor clamps oversized budgets. Previously `timeout: Infinity` was accepted and the job failed after 1ms because Node clamps the timer.
+  - A `ScheduleHandle` reports `"completed"` once its one-shot schedule has fired, instead of `"active"`.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/constants@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

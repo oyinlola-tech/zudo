@@ -210,14 +210,35 @@ function appendCustomValidationResult(
 }
 
 /**
+ * Compiles a string schema pattern for a one-shot `test`.
+ *
+ * A RegExp carrying the `g` or `y` flag keeps `lastIndex` between calls, so
+ * the same schema object alternated between accepting and rejecting an
+ * identical value on successive validations. Both flags are dropped; they
+ * have no meaning for a whole-value match.
+ */
+function compilePattern(pattern: string | RegExp): RegExp {
+  if (typeof pattern === "string") {
+    return new RegExp(pattern);
+  }
+
+  const flags = pattern.flags.replace(/[gy]/g, "");
+
+  return flags === pattern.flags ? pattern : new RegExp(pattern.source, flags);
+}
+
+/**
  * Built-in schema validation rules.
+ *
+ * Returns a replacement value when a rule rewrote it (an array whose item
+ * schema applied `transform` or `default`), otherwise undefined.
  */
 function validateBuiltInRules(
   value: unknown,
   schema: AnyConfigSchema,
   context: ConfigValidationContext,
   issues: ConfigValidationIssue[],
-): void {
+): ConfigValue | undefined {
   if (typeof value === "string") {
     const stringSchema = schema as ConfigStringSchema;
 
@@ -248,10 +269,7 @@ function validateBuiltInRules(
     }
 
     if (stringSchema.pattern) {
-      const pattern =
-        typeof stringSchema.pattern === "string"
-          ? new RegExp(stringSchema.pattern)
-          : stringSchema.pattern;
+      const pattern = compilePattern(stringSchema.pattern);
 
       if (!pattern.test(value)) {
         issues.push(
@@ -349,6 +367,13 @@ function validateBuiltInRules(
     }
 
     if (arraySchema.items) {
+      // Item results used to be consulted for issues only, so an item
+      // schema's `transform` (or `default`) ran and its output was thrown
+      // away: the caller got the untransformed array back as "valid".
+      const rebuilt: ConfigValue[] = [];
+
+      let allValid = true;
+
       value.forEach((item, index) => {
         const result = validateConfigValue(item, arraySchema.items!, {
           path: `${context.path}[${index}]`,
@@ -358,9 +383,21 @@ function validateBuiltInRules(
         });
 
         issues.push(...result.issues);
+
+        if (!result.valid) {
+          allValid = false;
+        }
+
+        rebuilt.push(
+          result.value === undefined ? (item as ConfigValue) : result.value,
+        );
       });
+
+      return allValid ? rebuilt : undefined;
     }
   }
+
+  return undefined;
 }
 
 /**
@@ -443,7 +480,12 @@ export function validateConfigValue(
     };
   }
 
-  validateBuiltInRules(value, schema, validationContext, issues);
+  const rewritten = validateBuiltInRules(
+    value,
+    schema,
+    validationContext,
+    issues,
+  );
 
   // An object schema carries `properties` / `additionalProperties`.
   // Those were declared on ConfigObjectSchema but read nowhere in this
@@ -453,7 +495,7 @@ export function validateConfigValue(
   // nested constraints are actually enforced.
   const objectSchema = schema as Partial<ConfigObjectSchema>;
 
-  let base: ConfigValue = value as ConfigValue;
+  let base: ConfigValue = rewritten ?? (value as ConfigValue);
 
   if (
     matchesConfigType(value, ConfigValueType.OBJECT) &&

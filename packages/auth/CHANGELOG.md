@@ -1,5 +1,21 @@
 # @zudojs/auth
 
+## 1.1.0
+
+### Minor Changes
+
+- - **Sessions with a `NaN` lifetime never expired.** `createMemorySessionStore().create()` accepted `ttlSeconds: NaN` (the usual source is `Number(process.env.X)` with `X` unset), produced an `Invalid Date` expiry, and then never reclaimed the session — not even at its absolute deadline. `ttlSeconds` and `absoluteTtlSeconds` must now be finite and greater than zero; anything else throws `AuthConfigurationError`. `createAuthService()` applies the same check to `sessionTtlSeconds` / `absoluteSessionTtlSeconds` at construction.
+  - **Login throttling could be bypassed with case or whitespace variants of the identifier.** Attempt counters were keyed by the raw submitted string, so `alice@example.com`, `Alice@example.com` and ` alice@example.com` each had an independent failed-attempt budget against one account. The throttle key is now the identifier trimmed, NFKC-normalised and lower-cased. Custom `LoginAttemptStore` implementations receive the normalised key.
+  - `createAuthService()` now validates its `TokenConfig` at construction (missing/short/identical secrets, out-of-range clock tolerance) instead of at the first `login()`, and `createTokenPair()` / the verifiers reject a non-finite (`NaN` / `Infinity`) `accessTtl` or `refreshTtl` with `AuthConfigurationError` rather than minting tokens whose `exp` serialises as `null` and can never verify. Zero and negative TTLs are still accepted (they mint already-expired tokens).
+  - README: `findUserById` is documented as required (it always was); there is no fallback to `findUser(sub)`.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/permissions@1.1.0
+  - @zudojs/constants@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

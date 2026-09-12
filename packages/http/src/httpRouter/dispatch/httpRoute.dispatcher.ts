@@ -475,9 +475,22 @@ function toDispatchHandler(
     );
 
     if (result instanceof HttpResponseContext && result !== response) {
-      response.status_code(result.status);
+      /*
+       * Everything the handler put on its response must survive the merge.
+       * Copying only status, headers and body dropped every cookie the
+       * handler set, its custom status text and its metadata.
+       */
+      response.setStatus(result.status, result.statusText);
 
       response.headers_obj(result.headers);
+
+      for (const cookie of result.cookies) {
+        response.setCookie(cookie);
+      }
+
+      for (const [key, value] of Object.entries(result.metadata)) {
+        response.setMetadata(key, value);
+      }
 
       response.setBody(result.body);
     }

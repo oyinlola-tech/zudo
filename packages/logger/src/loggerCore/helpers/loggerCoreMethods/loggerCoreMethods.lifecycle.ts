@@ -73,8 +73,17 @@ export async function flushLogger(ctx: ZudojsLoggerContext): Promise<void> {
 
   // In-flight dispatches must land in the transports before those
   // transports are asked to flush, otherwise flush() is a no-op for
-  // everything logged in the same tick.
-  await ctx.drainDispatches();
+  // everything logged in the same tick. A dispatch failure (surfaced
+  // when `throwTransportErrors` is on) is rethrown only after the
+  // transports have still been flushed.
+  let failure: unknown;
+  let failed = false;
+  try {
+    await ctx.drainDispatches();
+  } catch (error) {
+    failure = error;
+    failed = true;
+  }
 
   for (const transport of ctx.configuration.transports) {
     if (!isLoggerTransport(transport)) {
@@ -91,6 +100,8 @@ export async function flushLogger(ctx: ZudojsLoggerContext): Promise<void> {
       await registered.flush();
     }
   }
+
+  if (failed) throw failure;
 }
 
 /**
@@ -101,7 +112,17 @@ export async function closeLogger(ctx: ZudojsLoggerContext): Promise<void> {
     return;
   }
 
-  await ctx.drainDispatches();
+  // Closing is terminal: transports are flushed and closed and the logger
+  // is marked disposed even when a dispatch failed; the failure is rethrown
+  // afterwards.
+  let failure: unknown;
+  let failed = false;
+  try {
+    await ctx.drainDispatches();
+  } catch (error) {
+    failure = error;
+    failed = true;
+  }
 
   for (const transport of ctx.configuration.transports) {
     if (!isLoggerTransport(transport)) {
@@ -120,4 +141,6 @@ export async function closeLogger(ctx: ZudojsLoggerContext): Promise<void> {
   }
 
   ctx.markDisposed();
+
+  if (failed) throw failure;
 }

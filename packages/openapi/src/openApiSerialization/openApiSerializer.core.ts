@@ -43,8 +43,32 @@ const YAML_RESERVED = new Set([
 
 /** A bare (unquoted) YAML scalar may not start with these. */
 const YAML_UNSAFE_START = /^[-?:,[\]{}#&*!|>'"%@`\s]/;
-const YAML_UNSAFE_ANYWHERE = /[:#\n\r\t]|: |\s#/;
+// Control characters have no plain-scalar form; `JSON.stringify` escapes them.
+const YAML_UNSAFE_ANYWHERE = /[:#\u0000-\u001f\u007f]|: |\s#/;
 const YAML_NUMERIC = /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?$/;
+
+/**
+ * Other strings a YAML parser resolves to a non-string: the infinity and
+ * not-a-number forms, hexadecimal, octal and binary integers (1.1 and 1.2
+ * core schema), digit groups with `_`, sexagesimal numbers, timestamps
+ * and dates (1.1), the `=` value key and the `<<` merge key. A `version:
+ * 2024-01-01` or an enum value of `0x1F` came back from the parser as a
+ * date or the number 31.
+ */
+const YAML_SPECIAL_SCALARS: readonly RegExp[] = [
+  /^[-+]?\.(?:inf|nan)$/i,
+  /^[-+]?0x[0-9a-f_]+$/i,
+  /^[-+]?0o?[0-7_]+$/i,
+  /^[-+]?0b[01_]+$/i,
+  /^[-+]?[0-9][0-9_]*(?:\.[0-9_]*)?(?:[eE][-+]?[0-9]+)?$/,
+  /^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+(?:\.[0-9_]*)?$/,
+  /^\d{4}-\d{1,2}-\d{1,2}(?:[Tt ]|$)/,
+  /^(?:=|<<)$/,
+];
+
+function isSpecialScalar(value: string): boolean {
+  return YAML_SPECIAL_SCALARS.some((pattern) => pattern.test(value));
+}
 
 function quoteYamlString(value: string): string {
   // Double quotes with JSON escaping is always valid YAML and needs no
@@ -58,6 +82,7 @@ function yamlScalar(value: string): string {
     YAML_UNSAFE_START.test(value) ||
     YAML_UNSAFE_ANYWHERE.test(value) ||
     YAML_NUMERIC.test(value) ||
+    isSpecialScalar(value) ||
     value !== value.trim()
   ) {
     return quoteYamlString(value);

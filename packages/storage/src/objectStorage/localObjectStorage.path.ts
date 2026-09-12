@@ -8,7 +8,15 @@
  */
 
 import { realpath } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { StorageError } from "@zudojs/errors";
 
 /** Raised when a key resolves outside the store's base directory. */
@@ -75,11 +83,44 @@ export function resolveKeyPath(basePath: string, key: string): string {
 }
 
 /**
+ * Resolve the real location of a path that may not exist yet.
+ *
+ * The nearest existing ancestor is resolved through the filesystem and the
+ * missing tail is appended lexically, so a path about to be created is
+ * compared on the same footing as one that already exists.
+ *
+ * @param target - An absolute path.
+ * @returns The real path, or the input when no ancestor exists.
+ */
+export async function realpathLenient(target: string): Promise<string> {
+  const missing: string[] = [];
+  let current = target;
+
+  for (;;) {
+    try {
+      const real = await realpath(current);
+      return missing.length === 0 ? real : join(real, ...missing.reverse());
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return target;
+      missing.push(basename(current));
+      current = parent;
+    }
+  }
+}
+
+/**
  * Assert that a path's real location is still inside the base directory.
  *
  * The lexical check in {@link resolveKeyPath} cannot see symlinks. This
- * resolves the nearest existing ancestor and re-checks containment, so a link
- * planted inside the store cannot redirect a read or write outside it.
+ * resolves both the base and the nearest existing ancestor of the target and
+ * re-checks containment, so a link planted inside the store cannot redirect a
+ * read or write outside it.
+ *
+ * The base is resolved too: a store rooted in a directory that is itself
+ * reached through a symlink (macOS's `/var` → `/private/var`, a mounted
+ * volume, a deploy slot) would otherwise see every real path land outside
+ * its lexical base and refuse every key as a traversal.
  *
  * @param basePath - An absolute base directory.
  * @param target - The absolute path about to be opened.
@@ -91,18 +132,9 @@ export async function assertRealPathContained(
   target: string,
   key: string,
 ): Promise<void> {
-  let current = target;
-
-  for (;;) {
-    try {
-      const real = await realpath(current);
-      if (!isContained(basePath, real)) throw traversal(key);
-      return;
-    } catch (error) {
-      if (error instanceof StorageError) throw error;
-      const parent = dirname(current);
-      if (parent === current) return;
-      current = parent;
-    }
-  }
+  const [realBase, realTarget] = await Promise.all([
+    realpathLenient(basePath),
+    realpathLenient(target),
+  ]);
+  if (!isContained(realBase, realTarget)) throw traversal(key);
 }

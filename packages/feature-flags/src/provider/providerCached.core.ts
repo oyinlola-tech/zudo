@@ -8,8 +8,10 @@
 
 import type { FeatureFlag } from "../featureFlagTypes/featureFlag.interface.js";
 import type {
+  FeatureFlagChangeListener,
   FeatureFlagProvider,
   RefreshableFeatureFlagProvider,
+  Unsubscribe,
 } from "../featureFlagTypes/featureFlagProvider.js";
 
 /** Options for the cached provider. */
@@ -44,7 +46,31 @@ export function createCachedProvider(
     return Date.now() > entry.expiresAt;
   }
 
+  function clear(): void {
+    flagCache.clear();
+    listCache = undefined;
+  }
+
+  // A change announced by the upstream provider is forwarded, and the cache
+  // is dropped first so a `get()` made by the listener sees the new state.
+  // Without this the wrapper had no `subscribe`, so `createFeatureFlags` on
+  // a cached provider never heard about a flag flipped at the source and
+  // served the stale copy until the TTL ran out.
+  const subscribe: Pick<RefreshableFeatureFlagProvider, "subscribe"> =
+    inner.subscribe
+      ? {
+          subscribe(listener: FeatureFlagChangeListener): Unsubscribe {
+            return inner.subscribe!((flags) => {
+              clear();
+              listener(flags);
+            });
+          },
+        }
+      : {};
+
   return {
+    ...subscribe,
+
     async get(key: string): Promise<FeatureFlag | undefined> {
       const cached = flagCache.get(key);
       if (cached && !isExpired(cached)) return cached.value;
@@ -63,8 +89,7 @@ export function createCachedProvider(
     },
 
     async refresh(): Promise<void> {
-      flagCache.clear();
-      listCache = undefined;
+      clear();
       await inner.refresh?.();
     },
   };

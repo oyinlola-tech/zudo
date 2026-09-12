@@ -1,5 +1,16 @@
 # @zudojs/security
 
+## 1.0.1
+
+### Patch Changes
+
+- - `createRateLimiter` clamps its cleanup timer to 2^31 - 1 ms. A `windowMs` longer than ~24.8 days overflowed Node's timer delay, which silently became 1 ms and swept the whole store a thousand times a second.
+  - Key-cap eviction in `createRateLimiter` is now O(1) (least-recently-seen order kept in the store) instead of copying and sorting every tracked key on each new key past `maxKeys`, which let key rotation turn the eviction defence into a CPU sink.
+  - `validateBodyFraming` checks a repeated `Transfer-Encoding` field (`string[]`) the same way as a single one; `["gzip"]` used to pass where `"gzip"` was rejected.
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/constants@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

@@ -20,6 +20,7 @@ import {
   RPCDeadlineExceededError,
   RPCDeserializationError,
   RPCForbiddenError,
+  RPCInternalError,
   RPCInvalidRequestError,
   RPCProcedureNotFoundError,
   RPCRateLimitedError,
@@ -42,7 +43,7 @@ import type { RPCRequestLimits } from "../validation/rpcValidation.core.js";
  * error.
  */
 const ERROR_CODES: ReadonlyArray<
-  readonly [new (...args: never[]) => Error, string]
+  readonly [new (...args: never[]) => Error, string, boolean?]
 > = [
   [RPCProcedureNotFoundError, "RPC_PROCEDURE_NOT_FOUND"],
   [RPCValidationError, "RPC_VALIDATION_ERROR"],
@@ -54,7 +55,10 @@ const ERROR_CODES: ReadonlyArray<
   [RPCTimeoutError, "RPC_TIMEOUT"],
   [RPCCancelledError, "RPC_CANCELLED"],
   [RPCUnavailableError, "RPC_UNAVAILABLE"],
-  [RPCSerializationError, "RPC_SERIALIZATION_ERROR"],
+  // A serialization failure is a server fault (500, `expose: false`) whose
+  // message names what could not be encoded; the code travels, the
+  // message goes to `onInternalError`.
+  [RPCSerializationError, "RPC_SERIALIZATION_ERROR", true],
   [RPCDeserializationError, "RPC_DESERIALIZATION_ERROR"],
 ];
 
@@ -137,7 +141,14 @@ export class RPCServer {
     try {
       assertValidRequest(request, this.options.limits);
 
-      return await this.dispatcher.dispatch(request);
+      // `metadata` is optional on the wire (`createRPCRequest` fills it in,
+      // a hand-built or JSON-decoded frame need not). Every consumer below
+      // reads it as an object, so a frame without it used to fail with a
+      // TypeError reported as an internal error.
+      const frame: RPCRequest =
+        request.metadata === undefined ? { ...request, metadata: {} } : request;
+
+      return await this.dispatcher.dispatch(frame);
     } catch (error) {
       const mapped = this.mapError(error);
 
@@ -150,7 +161,23 @@ export class RPCServer {
         });
       }
 
-      return createRPCErrorResponse(requestId, mapped);
+      if (mapped.internal) {
+        // The error is typed, so the caller keeps its code, but it was
+        // constructed with `expose: false`: its message is server detail
+        // and goes to the log, not the wire.
+        this.options.onInternalError?.(error, requestId);
+
+        return createRPCErrorResponse(requestId, {
+          code: mapped.code,
+          message: INTERNAL_ERROR_MESSAGE,
+        });
+      }
+
+      return createRPCErrorResponse(requestId, {
+        code: mapped.code,
+        message: mapped.message,
+        ...(mapped.details !== undefined ? { details: mapped.details } : {}),
+      });
     }
   }
 
@@ -167,17 +194,34 @@ export class RPCServer {
    * Returns `undefined` for anything unrecognised, which the caller
    * answers with a generic internal error.
    */
-  private mapError(
-    error: unknown,
-  ): { code: string; message: string; details?: unknown } | undefined {
-    for (const [type, code] of ERROR_CODES) {
+  private mapError(error: unknown):
+    | { code: string; message: string; details?: unknown; internal?: boolean }
+    | undefined {
+    // An RPCInternalError *is* the generic internal failure: it carries
+    // `expose: false` and a message written for the log. Mapping it like
+    // any other RPCError put that message on the wire.
+    if (error instanceof RPCInternalError) {
+      return undefined;
+    }
+
+    for (const [type, code, internal] of ERROR_CODES) {
       if (error instanceof type) {
-        const payload: { code: string; message: string; details?: unknown } = {
+        const payload: {
+          code: string;
+          message: string;
+          details?: unknown;
+          internal?: boolean;
+        } = {
           code,
           message: error.message,
+          ...(internal ? { internal: true } : {}),
         };
 
-        if (error instanceof RPCValidationError && error.issues !== undefined) {
+        if (
+          error instanceof RPCValidationError &&
+          error.issues !== undefined &&
+          error.issues.length > 0
+        ) {
           payload.details = error.issues;
         }
 
@@ -193,9 +237,15 @@ export class RPCServer {
     }
 
     // A custom RPCError subclass is still a deliberate, caller-facing
-    // error; honour its own code rather than hiding it.
+    // error; honour its own code rather than hiding it. Its message only
+    // travels when the error was built to be exposed — `RPCError`
+    // defaults to `expose: false`.
     if (isRPCError(error)) {
-      return { code: error.code, message: error.message };
+      return {
+        code: error.code,
+        message: error.message,
+        internal: error.expose === false,
+      };
     }
 
     return undefined;

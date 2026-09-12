@@ -11,6 +11,7 @@ import {
   failValidation,
   rethrowUnexpected,
 } from "../schemaBase/index.js";
+import { describeValue } from "../schemaBase/schemaBase.describe.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
 /** Helper type to infer union output from schema array. */
@@ -170,21 +171,42 @@ export class DiscriminatedUnionSchema<
       failValidation();
     }
 
-    const discriminatorValue = String(rawValue);
-    const schema = this._schemaMap.get(discriminatorValue);
+    // Only a primitive can name a variant. `String(rawValue)` on an object
+    // used to throw for a null-prototype value, escaping `safeParse`.
+    const discriminatorValue = discriminatorKeyOf(rawValue);
+    const schema =
+      discriminatorValue === undefined
+        ? undefined
+        : this._schemaMap.get(discriminatorValue);
 
     if (schema) {
       return schema._parse(ctx, input) as UnionOutput<TSchemas>;
     }
 
+    const received = discriminatorValue ?? describeValue(rawValue);
+
     addIssue(ctx, {
       code: SchemaIssueCode.INVALID_UNION,
       path: [...ctx.path, this._discriminator],
-      message: `No matching variant for discriminator "${this._discriminator}" = "${discriminatorValue}"`,
+      message: `No matching variant for discriminator "${this._discriminator}" = "${received}"`,
       expected: `one of [${this.variants.join(", ")}]`,
-      received: discriminatorValue,
+      received,
     });
     failValidation();
+  }
+}
+
+/** Maps a discriminator value to its variant key, or undefined when it cannot name one. */
+function discriminatorKeyOf(value: unknown): string | undefined {
+  switch (typeof value) {
+    case "string":
+      return value;
+    case "number":
+    case "boolean":
+    case "bigint":
+      return String(value);
+    default:
+      return undefined;
   }
 }
 

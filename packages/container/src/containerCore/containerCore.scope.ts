@@ -43,6 +43,7 @@ import type {
 
 export class ContainerScopeContext {
   private disposed = false;
+  private disposing: Promise<void> | undefined;
   private readonly cache: ResolutionCache;
   private readonly lifecycle: ContainerLifecycle;
   private readonly container: ContainerLike;
@@ -132,11 +133,20 @@ export class ContainerScopeContext {
    * from its parent. Container-owned singletons are not touched. Idempotent.
    *
    * Every failure is collected; the scope is marked disposed regardless and
-   * an AggregateError listing the failures is thrown afterwards.
+   * an AggregateError listing the failures is thrown afterwards. Concurrent
+   * callers share the in-flight disposal rather than returning early.
    */
-  async dispose(): Promise<void> {
-    if (this.disposed) return;
+  dispose(): Promise<void> {
+    if (this.disposing) return this.disposing;
+    if (this.disposed) return Promise.resolve();
     this.disposed = true;
+    this.disposing = this.runDispose().finally(() => {
+      this.disposing = undefined;
+    });
+    return this.disposing;
+  }
+
+  private async runDispose(): Promise<void> {
     const failures: unknown[] = [];
     for (const child of [...this.children].reverse()) {
       try {

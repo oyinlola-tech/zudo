@@ -33,6 +33,32 @@ export function createContextManager(options: ContextManagerOptions) {
   const { storage } = options;
   const allowInactive = options.allowInactive ?? false;
 
+  // Methods close over these rather than reading `this`, so a method pulled
+  // off the manager (`const { requireCurrentTenant } = manager`) still works
+  // instead of failing with a TypeError that masks the real error.
+  function getCurrentTenant(): Tenant | undefined {
+    const ctx = storage.get();
+    if (ctx?.mode === "tenant") return ctx.tenant;
+    return undefined;
+  }
+
+  function run<T>(tenant: Tenant, callback: () => T): T {
+    if (!allowInactive) assertTenantUsable(tenant);
+
+    const context: TenantExecutionContext = {
+      mode: "tenant",
+      tenant,
+      context: {
+        tenantId: tenant.id,
+        source: "manual",
+        trust: "trusted",
+        resolvedAt: new Date(),
+        metadata: {},
+      },
+    };
+    return storage.run(context, callback);
+  }
+
   return {
     /**
      * Get the current execution context.
@@ -44,17 +70,13 @@ export function createContextManager(options: ContextManagerOptions) {
     /**
      * Get the current tenant, if any.
      */
-    getCurrentTenant(): Tenant | undefined {
-      const ctx = storage.get();
-      if (ctx?.mode === "tenant") return ctx.tenant;
-      return undefined;
-    },
+    getCurrentTenant,
 
     /**
      * Require a current tenant — throws if missing.
      */
     requireCurrentTenant(): Tenant {
-      const tenant = this.getCurrentTenant();
+      const tenant = getCurrentTenant();
       if (!tenant) throw new TenantContextMissingError();
       return tenant;
     },
@@ -73,22 +95,7 @@ export function createContextManager(options: ContextManagerOptions) {
      * @throws {TenantUnavailableError} when the tenant is not active and
      *   `allowInactive` was not set.
      */
-    run<T>(tenant: Tenant, callback: () => T): T {
-      if (!allowInactive) assertTenantUsable(tenant);
-
-      const context: TenantExecutionContext = {
-        mode: "tenant",
-        tenant,
-        context: {
-          tenantId: tenant.id,
-          source: "manual",
-          trust: "trusted",
-          resolvedAt: new Date(),
-          metadata: {},
-        },
-      };
-      return storage.run(context, callback);
-    },
+    run,
 
     /**
      * Run a callback in system mode (no tenant).
@@ -102,7 +109,7 @@ export function createContextManager(options: ContextManagerOptions) {
      * Run a callback with a specific tenant (for switching).
      */
     runAs<T>(tenant: Tenant, callback: () => T): T {
-      return this.run(tenant, callback);
+      return run(tenant, callback);
     },
   };
 }

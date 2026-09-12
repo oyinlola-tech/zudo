@@ -1,5 +1,13 @@
 # @zudojs/middleware
 
+## 1.0.1
+
+### Patch Changes
+
+- - `sanitizeLogValue()` (used by `loggingMiddleware`) now escapes the Unicode line separator (U+2028), paragraph separator (U+2029), next-line (U+0085) and the C1 control range, so a request path containing them can no longer split a log line.
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+
 ## 1.0.0
 
 ### Major Changes

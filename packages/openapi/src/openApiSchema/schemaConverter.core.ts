@@ -16,14 +16,24 @@ import { DEFAULT_OPENAPI_VERSION } from "../openApiConstants/openApiConstants.co
  *   array    `_config.itemSchema`, `_config.min`, `_config.max`, `_config.length`
  *   string   `_config.min|max|length|pattern|format`
  *   number   `_config.min|max|int|gt|lt|multipleOf`
+ *   coerce.string / coerce.number
+ *            `_constraints` — the wrapped StringSchema / NumberSchema that
+ *            carries the `_config` above
  *   union    `_schemas`          intersection `_left` / `_right`
  *   enum     `_values`           literal      `_expected`
  *   optional `_inner`            nullable     `_inner`
- *   default  `_inner`, `_defaultValue`        refine `_inner`
- *   transform `_base`            lazy         `_factory` / `_inner`
+ *   default  `_inner`, `_defaultValue` (a value or a factory function)
+ *   refine   `_inner`
+ *   transform `_inner` (`schema.transform(...)`, TransformModifierSchema)
+ *             or `_base` (the standalone TransformSchema class)
+ *   lazy     `_factory` / `_inner`
  *   record   `_keySchema`, `_valueSchema`     tuple  `_schemas`
  *   map      `_keySchema`, `_valueSchema`     set    `_valueSchema`
  *   metadata `_metadata` (description, example, title, deprecated)
+ *
+ * Object parsing accepts a missing key when the field schema is one of
+ * `optional`, `default`, `any` or `unknown` (`ACCEPTS_UNDEFINED` in
+ * schemaObject.core.ts), so exactly those are left out of `required`.
  */
 
 export interface SchemaConversionResult {
@@ -107,8 +117,58 @@ function isSchemaLike(value: unknown): value is SchemaLike {
   );
 }
 
-function isOptionalSchema(value: unknown): boolean {
-  return isSchemaLike(value) && value._type === "optional";
+/**
+ * Field schemas for which `ObjectSchema` accepts a missing key. Mirrors
+ * `ACCEPTS_UNDEFINED` in `@zudojs/schema`: a field with a default is filled
+ * in when absent, so documenting it as `required` publishes a contract
+ * stricter than the code that validates against it.
+ */
+const ACCEPTS_MISSING_KEY: ReadonlySet<string> = new Set([
+  "optional",
+  "default",
+  "any",
+  "unknown",
+]);
+
+function acceptsMissingKey(value: unknown): boolean {
+  return isSchemaLike(value) && ACCEPTS_MISSING_KEY.has(value._type);
+}
+
+/**
+ * The schema a `coerce.*` wrapper delegates its constraints to.
+ *
+ * `s.coerce.number().int().min(1)` keeps `int` and `min` on the wrapped
+ * `NumberSchema` under `_constraints`, not on the wrapper's own `_config`;
+ * reading the wrapper alone yields a bare `{ type: "number" }`.
+ */
+function coercionTarget(schema: SchemaLike): SchemaLike {
+  const constraints = schema["_constraints"];
+  return isSchemaLike(constraints) ? constraints : schema;
+}
+
+/**
+ * Resolves a `default` schema's value, which may be a factory function.
+ *
+ * A factory (`.default(() => new Date())`) is invoked once for the document.
+ * Emitting the function itself produces a `default` that `JSON.stringify`
+ * silently drops and the YAML serializer renders as source text.
+ */
+function resolveDefaultValue(
+  schema: SchemaLike,
+  state: ConversionState,
+): unknown {
+  const raw = schema["_defaultValue"];
+  if (typeof raw !== "function") return raw;
+  try {
+    return (raw as () => unknown)();
+  } catch (error) {
+    state.warnings.push(
+      `A \`default\` factory threw and its value was omitted: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return undefined;
+  }
 }
 
 function extractMeta(schema: SchemaLike): Partial<OpenAPISchema> {
@@ -344,17 +404,22 @@ function convertSchemaNode(
 
   switch (schema._type) {
     case "string":
-    case "coerce.string":
       return convertString(schema, state);
 
+    case "coerce.string":
+      return convertString(coercionTarget(schema), state);
+
     case "number":
-    case "coerce.number":
       return convertNumber(schema, state);
+
+    case "coerce.number":
+      return convertNumber(coercionTarget(schema), state);
 
     case "boolean":
     case "coerce.boolean":
       return { type: "boolean" };
 
+    case "bigint":
     case "coerce.bigint":
       return { type: "string", format: "int64" };
 
@@ -386,10 +451,11 @@ function convertSchemaNode(
 
       for (const [key, value] of Object.entries(shape)) {
         defineProperty(properties, key, convertNode(value, state));
-        // A field is required unless it is wrapped in `optional`. An explicit
+        // A field is required unless the object parser accepts its absence
+        // (`optional`, `default`, `any`, `unknown`). An explicit
         // `requiredKeys` set (from `.required()`) forces it back on.
         const forced = requiredKeys instanceof Set && requiredKeys.has(key);
-        if (forced || !isOptionalSchema(value)) required.push(key);
+        if (forced || !acceptsMissingKey(value)) required.push(key);
       }
 
       const unknownKeys = c["unknownKeys"];
@@ -556,7 +622,7 @@ function convertSchemaNode(
 
     case "default": {
       const inner = convertInner(schema["_inner"], state, "default");
-      const defaultValue = schema["_defaultValue"];
+      const defaultValue = resolveDefaultValue(schema, state);
       return defaultValue === undefined
         ? inner
         : { ...inner, default: defaultValue };
@@ -568,7 +634,14 @@ function convertSchemaNode(
       return convertInner(schema["_inner"], state, "refine");
 
     case "transform":
-      return convertInner(schema["_base"], state, "transform");
+      // `schema.transform(fn)` / `s.transform(schema, fn)` build a
+      // TransformModifierSchema, whose source is `_inner`; the standalone
+      // TransformSchema class names it `_base`.
+      return convertInner(
+        schema["_inner"] ?? schema["_base"],
+        state,
+        "transform",
+      );
 
     case "lazy": {
       const resolved = schema["_inner"] ?? resolveLazy(schema, state);

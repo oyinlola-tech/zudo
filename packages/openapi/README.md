@@ -101,9 +101,12 @@ manager.toUIResponse({ specUrl: "/openapi.json", assetsBaseUrl: "/vendor/swagger
 ```
 
 Caller-supplied text is escaped, and input that would break out of the page is
-refused rather than mangled: a `javascript:` or `vbscript:` URL throws, an
-empty `specUrl` throws, and `customCss` containing `</style>` throws — that
-sequence ends the style block and lets the rest be parsed as HTML.
+refused rather than mangled: a `javascript:` or `vbscript:` URL throws (the
+scheme is read after stripping the control characters browsers ignore, so
+`java\nscript:` is caught too), a `data:` URL that is not an image throws
+(the assets base lands in `<script src>`), an empty `specUrl` throws, and
+`customCss` containing `</style>` throws — that sequence ends the style block
+and lets the rest be parsed as HTML.
 
 ## Branding
 
@@ -180,9 +183,16 @@ produces
 
 Objects, arrays, enums, literals, unions, discriminated unions,
 intersections, records, tuples, sets, optionals, nullables, defaults,
-refinements, transforms, lazy schemas and the coercion wrappers are all
-converted, along with string and number constraints (`min`, `max`, `length`,
-`pattern`, `format`, `int`, `multipleOf`, `gt`, `lt`).
+refinements, transforms, lazy schemas, bigints and the coercion wrappers are
+all converted, along with string and number constraints (`min`, `max`,
+`length`, `pattern`, `format`, `int`, `multipleOf`, `gt`, `lt`). Constraints
+on a coercing schema (`coerce.number().int().min(1)`) are carried through.
+
+A property is listed in `required` exactly when the object parser rejects
+its absence: fields wrapped in `optional`, fields with a `default`, and
+`any` / `unknown` fields are left out, and `.required()` forces every key
+back on. A default supplied as a factory (`.default(() => new Date())`) is
+invoked once and its value emitted.
 
 Anything that cannot be expressed exactly produces a **warning** rather than a
 silent `{}`:
@@ -259,7 +269,10 @@ The validator checks:
 - that path templates and `in: "path"` parameters agree in both directions —
   the classic "`{id}` is in the path but nowhere in `parameters`" mistake
 - that path parameters are marked required, and that no parameter is declared
-  twice
+  twice in one list (an operation-level parameter may override a path-level
+  one with the same name and location)
+- that no two paths are identical apart from their template parameter names
+  (`/users/{id}` next to `/users/{userId}`)
 - `operationId` uniqueness and length
 - that every `security` requirement names a scheme declared in
   `components.securitySchemes` — a typo there yields a document that _looks_

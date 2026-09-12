@@ -1,5 +1,14 @@
 # @zudojs/cqrs
 
+## 1.0.1
+
+### Patch Changes
+
+- - `lockMiddleware` now awaits the lock's `release()` function. A release that returns a rejected promise (a failed Redis unlock, say) previously became an unhandled promise rejection — which terminates the process under Node's defaults. It now surfaces as a `CqrsError` ("CQRS lock release failed") carrying the lock key and the original error as `cause`; when the handler itself failed, the handler's error is kept and the release failure is not allowed to mask it. `CqrsLock.acquire()` is typed to accept an async release function.
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/events@1.0.1
+
 ## 0.1.0
 
 ### Patch Changes

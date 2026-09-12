@@ -20,7 +20,10 @@ import {
   decodeKeysetCursor,
 } from "../pagination/pagination.keyset.js";
 import type { QueryBuilder } from "../queryBuilder/queryBuilder.core.js";
-import { toPrismaArgs } from "../queryBuilder/queryBuilder.prisma.js";
+import {
+  toPrismaArgs,
+  toPrismaOrderBy,
+} from "../queryBuilder/queryBuilder.prisma.js";
 import type { QueryBuilderState } from "../queryBuilder/queryBuilder.type.js";
 import type {
   RelationLoadOptions,
@@ -382,6 +385,10 @@ export abstract class BaseRepository<
 
     const skip = (page - 1) * limit;
 
+    // Validated before either query is dispatched, so an invalid sort never
+    // costs a `count` round-trip.
+    const orderBy = this.buildOrderBy(options?.sort);
+
     const [data, total] = await Promise.all([
       this.execute(
         "findPaginated",
@@ -390,7 +397,7 @@ export abstract class BaseRepository<
             where: this.scope(filter),
             skip,
             take: limit,
-            orderBy: this.buildOrderBy(options?.sort),
+            orderBy,
           }),
         options,
       ),
@@ -431,6 +438,8 @@ export abstract class BaseRepository<
 
     const sort = this.buildCursorSort(options?.sort);
 
+    const orderBy = this.buildOrderBy(sort);
+
     const limit = normalizeLimit(options?.limit);
 
     const cursor = options?.cursor ?? null;
@@ -451,7 +460,7 @@ export abstract class BaseRepository<
         this.delegate.findMany({
           where: where as TWhereInput,
           take: limit + 1,
-          orderBy: this.buildOrderBy(sort),
+          orderBy,
         }),
       options,
     );
@@ -603,7 +612,7 @@ export abstract class BaseRepository<
       "update",
       () =>
         this.delegate.update({
-          where: this.scope(this.whereId(id) as TWhereInput),
+          where: this.whereUniqueId(id),
           data: input,
         }),
       options,
@@ -935,6 +944,19 @@ export abstract class BaseRepository<
   }
 
   /**
+   * Builds the primary-key `where` for a *unique* operation (`update`),
+   * folding the soft-delete scope in as a sibling of the id rather than
+   * wrapping it in `AND`. Prisma's `WhereUniqueInput` requires the unique
+   * field at the top level, so `{ AND: [{ id }, { deletedAt: null }] }` is
+   * rejected with a validation error.
+   */
+  protected whereUniqueId(id: TId): Record<string, unknown> {
+    const where = this.whereId(id);
+
+    return this.isScoped() ? { ...where, [this.softDeleteField!]: null } : where;
+  }
+
+  /**
    * Applies the soft-delete scope to a filter when enabled.
    */
   protected scope(filter?: TWhereInput): TWhereInput | undefined {
@@ -953,17 +975,16 @@ export abstract class BaseRepository<
 
   /**
    * Converts generic sort definitions into Prisma-compatible orderBy.
+   *
+   * Field names and directions are validated the same way the query
+   * builder validates them (`toPrismaOrderBy`), so a sort taken from
+   * request input cannot reach the delegate with an arbitrary key or an
+   * unsupported direction.
    */
   protected buildOrderBy<TField extends string>(
     sort?: readonly SortInput<TField>[],
   ): ReadonlyArray<Record<string, string>> | undefined {
-    if (!sort || sort.length === 0) {
-      return undefined;
-    }
-
-    return sort.map((entry) => ({
-      [entry.field]: entry.direction,
-    }));
+    return toPrismaOrderBy(sort);
   }
 
   private isScoped(): boolean {

@@ -1,5 +1,15 @@
 # zudojs-cli
 
+## 1.1.1
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/config@1.0.1
+  - @zudojs/core@1.1.0
+  - @zudojs/errors@1.0.1
+  - @zudojs/logger@1.1.0
+
 ## 1.1.0
 
 ### Minor Changes

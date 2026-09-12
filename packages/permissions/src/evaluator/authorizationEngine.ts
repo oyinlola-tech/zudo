@@ -26,6 +26,7 @@ import {
 } from "../permissionErrors/index.js";
 import { isValidPermission } from "../permission/permission.core.js";
 import { memoizeRoleLookup } from "../role/roleHierarchy.js";
+import { freezeRoleDefinition } from "../role/roleRegistry.js";
 import type { PermissionEventEmitter } from "../observability/observability.core.js";
 
 /** Anything the engine will accept as its source of roles. */
@@ -212,7 +213,11 @@ export function createPermissionEngine(
   } else {
     const list = (options?.roles ?? []) as readonly RoleDefinition[];
     if (validateConfiguration) validateRoles(list);
-    const roleMap = new Map(list.map((role) => [role.name, role]));
+    // Copy each role, so a caller still holding the arrays it passed in
+    // cannot widen a grant after validation has run.
+    const roleMap = new Map(
+      list.map((role) => [role.name, freezeRoleDefinition(role)]),
+    );
     roleLookup = (name) => roleMap.get(name);
     invalidateRoleCache = () => {};
   }
@@ -234,9 +239,16 @@ export function createPermissionEngine(
       );
   };
 
-  const evaluatorOptions = (): EvaluatorOptions => ({
-    getRole: roleLookup,
-    policies: resolvePolicies(),
+  // One live view over the configuration. `policies` is a getter so a
+  // registry-backed engine re-reads the registry on every evaluation — an
+  // Ability used to capture a snapshot of the policy list when it was
+  // created, so a policy defined afterwards was enforced by `engine.can()`
+  // and ignored by `ability.can()` for the same actor.
+  const liveOptions: EvaluatorOptions = {
+    getRole: (name) => roleLookup(name),
+    get policies() {
+      return resolvePolicies();
+    },
     rules: options?.rules,
     policyTimeout: options?.policyTimeout,
     algorithm: options?.algorithm,
@@ -246,7 +258,8 @@ export function createPermissionEngine(
     roleResolver: options?.roleResolver,
     expandImplied: options?.expandImplied,
     onError: options?.onError,
-  });
+  };
+  const evaluatorOptions = (): EvaluatorOptions => liveOptions;
 
   const emitter = options?.emitter;
 

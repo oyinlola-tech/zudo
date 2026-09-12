@@ -16,6 +16,7 @@ export {
   type ModuleLifecycleStep,
   type ModuleLifecycleHooks,
   type ModuleLifecycleOptions,
+  type ModuleLifecyclePhaseOptions,
   ModuleLifecycleError,
   type ModuleLifecycleResult,
   type ModuleLifecycleSkip,

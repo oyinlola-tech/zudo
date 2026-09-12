@@ -27,6 +27,8 @@ import { EventErrorMode } from "../eventEmitter/eventEmitter.type.js";
 
 import { EventRegistry } from "../eventRegistry/eventRegistry.store.js";
 
+import { normalizeRegistryEventType } from "../eventRegistry/eventRegistry.registration.js";
+
 import {
   EventBusDisposedError,
   EventBusStoppedError,
@@ -277,10 +279,14 @@ export class EventBus {
     const removed = this.registry.unregister(eventType);
 
     if (options.removeHandlers) {
-      const definition = this.registry.getHandlersForType(eventType);
+      /**
+       * Compare patterns on the full handler list: the matching
+       * query skips disabled handlers, which must be dropped too.
+       */
+      const type = normalizeRegistryEventType(eventType);
 
-      for (const handler of definition) {
-        if (handler.eventType !== "*" && !handler.eventType.endsWith(".*")) {
+      for (const handler of this.registry.getHandlers()) {
+        if (handler.eventType === type) {
           this.registry.unregisterHandler(handler.id);
         }
       }

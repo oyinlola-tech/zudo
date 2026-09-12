@@ -23,6 +23,14 @@ export function resolveRuntimeOptions(
   const signals = options.signals ?? {};
   const diagnostics = options.diagnostics ?? {};
 
+  /*
+   * Mode and role are validated here, not only in
+   * validateRuntimeOptions(): an unknown mode would otherwise be
+   * accepted silently and make the environment report neither
+   * production, development, nor test.
+   */
+  assertRuntimeMode(options.mode ?? DEFAULT_RUNTIME_OPTIONS.mode);
+  assertRuntimeRole(options.role ?? DEFAULT_RUNTIME_OPTIONS.role);
   validateRuntimeName(options.name);
   validateRuntimeTimeout(startup.timeoutMs, "startup");
   validateRuntimeTimeout(shutdown.timeoutMs, "shutdown");

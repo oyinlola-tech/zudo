@@ -42,6 +42,12 @@ included — implement the `LoggerTransport` interface for those.
 `transportTimeout` (default 10s) bounds every transport write, so a
 transport that stops responding cannot hang `flush()` or `close()`.
 
+`throwTransportErrors` (default `false`) rethrows transport and formatter
+failures instead of dropping them. A synchronous transport throws from the
+log call itself; a failure from an asynchronous transport (or with
+`asynchronous: true`) cannot, so it is rethrown by the next `flush()` or
+`close()`, which still flush and close the transports first.
+
 ## Flushing
 
 Dispatch completes synchronously when every transport is synchronous.
@@ -71,7 +77,7 @@ createLogger({ redact: { enabled: false } }); // opt out
 Text-shaped formatters escape control characters in the message, the
 logger name, metadata keys and values, context values and source
 locations. A newline or ANSI escape inside attacker-supplied text
-becomes `\n` / `` rather than forging an extra log record or
+becomes `\n` / `\u001b` rather than forging an extra log record or
 driving the operator's terminal. The JSON formatter relies on
 `JSON.stringify`, which escapes the same characters.
 
@@ -93,6 +99,11 @@ withLoggerContext(logger, createLoggerContext({ traceId }), (scoped) => {
   scoped.info("inside the trace");
 });
 ```
+
+Per-call context is merged into the entry's metadata the same way:
+`logger.log(LoggerLevel.INFO, "handled", { context: { tenant: "acme" } })`.
+The entry's `context` also carries the identifiers (`requestId`, `traceId`,
+...) of the active context for transports that read them directly.
 
 Child loggers inherit name, level, formatter, transports, metadata and
 redaction settings: `logger.child({ name: "api.db" })`.

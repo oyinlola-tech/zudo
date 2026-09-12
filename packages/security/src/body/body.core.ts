@@ -104,13 +104,20 @@ export function validateBodyFraming(
     return validateContentLength(contentLength, maxSize);
   }
 
-  if (typeof transferEncoding === "string") {
-    const encodings = transferEncoding
+  // A repeated Transfer-Encoding field is one comma-separated list (RFC 9110
+  // s5.3), so an array is flattened before the final-coding check. It used to
+  // be skipped entirely, so `["gzip"]` passed where `"gzip"` was rejected.
+  const transferEncodingList = Array.isArray(transferEncoding)
+    ? transferEncoding.join(",")
+    : transferEncoding;
+
+  if (typeof transferEncodingList === "string") {
+    const encodings = transferEncodingList
       .toLowerCase()
       .split(",")
       .map((e) => e.trim());
     if (encodings.length > 0 && encodings[encodings.length - 1] !== "chunked") {
-      return `Transfer-Encoding must end with "chunked", got: ${transferEncoding}`;
+      return `Transfer-Encoding must end with "chunked", got: ${transferEncodingList}`;
     }
   }
 

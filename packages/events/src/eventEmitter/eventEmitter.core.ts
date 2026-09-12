@@ -252,7 +252,16 @@ export class EventEmitter {
       return;
     }
 
-    this.removeAllListeners();
+    /**
+     * A shared store (the bus registry) may already have been
+     * disposed, in which case its handlers are gone and querying
+     * it would throw; disposing the emitter must still succeed.
+     */
+    const store = this.store as { isDisposed?: () => boolean };
+
+    if (typeof store.isDisposed !== "function" || !store.isDisposed()) {
+      this.removeAllListeners();
+    }
 
     this.disposed = true;
   }

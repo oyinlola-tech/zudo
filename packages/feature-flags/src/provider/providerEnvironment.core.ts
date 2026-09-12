@@ -26,8 +26,13 @@ function parseEnvValue(raw: string): boolean | string | number {
   if (raw === "true") return true;
   if (raw === "false") return false;
 
-  const num = Number(raw);
-  if (!Number.isNaN(num)) return num;
+  // `Number("")` and `Number("   ")` are both `0`, so an empty
+  // `FEATURE_X=` used to become the number zero. Only a value that is not
+  // blank is a candidate for a number; blank stays the string it is.
+  if (raw.trim() !== "") {
+    const num = Number(raw);
+    if (!Number.isNaN(num)) return num;
+  }
 
   return raw;
 }

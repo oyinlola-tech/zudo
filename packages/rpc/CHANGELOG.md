@@ -1,5 +1,23 @@
 # @zudojs/rpc
 
+## 1.1.0
+
+### Minor Changes
+
+- - `RPCServer.handle()` and `RPCDispatcher.dispatch()` accept a frame without `metadata` (it is optional on the wire); previously it crashed with a TypeError reported as `RPC_INTERNAL_ERROR`. `createRPCContext` defaults `metadata` to `{}`.
+  - Errors thrown with `expose: false` — `RPCInternalError`, `RPCSerializationError`, a plain `RPCError` or a subclass that does not opt in — no longer put their message on the wire: the caller receives the error's code with the generic internal-error message, and the original error is passed to `onInternalError`. Messages of typed, exposed errors (`RPCTimeoutError`, `RPCValidationError`, auth, rate-limit, …) are unchanged.
+  - A handler result that fails the procedure's `output` schema is now an `RPCInternalError` (server fault, reported to `onInternalError` with the failing paths) instead of an `RPC_VALIDATION_ERROR` with empty `details` that blamed the caller's input. `parseOutput` throws `RPCInternalError`.
+  - `RPCClient` passes its effective timeout to the transport as `RPCTransportRequestOptions.timeout`, which was declared but never populated.
+  - An `RPC_TIMEOUT` response is rebuilt on the client as an `RPCTimeoutError` carrying the server's message instead of "timed out after 0ms".
+  - README rewritten: the usage example called APIs that do not exist (`createRPCProcedure({ ... })`, `new RPCDispatcher()`, `dispatcher.register`, `dispatcher.call`).
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+  - @zudojs/schema@1.0.1
+  - @zudojs/constants@1.0.1
+
 ## 0.2.0
 
 ### Minor Changes

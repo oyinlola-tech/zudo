@@ -75,6 +75,30 @@ export class WaitQueue {
   }
 
   /**
+   * Reject the longest-waiting caller.
+   *
+   * Used when the pool tried to produce a replacement connection on a
+   * waiter's behalf and the factory failed: the waiter learns what
+   * `acquire()` would have thrown, instead of sitting out its timeout.
+   *
+   * @param error - The rejection reason.
+   * @returns True when a waiter was rejected.
+   */
+  rejectOne(error: Error): boolean {
+    for (;;) {
+      const waiter = this.waiters.shift();
+      if (!waiter) return false;
+
+      clearTimeout(waiter.timer);
+      if (waiter.settled) continue;
+
+      waiter.settled = true;
+      waiter.reject(error);
+      return true;
+    }
+  }
+
+  /**
    * Reject and clear every waiter.
    *
    * @param error - The rejection reason.

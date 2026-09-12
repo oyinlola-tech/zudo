@@ -84,6 +84,14 @@ export class JSONSerializer implements Serializer<unknown, string> {
       return json;
     }
 
+    // The fast path stays a bare `JSON.stringify` by default, but a depth
+    // limit the caller asked for must still be enforced: `maxDepth` used to
+    // be read only when `preserveTypes` was on, so a per-call or per-instance
+    // limit was silently ignored on the path most callers use.
+    if (opts.maxDepth !== undefined) {
+      assertDepthWithinLimit(value, maxDepth);
+    }
+
     const json = opts.pretty
       ? JSON.stringify(value, null, opts.indent ?? 2)
       : JSON.stringify(value);
@@ -109,6 +117,12 @@ export class JSONSerializer implements Serializer<unknown, string> {
       const maxDepth = opts.maxDepth ?? SerializationLimits.MAX_DEPTH;
       assertDepthWithinLimit(parsed, maxDepth);
       return this.restoreValue(parsed, 0, maxDepth, opts) as T;
+    }
+
+    // Same contract on the fast path: an explicit `maxDepth` bounds input
+    // that arrives from the wire, whether or not types are being restored.
+    if (opts.maxDepth !== undefined) {
+      assertDepthWithinLimit(parsed, opts.maxDepth);
     }
 
     return parsed as T;

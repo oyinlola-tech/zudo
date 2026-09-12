@@ -48,7 +48,19 @@ If a **critical** component (the default) fails any startup phase,
 `start()` rolls the application back (`stop` → `dispose`) and then
 **rejects** with a `LifecycleStartError`. Register a component with
 `{ critical: false }` when its failure should not abort startup — the
-component is marked `FAILED` and startup continues.
+component is marked `FAILED` and startup continues. A failed component
+takes no further part in startup (its later hooks are not invoked), and
+components that `dependsOn` it are not started either: they are marked
+`FAILED` with a `LifecycleComponentError` naming the failed dependency,
+and their own `critical` flag decides whether startup aborts.
+
+Rollback only undoes phases that ran: `stop()` is called on components
+whose `start` phase ran, and `dispose()` on components whose
+`initialize` phase ran.
+
+Calling `shutdown()` while `start()` is in flight waits for the
+executing stage to settle, tears down, and makes `start()` reject with a
+`LifecycleStartError` — later stages are never launched.
 
 ## Shutdown
 

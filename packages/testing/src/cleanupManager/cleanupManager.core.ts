@@ -64,6 +64,7 @@ export function createCleanupManager(
   const entries: CleanupEntry[] = [];
   let nextId = 0;
   let disposed = false;
+  let inFlight: Promise<void> | undefined;
 
   const register = (
     fn: () => Promise<void> | void,
@@ -82,13 +83,7 @@ export function createCleanupManager(
     });
   };
 
-  const dispose = async (): Promise<void> => {
-    if (disposed) {
-      return;
-    }
-
-    disposed = true;
-
+  const runCleanups = async (): Promise<void> => {
     const errors: Array<{
       entry: CleanupEntry;
       error: unknown;
@@ -116,6 +111,24 @@ export function createCleanupManager(
           .join(", ")}`,
       );
     }
+  };
+
+  /**
+   * Runs the cleanups once. A second call made while the first is still
+   * running shares its promise, so nobody is told "disposed" before the
+   * resources are actually released; a call after completion resolves
+   * immediately.
+   */
+  const dispose = (): Promise<void> => {
+    if (inFlight) return inFlight;
+    if (disposed) return Promise.resolve();
+
+    disposed = true;
+    inFlight = runCleanups().finally(() => {
+      inFlight = undefined;
+    });
+
+    return inFlight;
   };
 
   return {

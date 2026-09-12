@@ -15,7 +15,11 @@ import {
 } from "../pluginDependencies/dependencyResolver.core.js";
 import { assertDependencyVersions } from "../pluginDependencies/versionCheck.core.js";
 import { LifecycleController } from "../pluginLifecycle/pluginLifecycle.core.js";
-import { PluginError, PluginRegistrationError } from "@zudojs/errors";
+import {
+  PluginError,
+  PluginRegistrationError,
+  PluginStateError,
+} from "@zudojs/errors";
 import { createOwnedPluginContext } from "../pluginIntegration/pluginContext.core.js";
 import { buildDiagnosticReport } from "../pluginDiagnostics/pluginDiagnostic.core.js";
 import {
@@ -231,10 +235,22 @@ export class PluginManager {
 
       this.startupOrder = resolution.ordered;
 
+      // A disposed plugin has released its resources and the state
+      // machine offers no way back. `start()` used to skip such plugins
+      // silently — so a second `start()` after `stop()` resolved with
+      // nothing running, and after a rolled-back startup it brought up
+      // still-registered dependents on top of disposed dependencies.
+      for (const name of this.startupOrder) {
+        const registered = this.registry.get(name);
+        if (registered?.state === "disposed") {
+          throw new PluginStateError(name, "disposed", "installing");
+        }
+      }
+
       try {
         for (const name of this.startupOrder) {
           const registered = this.registry.get(name);
-          if (!registered || registered.state === "disposed") continue;
+          if (!registered) continue;
 
           // Guarded so a restart — where plugins are already installed
           // and merely stopped — re-runs only the phases it needs.
@@ -248,7 +264,7 @@ export class PluginManager {
 
         for (const name of this.startupOrder) {
           const registered = this.registry.get(name);
-          if (!registered || registered.state === "disposed") continue;
+          if (!registered) continue;
 
           if (registered.state === "installed") {
             await this.lifecycle.initialize(
@@ -260,7 +276,7 @@ export class PluginManager {
 
         for (const name of this.startupOrder) {
           const registered = this.registry.get(name);
-          if (!registered || registered.state === "disposed") continue;
+          if (!registered) continue;
 
           if (
             registered.state === "initialized" ||

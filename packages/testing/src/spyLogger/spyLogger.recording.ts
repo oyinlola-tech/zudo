@@ -105,16 +105,27 @@ export function createRecordingLogger(
       record("log", logLevel, message, options?.metadata);
     },
 
-    child: (options?: ChildLoggerOptions) =>
-      createRecordingLogger(
+    // A real child logger merges `options.metadata` into every entry it
+    // writes and may lower its own level; the spy mirrors both so a test
+    // can assert on `logger.child({ metadata: { module } })` output.
+    child: (options?: ChildLoggerOptions) => {
+      const context = options?.metadata
+        ? mergeLoggerContext(derived.context, {
+            identifiers: {},
+            metadata: options.metadata,
+          })
+        : derived.context;
+
+      return createRecordingLogger(
         recorder,
         {
           name: `${derived.name}.${options?.name ?? "child"}`,
-          ...(derived.context ? { context: derived.context } : {}),
+          ...(context ? { context } : {}),
         },
-        level,
+        options?.level ?? level,
         enabled,
-      ),
+      );
+    },
 
     withContext: (context: LoggerContext) =>
       createRecordingLogger(

@@ -7,6 +7,7 @@
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
 import { addIssue, failValidation } from "../schemaBase/index.js";
+import { describeValue } from "../schemaBase/schemaBase.describe.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
 /**
@@ -26,9 +27,9 @@ export class LiteralSchema<
       addIssue(_ctx, {
         code: SchemaIssueCode.INVALID_LITERAL,
         path: [..._ctx.path],
-        message: `Expected ${JSON.stringify(this._expected)}, received ${JSON.stringify(input)}`,
-        expected: JSON.stringify(this._expected),
-        received: JSON.stringify(input),
+        message: `Expected ${describeValue(this._expected)}, received ${describeValue(input)}`,
+        expected: describeValue(this._expected),
+        received: describeValue(input),
       });
       failValidation();
     }

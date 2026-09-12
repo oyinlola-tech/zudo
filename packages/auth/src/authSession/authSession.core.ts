@@ -13,6 +13,7 @@ import type {
   SessionStore,
 } from "../authTypes/authSession.type.js";
 import type { UserId } from "../authTypes/authUser.type.js";
+import { AuthConfigurationError } from "../authErrors/authError.base.js";
 import { randomBytes } from "node:crypto";
 
 const DEFAULT_TTL_SECONDS = 86400; // 24 hours
@@ -57,6 +58,11 @@ export function createMemorySessionStore(storeOptions?: {
 
   return {
     async create(options: CreateSessionOptions): Promise<AuthSession> {
+      // A non-finite TTL (`Number(undefinedEnvVar)` is the usual source)
+      // produced an `Invalid Date` expiry, and `now > NaN` is always false —
+      // so the session never expired, not even at its absolute deadline.
+      assertPositiveSeconds(options.ttlSeconds, "ttlSeconds");
+      assertPositiveSeconds(options.absoluteTtlSeconds, "absoluteTtlSeconds");
       maybePurgeExpired();
       const id = generateSessionId();
       const now = new Date();
@@ -136,6 +142,25 @@ export function createMemorySessionStore(storeOptions?: {
       }
     },
   };
+}
+
+/**
+ * Reject a TTL that cannot produce a real expiry.
+ *
+ * @throws {AuthConfigurationError} when `value` is defined but is not a
+ *   finite number greater than zero.
+ */
+export function assertPositiveSeconds(
+  value: number | undefined,
+  field: string,
+): void {
+  if (value === undefined) return;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new AuthConfigurationError(
+      `${field} must be a finite number of seconds greater than zero; ` +
+        `got ${String(value)}. A NaN lifetime would create a session that never expires.`,
+    );
+  }
 }
 
 function clampToAbsolute(expiresAt: Date, absolute: Date | undefined): Date {

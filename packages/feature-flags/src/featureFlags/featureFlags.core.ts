@@ -129,17 +129,27 @@ export function createFeatureFlags(options: FeatureFlagsOptions): FeatureFlags {
     return load();
   }
 
-  async function resolveFlag(key: string): Promise<FeatureFlag | undefined> {
+  /** A flag lookup, and whether the store answered. */
+  interface FlagLookup {
+    readonly flag: FeatureFlag | undefined;
+    readonly reachable: boolean;
+  }
+
+  async function resolveFlag(key: string): Promise<FlagLookup> {
     const known = registry.get(key);
-    if (known) return known;
+    if (known) return { flag: known, reachable: true };
 
     try {
       const flag = await provider.get(key);
       if (flag) registry.set(flag);
-      return flag;
+      return { flag, reachable: true };
     } catch (error) {
       handleProviderError(error, "FeatureFlagProvider.get");
-      return undefined;
+      // A `get()` that failed is not a `get()` that found nothing: reporting
+      // it as `not_found` (or throwing FeatureFlagNotFoundError under
+      // `throwOnMissing`) told the caller the flag does not exist when the
+      // truth is that the store could not be asked.
+      return { flag: undefined, reachable: false };
     }
   }
 
@@ -183,10 +193,10 @@ export function createFeatureFlags(options: FeatureFlagsOptions): FeatureFlags {
       const available = await ensureLoaded();
 
       const mergedCtx = mergeContext(defaultContext, context);
-      const flag = await resolveFlag(key);
+      const { flag, reachable } = await resolveFlag(key);
 
       if (!flag) {
-        if (!available) {
+        if (!available || !reachable) {
           // The store could not be reached and nothing is known about this
           // flag. Report it as an error, not as a decision.
           return {

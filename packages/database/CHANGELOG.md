@@ -1,5 +1,21 @@
 # @zudojs/database
 
+## 1.1.0
+
+### Minor Changes
+
+- Audit round 9 fixes:
+
+  - `DatabaseClient.transaction()` now raises an `AbortSignal` abort **inside** the Prisma interactive transaction, so an aborted transaction is rolled back. Previously the caller was rejected with `DatabaseAbortError` while the callback kept running and the transaction still committed.
+  - `BaseRepository.update()` on a soft-delete repository now sends `{ id, deletedAt: null }` instead of `{ AND: [{ id }, { deletedAt: null }] }`. Prisma's `WhereUniqueInput` requires the unique field at the top level, so every scoped `update()` was rejected with a validation error. Subclasses can reuse the new protected `whereUniqueId(id)` helper.
+  - Lock helpers (`lockRow`, `acquireAdvisoryLock`, `withRowLock`, `withAdvisoryLock`, `resolveLockTransactionOptions`) reject `timeoutMs` values below 1 ms with a `TypeError`. PostgreSQL treats `lock_timeout = 0` as "disabled", so `timeoutMs: 0` waited forever instead of failing fast; use `noWait` for that.
+  - `findPaginated()` and `paginateCursor()` validate `sort` field names and directions the same way the query builder does, before any query is dispatched. Unsafe field names (for example `"name; DROP TABLE"`, `"__proto__"`) and directions other than `"asc"` / `"desc"` are now rejected instead of being forwarded to the delegate.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+
 ## Unreleased
 
 ### Hardening (audit round 5)

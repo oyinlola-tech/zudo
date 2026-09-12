@@ -30,12 +30,18 @@ interface ObjectSchemaConfig {
 }
 
 /**
- * Schema types that supply or tolerate a missing value.
+ * Schema types known to supply or tolerate a missing value.
  *
  * A missing key is handed to these rather than being reported as required —
  * `.default()` in particular exists precisely to fill in `undefined`, and
  * matching only on `"optional"` meant a defaulted property could never be
  * omitted.
+ *
+ * This set is a fast path, not the rule. Any other schema is *asked* whether
+ * it accepts `undefined` (see {@link probeUndefined}): `schema.undefined()`,
+ * a union containing it, or a `refine`/`transform`/`lazy` wrapped around an
+ * optional all accept a missing key, and matching on the outer `_type` alone
+ * reported every one of them as required.
  */
 const ACCEPTS_UNDEFINED = new Set(["optional", "default", "any", "unknown"]);
 
@@ -116,10 +122,7 @@ export class ObjectSchema<
       const value = present ? obj[key] : undefined;
 
       if (!present || value === undefined) {
-        if (
-          this._config.requiredKeys?.has(key) ||
-          !this._acceptsUndefined(schema)
-        ) {
+        if (this._config.requiredKeys?.has(key)) {
           addIssue(ctx, {
             code: SchemaIssueCode.REQUIRED,
             path: [...childCtx.path],
@@ -129,19 +132,37 @@ export class ObjectSchema<
           continue;
         }
 
-        // Delegate to the wrapper so `.default()` can supply its value and
-        // `.optional()` can return undefined.
-        try {
-          const produced = schema._parse(childCtx, undefined);
-          if (produced !== undefined) {
-            defineKey(result, key, produced);
-          } else {
-            defineKey(result, key, undefined);
+        if (this._acceptsUndefined(schema)) {
+          // Delegate to the wrapper so `.default()` can supply its value and
+          // `.optional()` can return undefined.
+          try {
+            const produced = schema._parse(childCtx, undefined);
+            if (produced !== undefined) {
+              defineKey(result, key, produced);
+            } else {
+              defineKey(result, key, undefined);
+            }
+          } catch (error) {
+            rethrowUnexpected(error);
+            if (ctx.options.abortEarly) break;
           }
-        } catch (error) {
-          rethrowUnexpected(error);
-          if (ctx.options.abortEarly) break;
+          continue;
         }
+
+        // Anything else is asked, in isolation, whether it accepts undefined;
+        // a schema that does is not a required field.
+        const probe = probeUndefined(schema, childCtx);
+        if (probe.accepted) {
+          defineKey(result, key, probe.value);
+          continue;
+        }
+
+        addIssue(ctx, {
+          code: SchemaIssueCode.REQUIRED,
+          path: [...childCtx.path],
+          message: `Required field missing: ${key}`,
+        });
+        if (ctx.options.abortEarly) break;
         continue;
       }
 
@@ -314,6 +335,35 @@ export class ObjectSchema<
       if (kept.has(key)) next.add(key);
     }
     return next.size > 0 ? next : undefined;
+  }
+}
+
+/**
+ * Parses `undefined` through a schema in an isolated context.
+ *
+ * The probe has its own issue list so a rejection leaves nothing behind on
+ * the real context; everything else (options, depth, cycle set) is inherited.
+ */
+function probeUndefined(
+  schema: Schema<unknown>,
+  ctx: SchemaParseContext,
+): { readonly accepted: boolean; readonly value?: unknown } {
+  const probeCtx: SchemaParseContext = {
+    issues: [],
+    options: ctx.options,
+    seen: ctx.seen,
+    depth: ctx.depth,
+    path: [...ctx.path],
+  };
+
+  try {
+    const value = schema._parse(probeCtx, undefined);
+    return probeCtx.issues.length === 0
+      ? { accepted: true, value }
+      : { accepted: false };
+  } catch (error) {
+    rethrowUnexpected(error);
+    return { accepted: false };
   }
 }
 

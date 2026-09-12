@@ -68,6 +68,18 @@ export function createTenantManager(options: TenantManagerOptions) {
     return tenant;
   }
 
+  function assertActive(tenant: Tenant): void {
+    if (tenant.status !== "active") {
+      throw new TenantUnavailableError(tenant.id, tenant.status);
+    }
+  }
+
+  async function require(id: TenantId): Promise<Tenant> {
+    const tenant = await loadTenant(id);
+    if (!tenant) throw new TenantNotFoundError(id);
+    return tenant;
+  }
+
   return {
     /**
      * Resolve tenant from a resolution.
@@ -86,29 +98,23 @@ export function createTenantManager(options: TenantManagerOptions) {
     /**
      * Require a tenant by ID — throws if not found.
      */
-    async require(id: TenantId): Promise<Tenant> {
-      const tenant = await loadTenant(id);
-      if (!tenant) throw new TenantNotFoundError(id);
-      return tenant;
-    },
+    require,
 
     /**
      * Require a tenant that is also in an active state.
+     *
+     * Does not read `this`, so it survives being detached from the manager.
      */
     async requireActive(id: TenantId): Promise<Tenant> {
-      const tenant = await this.require(id);
-      this.assertActive(tenant);
+      const tenant = await require(id);
+      assertActive(tenant);
       return tenant;
     },
 
     /**
      * Validate that a tenant is in an active state.
      */
-    assertActive(tenant: Tenant): void {
-      if (tenant.status !== "active") {
-        throw new TenantUnavailableError(tenant.id, tenant.status);
-      }
-    },
+    assertActive,
 
     /**
      * Get the current tenant from context.

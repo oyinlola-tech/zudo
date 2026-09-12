@@ -17,6 +17,13 @@ interface ProviderRegistration {
   /** Whether a singleton instance has been created (even if undefined). */
   resolved: boolean;
   instance?: unknown;
+  /**
+   * Per-scope instances of a "scoped" provider. Owned by the
+   * registration so that unregister()/clear() drop them together
+   * with the provider instead of leaving stale instances behind
+   * for a token that is registered again later.
+   */
+  readonly scopedInstances: WeakMap<object, unknown>;
 }
 
 /**
@@ -45,10 +52,6 @@ export interface ContainerOptions {
  */
 export class Container {
   private readonly providers = new Map<Token<unknown>, ProviderRegistration>();
-  private readonly scopedInstances = new WeakMap<
-    object,
-    Map<Token<unknown>, unknown>
-  >();
   private readonly currentScope: (() => object | undefined) | undefined;
   private readonly resolving: Token<unknown>[] = [];
   private activeScope: object | undefined;
@@ -77,6 +80,7 @@ export class Container {
       provider: provider as Provider<unknown>,
       scope,
       resolved: false,
+      scopedInstances: new WeakMap(),
     });
   }
 
@@ -138,9 +142,8 @@ export class Container {
     }
 
     if (registration.scope === "scoped" && scopeKey) {
-      const cache = this.scopedInstances.get(scopeKey);
-      if (cache?.has(token)) {
-        return cache.get(token) as T;
+      if (registration.scopedInstances.has(scopeKey)) {
+        return registration.scopedInstances.get(scopeKey) as T;
       }
     }
 
@@ -150,12 +153,7 @@ export class Container {
       registration.instance = instance;
       registration.resolved = true;
     } else if (registration.scope === "scoped" && scopeKey) {
-      let cache = this.scopedInstances.get(scopeKey);
-      if (!cache) {
-        cache = new Map();
-        this.scopedInstances.set(scopeKey, cache);
-      }
-      cache.set(token, instance);
+      registration.scopedInstances.set(scopeKey, instance);
     }
 
     return instance;

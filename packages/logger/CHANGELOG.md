@@ -1,5 +1,22 @@
 # @zudojs/logger
 
+## 1.1.0
+
+### Minor Changes
+
+- - A `redact.pattern` carrying the `g` or `y` flag no longer alternates between redacting and leaking a secret-named field on consecutive entries.
+  - Per-call `context` passed to `logger.log(level, message, { context })` is merged into the entry's metadata, so it reaches text formatters instead of being silently dropped; it is redacted like any other metadata.
+  - `entry.context` now carries the active context's identifiers (`requestId`, `traceId`, ...) that its type always declared; the text formatter never prints an identifier twice.
+  - `throwTransportErrors: true` now surfaces failures from asynchronous transports (and from `asynchronous: true` loggers): they are rethrown by the next `flush()` or `close()`, which still flush and close the transports first. Previously such failures were swallowed.
+  - The buffered transport's flush timer is `unref`'d, so a finished process no longer stays alive for a full `flushInterval`.
+  - Concurrent `logger.close()` calls share one closure instead of flushing and closing every transport twice.
+  - README: the log-injection example contained a raw ESC control byte where the text `\u001b` was meant.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/errors@1.0.1
+
 ## 1.0.0
 
 ### Major Changes

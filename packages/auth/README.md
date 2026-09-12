@@ -66,10 +66,10 @@ const auth = createAuthService({
   // Required: look up a user by the identifier submitted at login.
   findUser: async (identifier) => findUserByEmail(identifier),
 
-  // Strongly recommended: look up a user by id. `refresh()` uses it to
-  // re-load the user on every rotation, so deactivations and role changes
-  // take effect immediately. Without it, `refresh()` falls back to
-  // `findUser(sub)` and rejects the refresh when that returns null.
+  // Required: look up a user by id (the token's `sub` claim). `refresh()`
+  // uses it to re-load the user on every rotation, so deactivations and
+  // role changes take effect immediately. It is keyed differently from
+  // `findUser` — do not pass an email-keyed lookup here.
   findUserById: async (id) => findUserById(id),
 
   // Required: check a plain-text password for a user id.
@@ -79,7 +79,9 @@ const auth = createAuthService({
   // Optional: enables atomic refresh-token rotation and replay detection.
   revocationStore: createMemoryTokenRevocationStore(),
 
-  // Optional: failed-attempt lockout + login rate limiting.
+  // Optional: failed-attempt lockout + login rate limiting. Counters are
+  // keyed by the submitted identifier, trimmed and case-folded, so
+  // "Alice@Example.com" and "alice@example.com" share one budget.
   loginThrottle: {
     store: createMemoryLoginAttemptStore({ windowSeconds: 60 }),
     maxFailedAttempts: 5, // -> AccountLockedError (423)
@@ -174,6 +176,12 @@ const ok = await verifyPassword("plain-text-password", hash);
 if (needsRehash(hash)) { /* re-hash on next successful login */ }
 ```
 
+- `createAuthService()` validates its configuration up front: bad or
+  identical secrets, a non-positive or `NaN` `sessionTtlSeconds` /
+  `absoluteSessionTtlSeconds`, and a non-finite (`NaN`/`Infinity`)
+  `accessTtl` / `refreshTtl` all throw `AuthConfigurationError` at construction rather
+  than at the first login (a `NaN` session TTL used to yield sessions that
+  never expired).
 - Passwords are limited to 1024 bytes (`MAX_PASSWORD_BYTES`).
 - The optional `saltLength` argument must be 16–64 bytes.
 - `verifyPassword` never throws: junk input is a non-match.
