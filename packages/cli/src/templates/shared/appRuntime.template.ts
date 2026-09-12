@@ -49,31 +49,6 @@ function literal(value: string): string {
 }
 
 /**
- * Renders `zudojs.config.ts`.
- *
- * The shape matches what the fullstack composer writes and what
- * `zudojs generate` parses to detect the project architecture.
- */
-export function renderZudojsConfig(options: {
-  readonly projectName: string;
-  readonly projectType: string;
-  readonly architecture: string;
-}): string {
-  return `/**
- * Zudojs project configuration.
- *
- * Read by the \`zudojs\` CLI to detect this project's architecture.
- */
-
-export default {
-  name: ${literal(options.projectName)},
-  projectType: ${literal(options.projectType)},
-  architecture: ${literal(options.architecture)},
-};
-`;
-}
-
-/**
  * Renders `src/app.ts`: assembles the runtime dependencies and returns a
  * started-on-demand `Runtime`.
  */

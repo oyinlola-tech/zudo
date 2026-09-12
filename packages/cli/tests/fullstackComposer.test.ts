@@ -187,7 +187,9 @@ describe("FullstackComposer", () => {
     expect(result.success).toBe(true);
     expect(result.files).toContain("package.json");
     expect(result.files).toContain("pnpm-workspace.yaml");
-    expect(result.files).toContain("zudojs.config.ts");
+    // The project description lives in .zudojs/manifest.json, written by
+    // the create command; no zudojs.config.ts is generated.
+    expect(result.files).not.toContain("zudojs.config.ts");
   });
 
   it("returns errors for invalid configuration", async () => {

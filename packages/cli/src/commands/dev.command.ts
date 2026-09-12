@@ -1,17 +1,107 @@
 /**
  * zudojs-cli — Dev Command
  *
- * The `zudojs dev` command.
- * Starts development servers based on project configuration.
+ * The `zudojs dev` command. Starts the development servers of the project
+ * in the current directory.
+ *
+ * Servers are started through the project's package manager (`pnpm run
+ * dev`, `npm run dev`, …) rather than by spawning `tsx` or `ng` directly:
+ * those binaries are devDependencies of the generated project and are not
+ * on the user's PATH, so the direct spawn failed with ENOENT for everyone
+ * who had not installed them globally. Running the script also means the
+ * project's own `dev` script is what runs — `tsx watch src` used to be
+ * hard-coded here, which watched `src/index.ts`, a file that only exports
+ * `createApp` and never starts the server.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, join, relative } from "node:path";
 import { runStreaming } from "../utils/utils.exec.js";
 import type { CLIContext } from "../cliType/cliType.type.js";
 import { CLIValidationError, CLIGenerationError } from "../errors/index.js";
-import { ManifestManager } from "../manifest/manifestManager.core.js";
-import { SAFE_PATH_SEGMENT } from "../utils/utils.name.js";
+import { getRunScriptCommand } from "../installers/dependency.installer.js";
+import {
+  resolveProjectLayout,
+  type ProjectLayout,
+} from "../resolvers/layout/projectLayout.core.js";
+
+/** One development server to start. */
+export interface DevServerSpec {
+  readonly label: string;
+  readonly cwd: string;
+  readonly file: string;
+  readonly args: readonly string[];
+  readonly env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Computes the servers `zudojs dev` starts for a project layout.
+ *
+ * Exported so the selection can be tested without spawning anything.
+ */
+export function planDevServers(
+  layout: ProjectLayout,
+  options: {
+    readonly frontendOnly?: boolean;
+    readonly backendOnly?: boolean;
+    readonly port?: number;
+  } = {},
+): DevServerSpec[] {
+  const servers: DevServerSpec[] = [];
+  const env =
+    options.port !== undefined
+      ? { ...process.env, PORT: String(options.port) }
+      : undefined;
+
+  if (!options.frontendOnly) {
+    for (const dir of layout.backendDirs) {
+      if (!existsSync(join(dir, "package.json"))) continue;
+      const [file, ...args] = getRunScriptCommand(layout.packageManager, "dev");
+      servers.push({
+        label: labelFor(layout.root, dir, "backend"),
+        cwd: dir,
+        file,
+        args,
+        ...(env ? { env } : {}),
+      });
+    }
+  }
+
+  if (!options.backendOnly && layout.frontendDir !== undefined) {
+    const spec = frontendServer(layout, layout.frontendDir);
+    if (spec) servers.push(spec);
+  }
+
+  return servers;
+}
+
+function labelFor(root: string, dir: string, fallback: string): string {
+  const rel = relative(root, dir);
+  return rel === "" ? fallback : basename(dir);
+}
+
+function frontendServer(
+  layout: ProjectLayout,
+  dir: string,
+): DevServerSpec | null {
+  const framework = layout.frontendFramework ?? "react";
+
+  if (framework === "none") return null;
+
+  if (framework === "flutter") {
+    if (!existsSync(join(dir, "pubspec.yaml"))) return null;
+    return { label: "web", cwd: dir, file: "flutter", args: ["run", "--debug"] };
+  }
+
+  if (!existsSync(join(dir, "package.json"))) return null;
+
+  // Angular's package.json has `start: ng serve`; React Native's has `start`.
+  const script =
+    framework === "angular" || framework === "react-native" ? "start" : "dev";
+  const [file, ...args] = getRunScriptCommand(layout.packageManager, script);
+
+  return { label: labelFor(layout.root, dir, "frontend"), cwd: dir, file, args };
+}
 
 export async function runDevCommand(context: CLIContext): Promise<void> {
   const frontendOnly = context.values["frontend-only"] === true;
@@ -24,283 +114,57 @@ export async function runDevCommand(context: CLIContext): Promise<void> {
     );
   }
 
-  const manifest = await new ManifestManager(context.cwd).read();
+  const layout = resolveProjectLayout(context.cwd);
 
-  const config = readProjectConfig(context.cwd) ?? configFromManifest(manifest);
-
-  if (!config) {
+  if (!layout) {
     throw new CLIValidationError(
-      "No Zudojs project found. Run `zudojs create` first.",
+      "No Zudojs project found in this directory. Run `zudojs create` first.",
     );
   }
 
-  context.logger.info(`Starting development server for: ${config.name}`);
-  context.logger.info(`Type: ${config.type}`);
-
-  if (config.backend) {
-    context.logger.info(`Backend architecture: ${config.backend.architecture}`);
+  context.logger.info(`Project type: ${layout.projectType}`);
+  if (layout.backendDirs.length > 0) {
+    context.logger.info(`Backend architecture: ${layout.architecture}`);
+  }
+  if (layout.frontendFramework) {
+    context.logger.info(`Frontend: ${layout.frontendFramework}`);
   }
 
-  if (config.frontend) {
-    context.logger.info(`Frontend: ${config.frontend.framework}`);
-  }
-
-  // Service names come from a manifest file on disk and are joined into
-  // filesystem paths below; a crafted entry such as "../../.." would make the
-  // dev command probe and run outside the project.
-  const services = (manifest?.services ?? []).filter((service) => {
-    if (SAFE_PATH_SEGMENT.test(service)) return true;
-    context.logger.warn(
-      `Ignoring invalid service name in .zudojs/manifest.json: "${service}"`,
-    );
-    return false;
+  const servers = planDevServers(layout, {
+    frontendOnly,
+    backendOnly,
+    ...(port !== undefined ? { port } : {}),
   });
 
-  const processes: Promise<void>[] = [];
-
-  if (
-    !frontendOnly &&
-    (config.type === "backend" || config.type === "fullstack")
-  ) {
-    if (config.backend?.architecture === "microservice") {
-      processes.push(...startMicroserviceDev(context.cwd, services));
-    } else {
-      processes.push(startBackendDev(context.cwd, config, port));
-    }
-  }
-
-  if (
-    !backendOnly &&
-    (config.type === "frontend" || config.type === "fullstack")
-  ) {
-    if (config.frontend && config.frontend.framework !== "none") {
-      processes.push(startFrontendDev(context.cwd, config));
-    }
-  }
-
-  if (processes.length === 0) {
+  if (servers.length === 0) {
     context.logger.warn("No development servers to start.");
     return;
   }
 
-  context.logger.info("Starting development servers...");
-
-  try {
-    await Promise.all(processes);
-  } catch (error) {
-    throw new CLIGenerationError("Development server failed to start.", error);
-  }
-}
-
-function configFromManifest(
-  manifest: Awaited<ReturnType<ManifestManager["read"]>>,
-): {
-  readonly name: string;
-  readonly type: string;
-  readonly backend?: { readonly architecture: string };
-  readonly frontend?: { readonly framework: string };
-} | null {
-  if (!manifest) return null;
-
-  return {
-    name: "zudojs-project",
-    type: manifest.projectType ?? "backend",
-    backend: manifest.backend
-      ? { architecture: manifest.backend.architecture }
-      : { architecture: manifest.architecture },
-    frontend: manifest.frontend
-      ? { framework: manifest.frontend.framework }
-      : undefined,
-  };
-}
-
-function readProjectConfig(cwd: string): {
-  readonly name: string;
-  readonly type: string;
-  readonly backend?: { readonly architecture: string };
-  readonly frontend?: { readonly framework: string };
-} | null {
-  const configPath = join(cwd, "zudojs.config.ts");
-  const configPathJs = join(cwd, "zudojs.config.js");
-
-  if (existsSync(configPath)) {
-    const content = readFileSync(configPath, "utf-8");
-    return parseConfigContent(content, cwd);
+  for (const server of servers) {
+    context.logger.info(
+      `Starting ${server.label}: ${server.file} ${server.args.join(" ")}`,
+    );
   }
 
-  if (existsSync(configPathJs)) {
-    const content = readFileSync(configPathJs, "utf-8");
-    return parseConfigContent(content, cwd);
-  }
+  // One controller for every server: when any of them exits with an error
+  // the others are stopped too, instead of being left running detached
+  // after the command has already reported failure.
+  const controller = new AbortController();
 
-  const pkgPath = join(cwd, "package.json");
-  if (existsSync(pkgPath)) {
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
-      name?: string;
-      zudojs?: {
-        projectType?: string;
-        architecture?: string;
-        frontend?: string;
-      };
-    };
-
-    if (pkg.zudojs) {
-      return {
-        name: pkg.name ?? "unknown",
-        type: pkg.zudojs.projectType ?? "backend",
-        backend: pkg.zudojs.architecture
-          ? { architecture: pkg.zudojs.architecture }
-          : undefined,
-        frontend: pkg.zudojs.frontend
-          ? { framework: pkg.zudojs.frontend }
-          : undefined,
-      };
-    }
-  }
-
-  return null;
-}
-
-function parseConfigContent(
-  content: string,
-  cwd: string,
-): {
-  readonly name: string;
-  readonly type: string;
-  readonly backend?: { readonly architecture: string };
-  readonly frontend?: { readonly framework: string };
-} {
-  const nameMatch = content.match(/name:\s*["']([^"']+)["']/);
-  const typeMatch = content.match(/projectType:\s*["'](\w+)["']/);
-  const architectureMatch = content.match(/architecture:\s*["'](\w+)["']/);
-  const frontendMatch = content.match(
-    /frontend:\s*\{[\s\S]*?framework:\s*["']([^"']+)["']/,
+  const runs = servers.map((server) =>
+    runStreaming(server.file, server.args, server.cwd, {
+      signal: controller.signal,
+      ...(server.env ? { env: server.env } : {}),
+    }).catch((error: unknown) => {
+      controller.abort();
+      throw error;
+    }),
   );
 
-  const pkgPath = join(cwd, "package.json");
-  let name = "unknown";
-
-  if (existsSync(pkgPath)) {
-    try {
-      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
-        name?: string;
-      };
-      name = pkg.name ?? name;
-    } catch {
-      // ignore
-    }
-  }
-
-  return {
-    name: nameMatch?.[1] ?? name,
-    type: typeMatch?.[1] ?? "backend",
-    backend: architectureMatch?.[1]
-      ? { architecture: architectureMatch[1] }
-      : undefined,
-    frontend: frontendMatch?.[1] ? { framework: frontendMatch[1] } : undefined,
-  };
-}
-
-async function startBackendDev(
-  cwd: string,
-  config: { readonly backend?: { readonly architecture: string } },
-  port?: number,
-): Promise<void> {
-  // `--port=N` was appended to the tsx argv, where it became an argument of
-  // the watched script and was ignored. Generated servers read PORT from the
-  // environment, so that is where the option has to land.
-  const options =
-    port !== undefined
-      ? { env: { ...process.env, PORT: String(port) } }
-      : undefined;
-
-  const entry =
-    config.backend?.architecture === "microservice"
-      ? "apps/gateway/src"
-      : "src";
-
-  await runStreaming("tsx", ["watch", entry], cwd, options);
-}
-
-function startMicroserviceDev(
-  cwd: string,
-  services: readonly string[],
-): Promise<void>[] {
-  const serviceDirs = services.map((service) => {
-    const nested = join(cwd, "apps", "services", service);
-    return existsSync(join(nested, "src"))
-      ? nested
-      : join(cwd, "apps", service);
-  });
-  const promises: Promise<void>[] = [];
-
-  const gatewayDir = join(cwd, "apps", "gateway");
-  if (existsSync(join(gatewayDir, "src"))) {
-    promises.push(runStreaming("tsx", ["watch", "src"], gatewayDir));
-  }
-
-  for (const dir of serviceDirs) {
-    if (existsSync(join(dir, "src"))) {
-      promises.push(runStreaming("tsx", ["watch", "src"], dir));
-    }
-  }
-
-  return promises;
-}
-
-async function startFrontendDev(
-  cwd: string,
-  config: { readonly frontend?: { readonly framework: string } },
-): Promise<void> {
-  const framework = config.frontend?.framework ?? "react";
-  const frontendDir = join(cwd, "apps", "web");
-
-  switch (framework) {
-    case "react":
-      await runStreaming("npm", ["run", "dev"], frontendDir);
-      break;
-
-    case "next":
-      await runStreaming("npm", ["run", "dev"], frontendDir);
-      break;
-
-    case "vue":
-      await runStreaming("npm", ["run", "dev"], frontendDir);
-      break;
-
-    case "nuxt":
-      await runStreaming("npm", ["run", "dev"], frontendDir);
-      break;
-
-    case "angular":
-      await runStreaming("ng", ["serve"], frontendDir);
-      break;
-
-    case "svelte":
-      await runStreaming("npm", ["run", "dev"], frontendDir);
-      break;
-
-    case "sveltekit":
-      await runStreaming("npm", ["run", "dev"], frontendDir);
-      break;
-
-    case "astro":
-      await runStreaming("npm", ["run", "dev"], frontendDir);
-      break;
-
-    case "vanilla":
-      await runStreaming("npm", ["run", "dev"], frontendDir);
-      break;
-
-    case "flutter":
-      await runStreaming("flutter", ["run", "--debug"], frontendDir);
-      break;
-
-    case "react-native":
-      await runStreaming("npx", ["react-native", "start"], frontendDir);
-      break;
-
-    default:
-      await runStreaming("npm", ["run", "dev"], frontendDir);
+  try {
+    await Promise.all(runs);
+  } catch (error) {
+    throw new CLIGenerationError("Development server failed to start.", error);
   }
 }

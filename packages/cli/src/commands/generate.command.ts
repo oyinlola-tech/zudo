@@ -2,11 +2,10 @@
  * zudojs-cli — Generate Command
  *
  * The `zudojs generate` (alias: `g`) command.
- * Reads zudojs.config.ts to determine project architecture.
+ * Reads the project manifest to determine the architecture and where the
+ * backend lives, then places the schematic accordingly.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { CLIContext } from "../cliType/cliType.type.js";
 import { generateService } from "../generators/service/service.generator.js";
 import { generateModule } from "../generators/module/module.generator.js";
@@ -26,6 +25,7 @@ import {
   assertGeneratableName,
   assertSafePathSegment,
 } from "../utils/utils.name.js";
+import { resolveProjectLayout } from "../resolvers/layout/projectLayout.core.js";
 
 const VALID_SCHEMATICS = [
   "service",
@@ -111,43 +111,22 @@ function getArchitectureRoot(
   }
 }
 
-function readZudojsArchitecture(cwd: string): string | null {
-  for (const configFile of ["zudojs.config.ts", "zudojs.config.js"]) {
-    const configPath = join(cwd, configFile);
-    if (existsSync(configPath)) {
-      const content = readFileSync(configPath, "utf-8");
-      const match = content.match(/architecture:\s*["'](\w[\w-]*)["']/);
-      if (match?.[1]) return match[1];
-    }
+/**
+ * Prefix under which backend schematics are generated.
+ *
+ * A fullstack project keeps its backend in `apps/api`; generating into the
+ * workspace root's `src/` produced files no app compiled. Microservice apps
+ * are addressed inside getArchitectureRoot, relative to that prefix.
+ */
+function backendPrefix(cwd: string): string {
+  const layout = resolveProjectLayout(cwd);
+  const [first] = layout?.backendDirs ?? [];
+
+  if (layout?.projectType === "fullstack" && first !== undefined && first !== cwd) {
+    return "apps/api/";
   }
 
-  // Fall back to the machine-managed manifest written by `zudojs create`.
-  const manifestPath = join(cwd, ".zudojs", "manifest.json");
-  if (existsSync(manifestPath)) {
-    try {
-      const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
-        architecture?: string;
-      };
-      if (manifest.architecture) return manifest.architecture;
-    } catch {
-      // ignore malformed manifest
-    }
-  }
-
-  // Fall back to the zudojs field in package.json.
-  const pkgPath = join(cwd, "package.json");
-  if (existsSync(pkgPath)) {
-    try {
-      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
-        zudojs?: { architecture?: string };
-      };
-      if (pkg.zudojs?.architecture) return pkg.zudojs.architecture;
-    } catch {
-      // ignore malformed package.json
-    }
-  }
-
-  return null;
+  return "";
 }
 
 export async function runGenerateCommand(context: CLIContext): Promise<void> {
@@ -185,13 +164,14 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
   }
 
   const cwd = context.cwd;
-  const architecture = readZudojsArchitecture(cwd);
+  const layout = resolveProjectLayout(cwd);
+  const architecture = layout?.architecture ?? null;
 
-  if (architecture) {
-    context.logger.info(`Detected architecture: ${architecture}`);
+  if (layout) {
+    context.logger.info(`Detected architecture: ${layout.architecture}`);
   } else {
     context.logger.warn(
-      "No Zudojs project detected (no zudojs.config.ts, .zudojs/manifest.json " +
+      "No Zudojs project detected (no .zudojs/manifest.json, zudojs.config.ts " +
         "or `zudojs` field in package.json). Run `zudojs create` first.",
     );
   }
@@ -239,12 +219,14 @@ async function runSchematic(
   cwd: string,
 ): Promise<string[]> {
   try {
-    const basePath = getBasePath(
-      options.architecture,
-      schematic,
-      options.module,
-      options.service,
-    );
+    const basePath =
+      backendPrefix(cwd) +
+      getBasePath(
+        options.architecture,
+        schematic,
+        options.module,
+        options.service,
+      );
     const dryRun = options.dryRun;
 
     // In the microservice layout `--service` selected the owning app and is

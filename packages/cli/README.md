@@ -59,11 +59,21 @@ zudojs build
 `zudojs build` and `zudojs doctor` exit with a non-zero status when they fail,
 so they can be used as CI gates.
 
-### Disabling the update check
+### Update check
 
-`zudojs-cli` checks npm for a newer version after a global install. Set
-`ZUDOJS_NO_UPDATE_CHECK=1` to turn it off; it is skipped automatically when
-`CI` is set, when npm is offline, and for non-global installs.
+`zudojs info` asks npm whether a newer `zudojs-cli` exists and prints the
+version if so. Set `ZUDOJS_NO_UPDATE_CHECK=1` to turn it off; it is skipped
+automatically when `CI` is set or npm is offline. Nothing runs at install
+time.
+
+### What a new project contains
+
+`zudojs create` records the project's type, architecture, package manager and
+capabilities in `.zudojs/manifest.json` (machine-managed) and in the `zudojs`
+block of `package.json`. Every follow-up command reads those; no
+`zudojs.config.ts` is written. Framework packages are added as `^1.0.0`
+ranges, and projects created for pnpm carry a `pnpm-workspace.yaml` that
+allows esbuild's build script, which pnpm 10+ would otherwise refuse to run.
 
 ## Commands
 
@@ -71,8 +81,8 @@ so they can be used as CI gates.
 | ---------- | ------------------------------------------------------------------------ |
 | `create`   | Scaffold a new project (backend, frontend, or fullstack)                 |
 | `generate` | Generate files (service, module, command, query, controller, repository) |
-| `add`      | Add feature packages (database, queue, messaging, etc.)                  |
-| `dev`      | Start development servers                                                |
+| `add`      | Add feature packages (database, queue, messaging, etc.); `--service` targets one microservice app |
+| `dev`      | Start development servers through the project's package manager (`pnpm run dev`, …) |
 | `build`    | Build the project with its detected package manager                      |
 | `doctor`   | Run project diagnostics                                                  |
 | `info`     | Show project information                                                 |

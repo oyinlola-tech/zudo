@@ -1,13 +1,14 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { resolveProjectLayout } from "../resolvers/layout/projectLayout.core.js";
 
+/**
+ * Returns the recorded architecture of the project at `cwd`, or `null` when
+ * the directory is not a Zudojs project.
+ *
+ * Used to read a `zudojs.config.json` that no template has ever written, so
+ * it returned `null` for every project. It now reads the same sources as
+ * every other command: the manifest, the legacy `zudojs.config.ts`, then
+ * the `zudojs` block in `package.json`.
+ */
 export async function detectArchitecture(cwd: string): Promise<string | null> {
-  try {
-    const configPath = join(cwd, "zudojs.config.json");
-    const content = await readFile(configPath, "utf-8");
-    const config = JSON.parse(content) as { architecture?: string };
-    return config.architecture ?? null;
-  } catch {
-    return null;
-  }
+  return resolveProjectLayout(cwd)?.architecture ?? null;
 }

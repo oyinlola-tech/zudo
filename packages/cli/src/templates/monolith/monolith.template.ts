@@ -34,7 +34,6 @@
  * ├── tests/
  * ├── package.json
  * ├── tsconfig.json
- * ├── zudojs.config.ts
  * └── README.md
  * ```
  */
@@ -49,7 +48,7 @@ import {
   renderModuleFile,
   renderServerFile,
   renderServiceFile,
-  renderZudojsConfig,
+  renderPnpmWorkspaceFile,
 } from "../shared/index.js";
 
 export function generateMonolithFiles(
@@ -148,11 +147,9 @@ export function generateMonolithFiles(
 }
 `;
 
-  files["zudojs.config.ts"] = renderZudojsConfig({
-    projectName: nameSlug,
-    projectType: "backend",
-    architecture: "monolith",
-  });
+  if (options.packageManager === "pnpm") {
+    files["pnpm-workspace.yaml"] = renderPnpmWorkspaceFile();
+  }
 
   // Environment
   files[".env.example"] = `NODE_ENV=development

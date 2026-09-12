@@ -59,7 +59,7 @@ export class FullstackComposer {
     try {
       // 1. Create workspace structure
       await this.createWorkspace(context);
-      files.push("package.json", "zudojs.config.ts");
+      files.push("package.json");
       if (this.getPackageManager(context) === "pnpm") {
         files.push("pnpm-workspace.yaml");
       }
@@ -126,29 +126,12 @@ export class FullstackComposer {
       },
     };
 
-    // Project and framework names reach this template from user input. They
-    // are emitted as JSON string literals (valid JS) so a quote, backslash,
-    // newline or `";` sequence cannot break out of the literal and inject
-    // code into the generated zudojs.config.ts.
-    const literal = (value: string): string => JSON.stringify(value);
-
-    const frontendBlock = context.project.frontend
-      ? `
-  frontend: {
-    framework: ${literal(context.project.frontend.framework)},
-  },`
-      : "";
-
-    const zudojsConfig = `export default {
-  name: ${literal(context.project.name)},
-  projectType: "fullstack",
-  architecture: ${literal(context.project.backend?.architecture ?? "monolith")},${frontendBlock}
-};
-`;
-
+    // The project's type, architecture and frontend are recorded in
+    // .zudojs/manifest.json by the create command; no zudojs.config.ts is
+    // written. The name reaches package.json through JSON.stringify, so a
+    // quote or newline in it stays data.
     const files: Record<string, string> = {
       "package.json": JSON.stringify(rootPackageJson, null, 2) + "\n",
-      "zudojs.config.ts": zudojsConfig,
     };
 
     if (packageManager === "pnpm") {

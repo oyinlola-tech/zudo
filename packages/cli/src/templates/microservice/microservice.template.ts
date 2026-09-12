@@ -17,7 +17,6 @@
  * ├── infrastructure/
  * ├── package.json
  * ├── pnpm-workspace.yaml
- * ├── zudojs.config.ts
  * ├── docker-compose.yml
  * └── README.md
  * ```
@@ -32,7 +31,6 @@ import {
   renderAppFile,
   renderModuleFile,
   renderServerFile,
-  renderZudojsConfig,
 } from "../shared/index.js";
 
 /** Default service names used when none are provided. */
@@ -177,12 +175,6 @@ ${composeServices}
 volumes:
   ${services.map((s) => `${s}-data:`).join("\n  ")}
 `;
-
-  files["zudojs.config.ts"] = renderZudojsConfig({
-    projectName: nameSlug,
-    projectType: "backend",
-    architecture: "microservice",
-  });
 
   files[".env.example"] = `NODE_ENV=development
 PORT=3000

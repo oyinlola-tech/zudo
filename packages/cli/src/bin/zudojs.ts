@@ -6,13 +6,10 @@
  * @module bin/zudojs
  */
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { createCLI } from "../cliApplication/index.js";
-import { CLI_DEFAULTS } from "../cliConstant/cliConstant.value.js";
 import { createCommand } from "../cliCommand/index.js";
 import type { CLIContext } from "../cliType/cliType.type.js";
+import { CLI_VERSION, FEATURE_PACKAGES } from "../constants/index.js";
 import { runCreateCommand } from "../commands/create.command.js";
 import { runDevCommand } from "../commands/dev.command.js";
 import { runGenerateCommand } from "../commands/generate.command.js";
@@ -21,35 +18,11 @@ import { runBuildCommand } from "../commands/build.command.js";
 import { runDoctorCommand } from "../commands/doctor.command.js";
 import { runInfoCommand } from "../commands/info.command.js";
 
-/**
- * Reads the CLI's real version from its own package.json at runtime so
- * `zudojs --version` can never drift from the published version.
- */
-function readCliVersion(): string {
-  let dir = dirname(fileURLToPath(import.meta.url));
-
-  for (let depth = 0; depth < 6; depth++) {
-    try {
-      const pkg = JSON.parse(
-        readFileSync(join(dir, "package.json"), "utf-8"),
-      ) as { name?: string; version?: string };
-      if (pkg.name === "zudojs-cli" && pkg.version) {
-        return pkg.version;
-      }
-    } catch {
-      // keep walking up
-    }
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-
-  return CLI_DEFAULTS.VERSION;
-}
-
 const app = createCLI({
   name: "Zudojs",
-  version: readCliVersion(),
+  // Read from the CLI's own package.json, so `zudojs --version` cannot
+  // drift from the published version.
+  version: CLI_VERSION,
   description: "Command-line interface for the Zudojs framework.",
 });
 
@@ -234,16 +207,16 @@ app.register(
     arguments: [
       {
         name: "feature",
-        description:
-          "The feature to add (database, queue, messaging, openapi, observability, security)",
+        description: `The feature to add (${Object.keys(FEATURE_PACKAGES).join(", ")})`,
         required: true,
       },
     ],
     options: [
       {
-        name: "adapter",
-        short: "a",
-        description: "Specific adapter to use",
+        name: "service",
+        short: "s",
+        description:
+          "Add the feature to one app of a microservice project (gateway or a service name)",
         type: "string",
       },
       {

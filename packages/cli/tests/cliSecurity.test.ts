@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCreateCommand } from "../src/commands/create.command.js";
@@ -239,16 +239,17 @@ describe("FullstackComposer template escaping", () => {
       });
       expect(result.success).toBe(true);
 
-      const config = await import("node:fs/promises").then((fs) =>
-        fs.readFile(join(root, "zudojs.config.ts"), "utf-8"),
-      );
+      // No executable config file is written any more; the name only
+      // reaches package.json, where JSON serialisation keeps the injected
+      // statement inert data.
+      expect(existsSync(join(root, "zudojs.config.ts"))).toBe(false);
 
-      // The name must be a single JSON string literal, so the injected
-      // statement stays inert data rather than becoming code.
-      expect(config).toContain(
-        `name: ${JSON.stringify('evil"; process.exit(1); //')}`,
-      );
-      expect(config).not.toContain('name: "evil"; process.exit(1); //"');
+      const pkg = JSON.parse(
+        await import("node:fs/promises").then((fs) =>
+          fs.readFile(join(root, "package.json"), "utf-8"),
+        ),
+      ) as { name: string };
+      expect(pkg.name).toBe('evil"; process.exit(1); //');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -269,12 +270,15 @@ describe("FullstackComposer template escaping", () => {
         projectPath: root,
       });
 
-      const config = await import("node:fs/promises").then((fs) =>
-        fs.readFile(join(root, "zudojs.config.ts"), "utf-8"),
+      const raw = await import("node:fs/promises").then((fs) =>
+        fs.readFile(join(root, "package.json"), "utf-8"),
       );
 
-      // A single-line literal: no raw newline escaped out of the string.
-      expect(config).toContain('name: "a\\\\b\\nname: \\"hijacked\\",\\n//"');
+      // A single JSON string: the newline and backslash are escaped and no
+      // second "name" key appears.
+      const pkg = JSON.parse(raw) as { name: string };
+      expect(pkg.name).toBe("a\\b\nname: \"hijacked\",\n//");
+      expect(raw.match(/"name":/g)).toHaveLength(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

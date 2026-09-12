@@ -1,24 +1,25 @@
-import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { resolveProjectLayout } from "./layout/projectLayout.core.js";
 
+const ARCHITECTURES = ["monolith", "modular-monolith", "microservice"] as const;
+
+type Architecture = (typeof ARCHITECTURES)[number];
+
+/**
+ * Detects the backend architecture of the project at `cwd`.
+ *
+ * Reads the manifest (then the legacy config, then package.json) through the
+ * shared layout resolver and falls back to directory heuristics for projects
+ * that were not created by the CLI.
+ */
 export async function detectArchitecture(
   cwd: string,
-): Promise<"monolith" | "modular-monolith" | "microservice" | null> {
-  const configPath = join(cwd, "zudojs.config.ts");
+): Promise<Architecture | null> {
+  const recorded = resolveProjectLayout(cwd)?.architecture;
 
-  if (existsSync(configPath)) {
-    try {
-      const content = await readFile(configPath, "utf-8");
-      const match = content.match(
-        /architecture:\s*["'](monolith|modular-monolith|microservice)["']/,
-      );
-      if (match) {
-        return match[1] as "monolith" | "modular-monolith" | "microservice";
-      }
-    } catch {
-      // fall through
-    }
+  if (recorded && (ARCHITECTURES as readonly string[]).includes(recorded)) {
+    return recorded as Architecture;
   }
 
   if (existsSync(join(cwd, "pnpm-workspace.yaml"))) {

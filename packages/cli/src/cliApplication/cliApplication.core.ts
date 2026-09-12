@@ -24,8 +24,9 @@ import { CommandNotFoundError } from "../cliError/cliError.command.js";
 import { CLICommandRegistry } from "../cliCommand/cliCommand.registry.js";
 import { executeCommand } from "../cliCommand/cliCommand.factory.js";
 import { CLIParser, resolveCommand } from "../cliParser/index.js";
-import { createDefaultLogger } from "@zudojs/logger";
+import type { Logger } from "@zudojs/logger";
 import { createCLIWriter } from "./cliApplication.writer.js";
+import { createCLILogger } from "./cliApplication.logger.js";
 import {
   isHelpRequest,
   isVersionRequest,
@@ -51,7 +52,7 @@ export class ZudojsCLI implements CLIApplication {
 
   private readonly cwd: string;
   private readonly env: CLIEnvironment;
-  private readonly logger: ReturnType<typeof createDefaultLogger>;
+  private readonly logger: Logger;
   private readonly hooks: CLIHooks;
   private running = false;
 
@@ -61,7 +62,7 @@ export class ZudojsCLI implements CLIApplication {
     this.description = options.description ?? CLI_DEFAULTS.DESCRIPTION;
     this.cwd = options.cwd ?? process.cwd();
     this.env = options.env ?? (process.env as CLIEnvironment);
-    this.logger = options.logger ?? createDefaultLogger();
+    this.logger = options.logger ?? createCLILogger();
     this.commands = new CLICommandRegistry();
     this.parser = new CLIParser();
     this.writer = createCLIWriter();

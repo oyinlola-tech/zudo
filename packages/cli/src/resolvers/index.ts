@@ -15,3 +15,10 @@ export {
   ConfigurationResolver,
   type ResolvedConfiguration,
 } from "./configuration/index.js";
+export {
+  resolveProjectLayout,
+  detectPackageManager,
+  type ProjectLayout,
+  type ProjectLayoutType,
+  type ProjectLayoutSource,
+} from "./layout/index.js";

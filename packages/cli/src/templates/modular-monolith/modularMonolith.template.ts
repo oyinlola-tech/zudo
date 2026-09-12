@@ -28,7 +28,6 @@
  * ├── tests/
  * ├── package.json
  * ├── tsconfig.json
- * ├── zudojs.config.ts
  * └── README.md
  * ```
  */
@@ -42,7 +41,6 @@ import {
   renderAppFile,
   renderModuleFile,
   renderServerFile,
-  renderZudojsConfig,
 } from "../shared/index.js";
 
 export function generateModularMonolithFiles(
@@ -128,12 +126,6 @@ export function generateModularMonolithFiles(
   "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }
 `;
-
-  files["zudojs.config.ts"] = renderZudojsConfig({
-    projectName: nameSlug,
-    projectType: "backend",
-    architecture: "modular-monolith",
-  });
 
   files[".env.example"] = `NODE_ENV=development
 PORT=3000

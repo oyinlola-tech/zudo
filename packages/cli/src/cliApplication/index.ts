@@ -1,19 +1,14 @@
 /**
  * zudojs-cli — CLI Application
- *
- * Main application class, factory, built-in commands, and signal handling.
  */
 
 export { ZudojsCLI, createCLI } from "./cliApplication.core.js";
-
 export {
   createCLIWriter,
   registerCLIInterruptHandler,
 } from "./cliApplication.writer.js";
-
 export {
-  isHelpRequest,
-  isVersionRequest,
-  printVersion,
-  printHelp,
-} from "./cliApplication.builtins.js";
+  createCLILogger,
+  formatCLILogLine,
+  type CLILoggerOptions,
+} from "./cliApplication.logger.js";

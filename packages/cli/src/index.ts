@@ -114,7 +114,10 @@ export {
   ZudojsCLI,
   createCLI,
   createCLIWriter,
+  createCLILogger,
+  formatCLILogLine,
   registerCLIInterruptHandler,
+  type CLILoggerOptions,
 } from "./cliApplication/index.js";
 
 // Version
@@ -126,7 +129,11 @@ export {
   compareVersions,
   parseVersion,
   isCompatibleVersion,
+  checkForNewerVersion,
+  isUpdateCheckDisabled,
   type CLIVersionInfo,
+  type UpdateCheckOptions,
+  type UpdateCheckResult,
 } from "./cliVersion/index.js";
 
 // Adapters
@@ -187,6 +194,13 @@ export {
   ConfigurationResolver,
   type ResolvedConfiguration,
 } from "./resolvers/configuration/index.js";
+export {
+  resolveProjectLayout,
+  detectPackageManager,
+  type ProjectLayout,
+  type ProjectLayoutType,
+  type ProjectLayoutSource,
+} from "./resolvers/layout/index.js";
 
 // Validators
 export {

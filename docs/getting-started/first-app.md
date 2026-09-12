@@ -19,15 +19,19 @@ npm run dev
 
 ```
 my-app/
+├── .zudojs/
+│   └── manifest.json    # project type, architecture, capabilities
 ├── src/
+│   ├── app.ts           # application assembly
+│   ├── server.ts        # entry point
 │   ├── modules/
-│   │   └── identity/
-│   │       ├── identity.module.ts
-│   │       └── identity.controller.ts
-│   └── main.ts
+│   │   └── app.module.ts
+│   ├── services/
+│   │   └── app.service.ts
+│   └── controllers/
+│       └── health.controller.ts
 ├── package.json
-├── tsconfig.json
-└── zudojs.config.ts
+└── tsconfig.json
 ```
 
 ## Add Features

@@ -430,7 +430,6 @@ async function createProject(
   try {
     spinner.start("Creating project structure");
     await mkdir(targetPath, { recursive: true });
-    rollback.trackDirectory(targetPath);
     spinner.stop("Project structure created");
 
     if (
@@ -452,8 +451,9 @@ async function createProject(
     } else {
       spinner.start("Generating backend project");
       const result = await generateProject(options, targetPath);
-      context.logger.info(`Files created: ${result.filesCreated.length}`);
-      spinner.stop("Backend project generated");
+      spinner.stop(
+        `Backend project generated (${result.filesCreated.length} files)`,
+      );
     }
 
     await writeProjectManifest(options, targetPath);
@@ -475,8 +475,13 @@ async function createProject(
         spinner.stop("Installing dependencies...");
         await runStreaming(installFile, ["install"], targetPath);
         p.log.success("Dependencies installed");
-      } catch {
-        p.log.warn("Dependency installation skipped");
+      } catch (error) {
+        // The project is complete without its node_modules; say what
+        // failed and how to retry instead of a bare "skipped".
+        const reason = error instanceof Error ? error.message : String(error);
+        p.log.warn(
+          `Dependency installation failed: ${reason}\nRun "${installFile} install" inside ${projectName} to retry.`,
+        );
       }
     }
 

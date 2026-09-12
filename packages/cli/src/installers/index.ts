@@ -1,10 +1,10 @@
 /**
  * zudojs-cli — Installers
- *
- * Dependency installation utilities.
  */
 
 export {
-  installDependencies,
   getInstallCommand,
+  getAddCommand,
+  getRunScriptCommand,
+  installDependencies,
 } from "./dependency.installer.js";
