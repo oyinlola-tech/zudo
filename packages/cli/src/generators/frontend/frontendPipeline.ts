@@ -15,8 +15,14 @@ import type {
   FrontendAdapter,
   FrontendGenerationContext,
 } from "../../adapters/frontend/frontendAdapter.type.js";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { PackageManagerRegistry } from "../../registries/adapter/packageManagerRegistry.core.js";
-import type { DependencyResolver } from "../../resolvers/dependency/dependencyResolver.core.js";
+import type {
+  DependencyResolver,
+  ResolvedDependency,
+} from "../../resolvers/dependency/dependencyResolver.core.js";
+import { writeFileTree } from "../../utils/utils.fileSystem.js";
 
 /** Outcome of running the frontend pipeline for a single adapter. */
 export interface FrontendPipelineResult {
@@ -92,10 +98,14 @@ export async function runFrontendPipeline(
 
   // 5. Install BOTH runtime and dev dependencies. Only devDependencies used
   //    to be installed, so every runtime package an adapter declared was
-  //    resolved and then dropped on the floor.
+  //    resolved and then dropped on the floor. With `--no-install` the
+  //    dependencies are written to package.json for a later install.
   const packageManager = packageManagerRegistry.get(context.packageManager);
 
-  if (packageManager) {
+  if (context.skipInstall === true) {
+    await recordDependencies(context.projectPath, resolution.dependencies, resolution.devDependencies);
+    files.push("dependencies");
+  } else if (packageManager) {
     const deps = resolution.dependencies.map((d) => d.name);
     const devDeps = resolution.devDependencies.map((d) => d.name);
     assertSafePackageNames(deps);
@@ -119,4 +129,54 @@ export async function runFrontendPipeline(
   }
 
   return { files, errors };
+}
+
+/**
+ * Adds the resolved dependencies to the project's package.json without
+ * running a package manager. Existing entries win: the adapter's own
+ * template may already pin a version.
+ */
+async function recordDependencies(
+  projectPath: string,
+  dependencies: readonly ResolvedDependency[],
+  devDependencies: readonly ResolvedDependency[],
+): Promise<void> {
+  const pkgPath = join(projectPath, "package.json");
+  let pkg: {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+    [key: string]: unknown;
+  } = {};
+
+  if (existsSync(pkgPath)) {
+    try {
+      pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as typeof pkg;
+    } catch {
+      pkg = {};
+    }
+  }
+
+  const merge = (
+    target: Record<string, string> | undefined,
+    entries: readonly ResolvedDependency[],
+  ): Record<string, string> => {
+    const merged = { ...(target ?? {}) };
+    for (const entry of entries) {
+      if (!(entry.name in merged)) {
+        merged[entry.name] = entry.version || "latest";
+      }
+    }
+    return merged;
+  };
+
+  if (dependencies.length > 0) {
+    pkg.dependencies = merge(pkg.dependencies, dependencies);
+  }
+  if (devDependencies.length > 0) {
+    pkg.devDependencies = merge(pkg.devDependencies, devDependencies);
+  }
+
+  await writeFileTree(projectPath, {
+    "package.json": JSON.stringify(pkg, null, 2) + "\n",
+  });
 }

@@ -48,7 +48,8 @@ export function renderPnpmWorkspaceFile(
   lines.push("# Dependencies allowed to run install scripts (pnpm 10).");
   lines.push("onlyBuiltDependencies:");
   for (const name of PNPM_ALLOWED_BUILD_SCRIPTS) {
-    lines.push(`  - ${name}`);
+    // Quoted: a bare leading "@" is a reserved YAML indicator.
+    lines.push(`  - ${JSON.stringify(name)}`);
   }
   lines.push("");
   lines.push("# The same list in the form pnpm 11 reads.");

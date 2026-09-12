@@ -90,7 +90,12 @@ function frontendServer(
 
   if (framework === "flutter") {
     if (!existsSync(join(dir, "pubspec.yaml"))) return null;
-    return { label: "web", cwd: dir, file: "flutter", args: ["run", "--debug"] };
+    return {
+      label: "web",
+      cwd: dir,
+      file: "flutter",
+      args: ["run", "--debug"],
+    };
   }
 
   if (!existsSync(join(dir, "package.json"))) return null;
@@ -100,7 +105,12 @@ function frontendServer(
     framework === "angular" || framework === "react-native" ? "start" : "dev";
   const [file, ...args] = getRunScriptCommand(layout.packageManager, script);
 
-  return { label: labelFor(layout.root, dir, "frontend"), cwd: dir, file, args };
+  return {
+    label: labelFor(layout.root, dir, "frontend"),
+    cwd: dir,
+    file,
+    args,
+  };
 }
 
 export async function runDevCommand(context: CLIContext): Promise<void> {

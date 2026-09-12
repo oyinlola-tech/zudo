@@ -23,6 +23,8 @@ import { renderPnpmWorkspaceFile } from "../../templates/shared/pnpm.template.js
 export interface FullstackGenerationContext {
   readonly project: ProjectConfiguration;
   readonly projectPath: string;
+  /** `false` records frontend dependencies instead of installing them. */
+  readonly installDeps?: boolean;
 }
 
 /**
@@ -214,6 +216,7 @@ export type Timestamp = string;
         formatting: true,
         envValidation: true,
       },
+      ...(context.installDeps === false ? { skipInstall: true } : {}),
     };
 
     // The same pipeline the frontend-only path uses: availability check,

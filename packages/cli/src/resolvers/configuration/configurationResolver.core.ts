@@ -43,9 +43,10 @@ export class ConfigurationResolver {
     const manifest = this.readJson<ManifestShape>(
       join(cwd, ".zudojs", "manifest.json"),
     );
-    const pkg = this.readJson<{ name?: string; zudojs?: { features?: unknown } }>(
-      join(cwd, "package.json"),
-    );
+    const pkg = this.readJson<{
+      name?: string;
+      zudojs?: { features?: unknown };
+    }>(join(cwd, "package.json"));
     const legacy = this.readLegacyConfig(cwd);
 
     const features =
@@ -64,8 +65,7 @@ export class ConfigurationResolver {
     const language = this.extractValue(legacy, "language");
 
     return {
-      projectName:
-        this.extractValue(legacy, "name") ?? pkg?.name ?? "unknown",
+      projectName: this.extractValue(legacy, "name") ?? pkg?.name ?? "unknown",
       projectType: layout.projectType,
       architecture: layout.architecture,
       packageManager: layout.packageManager,

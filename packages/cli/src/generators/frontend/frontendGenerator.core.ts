@@ -25,6 +25,8 @@ export interface FrontendGenerationOptions {
     "zudojs-standard" | "feature-based" | "minimal" | "framework-default";
   readonly language?: "typescript" | "javascript";
   readonly packageManager?: "pnpm" | "npm" | "yarn" | "bun";
+  /** `false` records dependencies in package.json instead of installing. */
+  readonly installDeps?: boolean;
 }
 
 /**
@@ -77,6 +79,7 @@ export class FrontendGenerator {
         linting: true,
         formatting: true,
       },
+      ...(options.installDeps === false ? { skipInstall: true } : {}),
     };
 
     const files: string[] = [];

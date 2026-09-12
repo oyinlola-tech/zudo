@@ -20,6 +20,12 @@ export interface FrontendGenerationContext {
     "zudojs-standard" | "feature-based" | "minimal" | "framework-default";
   readonly packageManager: "pnpm" | "npm" | "yarn" | "bun";
   readonly features: FrontendFeatures;
+  /**
+   * Record resolved dependencies in package.json instead of installing
+   * them. Set by `zudojs create --no-install`, which the frontend pipeline
+   * used to ignore: it ran the package manager regardless of the flag.
+   */
+  readonly skipInstall?: boolean;
 }
 
 /**

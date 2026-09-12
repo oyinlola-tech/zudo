@@ -61,10 +61,7 @@ export async function checkForNewerVersion(
   const registryUrl = options.registryUrl ?? "https://registry.npmjs.org";
   const fetchImpl = options.fetchImpl ?? fetch;
   const controller = new AbortController();
-  const timer = setTimeout(
-    () => controller.abort(),
-    options.timeoutMs ?? 3000,
-  );
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 3000);
 
   try {
     const response = await fetchImpl(

@@ -15,7 +15,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ZUDOJS_PACKAGES_VERSION, FEATURE_PACKAGES } from "../src/constants/index.js";
+import {
+  ZUDOJS_PACKAGES_VERSION,
+  FEATURE_PACKAGES,
+} from "../src/constants/index.js";
 import { generateMonolithFiles } from "../src/templates/monolith/index.js";
 import { generateModularMonolithFiles } from "../src/templates/modular-monolith/index.js";
 import { generateMicroserviceFiles } from "../src/templates/microservice/index.js";
@@ -32,9 +35,18 @@ import {
 import { getBuildArgs } from "../src/commands/build.command.js";
 import { runGenerateCommand } from "../src/commands/generate.command.js";
 import { getRunScriptCommand } from "../src/installers/dependency.installer.js";
-import { resolveSpawnTarget, quoteForWindowsShell } from "../src/utils/utils.exec.js";
-import { createCLILogger, formatCLILogLine } from "../src/cliApplication/cliApplication.logger.js";
-import { checkForNewerVersion, isUpdateCheckDisabled } from "../src/cliVersion/cliVersion.update.js";
+import {
+  resolveSpawnTarget,
+  quoteForWindowsShell,
+} from "../src/utils/utils.exec.js";
+import {
+  createCLILogger,
+  formatCLILogLine,
+} from "../src/cliApplication/cliApplication.logger.js";
+import {
+  checkForNewerVersion,
+  isUpdateCheckDisabled,
+} from "../src/cliVersion/cliVersion.update.js";
 import { ConfigurationResolver } from "../src/resolvers/configuration/configurationResolver.core.js";
 import type { ScaffoldOptions } from "../src/types/index.js";
 import type { CLIContext } from "../src/cliType/cliType.type.js";
@@ -121,7 +133,10 @@ async function scaffoldFullstack(): Promise<string> {
     JSON.stringify({ name: "shop", private: true }, null, 2),
   );
   writeFileSync(join(root, "pnpm-workspace.yaml"), 'packages:\n  - "apps/*"\n');
-  await writeFileTree(join(root, "apps/api"), generateMonolithFiles(scaffoldOptions()));
+  await writeFileTree(
+    join(root, "apps/api"),
+    generateMonolithFiles(scaffoldOptions()),
+  );
   await writeFileTree(join(root, "apps/web"), {
     "package.json": JSON.stringify({ name: "web", scripts: { dev: "vite" } }),
     "tsconfig.json": "{}",
@@ -394,7 +409,9 @@ describe("runDoctorChecks", () => {
 
   it("does not flag the src/modules directory every template creates", async () => {
     const root = await scaffoldBackend("monolith");
-    const messages = runDoctorChecks(root).map((c) => c.message).join("\n");
+    const messages = runDoctorChecks(root)
+      .map((c) => c.message)
+      .join("\n");
     expect(messages).not.toMatch(/src\/modules/);
   });
 
@@ -438,12 +455,15 @@ describe("zudojs add", () => {
   });
 
   it("never writes workspace:* into a user project", () => {
-    expect(versionForNewDependency({ dependencies: { "@zudojs/core": "^1.0.0" } }))
-      .toBe(ZUDOJS_PACKAGES_VERSION);
+    expect(
+      versionForNewDependency({ dependencies: { "@zudojs/core": "^1.0.0" } }),
+    ).toBe(ZUDOJS_PACKAGES_VERSION);
     expect(versionForNewDependency({})).toBe(ZUDOJS_PACKAGES_VERSION);
     // Inside the framework monorepo the siblings are linked.
     expect(
-      versionForNewDependency({ dependencies: { "@zudojs/core": "workspace:*" } }),
+      versionForNewDependency({
+        dependencies: { "@zudojs/core": "workspace:*" },
+      }),
     ).toBe("workspace:*");
   });
 
@@ -463,21 +483,30 @@ describe("zudojs add", () => {
     expect(selectAddTargets(layout, "gateway")).toEqual([
       join(root, "apps", "gateway", "package.json"),
     ]);
-    expect(() => selectAddTargets(layout, "billing")).toThrow(/Unknown service/);
+    expect(() => selectAddTargets(layout, "billing")).toThrow(
+      /Unknown service/,
+    );
     expect(selectAddTargets(layout, undefined)).toHaveLength(5);
   });
 
   it("updates the backend package.json and the manifest", async () => {
     const root = await scaffoldFullstack();
-    await runAddCommand(context(root, { feature: "cache", "skip-install": true }));
+    await runAddCommand(
+      context(root, { feature: "cache", "skip-install": true }),
+    );
 
     const api = JSON.parse(
       readFileSync(join(root, "apps", "api", "package.json"), "utf-8"),
-    ) as { dependencies: Record<string, string>; zudojs: { features: string[] } };
+    ) as {
+      dependencies: Record<string, string>;
+      zudojs: { features: string[] };
+    };
     expect(api.dependencies["@zudojs/cache"]).toBe(ZUDOJS_PACKAGES_VERSION);
     expect(api.zudojs.features).toContain("cache");
 
-    const rootPkg = JSON.parse(readFileSync(join(root, "package.json"), "utf-8")) as {
+    const rootPkg = JSON.parse(
+      readFileSync(join(root, "package.json"), "utf-8"),
+    ) as {
       dependencies?: Record<string, string>;
     };
     expect(rootPkg.dependencies).toBeUndefined();
@@ -489,7 +518,9 @@ describe("zudojs add", () => {
   it("rejects unknown features and frontend-only projects", async () => {
     const root = await scaffoldBackend("monolith");
     await expect(
-      runAddCommand(context(root, { feature: "blockchain", "skip-install": true })),
+      runAddCommand(
+        context(root, { feature: "blockchain", "skip-install": true }),
+      ),
     ).rejects.toThrow(/Unknown feature/);
 
     const web = tempDir();
@@ -626,7 +657,9 @@ describe("createCLILogger", () => {
 describe("checkForNewerVersion", () => {
   const fetchLatest = (version: string): typeof fetch =>
     (async () =>
-      new Response(JSON.stringify({ version }), { status: 200 })) as typeof fetch;
+      new Response(JSON.stringify({ version }), {
+        status: 200,
+      })) as typeof fetch;
 
   it("reports a newer version", async () => {
     const result = await checkForNewerVersion("1.0.0", {
@@ -664,5 +697,54 @@ describe("checkForNewerVersion", () => {
       fetchImpl: failing,
     });
     expect(result).toMatchObject({ latest: null, skipped: "offline" });
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* pnpm build-script allow-list                                               */
+/* -------------------------------------------------------------------------- */
+
+describe("pnpm-workspace.yaml in generated projects", () => {
+  it("allows esbuild's install script in both pnpm 10 and pnpm 11 forms", () => {
+    for (const generate of [
+      generateMonolithFiles,
+      generateModularMonolithFiles,
+      generateMicroserviceFiles,
+    ]) {
+      const files = generate(scaffoldOptions({ packageManager: "pnpm" }));
+      const yaml = files["pnpm-workspace.yaml"];
+      expect(yaml, generate.name).toBeDefined();
+      expect(yaml).toMatch(
+        /onlyBuiltDependencies:\n(?:  - .+\n)*  - "esbuild"/,
+      );
+      // Scoped names must be quoted or the file is not valid YAML.
+      expect(yaml).toContain('  - "@swc/core"');
+      expect(yaml).not.toMatch(/^\s+- @/m);
+      expect(yaml).toMatch(/allowBuilds:\n(?:  .+\n)*  "esbuild": true/);
+    }
+  });
+
+  it("keeps the microservice workspace globs", () => {
+    const files = generateMicroserviceFiles(
+      scaffoldOptions({ architecture: "microservice", packageManager: "pnpm" }),
+    );
+    expect(files["pnpm-workspace.yaml"]).toMatch(
+      /packages:\n  - "apps\/gateway"\n  - "apps\/services\/\*"/,
+    );
+  });
+
+  it("is not written for other package managers", () => {
+    const files = generateMonolithFiles(
+      scaffoldOptions({ packageManager: "npm" }),
+    );
+    expect(files["pnpm-workspace.yaml"]).toBeUndefined();
+  });
+
+  it("does not turn a single-package project into a workspace", async () => {
+    const root = await scaffoldBackend("monolith");
+    expect(resolveProjectLayout(root)?.isWorkspace).toBe(false);
+    expect(
+      getBuildArgs("pnpm", resolveProjectLayout(root)!.isWorkspace),
+    ).toEqual(["run", "build"]);
   });
 });

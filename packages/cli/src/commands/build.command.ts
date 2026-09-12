@@ -28,10 +28,7 @@ export async function runBuildCommand(context: CLIContext): Promise<void> {
   const layout = resolveProjectLayout(projectRoot);
   const packageManager =
     layout?.packageManager ?? detectPackageManager(projectRoot);
-  const buildArgs = getBuildArgs(
-    packageManager,
-    layout?.isWorkspace ?? false,
-  );
+  const buildArgs = getBuildArgs(packageManager, layout?.isWorkspace ?? false);
 
   try {
     await runStreaming(packageManager, buildArgs, projectRoot);

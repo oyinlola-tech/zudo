@@ -48,8 +48,8 @@ export function selectAddTargets(
       );
     }
 
-    const match = layout.backendDirs.find(
-      (dir) => dir.endsWith(`${join("apps", "services", service)}`),
+    const match = layout.backendDirs.find((dir) =>
+      dir.endsWith(`${join("apps", "services", service)}`),
     );
     const gateway = layout.backendDirs.find((dir) =>
       dir.endsWith(join("apps", "gateway")),
@@ -148,7 +148,9 @@ export async function runAddCommand(context: CLIContext): Promise<void> {
         throw new CLIGenerationError(`Could not find ${pkgPath}`);
       }
 
-      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as PackageJsonShape;
+      const pkg = JSON.parse(
+        readFileSync(pkgPath, "utf-8"),
+      ) as PackageJsonShape;
       const version = versionForNewDependency(pkg);
 
       pkg.dependencies ??= {};

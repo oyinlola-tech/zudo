@@ -100,8 +100,7 @@ function readManifest(root: string): RawProjectDescription | null {
   const backend = manifest.backend as { architecture?: unknown } | undefined;
   const frontend = manifest.frontend as { framework?: unknown } | undefined;
   const workspace = manifest.workspace as
-    | { packageManager?: unknown }
-    | undefined;
+    { packageManager?: unknown } | undefined;
   const services = Array.isArray(manifest.services)
     ? manifest.services.filter(
         (service): service is string => typeof service === "string",
@@ -263,7 +262,8 @@ export function resolveProjectLayout(cwd: string): ProjectLayout | null {
   // backend-only project is its own backend root.
   const fullstackApi = join(cwd, "apps", "api");
   const backendRoot =
-    projectType === "fullstack" && existsSync(join(fullstackApi, "package.json"))
+    projectType === "fullstack" &&
+    existsSync(join(fullstackApi, "package.json"))
       ? fullstackApi
       : cwd;
 

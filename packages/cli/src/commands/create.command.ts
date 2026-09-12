@@ -603,6 +603,7 @@ async function generateFullstackProject(
       features: options.services,
     },
     projectPath,
+    installDeps: options.installDeps,
   });
 
   if (!result.success) {
@@ -693,6 +694,7 @@ async function generateFrontendProject(
     architecture: options.frontendArchitecture ?? "zudojs-standard",
     language: options.language ?? "typescript",
     packageManager: options.packageManager,
+    installDeps: options.installDeps,
   });
 
   if (!result.success) {
