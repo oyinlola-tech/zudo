@@ -31,6 +31,7 @@ import {
   renderAppFile,
   renderModuleFile,
   renderServerFile,
+  renderPnpmWorkspaceFile,
 } from "../shared/index.js";
 
 /** Default service names used when none are provided. */
@@ -138,9 +139,7 @@ export function generateMicroserviceFiles(
     ) + "\n";
 
   if (options.packageManager === "pnpm") {
-    files["pnpm-workspace.yaml"] = `packages:
-${workspaceGlobs.map((g) => `  - "${g}"`).join("\n")}
-`;
+    files["pnpm-workspace.yaml"] = renderPnpmWorkspaceFile(workspaceGlobs);
   }
 
   // Docker Compose — gateway on 3000, service i on 3001+i.

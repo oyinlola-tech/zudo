@@ -15,6 +15,7 @@ import { PackageManagerRegistry } from "../../registries/adapter/packageManagerR
 import { DependencyResolver } from "../../resolvers/dependency/dependencyResolver.core.js";
 import { runFrontendPipeline } from "../frontend/frontendPipeline.js";
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
+import { renderPnpmWorkspaceFile } from "../../templates/shared/pnpm.template.js";
 
 /**
  * Fullstack generation context.
@@ -135,9 +136,7 @@ export class FullstackComposer {
     };
 
     if (packageManager === "pnpm") {
-      files["pnpm-workspace.yaml"] = `packages:
-${workspaceGlobs.map((g) => `  - "${g}"`).join("\n")}
-`;
+      files["pnpm-workspace.yaml"] = renderPnpmWorkspaceFile(workspaceGlobs);
     }
 
     await writeFileTree(context.projectPath, files);

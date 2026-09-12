@@ -11,6 +11,8 @@ import { PackageManagerRegistry } from "../../registries/adapter/packageManagerR
 import { DependencyResolver } from "../../resolvers/dependency/dependencyResolver.core.js";
 import { CLIGenerationError } from "../../errors/index.js";
 import { runFrontendPipeline } from "./frontendPipeline.js";
+import { writeFileTree } from "../../utils/utils.fileSystem.js";
+import { renderPnpmWorkspaceFile } from "../../templates/shared/pnpm.template.js";
 
 /**
  * Frontend generation options.
@@ -81,6 +83,15 @@ export class FrontendGenerator {
     const errors: string[] = [];
 
     try {
+      // A frontend-only project is its own pnpm root. Vite depends on
+      // esbuild, whose install script pnpm 10+ refuses without this list,
+      // and the pipeline installs dependencies right after scaffolding.
+      if (context.packageManager === "pnpm") {
+        await writeFileTree(context.projectPath, {
+          "pnpm-workspace.yaml": renderPnpmWorkspaceFile(),
+        });
+      }
+
       const outcome = await runFrontendPipeline(
         adapter,
         context,

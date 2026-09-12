@@ -183,8 +183,22 @@ export function detectPackageManager(root: string): PackageManager {
   return "npm";
 }
 
+/**
+ * Whether `root` is a multi-package workspace.
+ *
+ * A `pnpm-workspace.yaml` alone is not enough: pnpm 10+ also uses that file
+ * for settings (the build-script allow-list every generated project
+ * carries), so only one that declares `packages:` makes a workspace.
+ */
 function isWorkspaceRoot(root: string): boolean {
-  if (existsSync(join(root, "pnpm-workspace.yaml"))) return true;
+  const workspaceFile = join(root, "pnpm-workspace.yaml");
+  if (existsSync(workspaceFile)) {
+    try {
+      if (/^packages:/m.test(readFileSync(workspaceFile, "utf-8"))) return true;
+    } catch {
+      // unreadable: fall through to package.json
+    }
+  }
   const pkg = readJson(join(root, "package.json"));
   return pkg?.workspaces !== undefined;
 }

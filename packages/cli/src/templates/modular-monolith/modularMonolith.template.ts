@@ -41,6 +41,7 @@ import {
   renderAppFile,
   renderModuleFile,
   renderServerFile,
+  renderPnpmWorkspaceFile,
 } from "../shared/index.js";
 
 export function generateModularMonolithFiles(
@@ -126,6 +127,10 @@ export function generateModularMonolithFiles(
   "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }
 `;
+
+  if (options.packageManager === "pnpm") {
+    files["pnpm-workspace.yaml"] = renderPnpmWorkspaceFile();
+  }
 
   files[".env.example"] = `NODE_ENV=development
 PORT=3000
