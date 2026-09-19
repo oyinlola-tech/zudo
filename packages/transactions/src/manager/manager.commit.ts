@@ -148,6 +148,14 @@ export async function commitTransaction(
   if (hooks?.beforeCommit) await hooks.beforeCommit({ transaction });
   emit(TRANSACTION_EVENTS.COMMITTING, transaction);
 
+  if (hooks?.afterCommit && transaction.kind === "savepoint") {
+    // Releasing a savepoint is not a commit. Registered as a callback, the
+    // hook is deferred with the savepoint's own callbacks and fires only if
+    // the outermost transaction commits.
+    const afterCommit = hooks.afterCommit;
+    transaction.afterCommit(() => afterCommit({ transaction }));
+  }
+
   try {
     await adapterCommit(transaction, adapter);
     await transaction.commit();
@@ -173,7 +181,9 @@ export async function commitTransaction(
     });
   }
 
-  if (hooks?.afterCommit) await hooks.afterCommit({ transaction });
+  if (hooks?.afterCommit && transaction.kind !== "savepoint") {
+    await hooks.afterCommit({ transaction });
+  }
 }
 
 /**

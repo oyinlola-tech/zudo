@@ -97,7 +97,7 @@ async function beginSavepoint(
     );
   }
 
-  const child = createTransaction(opts, parent.id, "savepoint");
+  const child = createTransaction(opts, parent.id, "savepoint", parent);
   if (hooks?.beforeBegin) await hooks.beforeBegin({ transaction: child });
 
   const savepoint = `sp_${child.id}`;

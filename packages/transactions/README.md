@@ -111,6 +111,12 @@ the transaction.
 - A `nested` transaction rolls back to its savepoint, never to the connection.
   Savepoints are always created on the connection, including when the
   enclosing scope is itself a savepoint or a participant.
+- Releasing a savepoint is not a commit. `afterCommit` and `afterRollback`
+  callbacks registered inside a `nested` block, and `hooks.afterCommit` for the
+  savepoint, move to the enclosing transaction on release. They run only when
+  the outermost transaction commits (or, for `afterRollback`, rolls back). A
+  savepoint that is itself rolled back runs its `afterRollback` callbacks at
+  once and discards its `afterCommit` callbacks.
 - `begin()` and `run()` both honour `timeout`; completing a transaction through
   `manager.commit()` / `manager.rollback()` releases its timer and registry entry.
 - Failures thrown by `afterCommit` callbacks never undo the commit; they are

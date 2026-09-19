@@ -20,6 +20,7 @@ import {
   createTransitionFunction,
 } from "./transactionStateMachine.js";
 import { attachInternals } from "./transaction.internal.js";
+import { deferCallbacksToParent } from "./transaction.savepoint.js";
 
 /**
  * Generate a unique transaction ID.
@@ -49,11 +50,14 @@ async function runCallbacks(
  * @param options - Options the transaction was started with.
  * @param parentId - Enclosing transaction id, for nested transactions.
  * @param kind - How this handle relates to the adapter transaction.
+ * @param parent - The enclosing transaction of a savepoint. Its callbacks
+ *   are deferred to `parent` on release instead of running.
  */
 export function createTransaction(
   options: TransactionOptions = {},
   parentId?: string,
   kind: TransactionKind = "root",
+  parent?: Transaction,
 ): Transaction {
   let state: TransactionState = "pending";
   let rollbackOnly = false;
@@ -124,6 +128,10 @@ export function createTransaction(
 
       transition("committing");
       transition("committed");
+      if (kind === "savepoint" && parent !== undefined) {
+        deferCallbacksToParent(parent, afterCommitCallbacks, afterRollbackCallbacks);
+        return;
+      }
       afterRollbackCallbacks.length = 0;
       // The commit stands whatever the callbacks do; their failures are
       // kept for the manager to report instead of being dropped.
