@@ -70,23 +70,60 @@ function parse(html) {
   return root;
 }
 
+const ENTITIES = {
+  nbsp: " ",
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  rsquo: "’",
+  lsquo: "‘",
+  rdquo: "”",
+  ldquo: "“",
+  sbquo: "‚",
+  bdquo: "„",
+  mdash: "—",
+  ndash: "–",
+  hellip: "…",
+  rarr: "→",
+  larr: "←",
+  uarr: "↑",
+  darr: "↓",
+  harr: "↔",
+  rArr: "⇒",
+  ge: "≥",
+  le: "≤",
+  ne: "≠",
+  times: "×",
+  divide: "÷",
+  minus: "−",
+  plusmn: "±",
+  middot: "·",
+  bull: "•",
+  deg: "°",
+  copy: "©",
+  reg: "®",
+  trade: "™",
+  sect: "§",
+  para: "¶",
+  laquo: "«",
+  raquo: "»",
+  check: "✓",
+};
+
+// One pass, so a decoded "&" can never start a second entity ("&amp;lt;" stays "&lt;").
 function decode(s) {
-  return s
-    .replace(/&nbsp;/g, " ")
-    .replace(/&rarr;/g, "→")
-    .replace(/&larr;/g, "←")
-    .replace(/&mdash;/g, "—")
-    .replace(/&ndash;/g, "–")
-    .replace(/&hellip;/g, "…")
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) =>
-      String.fromCodePoint(parseInt(h, 16)),
-    )
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&amp;/g, "&");
+  return s.replace(
+    /&(?:#x([0-9a-f]+)|#(\d+)|([a-z][a-z0-9]*));/gi,
+    (match, hex, dec, name) => {
+      const code = hex ? parseInt(hex, 16) : dec ? Number(dec) : undefined;
+      if (code !== undefined) {
+        return code <= 0x10ffff ? String.fromCodePoint(code) : match;
+      }
+      return Object.hasOwn(ENTITIES, name) ? ENTITIES[name] : match;
+    },
+  );
 }
 
 const cls = (n) => ` ${n.attrs?.class ?? ""} `;
