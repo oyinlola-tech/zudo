@@ -91,6 +91,10 @@ export class Container implements ContainerLike {
       void this.#lifecycle.disposeInstance(token).catch(() => {
         /* see clearSingletons()/dispose() for error-surfacing disposal */
       });
+    }, (token) => {
+      // Live scopes would otherwise keep serving a replaced SCOPED
+      // instance, or one built on a replaced dependency.
+      for (const scope of this.#liveScopes) scope.evictCached(token);
     });
   }
 

@@ -77,7 +77,10 @@ not capture a shorter-lived dependency.
 
 `registerValue()` always registers as `SINGLETON`, overriding any
 `options.scope` you pass — a value provider can only ever return the one
-instance you gave it.
+instance you gave it. The container did not create that value, so it
+never disposes it: a pool or logger shared between containers, or owned
+by the host, stays open when a container is disposed. Register a factory
+instead when the container should own the instance.
 
 A `useExisting` alias never becomes a second owner of its target's instance:
 a `SINGLETON` or `SCOPED` target is disposed exactly once by whoever created
@@ -154,7 +157,12 @@ intentionally swap a registration.
 
 Replacing or removing a registration **evicts and disposes** its cached
 singleton — and evicts any cached `useExisting` alias of it — so the next
-`resolve()` of either token uses the new provider.
+`resolve()` of either token uses the new provider. Eviction cascades: every
+cached singleton that was built on the replaced token (directly or through
+a `TRANSIENT` in between) is evicted and disposed too, so consumers are
+rebuilt against the new instance instead of keeping the old, disposed one.
+Live scopes drop (and dispose) their cached `SCOPED` copies of the replaced
+token and of its consumers.
 
 `DuplicateRegistrationError`, `CircularDependencyError`,
 `RegistrationNotFoundError` and `ProviderResolutionError` are defined in
@@ -214,6 +222,7 @@ await container.dispose();
   have a `dispose()` method or implement `Symbol.dispose` /
   `Symbol.asyncDispose`.
 - `TRANSIENT` instances are never tracked; dispose them yourself.
+- `registerValue()` values are never disposed by the container.
 - With `autoDispose: false`, `dispose()` releases tracked references
   **without disposing them** — disposal becomes your responsibility.
 - Disposal is terminal: the container is marked disposed even if some

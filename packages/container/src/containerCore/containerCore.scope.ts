@@ -195,6 +195,18 @@ export class ContainerScopeContext {
     return this.container;
   }
 
+  /**
+   * @internal Drops a cached SCOPED instance whose registration (or a
+   * dependency of it) was replaced or removed, disposing it best-effort,
+   * in this scope and every child scope.
+   */
+  evictCached(token: Token): void {
+    if (this.disposed) return;
+    this.cache.delete?.(token);
+    void this.lifecycle.disposeInstance(token).catch(() => undefined);
+    for (const child of this.children) child.evictCached(token);
+  }
+
   /** @internal Detaches a disposed child scope. */
   releaseChild(scope: ContainerScopeContext): void {
     this.children.delete(scope);

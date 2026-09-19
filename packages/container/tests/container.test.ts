@@ -500,9 +500,11 @@ describe("Lifecycle and disposal", () => {
       },
     );
     await tick();
-    c.resolve("dep"); // dep2 created after consumer -> disposed before it
+    c.resolve("dep");
     await c.dispose();
-    expect(order).toEqual(["dep", "dep2", "consumer"]);
+    // CONT-01: replacing "dep" evicts and disposes its consumer first
+    // (it captured the old dep), then the old dep; dep2 goes on dispose().
+    expect(order).toEqual(["consumer", "dep", "dep2"]);
   });
 
   it("recognizes Symbol.dispose and Symbol.asyncDispose", async () => {
@@ -519,8 +521,13 @@ describe("Lifecycle and disposal", () => {
         this.closed = true;
       },
     };
-    c.registerValue("sync", sync);
-    c.registerValue("async", async);
+    // CONT-02: values are host-owned, so use factories the container owns.
+    c.registerFactory("sync", () => sync, [], {
+      scope: ContainerScope.SINGLETON,
+    });
+    c.registerFactory("async", () => async, [], {
+      scope: ContainerScope.SINGLETON,
+    });
     c.resolve("sync");
     c.resolve("async");
     await c.dispose();
@@ -541,11 +548,16 @@ describe("Lifecycle and disposal", () => {
 
   it("marks the container disposed even when disposal fails, reporting failures", async () => {
     const c = createContainer();
-    c.registerValue("bad", {
-      dispose() {
-        throw new Error("boom");
-      },
-    });
+    c.registerFactory(
+      "bad",
+      () => ({
+        dispose() {
+          throw new Error("boom");
+        },
+      }),
+      [],
+      { scope: ContainerScope.SINGLETON },
+    );
     c.resolve("bad");
     await expect(c.dispose()).rejects.toBeInstanceOf(AggregateError);
     expect(c.isDisposed()).toBe(true);

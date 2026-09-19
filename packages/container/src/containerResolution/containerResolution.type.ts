@@ -19,6 +19,8 @@ export interface ResolutionCache {
   has(token: Token<unknown>): boolean;
   get(token: Token<unknown>): unknown;
   set(token: Token<unknown>, value: unknown): void;
+  /** Drops one entry from this cache (not its parents). Optional. */
+  delete?(token: Token<unknown>): boolean;
   clear(): void;
 }
 

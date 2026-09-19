@@ -72,6 +72,7 @@ import {
   ScopedResolutionError,
 } from "./containerResolution.error.js";
 import { describeToken } from "../containerToken/containerToken.type.js";
+import { DependentIndex } from "./containerResolution.dependents.js";
 
 /** Normalized per-resolution settings. */
 interface ResolutionState {
@@ -114,6 +115,10 @@ class ChainedResolutionCache implements ResolutionCache {
     this.#own.set(token, value);
   }
 
+  delete(token: Token<unknown>): boolean {
+    return this.#own.delete(token);
+  }
+
   clear(): void {
     this.#own.clear();
   }
@@ -124,13 +129,25 @@ export class ContainerResolver {
   private readonly singletonCache = new Map<Token<unknown>, unknown>();
   private readonly onSingletonEvicted:
     ((token: Token<unknown>) => void) | undefined;
+  private readonly onTokenInvalidated:
+    ((token: Token<unknown>) => void) | undefined;
+  private readonly dependents = new DependentIndex();
 
+  /**
+   * @param onSingletonEvicted Called for each evicted cached singleton so
+   *   the owner can dispose it.
+   * @param onTokenInvalidated Called for every token invalidated by a
+   *   `replace()`/`remove()` (the token itself and each cached consumer),
+   *   so owners of scope caches can drop and dispose their SCOPED copies.
+   */
   constructor(
     registry: ContainerRegistry,
     onSingletonEvicted?: (token: Token<unknown>) => void,
+    onTokenInvalidated?: (token: Token<unknown>) => void,
   ) {
     this.registry = registry;
     this.onSingletonEvicted = onSingletonEvicted;
+    this.onTokenInvalidated = onTokenInvalidated;
     registry.subscribe((event) => this.handleRegistryChange(event));
   }
 
@@ -199,6 +216,12 @@ export class ContainerResolver {
     }
 
     const currentPath = [...state.path, token];
+
+    this.dependents.record(
+      token,
+      state.path,
+      (t) => this.registry.get(t)?.scope,
+    );
 
     if (registration.scope === Scope.SINGLETON) {
       if (this.singletonCache.has(token)) {
@@ -282,8 +305,11 @@ export class ContainerResolver {
     const provider = normalizeProvider(registration.provider);
     const token = getRegistrationToken(registration);
     try {
+      // A pre-built value belongs to whoever built it (often shared
+      // between containers); the container did not create it, so it
+      // must not dispose it.
       if (isValueProvider(provider))
-        return { value: provider.useValue, owned: true };
+        return { value: provider.useValue, owned: false };
       if (isExistingProvider(provider)) {
         const target = unwrapToken(provider.useExisting);
         if (
@@ -397,13 +423,20 @@ export class ContainerResolver {
       case RegistryOperation.REPLACE:
       case RegistryOperation.REMOVE: {
         const token = unwrapToken(event.token);
+        // Consumers first, so each is disposed before what it consumed.
+        for (const dependent of this.dependents.take(token)) {
+          this.evictSingleton(dependent);
+          this.onTokenInvalidated?.(dependent);
+        }
         this.evictSingleton(token);
         this.evictAliasesOf(token);
+        this.onTokenInvalidated?.(token);
         break;
       }
       case RegistryOperation.CLEAR:
       case RegistryOperation.RESTORE: {
         for (const t of [...this.singletonCache.keys()]) this.evictSingleton(t);
+        this.dependents.clear();
         break;
       }
       default:
