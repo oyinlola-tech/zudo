@@ -37,6 +37,19 @@ const PAGE_FIXES = {
   },
 };
 
+const AI_CRAWLERS = [
+  "GPTBot",
+  "OAI-SearchBot",
+  "ChatGPT-User",
+  "ClaudeBot",
+  "Claude-User",
+  "Claude-SearchBot",
+  "PerplexityBot",
+  "Google-Extended",
+  "Applebot-Extended",
+  "CCBot",
+];
+
 const isNoIndex = (rel) => rel === "404.html" || rel.startsWith("error/");
 
 function htmlFiles(dir) {
@@ -216,14 +229,27 @@ function processPage(abs) {
   return { rel, url, noindex: isNoIndex(rel) };
 }
 
-function lastModified(abs) {
+const previousLastmod = new Map(
+  existsSync(join(ROOT, "sitemap.xml"))
+    ? [
+        ...readFileSync(join(ROOT, "sitemap.xml"), "utf8").matchAll(
+          /<loc>([^<]+)<\/loc><lastmod>([^<]+)<\/lastmod>/g,
+        ),
+      ].map((m) => [m[1], m[2]])
+    : [],
+);
+
+function lastModified(abs, url) {
+  const fallback =
+    previousLastmod.get(url) ?? new Date().toISOString().slice(0, 10);
   try {
     const out = execFileSync("git", ["log", "-1", "--format=%cs", "--", abs], {
       encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-    return out || new Date().toISOString().slice(0, 10);
+    return out || fallback;
   } catch {
-    return new Date().toISOString().slice(0, 10);
+    return fallback;
   }
 }
 
@@ -242,7 +268,7 @@ const sitemap = [
         : p.rel.startsWith("docs/getting-started")
           ? "0.9"
           : "0.7";
-    return `  <url><loc>${p.url}</loc><lastmod>${lastModified(p.abs)}</lastmod><priority>${priority}</priority></url>`;
+    return `  <url><loc>${p.url}</loc><lastmod>${lastModified(p.abs, p.url)}</lastmod><priority>${priority}</priority></url>`;
   }),
   `</urlset>`,
   ``,
@@ -252,10 +278,15 @@ writeFileSync(join(ROOT, "sitemap.xml"), sitemap);
 writeFileSync(
   join(ROOT, "robots.txt"),
   [
+    "# AI agents and LLM crawlers are welcome. Plain-Markdown docs:",
+    `#   ${BASE}/llms.txt       (index)`,
+    `#   ${BASE}/llms-full.txt  (every page in one file)`,
+    "",
     "User-agent: *",
     "Allow: /",
     "Disallow: /error/",
     "",
+    ...AI_CRAWLERS.flatMap((bot) => [`User-agent: ${bot}`, "Allow: /", ""]),
     `Sitemap: ${BASE}/sitemap.xml`,
     "",
   ].join("\n"),

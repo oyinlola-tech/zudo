@@ -208,6 +208,7 @@
               ['Architecture', '/docs/architecture'],
               ['Concepts', '/docs/concepts'],
               ['Package rules', '/docs/rules'],
+              ['For AI agents (llms.txt)', '/llms.txt'],
             ]) +
             col('Packages', 'c-blue', [
               ['@zudojs/core', '/docs/packages-core'],
@@ -432,6 +433,40 @@
     });
   }
 
+  /* ---------- markdown copy of docs pages (for pasting into AI tools) ---------- */
+
+  function initMarkdownActions() {
+    var alt = document.querySelector('link[rel="alternate"][type="text/markdown"]');
+    var main = document.querySelector('main');
+    if (!alt || !main) return;
+    var href = alt.getAttribute('href');
+
+    var bar = document.createElement('div');
+    bar.className = 'md-actions';
+    bar.innerHTML =
+      '<button type="button" class="md-btn">' + COPY_ICON + '<span>Copy page as Markdown</span></button>' +
+      '<a class="md-btn" href="' + href + '" target="_blank" rel="noopener">View as Markdown</a>';
+    main.insertBefore(bar, main.firstChild);
+
+    var btn = bar.querySelector('button');
+    var label = btn.querySelector('span');
+    function show(text, ok) {
+      label.textContent = text;
+      btn.classList.toggle('is-done', ok);
+      setTimeout(function () { label.textContent = 'Copy page as Markdown'; btn.classList.remove('is-done'); }, 1800);
+    }
+    btn.addEventListener('click', function () {
+      var text = fetch(href).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.text();
+      });
+      var write = window.ClipboardItem && navigator.clipboard && navigator.clipboard.write
+        ? navigator.clipboard.write([new ClipboardItem({ 'text/plain': text.then(function (t) { return new Blob([t], { type: 'text/plain' }); }) })])
+        : text.then(function (t) { return navigator.clipboard.writeText(t); });
+      write.then(function () { show('Copied', true); }, function () { show('Copy failed: open View as Markdown', false); });
+    });
+  }
+
   /* ---------- vercel analytics + speed insights ---------- */
 
   /*
@@ -465,6 +500,7 @@
     renderFooter();
     renderSearch();
     initCopyButtons();
+    initMarkdownActions();
     injectVercelInsights();
     var main = document.querySelector('main');
     if (main && !main.id) main.id = 'main';
