@@ -6,7 +6,7 @@
  */
 
 import type { TypeTransformer } from "../serializerTypes/index.js";
-import { SerializationTags } from "@zudojs/constants";
+import { SerializationLimits, SerializationTags } from "@zudojs/constants";
 import { InvalidSerializedDataError, SerializeError } from "@zudojs/errors";
 
 const BIGINT_TYPE = "BigInt" as const;
@@ -14,10 +14,10 @@ const BIGINT_TYPE = "BigInt" as const;
 /**
  * Most decimal digits a BigInt may carry across the wire. `BigInt(raw)` is
  * super-linear in the digit count, so one 10 MB `{"$type":"BigInt"}` payload
- * used to stall a consumer for seconds. Matches `@zudojs/schema`'s coercion
- * cap.
+ * used to stall a consumer for seconds. Shared with `@zudojs/schema`'s
+ * coercion cap through `SerializationLimits.MAX_BIGINT_DIGITS`.
  */
-const MAX_BIGINT_DIGITS = 4096;
+const MAX_BIGINT_DIGITS = SerializationLimits.MAX_BIGINT_DIGITS;
 
 /** Plain decimal integer, bounded, as `bigint.toString()` writes it. */
 const BIGINT_PATTERN = new RegExp(`^-?\\d{1,${MAX_BIGINT_DIGITS}}$`);

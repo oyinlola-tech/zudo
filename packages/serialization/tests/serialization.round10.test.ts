@@ -6,6 +6,7 @@ import {
   SerializationPayloadTooLargeError,
   TransformerError,
 } from "@zudojs/errors";
+import { SerializationLimits } from "@zudojs/constants";
 import {
   createSerializer,
   ESCAPED_OBJECT_TAG,
@@ -106,5 +107,18 @@ describe("data/VAL-01 via serialize", () => {
   it("sparse arrays serialize with preserveTypes", () => {
     // eslint-disable-next-line no-sparse-arrays
     expect(typed.serialize({ list: [1, , 3] })).toBe('{"list":[1,null,3]}');
+  });
+});
+
+describe("SER-03 (phase 2: shared SerializationLimits.MAX_BIGINT_DIGITS)", () => {
+  const max = SerializationLimits.MAX_BIGINT_DIGITS;
+
+  it("round-trips exactly the shared bound and rejects one digit more", () => {
+    const edge = -BigInt("9".repeat(max));
+    expect(typed.deserialize(typed.serialize(edge))).toBe(edge);
+    const over = `{"$type":"BigInt","$value":"${"9".repeat(max + 1)}"}`;
+    expect(() => typed.deserialize(over, { strict: true })).toThrow(
+      InvalidSerializedDataError,
+    );
   });
 });
