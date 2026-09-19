@@ -16,13 +16,14 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../site/", import.meta.url));
-const BASE = (process.env.SITE_URL || "https://zudojs.vercel.app").replace(
+const BASE = (process.env.SITE_URL || "https://zudojs.oyinlola.site").replace(
   /\/+$/,
   "",
 );
 const VERIFICATION = process.env.GOOGLE_SITE_VERIFICATION || "";
 const OG_IMAGE = `${BASE}/assets/og-image.png`;
-const OLD_ORIGIN = /https?:\/\/(?:www\.)?zudo\.dev((?:\/[A-Za-z0-9._\/-]*)?)/g;
+const OLD_ORIGIN =
+  /https?:\/\/(?:(?:www\.)?zudo\.dev|zudojs\.vercel\.app)((?:\/[A-Za-z0-9._\/-]*)?)/g;
 
 const HOME_TITLE = "ZudoJS — Modular TypeScript Framework for Node.js";
 const HOME_DESCRIPTION =
@@ -43,7 +44,8 @@ function htmlFiles(dir) {
     const abs = join(dir, entry.name);
     if (entry.isDirectory())
       return entry.name === "assets" ? [] : htmlFiles(abs);
-    return entry.name.endsWith(".html") ? [abs] : [];
+    const isVerification = /^google[0-9a-f]+\.html$/.test(entry.name);
+    return entry.name.endsWith(".html") && !isVerification ? [abs] : [];
   });
 }
 
