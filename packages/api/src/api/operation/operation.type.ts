@@ -1,5 +1,7 @@
 import type { APIHandler } from "../handler/handler.type.js";
 
+import { assertAPISchema } from "../schema/index.js";
+
 import {
   DEFAULT_OPERATION_TIMEOUT,
   MAX_OPERATION_NAME_LENGTH,
@@ -37,20 +39,22 @@ export interface APIOperation<TInput = unknown, TOutput = unknown> {
   readonly name: string;
 
   /**
-   * Input schema. When this is a Standard Schema
-   * (https://standardschema.dev), the executor validates input against it
-   * before invoking the handler; other values are documentation-only.
+   * Input schema: a Standard Schema (https://standardschema.dev) or a
+   * `safeParse` schema such as `@zudojs/schema`. The executor validates
+   * input against it before invoking the handler. Any other non-`undefined`
+   * value is rejected by {@link defineOperation} and the registry, and
+   * fails closed in the executor.
    */
   readonly input?: unknown;
 
   /**
-   * Output schema. When this is a Standard Schema
-   * (https://standardschema.dev), the executor validates the handler's
-   * return value against it and returns the validated (possibly
-   * transformed) value as the result data; a handler returning the wrong
+   * Output schema: a Standard Schema or a `safeParse` schema such as
+   * `@zudojs/schema`. The executor validates the handler's return value
+   * against it and returns the validated (possibly transformed or
+   * stripped) value as the result data; a handler returning the wrong
    * shape fails with an `APIInternalError` (`expose: false`) rather than
-   * leaking through to the transport. Other values are
-   * documentation-only.
+   * leaking through to the transport. Any other non-`undefined` value is
+   * rejected, exactly like {@link APIOperation.input}.
    */
   readonly output?: unknown;
 
@@ -169,13 +173,16 @@ export function resolveOperationTimeout(source: {
  * `APIOperationRegistry.register`, since `APIOperation` is a bare
  * interface that callers can satisfy without `defineOperation`.
  *
- * @throws {TypeError} if `name` or `handler` has the wrong type.
+ * @throws {TypeError} if `name` or `handler` has the wrong type, or if
+ * `input` / `output` is set but is not a recognised schema.
  * @throws {RangeError} if `name` is empty, over-long, or contains
  * characters outside `[A-Za-z0-9._:/-]`.
  */
 export function assertValidOperationShape(operation: {
   readonly name?: unknown;
   readonly handler?: unknown;
+  readonly input?: unknown;
+  readonly output?: unknown;
 }): void {
   const { name, handler } = operation;
 
@@ -202,6 +209,8 @@ export function assertValidOperationShape(operation: {
       `Operation "${name}" must have a handler function, received ${typeof handler}.`,
     );
   }
+  assertAPISchema(operation.input, "input", name);
+  assertAPISchema(operation.output, "output", name);
 }
 
 /**
@@ -227,7 +236,8 @@ export function freezeOperationMetadata(
  * unusable timeout fails here, at startup, rather than on the first
  * request that reaches the operation.
  *
- * @throws {TypeError} if `name` or `handler` has the wrong type.
+ * @throws {TypeError} if `name` or `handler` has the wrong type, or if
+ * `input` / `output` is set but is not a recognised schema.
  * @throws {RangeError} if `name` or a supplied `timeout` is out of range.
  */
 export function defineOperation<TInput = unknown, TOutput = unknown>(

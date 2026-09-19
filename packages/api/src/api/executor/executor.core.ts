@@ -23,6 +23,10 @@ import {
   isAPIError,
 } from "../errors/index.js";
 
+import type { APISchemaIssue } from "../schema/index.js";
+
+import { validateWithSchema } from "../schema/index.js";
+
 import {
   MAX_INTERCEPTORS,
   MAX_VALIDATION_ISSUES,
@@ -89,55 +93,6 @@ function describeValueType(value: unknown): string {
   return typeof value;
 }
 
-/**
- * Minimal Standard Schema (https://standardschema.dev) shape.
- *
- * Zod, Valibot, ArkType, and other libraries implement this interface,
- * so operation schemas from any of them validate without the api
- * package depending on a specific validation library.
- */
-interface StandardSchemaLike {
-  readonly "~standard": {
-    readonly version: number;
-    readonly vendor: string;
-    validate(
-      value: unknown,
-    ): StandardSchemaResult | Promise<StandardSchemaResult>;
-  };
-}
-
-type StandardSchemaPathSegment = PropertyKey | { readonly key: PropertyKey };
-
-interface StandardSchemaIssue {
-  readonly message: string;
-  readonly path?: ReadonlyArray<StandardSchemaPathSegment>;
-}
-
-type StandardSchemaResult =
-  | { readonly value: unknown; readonly issues?: undefined }
-  | { readonly issues: ReadonlyArray<StandardSchemaIssue> };
-
-function isStandardSchema(value: unknown): value is StandardSchemaLike {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as Record<string, { validate?: unknown }>)["~standard"]
-      ?.validate === "function"
-  );
-}
-
-/**
- * A schema result counts as a failure only when it carries at least one
- * issue. Some adapters always populate `issues` and return an empty array
- * on success; treating that as a failure produces a 422 with an empty
- * issue list and no way to learn what was wrong.
- */
-function hasIssues(
-  result: StandardSchemaResult,
-): result is { readonly issues: ReadonlyArray<StandardSchemaIssue> } {
-  return Array.isArray(result.issues) && result.issues.length > 0;
-}
-
 type MutableExecutionContext<TInput, TOutput> = Omit<
   APIExecutionContext<TInput, TOutput>,
   "result"
@@ -181,8 +136,10 @@ export interface APIExecutorOptions {
  * Executes an API operation through its interceptor pipeline.
  *
  * Enforces the operation timeout, honors the context AbortSignal, and
- * validates input and output when the operation's `input` / `output` is a
- * Standard Schema.
+ * validates input and output against the operation's `input` / `output`
+ * schema (a Standard Schema or a `safeParse` schema such as
+ * `@zudojs/schema`). A declared schema of any other kind fails closed
+ * with an `APIInternalError`; it is never skipped.
  */
 export class APIExecutor {
   private readonly interceptors: readonly APIInterceptor[];
@@ -237,10 +194,10 @@ export class APIExecutor {
     }
 
     let effectiveInput = input;
-    if (isStandardSchema(operation.input)) {
+    if (operation.input !== undefined) {
       try {
-        const validation = await operation.input["~standard"].validate(input);
-        if (hasIssues(validation)) {
+        const validation = await validateWithSchema(operation.input, input);
+        if (!validation.ok) {
           return apiFailure(
             new APIValidationError(
               `Invalid input for operation "${operation.name}".`,
@@ -275,8 +232,7 @@ export class APIExecutor {
 
   /**
    * Invokes the operation handler under its timeout and abort signal, and
-   * validates the handler's output when `operation.output` is a Standard
-   * Schema.
+   * validates the handler's output against `operation.output`.
    */
   private async invokeHandler<TInput, TOutput>(
     operation: APIOperation<TInput, TOutput>,
@@ -317,18 +273,18 @@ export class APIExecutor {
     operation: APIOperation<TInput, TOutput>,
     output: TOutput,
   ): Promise<APIResult<TOutput>> {
-    if (!isStandardSchema(operation.output)) {
+    if (operation.output === undefined) {
       return apiSuccess(output);
     }
 
-    let validation: StandardSchemaResult;
+    let validation: Awaited<ReturnType<typeof validateWithSchema>>;
     try {
-      validation = await operation.output["~standard"].validate(output);
+      validation = await validateWithSchema(operation.output, output);
     } catch (error) {
       return apiFailure(normalizeAPIError(error, operation.name));
     }
 
-    if (hasIssues(validation)) {
+    if (!validation.ok) {
       const paths = validation.issues
         .slice(0, this.maxValidationIssues)
         .map(formatIssuePath)
@@ -348,7 +304,7 @@ export class APIExecutor {
    * client-facing `APIValidationError`.
    */
   private clientIssues(
-    issues: ReadonlyArray<StandardSchemaIssue>,
+    issues: ReadonlyArray<APISchemaIssue>,
   ): readonly string[] {
     const limit = this.maxValidationIssues;
     const shown = issues.slice(0, limit).map((issue) =>
@@ -421,7 +377,7 @@ function truncate(value: string, max: number): string {
  * Renders a Standard Schema issue path as a dotted string. Path segments
  * are field names, never submitted values, so they are safe to expose.
  */
-function formatIssuePath(issue: StandardSchemaIssue): string {
+function formatIssuePath(issue: APISchemaIssue): string {
   const path = issue.path;
   if (path === undefined || path.length === 0) {
     return "(root)";

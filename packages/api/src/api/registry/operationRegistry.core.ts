@@ -38,7 +38,7 @@ export class APIOperationRegistry {
    *
    * @throws {APIDuplicateOperationError} if an operation with the same name is already registered.
    * @throws {APIError} if the registry is frozen.
-   * @throws {TypeError | RangeError} if the operation's name or handler is invalid.
+   * @throws {TypeError | RangeError} if the operation's name, handler, or input/output schema is invalid.
    */
   register(operation: AnyAPIOperation): void {
     if (this.frozen) {

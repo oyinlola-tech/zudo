@@ -17,7 +17,7 @@
  *
  * const getUser = defineOperation({
  *   name: "users.get",
- *   input: GetUserSchema, // any Standard Schema (Zod, Valibot, ArkType, …)
+ *   input: GetUserSchema, // @zudojs/schema, or any Standard Schema (Zod, Valibot, …)
  *   output: UserSchema,
  *   handler: async (input, context) => userService.findById(input.id),
  * });
@@ -113,6 +113,11 @@ export {
   defineOperation,
   resolveOperationTimeout,
 } from "./api/operation/operation.type.js";
+
+// Schema recognition
+export type { APISchemaIssue, APISchemaResult } from "./api/schema/index.js";
+
+export { isAPISchema } from "./api/schema/index.js";
 
 // Registry
 export { APIOperationRegistry } from "./api/registry/index.js";

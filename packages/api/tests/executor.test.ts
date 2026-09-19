@@ -609,21 +609,18 @@ describe("APIExecutor output validation", () => {
     }
   });
 
-  it("leaves non-schema output values as documentation only", async () => {
+  it("fails closed when a hand-rolled operation's output is not a recognised schema", async () => {
     const executor = new APIExecutor();
-    const operation = defineOperation({
+    const operation = {
       name: "users.get",
       output: { parse: () => ({}) },
       handler: async () => ({ id: "1" }),
-    });
+    };
     const context = createAPIContext("req-1", {});
 
     const result = await executor.execute(operation, {}, context);
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.data).toEqual({ id: "1" });
-    }
+    expect(result.ok).toBe(false);
   });
 });
 

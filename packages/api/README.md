@@ -84,7 +84,7 @@ import {
 // 1. Define the operation. The handler is positional: (input, context).
 const getUser = defineOperation<{ id: string }, { id: string; name: string }>({
   name: "users.get",
-  input: GetUserSchema, // any Standard Schema (Zod, Valibot, ArkType, …)
+  input: GetUserSchema, // @zudojs/schema, or any Standard Schema (Zod, Valibot, …)
   output: UserSchema, // validated too — see "Output validation"
   timeout: 5_000,
   metadata: { tags: ["Users"] },
@@ -122,7 +122,25 @@ Results are frozen `{ ok: true, data }` / `{ ok: false, error }` objects — `ex
 
 ## Input validation
 
-When `operation.input` is a Standard Schema, the executor validates the input before the handler runs and passes the schema's *transformed* value to the handler. Failures return an `APIValidationError` (422).
+The executor accepts two kinds of schema for `input` and `output`, recognised structurally so the package depends on no validation library:
+
+- a `@zudojs/schema` schema, or any other schema with a `safeParse` method returning `{ success, data }` / `{ success: false, issues }` (Zod-style `error.issues` also works);
+- a [Standard Schema](https://standardschema.dev) (`"~standard".validate`): Zod, Valibot, ArkType, ….
+
+Anything else fails closed. `defineOperation` and `APIOperationRegistry.register` throw a `TypeError` when `input` or `output` is set to a value that is neither, and the executor answers a hand-rolled operation carrying one with an `APIInternalError` (500) without running the handler. A schema is never silently skipped. `isAPISchema(value)` reports whether a value would be accepted.
+
+```typescript
+import { schema } from "@zudojs/schema";
+
+const charge = defineOperation({
+  name: "payments.charge",
+  input: schema.object({ id: schema.string().uuid(), amount: schema.number().min(1) }),
+  output: schema.object({ ok: schema.boolean() }), // strips unknown keys
+  handler: async (input) => ({ ok: true }),
+});
+```
+
+The executor validates the input before the handler runs and passes the schema's *transformed* value to the handler. Failures return an `APIValidationError` (422).
 
 Schema issue messages routinely interpolate the value that failed, so by default the executor does **not** copy them into the client-facing error: each issue becomes `"<path>: invalid"` (e.g. `"user.email: invalid"`), naming where validation failed without echoing what was submitted. The list is capped at `MAX_VALIDATION_ISSUES` entries with a trailing `"… and N more issue(s) omitted."` marker.
 
@@ -134,7 +152,7 @@ new APIExecutor({ exposeValidationMessages: true, maxValidationIssues: 10 });
 
 ## Output validation
 
-When `operation.output` is a Standard Schema, the handler's return value is validated too, and the validated (possibly stripped or transformed) value becomes `result.data`. A mismatch is a server bug, so it fails with an `APIInternalError` (500, `expose: false`) naming only the failing paths.
+When `operation.output` is set, the handler's return value is validated too, and the validated (possibly stripped or transformed) value becomes `result.data`. A mismatch is a server bug, so it fails with an `APIInternalError` (500, `expose: false`) naming only the failing paths.
 
 ## Timeouts
 

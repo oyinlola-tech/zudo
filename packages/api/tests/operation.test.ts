@@ -36,8 +36,8 @@ describe("defineOperation", () => {
   });
 
   it("preserves the input and output schemas it will validate against", () => {
-    const inputSchema = { parse: () => ({}) };
-    const outputSchema = { parse: () => ({}) };
+    const inputSchema = { safeParse: () => ({ success: true, data: {} }) };
+    const outputSchema = { safeParse: () => ({ success: true, data: {} }) };
 
     const operation = defineOperation({
       name: "users.create",
