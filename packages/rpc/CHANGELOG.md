@@ -1,5 +1,23 @@
 # @zudojs/rpc
 
+## 1.2.0
+
+### Minor Changes
+
+- Round 10 fixes.
+
+  - **edge/RPC-01 (security):** `RPCServer.handle(request, { auth })` and `RPCDispatcher.dispatch(request, { auth })` accept trusted, transport-derived identity, exposed frozen as `context.auth`. Frame `metadata` is documented as caller-controlled; the README no longer teaches authenticating on `context.metadata.userId`.
+  - **edge/RPC-02:** `context.input` now carries the schema-parsed input (stripped, defaulted, coerced), so middleware can authorise on the value the handler receives. `context.request.payload` stays raw. README corrected.
+  - New exports: `RPCAuthContext`, `RPCContextOptions`; `createRPCContext` takes an optional third `options` argument. All additions are optional; existing calls are unchanged.
+
+### Patch Changes
+
+- Updated dependencies [`d2b01bf`, `d2b01bf`, `5d6b957`, `d2b01bf`]:
+  - @zudojs/constants@1.1.0
+  - @zudojs/errors@1.1.0
+  - @zudojs/schema@1.1.0
+  - @zudojs/types@1.1.0
+
 ## 1.1.0
 
 ### Minor Changes
