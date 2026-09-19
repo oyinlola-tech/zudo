@@ -1,60 +1,22 @@
 /**
  * Middleware-specific error classes.
  *
+ * `MiddlewareError`, `MiddlewareTimeoutError` and
+ * `MiddlewareNextCalledMultipleTimesError` are the classes owned by
+ * `@zudojs/errors`, re-exported here so `instanceof` checks against either
+ * import path match the same errors. The remaining classes are thin
+ * wrappers over the shared `MiddlewareError`.
+ *
  * @module middlewareErrors
  */
 
-import {
-  BaseError,
-  ErrorCode,
-  ErrorCategory,
-  ErrorSeverity,
+import { MiddlewareError } from "@zudojs/errors";
+
+export {
+  MiddlewareError,
+  MiddlewareTimeoutError,
+  MiddlewareNextCalledMultipleTimesError,
 } from "@zudojs/errors";
-
-/**
- * Error thrown when a middleware pipeline fails.
- */
-export class MiddlewareError extends BaseError {
-  constructor(
-    message: string,
-    options?: {
-      readonly middlewareName?: string;
-      readonly cause?: unknown;
-    },
-  ) {
-    super(message, {
-      code: ErrorCode.OPERATION_FAILED,
-      category: ErrorCategory.INTERNAL,
-      severity: ErrorSeverity.ERROR,
-      metadata: {
-        middlewareName: options?.middlewareName,
-      },
-      cause: options?.cause,
-    });
-  }
-}
-
-/**
- * Error thrown when a middleware exceeds its timeout.
- */
-export class MiddlewareTimeoutError extends MiddlewareError {
-  constructor(middlewareName: string, timeoutMs: number) {
-    super(`Middleware "${middlewareName}" timed out after ${timeoutMs}ms`, {
-      middlewareName,
-    });
-  }
-}
-
-/**
- * Error thrown when a middleware calls next() multiple times.
- */
-export class MiddlewareNextCalledMultipleTimesError extends MiddlewareError {
-  constructor(middlewareName: string) {
-    super(`Middleware "${middlewareName}" called next() multiple times`, {
-      middlewareName,
-    });
-  }
-}
 
 /**
  * Error thrown when a pipeline is configured with more middleware than allowed.
@@ -63,6 +25,7 @@ export class MiddlewareLimitExceededError extends MiddlewareError {
   constructor(count: number, maximum: number) {
     super(
       `Pipeline has ${count} middleware, exceeding the maximum of ${maximum}`,
+      { metadata: { count, maximum } },
     );
   }
 }
@@ -72,7 +35,9 @@ export class MiddlewareLimitExceededError extends MiddlewareError {
  */
 export class MiddlewareDepthExceededError extends MiddlewareError {
   constructor(maxDepth: number) {
-    super(`Middleware chain exceeded the maximum depth of ${maxDepth}`);
+    super(`Middleware chain exceeded the maximum depth of ${maxDepth}`, {
+      metadata: { maxDepth },
+    });
   }
 }
 
@@ -90,6 +55,7 @@ export class MiddlewareRateLimitError extends MiddlewareError {
   constructor(limit: number, windowMs: number, retryAfterMs: number) {
     super(`Rate limit exceeded: ${limit} requests per ${windowMs}ms`, {
       middlewareName: "rate-limit",
+      metadata: { middlewareName: "rate-limit" },
     });
     this.retryAfterMs = retryAfterMs;
     this.limit = limit;

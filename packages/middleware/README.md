@@ -34,7 +34,7 @@ interface RequestContext {
 const pipeline = createPipeline<RequestContext, string>(
   [
     timeoutMiddleware(5_000),
-    loggingMiddleware(),
+    loggingMiddleware((line) => console.info(line)),
     rateLimitMiddleware(100, 60_000),
   ],
   async (context) => `handled ${context.method} ${context.path}`,
@@ -139,8 +139,10 @@ const pipeline = createPipeline(list, handler, { signal: controller.signal });
 
 ## Built-in middleware
 
-- **`loggingMiddleware(logger?, options?)`** — logs start and completion.
-  Every interpolated field is escaped, so a path containing newlines cannot
+- **`loggingMiddleware(logger?, options?)`** — logs start and completion
+  to `logger`, a `(line: string) => void` sink such as
+  `(line) => log.info(line)` from `@zudojs/logger`. Without a sink it writes
+  nothing (it never falls back to the console). Every interpolated field is escaped, so a path containing newlines cannot
   forge log lines. Error messages are omitted unless you opt in with
   `includeErrorMessage`.
 - **`errorMiddleware(onError?, onReporterError?)`** — reports errors and
@@ -153,7 +155,9 @@ const pipeline = createPipeline(list, handler, { signal: controller.signal });
 - **`rateLimitMiddleware(maxRequests, windowMs, options?)`** — a true sliding
   window keyed on `context.key`, with key eviction and a configurable cap.
   Rejections throw `MiddlewareRateLimitError`, which carries `retryAfterMs`
-  for a `Retry-After` header.
+  for a `Retry-After` header. A rejected request also counts as recent
+  activity, so a throttled key is never the first one evicted when the key
+  cap is reached.
 
 ```typescript
 import { MiddlewareRateLimitError } from "@zudojs/middleware";
@@ -168,7 +172,8 @@ each process enforces its own limit.
 
 ## Timing
 
-`withTiming` wraps any middleware and reports slow executions. It is
+`withTiming` wraps any middleware and reports slow executions to
+`options.logger`. Without a logger nothing is reported. It is
 transparent — the return value and any error pass through unchanged.
 
 ```typescript
@@ -180,9 +185,11 @@ const timed = withTiming("db-lookup", lookup, {
 
 ## Errors
 
-All errors extend `MiddlewareError` (itself a `BaseError` from
-`@zudojs/errors`), so a single `instanceof` catches everything from this
-package:
+All errors extend `MiddlewareError`, which is the class owned by
+`@zudojs/errors` (re-exported here). `MiddlewareTimeoutError` and
+`MiddlewareNextCalledMultipleTimesError` are the `@zudojs/errors` classes
+too, so an `instanceof` check against either import path matches, and a
+single `instanceof MiddlewareError` catches everything from this package:
 
 `MiddlewareTimeoutError` · `MiddlewareNextCalledMultipleTimesError` ·
 `MiddlewareLimitExceededError` · `MiddlewareDepthExceededError` ·

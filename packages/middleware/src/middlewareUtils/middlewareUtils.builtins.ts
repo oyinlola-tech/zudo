@@ -54,6 +54,10 @@ export function sanitizeLogValue(
     : escaped;
 }
 
+function noopLog(): void {
+  return;
+}
+
 /** Options for {@link loggingMiddleware}. */
 export interface LoggingOptions {
   /**
@@ -72,12 +76,16 @@ export interface LoggingOptions {
  *
  * Logs request start, completion, and errors. Every interpolated field is
  * escaped, so a path containing newlines cannot forge log lines.
+ *
+ * Lines go to `logger`, typically a `@zudojs/logger` method such as
+ * `(line) => log.info(line)`. Without one the middleware writes nothing;
+ * it never falls back to the console.
  */
 export function loggingMiddleware<TResult = void>(
   logger?: (msg: string) => void,
   options?: LoggingOptions,
 ): NamedMiddleware<LoggingContext, TResult> {
-  const log = logger ?? ((msg: string) => console.log(msg));
+  const log = logger ?? noopLog;
   const maxFieldLength = options?.maxFieldLength ?? MAX_LOG_FIELD_LENGTH;
   const includeErrorMessage = options?.includeErrorMessage ?? false;
 
@@ -351,6 +359,7 @@ export function rateLimitMiddleware<
       const live = prune(hits.get(key) ?? [], now);
 
       if (live.length >= maxRequests) {
+        hits.delete(key);
         hits.set(key, live);
         const retryAfterMs = Math.max(1, live[0]! + windowMs - now);
         throw new MiddlewareRateLimitError(maxRequests, windowMs, retryAfterMs);

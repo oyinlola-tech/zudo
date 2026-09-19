@@ -114,7 +114,7 @@ export function resolveMiddleware<TContext, TResult>(
 export interface TimingOptions {
   /** Log only when the middleware takes at least this long. Default: 100ms. */
   readonly thresholdMs?: number;
-  /** Where to report slow middleware. Default: `console.warn`. */
+  /** Where to report slow middleware. Default: nothing is reported. */
   readonly logger?: (message: string) => void;
 }
 
@@ -131,11 +131,7 @@ export function withTiming<TContext, TResult = void>(
   options?: TimingOptions,
 ): NamedMiddleware<TContext, TResult> {
   const thresholdMs = options?.thresholdMs ?? 100;
-  const log =
-    options?.logger ??
-    ((message: string) => {
-      console.warn(message);
-    });
+  const log = options?.logger ?? ((): void => undefined);
 
   return {
     name,
