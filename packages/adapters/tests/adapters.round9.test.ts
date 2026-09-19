@@ -94,9 +94,8 @@ describe("ADAPTERS-R9-01", () => {
     }
 
     expect(caught).toBeInstanceOf(AggregateError);
-    expect((caught as AggregateError).errors.map((e) => (e as Error).message)).toEqual([
-      "stop failed",
-      "dispose failed",
-    ]);
+    expect(
+      (caught as AggregateError).errors.map((e) => (e as Error).message),
+    ).toEqual(["stop failed", "dispose failed"]);
   });
 });

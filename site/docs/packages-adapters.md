@@ -690,7 +690,7 @@ process.on("SIGTERM", async () => {
 
 ## IMPROVEMENTS & RECOMMENDATIONS
 
-#### 1. Add AdapterFactory Pattern
+### 1. Add AdapterFactory Pattern
 
 Create factory functions that encapsulate adapter creation with validation:
 
@@ -702,19 +702,19 @@ function createHTTPAdapter(config: HTTPAdapterConfig): HTTPAdapter {
 }
 ```
 
-#### 2. Add AdapterMiddleware Support
+### 2. Add AdapterMiddleware Support
 
 Allow wrapping adapter operations with middleware for logging, metrics, and retry logic.
 
-#### 3. Add AdapterHealthChecker
+### 3. Add AdapterHealthChecker
 
 A utility that periodically checks adapter health and emits events when status changes.
 
-#### 4. Add Adapter Connection Pool
+### 4. Add Adapter Connection Pool
 
 For adapters that maintain connections (HTTP, storage), add connection pooling with configurable limits.
 
-#### 5. Add Adapter Metrics Collection
+### 5. Add Adapter Metrics Collection
 
 Automatic metrics for adapter operations: request duration, error rates, connection counts.
 

@@ -91,7 +91,9 @@ export function createAuthorizationUrl(
   }
 
   const params = new URLSearchParams(url.search);
-  for (const [key, value] of Object.entries(resolved.preset.authorizeParams ?? {})) {
+  for (const [key, value] of Object.entries(
+    resolved.preset.authorizeParams ?? {},
+  )) {
     params.set(key, value);
   }
   for (const [key, value] of Object.entries(options.additionalParams ?? {})) {
@@ -101,7 +103,9 @@ export function createAuthorizationUrl(
       );
     }
     if (typeof value !== "string") {
-      throw new OAuthConfigurationError("additionalParams values must be strings.");
+      throw new OAuthConfigurationError(
+        "additionalParams values must be strings.",
+      );
     }
     params.set(key, value);
   }

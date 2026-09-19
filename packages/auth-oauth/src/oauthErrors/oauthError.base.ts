@@ -118,7 +118,10 @@ export class OAuthRedirectUriError extends OAuthError {
 export class OAuthStateMismatchError extends OAuthError {
   override readonly name: string = "OAuthStateMismatchError";
 
-  constructor(message = "OAuth state verification failed.", options?: OAuthErrorOptions) {
+  constructor(
+    message = "OAuth state verification failed.",
+    options?: OAuthErrorOptions,
+  ) {
     super(message, {
       code: OAuthErrorCode.STATE_MISMATCH,
       statusCode: 400,
@@ -177,15 +180,12 @@ export class OAuthResponseTooLargeError extends OAuthError {
   override readonly name: string = "OAuthResponseTooLargeError";
 
   constructor(limitBytes: number, options?: OAuthErrorOptions) {
-    super(
-      `OAuth provider response exceeded the ${limitBytes}-byte limit.`,
-      {
-        code: OAuthErrorCode.RESPONSE_TOO_LARGE,
-        statusCode: 502,
-        expose: true,
-        ...options,
-      },
-    );
+    super(`OAuth provider response exceeded the ${limitBytes}-byte limit.`, {
+      code: OAuthErrorCode.RESPONSE_TOO_LARGE,
+      statusCode: 502,
+      expose: true,
+      ...options,
+    });
   }
 }
 

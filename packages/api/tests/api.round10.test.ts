@@ -52,18 +52,29 @@ describe("edge/API-01", () => {
     });
     const executor = new APIExecutor();
 
-    const badResult = await executor.execute(bad, {}, createAPIContext("r", {}));
-    const leakyResult = await executor.execute(leaky, {}, createAPIContext("r", {}));
+    const badResult = await executor.execute(
+      bad,
+      {},
+      createAPIContext("r", {}),
+    );
+    const leakyResult = await executor.execute(
+      leaky,
+      {},
+      createAPIContext("r", {}),
+    );
 
     expect(badResult.ok).toBe(false);
     if (!badResult.ok) expect(badResult.error.statusCode).toBe(500);
     expect(leakyResult).toMatchObject({ ok: true, data: { ok: true } });
-    if (leakyResult.ok) expect(leakyResult.data).not.toHaveProperty("passwordHash");
+    if (leakyResult.ok)
+      expect(leakyResult.data).not.toHaveProperty("passwordHash");
   });
 
   it("recognises @zudojs/schema and Standard Schema, nothing else", () => {
     expect(isAPISchema(input)).toBe(true);
-    expect(isAPISchema({ "~standard": { validate: () => ({ value: 1 }) } })).toBe(true);
+    expect(
+      isAPISchema({ "~standard": { validate: () => ({ value: 1 }) } }),
+    ).toBe(true);
     expect(isAPISchema({ parse: () => ({}) })).toBe(false);
     expect(isAPISchema({ type: "object" })).toBe(false);
   });
@@ -74,10 +85,18 @@ describe("edge/API-01", () => {
       defineOperation({ name: "a.in", input: { type: "object" }, handler }),
     ).toThrow(TypeError);
     expect(() =>
-      defineOperation({ name: "a.out", output: { parse: () => ({}) }, handler }),
+      defineOperation({
+        name: "a.out",
+        output: { parse: () => ({}) },
+        handler,
+      }),
     ).toThrow(TypeError);
     expect(() =>
-      new APIOperationRegistry().register({ name: "a.reg", input: {}, handler }),
+      new APIOperationRegistry().register({
+        name: "a.reg",
+        input: {},
+        handler,
+      }),
     ).toThrow(TypeError);
   });
 
@@ -92,7 +111,11 @@ describe("edge/API-01", () => {
       },
     };
 
-    const result = await new APIExecutor().execute(op, {}, createAPIContext("r", {}));
+    const result = await new APIExecutor().execute(
+      op,
+      {},
+      createAPIContext("r", {}),
+    );
 
     expect(result.ok).toBe(false);
     expect(reached).toBe(false);
@@ -105,7 +128,11 @@ describe("edge/API-01", () => {
       handler: async () => ({}),
     });
 
-    const result = await new APIExecutor().execute(op, {}, createAPIContext("r", {}));
+    const result = await new APIExecutor().execute(
+      op,
+      {},
+      createAPIContext("r", {}),
+    );
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.statusCode).toBe(500);

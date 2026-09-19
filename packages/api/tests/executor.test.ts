@@ -35,7 +35,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Builds a minimal Standard Schema from a validate function. */
 const schema = (
-  validate: (value: unknown) =>
+  validate: (
+    value: unknown,
+  ) =>
     | { value: unknown; issues?: undefined }
     | { issues: ReadonlyArray<{ message: string; path?: readonly string[] }> },
 ) => ({
@@ -361,7 +363,9 @@ describe("APIExecutor", () => {
       createNoopInterceptor(),
     );
     expect(() => new APIExecutor(tooMany)).toThrow(RangeError);
-    expect(() => new APIExecutor({ interceptors: tooMany })).toThrow(RangeError);
+    expect(() => new APIExecutor({ interceptors: tooMany })).toThrow(
+      RangeError,
+    );
   });
 
   it("rejects an out-of-range maxValidationIssues", () => {
@@ -640,9 +644,9 @@ describe("APIExecutionContext", () => {
     const inner: APIInterceptor = {
       async intercept(_context, next) {
         const result = await next();
-        return (result.ok
-          ? { ok: true, data: "TRANSFORMED" }
-          : result) as APIResult<never>;
+        return (
+          result.ok ? { ok: true, data: "TRANSFORMED" } : result
+        ) as APIResult<never>;
       },
     };
 
@@ -697,7 +701,9 @@ describe("APIExecutionContext", () => {
   it("lets an interceptor replace the input the handler receives", async () => {
     const sanitizer: APIInterceptor = {
       async intercept(context, next) {
-        (context as unknown as APIExecutionContext<{ id: string }, string>).input = {
+        (
+          context as unknown as APIExecutionContext<{ id: string }, string>
+        ).input = {
           id: "sanitized",
         };
         return next();
@@ -735,7 +741,7 @@ describe("normalizeAPIError", () => {
     expect((wrapped.cause as Error).message).toBe("secret-db-detail");
   });
 
-  it("describes non-error throws without emitting \"undefined\"", () => {
+  it('describes non-error throws without emitting "undefined"', () => {
     for (const [thrown, description] of [
       ["boom", "string"],
       [null, "null"],

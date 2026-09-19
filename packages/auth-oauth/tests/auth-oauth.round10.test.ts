@@ -4,7 +4,10 @@
 
 import { describe, it, expect } from "vitest";
 
-import { assertSafeUrl, isBlockedFetchHost } from "../src/oauthSecurity/index.js";
+import {
+  assertSafeUrl,
+  isBlockedFetchHost,
+} from "../src/oauthSecurity/index.js";
 
 describe("security/SEC-06", () => {
   it.each([

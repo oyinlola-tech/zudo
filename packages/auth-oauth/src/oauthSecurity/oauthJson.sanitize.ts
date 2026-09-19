@@ -66,7 +66,11 @@ export function parseJsonObject(
   label: string,
 ): Record<string, unknown> {
   const sanitized = parseJsonValue(text, label);
-  if (sanitized === null || typeof sanitized !== "object" || Array.isArray(sanitized)) {
+  if (
+    sanitized === null ||
+    typeof sanitized !== "object" ||
+    Array.isArray(sanitized)
+  ) {
     throw new OAuthResponseError(`${label} did not return a JSON object.`);
   }
   return sanitized as Record<string, unknown>;

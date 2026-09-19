@@ -44,7 +44,10 @@ export interface OAuthProviderPreset {
 }
 
 /** Read a string field from a sanitized provider payload. */
-function str(payload: Record<string, unknown>, key: string): string | undefined {
+function str(
+  payload: Record<string, unknown>,
+  key: string,
+): string | undefined {
   const value = payload[key];
   if (typeof value === "string" && value.trim().length > 0) return value;
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
@@ -52,7 +55,10 @@ function str(payload: Record<string, unknown>, key: string): string | undefined 
 }
 
 /** Read a boolean field from a sanitized provider payload. */
-function bool(payload: Record<string, unknown>, key: string): boolean | undefined {
+function bool(
+  payload: Record<string, unknown>,
+  key: string,
+): boolean | undefined {
   const value = payload[key];
   return typeof value === "boolean" ? value : undefined;
 }
@@ -107,10 +113,17 @@ export const PROVIDER_PRESETS: Readonly<
     },
   },
   microsoft: {
-    authorizeUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    authorizeUrl:
+      "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
     tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
     userInfoUrl: "https://graph.microsoft.com/v1.0/me",
-    defaultScopes: ["openid", "email", "profile", "offline_access", "User.Read"],
+    defaultScopes: [
+      "openid",
+      "email",
+      "profile",
+      "offline_access",
+      "User.Read",
+    ],
     clientAuth: "body",
     supportsRefresh: true,
   },
@@ -213,8 +226,7 @@ export function normalizeUserInfo(
       if (id === undefined) return undefined;
       const email = str(payload, "email");
       const verified = bool(payload, "verified");
-      const name =
-        str(payload, "global_name") ?? str(payload, "username");
+      const name = str(payload, "global_name") ?? str(payload, "username");
       const avatarHash = str(payload, "avatar");
       const avatarUrl =
         avatarHash === undefined
@@ -238,8 +250,7 @@ export function normalizeUserInfo(
       const id = str(payload, "sub") ?? str(payload, "id");
       if (id === undefined) return undefined;
       const name = str(payload, "name") ?? str(payload, "displayName");
-      const avatarUrl =
-        str(payload, "picture") ?? str(payload, "avatar_url");
+      const avatarUrl = str(payload, "picture") ?? str(payload, "avatar_url");
       return profile(
         id,
         {

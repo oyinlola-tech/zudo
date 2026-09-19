@@ -34,7 +34,8 @@ export function generateState(): string {
  * @returns `true` only if both are non-empty strings with identical bytes.
  */
 export function verifyState(expected: string, received: string): boolean {
-  if (typeof expected !== "string" || typeof received !== "string") return false;
+  if (typeof expected !== "string" || typeof received !== "string")
+    return false;
   if (expected.length === 0 || received.length === 0) return false;
   const a = Buffer.from(expected, "utf8");
   const b = Buffer.from(received, "utf8");

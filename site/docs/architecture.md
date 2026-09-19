@@ -75,19 +75,19 @@ Two details in that diagram surprise people, so they are worth saying out loud.
 
 ## Four Principles
 
-#### 1. Dependencies point down, never up
+### 1. Dependencies point down, never up
 
 No package imports a package above it, and no two packages import each other. The dependency graph has no cycles, which is why every package can be built and tested on its own.
 
-#### 2. Everything has an explicit lifecycle
+### 2. Everything has an explicit lifecycle
 
 A module is started and stopped through named hooks, in dependency order, and stopped in reverse. Nothing starts itself as a side effect of being imported.
 
-#### 3. Shared objects come from a container
+### 3. Shared objects come from a container
 
 Code asks the container for what it needs instead of constructing it. In a test you register a fake under the same name and the code under test never notices.
 
-#### 4. The outside world is reached through adapters
+### 4. The outside world is reached through adapters
 
 Framework code talks to an interface, and an adapter translates that interface into a real platform call. See [Adapters](https://zudojs.oyinlola.site/docs/architecture-adapters.md) for what is a contract and what is a working implementation today.
 
@@ -206,13 +206,13 @@ Call `await adapter.stop()` to shut the server down. In a real application you w
 
 ## Where To Go Next
 
-[#### Module System →
+[### Module System →
 
-What a module is, how `defineModule` works, and which hooks run when.](https://zudojs.oyinlola.site/docs/architecture-module-system.md) [#### Runtime →
+What a module is, how `defineModule` works, and which hooks run when.](https://zudojs.oyinlola.site/docs/architecture-module-system.md) [### Runtime →
 
-The state machine behind startup and shutdown, plus signal handling.](https://zudojs.oyinlola.site/docs/architecture-runtime.md) [#### Adapters →
+The state machine behind startup and shutdown, plus signal handling.](https://zudojs.oyinlola.site/docs/architecture-runtime.md) [### Adapters →
 
-The boundary to the outside world, and an honest list of what exists today.](https://zudojs.oyinlola.site/docs/architecture-adapters.md) [#### Dependency Direction →
+The boundary to the outside world, and an honest list of what exists today.](https://zudojs.oyinlola.site/docs/architecture-adapters.md) [### Dependency Direction →
 
 The full 39-package graph and a script that verifies it.](https://zudojs.oyinlola.site/docs/architecture-dependency-direction.md)
 

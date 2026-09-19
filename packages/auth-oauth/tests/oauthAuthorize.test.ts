@@ -33,7 +33,13 @@ describe("createAuthorizationUrl", () => {
   });
 
   it("never emits a plain code challenge and never omits PKCE", () => {
-    for (const provider of ["google", "github", "microsoft", "apple", "discord"] as const) {
+    for (const provider of [
+      "google",
+      "github",
+      "microsoft",
+      "apple",
+      "discord",
+    ] as const) {
       const url = new URL(
         createAuthorizationUrl(makeConfig({ provider }), {
           state,
@@ -120,7 +126,13 @@ describe("createAuthorizationUrl", () => {
   });
 
   it("refuses to let additionalParams override a security parameter", () => {
-    for (const key of ["state", "code_challenge", "code_challenge_method", "redirect_uri", "response_type"]) {
+    for (const key of [
+      "state",
+      "code_challenge",
+      "code_challenge_method",
+      "redirect_uri",
+      "response_type",
+    ]) {
       expect(() =>
         createAuthorizationUrl(makeConfig(), {
           state,

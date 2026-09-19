@@ -134,13 +134,16 @@ import { schema } from "@zudojs/schema";
 
 const charge = defineOperation({
   name: "payments.charge",
-  input: schema.object({ id: schema.string().uuid(), amount: schema.number().min(1) }),
+  input: schema.object({
+    id: schema.string().uuid(),
+    amount: schema.number().min(1),
+  }),
   output: schema.object({ ok: schema.boolean() }), // strips unknown keys
   handler: async (input) => ({ ok: true }),
 });
 ```
 
-The executor validates the input before the handler runs and passes the schema's *transformed* value to the handler. Failures return an `APIValidationError` (422).
+The executor validates the input before the handler runs and passes the schema's _transformed_ value to the handler. Failures return an `APIValidationError` (422).
 
 Schema issue messages routinely interpolate the value that failed, so by default the executor does **not** copy them into the client-facing error: each issue becomes `"<path>: invalid"` (e.g. `"user.email: invalid"`), naming where validation failed without echoing what was submitted. The list is capped at `MAX_VALIDATION_ISSUES` entries with a trailing `"… and N more issue(s) omitted."` marker.
 

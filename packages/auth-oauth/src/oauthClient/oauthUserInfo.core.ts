@@ -13,10 +13,7 @@ import {
   resolveUserInfoUrl,
   type ResolvedOAuthConfig,
 } from "./oauthConfig.resolve.js";
-import {
-  requestProviderJson,
-  requestProviderValue,
-} from "./oauthHttp.core.js";
+import { requestProviderJson, requestProviderValue } from "./oauthHttp.core.js";
 
 /**
  * GitHub's `/user` omits `email` whenever the address is private — which is

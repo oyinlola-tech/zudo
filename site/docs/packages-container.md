@@ -22,14 +22,14 @@ You describe each dependency once, say how long it should live, and ask for it w
 
 > **In plain words:** a container is a box of recipes. You register a recipe under a name, and later you ask for that name and get the finished dish.
 
-#### When you need it
+### When you need it
 
 - Several services depend on each other and you want one place that builds them.
 - You want one shared instance of something (a DB pool) and fresh instances of other things.
 - You need per-request objects that are cleaned up when the request ends.
 - You want to swap a real service for a fake one in tests without editing the code under test.
 
-#### When you don't
+### When you don't
 
 - A script or tiny app with two or three objects. Plain `new` is clearer.
 - Your dependencies are all created asynchronously and you want the container to await them. It is synchronous by design.
@@ -202,15 +202,15 @@ All four shortcuts call `register(token, provider, options)` underneath. You can
 
 Every registration has a *scope*, which is how long an instance lives before the container makes a new one. You set it with the `scope` option using the `ContainerScope` enum.
 
-#### SINGLETON
+### SINGLETON
 
 One instance for the whole container. Built on first ask, then reused everywhere, including inside scopes.
 
-#### SCOPED
+### SCOPED
 
 One instance per scope. Each `createScope()` gets its own copy. Asking at the root throws.
 
-#### TRANSIENT
+### TRANSIENT
 
 A brand-new instance every single time you resolve. Never cached. This is the default.
 

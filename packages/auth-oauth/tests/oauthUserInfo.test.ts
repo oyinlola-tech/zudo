@@ -6,15 +6,27 @@ import {
   OAuthConfigurationError,
   OAuthResponseError,
 } from "../src/index.js";
-import { headerOf, makeConfig, stubFetch, stubFetchSequence } from "./helpers.js";
+import {
+  headerOf,
+  makeConfig,
+  stubFetch,
+  stubFetchSequence,
+} from "./helpers.js";
 
 describe("fetchUserInfo", () => {
   it("sends the access token as a bearer header, never in the URL", async () => {
     const { fetch, calls } = stubFetch(
-      JSON.stringify({ sub: "g-1", email: "a@example.com", name: "A", picture: "https://img/1" }),
+      JSON.stringify({
+        sub: "g-1",
+        email: "a@example.com",
+        name: "A",
+        picture: "https://img/1",
+      }),
     );
     const info = await fetchUserInfo(makeConfig({ fetch }), "at-123");
-    expect(calls[0]?.url).toBe("https://openidconnect.googleapis.com/v1/userinfo");
+    expect(calls[0]?.url).toBe(
+      "https://openidconnect.googleapis.com/v1/userinfo",
+    );
     expect(calls[0]?.url).not.toContain("at-123");
     expect(headerOf(calls[0], "Authorization")).toBe("Bearer at-123");
     expect(info).toMatchObject({
@@ -34,18 +46,36 @@ describe("fetchUserInfo", () => {
         name: "G",
         picture: "p",
       }),
-    ).toMatchObject({ providerId: "1", email: "g@example.com", emailVerified: true });
+    ).toMatchObject({
+      providerId: "1",
+      email: "g@example.com",
+      emailVerified: true,
+    });
 
     expect(
-      normalizeUserInfo("github", { id: 42, login: "octocat", avatar_url: "a", email: null }),
+      normalizeUserInfo("github", {
+        id: 42,
+        login: "octocat",
+        avatar_url: "a",
+        email: null,
+      }),
     ).toMatchObject({ providerId: "42", name: "octocat", avatarUrl: "a" });
 
     expect(
-      normalizeUserInfo("microsoft", { id: "m1", userPrincipalName: "m@x.com", displayName: "M" }),
+      normalizeUserInfo("microsoft", {
+        id: "m1",
+        userPrincipalName: "m@x.com",
+        displayName: "M",
+      }),
     ).toMatchObject({ providerId: "m1", email: "m@x.com", name: "M" });
 
     expect(
-      normalizeUserInfo("discord", { id: "d1", username: "u", global_name: "G", avatar: "hash" }),
+      normalizeUserInfo("discord", {
+        id: "d1",
+        username: "u",
+        global_name: "G",
+        avatar: "hash",
+      }),
     ).toMatchObject({
       providerId: "d1",
       name: "G",
@@ -81,7 +111,9 @@ describe("fetchUserInfo", () => {
   });
 
   it("does not query /user/emails without the scope, and reports no email", async () => {
-    const { fetch, calls } = stubFetch(JSON.stringify({ id: 42, login: "octocat" }));
+    const { fetch, calls } = stubFetch(
+      JSON.stringify({ id: 42, login: "octocat" }),
+    );
     const info = await fetchUserInfo(
       makeConfig({ provider: "github", fetch, scopes: ["read:user"] }),
       "gho_token",
@@ -93,9 +125,16 @@ describe("fetchUserInfo", () => {
   it("keeps no email when /user/emails has no verified primary address", async () => {
     const { fetch } = stubFetchSequence([
       { body: JSON.stringify({ id: 42, login: "octocat" }) },
-      { body: JSON.stringify([{ email: "u@example.com", primary: true, verified: false }]) },
+      {
+        body: JSON.stringify([
+          { email: "u@example.com", primary: true, verified: false },
+        ]),
+      },
     ]);
-    const info = await fetchUserInfo(makeConfig({ provider: "github", fetch }), "gho");
+    const info = await fetchUserInfo(
+      makeConfig({ provider: "github", fetch }),
+      "gho",
+    );
     expect(info.email).toBeUndefined();
   });
 
@@ -125,13 +164,17 @@ describe("fetchUserInfo", () => {
   it("strips prototype-polluting keys from the profile payload", async () => {
     const { fetch } = stubFetch('{"sub":"1","__proto__":{"polluted":"yes"}}');
     const info = await fetchUserInfo(makeConfig({ fetch }), "at");
-    expect(Object.prototype.hasOwnProperty.call(info.raw ?? {}, "__proto__")).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(info.raw ?? {}, "__proto__"),
+    ).toBe(false);
     const probe: Record<string, unknown> = {};
     expect(probe["polluted"]).toBeUndefined();
   });
 
   it("applies the size cap to the user-info endpoint too", async () => {
-    const { fetch } = stubFetch(JSON.stringify({ sub: "1", bio: "x".repeat(4096) }));
+    const { fetch } = stubFetch(
+      JSON.stringify({ sub: "1", bio: "x".repeat(4096) }),
+    );
     await expect(
       fetchUserInfo(makeConfig({ fetch, maxResponseBytes: 1024 }), "at"),
     ).rejects.toThrow();

@@ -92,7 +92,9 @@ app.get("/auth/callback", async (req, res) => {
   const profile = await fetchUserInfo(config, tokens.accessToken);
 
   if (profile.email === undefined) {
-    return res.status(400).send("This provider did not release an email address.");
+    return res
+      .status(400)
+      .send("This provider did not release an email address.");
   }
 
   // Now it is your application's turn: find or create the local account keyed
@@ -115,29 +117,29 @@ const fresh = await refreshAccessToken(config, storedRefreshToken);
 
 ## API
 
-| Export | What it does |
-| --- | --- |
-| `createAuthorizationUrl(config, options)` | Builds the authorize URL. Returns `{ url, state, codeVerifier, codeChallenge }`. |
-| `exchangeCodeForToken(config, options)` | Authorization-code grant. Returns a validated `OAuthTokenSet`. |
-| `refreshAccessToken(config, refreshToken)` | Refresh-token grant, where the provider supports one. |
-| `fetchUserInfo(config, accessToken)` | Bearer GET of the user-info endpoint, normalised to `OAuthUserInfo`. |
-| `generateState()` / `verifyState(expected, received)` | 256-bit state, timing-safe comparison. |
-| `generateCodeVerifier()` / `deriveCodeChallenge(verifier)` | PKCE primitives (`S256`). |
-| `parseTokenResponse(payload)` | Validate a token payload you obtained elsewhere. |
-| `normalizeUserInfo(provider, payload)` | Normalise a profile payload you obtained elsewhere. |
-| `assertSafeUrl(url, label, use)` / `isBlockedFetchHost(host)` | The URL and SSRF guards, exposed for your own checks. |
-| `PROVIDER_PRESETS` | Endpoint defaults per provider. |
+| Export                                                        | What it does                                                                     |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `createAuthorizationUrl(config, options)`                     | Builds the authorize URL. Returns `{ url, state, codeVerifier, codeChallenge }`. |
+| `exchangeCodeForToken(config, options)`                       | Authorization-code grant. Returns a validated `OAuthTokenSet`.                   |
+| `refreshAccessToken(config, refreshToken)`                    | Refresh-token grant, where the provider supports one.                            |
+| `fetchUserInfo(config, accessToken)`                          | Bearer GET of the user-info endpoint, normalised to `OAuthUserInfo`.             |
+| `generateState()` / `verifyState(expected, received)`         | 256-bit state, timing-safe comparison.                                           |
+| `generateCodeVerifier()` / `deriveCodeChallenge(verifier)`    | PKCE primitives (`S256`).                                                        |
+| `parseTokenResponse(payload)`                                 | Validate a token payload you obtained elsewhere.                                 |
+| `normalizeUserInfo(provider, payload)`                        | Normalise a profile payload you obtained elsewhere.                              |
+| `assertSafeUrl(url, label, use)` / `isBlockedFetchHost(host)` | The URL and SSRF guards, exposed for your own checks.                            |
+| `PROVIDER_PRESETS`                                            | Endpoint defaults per provider.                                                  |
 
 ## Providers
 
-| Provider | Endpoints | Client auth | Refresh | Notes |
-| --- | --- | --- | --- | --- |
-| `google` | preset | body | yes | `access_type=offline` + `prompt=consent` are sent so a refresh token is actually issued. |
-| `github` | preset | body | **no** | Classic OAuth App tokens do not expire and no refresh token is issued; `refreshAccessToken` throws rather than making a pointless request. |
-| `microsoft` | preset (`common` tenant) | body | yes | Override `authorizeUrl`/`tokenUrl` for a single-tenant app. |
-| `apple` | preset | body | yes | `clientSecret` is the ES256 JWT you mint from your private key — this package does not generate it. Apple has **no user-info endpoint**; the profile is in the `id_token`, so `fetchUserInfo` throws for `apple`. |
-| `discord` | preset | **basic** | yes | |
-| `custom` | you supply all three URLs | body | yes | |
+| Provider    | Endpoints                 | Client auth | Refresh | Notes                                                                                                                                                                                                             |
+| ----------- | ------------------------- | ----------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `google`    | preset                    | body        | yes     | `access_type=offline` + `prompt=consent` are sent so a refresh token is actually issued.                                                                                                                          |
+| `github`    | preset                    | body        | **no**  | Classic OAuth App tokens do not expire and no refresh token is issued; `refreshAccessToken` throws rather than making a pointless request.                                                                        |
+| `microsoft` | preset (`common` tenant)  | body        | yes     | Override `authorizeUrl`/`tokenUrl` for a single-tenant app.                                                                                                                                                       |
+| `apple`     | preset                    | body        | yes     | `clientSecret` is the ES256 JWT you mint from your private key — this package does not generate it. Apple has **no user-info endpoint**; the profile is in the `id_token`, so `fetchUserInfo` throws for `apple`. |
+| `discord`   | preset                    | **basic**   | yes     |                                                                                                                                                                                                                   |
+| `custom`    | you supply all three URLs | body        | yes     |                                                                                                                                                                                                                   |
 
 Any preset URL can be overridden on the config; every override goes through the
 same validation.
@@ -148,7 +150,7 @@ same validation.
 
 - **GitHub** omits `email` from `/user` whenever the address is private, which
   is the default. When the `user:email` scope was granted, this package asks
-  `/user/emails` and uses the primary *verified* address. Without the scope, or
+  `/user/emails` and uses the primary _verified_ address. Without the scope, or
   without a verified primary, the profile simply comes back with no email.
 - **Discord** returns no email unless the `email` scope was granted.
 
@@ -173,7 +175,7 @@ Every one of these is covered by a test in `tests/`.
   arbitrary redirect target is never reflected.
 - **URL validation and SSRF guard.** Every URL must be `https` — `http` is
   tolerated only for `localhost` / `127.0.0.1` / `[::1]` and only on
-  browser-facing URLs — and must not embed credentials. The *server-fetched*
+  browser-facing URLs — and must not embed credentials. The _server-fetched_
   endpoints (token, user-info) additionally may not point at a loopback,
   private, CGNAT, link-local, unique-local, multicast or reserved address, at
   `169.254.169.254` and friends, or at a `localhost` / `*.local` / `*.internal`
@@ -191,7 +193,7 @@ Every one of these is covered by a test in `tests/`.
   `AbortSignal.timeout(timeoutMs)` (default 10s) and the body is streamed and
   abandoned the moment it passes `maxResponseBytes` (default 256 KiB); an
   oversized `Content-Length` is refused before a byte is read.
-- **Defensive parsing.** A token response must be a JSON *object* with a
+- **Defensive parsing.** A token response must be a JSON _object_ with a
   non-blank string `access_token`; `expires_in` must be a non-negative integer
   (or its decimal string); `refresh_token`, `id_token`, `scope` and `token_type`
   must be strings when present. `__proto__`, `constructor` and `prototype` are
@@ -214,30 +216,30 @@ Every failure is an `OAuthError` with a machine-readable `code`, a suggested
 class below is also a `BaseError`, and its codes equal the shared
 `ErrorCode.OAUTH_*` members.
 
-| Class | Code | Status | Exposed |
-| --- | --- | --- | --- |
-| `OAuthConfigurationError` | `OAUTH_CONFIGURATION_INVALID` | 500 | no |
-| `OAuthEndpointNotAllowedError` | `OAUTH_ENDPOINT_NOT_ALLOWED` | 500 | no |
-| `OAuthRedirectUriError` | `OAUTH_REDIRECT_URI_NOT_ALLOWED` | 400 | yes |
-| `OAuthStateMismatchError` | `OAUTH_STATE_MISMATCH` | 400 | yes |
-| `OAuthProviderError` | `OAUTH_PROVIDER_REJECTED` | 502 | yes |
-| `OAuthResponseError` | `OAUTH_PROVIDER_RESPONSE_INVALID` | 502 | yes |
-| `OAuthResponseTooLargeError` | `OAUTH_RESPONSE_TOO_LARGE` | 502 | yes |
-| `OAuthNetworkError` | `OAUTH_NETWORK` | 504 | yes |
+| Class                          | Code                              | Status | Exposed |
+| ------------------------------ | --------------------------------- | ------ | ------- |
+| `OAuthConfigurationError`      | `OAUTH_CONFIGURATION_INVALID`     | 500    | no      |
+| `OAuthEndpointNotAllowedError` | `OAUTH_ENDPOINT_NOT_ALLOWED`      | 500    | no      |
+| `OAuthRedirectUriError`        | `OAUTH_REDIRECT_URI_NOT_ALLOWED`  | 400    | yes     |
+| `OAuthStateMismatchError`      | `OAUTH_STATE_MISMATCH`            | 400    | yes     |
+| `OAuthProviderError`           | `OAUTH_PROVIDER_REJECTED`         | 502    | yes     |
+| `OAuthResponseError`           | `OAUTH_PROVIDER_RESPONSE_INVALID` | 502    | yes     |
+| `OAuthResponseTooLargeError`   | `OAUTH_RESPONSE_TOO_LARGE`        | 502    | yes     |
+| `OAuthNetworkError`            | `OAUTH_NETWORK`                   | 504    | yes     |
 
 ## Configuration reference
 
-| Field | Required | Default |
-| --- | --- | --- |
-| `provider` | yes | — |
-| `clientId`, `clientSecret` | yes | — |
-| `allowedRedirectUris` | yes, non-empty | — |
-| `authorizeUrl`, `tokenUrl`, `userInfoUrl` | only for `custom` | the preset's |
-| `scopes` | no | the preset's |
-| `clientAuthMethod` | no | the preset's |
-| `timeoutMs` | no | `10000` (1 - 120000) |
-| `maxResponseBytes` | no | `262144` (1024 - 5242880) |
-| `fetch` | no | global `fetch` |
+| Field                                     | Required          | Default                   |
+| ----------------------------------------- | ----------------- | ------------------------- |
+| `provider`                                | yes               | —                         |
+| `clientId`, `clientSecret`                | yes               | —                         |
+| `allowedRedirectUris`                     | yes, non-empty    | —                         |
+| `authorizeUrl`, `tokenUrl`, `userInfoUrl` | only for `custom` | the preset's              |
+| `scopes`                                  | no                | the preset's              |
+| `clientAuthMethod`                        | no                | the preset's              |
+| `timeoutMs`                               | no                | `10000` (1 - 120000)      |
+| `maxResponseBytes`                        | no                | `262144` (1024 - 5242880) |
+| `fetch`                                   | no                | global `fetch`            |
 
 Out-of-range values are rejected, not clamped.
 

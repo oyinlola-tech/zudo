@@ -11,12 +11,7 @@
  * named providers supply their own defaults (see the provider presets).
  */
 export type OAuthProvider =
-  | "google"
-  | "github"
-  | "microsoft"
-  | "apple"
-  | "discord"
-  | "custom";
+  "google" | "github" | "microsoft" | "apple" | "discord" | "custom";
 
 /**
  * How the client authenticates itself at the token endpoint.
@@ -35,10 +30,7 @@ export type ClientAuthMethod = "basic" | "body";
  * Defaults to the global `fetch`. Inject your own to add proxying, retries or
  * to test without a network.
  */
-export type FetchLike = (
-  input: string,
-  init: RequestInit,
-) => Promise<Response>;
+export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 /**
  * OAuth2 provider configuration.

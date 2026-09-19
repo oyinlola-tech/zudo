@@ -86,10 +86,7 @@ describe("module registration", () => {
   });
 
   it("namespaces every handler by module", () => {
-    const all = [
-      ...commandBus.getCommandTypes(),
-      ...queryBus.getQueryTypes(),
-    ];
+    const all = [...commandBus.getCommandTypes(), ...queryBus.getQueryTypes()];
 
     expect(all.filter((t) => !t.includes("."))).toEqual([]);
   });

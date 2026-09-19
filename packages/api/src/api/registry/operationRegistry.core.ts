@@ -134,12 +134,9 @@ export class APIOperationRegistry {
  * client mistake — hence 500 and `expose: false`.
  */
 function frozenRegistryError(action: "register" | "unregister"): APIError {
-  return createAPIError(
-    `Cannot ${action} operations on a frozen registry.`,
-    {
-      statusCode: 500,
-      expose: false,
-      isOperational: false,
-    },
-  );
+  return createAPIError(`Cannot ${action} operations on a frozen registry.`, {
+    statusCode: 500,
+    expose: false,
+    isOperational: false,
+  });
 }

@@ -127,25 +127,25 @@ Peers still count for tier placement on this page. `permissions` can reach `http
 
 ## The Rules
 
-#### 1. No cycles, ever
+### 1. No cycles, ever
 
 A package may never depend on itself through any chain. This is the only rule that is absolute; everything else follows from it.
 
-#### 2. Depend downward, not sideways
+### 2. Depend downward, not sideways
 
 Prefer a package in a lower tier. Two packages in the same tier never depend on each other today, and adding such an edge would push one of them up a tier.
 
-#### 3. Import from the package root
+### 3. Import from the package root
 
 Use `import { X } from "@zudojs/core"`. Deep paths into a package's internals are not part of the public surface and can change without notice.
 
-#### 4. When two packages need each other, extract a third
+### 4. When two packages need each other, extract a third
 
 This is why `@zudojs/errors` and `@zudojs/types` exist at tier 0. They hold what everyone needs so that nobody has to reach sideways for it.
 
 The same rules stated as allowed and forbidden edges:
 
-#### ALLOWED
+### ALLOWED
 
 ✓http → core
 
@@ -159,7 +159,7 @@ The same rules stated as allowed and forbidden edges:
 
 ✓anything → errors
 
-#### FORBIDDEN
+### FORBIDDEN
 
 ✗core → http
 

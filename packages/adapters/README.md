@@ -97,11 +97,19 @@ A `LifecycleAdapter` adds optional `configure(options)` and `health()` to the
 base contract. The registry calls them:
 
 ```typescript
-import { AdapterRegistry, createHealthyHealth, createMockAdapter } from "@zudojs/adapters";
+import {
+  AdapterRegistry,
+  createHealthyHealth,
+  createMockAdapter,
+} from "@zudojs/adapters";
 
 const registry = new AdapterRegistry();
 registry.register(
-  createMockAdapter({ name: "db", health: () => createHealthyHealth(), configure: () => {} }),
+  createMockAdapter({
+    name: "db",
+    health: () => createHealthyHealth(),
+    configure: () => {},
+  }),
 );
 
 await registry.configure("db", { poolSize: 10 }); // throws if the adapter has no configure()

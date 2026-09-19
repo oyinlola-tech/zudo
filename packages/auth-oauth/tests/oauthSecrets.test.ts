@@ -29,7 +29,9 @@ const STATE = generateState();
  */
 function surfaceOf(error: unknown): string {
   if (error instanceof Error) {
-    return [error.name, error.message, error.stack ?? "", String(error)].join("\n");
+    return [error.name, error.message, error.stack ?? "", String(error)].join(
+      "\n",
+    );
   }
   return String(error);
 }
@@ -49,7 +51,8 @@ describe("secret hygiene", () => {
     { status: 401 },
   ).fetch;
 
-  const throwing: FetchLike = () => Promise.reject(new Error(`connect failed ${SECRET}`));
+  const throwing: FetchLike = () =>
+    Promise.reject(new Error(`connect failed ${SECRET}`));
 
   const cases: readonly [string, () => Promise<unknown>][] = [
     [
@@ -111,10 +114,13 @@ describe("secret hygiene", () => {
     ],
   ];
 
-  it.each(cases)("keeps the client secret out of the error from %s", async (_label, run) => {
-    const surface = await captureError(run);
-    expect(surface).not.toContain(SECRET);
-  });
+  it.each(cases)(
+    "keeps the client secret out of the error from %s",
+    async (_label, run) => {
+      const surface = await captureError(run);
+      expect(surface).not.toContain(SECRET);
+    },
+  );
 
   it("keeps the secret out of the error when the transport itself leaks it", async () => {
     // A caller-supplied fetch may put anything in its rejection; it is passed

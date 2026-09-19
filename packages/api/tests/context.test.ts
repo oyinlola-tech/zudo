@@ -95,9 +95,9 @@ describe("createAPIContext", () => {
     expect(() =>
       createAPIContext("a".repeat(MAX_REQUEST_ID_LENGTH + 1), {}),
     ).toThrow(TypeError);
-    expect(() =>
-      createAPIContext(undefined as unknown as string, {}),
-    ).toThrow(TypeError);
+    expect(() => createAPIContext(undefined as unknown as string, {})).toThrow(
+      TypeError,
+    );
   });
 });
 

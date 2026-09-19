@@ -33,7 +33,11 @@ async function readCappedText(
   maxBytes: number,
 ): Promise<string> {
   const declared = response.headers.get("content-length");
-  if (declared !== null && /^\d+$/.test(declared) && Number(declared) > maxBytes) {
+  if (
+    declared !== null &&
+    /^\d+$/.test(declared) &&
+    Number(declared) > maxBytes
+  ) {
     throw new OAuthResponseTooLargeError(maxBytes);
   }
   const body = response.body;
@@ -70,7 +74,8 @@ function safeProviderError(
   if (typeof value === "string" && SAFE_ERROR_CODE.test(value)) return value;
   if (value !== null && typeof value === "object") {
     const nested = (value as Record<string, unknown>)["code"];
-    if (typeof nested === "string" && SAFE_ERROR_CODE.test(nested)) return nested;
+    if (typeof nested === "string" && SAFE_ERROR_CODE.test(nested))
+      return nested;
   }
   return undefined;
 }
@@ -196,7 +201,10 @@ function toNetworkError(
 }
 
 /** Build the `Authorization: Basic` header for client authentication. */
-export function basicAuthHeader(clientId: string, clientSecret: string): string {
+export function basicAuthHeader(
+  clientId: string,
+  clientSecret: string,
+): string {
   // RFC 6749 §2.3.1: both halves are form-urlencoded before base64.
   const encoded = Buffer.from(
     `${encodeURIComponent(clientId)}:${encodeURIComponent(clientSecret)}`,

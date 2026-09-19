@@ -221,7 +221,9 @@ export class AdapterRegistry {
    * timeouts (`options.timeout`) and aborts (`options.signal`) are reported
    * as `"unhealthy"` entries rather than thrown.
    */
-  async healthAll(options?: AdapterOperationOptions): Promise<AdapterHealthReport> {
+  async healthAll(
+    options?: AdapterOperationOptions,
+  ): Promise<AdapterHealthReport> {
     return collectAdapterHealth([...this.adapters.entries()], options);
   }
 
@@ -232,7 +234,11 @@ export class AdapterRegistry {
    * @throws {AdapterConfigurationError} If the adapter has no `configure()`.
    */
   async configure(name: string, options: unknown): Promise<void> {
-    await configureAdapter(this.normalizeName(name), this.require(name), options);
+    await configureAdapter(
+      this.normalizeName(name),
+      this.require(name),
+      options,
+    );
   }
 
   /**

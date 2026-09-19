@@ -140,7 +140,9 @@ describe("exchangeCodeForToken", () => {
   });
 
   it("treats a 200 body carrying an OAuth error as a failure", async () => {
-    const { fetch } = stubFetch(JSON.stringify({ error: "bad_verification_code" }));
+    const { fetch } = stubFetch(
+      JSON.stringify({ error: "bad_verification_code" }),
+    );
     await expect(
       exchangeCodeForToken(makeConfig({ provider: "github", fetch }), {
         code: "c",
@@ -185,9 +187,9 @@ describe("token response validation", () => {
     ["non-string scope", { access_token: "a", scope: 3 }],
     ["non-string token_type", { access_token: "a", token_type: 1 }],
   ])("rejects a response with a %s", (_label, payload) => {
-    expect(() => parseTokenResponse(payload as Record<string, unknown>)).toThrow(
-      OAuthResponseError,
-    );
+    expect(() =>
+      parseTokenResponse(payload as Record<string, unknown>),
+    ).toThrow(OAuthResponseError);
   });
 
   it("rejects a non-object body from the token endpoint", async () => {
@@ -204,7 +206,10 @@ describe("token response validation", () => {
   });
 
   it("defaults token_type and tolerates a numeric-string expires_in", () => {
-    const tokens = parseTokenResponse({ access_token: "a", expires_in: "3600" });
+    const tokens = parseTokenResponse({
+      access_token: "a",
+      expires_in: "3600",
+    });
     expect(tokens.tokenType).toBe("Bearer");
     expect(tokens.expiresIn).toBe(3600);
   });
@@ -220,11 +225,19 @@ describe("token response validation", () => {
     });
     const probe: Record<string, unknown> = {};
     expect(probe["polluted"]).toBeUndefined();
-    expect(Object.prototype.hasOwnProperty.call(tokens.raw, "__proto__")).toBe(false);
-    expect(Object.prototype.hasOwnProperty.call(tokens.raw, "constructor")).toBe(false);
-    expect(Object.prototype.hasOwnProperty.call(tokens.raw, "prototype")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(tokens.raw, "__proto__")).toBe(
+      false,
+    );
+    expect(
+      Object.prototype.hasOwnProperty.call(tokens.raw, "constructor"),
+    ).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(tokens.raw, "prototype")).toBe(
+      false,
+    );
     const nested = tokens.raw["nested"] as Record<string, unknown>;
-    expect(Object.prototype.hasOwnProperty.call(nested, "__proto__")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(nested, "__proto__")).toBe(
+      false,
+    );
     expect(Object.getPrototypeOf(tokens.raw)).toBe(Object.prototype);
   });
 });

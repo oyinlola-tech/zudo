@@ -149,9 +149,7 @@ export class APIExecutor {
   private readonly maxValidationIssues: number;
 
   constructor(
-    optionsOrInterceptors:
-      | readonly APIInterceptor[]
-      | APIExecutorOptions = {},
+    optionsOrInterceptors: readonly APIInterceptor[] | APIExecutorOptions = {},
   ) {
     const options: APIExecutorOptions = Array.isArray(optionsOrInterceptors)
       ? { interceptors: optionsOrInterceptors }
@@ -307,11 +305,13 @@ export class APIExecutor {
     issues: ReadonlyArray<APISchemaIssue>,
   ): readonly string[] {
     const limit = this.maxValidationIssues;
-    const shown = issues.slice(0, limit).map((issue) =>
-      this.exposeValidationMessages
-        ? truncate(issue.message, MAX_VALIDATION_ISSUE_LENGTH)
-        : `${formatIssuePath(issue)}: invalid`,
-    );
+    const shown = issues
+      .slice(0, limit)
+      .map((issue) =>
+        this.exposeValidationMessages
+          ? truncate(issue.message, MAX_VALIDATION_ISSUE_LENGTH)
+          : `${formatIssuePath(issue)}: invalid`,
+      );
 
     const omitted = issues.length - shown.length;
     if (omitted > 0) {

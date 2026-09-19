@@ -107,7 +107,13 @@ describe("defineOperation", () => {
     });
 
     it("rejects a timeout that would disable the deadline", () => {
-      for (const timeout of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1.5]) {
+      for (const timeout of [
+        0,
+        -1,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        1.5,
+      ]) {
         expect(() =>
           defineOperation({
             name: "slow.op",
@@ -188,9 +194,9 @@ describe("defineOperation", () => {
 
 describe("resolveOperationTimeout", () => {
   it("prefers timeout over metadata.timeout over the default", () => {
-    expect(resolveOperationTimeout({ timeout: 10, metadata: { timeout: 20 } })).toBe(
-      10,
-    );
+    expect(
+      resolveOperationTimeout({ timeout: 10, metadata: { timeout: 20 } }),
+    ).toBe(10);
     expect(resolveOperationTimeout({ metadata: { timeout: 20 } })).toBe(20);
     expect(resolveOperationTimeout({})).toBe(DEFAULT_OPERATION_TIMEOUT);
   });

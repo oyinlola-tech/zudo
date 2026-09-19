@@ -11,9 +11,10 @@ import { makeConfig } from "./helpers.js";
 
 describe("URL guard", () => {
   it("accepts a plain https endpoint", () => {
-    expect(assertSafeUrl("https://oauth2.googleapis.com/token", "tokenUrl", "fetch").host).toBe(
-      "oauth2.googleapis.com",
-    );
+    expect(
+      assertSafeUrl("https://oauth2.googleapis.com/token", "tokenUrl", "fetch")
+        .host,
+    ).toBe("oauth2.googleapis.com");
   });
 
   it("rejects http for a server-fetched endpoint, even on localhost", () => {
@@ -23,12 +24,14 @@ describe("URL guard", () => {
   });
 
   it("allows http on localhost for a browser-facing URL only", () => {
-    expect(assertSafeUrl("http://localhost:3000/cb", "redirectUri", "browser").protocol).toBe(
-      "http:",
-    );
-    expect(assertSafeUrl("http://127.0.0.1:3000/cb", "redirectUri", "browser").protocol).toBe(
-      "http:",
-    );
+    expect(
+      assertSafeUrl("http://localhost:3000/cb", "redirectUri", "browser")
+        .protocol,
+    ).toBe("http:");
+    expect(
+      assertSafeUrl("http://127.0.0.1:3000/cb", "redirectUri", "browser")
+        .protocol,
+    ).toBe("http:");
     expect(() =>
       assertSafeUrl("http://evil.example.com/cb", "redirectUri", "browser"),
     ).toThrow(OAuthEndpointNotAllowedError);
@@ -58,7 +61,10 @@ describe("URL guard", () => {
 
   it.each([
     ["cloud metadata", "https://169.254.169.254/latest/meta-data/"],
-    ["gcp metadata name", "https://metadata.google.internal/computeMetadata/v1/"],
+    [
+      "gcp metadata name",
+      "https://metadata.google.internal/computeMetadata/v1/",
+    ],
     ["loopback v4", "https://127.0.0.1/token"],
     ["loopback v6", "https://[::1]/token"],
     ["unspecified", "https://0.0.0.0/token"],

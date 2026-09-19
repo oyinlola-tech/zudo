@@ -38,7 +38,10 @@ export function stubFetch(
     return Promise.resolve(
       new Response(body, {
         status: init.status ?? 200,
-        headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+        headers: {
+          "Content-Type": "application/json",
+          ...(init.headers ?? {}),
+        },
       }),
     );
   };

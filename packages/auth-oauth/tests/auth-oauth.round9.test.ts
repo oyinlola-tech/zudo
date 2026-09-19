@@ -58,9 +58,9 @@ describe("AUTH-OAUTH-R9-01 trailing-dot hostnames cannot bypass the SSRF guard",
     "LOCALHOST..",
   ])("blocks %s", (host) => {
     expect(isBlockedFetchHost(host)).toBe(true);
-    expect(() => assertSafeUrl(`https://${host}/token`, "tokenUrl", "fetch")).toThrow(
-      OAuthEndpointNotAllowedError,
-    );
+    expect(() =>
+      assertSafeUrl(`https://${host}/token`, "tokenUrl", "fetch"),
+    ).toThrow(OAuthEndpointNotAllowedError);
   });
 
   it("still allows a public name with a trailing dot", () => {
@@ -170,7 +170,11 @@ describe("AUTH-OAUTH-R9-03 per-request scopes are validated like config scopes",
 describe("README flow", () => {
   it("runs the documented authorize -> verify state -> exchange -> profile sequence", async () => {
     const { fetch, calls } = stubFetch(
-      JSON.stringify({ access_token: "at", token_type: "Bearer", expires_in: 3600 }),
+      JSON.stringify({
+        access_token: "at",
+        token_type: "Bearer",
+        expires_in: 3600,
+      }),
     );
     const config: OAuthConfig = {
       provider: "google",
@@ -199,13 +203,20 @@ describe("README flow", () => {
 
     calls.length = 0;
     const profileFetch = stubFetch(
-      JSON.stringify({ sub: "123", email: "a@example.com", email_verified: true }),
+      JSON.stringify({
+        sub: "123",
+        email: "a@example.com",
+        email_verified: true,
+      }),
     );
     const profile = await fetchUserInfo(
       { ...config, fetch: profileFetch.fetch },
       tokens.accessToken,
     );
-    expect(profile).toMatchObject({ providerId: "123", email: "a@example.com" });
+    expect(profile).toMatchObject({
+      providerId: "123",
+      email: "a@example.com",
+    });
 
     const fresh = await refreshAccessToken(config, "stored-refresh");
     expect(fresh.refreshToken).toBeUndefined();

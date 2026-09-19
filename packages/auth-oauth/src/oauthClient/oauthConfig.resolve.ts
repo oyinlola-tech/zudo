@@ -51,7 +51,9 @@ export interface ResolvedOAuthConfig {
 
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new OAuthConfigurationError(`${field} is required and must be a non-empty string.`);
+    throw new OAuthConfigurationError(
+      `${field} is required and must be a non-empty string.`,
+    );
   }
   return value;
 }
@@ -64,11 +66,17 @@ function boundedInt(
   field: string,
 ): number {
   if (value === undefined) return fallback;
-  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    !Number.isInteger(value)
+  ) {
     throw new OAuthConfigurationError(`${field} must be an integer.`);
   }
   if (value < min || value > max) {
-    throw new OAuthConfigurationError(`${field} must be between ${min} and ${max}.`);
+    throw new OAuthConfigurationError(
+      `${field} must be between ${min} and ${max}.`,
+    );
   }
   return value;
 }
@@ -84,10 +92,15 @@ function boundedInt(
  */
 export function assertScopes(scopes: readonly unknown[]): void {
   if (!Array.isArray(scopes)) {
-    throw new OAuthConfigurationError("scopes must be an array of scope-tokens.");
+    throw new OAuthConfigurationError(
+      "scopes must be an array of scope-tokens.",
+    );
   }
   for (const scope of scopes) {
-    if (typeof scope !== "string" || !/^[\x21\x23-\x5B\x5D-\x7E]+$/.test(scope)) {
+    if (
+      typeof scope !== "string" ||
+      !/^[\x21\x23-\x5B\x5D-\x7E]+$/.test(scope)
+    ) {
       throw new OAuthConfigurationError(
         "Each scope must be a non-empty RFC 6749 scope-token.",
       );
@@ -110,11 +123,12 @@ function canonicalRedirect(url: URL): string {
  */
 export function resolveConfig(config: OAuthConfig): ResolvedOAuthConfig {
   if (config === null || typeof config !== "object") {
-    throw new OAuthConfigurationError("An OAuth configuration object is required.");
+    throw new OAuthConfigurationError(
+      "An OAuth configuration object is required.",
+    );
   }
   const preset = PROVIDER_PRESETS[config.provider] as
-    | OAuthProviderPreset
-    | undefined;
+    OAuthProviderPreset | undefined;
   if (preset === undefined) {
     throw new OAuthConfigurationError("Unknown OAuth provider.");
   }
@@ -153,7 +167,13 @@ export function resolveConfig(config: OAuthConfig): ResolvedOAuthConfig {
     clientSecret,
     scopes,
     clientAuth: config.clientAuthMethod ?? preset.clientAuth,
-    timeoutMs: boundedInt(config.timeoutMs, DEFAULT_TIMEOUT_MS, 1, MAX_TIMEOUT_MS, "timeoutMs"),
+    timeoutMs: boundedInt(
+      config.timeoutMs,
+      DEFAULT_TIMEOUT_MS,
+      1,
+      MAX_TIMEOUT_MS,
+      "timeoutMs",
+    ),
     maxResponseBytes: boundedInt(
       config.maxResponseBytes,
       DEFAULT_MAX_RESPONSE_BYTES,
@@ -182,7 +202,9 @@ export function resolveAuthorizeUrl(resolved: ResolvedOAuthConfig): URL {
 export function resolveTokenUrl(resolved: ResolvedOAuthConfig): URL {
   const raw = resolved.source.tokenUrl ?? resolved.preset.tokenUrl;
   if (raw === undefined) {
-    throw new OAuthConfigurationError("tokenUrl is required for this provider.");
+    throw new OAuthConfigurationError(
+      "tokenUrl is required for this provider.",
+    );
   }
   return assertSafeUrl(raw, "tokenUrl", "fetch");
 }

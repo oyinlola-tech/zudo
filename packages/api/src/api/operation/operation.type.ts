@@ -112,7 +112,9 @@ const OPERATION_NAME_PATTERN = /^[A-Za-z0-9._:/-]+$/;
  */
 export function assertValidTimeout(timeout: unknown, label: string): number {
   if (typeof timeout !== "number") {
-    throw new TypeError(`${label} must be a number, received ${typeof timeout}.`);
+    throw new TypeError(
+      `${label} must be a number, received ${typeof timeout}.`,
+    );
   }
   if (!Number.isFinite(timeout) || !Number.isInteger(timeout)) {
     throw new RangeError(

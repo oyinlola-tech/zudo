@@ -22,7 +22,10 @@ describe("API-R9-01 a synchronous handler runs like an asynchronous one", () => 
       name: "sync.echo",
       handler: (input: unknown) => input,
       timeout: 1_000,
-    } as unknown as APIOperation<{ readonly a: number }, { readonly a: number }>;
+    } as unknown as APIOperation<
+      { readonly a: number },
+      { readonly a: number }
+    >;
 
     const result = await executor.execute(operation, { a: 1 }, context);
     expect(result).toEqual({ ok: true, data: { a: 1 } });
@@ -49,7 +52,9 @@ describe("API-R9-01 a synchronous handler runs like an asynchronous one", () => 
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.name).toBe("APIInternalError");
-      expect(result.error.message).toContain('Invalid output for operation "sync.out"');
+      expect(result.error.message).toContain(
+        'Invalid output for operation "sync.out"',
+      );
     }
   });
 

@@ -112,9 +112,8 @@ function isNonPublicIpv6(raw: string): boolean {
  */
 export function isBlockedFetchHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
-  const unbracketed = host.startsWith("[") && host.endsWith("]")
-    ? host.slice(1, -1)
-    : host;
+  const unbracketed =
+    host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   // A trailing dot marks a fully-qualified name (`localhost.`,
   // `metadata.google.internal.`). DNS resolves it to the same address as
   // the undotted form, but the WHATWG parser keeps the dot on domain
@@ -151,7 +150,9 @@ export function assertSafeUrl(raw: string, label: string, use: UrlUse): URL {
   try {
     url = new URL(raw);
   } catch {
-    throw new OAuthEndpointNotAllowedError(`${label} is not a valid absolute URL.`);
+    throw new OAuthEndpointNotAllowedError(
+      `${label} is not a valid absolute URL.`,
+    );
   }
   if (url.username !== "" || url.password !== "") {
     throw new OAuthEndpointNotAllowedError(
