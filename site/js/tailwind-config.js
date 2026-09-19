@@ -9,6 +9,7 @@ tailwind.config = {
         'zudo-blue': '#2471A3',
         'zudo-blue-dark': '#1A5276',
         'zudo-yellow': '#D4AC0D',
+        'zudo-yellow-dark': '#7D6608',
         'zudo-black': '#1A1A2E',
         'zudo-navy': '#16213E',
         'zudo-white': '#FAFAF9',
