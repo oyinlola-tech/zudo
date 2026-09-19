@@ -6,6 +6,7 @@
  * For production, implement SessionStore backed by Redis, database, etc.
  */
 
+import { randomHex } from "@zudojs/crypto";
 import type {
   AuthSession,
   CreateSessionOptions,
@@ -14,7 +15,6 @@ import type {
 } from "../authTypes/authSession.type.js";
 import type { UserId } from "../authTypes/authUser.type.js";
 import { AuthConfigurationError } from "../authErrors/authError.base.js";
-import { randomBytes } from "node:crypto";
 
 const DEFAULT_TTL_SECONDS = 86400; // 24 hours
 
@@ -64,7 +64,7 @@ export function createMemorySessionStore(storeOptions?: {
       assertPositiveSeconds(options.ttlSeconds, "ttlSeconds");
       assertPositiveSeconds(options.absoluteTtlSeconds, "absoluteTtlSeconds");
       maybePurgeExpired();
-      const id = generateSessionId();
+      const id = await generateSessionId();
       const now = new Date();
       const ttlMs = (options.ttlSeconds ?? DEFAULT_TTL_SECONDS) * 1000;
       const absoluteExpiresAt =
@@ -168,6 +168,7 @@ function clampToAbsolute(expiresAt: Date, absolute: Date | undefined): Date {
   return expiresAt.getTime() > absolute.getTime() ? absolute : expiresAt;
 }
 
-function generateSessionId(): SessionId {
-  return randomBytes(32).toString("hex") as SessionId;
+/** 32 random bytes from `@zudojs/crypto`, hex-encoded (64 characters). */
+async function generateSessionId(): Promise<SessionId> {
+  return (await randomHex(64)) as SessionId;
 }

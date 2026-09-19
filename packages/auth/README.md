@@ -199,14 +199,18 @@ allocating.
 ```typescript
 import { hashPassword, verifyPassword, needsRehash } from "@zudojs/auth";
 
-const hash = await hashPassword("plain-text-password"); // scrypt N=16384,r=8,p=5
+const hash = await hashPassword("plain-text-password"); // "v1$scrypt$16384$8$5$…"
 const ok = await verifyPassword("plain-text-password", hash);
 if (needsRehash(hash)) { /* re-hash on next successful login */ }
 ```
 
-New hashes use OWASP's N=2^14, r=8, p=5 row. Hashes written with the earlier
-p=1 default (and the param-less legacy format) still verify, and
-`needsRehash()` returns `true` for them so they upgrade on the next login.
+Hashing is delegated to `@zudojs/crypto`: new hashes are its
+`v1$scrypt$N$r$p$<salt>.<hash>` strings (Base64URL, 32-byte salt, 64-byte key)
+with OWASP's N=2^14, r=8, p=5 row. Hashes written by earlier versions of this
+package (`scrypt$N$r$p$…`, including the p=1 default and the param-less legacy
+format) still verify, and `needsRehash()` returns `true` for every hash that is
+not a current-parameter `@zudojs/crypto` scrypt hash, so they upgrade on the
+next login. `hashPassword("")` throws `AuthError` (`INVALID_INPUT`).
 
 - `createAuthService()` validates its configuration up front: bad or
   identical secrets, a non-positive or `NaN` `sessionTtlSeconds` /

@@ -49,8 +49,8 @@ import {
  * the unknown-user path takes comparable time to the wrong-password path and
  * the response time does not disclose whether an account exists.
  */
-const DUMMY_PASSWORD_HASH = `scrypt$16384$8$5$${"0".repeat(64)}$${"0".repeat(
-  128,
+const DUMMY_PASSWORD_HASH = `v1$scrypt$16384$8$5$${"A".repeat(43)}.${"A".repeat(
+  86,
 )}`;
 
 export { throttleKey } from "./authProvider.throttle.js";

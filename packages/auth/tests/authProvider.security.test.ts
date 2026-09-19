@@ -440,7 +440,7 @@ describe("service password helpers", () => {
   it("hashes and verifies through the service", async () => {
     const { auth } = await fixture();
     const hash = await auth.hashPassword("s3cret-passphrase");
-    expect(hash).toMatch(/^scrypt\$/);
+    expect(hash).toMatch(/^v1\$scrypt\$/);
     expect(await auth.verifyPasswordHash("s3cret-passphrase", hash)).toBe(true);
     expect(await auth.verifyPasswordHash("wrong", hash)).toBe(false);
   });

@@ -82,12 +82,13 @@ describe("Password Hashing", () => {
     expect(needsRehash("scrypt$a$hash")).toBe(true);
   });
 
-  it("should produce the documented scrypt$N$r$p$salt$hash format", async () => {
+  it("should produce the documented v1$scrypt$N$r$p$salt.hash format", async () => {
     const hash = await hashPassword("my-password");
     const parts = hash.split("$");
     expect(parts).toHaveLength(6);
-    expect(parts[0]).toBe("scrypt");
-    expect(Number(parts[1])).toBe(16384);
+    expect(parts[0]).toBe("v1");
+    expect(parts[1]).toBe("scrypt");
+    expect(Number(parts[2])).toBe(16384);
     expect(needsRehash(hash)).toBe(false);
   });
 

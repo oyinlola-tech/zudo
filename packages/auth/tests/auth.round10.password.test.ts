@@ -10,7 +10,7 @@ import { hashPassword, needsRehash, verifyPassword } from "../src/index.js";
 describe("security/CRYPTO-01 (auth side)", () => {
   it("new hashes use the OWASP N=2^14, r=8, p=5 row", async () => {
     const hash = await hashPassword("correct horse");
-    expect(hash.startsWith("scrypt$16384$8$5$")).toBe(true);
+    expect(hash.startsWith("v1$scrypt$16384$8$5$")).toBe(true);
     expect(needsRehash(hash)).toBe(false);
     expect(await verifyPassword("correct horse", hash)).toBe(true);
   });

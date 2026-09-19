@@ -32,10 +32,10 @@ describe("saltLength bounds", () => {
 
   it("accepts the documented range", async () => {
     await expect(hashPassword("password", MIN_SALT_LENGTH)).resolves.toMatch(
-      /^scrypt\$/,
+      /^v1\$scrypt\$/,
     );
     await expect(hashPassword("password", MAX_SALT_LENGTH)).resolves.toMatch(
-      /^scrypt\$/,
+      /^v1\$scrypt\$/,
     );
   });
 

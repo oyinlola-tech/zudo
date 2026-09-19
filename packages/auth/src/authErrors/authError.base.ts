@@ -10,53 +10,20 @@
  */
 
 import {
-  BaseError,
+  AuthError,
   ErrorCode,
   ErrorCategory,
   ErrorSeverity,
-  type ErrorMetadata,
+  type AuthErrorOptions,
 } from "@zudojs/errors";
 
 /**
- * Options accepted by {@link AuthError} and every subclass.
- *
- * Subclasses supply sensible defaults for `code`, `category`, `statusCode`
- * and `expose`; anything passed here overrides them. Accepting the full set
- * also keeps `BaseError.withMetadata()` — which reconstructs the error from
- * its own fields — lossless for these classes.
+ * `AuthError` (the base of every class below) and `AuthErrorOptions` live
+ * in `@zudojs/errors`; they are re-exported here so existing imports keep
+ * working. Defaults: `401 Unauthorized`, category `authentication`,
+ * `expose: true`; every default can be overridden.
  */
-export interface AuthErrorOptions {
-  readonly code?: ErrorCode;
-  readonly category?: ErrorCategory;
-  readonly severity?: ErrorSeverity;
-  readonly statusCode?: number;
-  readonly expose?: boolean;
-  readonly isOperational?: boolean;
-  readonly metadata?: ErrorMetadata;
-  readonly cause?: unknown;
-}
-
-/**
- * Base error for all auth-related failures.
- *
- * Defaults to `401 Unauthorized`, category `authentication`, `expose: true`.
- */
-export class AuthError extends BaseError {
-  constructor(message: string, options?: AuthErrorOptions) {
-    super(message, {
-      code: options?.code ?? ErrorCode.AUTHENTICATION,
-      category: options?.category ?? ErrorCategory.AUTHENTICATION,
-      severity: options?.severity ?? ErrorSeverity.ERROR,
-      statusCode: options?.statusCode ?? 401,
-      expose: options?.expose ?? true,
-      ...(options?.isOperational !== undefined
-        ? { isOperational: options.isOperational }
-        : {}),
-      metadata: options?.metadata,
-      cause: options?.cause,
-    });
-  }
-}
+export { AuthError, type AuthErrorOptions };
 
 /**
  * The package is misconfigured (missing/weak signing secret, missing
