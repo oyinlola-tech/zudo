@@ -83,8 +83,16 @@ starting still-registered dependents on top of disposed dependencies).
 Unregister the disposed plugins and register fresh instances, or create a
 new manager. `manager.stop` continues past a failing
 plugin so one bad `stop` cannot strand the rest; those failures are
-reported through the `onError` option (and logged to `console.error` if you
-do not supply one) rather than swallowed.
+reported through the `onError` option rather than swallowed. Without
+`onError` they go to the `logger` option, or else the logger on the
+context passed to `start()`/`stop()`; with no logger at all they are
+raised as a `ZudoPluginWarning` process warning.
+
+A hook that exceeds `hookTimeout` keeps running (it cannot be cancelled).
+Before a plugin whose hook timed out is disposed, the manager waits up to
+another `hookTimeout` for that hook to settle, and calls `stop()` if a
+timed-out `start()` went on to succeed. If `start()` finishes even later,
+`stop()` runs as soon as it does.
 
 ## Dependency order and versions
 
@@ -121,6 +129,7 @@ new PluginManager({
   checkVersions: true, // enforce declared dependency versions (default)
   hookTimeout: 5_000, // bound each lifecycle hook; 0 = unbounded (default)
   onError: (error, pluginName) => report(error, pluginName), // teardown failures
+  logger, // used for teardown failures when onError is omitted
   allowedCapabilities: ["http", "db"], // reject plugins requesting anything else
   events: eventSink, // receives `plugin:registered`
 });

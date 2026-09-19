@@ -12,6 +12,8 @@ import {
   PLUGIN_EVENTS,
   createPluginLifecycleEvent,
 } from "../pluginEvents/pluginEvent.core.js";
+import { AbandonedHooks } from "./pluginLifecycle.abandoned.js";
+import { reportPluginFailure } from "./pluginLifecycle.report.js";
 
 /**
  * Emits a plugin lifecycle event if the context supports events.
@@ -37,9 +39,11 @@ function emitLifecycleEvent(
     context.events.emit(eventName, event);
   } catch (emitError) {
     queueMicrotask(() => {
-      console.error(
-        `[@zudojs/plugins] Listener for "${eventName}" threw.`,
+      reportPluginFailure(
+        context.logger,
+        `Listener for "${eventName}" threw.`,
         emitError,
+        { plugin: plugin.name, event: eventName },
       );
     });
   }
@@ -68,6 +72,7 @@ export interface LifecycleControllerOptions {
  */
 export class LifecycleController {
   private readonly options: LifecycleControllerOptions;
+  private readonly abandoned = new AbandonedHooks();
 
   public constructor(options: LifecycleControllerOptions = {}) {
     this.options = options;
@@ -81,6 +86,7 @@ export class LifecycleController {
     pluginName: string,
     phase: string,
     run: () => void | Promise<void>,
+    onAbandoned?: (hook: Promise<void>) => void,
   ): Promise<void> {
     const timeout = this.options.hookTimeout ?? 0;
 
@@ -101,15 +107,14 @@ export class LifecycleController {
       await Promise.race([
         hook,
         new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () =>
-              reject(
-                new PluginTimeoutError(pluginName, timeout, {
-                  metadata: { phase },
-                }),
-              ),
-            Math.min(timeout, MAX_TIMER_DELAY),
-          );
+          timer = setTimeout(() => {
+            onAbandoned?.(hook);
+            reject(
+              new PluginTimeoutError(pluginName, timeout, {
+                metadata: { phase },
+              }),
+            );
+          }, Math.min(timeout, MAX_TIMER_DELAY));
 
           timer.unref?.();
         }),
@@ -204,7 +209,9 @@ export class LifecycleController {
     emitLifecycleEvent(context, startEvent, metadata, transient, from);
 
     try {
-      await this.runHook(metadata.name, transient, run);
+      await this.runHook(metadata.name, transient, run, (hook) =>
+        this.abandoned.record(registered, transient, hook),
+      );
       this.ensureTransition(registered, settled);
       registered.setState(settled);
       emitLifecycleEvent(context, endEvent, metadata, settled, transient);
@@ -253,6 +260,8 @@ export class LifecycleController {
     );
 
     const errors: unknown[] = [];
+
+    await this.releaseAbandoned(registered, context, errors);
 
     // Take the list before running it: a disposable that registers
     // another during teardown must not extend the loop indefinitely.
@@ -306,6 +315,45 @@ export class LifecycleController {
       });
 
       throw error;
+    }
+  }
+
+  /**
+   * Waits (up to `hookTimeout`) for a hook abandoned by a timeout before
+   * the plugin is disposed, and runs `stop()` for a plugin whose timed-out
+   * `start()` went on to succeed. When the hook is still running after
+   * that grace period, `stop()` runs as soon as it does finish, and any
+   * failure is reported through the context logger.
+   */
+  private async releaseAbandoned(
+    registered: RegisteredPlugin,
+    context: PluginContext,
+    errors: unknown[],
+  ): Promise<void> {
+    const taken = await this.abandoned.take(
+      registered,
+      this.options.hookTimeout ?? 0,
+    );
+    if (taken === undefined || taken.phase !== "starting") return;
+
+    const name = registered.plugin.metadata.name;
+    const stop = (): Promise<void> =>
+      this.runHook(name, "stopping", () => registered.plugin.stop?.(context));
+
+    if (taken.outcome === "resolved") {
+      try {
+        await stop();
+      } catch (error) {
+        errors.push(error);
+      }
+    } else if (taken.outcome === "pending") {
+      void taken.hook.then(
+        () =>
+          stop().catch((error: unknown) =>
+            reportPluginFailure(context.logger, `Plugin "${name}" failed to stop after a late start.`, error, { plugin: name }),
+          ),
+        () => undefined,
+      );
     }
   }
 

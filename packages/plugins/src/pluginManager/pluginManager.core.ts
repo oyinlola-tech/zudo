@@ -27,6 +27,8 @@ import {
   createPluginLifecycleEvent,
 } from "../pluginEvents/pluginEvent.core.js";
 import type { PluginDiagnosticReport } from "../pluginDiagnostics/pluginDiagnostic.core.js";
+import type { PluginLogger } from "../pluginTypes/pluginContext.type.js";
+import { reportPluginFailure } from "../pluginLifecycle/pluginLifecycle.report.js";
 
 /**
  * States from which a plugin still owns resources that must be released.
@@ -77,6 +79,11 @@ export interface PluginManagerOptions {
    * emitted.
    */
   readonly events?: PluginEvents;
+  /**
+   * Logger for teardown failures when `onError` is not supplied.
+   * Defaults to the logger on the context passed to `start()`/`stop()`.
+   */
+  readonly logger?: PluginLogger;
 }
 
 /**
@@ -103,6 +110,9 @@ export class PluginManager {
   private startupOrder: readonly string[] = [];
 
   private starting = false;
+
+  /** Logger of the most recent start()/stop() context. */
+  private contextLogger: PluginLogger | undefined;
 
   /**
    * Per-plugin context views and their abort handles.
@@ -224,6 +234,7 @@ export class PluginManager {
     }
 
     this.starting = true;
+    this.contextLogger = context.logger ?? this.contextLogger;
 
     try {
       const resolution = this.resolver.resolve(this.toDependencyMap());
@@ -305,6 +316,8 @@ export class PluginManager {
    * rather than swallowed.
    */
   public async stop(context: PluginContext): Promise<void> {
+    this.contextLogger = context.logger ?? this.contextLogger;
+
     for (const registered of this.teardownOrder()) {
       if (registered.state !== "started") continue;
 
@@ -485,9 +498,11 @@ export class PluginManager {
     }
 
     queueMicrotask(() => {
-      console.error(
-        `[@zudojs/plugins] Plugin "${pluginName}" failed during teardown.`,
+      reportPluginFailure(
+        this.options.logger ?? this.contextLogger,
+        `Plugin "${pluginName}" failed during teardown.`,
         error,
+        { plugin: pluginName },
       );
     });
   }
