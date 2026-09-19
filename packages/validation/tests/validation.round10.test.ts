@@ -100,3 +100,20 @@ describe("VAL-07", () => {
     expect(allStrings.validate(["a", "b"])).toBe(true);
   });
 });
+
+describe("LEAF-10", () => {
+  const leaky = [
+    { path: ["password"], code: "too_short", message: "too short", received: "hunter2" },
+  ];
+  it("toJSON keeps the redaction of issue values and context", () => {
+    const err = new ValidationError("bad", leaky, {
+      context: { password: "ctx-secret", field: "x" },
+    });
+    const json = JSON.stringify(err);
+    expect(json).not.toContain("hunter2");
+    expect(json).not.toContain("ctx-secret");
+    expect(json).toContain("too short");
+    expect(err.issues[0]?.received).toBe("hunter2");
+    expect(JSON.stringify(new ValidationResultError(leaky))).not.toContain("hunter2");
+  });
+});

@@ -178,12 +178,12 @@ export class ValidationResultError extends SharedValidationError {
     this.name = "ValidationResultError";
   }
 
+  /** Serializes the error; `issues` keep the base class's value redaction. */
   public override toJSON() {
     return {
       ...super.toJSON(),
       name: this.name,
       message: this.message,
-      issues: this.issues,
     };
   }
 }

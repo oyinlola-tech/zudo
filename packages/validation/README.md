@@ -65,7 +65,8 @@ assertNoCircularReference(body);
   sparse arrays (a hole counts as `undefined`).
 - `ValidationError` and `ValidationResultError` extend `@zudojs/errors`'
   `ValidationError`, so `instanceof` and `isValidationError()` from either
-  package catch them.
+  package catch them. Their `toJSON()` keeps the base class's redaction:
+  submitted issue values and sensitive `context` keys never reach the JSON.
 - `not(constraint)` fails closed: a wrong-typed value, or one that makes the
   inner constraint throw, fails. `everyItem`/`someItem` read every index,
   holes included.

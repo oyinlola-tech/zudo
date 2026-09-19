@@ -108,14 +108,19 @@ export class ValidationError extends SharedValidationError {
     return formatIssues(this.issues);
   }
 
+  /**
+   * Serializes the error. `issues` and `context` come from the base
+   * `toJSON()`, which redacts submitted issue values and sensitive metadata
+   * keys; re-adding the raw fields here used to undo that redaction.
+   */
   public override toJSON() {
+    const base = super.toJSON();
     return {
-      ...super.toJSON(),
+      ...base,
       name: this.name,
       validationCode: this.validationCode,
       message: this.message,
-      issues: this.issues,
-      ...(this.context ? { context: this.context } : {}),
+      ...(this.context ? { context: base.metadata } : {}),
       timestamp: this.timestamp,
     };
   }
