@@ -402,7 +402,7 @@ container.<span class="fn">register</span>(UrlToken, { useFactory: (c) =&gt; <sp
 
 console.<span class="fn">log</span>(container.<span class="fn">resolve</span>(UrlToken));   <span class="cmt">// "postgres://localhost:5432"</span></div>
         <p class="mb-4">
-          The optional third argument to <code class="bg-gray-100 px-1 font-bold">register</code> is the scope: <code class="bg-gray-100 px-1 font-bold">"singleton"</code> (default), <code class="bg-gray-100 px-1 font-bold">"transient"</code> (new per <code class="bg-gray-100 px-1 font-bold">resolve</code>), or <code class="bg-gray-100 px-1 font-bold">"scoped"</code> (one per execution context). Unknown tokens throw <code class="bg-gray-100 px-1 font-bold">ProviderNotFoundError</code>; registering twice throws <code class="bg-gray-100 px-1 font-bold">ProviderAlreadyRegisteredError</code>.
+          The optional third argument to <code class="bg-gray-100 px-1 font-bold">register</code> is the scope: <code class="bg-gray-100 px-1 font-bold">"singleton"</code> (default), <code class="bg-gray-100 px-1 font-bold">"transient"</code> (new per <code class="bg-gray-100 px-1 font-bold">resolve</code>), or <code class="bg-gray-100 px-1 font-bold">"scoped"</code> (one per execution context; resolving it outside any execution context, or from inside a singleton's factory, throws <code class="bg-gray-100 px-1 font-bold">DependencyResolutionError</code>). Unknown tokens throw <code class="bg-gray-100 px-1 font-bold">ProviderNotFoundError</code>; registering twice throws <code class="bg-gray-100 px-1 font-bold">ProviderAlreadyRegisteredError</code>.
         </p>
 
         <h3 class="text-xl font-black mt-6 mb-3">Configuration</h3>
@@ -455,7 +455,7 @@ logger.<span class="fn">error</span>(<span class="str">"failed"</span>, <span cl
 <span class="kw">await</span> storage.<span class="fn">run</span>(<span class="fn">createExecutionContext</span>({ operation: <span class="str">"checkout"</span> }), <span class="fn">saveOrder</span>);
 console.<span class="fn">log</span>(storage.<span class="fn">get</span>());   <span class="cmt">// undefined (outside run)</span></div>
         <p class="mb-4">
-          <code class="bg-gray-100 px-1 font-bold">require()</code> outside <code class="bg-gray-100 px-1 font-bold">run()</code> throws <code class="bg-gray-100 px-1 font-bold">ExecutionContextNotFoundError</code>. The runtime runs every module hook inside a context whose <code class="bg-gray-100 px-1 font-bold">module</code> is the module id; the default logger adds its <code class="bg-gray-100 px-1 font-bold">executionId</code> to each line, and <code class="bg-gray-100 px-1 font-bold">"scoped"</code> providers resolve once per context.
+          <code class="bg-gray-100 px-1 font-bold">require()</code> outside <code class="bg-gray-100 px-1 font-bold">run()</code> throws <code class="bg-gray-100 px-1 font-bold">ExecutionContextNotFoundError</code>. The runtime runs every module hook inside a context whose <code class="bg-gray-100 px-1 font-bold">module</code> is the module id; the default logger adds its <code class="bg-gray-100 px-1 font-bold">executionId</code> to each line, and <code class="bg-gray-100 px-1 font-bold">"scoped"</code> providers resolve once per context. <code class="bg-gray-100 px-1 font-bold">run(ctx, fn)</code> starts a new execution without the enclosing execution's <code class="bg-gray-100 px-1 font-bold">ContextValues</code>; <code class="bg-gray-100 px-1 font-bold">runDerived()</code> keeps them.
         </p>
       </section>
 
@@ -469,11 +469,12 @@ console.<span class="fn">log</span>(storage.<span class="fn">get</span>());   <s
         <table class="doc-table">
           <thead><tr><th>Option</th><th>What it does</th><th>Default</th></tr></thead>
           <tbody>
-            <tr><td><code>name</code>, <code>mode</code></td><td>Service name; <code>"development"</code>, <code>"test"</code> or <code>"production"</code></td><td><code>"application"</code>, <code>"development"</code></td></tr>
+            <tr><td><code>name</code>, <code>mode</code></td><td>Service name; <code>"development"</code>, <code>"test"</code> or <code>"production"</code>. <code>mode</code> defaults to the mode derived from <code>NODE_ENV</code> via <code>resolveEnvironment()</code> (@zudojs/constants); <code>staging</code> runs as <code>production</code>, unset is <code>development</code></td><td><code>"application"</code>, from <code>NODE_ENV</code></td></tr>
             <tr><td><code>startup.timeoutMs</code>, <code>shutdown.timeoutMs</code></td><td>Abort with <code>RuntimeTimeoutError</code> after this long (<code>0</code> = no limit)</td><td><code>0</code>, <code>30000</code></td></tr>
             <tr><td><code>startup.continueOnInitializeError</code>, <code>continueOnStartError</code></td><td>Keep going when a module throws; report it in <code>getStatus().bootstrap</code> instead</td><td><code>false</code></td></tr>
             <tr><td><code>signals.handleSigint</code>, <code>handleSigterm</code>, <code>handleSighup</code></td><td>Stop gracefully on the OS signal</td><td><code>true</code>, <code>true</code>, <code>false</code></td></tr>
-            <tr><td><code>signals.handleUncaughtException</code>, <code>handleUnhandledRejection</code></td><td>Mark the runtime failed and stop it</td><td><code>true</code></td></tr>
+            <tr><td><code>signals.handleUncaughtException</code>, <code>handleUnhandledRejection</code></td><td>Mark the runtime failed, stop it, then exit with code 1 (opt out with <code>signals.exitOnFatalError: false</code>; <code>signals.fatalExitTimeout</code>, default 10000 ms, bounds a hanging stop)</td><td><code>true</code></td></tr>
+            <tr><td><code>signals.forceExitOnSecondSignal</code></td><td>A second signal during shutdown exits with <code>signals.forceExitCode</code> (default <code>1</code>)</td><td><code>true</code></td></tr>
             <tr><td><code>diagnostics.startupLogging</code>, <code>shutdownLogging</code></td><td>Print the runtime's own progress lines</td><td><code>true</code></td></tr>
           </tbody>
         </table>

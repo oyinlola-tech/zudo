@@ -324,7 +324,7 @@ console.<span class="fn">log</span>(<span class="fn">describeToken</span>(Clock)
         <table class="doc-table mb-6">
           <thead><tr><th>Method</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr><td><code>registerValue(token, value)</code></td><td>Hands back the exact object you gave it.</td><td>Always SINGLETON, whatever scope you pass.</td></tr>
+            <tr><td><code>registerValue(token, value)</code></td><td>Hands back the exact object you gave it.</td><td>Always SINGLETON, whatever scope you pass. Never disposed by the container (the value is yours).</td></tr>
             <tr><td><code>registerClass(token, Class, { inject })</code></td><td>Calls <code>new Class(...deps)</code>.</td><td><code>inject</code> lists the tokens to pass, in constructor order. Omit it for a zero-argument constructor.</td></tr>
             <tr><td><code>registerFactory(token, fn, inject)</code></td><td>Calls your function and uses its return value.</td><td>Resolved <code>inject</code> tokens become the function's arguments.</td></tr>
             <tr><td><code>registerExisting(token, otherToken)</code></td><td>Makes <code>token</code> an alias for <code>otherToken</code>.</td><td>Both tokens resolve to the same instance.</td></tr>
@@ -466,7 +466,7 @@ console.<span class="fn">log</span>(requestB.<span class="fn">resolve</span>(REQ
       <section id="disposal" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">DISPOSAL AND CLEANUP</h2>
         <p class="mb-4">
-          Some objects hold resources that must be released: database connections, file handles, timers. The container tracks every SINGLETON it creates (and every SCOPED instance a scope creates) and cleans them up when you call <code class="bg-gray-100 px-1">dispose()</code>.
+          Some objects hold resources that must be released: database connections, file handles, timers. The container tracks every SINGLETON it creates (and every SCOPED instance a scope creates) and cleans them up when you call <code class="bg-gray-100 px-1">dispose()</code>. Values passed to <code class="bg-gray-100 px-1">registerValue()</code> are not tracked or disposed.
         </p>
         <p class="mb-4">
           An instance is cleaned up if it has a <code class="bg-gray-100 px-1">dispose()</code> method (sync or async) or implements <code class="bg-gray-100 px-1">Symbol.dispose</code> / <code class="bg-gray-100 px-1">Symbol.asyncDispose</code>. Disposal runs in reverse creation order, so a dependency is closed after the things that used it.
@@ -649,7 +649,7 @@ console.<span class="fn">log</span>(container.<span class="fn">resolve</span>(MA
             <tr><td><code>resolveOptional(token)</code></td><td>Like <code>resolve</code>, but returns <code>undefined</code> when not registered.</td><td>Other failures still throw.</td></tr>
             <tr><td><code>resolveMany([a, b])</code></td><td>Resolves several tokens at once.</td><td>Returns a tuple typed per token.</td></tr>
             <tr><td><code>has(token)</code> / <code>canResolve(token)</code></td><td>Is it registered? / Could <code>resolve</code> succeed?</td><td><code>canResolve</code> counts auto-registrable classes.</td></tr>
-            <tr><td><code>replace(token, provider, options?)</code></td><td>Swaps a registration.</td><td>Disposes the old cached singleton.</td></tr>
+            <tr><td><code>replace(token, provider, options?)</code></td><td>Swaps a registration.</td><td>Evicts and disposes the old cached singleton and every cached consumer built on it; live scopes drop their copies.</td></tr>
             <tr><td><code>remove(token)</code> / <code>clearRegistrations()</code></td><td>Removes one or all registrations.</td><td>Cached singletons are disposed.</td></tr>
             <tr><td><code>createScope(options?)</code></td><td>Creates a <code>ContainerScopeContext</code>.</td><td><code>options.name</code>, <code>options.metadata</code>.</td></tr>
             <tr><td><code>snapshot()</code> / <code>restoreSnapshot(snap)</code></td><td>Save and restore the registration set.</td><td>For tests. Refused when registrations are frozen.</td></tr>
@@ -716,7 +716,7 @@ console.<span class="fn">log</span>(container.<span class="fn">resolve</span>(MA
           <li class="border-l-4 border-zudo-blue pl-3"><strong>Forgetting <code>inject</code> on a class with constructor arguments.</strong> The container calls <code>new Service()</code> with nothing, and the fields are <code>undefined</code>. Fix: <code>registerClass(TOKEN, Service, { inject: [DEP_A, DEP_B] })</code> in constructor order.</li>
           <li class="border-l-4 border-zudo-yellow pl-3"><strong>Resolving a SCOPED token from the container.</strong> <code>ScopedResolutionError</code>. Fix: <code>const scope = container.createScope()</code> and <code>scope.resolve(TOKEN)</code>, then <code>await scope.dispose()</code>.</li>
           <li class="border-l-4 border-zudo-green pl-3"><strong>Expecting the default to be singleton.</strong> The default is TRANSIENT, so a DB pool factory runs on every resolve. Fix: pass <code>{ scope: ContainerScope.SINGLETON }</code> for shared things.</li>
-          <li class="border-l-4 border-black pl-3"><strong>Returning a Promise from a singleton factory.</strong> <code>AsyncProviderError</code>. Fix: <code>const db = await connect()</code> first, then <code>registerValue(DB, db)</code>.</li>
+          <li class="border-l-4 border-black pl-3"><strong>Returning a Promise from a singleton factory.</strong> <code>AsyncProviderError</code>. Fix: <code>const db = await connect()</code> first, then <code>registerValue(DB, db)</code> &mdash; and close it yourself, since the container does not dispose registered values.</li>
         </ul>
       </section>
 

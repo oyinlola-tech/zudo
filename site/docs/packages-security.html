@@ -437,7 +437,7 @@ console.<span class="fn">log</span>(<span class="fn">checkCsrf</span>(<span clas
 console.<span class="fn">log</span>(<span class="fn">checkCsrf</span>(<span class="str">"POST"</span>, {}, <span class="str">"user-42"</span>, <span class="str">"s3cret"</span>)); <span class="cmt">// false — no token present</span></div>
 
         <p class="mb-4">
-          <code class="bg-black/5 px-1">verifyDoubleSubmit</code> passes only when both tokens are present, byte-for-byte equal (compared in constant time), correctly signed, unexpired, and bound to the session id you pass. Comparing the two alone would not be enough.
+          <code class="bg-black/5 px-1">verifyDoubleSubmit</code> passes only when both tokens are present, byte-for-byte equal (compared in constant time), correctly signed, unexpired, and bound to the session id you pass. Comparing the two alone would not be enough. <code class="bg-black/5 px-1">validateCsrfToken</code> and <code class="bg-black/5 px-1">verifyDoubleSubmit</code> throw on a secret shorter than 32 characters, and the protected <code class="bg-black/5 px-1">methods</code> list is matched case-insensitively.
         </p>
 
         <div class="callout callout-warning">
@@ -487,7 +487,7 @@ limiter.<span class="fn">destroy</span>(); <span class="cmt">// clears the inter
           <tbody>
             <tr><td><code>check(request)</code></td><td>Decides one request and records it.</td><td>Returns <code>{ allowed, remaining, resetAt, total }</code>; <code>resetAt</code> is a <code>Date</code>.</td></tr>
             <tr><td><code>middleware(request, response?)</code></td><td>Same as <code>check</code>, but on a denial it also fills in the response object.</td><td>Sets status 429, <code>Retry-After</code> and a JSON error body, unless you configured your own <code>handler</code>.</td></tr>
-            <tr><td><code>reset(key)</code></td><td>Forgets one client's history.</td><td>The key is whatever your <code>keyGenerator</code> returns &mdash; the IP by default.</td></tr>
+            <tr><td><code>reset(key)</code></td><td>Forgets one client's history.</td><td>The key is whatever your <code>keyGenerator</code> returns &mdash; by default the IP (IPv6 by /64); passing the raw IP works too.</td></tr>
             <tr><td><code>clear()</code></td><td>Forgets every client.</td><td>Useful between tests.</td></tr>
             <tr><td><code>getCount(key)</code></td><td>How many allowed requests are still inside the window.</td><td>Never exceeds <code>max</code>.</td></tr>
             <tr><td><code>destroy()</code></td><td>Stops the cleanup timer and empties the store.</td><td>Call it on shutdown, and in tests.</td></tr>
@@ -497,7 +497,7 @@ limiter.<span class="fn">destroy</span>(); <span class="cmt">// clears the inter
         </div>
 
         <p class="mb-4">
-          The config takes <code class="bg-black/5 px-1">max</code> and <code class="bg-black/5 px-1">windowMs</code> (both required; a non-positive value throws a <code class="bg-black/5 px-1">RangeError</code>), plus optional <code class="bg-black/5 px-1">keyGenerator</code>, <code class="bg-black/5 px-1">handler</code>, <code class="bg-black/5 px-1">skip</code>, <code class="bg-black/5 px-1">message</code> and <code class="bg-black/5 px-1">maxKeys</code>. Once the store passes <code class="bg-black/5 px-1">maxKeys</code> (100,000 by default) the least recently seen keys are dropped, so a client rotating its identity cannot grow the map without limit.
+          The config takes <code class="bg-black/5 px-1">max</code> and <code class="bg-black/5 px-1">windowMs</code> (both required; a non-positive value throws a <code class="bg-black/5 px-1">RangeError</code>), plus optional <code class="bg-black/5 px-1">keyGenerator</code>, <code class="bg-black/5 px-1">handler</code>, <code class="bg-black/5 px-1">skip</code>, <code class="bg-black/5 px-1">message</code> and <code class="bg-black/5 px-1">maxKeys</code>. Once the store passes <code class="bg-black/5 px-1">maxKeys</code> (100,000 by default) the least recently seen keys are dropped, so a client rotating its identity cannot grow the map without limit. The default key generator strips ports, keys IPv4-mapped IPv6 as IPv4, buckets other IPv6 by /64 (<code class="bg-black/5 px-1">DEFAULT_IPV6_PREFIX_LENGTH</code>; build your own with <code class="bg-black/5 px-1">createIpKeyGenerator</code> / <code class="bg-black/5 px-1">ipRateLimitKey</code>), and throws a <code class="bg-black/5 px-1">ConfigurationError</code> when <code class="bg-black/5 px-1">request.ip</code> is missing or not an address (including <code class="bg-black/5 px-1">"unknown"</code>).
         </p>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Finding the client's IP</h3>
@@ -657,7 +657,7 @@ console.<span class="fn">log</span>(<span class="fn">validateUrl</span>(<span cl
           SSRF &mdash; Server-Side Request Forgery &mdash; is when a user hands you a URL and your server fetches it for them. Your server usually sits inside a private network, so <code class="bg-black/5 px-1">http://169.254.169.254/</code> reaches the cloud metadata service and the credentials it hands out.
         </p>
         <p class="mb-4">
-          <code class="bg-black/5 px-1">isSafeUrl</code> answers "does this URL point somewhere public?" It allows only <code class="bg-black/5 px-1">http:</code> and <code class="bg-black/5 px-1">https:</code>, refuses URLs carrying a username or password, and range-checks the address numerically.
+          <code class="bg-black/5 px-1">isSafeUrl</code> answers "does this URL point somewhere public?" It allows only <code class="bg-black/5 px-1">http:</code> and <code class="bg-black/5 px-1">https:</code>, refuses URLs carrying a username or password, and range-checks the address numerically. IPv6 forms embedding an IPv4 address (<code class="bg-black/5 px-1">::a.b.c.d</code>, <code class="bg-black/5 px-1">::ffff:0:a.b.c.d</code>, <code class="bg-black/5 px-1">64:ff9b::/96</code>, <code class="bg-black/5 px-1">2002::/16</code>) are judged as that IPv4 address; <code class="bg-black/5 px-1">expandIpv6(address)</code>, <code class="bg-black/5 px-1">embeddedIpv4(groups)</code> and <code class="bg-black/5 px-1">isNonPublicIpv6Range(groups)</code> are exported.
         </p>
 
         <div class="code-block mb-4"><span class="kw">import</span> { isSafeUrl, isPrivateHostname } <span class="kw">from</span> <span class="str">"@zudojs/security"</span>;
@@ -739,7 +739,7 @@ console.<span class="fn">log</span>(<span class="fn">validateCookieName</span>(<
 console.<span class="fn">log</span>(<span class="fn">stripSensitiveCookies</span>(<span class="str">"session_id=abc; theme=dark"</span>)); <span class="cmt">// "theme=dark"</span></div>
 
         <div class="callout callout-note">
-          <strong>In plain words:</strong> <code>stripSensitiveCookies</code> drops anything named <code>session</code>, <code>token</code>, <code>auth</code> or <code>jwt</code>, plus names that start with one of those followed by <code>_</code>, <code>-</code> or <code>.</code>. Pass your own list as the second argument if your cookies are named differently &mdash; a cookie it does not recognise is kept.
+          <strong>In plain words:</strong> <code>stripSensitiveCookies</code> drops any cookie whose name contains <code>session</code>, <code>sessionid</code>, <code>sess</code>, <code>sid</code>, <code>token</code>, <code>auth</code>, <code>jwt</code>, <code>csrf</code>, <code>xsrf</code> (and <code>PHPSESSID</code>/<code>JSESSIONID</code>) as a whole word, after ignoring a <code>__Host-</code>/<code>__Secure-</code> prefix, e.g. <code>connect.sid</code>, <code>access_token</code>, <code>__Host-session</code>. Pass your own list as the second argument if your cookies are named differently &mdash; a cookie it does not recognise is kept.
         </div>
       </section>
 
@@ -815,7 +815,7 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
         </div>
 
         <p class="mb-4">
-          Once you know the limit, <code class="bg-black/5 px-1">validateBodySize(actualSize, maxSize, contentType?)</code> checks one size, and <code class="bg-black/5 px-1">createBodySizeChecker(maxSize, contentType?)</code> returns a reusable <code class="bg-black/5 px-1">(size) =&gt; { allowed, error? }</code> function for a streaming read.
+          Once you know the limit, <code class="bg-black/5 px-1">validateBodySize(actualSize, maxSize, contentType?)</code> checks one size, and <code class="bg-black/5 px-1">createBodySizeChecker(maxSize, contentType?)</code> returns a reusable <code class="bg-black/5 px-1">(size) =&gt; { allowed, error? }</code> function for a streaming read. A limit that is <code class="bg-black/5 px-1">NaN</code>, infinite, zero or negative throws a <code class="bg-black/5 px-1">ConfigurationError</code> instead of silently allowing everything.
         </p>
       </section>
 
@@ -875,8 +875,8 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
           <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
             <tr><td><code>createRateLimiter(config)</code></td><td>Builds an in-memory sliding-window limiter.</td><td>Returns <code>{ check, middleware, reset, clear, getCount, destroy, size }</code>. Create once, at startup.</td></tr>
-            <tr><td><code>extractClientIp(headers, options?)</code></td><td>Works out the client address.</td><td>Ignores forwarding headers unless <code>trustProxy</code> is set. Falls back to <code>remoteAddress</code>, then <code>"unknown"</code>.</td></tr>
-            <tr><td><code>defaultKeyGenerator(request)</code></td><td>Uses <code>request.ip</code> as the key.</td><td>Used when you pass no <code>keyGenerator</code>.</td></tr>
+            <tr><td><code>extractClientIp(headers, options?)</code></td><td>Works out the client address.</td><td>Ignores forwarding headers unless <code>trustProxy</code> is set. Falls back to <code>remoteAddress</code>, then <code>"unknown"</code>. Ports and IPv6 brackets are stripped from the result.</td></tr>
+            <tr><td><code>defaultKeyGenerator(request)</code></td><td>Uses <code>request.ip</code> as the key (port stripped, IPv6 by /64); throws <code>ConfigurationError</code> when it is missing or not an IP.</td><td>Used when you pass no <code>keyGenerator</code>.</td></tr>
             <tr><td><code>defaultHandler(request, response)</code></td><td>Fills in a 429 response.</td><td>Sets status, <code>Retry-After: 60</code> and a JSON error body.</td></tr>
             <tr><td><code>rateLimit</code></td><td>Namespace holding the four functions above.</td><td>&mdash;</td></tr>
           </tbody>
@@ -928,7 +928,7 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
             <tr><td><code>serializeCookie(cookie, config?)</code></td><td>Same, taking a <code>ParsedCookie</code>.</td><td>Percent-encodes the value; validates every attribute.</td></tr>
             <tr><td><code>parseCookieHeader(header, config?)</code></td><td>Splits a Cookie header.</td><td>Returns <code>{ cookies, errors }</code>. Does not percent-decode.</td></tr>
             <tr><td><code>validateCookieName(name)</code> / <code>validateCookieValue(value)</code></td><td>Check one part.</td><td>Error message, or <code>undefined</code> when fine.</td></tr>
-            <tr><td><code>stripSensitiveCookies(header, names?)</code></td><td>Removes session-like cookies.</td><td>Defaults to <code>session</code>, <code>token</code>, <code>auth</code>, <code>jwt</code> and prefixed variants.</td></tr>
+            <tr><td><code>stripSensitiveCookies(header, names?)</code></td><td>Removes session-like cookies.</td><td>Defaults to <code>DEFAULT_SENSITIVE_COOKIE_NAMES</code>, matched as whole words anywhere in the name (<code>isSensitiveCookieName</code>).</td></tr>
             <tr><td><code>validateHeaders(headers, config?)</code></td><td>Checks names, values, counts and sizes.</td><td>Returns <code>{ valid, errors }</code>. Blocks <code>x-forwarded-*</code> by default.</td></tr>
             <tr><td><code>validateHeaderName(name)</code> / <code>validateHeaderValue(name, value, config?)</code></td><td>Check one header.</td><td>Error message, or <code>undefined</code>.</td></tr>
             <tr><td><code>sanitizeHeaderValue(value)</code></td><td>Strips null bytes and line breaks.</td><td>Returns <code>undefined</code> if nothing is left.</td></tr>

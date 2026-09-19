@@ -400,7 +400,7 @@ down: database</div>
       <!-- Startup and Shutdown -->
       <section id="startup-and-shutdown" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">STARTUP AND SHUTDOWN</h2>
-        <p class="mb-4"><code class="bg-black/5 px-1">start()</code> initializes every module in order, then readies them. If any module throws, the runtime rolls back: modules that already started are stopped and destroyed in reverse, the state becomes <code class="bg-black/5 px-1">failed</code>, and the original error is re-thrown to you.</p>
+        <p class="mb-4"><code class="bg-black/5 px-1">start()</code> initializes every module in order, then readies them. If any module throws, the runtime rolls back: modules that already started are stopped and destroyed in reverse, the state becomes <code class="bg-black/5 px-1">failed</code>, and the original error is re-thrown to you. A configuration manager that fails to load fails startup with <code class="bg-black/5 px-1">RuntimeStartError</code> (<code class="bg-black/5 px-1">phase: "initialize"</code>).</p>
         <p class="mb-4"><code class="bg-black/5 px-1">stop()</code> goes the other way, and is safe to call more than once — stopping an already-stopped runtime does nothing.</p>
 
         <p class="mb-3">Handling a failed start:</p>
@@ -426,7 +426,7 @@ down: database</div>
             <tr><th>Option</th><th>Default</th><th>What it bounds</th></tr>
           </thead>
           <tbody>
-            <tr><td><span class="code-inline">startupTimeout</span></td><td>60000</td><td>The whole startup sequence. On expiry, startup fails with a timeout error and rolls back.</td></tr>
+            <tr><td><span class="code-inline">startupTimeout</span></td><td>60000</td><td>The whole startup sequence. On expiry, startup fails with a timeout error and rolls back; no further module hook starts, and a module whose hook finishes late is shut down and destroyed.</td></tr>
             <tr><td><span class="code-inline">shutdownTimeout</span></td><td>30000</td><td>The whole shutdown sequence. On expiry <code>stop()</code> throws <code>RuntimeStopError</code> and the state becomes <code>failed</code>.</td></tr>
           </tbody>
         </table>
@@ -708,6 +708,9 @@ registry.<span class="fn">register</span>(<span class="str">"worker"</span>, wor
             <tr><td><span class="code-inline">runtimeId</span></td><td>generated</td><td>Identifier for this runtime instance.</td></tr>
             <tr><td><span class="code-inline">handleSignals</span></td><td>true</td><td>Shut down on SIGTERM and SIGINT.</td></tr>
             <tr><td><span class="code-inline">handleFatalErrors</span></td><td>true</td><td>Shut down and exit 1 on an uncaught error.</td></tr>
+            <tr><td><span class="code-inline">exitOnFatalError</span></td><td>true</td><td>Exit 1 after a fatal-error shutdown.</td></tr>
+            <tr><td><span class="code-inline">fatalExitTimeout</span></td><td>10000</td><td>Exit anyway if that shutdown hangs.</td></tr>
+            <tr><td><span class="code-inline">forceExitOnSecondSignal</span></td><td>true</td><td>A second SIGTERM/SIGINT exits immediately.</td></tr>
             <tr><td><span class="code-inline">startupTimeout</span></td><td>60000</td><td>Milliseconds allowed for startup.</td></tr>
             <tr><td><span class="code-inline">shutdownTimeout</span></td><td>30000</td><td>Milliseconds allowed for shutdown.</td></tr>
             <tr><td><span class="code-inline">emitEvents</span></td><td>true</td><td>Publish lifecycle events on the bus.</td></tr>
@@ -801,7 +804,7 @@ registry.<span class="fn">register</span>(<span class="str">"worker"</span>, wor
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Importing test helpers from the package root.</strong> <code>import { withTestRuntime } from "@zudojs/runtime"</code> fails — nothing by that name is exported there. Import from <code>@zudojs/runtime/testing</code> instead.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Registering a runtime without an id.</strong> <code>registry.register(apiRuntime)</code> does not type-check. The signature is <code>register(id, runtime)</code>, and registering the same id twice throws.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Expecting a new readiness check to pass.</strong> It is failing until <code>runReadinessChecks()</code> runs it, so <code>runtime.ready</code> flips to false the moment you register one. Run the checks before reading readiness.</span></li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Treating <code>failed</code> as the end.</strong> Startup rollback only reaches modules that started. Skipping <code>stop()</code> after a failed start leaks whatever the rest had opened.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Treating <code>failed</code> as the end.</strong> Startup rollback shuts down started modules and destroys every module whose <code>onInitialize</code> ran (including one that threw); a module that finishes after a startup timeout is torn down when it settles, and <code>stop()</code> waits for that. Call <code>stop()</code> on a failed runtime to release it fully.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Caching <code>runtime.status</code> in a variable and reading it later.</strong> Each read builds a fresh snapshot; the one you held onto is frozen in the past. Read <code>runtime.status</code> at the moment you need it.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><strong>Ignoring <code>status.shutdownFailures</code>.</strong> The state reaches <code>stopped</code> either way. Only that list tells you a module failed to release its resources.</span></li>
         </ul>

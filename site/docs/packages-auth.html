@@ -189,7 +189,7 @@
               You bring the database. The package never reads or writes user rows itself — you hand it three small functions (find a user by login identifier, find a user by id, check a password) and it does the rest.
             </p>
             <p class="text-body text-black/80 mb-4">
-              All cryptography comes from Node's built-in <span class="code-inline">node:crypto</span>: HMAC SHA-256 for signing tokens, scrypt for hashing passwords. There are no third-party crypto dependencies.
+              Tokens are signed with HMAC SHA-256 from Node's built-in <span class="code-inline">node:crypto</span>; password hashing (scrypt) is delegated to <a href="/docs/packages-crypto" class="underline hover:text-zudo-blue">@zudojs/crypto</a>. There are no third-party crypto dependencies.
             </p>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
@@ -371,8 +371,8 @@ console.<span class="fn">log</span>(payload.sub, payload.roles);
             <div class="code-block p-4 mb-4"><span class="kw">import</span> { <span class="fn">hashPassword</span>, <span class="fn">verifyPassword</span>, <span class="fn">needsRehash</span> } <span class="kw">from</span> <span class="str">"@zudojs/auth"</span>;
 
 <span class="kw">const</span> stored = <span class="kw">await</span> <span class="fn">hashPassword</span>(<span class="str">"hunter2-but-longer"</span>);
-console.<span class="fn">log</span>(stored.<span class="fn">split</span>(<span class="str">"$"</span>).<span class="fn">slice</span>(<span class="num">0</span>, <span class="num">4</span>).<span class="fn">join</span>(<span class="str">"$"</span>));
-<span class="cmt">// scrypt$16384$8$1   (algorithm and cost parameters, then salt$hash)</span>
+console.<span class="fn">log</span>(stored.<span class="fn">split</span>(<span class="str">"$"</span>).<span class="fn">slice</span>(<span class="num">0</span>, <span class="num">5</span>).<span class="fn">join</span>(<span class="str">"$"</span>));
+<span class="cmt">// v1$scrypt$16384$8$5   (format version, algorithm and cost parameters, then &lt;salt&gt;.&lt;hash&gt;)</span>
 
 console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">verifyPassword</span>(<span class="str">"hunter2-but-longer"</span>, stored)); <span class="cmt">// true</span>
 console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">verifyPassword</span>(<span class="str">"wrong"</span>, stored));              <span class="cmt">// false</span>
@@ -381,7 +381,7 @@ console.<span class="fn">log</span>(<span class="fn">needsRehash</span>(stored))
               Hashing the same password twice gives two different strings, because each hash gets a fresh random <em>salt</em> mixed in. That is expected — <span class="code-inline">verifyPassword()</span> reads the salt back out of the stored string.
             </p>
             <p class="text-body text-black/80 mb-4">
-              <span class="code-inline">needsRehash()</span> returns <span class="code-inline">true</span> when a stored hash was made with older settings. Call it right after a successful login, while you still hold the plain password, and re-store a fresh hash if it says so.
+              <span class="code-inline">hashPassword</span> returns a <a href="/docs/packages-crypto" class="underline hover:text-zudo-blue">@zudojs/crypto</a> hash, <span class="code-inline">v1$scrypt$16384$8$5$&lt;salt&gt;.&lt;hash&gt;</span>. Earlier <span class="code-inline">scrypt$…</span> hashes (all parameter sets and the param-less format) still verify, and <span class="code-inline">needsRehash()</span> returns <span class="code-inline">true</span> for every hash that is not a current-parameter crypto scrypt hash. Call it right after a successful login, while you still hold the plain password, and re-store a fresh hash if it says so. <span class="code-inline">hashPassword("")</span> throws <span class="code-inline">AuthError</span> (<span class="code-inline">INVALID_INPUT</span>).
             </p>
             <div class="callout callout-warning mb-6">
               <strong class="text-sm uppercase tracking-wider">verifyPassword never throws</strong>
@@ -548,6 +548,7 @@ console.<span class="fn">log</span>(<span class="tp">String</span>(userId) === <
                 <tr><td><span class="code-inline">absoluteSessionTtlSeconds</span></td><td>No</td><td>Hard ceiling on session age. Strongly recommended.</td></tr>
                 <tr><td><span class="code-inline">permissions</span></td><td>No</td><td>A <span class="code-inline">PermissionEngine</span> from @zudojs/permissions, used by <span class="code-inline">checkAccess()</span>.</td></tr>
                 <tr><td><span class="code-inline">revocationStore</span></td><td>No</td><td>Enables refresh-token rotation and replay detection.</td></tr>
+                <tr><td><span class="code-inline">allowSessionlessTokens</span></td><td>No</td><td>Accept tokens without a <span class="code-inline">sid</span> claim (default <span class="code-inline">false</span>: they are rejected).</td></tr>
                 <tr><td><span class="code-inline">loginThrottle</span></td><td>No</td><td>Failed-attempt lockout and login rate limiting.</td></tr>
                 <tr><td><span class="code-inline">allowInsecureFallbackGuard</span></td><td>No</td><td>Opt in to the built-in guard when no engine is configured. Read the warning below first.</td></tr>
                 <tr><td><span class="code-inline">fallbackAdminRole</span></td><td>No</td><td>Role the fallback guard treats as superuser (default <span class="code-inline">"admin"</span>).</td></tr>
@@ -630,7 +631,7 @@ console.<span class="fn">log</span>(rotated.refreshToken !== tokens.refreshToken
 
             <h3 class="text-h3 mb-3">Brute-force lockout</h3>
             <p class="text-body text-black/80 mb-4">
-              Add <span class="code-inline">loginThrottle</span> and repeated failures start costing the attacker. After <span class="code-inline">maxFailedAttempts</span> (default 5) the identifier is locked for <span class="code-inline">lockoutSeconds</span> (default 900) and <span class="code-inline">login()</span> throws <span class="code-inline">AccountLockedError</span>. Beyond <span class="code-inline">maxAttemptsPerWindow</span> (default 20) it throws <span class="code-inline">AuthRateLimitError</span> instead.
+              Add <span class="code-inline">loginThrottle</span> and repeated failures start costing the attacker. After <span class="code-inline">maxFailedAttempts</span> (default 5) the identifier is locked for <span class="code-inline">lockoutSeconds</span> (default 900) and <span class="code-inline">login()</span> throws <span class="code-inline">AccountLockedError</span>. Beyond <span class="code-inline">maxAttemptsPerWindow</span> (default 20) it throws <span class="code-inline">AuthRateLimitError</span> instead. A failure is reserved before the password is checked, so even a parallel burst gets only <span class="code-inline">maxFailedAttempts</span> guesses. Both budgets are per identifier: put a per-IP limiter (<span class="code-inline">createRateLimiter</span> from @zudojs/security) in front of <span class="code-inline">login()</span>. The in-memory store forgets an unlocked failure streak after <span class="code-inline">failureTtlSeconds</span> (default 900) and caps tracked identifiers at <span class="code-inline">maxEntries</span> (default 100 000).
             </p>
             <div class="code-block p-4 mb-4"><span class="kw">import</span> { <span class="fn">createMemoryLoginAttemptStore</span> } <span class="kw">from</span> <span class="str">"@zudojs/auth"</span>;
 
@@ -762,14 +763,14 @@ console.<span class="fn">log</span>(<span class="fn">generateCsrfToken</span>().
               <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
               <tbody>
                 <tr><td><span class="code-inline">createAuthService(config)</span></td><td>Builds the full auth service.</td><td>The entry point for real applications.</td></tr>
-                <tr><td><span class="code-inline">hashPassword(password, saltLength?)</span></td><td>Hashes a password with scrypt.</td><td>Async. Salt length 16–64 bytes, default 32.</td></tr>
+                <tr><td><span class="code-inline">hashPassword(password, saltLength?)</span></td><td>Hashes a password with scrypt (N=16384, r=8, p=5) via @zudojs/crypto.</td><td>Async. Salt length 16–64 bytes, default 32.</td></tr>
                 <tr><td><span class="code-inline">verifyPassword(password, hash)</span></td><td>Checks a password against a stored hash.</td><td>Async. Returns <span class="code-inline">false</span> instead of throwing.</td></tr>
                 <tr><td><span class="code-inline">needsRehash(hash)</span></td><td>Says whether a stored hash uses outdated settings.</td><td>Call after a successful login.</td></tr>
                 <tr><td><span class="code-inline">generateRandomToken(length?)</span></td><td>Random hex string for reset links and similar.</td><td>Length in bytes, 16–1024, default 32.</td></tr>
-                <tr><td><span class="code-inline">createTokenPair(userId, config, options?)</span></td><td>Mints an access + refresh pair.</td><td>Synchronous. No session binding unless you pass <span class="code-inline">sessionId</span>.</td></tr>
+                <tr><td><span class="code-inline">createTokenPair(userId, config, options?)</span></td><td>Mints an access + refresh pair.</td><td>Synchronous. No session binding unless you pass <span class="code-inline">sessionId</span>; <span class="code-inline">createAuthService()</span> rejects such unbound tokens unless <span class="code-inline">allowSessionlessTokens</span> is true.</td></tr>
                 <tr><td><span class="code-inline">verifyAccessToken(token, config)</span></td><td>Verifies an access token.</td><td>Returns a result object; only bad config throws.</td></tr>
                 <tr><td><span class="code-inline">verifyRefreshToken(token, config)</span></td><td>Verifies a refresh token.</td><td>Same shape, refresh secret.</td></tr>
-                <tr><td><span class="code-inline">refreshAccessToken(token, config, options?)</span></td><td>Raw exchange of a refresh token for a new pair.</td><td>No rotation or revocation. Prefer <span class="code-inline">service.refresh()</span>.</td></tr>
+                <tr><td><span class="code-inline">refreshAccessToken(token, config, options?)</span></td><td>Raw exchange of a refresh token for a new pair.</td><td>No rotation or revocation. Prefer <span class="code-inline">service.refresh()</span>. A refresh token that carries a <span class="code-inline">sid</span> produces a pair bound to the same <span class="code-inline">sid</span>, so it still dies with <span class="code-inline">logout()</span> when verified through the service.</td></tr>
                 <tr><td><span class="code-inline">createMemorySessionStore(options?)</span></td><td>In-process <span class="code-inline">SessionStore</span>.</td><td>Development and tests only.</td></tr>
                 <tr><td><span class="code-inline">createMemoryTokenRevocationStore(options?)</span></td><td>In-process <span class="code-inline">TokenRevocationStore</span>.</td><td>Enables atomic rotation in one process.</td></tr>
                 <tr><td><span class="code-inline">createMemoryLoginAttemptStore(options?)</span></td><td>In-process <span class="code-inline">LoginAttemptStore</span>.</td><td>Counters are not shared between instances.</td></tr>
@@ -814,7 +815,7 @@ console.<span class="fn">log</span>(<span class="fn">generateCsrfToken</span>().
 
             <h3 class="text-h3 mb-3">Errors</h3>
             <p class="text-body text-black/80 mb-4">
-              Every error extends <span class="code-inline">AuthError</span>, which extends <span class="code-inline">BaseError</span> from <a href="/docs/packages-errors" class="underline hover:text-zudo-blue">@zudojs/errors</a>. Each carries an HTTP status code and a message that is safe to show a client — the messages never reveal whether an account exists.
+              Every error extends <span class="code-inline">AuthError</span>, re-exported from <a href="/docs/packages-errors" class="underline hover:text-zudo-blue">@zudojs/errors</a> (a <span class="code-inline">BaseError</span>). Each carries an HTTP status code and a message that is safe to show a client — the messages never reveal whether an account exists.
             </p>
             <table class="doc-table mb-6">
               <thead><tr><th>Name</th><th>Thrown when</th><th>Status</th></tr></thead>
