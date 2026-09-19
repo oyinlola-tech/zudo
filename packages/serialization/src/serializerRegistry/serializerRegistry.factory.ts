@@ -9,6 +9,8 @@
 import type {
   Serializer,
   SerializationFormat,
+  SerializeOptions,
+  DeserializeOptions,
 } from "../serializerTypes/index.js";
 import { JSONSerializer } from "../serializerJson/index.js";
 import { UnsupportedSerializationFormatError } from "@zudojs/errors";
@@ -16,8 +18,15 @@ import { SerializationFormat as Format } from "@zudojs/constants";
 import { TransformerRegistry } from "../serializerTransforms/index.js";
 import { SerializerRegistry } from "./serializerRegistry.core.js";
 
-/** Options accepted when creating a serializer. */
-export interface CreateSerializerOptions {
+/**
+ * Options accepted when creating a serializer.
+ *
+ * Every serialize/deserialize option (`pretty`, `preserveTypes`, `maxDepth`,
+ * `maxSize`, `strict`, `allowUnsafeKeys`, ...) is accepted as a per-instance
+ * default that each call can still override.
+ */
+export interface CreateSerializerOptions
+  extends SerializeOptions, DeserializeOptions {
   /** Transformer registry to use instead of the built-in one. */
   readonly transformers?: TransformerRegistry;
   /** Pretty-print by default. Overridable per call. */
@@ -52,19 +61,15 @@ export function createSerializer(
   options?: CreateSerializerOptions,
 ): Serializer {
   switch (format) {
-    case Format.JSON:
-      // `pretty` and `preserveTypes` used to be accepted and thrown away.
-      // They are now carried as per-instance defaults that each call can
-      // still override.
-      return new JSONSerializer({
-        transformers: options?.transformers,
-        defaults: {
-          ...(options?.pretty !== undefined ? { pretty: options.pretty } : {}),
-          ...(options?.preserveTypes !== undefined
-            ? { preserveTypes: options.preserveTypes }
-            : {}),
-        },
-      });
+    case Format.JSON: {
+      // Only `pretty` and `preserveTypes` used to be forwarded, so instance
+      // limits such as `maxDepth`/`maxSize`/`strict` were silently dropped.
+      const { transformers, ...rest } = options ?? {};
+      const defaults = Object.fromEntries(
+        Object.entries(rest).filter(([, value]) => value !== undefined),
+      ) as SerializeOptions & DeserializeOptions;
+      return new JSONSerializer({ transformers, defaults });
+    }
     default:
       throw new UnsupportedSerializationFormatError(format);
   }

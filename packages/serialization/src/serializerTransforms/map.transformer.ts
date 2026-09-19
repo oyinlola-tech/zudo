@@ -7,6 +7,7 @@
 
 import type { TypeTransformer } from "../serializerTypes/index.js";
 import { SerializationTags } from "@zudojs/constants";
+import { InvalidSerializedDataError } from "@zudojs/errors";
 
 const MAP_TYPE = "Map" as const;
 
@@ -33,7 +34,7 @@ export const MapTransformer: TypeTransformer<Map<unknown, unknown>> = {
     const data = value as Record<string, unknown>;
     const raw = data[SerializationTags.VALUE];
     if (!Array.isArray(raw)) {
-      throw new Error(
+      throw new InvalidSerializedDataError(
         `Invalid Map serialized value: expected array, got ${typeof raw}`,
       );
     }

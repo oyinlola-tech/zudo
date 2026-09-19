@@ -38,7 +38,7 @@ export type {
 } from "./serializerTypes/index.js";
 
 // ─── JSON Serializer ──────────────────────────────────────────
-export { JSONSerializer } from "./serializerJson/index.js";
+export { JSONSerializer, ESCAPED_OBJECT_TAG } from "./serializerJson/index.js";
 
 // ─── Transformer Registry ─────────────────────────────────────
 export { TransformerRegistry } from "./serializerTransforms/index.js";

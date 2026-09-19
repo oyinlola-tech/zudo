@@ -7,6 +7,7 @@
 
 import type { TypeTransformer } from "../serializerTypes/index.js";
 import { SerializationTags } from "@zudojs/constants";
+import { InvalidSerializedDataError, SerializeError } from "@zudojs/errors";
 
 const DATE_TYPE = "Date" as const;
 
@@ -19,6 +20,9 @@ export const DateTransformer: TypeTransformer<Date> = {
   },
 
   serialize(value: Date): unknown {
+    if (Number.isNaN(value.getTime())) {
+      throw new SerializeError("Cannot serialize an invalid Date.");
+    }
     return {
       [SerializationTags.TYPE]: DATE_TYPE,
       [SerializationTags.VALUE]: value.toISOString(),
@@ -29,13 +33,13 @@ export const DateTransformer: TypeTransformer<Date> = {
     const data = value as Record<string, unknown>;
     const raw = data[SerializationTags.VALUE];
     if (typeof raw !== "string") {
-      throw new Error(
+      throw new InvalidSerializedDataError(
         `Invalid Date serialized value: expected string, got ${typeof raw}`,
       );
     }
     const date = new Date(raw);
     if (Number.isNaN(date.getTime())) {
-      throw new Error(`Invalid Date value: "${raw}"`);
+      throw new InvalidSerializedDataError(`Invalid Date value: "${raw}"`);
     }
     return date;
   },

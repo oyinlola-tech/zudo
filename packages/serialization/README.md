@@ -28,8 +28,10 @@ const value = serializer.deserialize<{ id: string; createdAt: Date }>(json);
 value.createdAt instanceof Date; // true
 ```
 
-The methods are `serialize` / `deserialize`, and every option can be overridden
-per call:
+Every serialize/deserialize option — `pretty`, `preserveTypes`, `maxSize`,
+`maxDepth`, `strict`, `allowUnsafeKeys`, `includeStack` — can be passed to
+`createSerializer` as an instance default. The methods are `serialize` /
+`deserialize`, and every option can be overridden per call:
 
 ```typescript
 serializer.serialize(value, { pretty: true, maxSize: 1_000_000 });
@@ -90,11 +92,29 @@ RPC peer or a request body.
 - **Input is size-bounded** by `maxSize`, and depth-bounded by `maxDepth`. On
   the `preserveTypes` path the depth limit defaults to 128; on the fast path it
   is enforced whenever you set it, per call or as an instance default.
-- **An unrecognised `$type` tag is treated as ordinary data**, so a peer cannot
-  stop the consumer with `{"$type":"anything"}` and your own records may carry a
-  `$type` field. Pass `strict: true` to make an unknown tag an error instead.
+- **Your own data may carry a `$type` key.** With `preserveTypes`, a plain
+  object that has its own string `$type` is written escaped as
+  `{"$type":"Object","$value":{...}}` (`ESCAPED_OBJECT_TAG`) and read back as
+  the plain object it was, so user data can never be revived as a `Map`,
+  `Error`, `BigInt` or `Buffer`. `"Object"` is reserved and cannot be
+  registered as a transformer. Payloads written before this escaping existed
+  are still read as before: an unescaped tag is revived, since it cannot be
+  told apart from one the serializer wrote.
+- **An unrecognised or malformed tag is treated as ordinary data**, so a peer
+  cannot stop the consumer with `{"$type":"anything"}` or
+  `{"$type":"Date","$value":"nope"}`, and a bad record stays readable. Pass
+  `strict: true` to make either an error instead.
+- **BigInt tags are capped at 4096 decimal digits**, checked before `BigInt()`
+  runs; serializing a larger BigInt throws.
 
 ## Errors
+
+Failures throw `@zudojs/errors` serialization classes: `SerializationPayloadTooLargeError`,
+`SerializationDepthError`, `InvalidSerializedDataError` (malformed JSON, unknown
+or malformed tags under `strict`), `TransformerError` and `SerializeError` (for
+example an invalid `Date`). All extend `SerializationError`.
+
+### Serialized errors
 
 Stack traces are **not** serialized unless you ask, because a serialized error
 routinely ends up in a queue message or a log sink:

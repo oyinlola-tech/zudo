@@ -6,3 +6,4 @@
  */
 
 export { JSONSerializer } from "./jsonSerializer.core.js";
+export { ESCAPED_OBJECT_TAG } from "./jsonSerializer.escape.js";

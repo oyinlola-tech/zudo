@@ -7,6 +7,7 @@
 
 import type { TypeTransformer } from "../serializerTypes/index.js";
 import { SerializationTags } from "@zudojs/constants";
+import { InvalidSerializedDataError } from "@zudojs/errors";
 import { toBase64, fromBase64 } from "./encoding.utils.js";
 
 const BUFFER_TYPE = "Buffer" as const;
@@ -31,7 +32,7 @@ export const BufferTransformer: TypeTransformer<Uint8Array> = {
     const data = value as Record<string, unknown>;
     const raw = data[SerializationTags.VALUE];
     if (typeof raw !== "string") {
-      throw new Error(
+      throw new InvalidSerializedDataError(
         `Invalid Buffer serialized value: expected string, got ${typeof raw}`,
       );
     }
