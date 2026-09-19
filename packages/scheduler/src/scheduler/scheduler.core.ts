@@ -376,6 +376,16 @@ export class Scheduler {
     const now = this.clock.now();
     let nextRunAt = trigger.next(now);
 
+    if (nextRunAt === null && (type === "cron" || type === "interval")) {
+      // A recurring trigger with no next fire time is unsatisfiable (30
+      // February) — not a misfire. Running it "once now" fired a job at an
+      // arbitrary moment and then retired it silently.
+      throw new InvalidScheduleError(
+        `Recurring trigger has no future fire time${expression === undefined ? "" : ` ("${expression}")`}.`,
+        jobId,
+      );
+    }
+
     if (nextRunAt === null) {
       // The fire time has already passed. That is the misfire case, not an
       // error — `at(pastDate)` and a schedule restored after a restart both
@@ -418,6 +428,10 @@ export class Scheduler {
 
     this.schedules.set(scheduleId, record);
     this.queue.enqueue(schedule);
+    // A schedule added after start() must re-arm the timer: it may be due
+    // sooner than whatever the timer is currently armed for (up to ~24.8
+    // days on an empty scheduler).
+    this.rearm();
 
     // The handle holds a reference to this scheduler, so pause, resume and
     // cancel actually reach the queue instead of mutating a detached copy.

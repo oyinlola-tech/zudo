@@ -244,7 +244,8 @@ export function nextCronDate(
 
   // Start at the next whole minute after `after`, with seconds cleared.
   const candidate = new Date(after.getTime());
-  candidate.setSeconds(0, 0);
+  if (utc) candidate.setUTCSeconds(0, 0);
+  else candidate.setSeconds(0, 0);
   candidate.setTime(candidate.getTime() + 60_000);
 
   const limitYear = get.year(after) + MAX_SEARCH_YEARS;
@@ -261,7 +262,7 @@ export function nextCronDate(
     }
 
     if (!parsed.hour.has(get.hour(candidate))) {
-      advanceHour(candidate);
+      advanceHour(candidate, utc);
       continue;
     }
 
@@ -333,9 +334,18 @@ function advanceDay(candidate: Date, utc: boolean): void {
  * Moves to the top of the next hour.
  *
  * Uses wall-clock arithmetic rather than adding an hour of milliseconds, so a
- * DST transition does not skip or repeat an hour of scheduling.
+ * DST transition does not skip or repeat an hour of scheduling. In UTC mode
+ * the top of the hour is taken in UTC: a host on a half-hour offset
+ * (Asia/Kolkata) would otherwise land every skip on :30 UTC and never visit
+ * minutes 0-29 of a restricted hour.
  */
-function advanceHour(candidate: Date): void {
+function advanceHour(candidate: Date, utc: boolean): void {
+  if (utc) {
+    candidate.setUTCMinutes(0, 0, 0);
+    candidate.setTime(candidate.getTime() + 3_600_000);
+    candidate.setUTCMinutes(0, 0, 0);
+    return;
+  }
   candidate.setMinutes(0, 0, 0);
   candidate.setTime(candidate.getTime() + 3_600_000);
   candidate.setMinutes(0, 0, 0);

@@ -157,6 +157,13 @@ for a recurring schedule whose process was blocked past its fire time.
 scheduler.every("1h", "hourly-rollup", { misfire: "catch-up" });
 ```
 
+A cron expression that can never fire (`0 0 30 2 *`, 30 February) is not a
+misfire: `cron()` throws `InvalidScheduleError` at registration.
+
+Schedules may be added before or after `start()`. One added to a running
+scheduler re-arms the timer immediately, so it fires on time even when it is
+due sooner than every existing schedule.
+
 ## Execution history
 
 The scheduler keeps the last 100 executions (`MAX_EXECUTION_HISTORY`), each a
