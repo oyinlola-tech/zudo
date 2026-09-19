@@ -61,9 +61,18 @@ clock.advance(1_000);
 - `Random` is branded, so `SeededRandom` — whose output is fully predictable
   from its seed — cannot be injected where unpredictability is required.
   Implement a secure generator through `defineSecureRandom()`.
-- `Random.int()` uses rejection sampling, not `% max`, so draws are uniform for
-  every bound rather than only powers of two.
+- `Random.int(max)` uses rejection sampling, not `% max`, so draws are uniform
+  for every bound rather than only powers of two. `max` must be an integer
+  from 1 to `MAX_RANDOM_INT_BOUND` (`Number.MAX_SAFE_INTEGER`); bounds above
+  2^32 draw 53 bits. Anything else throws a `RangeError`.
+- `SeededRandom` is mulberry32-backed: its `uuid()` values do not repeat after
+  16 draws and `int(2)` does not alternate.
 - `mapToObject` and `safeJsonParse` cannot be used to reach a prototype.
+  `safeJsonParse` drops `__proto__`, `constructor` and `prototype` keys at
+  every depth as a deliberate deny-list, so a payload with a legitimate
+  `constructor` field loses it.
+- `camelToSnake` / `camelToKebab` are Unicode-aware (`caféAuLait` becomes
+  `café_au_lait`) and keep characters other than `_`, `-` and whitespace.
 - `toNumber` requires a finite number and refuses blank strings, hexadecimal
   literals and `1e999`; `toBoolean(NaN)` falls back rather than returning true.
 - `isUuid` accepts versions 1–8 including UUIDv7; use `isUuidV4` where the
@@ -75,8 +84,10 @@ clock.advance(1_000);
 - Type guards (`isPlainObject`, `isDate`, `isEmail`, `isUuid`, etc.)
 - Utility types (`Maybe`, `DeepReadonly`, `Prettify`, etc.)
 - Type converters and case transformers
-- Branded type utilities
 - Injectable `Clock` and `Random` primitives, with deterministic test doubles
+
+Branded identifier types (`Brand<>`, `UserId`, `TenantId`, ...) are not in
+this package; they live in `@zudojs/constants`.
 
 ## Use Cases
 

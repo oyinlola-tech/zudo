@@ -18,5 +18,6 @@ export {
   defineSecureRandom,
   systemRandom,
   FixedClock,
-  SeededRandom,
 } from "./runtime.core.js";
+export { SeededRandom } from "./runtime.seeded.js";
+export { MAX_RANDOM_INT_BOUND } from "./runtime.int.js";

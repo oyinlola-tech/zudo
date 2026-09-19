@@ -19,8 +19,13 @@ const UNSAFE_KEYS: ReadonlySet<string> = new Set([
  * boundary with `@zudojs/validation` or `@zudojs/schema` instead of relying on
  * this cast.
  *
- * Keys that would reach a prototype are dropped, so the parsed value cannot
- * seed a pollution chain downstream.
+ * `__proto__`, `constructor` and `prototype` keys are dropped at every depth.
+ * `JSON.parse` itself never routes them through a prototype, so this is a
+ * deliberate deny-list, not a parser fix: a downstream deep merge that walks
+ * `constructor.prototype` or `__proto__` would otherwise reach
+ * `Object.prototype`. A payload whose legitimate field is named
+ * `constructor` or `prototype` loses that field; parse it with plain
+ * `JSON.parse` and validate it instead.
  */
 export function safeJsonParse<T>(json: string, fallback: T): T {
   try {
@@ -170,10 +175,17 @@ export function snakeToCamel(str: string): string {
  * Split a camelCase or PascalCase identifier into its words.
  *
  * Runs of capitals are kept together, so `parseHTTPResponse` yields
- * `["parse", "HTTP", "Response"]` rather than one word per letter.
+ * `["parse", "HTTP", "Response"]` rather than one word per letter. Letter
+ * classes are Unicode-aware (`caféAuLait` keeps its `é`), existing `_`, `-`
+ * and whitespace separators are word boundaries, and any other character is
+ * kept in place rather than silently dropped.
  */
 function splitCamelWords(str: string): string[] {
-  return str.match(/(?:[A-Z](?![a-z]))+|[A-Z]?[a-z0-9]+|[A-Z]|[0-9]+/gu) ?? [];
+  return str
+    .replace(/([\p{Ll}\p{N}])(\p{Lu})/gu, "$1\u0000$2")
+    .replace(/(\p{Lu})(\p{Lu}\p{Ll})/gu, "$1\u0000$2")
+    .split(/[\u0000\s_-]+/u)
+    .filter((word) => word.length > 0);
 }
 
 /**

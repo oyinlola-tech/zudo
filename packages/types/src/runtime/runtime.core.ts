@@ -6,7 +6,9 @@
  * deterministic implementations.
  */
 
-import { randomInt, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+
+import { assertIntBound, cryptoWord, sampleInt } from "./runtime.int.js";
 
 /** Returns the current time in milliseconds since the Unix epoch. */
 export interface Clock {
@@ -40,7 +42,11 @@ export interface Random {
   readonly [SecureRandomBrand]: true;
   /** Returns a random UUID v4 string. */
   uuid(): string;
-  /** Returns a uniformly random integer in [0, max). */
+  /**
+   * Returns a uniformly random integer in [0, max).
+   *
+   * @throws RangeError unless `max` is a safe integer of at least 1.
+   */
   int(max: number): number;
   /** Returns a random string of the given length (alphanumeric). */
   string(length: number): string;
@@ -87,29 +93,13 @@ function cryptoUUID(): string {
 /**
  * Returns a uniformly random integer in [0, max).
  *
- * Rejection sampling, not `% max`. A modulo of a uniform 32-bit draw is only
- * uniform when `max` is a power of two; for other bounds the low values come
- * up more often, which is not acceptable from an interface documented as
- * cryptographically secure.
+ * Rejection sampling, not `% max`: a modulo of a uniform draw is only uniform
+ * when `max` divides the range. Bounds above `2**32` draw 53 bits, so every
+ * safe-integer bound terminates; anything else is a `RangeError`.
  */
 function cryptoInt(max: number): number {
-  if (!Number.isInteger(max) || max <= 0) {
-    throw new RangeError("Random.int(max) requires a positive integer max");
-  }
-
-  if (typeof globalThis.crypto?.getRandomValues !== "function") {
-    return randomInt(max);
-  }
-
-  const range = 2 ** 32;
-  const limit = range - (range % max);
-  const buffer = new Uint32Array(1);
-
-  for (;;) {
-    globalThis.crypto.getRandomValues(buffer);
-    const draw = buffer[0]!;
-    if (draw < limit) return draw % max;
-  }
+  assertIntBound(max, "Random");
+  return sampleInt(max, cryptoWord);
 }
 
 /** Builds a random string over an alphabet. */
@@ -174,60 +164,5 @@ export class FixedClock implements Clock {
   }
   advance(deltaMs: number): void {
     this.current += deltaMs;
-  }
-}
-
-/**
- * Deterministic generator useful for tests.
- *
- * Implements {@link PseudoRandom}, never {@link Random}: its output is fully
- * predictable from the seed, so injecting it where a secure generator is
- * expected would make every token guessable from a single observation.
- */
-export class SeededRandom implements PseudoRandom {
-  readonly deterministic = true;
-  private state: number;
-
-  constructor(seed: number = 1) {
-    this.state = seed >>> 0 || 1;
-  }
-
-  /** Returns a structurally valid v4 UUID derived from the seed. */
-  uuid(): string {
-    const hex = (count: number): string =>
-      Array.from({ length: count }, () =>
-        this.next().toString(16).padStart(8, "0").slice(-1),
-      ).join("");
-
-    return [
-      hex(8),
-      hex(4),
-      `4${hex(3)}`,
-      `${"89ab".charAt(this.int(4))}${hex(3)}`,
-      hex(12),
-    ].join("-");
-  }
-
-  int(max: number): number {
-    if (!Number.isInteger(max) || max <= 0) {
-      throw new RangeError(
-        "PseudoRandom.int(max) requires a positive integer max",
-      );
-    }
-    return this.next() % max;
-  }
-
-  string(length: number): string {
-    return this.custom(length, ALPHANUMERIC);
-  }
-
-  custom(length: number, alphabet: string): string {
-    return randomString(length, alphabet, (max) => this.int(max));
-  }
-
-  /** Advances the linear congruential state. */
-  private next(): number {
-    this.state = (Math.imul(this.state, 1103515245) + 12345) & 0x7fffffff;
-    return this.state;
   }
 }

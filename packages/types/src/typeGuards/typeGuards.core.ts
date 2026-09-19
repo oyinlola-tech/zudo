@@ -87,10 +87,12 @@ export const MAX_EMAIL_LENGTH = 254;
 /**
  * Check if a value is a valid email string.
  *
- * This is the monorepo's single email check; `@zudojs/validation` re-exports
- * it as the `email` constraint. Two implementations previously disagreed
- * about the same address, so a value accepted at the edge could be rejected
- * halfway through a request.
+ * This is the monorepo's reference email check. `ValidationPattern.EMAIL`
+ * in `@zudojs/constants` (and therefore `createEmailAddress` and the schema
+ * `email` format) encodes the same acceptance set, including the 254
+ * character bound. `@zudojs/validation`'s `email` constraint still carries
+ * its own copy of the pattern without the length bound; until it delegates
+ * here, an address over 254 characters passes that constraint only.
  */
 export function isEmail(value: unknown): value is string {
   if (typeof value !== "string") return false;
