@@ -104,17 +104,25 @@ export function matches(
   });
 }
 
+/** RFC 5321 path limit; mirrors `ValidationLength.EMAIL` in `@zudojs/constants`. */
+const EMAIL_MAX_LENGTH = 254;
+
 /**
  * Requires a valid email-like format.
  *
  * Deliberately structural, not a full RFC 5322 parser: it rejects the shapes
  * that are certainly wrong and leaves deliverability to a verification step.
+ * Accepts exactly what `ValidationPattern.EMAIL` (`@zudojs/constants`) and
+ * `isEmail` (`@zudojs/types`) accept, including the 254-character bound,
+ * which is checked before the pattern so a long label cannot backtrack.
  */
 export const email = createConstraint<string>(
   (value) =>
+    value.length <= EMAIL_MAX_LENGTH &&
+    !value.includes("..") &&
     /^[^\s@,;<>"[\]\\]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/iu.test(
       value,
-    ) && !value.includes(".."),
+    ),
   {
     name: "email",
     code: "invalid_email",

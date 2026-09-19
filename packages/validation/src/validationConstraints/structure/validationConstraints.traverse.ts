@@ -18,22 +18,16 @@
  * check would fail inside itself before it could report anything.
  */
 
+import { TraversalLimitError } from "@zudojs/errors";
+
 import { childrenOf, isContainer } from "./validationConstraints.children.js";
 
-/** Why a traversal stopped early. */
-export type TraversalHalt = "depth" | "budget" | "cycle";
-
-/** Signals that a traversal hit one of its bounds. */
-export class TraversalLimitError extends Error {
-  constructor(
-    readonly halt: TraversalHalt,
-    readonly path: string,
-    readonly observed: number,
-  ) {
-    super(`Traversal halted (${halt}) at ${path}`);
-    this.name = "TraversalLimitError";
-  }
-}
+/**
+ * The halt signal is owned by `@zudojs/errors` (round 10 VAL-05/CV-02) and
+ * re-exported here, so the depth, size and circular guards keep importing
+ * it from this module.
+ */
+export { TraversalLimitError, type TraversalHalt } from "@zudojs/errors";
 
 /** What the caller wants from each node. */
 export interface TraversalVisitor {
