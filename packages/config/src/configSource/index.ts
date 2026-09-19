@@ -6,3 +6,4 @@
 
 export * from "./configSource.core.js";
 export * from "./configSource.environment.js";
+export * from "./configSource.sensitive.js";

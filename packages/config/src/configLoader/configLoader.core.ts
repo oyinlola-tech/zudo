@@ -15,6 +15,13 @@ import {
   sortConfigSources,
 } from "../configSource/configSource.core.js";
 
+import { isSensitiveConfigEntry } from "../configSource/configSource.sensitive.js";
+
+import {
+  commitReloadStaging,
+  createReloadStaging,
+} from "./configLoader.reload.js";
+
 import type { ConfigStore } from "../configStore/configStore.core.js";
 
 import { createConfigStore } from "../configStore/configStore.factory.js";
@@ -247,14 +254,62 @@ export class ConfigLoader {
   /**
    * Reloads configuration.
    *
-   * The current store is replaced with freshly loaded values.
+   * The current store is replaced with freshly loaded values. When the
+   * loader layers onto a shared store (`clearStore: false`), values that
+   * sources no longer provide are dropped, runtime and initial values are
+   * kept, and the store is only updated once every source has loaded.
    */
   async reload(): Promise<ConfigLoadResult> {
     this.assertActive();
 
     this.loaded = false;
 
-    return this.load();
+    if (this.clearStore) {
+      return this.load();
+    }
+
+    // Layered stores (clearStore: false) are rebuilt off to the side and
+    // committed only once every source has loaded: see
+    // configLoader.reload.ts.
+    const staging = createReloadStaging(
+      this.store,
+      new Set(this.sources.map((source) => source.name)),
+      this.freeze,
+    );
+
+    const stagingLoader = new ConfigLoader({
+      sources: this.sources,
+      context: this.context,
+      store: staging,
+      clearStore: false,
+      freeze: this.freeze,
+      onSourceLoaded: this.onSourceLoaded,
+      onSourceError: this.onSourceError,
+    });
+
+    this.loading = true;
+
+    try {
+      const staged = await stagingLoader.load();
+
+      commitReloadStaging(this.store, staging);
+
+      const result: ConfigLoadResult = {
+        ...staged,
+        store: this.store,
+        entries: this.store.getEntries(),
+      };
+
+      this.lastResult = result;
+
+      this.loaded = true;
+
+      return result;
+    } finally {
+      this.loading = false;
+
+      stagingLoader.detach();
+    }
   }
 
   /**
@@ -380,7 +435,9 @@ export class ConfigLoader {
    * source overwrites, so among equal priorities the last-applied
    * (last-registered) source wins.
    *
-   * Keys listed in the result's `sensitiveKeys` are marked sensitive.
+   * Keys listed in the result's `sensitiveKeys` are marked sensitive, as
+   * is any key or value that `isSensitiveConfigEntry` flags, whatever the
+   * source type.
    * Once an entry is sensitive it stays sensitive even when a later
    * source overwrites its value.
    */
@@ -400,7 +457,10 @@ export class ConfigLoader {
         source: source.name,
         sourceType: source.type,
         priority,
-        sensitive: sensitiveKeys.has(key) || (existing?.sensitive ?? false),
+        sensitive:
+          sensitiveKeys.has(key) ||
+          (existing?.sensitive ?? false) ||
+          isSensitiveConfigEntry(key, value),
         resolved: true,
       });
     }
@@ -471,7 +531,8 @@ export function sourceResultsToEntries(
           source: result.source,
           sourceType: result.type,
           priority: source?.priority ?? 0,
-          sensitive: sensitiveKeys.has(key),
+          sensitive:
+            sensitiveKeys.has(key) || isSensitiveConfigEntry(key, value),
         }),
       );
     }

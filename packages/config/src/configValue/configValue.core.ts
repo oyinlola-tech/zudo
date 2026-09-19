@@ -180,8 +180,14 @@ export function toConfigJsonValue(
     for (const [key, child] of Object.entries(value)) {
       const converted = toConfigJsonValue(child);
 
+      // Defined, never assigned: an own "__proto__" key from a JSON or
+      // remote source would otherwise replace the result's prototype.
       if (converted !== undefined) {
-        result[key] = converted;
+        defineConfigProperty(
+          result as Record<string, ConfigValue>,
+          key,
+          converted as ConfigValue,
+        );
       }
     }
 
@@ -283,8 +289,12 @@ export function parseConfigBoolean(
   }
 }
 
+/** Optionally signed decimal number, with optional fraction and exponent. */
+const DECIMAL_NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
+
 /**
- * Parses a numeric configuration value.
+ * Parses a numeric configuration value. Only decimal notation is
+ * accepted; hex, binary and octal strings return `undefined`.
  */
 export function parseConfigNumber(
   value: string | number | undefined,
@@ -300,6 +310,12 @@ export function parseConfigNumber(
   const normalized = value.trim();
 
   if (normalized.length === 0) {
+    return undefined;
+  }
+
+  // Decimal only. `Number()` also accepts "0x1F90", "0b11" and "0o17",
+  // so a port of "0x1F90" silently became 8080.
+  if (!DECIMAL_NUMBER.test(normalized)) {
     return undefined;
   }
 

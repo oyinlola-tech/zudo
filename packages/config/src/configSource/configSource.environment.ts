@@ -14,15 +14,7 @@ import type { ConfigSource } from "./configSource.core.js";
 
 import { ConfigSourceType, createConfigSource } from "./configSource.core.js";
 
-/**
- * Environment variable names whose values are treated as secrets.
- *
- * Matching entries are reported through `sensitiveKeys`, so
- * `toSafeObject()` and safe entry serialization redact them instead of
- * printing credentials into logs.
- */
-const DEFAULT_SECRET_PATTERN =
-  /(pass(word)?|secret|token|api[_.-]?key|private[_.-]?key|credential|auth)/i;
+import { isSensitiveConfigKey } from "./configSource.sensitive.js";
 
 /**
  * Options for the environment configuration source.
@@ -66,11 +58,13 @@ export interface EnvironmentConfigSourceOptions {
 
   /**
    * Decides whether a variable holds a secret. Receives the ORIGINAL
-   * variable name and the derived configuration key. Defaults to a
-   * name pattern covering passwords, tokens, API keys and credentials.
+   * variable name and the derived configuration key. Defaults to
+   * `isSensitiveConfigKey` (passwords, tokens, API/private keys,
+   * credentials, DSNs, database URLs, `*_KEY`).
    *
-   * Pass `() => false` to opt out — values are then NOT redacted by
-   * safe serialization.
+   * Returning false does not un-redact: the loader still marks keys and
+   * values that `isSensitiveConfigEntry` flags (for example a URL with
+   * embedded `user:password@`).
    */
   readonly isSensitive?: (name: string, key: string) => boolean;
 }
@@ -103,7 +97,8 @@ export function createEnvironmentConfigSource(
 
   const isSensitive =
     options.isSensitive ??
-    ((name: string): boolean => DEFAULT_SECRET_PATTERN.test(name));
+    ((name: string, key: string): boolean =>
+      isSensitiveConfigKey(name) || isSensitiveConfigKey(key));
 
   const name = options.name ?? "environment";
 

@@ -64,8 +64,8 @@ priorities are applied in registration order (last registered wins).
 - `createEnvironmentConfigSource({ prefix, env?, priority?, keyMapper?, isSensitive? })`
   — reads environment variables. Values stay RAW STRINGS (use the typed
   accessors to coerce, so `"false"` becomes `false` instead of a truthy
-  string). Names matching a password/token/secret/API-key pattern are
-  reported as sensitive and therefore redacted by `toSafeObject()`.
+  string). Names matching `isSensitiveConfigKey` are reported as
+  sensitive and therefore redacted by `toSafeObject()`.
 - `createCustomConfigSource(name, loader, options?)` — async loader
   function returning `{ values, source, type }`. Include
   `sensitiveKeys: ["some.key"]` in the result to mark values as
@@ -89,6 +89,13 @@ const remote = createCustomConfigSource("vault", async () => ({
 }));
 ```
 
+Whatever the source, the loader also marks an entry sensitive when
+`isSensitiveConfigEntry(key, value)` flags it: a key naming a password,
+secret, token, API/private key, credential, DSN, database URL or `*_key`
+(in any dotted segment, case-insensitive), a nested object containing such
+a key, or a URL with embedded `user:password@` credentials. Returning
+`false` from `isSensitive` or omitting `sensitiveKeys` cannot un-mark these.
+
 ## Typed access
 
 `ConfigManager` (and the underlying `ConfigResolver`) offer typed
@@ -100,6 +107,9 @@ prefix-scoped access.
 const db = manager.scoped("db");
 db.string("host", "localhost");
 ```
+
+`number()` accepts decimal notation only: `"0x1F90"`, `"0b11"` and `"0o17"`
+are rejected rather than silently becoming 8080, 3 and 15.
 
 ## Schema validation
 
@@ -124,7 +134,10 @@ so nested constraints are enforced by `validate()`, `resolve()` and the
 standalone `validateConfigValue`.
 
 `validate()` throws on failure and marks entries whose schema has
-`secret: true` as sensitive. Individual values can be validated with
+`secret: true` as sensitive, at any depth: a secret declared inside a
+nested object schema, or as a dotted key such as `"db.password"`, marks
+the store entry that holds it (for a nested `db` object, the whole `db`
+entry is redacted). Individual values can be validated with
 `manager.resolve(key, schema)` or the standalone
 `validateConfigValue` / `validateConfigObject` functions.
 
@@ -139,7 +152,12 @@ standalone `validateConfigValue`.
 
 `manager.reload()` re-runs all sources. Values set at runtime via
 `manager.set()` and `initialValues` survive loads; sources only
-overwrite entries at equal or higher priority.
+overwrite entries at equal or higher priority. A reload rebuilds every
+source-provided value from scratch, so a value a source no longer
+provides disappears (letting a lower-priority default show through), and
+the store is only updated once every source has loaded — a failing
+source leaves the previous configuration intact. An entry that was
+sensitive before a reload stays sensitive.
 
 ## Untrusted input
 
@@ -147,7 +165,8 @@ Configuration frequently originates from files, environment variables
 or remote services. Keys such as `__proto__`, `constructor` and
 `prototype` are copied with `Object.defineProperty`, never plain
 assignment, so a hostile key becomes an ordinary own property and can
-never replace an object's prototype. Schema properties are read as OWN
+never replace an object's prototype (this includes
+`toConfigJsonValue` and `configValueToString`). Schema properties are read as OWN
 properties, so a schema property named `constructor` is reported as
 missing rather than matching an inherited function.
 

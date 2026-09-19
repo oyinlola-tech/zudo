@@ -45,6 +45,11 @@ import { ConfigManagerState } from "./configManager.type.js";
 
 import { ConfigManagerValidationError } from "./configManager.error.js";
 
+import {
+  collectSecretPaths,
+  markSecretEntries,
+} from "./configManager.secrets.js";
+
 /**
  * Central configuration lifecycle manager.
  *
@@ -312,25 +317,9 @@ export class ConfigManager {
       throw new ConfigManagerValidationError(result.issues);
     }
 
-    // Property schemas flagged `secret` mark the corresponding store
-    // entries as sensitive so safe serialization redacts them.
-    for (const [key, propertySchema] of Object.entries(schema.properties)) {
-      if (!propertySchema.secret) {
-        continue;
-      }
-
-      const entry = this.store.getEntry(key);
-
-      if (entry && !entry.sensitive) {
-        this.store.set(key, entry.value, {
-          source: entry.source,
-          sourceType: entry.sourceType,
-          priority: entry.priority,
-          sensitive: true,
-          resolved: entry.resolved,
-        });
-      }
-    }
+    // Schemas flagged `secret` at any depth mark the store entries that
+    // hold them as sensitive, so safe serialization redacts them.
+    markSecretEntries(this.store, collectSecretPaths(schema.properties));
 
     return cloneConfigValue(result.value as T);
   }
