@@ -6,14 +6,14 @@
  * for the actual JSON serialization with type preservation.
  */
 
-import type { CacheSerializer } from "./types.js";
+import { SCHEMA_FORBIDDEN_KEYS } from "@zudojs/constants";
 import { JSONSerializer } from "@zudojs/serialization";
+
+import type { CacheSerializer } from "./types.js";
 
 /* -------------------------------------------------------------------------- */
 /* Prototype-pollution hardening                                              */
 /* -------------------------------------------------------------------------- */
-
-const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 /**
  * Strips prototype-polluting own keys from a freshly deserialized value.
@@ -22,6 +22,8 @@ const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
  * or another writer, so the bytes are not necessarily ones this process
  * serialized. `JSON.parse` leaves `__proto__` as a genuine own property,
  * which re-triggers the setter on any later spread or `Object.assign`.
+ *
+ * The key list is `SCHEMA_FORBIDDEN_KEYS` from `@zudojs/constants`.
  *
  * `JsonCacheSerializer` needs this only for `preserveTypes: false`: on the
  * type-preserving path `@zudojs/serialization` already drops these keys
@@ -48,7 +50,7 @@ export function stripUnsafeKeys<T>(value: T): T {
       return;
     }
     for (const key of Object.getOwnPropertyNames(obj)) {
-      if (UNSAFE_KEYS.has(key)) {
+      if (SCHEMA_FORBIDDEN_KEYS.has(key)) {
         Reflect.deleteProperty(obj, key);
         continue;
       }
