@@ -11,9 +11,16 @@ import type { ErrorMetadata } from "../../base/core/errorMetadata.type.js";
 /** Default maximum length for untrusted strings embedded in messages. */
 export const MAX_MESSAGE_FRAGMENT_LENGTH = 200;
 
-/** Control characters (C0 range, DEL, and C1 range) that must not reach logs. */
+/**
+ * Characters that must not reach logs: C0, DEL and C1 controls, the Unicode
+ * line and paragraph separators (U+2028/U+2029, which break log lines in
+ * viewers that honour them), and the bidirectional marks, embeddings,
+ * overrides and isolates (U+061C, U+200E/F, U+202A-E, U+2066-9), which can
+ * visually reorder a log line.
+ */
 // eslint-disable-next-line no-control-regex
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
+const CONTROL_CHARS =
+  /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
 
 /** Default maximum length for untrusted strings stored in metadata. */
 export const MAX_METADATA_FRAGMENT_LENGTH = 1024;
@@ -55,16 +62,27 @@ export function safeStringify(
     } else if (value === undefined) {
       text = "undefined";
     } else {
-      const seen = new WeakSet<object>();
-      const json = JSON.stringify(value, (_key, item: unknown) => {
-        if (typeof item === "bigint") return `${item.toString()}n`;
-        if (typeof item === "symbol") return item.toString();
-        if (typeof item === "object" && item !== null) {
-          if (seen.has(item)) return "[Circular]";
-          seen.add(item);
-        }
-        return item;
-      });
+      // Track the ancestor path, not every object visited: a sub-object
+      // shared by two siblings is repeated data, not a cycle.
+      const ancestors: unknown[] = [];
+      const json = JSON.stringify(
+        value,
+        function replacer(this: unknown, _key: string, item: unknown) {
+          if (typeof item === "bigint") return `${item.toString()}n`;
+          if (typeof item === "symbol") return item.toString();
+          if (typeof item === "object" && item !== null) {
+            while (
+              ancestors.length > 0 &&
+              ancestors[ancestors.length - 1] !== this
+            ) {
+              ancestors.pop();
+            }
+            if (ancestors.includes(item)) return "[Circular]";
+            ancestors.push(item);
+          }
+          return item;
+        },
+      );
       text = json === undefined ? String(value) : json;
     }
   } catch {
@@ -156,13 +174,24 @@ export function mergeMetadata(
   return { ...(callerMetadata ?? {}), ...own };
 }
 
+/**
+ * Keys never copied into a redacted issue: assigning an own `__proto__` key
+ * (which a JSON round-trip creates) to a plain object replaces its prototype.
+ */
+const FORBIDDEN_ISSUE_KEYS: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+
 /** Keys that hold submitted values inside validation/schema issues. */
 const VALUE_KEYS = new Set(["value", "received", "input", "actual"]);
 
 /**
  * Removes submitted values from a list of issue objects so they can be
- * exposed to clients. Values are replaced by a type/size description under
- * `<key>Type`.
+ * exposed to clients or logged. Values are replaced by a type/size
+ * description under `<key>Type`; `__proto__`, `constructor` and `prototype`
+ * keys are dropped.
  */
 export function redactIssueValues<T>(issues: readonly T[]): readonly T[] {
   return issues.map((issue) => {
@@ -171,6 +200,7 @@ export function redactIssueValues<T>(issues: readonly T[]): readonly T[] {
     }
     const out: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(issue as Record<string, unknown>)) {
+      if (FORBIDDEN_ISSUE_KEYS.has(key)) continue;
       if (VALUE_KEYS.has(key)) {
         out[`${key}Type`] = describeValue(val);
       } else {

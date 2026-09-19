@@ -4,11 +4,18 @@
 
 import { BaseError } from "../base/core/baseError.core.js";
 import {
-  isSensitiveMetadataKey,
   pickErrorMetadata,
   redactErrorMetadata,
-  REDACTED_METADATA_VALUE,
 } from "../base/core/errorMetadata.core.js";
+import {
+  isGenuineSerializedBaseError,
+  MAX_CAUSE_DEPTH,
+  toJSONWithFrame,
+} from "../base/core/baseError.serialize.js";
+import {
+  redactCauseFields,
+  redactCauseValue,
+} from "../base/core/errorCause.redact.js";
 import type { ErrorMetadata } from "../base/core/errorMetadata.type.js";
 import type { SerializedBaseError } from "../base/types/baseError.type.js";
 import type {
@@ -54,10 +61,12 @@ export class ErrorSerializer {
    * Serializes an error for internal logging or monitoring.
    *
    * `includeStack`, `includeCause` and `redactSensitiveData` are applied at
-   * every level of the cause chain.
+   * every level of the cause chain, including array causes and plain-object
+   * causes that merely look like a serialized BaseError.
    */
   public serialize(error: BaseError): InternalErrorResponse {
-    return this.serializeLevel(error.toJSON());
+    const raw = toJSONWithFrame(error, { depth: 0, redact: false });
+    return this.serializeLevel(raw as unknown as SerializedBaseError, 0);
   }
 
   /**
@@ -89,7 +98,10 @@ export class ErrorSerializer {
   }
 
   /** Applies the serializer options to one level of a serialized error. */
-  private serializeLevel(serialized: SerializedBaseError): SerializedBaseError {
+  private serializeLevel(
+    serialized: SerializedBaseError,
+    depth: number,
+  ): SerializedBaseError {
     const { stack, cause, metadata, ...rest } = serialized;
 
     const result: SerializedBaseError = {
@@ -101,27 +113,35 @@ export class ErrorSerializer {
         : {},
       ...(this.includeStack && stack !== undefined ? { stack } : {}),
       ...(this.includeCause && cause !== undefined
-        ? { cause: this.serializeCause(cause) }
+        ? { cause: this.serializeCause(cause, depth + 1) }
         : {}),
     };
 
     return result;
   }
 
-  /** Applies the serializer options recursively to a serialized cause. */
-  private serializeCause(cause: unknown): unknown {
+  /**
+   * Applies the serializer options recursively to a serialized cause.
+   *
+   * Only objects that a BaseError's `toJSON` really produced are treated as
+   * serialized BaseErrors (whose `metadata` alone needs redacting). Anything
+   * else, including a plain object carrying the same field names and any
+   * array, has every field walked and redacted.
+   */
+  private serializeCause(cause: unknown, depth: number): unknown {
+    if (depth > MAX_CAUSE_DEPTH) return "[MaxDepth]";
     if (cause === null || typeof cause !== "object") return cause;
-    if (Array.isArray(cause)) return cause;
-
-    const record = cause as Record<string, unknown>;
-    if (isSerializedBaseError(record)) {
-      return this.serializeLevel(record);
+    if (Array.isArray(cause)) {
+      return this.redactSensitiveData
+        ? redactCauseValue(cause, this.sensitiveKeyPattern)
+        : cause;
     }
 
-    // Native error shape: { name, message, stack?, cause? } — or an
-    // arbitrary plain object that was thrown/attached as a cause. The
-    // latter reaches here by reference and used to be copied verbatim, so
-    // `redactSensitiveData` did not apply to it.
+    const record = cause as Record<string, unknown>;
+    if (isGenuineSerializedBaseError(record)) {
+      return this.serializeLevel(record as unknown as SerializedBaseError, depth);
+    }
+
     const { stack, cause: nested, ...rest } = record;
     const fields = this.redactSensitiveData
       ? redactCauseFields(rest, this.sensitiveKeyPattern, new WeakSet([record]))
@@ -129,7 +149,9 @@ export class ErrorSerializer {
     return {
       ...fields,
       ...(this.includeStack && stack !== undefined ? { stack } : {}),
-      ...(nested !== undefined ? { cause: this.serializeCause(nested) } : {}),
+      ...(nested !== undefined
+        ? { cause: this.serializeCause(nested, depth + 1) }
+        : {}),
     };
   }
 
@@ -162,75 +184,4 @@ export class ErrorSerializer {
       sensitiveKeyPattern: this.sensitiveKeyPattern,
     });
   }
-}
-
-/** Plain objects (Object.prototype or null prototype) are walked; anything else is kept as-is. */
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== "object") return false;
-  const proto = Object.getPrototypeOf(value) as object | null;
-  return proto === Object.prototype || proto === null;
-}
-
-/**
- * Redacts sensitive keys inside a non-BaseError cause without changing its
- * shape: primitives, dates and class instances are kept, plain objects and
- * arrays are walked, cycles stop at "[Circular]".
- */
-function redactCauseFields(
-  fields: Record<string, unknown>,
-  pattern: RegExp | undefined,
-  seen: WeakSet<object> = new WeakSet(),
-): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const key of Object.keys(fields)) {
-    if (key === "__proto__" || key === "constructor" || key === "prototype")
-      continue;
-    const value = fields[key];
-    const sensitive =
-      pattern === undefined
-        ? isSensitiveMetadataKey(key)
-        : isSensitiveMetadataKey(key, pattern);
-    result[key] = sensitive
-      ? REDACTED_METADATA_VALUE
-      : redactCauseValue(value, pattern, seen);
-  }
-  return result;
-}
-
-function redactCauseValue(
-  value: unknown,
-  pattern: RegExp | undefined,
-  seen: WeakSet<object>,
-): unknown {
-  if (Array.isArray(value)) {
-    if (seen.has(value)) return "[Circular]";
-    seen.add(value);
-    try {
-      return value.map((entry) => redactCauseValue(entry, pattern, seen));
-    } finally {
-      seen.delete(value);
-    }
-  }
-  if (!isPlainRecord(value)) return value;
-  if (seen.has(value)) return "[Circular]";
-  seen.add(value);
-  try {
-    return redactCauseFields(value, pattern, seen);
-  } finally {
-    seen.delete(value);
-  }
-}
-
-/** Structural check for a serialized BaseError (used on nested causes). */
-function isSerializedBaseError(
-  value: Record<string, unknown>,
-): value is SerializedBaseError & Record<string, unknown> {
-  return (
-    typeof value.code === "string" &&
-    typeof value.category === "string" &&
-    typeof value.severity === "string" &&
-    typeof value.statusCode === "number" &&
-    typeof value.metadata === "object" &&
-    value.metadata !== null
-  );
 }

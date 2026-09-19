@@ -11,3 +11,4 @@ export * from "./container/index.js";
 export * from "./cache/index.js";
 export * from "./middleware/index.js";
 export * from "./adapter/index.js";
+export * from "./httpPipeline/index.js";

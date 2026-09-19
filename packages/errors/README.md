@@ -35,7 +35,7 @@ try {
   await work();
 } catch (thrown) {
   const error = toBaseError(thrown).withMetadata({ requestId });
-  logger.error(error.toLogObject()); // stack + cause chain, for trusted logs
+  logger.error(error.toLogObject()); // stack + cause chain, sensitive metadata redacted
   res.status(error.statusCode).json(serializePublicError(error));
   // -> { code, message, category, statusCode } — no stack, no cause,
   //    and no metadata unless the error is exposable (or keys are allow-listed)
@@ -47,8 +47,9 @@ try {
 - `BaseError` with stable `code`, `category`, `severity`, `statusCode`, `expose`, `isOperational`, deep-frozen `metadata` and `cause`
 - `ErrorCode`, `ErrorCategory` and `ErrorSeverity` enums with guards (`isErrorCode`, ...)
 - Domain, infrastructure and system error families (access, state, HTTP, database, network, container, adapter, crypto, ...) with factories and type guards
+- Base classes for other packages' error families, so their `instanceof` checks match: `TransactionError` (+ 10 subclasses), `MiddlewareLimitExceededError` / `MiddlewareDepthExceededError` / `MiddlewareRateLimitError` / `MiddlewareAbortedError`, `TraversalLimitError`, `HttpMiddlewareError` / `HttpMiddlewarePipelineError` / `HttpRequestGuardError`, `OpenAPIError`, `AuthError`, `OAuthError` (with `ErrorCode.OAUTH_*`), `CqrsError`, `ObservabilityError`, `InvalidConstantError` / `ConstantContextError`
 - `withMetadata()` copies any error (including subclasses with custom constructors) with extra metadata
-- Serialization: `toJSON()`/`toLogObject()` for trusted logs (cycle-safe cause chains), `serializePublicError` / `ErrorSerializer` / `ErrorHandler.toPublicResult` for untrusted clients (recursive redaction, metadata allow-list)
+- Serialization: `toJSON()`/`toLogObject()` for trusted logs (cycle-safe cause chains truncated with `"[MaxDepth]"` after 8 levels across the whole chain; metadata under sensitive keys, sensitive keys in object causes and submitted issue values are redacted, so `JSON.stringify(error)` is safe to log), `serializePublicError` / `ErrorSerializer` / `ErrorHandler.toPublicResult` for untrusted clients (recursive redaction, metadata allow-list)
 - Metadata utilities: `createErrorMetadata`, `mergeErrorMetadata`, `sanitizeErrorMetadata` (drops unsupported values) and `redactErrorMetadata` (removes secrets)
 - Normalization (`toBaseError`, `normalizeUnknownError`, `ErrorHandler.normalize`) that keeps the thrown value as `cause` and classifies unknown failures as internal, non-operational 500s
 - Error mapping registry (`ErrorMapperRegistry`, `mapErrorType`, declarative `ErrorMapping`)

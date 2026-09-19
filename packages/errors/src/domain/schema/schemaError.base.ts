@@ -53,7 +53,7 @@ export class SchemaError extends BaseError {
     const safeIssues = toJsonSafeIssues(this.issues);
     return {
       ...super.toJSON(),
-      issues: this.expose ? redactIssueValues(safeIssues) : safeIssues,
+      issues: redactIssueValues(safeIssues),
     };
   }
 }

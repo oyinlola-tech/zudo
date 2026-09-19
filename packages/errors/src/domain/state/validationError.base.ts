@@ -73,16 +73,17 @@ export class ValidationError extends BaseError {
   /**
    * Returns a serialized representation including validation issues.
    *
-   * When the error is exposable (the default), submitted values inside
-   * issues (`value`) are replaced by a type/size description so that secrets
-   * such as passwords are never echoed to clients or written to logs. The
+   * Submitted values inside issues (`value`, `received`, `input`, `actual`)
+   * are always replaced by a type/size description, whether or not the error
+   * is exposable, so that secrets such as passwords are never echoed to
+   * clients or written to logs. The raw values remain on `error.issues`. The
    * output is always JSON-safe (BigInt and cyclic values are stringified).
    */
   public override toJSON() {
     const safeIssues = toJsonSafeIssues(this.issues);
     return {
       ...super.toJSON(),
-      issues: this.expose ? redactIssueValues(safeIssues) : safeIssues,
+      issues: redactIssueValues(safeIssues),
     };
   }
 }

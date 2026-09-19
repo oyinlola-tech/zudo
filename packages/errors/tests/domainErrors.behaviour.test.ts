@@ -89,12 +89,14 @@ describe("ERR-B-03 schema/validation errors never echo submitted values", () => 
     expect(vj).not.toContain("hunter2");
     expect(vj).toContain('"valueType":"string(7)"');
 
-    // A non-exposed error keeps the value for internal logging.
+    // Round 10 (LEAF-10): a non-exposed error goes to logs, so it is
+    // redacted too; the raw value stays on `issues`.
     const internal = new ValidationError("bad", {
       expose: false,
       issues: [{ field: "password", message: "weak", value: "hunter2" }],
     });
-    expect(JSON.stringify(internal.toJSON())).toContain("hunter2");
+    expect(JSON.stringify(internal.toJSON())).not.toContain("hunter2");
+    expect(internal.issues[0]?.value).toBe("hunter2");
   });
 
   it("never throws on BigInt or circular input", () => {

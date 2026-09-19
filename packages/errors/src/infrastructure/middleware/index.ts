@@ -5,3 +5,4 @@
  */
 
 export * from "./middleware.error.js";
+export * from "./middlewareError.types.js";

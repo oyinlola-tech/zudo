@@ -18,3 +18,8 @@ export * from "./rpc/index.js";
 export * from "./scheduler/index.js";
 export * from "./documentation/index.js";
 export * from "./plugin/index.js";
+export * from "./transaction/index.js";
+export * from "./traversal/index.js";
+export * from "./openapi/index.js";
+export * from "./cqrs/index.js";
+export * from "./constant/index.js";

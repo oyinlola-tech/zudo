@@ -4,8 +4,14 @@ import { ErrorSeverity } from "../types/errorSeverity.type.js";
 import type { ErrorMetadata } from "./errorMetadata.type.js";
 import {
   createErrorMetadata,
+  redactErrorMetadata,
   serializeErrorMetadata,
 } from "./errorMetadata.core.js";
+import {
+  beginSerializing,
+  serializeCauseAt,
+  takeSerializationFrame,
+} from "./baseError.serialize.js";
 import type {
   BaseErrorOptions,
   SerializedBaseError,
@@ -19,12 +25,6 @@ import type {
 export const BASE_ERROR_BRAND: unique symbol = Symbol.for(
   "@zudojs/errors.BaseError",
 );
-
-/** Maximum depth of cause chains included in serialized output. */
-const MAX_CAUSE_DEPTH = 8;
-
-/** Errors currently being serialized (guards against cyclic cause chains). */
-const serializing = new WeakSet<object>();
 
 /**
  * Base error class shared by all Zudojs application errors.
@@ -127,10 +127,19 @@ export class BaseError extends Error {
    * Converts the error into a serializable representation.
    *
    * Intended for trusted internal logging: includes the stack trace and the
-   * cause chain (depth-limited and cycle-safe). Use `ErrorSerializer`
-   * (`serializePublicError`) for anything sent to an untrusted client.
+   * cause chain (cycle-safe, and truncated with `"[MaxDepth]"` after 8
+   * levels counted across the whole chain, BaseError causes included).
+   *
+   * Metadata values under sensitive keys (`password`, `authorization`,
+   * `token`, ...) and sensitive keys inside plain-object causes are replaced
+   * with `"[REDACTED]"`, because `JSON.stringify(error)` and `res.json(error)`
+   * call this implicitly. The raw values stay on `error.metadata` and
+   * `error.cause`. Use `ErrorSerializer` (`serializePublicError`) for anything
+   * sent to an untrusted client.
    */
   public toJSON(): SerializedBaseError {
+    const frame = takeSerializationFrame();
+    const metadata = serializeErrorMetadata(this.metadata);
     const base: SerializedBaseError = {
       name: this.name,
       message: this.message,
@@ -140,25 +149,35 @@ export class BaseError extends Error {
       statusCode: this.statusCode,
       expose: this.expose,
       isOperational: this.isOperational,
-      metadata: serializeErrorMetadata(this.metadata),
+      metadata: frame.redact ? { ...redactErrorMetadata(metadata) } : metadata,
       ...(this.stack ? { stack: this.stack } : {}),
     };
 
     if (this.cause === undefined) return base;
 
-    if (serializing.has(this)) {
-      return { ...base, cause: "[Circular]" };
-    }
-
-    serializing.add(this);
+    const release = beginSerializing(this);
+    if (release === undefined) return { ...base, cause: "[Circular]" };
     try {
-      return { ...base, cause: serializeErrorCause(this.cause, 1) };
+      return {
+        ...base,
+        cause: serializeCauseAt(
+          this.cause,
+          frame.depth + 1,
+          frame.redact,
+          BASE_ERROR_BRAND,
+        ),
+      };
     } finally {
-      serializing.delete(this);
+      release();
     }
   }
 
-  /** Returns the error as a plain object for internal logging. */
+  /**
+   * Returns the error as a plain object for internal logging.
+   *
+   * Same output as {@link BaseError.toJSON}, so sensitive metadata is
+   * redacted.
+   */
   public toLogObject(): SerializedBaseError {
     return this.toJSON();
   }
@@ -185,40 +204,13 @@ function normalizeStatusCode(statusCode: number | undefined): number {
 /**
  * Serializes nested Error causes while avoiding recursive failures.
  *
- * Cause chains are cycle-safe and truncated after `MAX_CAUSE_DEPTH` levels.
+ * Cause chains are cycle-safe and truncated after 8 levels counted from
+ * `depth`; BaseError causes continue the count rather than restarting it.
+ * Plain-object causes are redacted.
  */
 export function serializeErrorCause(
   cause: unknown,
   depth = 1,
 ): SerializedBaseError | unknown {
-  if (depth > MAX_CAUSE_DEPTH) return "[MaxDepth]";
-
-  if (cause instanceof BaseError) {
-    if (serializing.has(cause)) return "[Circular]";
-    return cause.toJSON();
-  }
-
-  if (cause instanceof Error) {
-    if (serializing.has(cause)) return "[Circular]";
-    serializing.add(cause);
-    try {
-      return {
-        name: cause.name,
-        message: cause.message,
-        ...(cause.stack ? { stack: cause.stack } : {}),
-        ...(cause.cause !== undefined
-          ? { cause: serializeErrorCause(cause.cause, depth + 1) }
-          : {}),
-      };
-    } finally {
-      serializing.delete(cause);
-    }
-  }
-
-  if (cause !== null && typeof cause === "object") {
-    if (serializing.has(cause)) return "[Circular]";
-    return cause;
-  }
-
-  return cause;
+  return serializeCauseAt(cause, depth, true, BASE_ERROR_BRAND);
 }
