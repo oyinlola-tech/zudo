@@ -11,6 +11,8 @@ import {
   RoleNotFoundError,
 } from "../permissionErrors/index.js";
 import { isValidPermission } from "../permission/permission.core.js";
+import { invalidRulePattern } from "../evaluator/engineSupport/index.js";
+import { createChangeNotifier } from "../utils/utils.notifier.js";
 
 /** Options for the role registry. */
 export interface RoleRegistryOptions {
@@ -35,6 +37,15 @@ export interface RoleRegistry {
   all(): readonly RoleDefinition[];
   remove(name: string): boolean;
   clear(): void;
+  /**
+   * Be told whenever the role set changes (`define`, a `remove` that removed
+   * something, `clear`). Returns an unsubscribe function.
+   *
+   * An engine built on this registry subscribes itself, which is what makes
+   * revoking a role take effect on the next check instead of whenever
+   * somebody remembers to call `engine.invalidateRoles()`.
+   */
+  subscribe(listener: () => void): () => void;
 }
 
 /**
@@ -67,6 +78,7 @@ export function createRoleRegistry(
   const roles = new Map<string, RoleDefinition>();
   const allowOverride = options?.allowOverride ?? false;
   const validatePermissions = options?.validatePermissions ?? true;
+  const changes = createChangeNotifier();
 
   return {
     /**
@@ -94,6 +106,15 @@ export function createRoleRegistry(
             );
           }
         }
+        for (const rule of definition.rules ?? []) {
+          const invalid = invalidRulePattern(rule);
+          if (invalid !== undefined) {
+            throw new InvalidRoleError(
+              `Role "${definition.name}" has a rule on "${invalid}", which is ` +
+                `not a valid "resource:action" pattern`,
+            );
+          }
+        }
       }
 
       if (roles.has(definition.name) && !allowOverride) {
@@ -101,6 +122,7 @@ export function createRoleRegistry(
       }
 
       roles.set(definition.name, freezeRoleDefinition(definition));
+      changes.notify();
     },
 
     get(name: string): RoleDefinition | undefined {
@@ -126,11 +148,18 @@ export function createRoleRegistry(
     },
 
     remove(name: string): boolean {
-      return roles.delete(name);
+      const removed = roles.delete(name);
+      if (removed) changes.notify();
+      return removed;
     },
 
     clear(): void {
       roles.clear();
+      changes.notify();
+    },
+
+    subscribe(listener: () => void): () => void {
+      return changes.subscribe(listener);
     },
   };
 }

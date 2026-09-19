@@ -14,6 +14,7 @@ import { evaluate, evaluateWithTrace } from "../evaluator/evaluator.core.js";
 import type { EvaluatorOptions } from "../evaluator/evaluator.pipeline.js";
 import { PermissionDeniedError } from "../permissionErrors/index.js";
 import type { PermissionEventEmitter } from "../observability/observability.core.js";
+import { observed } from "../evaluator/engineSupport/index.js";
 
 /**
  * An Ability provides fast permission checks for a pre-resolved actor.
@@ -61,39 +62,19 @@ export function createAbility(
   evaluatorOptions: EvaluatorOptions,
   emitter?: PermissionEventEmitter,
 ): Ability {
-  async function run(
+  function run(
     permission: string,
     resource?: unknown,
     options?: AuthorizationOptions,
   ): Promise<PermissionDecision> {
-    const start = performance.now();
-    let decision: PermissionDecision | undefined;
-    let failure: unknown;
-
-    try {
-      decision = await evaluate(
-        actor,
-        permission,
-        resource,
-        evaluatorOptions,
-        options,
-      );
-      return decision;
-    } catch (error) {
-      failure = error;
-      throw error;
-    } finally {
-      emitter?.emit({
-        actorId: actor.id,
-        permission,
-        allowed: decision?.allowed ?? false,
-        reason:
-          decision?.reason ??
-          (failure instanceof Error ? `error:${failure.name}` : undefined),
-        durationMs: performance.now() - start,
-        errored: failure !== undefined,
-      });
-    }
+    return observed(
+      emitter,
+      actor,
+      permission,
+      resource,
+      () => evaluate(actor, permission, resource, evaluatorOptions, options),
+      (decision) => decision,
+    );
   }
 
   return {
@@ -112,12 +93,20 @@ export function createAbility(
     },
 
     async explain(permission, resource, options) {
-      return evaluateWithTrace(
+      return observed(
+        emitter,
         actor,
         permission,
         resource,
-        evaluatorOptions,
-        options,
+        () =>
+          evaluateWithTrace(
+            actor,
+            permission,
+            resource,
+            evaluatorOptions,
+            options,
+          ),
+        (result) => result.decision,
       );
     },
 

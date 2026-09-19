@@ -20,24 +20,40 @@ import type {
 import { evaluate, evaluateWithTrace } from "./evaluator.core.js";
 import type { EvaluatorOptions } from "./evaluator.pipeline.js";
 import { createAbility, type Ability } from "../ability/ability.core.js";
-import {
-  PermissionDeniedError,
-  InvalidRoleError,
-} from "../permissionErrors/index.js";
-import { isValidPermission } from "../permission/permission.core.js";
+import { PermissionDeniedError } from "../permissionErrors/index.js";
 import { memoizeRoleLookup } from "../role/roleHierarchy.js";
 import { freezeRoleDefinition } from "../role/roleRegistry.js";
 import type { PermissionEventEmitter } from "../observability/observability.core.js";
+import {
+  validatePolicy,
+  validateRole,
+  validateRoles,
+  validateRule,
+} from "./engineSupport/index.js";
+import { observed } from "./engineSupport/index.js";
 
-/** Anything the engine will accept as its source of roles. */
+/**
+ * Anything the engine will accept as its source of roles.
+ *
+ * A source with `subscribe` (every `createRoleRegistry()`) is watched: a
+ * `define`, `remove` or `clear` discards the engine's memoized roles and
+ * every cached decision, so revoking a role takes effect on the next check.
+ */
 export interface RoleSource {
   get(name: string): RoleDefinition | undefined;
+  subscribe?(listener: () => void): () => void;
 }
 
-/** Anything the engine will accept as its source of policies. */
+/**
+ * Anything the engine will accept as its source of policies.
+ *
+ * A source with `subscribe` (every `createPolicyRegistry()`) is watched the
+ * same way, so a policy added or removed is not bypassed by a cached decision.
+ */
 export interface PolicySource {
   names(): readonly string[];
   get(name: string): PermissionPolicyDefinition | undefined;
+  subscribe?(listener: () => void): () => void;
 }
 
 /** Configuration for the permission engine. */
@@ -131,7 +147,11 @@ export interface PermissionEngine {
   /** Drop cached decisions for one actor. */
   invalidateActor(actorId: string): Promise<void>;
 
-  /** Re-read the role source, discarding the memoized lookups. */
+  /**
+   * Re-read the role source, discarding the memoized lookups and every
+   * cached decision. Registries created with `createRoleRegistry()` and
+   * `createPolicyRegistry()` trigger this themselves on every change.
+   */
   invalidateRoles(): void;
 }
 
@@ -155,37 +175,6 @@ function isPolicySource(
   );
 }
 
-/** Rejects a role whose grants could never match. */
-function validateRole(role: RoleDefinition): void {
-  if (!role.name || role.name.trim() === "") {
-    throw new InvalidRoleError("Role name cannot be empty");
-  }
-  for (const permission of role.permissions) {
-    if (!isValidPermission(permission)) {
-      // A malformed grant can never match, so it is a silent no-op unless
-      // it is rejected here.
-      throw new InvalidRoleError(
-        `Role "${role.name}" grants "${permission}", which is not a valid ` +
-          `"resource:action" permission`,
-      );
-    }
-  }
-}
-
-function validateRoles(roles: readonly RoleDefinition[]): void {
-  const seen = new Set<string>();
-
-  for (const role of roles) {
-    validateRole(role);
-    if (seen.has(role.name)) {
-      throw new InvalidRoleError(
-        `Role "${role.name}" is defined more than once`,
-      );
-    }
-    seen.add(role.name);
-  }
-}
-
 /**
  * Create a permission engine.
  */
@@ -193,6 +182,9 @@ export function createPermissionEngine(
   options?: PermissionEngineOptions,
 ): PermissionEngine {
   const validateConfiguration = options?.validateConfiguration ?? true;
+  if (validateConfiguration) {
+    for (const rule of options?.rules ?? []) validateRule(rule);
+  }
 
   let roleLookup: (name: string) => RoleDefinition | undefined;
   let invalidateRoleCache: () => void;
@@ -228,7 +220,12 @@ export function createPermissionEngine(
   const policyList = policySource
     ? undefined
     : ((options?.policies ?? []) as readonly PermissionPolicyDefinition[]);
+  if (validateConfiguration) policyList?.forEach(validatePolicy);
 
+  // A policy source is read lazily, so its validation is lazy too. Each
+  // definition is checked once; a malformed one makes the check throw, which
+  // never reads as an allow.
+  const validatedPolicies = new WeakSet<PermissionPolicyDefinition>();
   const resolvePolicies = (): readonly PermissionPolicyDefinition[] => {
     if (!policySource) return policyList ?? [];
     return policySource
@@ -236,8 +233,32 @@ export function createPermissionEngine(
       .map((name) => policySource.get(name))
       .filter(
         (policy): policy is PermissionPolicyDefinition => policy !== undefined,
-      );
+      )
+      .map((policy) => {
+        if (validateConfiguration && !validatedPolicies.has(policy)) {
+          validatePolicy(policy);
+          validatedPolicies.add(policy);
+        }
+        return policy;
+      });
   };
+
+  // Every change to the configuration bumps the generation, which is part
+  // of every decision-cache key: an entry written under an older role or
+  // policy set can no longer be found, whatever cache adapter is in use.
+  let generation = 0;
+  const invalidateConfiguration = (): void => {
+    generation += 1;
+    invalidateRoleCache();
+    const cleared = options?.cache?.clear?.();
+    cleared?.catch((error: unknown) => {
+      options?.onError?.(error, "PermissionCache.clear");
+    });
+  };
+  if (isRoleSource(options?.roles)) {
+    options.roles.subscribe?.(invalidateConfiguration);
+  }
+  policySource?.subscribe?.(invalidateConfiguration);
 
   // One live view over the configuration. `policies` is a getter so a
   // registry-backed engine re-reads the registry on every evaluation — an
@@ -258,51 +279,28 @@ export function createPermissionEngine(
     roleResolver: options?.roleResolver,
     expandImplied: options?.expandImplied,
     onError: options?.onError,
+    cacheScope: () => `g${generation}`,
   };
   const evaluatorOptions = (): EvaluatorOptions => liveOptions;
 
   const emitter = options?.emitter;
 
-  /**
-   * Runs a check and emits an audit event whichever way it ends — including
-   * when it throws. An authorization trail that records only the successful
-   * paths is not a trail.
-   */
-  async function runCheck(
+  /** Runs a check and emits an audit event whichever way it ends. */
+  function runCheck(
     actor: PermissionActor,
     permission: string,
     resource: unknown,
     authOptions?: AuthorizationOptions,
   ): Promise<PermissionDecision> {
-    const start = performance.now();
-    let decision: PermissionDecision | undefined;
-    let failure: unknown;
-
-    try {
-      decision = await evaluate(
-        actor,
-        permission,
-        resource,
-        evaluatorOptions(),
-        authOptions,
-      );
-      return decision;
-    } catch (error) {
-      failure = error;
-      throw error;
-    } finally {
-      emitter?.emit({
-        actorId: actor.id,
-        permission,
-        resourceType: resourceTypeOf(resource),
-        allowed: decision?.allowed ?? false,
-        reason:
-          decision?.reason ??
-          (failure instanceof Error ? `error:${failure.name}` : undefined),
-        durationMs: performance.now() - start,
-        errored: failure !== undefined,
-      });
-    }
+    return observed(
+      emitter,
+      actor,
+      permission,
+      resource,
+      () =>
+        evaluate(actor, permission, resource, evaluatorOptions(), authOptions),
+      (decision) => decision,
+    );
   }
 
   return {
@@ -333,12 +331,20 @@ export function createPermissionEngine(
     },
 
     async explain(actor, permission, resource, authOptions) {
-      return evaluateWithTrace(
+      return observed(
+        emitter,
         actor,
         permission,
         resource,
-        evaluatorOptions(),
-        authOptions,
+        () =>
+          evaluateWithTrace(
+            actor,
+            permission,
+            resource,
+            evaluatorOptions(),
+            authOptions,
+          ),
+        (result) => result.decision,
       );
     },
 
@@ -351,19 +357,7 @@ export function createPermissionEngine(
     },
 
     invalidateRoles() {
-      invalidateRoleCache();
+      invalidateConfiguration();
     },
   };
-}
-
-/** Best-effort resource type for an audit event. */
-function resourceTypeOf(resource: unknown): string | undefined {
-  if (typeof resource !== "object" || resource === null) return undefined;
-  const record = resource as {
-    type?: unknown;
-    constructor?: { name?: string };
-  };
-  if (typeof record.type === "string") return record.type;
-  const name = record.constructor?.name;
-  return name && name !== "Object" ? name : undefined;
 }

@@ -2,10 +2,11 @@
  * HTTP middleware adapter for @zudojs/permissions.
  *
  * The HTTP types are mirrored locally in `httpTypes.ts` so this package has no
- * hard dependency on @zudojs/http, which is an optional peer. The mirror is
- * structural: anything satisfying the real `HttpMiddlewareContext` satisfies
- * the local one, so the middleware composes with the real pipeline. Keep the
- * two in step when @zudojs/http changes — nothing here can check it for you.
+ * dependency on @zudojs/http at all — http sits in a higher architecture tier,
+ * so it cannot be a dependency or a peer. The mirror is structural: anything
+ * satisfying the real `HttpMiddlewareContext` satisfies the local one, so the
+ * middleware composes with the real pipeline. A test runs the guard inside
+ * the real `HttpMiddlewarePipeline` to keep the two in step.
  *
  * @module http
  */
@@ -32,7 +33,15 @@ export {
   type PermissionHttpResponse,
 } from "./httpHelpers.js";
 
+export {
+  loadResource,
+  RESOURCE_ERROR_DECISION,
+  type ResourceExtractor,
+  type ResourceOutcome,
+} from "./httpResource.helper.js";
+
 export type {
+  HttpRequestBag,
   HttpMiddleware,
   HttpMiddlewareContext,
   HttpRequestContext,

@@ -19,6 +19,7 @@ import {
   createUnauthorizedResponse,
   type DeniedResponseOptions,
 } from "./httpHelpers.js";
+import { loadResource, type ResourceExtractor } from "./httpResource.helper.js";
 
 // ─── Options ──────────────────────────────────────────────────────────────
 
@@ -46,14 +47,19 @@ export interface AuthorizeMiddlewareOptions extends DeniedResponseOptions {
   readonly extractMetadata?: (
     context: HttpMiddlewareContext,
   ) => Record<string, unknown> | undefined;
+  /** Reports a failure the guard turned into a denial (a failed resource load). */
+  readonly onError?: (error: unknown, source: string) => void;
 }
 
 /** Options for the requirePermission middleware. */
 export interface RequirePermissionMiddlewareOptions extends AuthorizeMiddlewareOptions {
   /** The permission to check (e.g. "post:update"). */
   readonly permission: string;
-  /** Extracts the resource from the request (optional). */
-  readonly extractResource?: (context: HttpMiddlewareContext) => unknown;
+  /**
+   * Loads the resource the permission is checked against (optional). May be
+   * async; it is awaited, and a loader that throws or rejects denies (403).
+   */
+  readonly extractResource?: ResourceExtractor;
 }
 
 /** Options for {@link createActorMiddleware}. */
@@ -144,11 +150,19 @@ export function createRequirePermissionMiddleware(
     const actor = await resolveActor(context, options);
     if (!actor) return createUnauthorizedResponse(options);
 
-    const resource = options.extractResource?.(context);
+    const loaded = await loadResource(
+      context,
+      options.extractResource,
+      options.onError,
+    );
+    if (!loaded.ok) {
+      context.state.set(DECISION_STATE_KEY, loaded.decision);
+      return createForbiddenResponse(loaded.decision, options);
+    }
     const decision = await engine.check(
       actor,
       options.permission,
-      resource,
+      loaded.resource,
       buildAuthorization(context, options),
     );
 
@@ -174,8 +188,11 @@ export function authorize(
 
 /** Options for {@link createRequirePermissionsMiddleware}. */
 export interface RequirePermissionsMiddlewareOptions extends AuthorizeMiddlewareOptions {
-  /** Extracts the resource checked for every permission (optional). */
-  readonly extractResource?: (context: HttpMiddlewareContext) => unknown;
+  /**
+   * Loads the resource checked for every permission (optional). May be
+   * async; it is awaited, and a loader that throws or rejects denies (403).
+   */
+  readonly extractResource?: ResourceExtractor;
   /**
    * `"all"` (default) requires every permission; `"any"` requires one.
    */
@@ -186,7 +203,8 @@ export interface RequirePermissionsMiddlewareOptions extends AuthorizeMiddleware
  * Create middleware that checks multiple permissions.
  *
  * Under `"all"` the first denial short-circuits: evaluating the rest costs
- * policy calls and timeouts for an answer that is already decided.
+ * policy calls and timeouts for an answer that is already decided. An empty
+ * permission list denies in either mode.
  */
 export function createRequirePermissionsMiddleware(
   engine: PermissionEngine,
@@ -199,7 +217,22 @@ export function createRequirePermissionsMiddleware(
     const actor = await resolveActor(context, options);
     if (!actor) return createUnauthorizedResponse(options);
 
-    const resource = options.extractResource?.(context);
+    // An empty list is a configuration error, not a grant: under "all" it
+    // used to fall through to next() for any authenticated actor.
+    if (permissions.length === 0) {
+      return createForbiddenResponse(
+        { allowed: false, reason: "no_permissions", publicReason: "Access denied" },
+        options,
+      );
+    }
+
+    const loaded = await loadResource(
+      context,
+      options.extractResource,
+      options.onError,
+    );
+    if (!loaded.ok) return createForbiddenResponse(loaded.decision, options);
+    const resource = loaded.resource;
     const authorization = buildAuthorization(context, options);
     const results = new Map<string, PermissionDecision>();
     let lastDenial: PermissionDecision | undefined;

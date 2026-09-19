@@ -42,13 +42,22 @@ function actorPrefix(actorId: string): string {
  * The actor id is delimited, so invalidating actor `1` cannot also clear
  * actors `10` and `123`, and a delimiter inside an id is escaped so two
  * different (actor, permission, resource) triples can never share a key.
+ *
+ * `scope` carries whatever else the decision depends on — the engine passes
+ * a digest of the actor's roles, permissions and attributes, so the same id
+ * holding different grants never shares a key. It sits after the actor
+ * prefix behind a `~`, which no permission string can start with, so
+ * `invalidateActor` still finds every entry for the actor.
  */
 export function permissionCacheKey(
   actorId: string,
   permission: string,
   resourceId?: string,
+  scope?: string,
 ): string {
-  const base = `${actorPrefix(actorId)}${permission}`;
+  const scoped =
+    scope === undefined ? "" : `~${escapeSegment(scope)}${KEY_DELIMITER}`;
+  const base = `${actorPrefix(actorId)}${scoped}${permission}`;
   return resourceId
     ? `${base}${KEY_DELIMITER}${escapeSegment(resourceId)}`
     : base;

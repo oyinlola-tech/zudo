@@ -10,6 +10,7 @@ export {
   isValidPermission,
   matches,
   matchesPermission,
+  permissionsOverlap,
   formatPermission,
 } from "./permission.core.js";
 

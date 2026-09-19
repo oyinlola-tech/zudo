@@ -11,52 +11,37 @@ import type {
   RuleCombiningAlgorithm,
   RuleEvaluation,
 } from "../permissionTypes/index.js";
+import { ruleBearsOn } from "./rule.pattern.js";
+
+export { ruleMatches, patternStrMatches } from "./rule.pattern.js";
 
 /**
- * Check if a rule matches a target permission.
- *
- * Matching is about resource and action only. Whether the rule *applies* also
- * depends on its condition, which needs a context and is therefore evaluated
- * by {@link evaluateRules}.
+ * Sort key for `priority` combining: higher priority first, and at equal
+ * priority a deny before an allow.
  */
-export function ruleMatches(rule: PermissionRule, target: Permission): boolean {
-  return (
-    patternListMatches(rule.resource, target.resource) &&
-    patternListMatches(rule.action, target.action)
-  );
+function byPriority(a: PermissionRule, b: PermissionRule): number {
+  const priorityA = a.priority ?? 0;
+  const priorityB = b.priority ?? 0;
+  if (priorityA !== priorityB) return priorityB - priorityA;
+  if (a.effect === "deny" && b.effect !== "deny") return -1;
+  if (b.effect === "deny" && a.effect !== "deny") return 1;
+  return 0;
 }
 
-/** Check if any pattern in a rule field matches a target segment. */
-function patternListMatches(
-  pattern: string | readonly string[],
-  target: string,
-): boolean {
-  if (Array.isArray(pattern)) {
-    return (pattern as readonly string[]).some((entry) =>
-      patternStrMatches(entry, target),
-    );
-  }
-  return patternStrMatches(pattern as string, target);
-}
+function combineApplicable(
+  applicable: PermissionRule[],
+  algorithm: RuleCombiningAlgorithm,
+): RuleEvaluation {
+  if (applicable.length === 0) return { allowed: false, applicable: [] };
 
-/**
- * Check if a single pattern string matches a target, supporting wildcards.
- *
- * Two forms are supported, and they are the same two the permission matcher
- * supports, so a pattern means the same thing wherever it is written:
- *   `*`           — matches anything
- *   `billing.*`   — matches `billing` and any `billing.…` namespace
- */
-export function patternStrMatches(pattern: string, target: string): boolean {
-  if (pattern === "*") return true;
-  if (pattern === target) return true;
-
-  if (pattern.endsWith(".*")) {
-    const prefix = pattern.slice(0, -2);
-    return target === prefix || target.startsWith(`${prefix}.`);
+  if (algorithm === "deny-overrides") {
+    const deny = applicable.find((rule) => rule.effect === "deny");
+    if (deny) return { allowed: false, matchedRule: deny, applicable };
+    return { allowed: true, matchedRule: applicable[0], applicable };
   }
 
-  return false;
+  const top = [...applicable].sort(byPriority)[0]!;
+  return { allowed: top.effect === "allow", matchedRule: top, applicable };
 }
 
 /**
@@ -67,9 +52,15 @@ export function patternStrMatches(pattern: string, target: string): boolean {
  * has to mean "owners may", not "anyone may". Conditions are async, so this
  * function is too.
  *
- * A condition that throws is treated as unmet — an authorization check fails
- * closed. A rule that carries a condition when no context was supplied is
- * skipped for the same reason.
+ * A condition that cannot be evaluated fails closed, and what "closed" means
+ * depends on the rule's effect. An allow whose condition throws, or that has
+ * a condition but no context, does not apply. A *deny* in the same position
+ * does apply: treating it as unmet dropped the deny and let the role's allow
+ * win, so a missing resource or a blocklist service that was down granted
+ * the very access the deny existed to refuse.
+ *
+ * A deny also applies when its patterns merely overlap a wildcard target —
+ * `can(actor, "post:*")` is refused by a deny on `post:delete`.
  *
  * Default combining algorithm: `deny-overrides`. Any applicable deny wins,
  * whatever its priority.
@@ -87,16 +78,20 @@ export async function evaluateRules(
   const applicable: PermissionRule[] = [];
 
   for (const rule of rules) {
-    if (!ruleMatches(rule, target)) continue;
+    if (!ruleBearsOn(rule, target)) continue;
 
     if (rule.condition) {
-      if (!context) continue;
-      let met = false;
+      const failClosed = rule.effect === "deny";
+      if (!context) {
+        if (failClosed) applicable.push(rule);
+        continue;
+      }
+      let met: boolean;
       try {
         met = await rule.condition(context);
       } catch (error) {
         options?.onConditionError?.(rule, error);
-        met = false;
+        met = failClosed;
       }
       if (!met) continue;
     }
@@ -104,36 +99,17 @@ export async function evaluateRules(
     applicable.push(rule);
   }
 
-  if (applicable.length === 0) {
-    return { allowed: false, applicable: [] };
-  }
-
-  if (algorithm === "deny-overrides") {
-    const deny = applicable.find((rule) => rule.effect === "deny");
-    if (deny) return { allowed: false, matchedRule: deny, applicable };
-    return { allowed: true, matchedRule: applicable[0], applicable };
-  }
-
-  const sorted = [...applicable].sort((a, b) => {
-    const priorityA = a.priority ?? 0;
-    const priorityB = b.priority ?? 0;
-    if (priorityA !== priorityB) return priorityB - priorityA;
-    // Same priority: deny wins.
-    if (a.effect === "deny" && b.effect !== "deny") return -1;
-    if (b.effect === "deny" && a.effect !== "deny") return 1;
-    return 0;
-  });
-
-  const top = sorted[0]!;
-  return { allowed: top.effect === "allow", matchedRule: top, applicable };
+  return combineApplicable(applicable, algorithm);
 }
 
 /**
  * Evaluate rules that carry no conditions.
  *
  * Synchronous, for callers that build their own condition-free rule sets.
- * Any rule with a condition is skipped, because there is no way to evaluate
- * one without awaiting it — use {@link evaluateRules} for those.
+ * A conditional rule cannot be evaluated without awaiting it — use
+ * {@link evaluateRules} for those — so it fails closed the same way an
+ * unevaluable condition does there: a conditional allow is skipped, and a
+ * conditional deny applies.
  */
 export function evaluateRulesSync(
   rules: readonly PermissionRule[],
@@ -142,26 +118,9 @@ export function evaluateRulesSync(
 ): RuleEvaluation {
   const algorithm = options?.algorithm ?? "deny-overrides";
   const applicable = rules.filter(
-    (rule) => rule.condition === undefined && ruleMatches(rule, target),
+    (rule) =>
+      ruleBearsOn(rule, target) &&
+      (rule.condition === undefined || rule.effect === "deny"),
   );
-
-  if (applicable.length === 0) return { allowed: false, applicable: [] };
-
-  if (algorithm === "deny-overrides") {
-    const deny = applicable.find((rule) => rule.effect === "deny");
-    if (deny) return { allowed: false, matchedRule: deny, applicable };
-    return { allowed: true, matchedRule: applicable[0], applicable };
-  }
-
-  const sorted = [...applicable].sort((a, b) => {
-    const priorityA = a.priority ?? 0;
-    const priorityB = b.priority ?? 0;
-    if (priorityA !== priorityB) return priorityB - priorityA;
-    if (a.effect === "deny" && b.effect !== "deny") return -1;
-    if (b.effect === "deny" && a.effect !== "deny") return 1;
-    return 0;
-  });
-
-  const top = sorted[0]!;
-  return { allowed: top.effect === "allow", matchedRule: top, applicable };
+  return combineApplicable(applicable, algorithm);
 }

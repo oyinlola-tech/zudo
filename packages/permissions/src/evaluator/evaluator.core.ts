@@ -19,10 +19,15 @@ import type {
   AuthorizationOptions,
   RuleEvaluation,
 } from "../permissionTypes/index.js";
-import { parsePermissionSafe, matches } from "../permission/permission.core.js";
+import {
+  parsePermissionSafe,
+  matches,
+  permissionsOverlap,
+} from "../permission/permission.core.js";
 import { InvalidPermissionError } from "../permissionErrors/index.js";
 import { compileRules, findMatchingRules } from "../rule/ruleCompiler.js";
 import { evaluateRules } from "../rule/rule.core.js";
+import { isWildcardTarget } from "../rule/rule.pattern.js";
 import {
   assertNotAborted,
   evaluatePolicies,
@@ -30,7 +35,7 @@ import {
   toMetadataMap,
   type EvaluatorOptions,
 } from "./evaluator.pipeline.js";
-import { permissionCacheKey } from "../cache/cache.core.js";
+import { decisionCacheKey } from "./engineSupport/index.js";
 
 export { evaluateWithExplain } from "./evaluator.explain.js";
 
@@ -108,7 +113,10 @@ export async function evaluate(
       });
       continue;
     }
-    if (matches(deny, permissionStr)) {
+    // Overlap, not match: for a concrete target the two are the same, but a
+    // wildcard target (`post:*`) asks about every action under it, and a
+    // deny on one of them has to refuse it.
+    if (permissionsOverlap(deny, permissionStr)) {
       trace?.push({
         type: "deny",
         detail: `Explicit deny: ${deny}`,
@@ -120,22 +128,13 @@ export async function evaluate(
 
   /* ── Cache ───────────────────────────────────────────────────────────── */
 
-  const resourceId = authOptions?.resourceId ?? resourceIdOf(resource);
-  // Only a decision the key can fully describe may be cached.
-  //
-  // A resource with no derivable id is the sharp case: the key would collapse
-  // to `actor|permission`, so an allow for `{ ownerId: "ada" }` would answer
-  // for `{ ownerId: "bob" }` on the next call. Request metadata is the other:
-  // `tenantIsolation()` reads the tenant from it, and it is not part of the
-  // key, so a decision made for one tenant must not answer for another.
-  const keyable =
-    (resource === undefined || resourceId !== undefined) &&
-    !hasMetadata(authOptions?.metadata);
-
-  const cacheKey =
-    options.cache && authOptions?.skipCache !== true && keyable
-      ? permissionCacheKey(actor.id, permissionStr, resourceId)
-      : undefined;
+  const cacheKey = decisionCacheKey(
+    actor,
+    permissionStr,
+    resource,
+    options,
+    authOptions,
+  );
 
   if (options.cache && cacheKey) {
     try {
@@ -222,13 +221,20 @@ export async function evaluate(
     ...grants.rules,
   ];
 
+  // A wildcard target is not a key the index can look up, and the deny
+  // rules that merely overlap it are exactly the ones an index lookup misses,
+  // so it is checked against every rule.
+  let conditionFailed = false;
   const ruleResult = await evaluateRules(
-    findMatchingRules(compileRules(rules), permission),
+    isWildcardTarget(permission)
+      ? rules
+      : findMatchingRules(compileRules(rules), permission),
     permission,
     context,
     {
       algorithm: options.algorithm,
       onConditionError: (rule, error) => {
+        conditionFailed = true;
         options.onError?.(error, `RuleCondition.${rule.name ?? "unnamed"}`);
       },
     },
@@ -267,7 +273,9 @@ export async function evaluate(
 
   /* ── Cache write ─────────────────────────────────────────────────────── */
 
-  if (options.cache && cacheKey && outcome.cacheable) {
+  // A decision forced by a condition that threw describes the failure, not
+  // the actor, and must not outlive it.
+  if (options.cache && cacheKey && outcome.cacheable && !conditionFailed) {
     try {
       await options.cache.set(cacheKey, decision, {
         ttl: options.cacheTtlMs,
@@ -321,22 +329,6 @@ function combine(
   if (policyDecision?.allowed) return policyDecision;
 
   return denied("no_matching_rule");
-}
-
-/** True when the caller supplied request metadata the cache key cannot carry. */
-function hasMetadata(metadata: AuthorizationOptions["metadata"]): boolean {
-  if (!metadata) return false;
-  if (metadata instanceof Map) return metadata.size > 0;
-  return Object.keys(metadata).length > 0;
-}
-
-/** Best-effort resource identity for the cache key. */
-function resourceIdOf(resource: unknown): string | undefined {
-  if (typeof resource !== "object" || resource === null) return undefined;
-  const id = (resource as { id?: unknown }).id;
-  if (typeof id === "string") return id;
-  if (typeof id === "number") return String(id);
-  return undefined;
 }
 
 /**

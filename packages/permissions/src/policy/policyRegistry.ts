@@ -7,11 +7,19 @@
 import type { PermissionPolicyDefinition } from "../permissionTypes/index.js";
 import { DuplicatePolicyError } from "../permissionErrors/index.js";
 import { selectPolicies } from "../evaluator/evaluator.pipeline.js";
+import { validatePolicy } from "../evaluator/engineSupport/index.js";
+import { createChangeNotifier } from "../utils/utils.notifier.js";
 
 /** Options for the policy registry. */
 export interface PolicyRegistryOptions {
   /** Allow overwriting an existing policy. Defaults to false. */
   readonly allowOverride?: boolean;
+  /**
+   * Reject permission patterns that are not `resource:action`. Defaults to
+   * true — a policy scoped to a pattern that never matches never runs, so a
+   * mistyped lockdown would deny nothing.
+   */
+  readonly validatePermissions?: boolean;
 }
 
 /** A policy registry, usable directly as the engine's `policies` source. */
@@ -24,6 +32,12 @@ export interface PolicyRegistry {
   all(): readonly PermissionPolicyDefinition[];
   remove(name: string): boolean;
   clear(): void;
+  /**
+   * Be told whenever the policy set changes. Returns an unsubscribe function.
+   * An engine built on this registry subscribes itself, so a policy change
+   * is not bypassed by a cached decision.
+   */
+  subscribe(listener: () => void): () => void;
 }
 
 /**
@@ -36,6 +50,8 @@ export function createPolicyRegistry(
 ): PolicyRegistry {
   const policies = new Map<string, PermissionPolicyDefinition>();
   const allowOverride = options?.allowOverride ?? false;
+  const validatePermissions = options?.validatePermissions ?? true;
+  const changes = createChangeNotifier();
 
   return {
     /**
@@ -44,8 +60,11 @@ export function createPolicyRegistry(
      * Re-registering a name is rejected unless `allowOverride` was set: a
      * second `define("owner-only", …)` used to replace the first in silence,
      * which is an authorization rule vanishing without a trace.
+     *
+     * @throws {InvalidPermissionError} when a permission pattern is malformed.
      */
     define(definition: PermissionPolicyDefinition): void {
+      if (validatePermissions) validatePolicy(definition);
       if (policies.has(definition.name) && !allowOverride) {
         throw new DuplicatePolicyError(definition.name);
       }
@@ -58,6 +77,7 @@ export function createPolicyRegistry(
           permissions: Object.freeze([...definition.permissions]),
         }),
       );
+      changes.notify();
     },
 
     get(name: string): PermissionPolicyDefinition | undefined {
@@ -88,11 +108,18 @@ export function createPolicyRegistry(
     },
 
     remove(name: string): boolean {
-      return policies.delete(name);
+      const removed = policies.delete(name);
+      if (removed) changes.notify();
+      return removed;
     },
 
     clear(): void {
       policies.clear();
+      changes.notify();
+    },
+
+    subscribe(listener: () => void): () => void {
+      return changes.subscribe(listener);
     },
   };
 }

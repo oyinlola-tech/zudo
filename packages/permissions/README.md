@@ -108,8 +108,19 @@ await engine.can(actor, "post:update", { ownerId: "user_1" }); // true
 await engine.can(actor, "post:update", { ownerId: "user_9" }); // false
 ```
 
-Conditions may be async. A condition that throws is treated as unmet — an
-authorization check fails closed.
+Conditions may be async. A condition that cannot be evaluated fails closed,
+and what "closed" means depends on the rule's effect:
+
+- an **allow** whose condition throws (or that has a condition but no
+  context) does not apply;
+- a **deny** whose condition throws **applies**. In the example above,
+  `locked-posts` throws when no resource is passed, and the check is denied —
+  treating the deny as unmet would let the role's allow win. The error is
+  reported through `onError`, and the decision is not cached.
+
+A deny also bears on a wildcard check: `can(actor, "post:*")` is refused by a
+deny on `post:delete`, whether it comes from `deniedPermissions`, a deny rule,
+or a policy registered for `post:delete`.
 
 **Combining.** The default is `deny-overrides`: any applicable deny wins,
 whatever its priority. Pass `algorithm: "priority"` for highest-priority-wins,
@@ -124,13 +135,19 @@ Conditions read request-scoped facts from `context.metadata`, supplied per
 check:
 
 ```typescript
+import { requireCurrentTenant } from "@zudojs/tenancy";
+
 await engine.can(actor, "invoice:read", invoice, {
-  metadata: { tenantId: request.tenantId },
+  // The *verified* tenant — resolved and trust-checked by @zudojs/tenancy.
+  metadata: { tenantId: requireCurrentTenant().id },
 });
 ```
 
 `tenantIsolation()` compares that value against the resource's tenant, and
-denies when either is missing.
+denies when either is missing. It is only as good as the value you pass: fill
+`tenantId` from a source the client cannot choose (a verified token claim, or
+the tenant `@zudojs/tenancy` resolved), **never from a request header** — a
+caller would set the header to the resource's tenant and pass.
 
 ## Policies
 
@@ -182,7 +199,8 @@ const policies = createPolicyRegistry();
 const engine = createPermissionEngine({ roles, policies });
 
 roles.define({ name: "auditor", permissions: ["audit:read"] });
-engine.invalidateRoles(); // pick up the change
+roles.remove("reader");
+// both take effect on the next check: the engine subscribes to the registry
 
 policies.define({ name: "lockdown", permissions: ["*:*"], evaluate: () => ({ allowed: false }) });
 // enforced by the next check — through the engine or an existing Ability
@@ -194,9 +212,17 @@ All three registries reject a duplicate name — re-registering a role or a
 policy is an authorization rule disappearing without a trace. Pass
 `{ allowOverride: true }` when replacement is what you mean.
 
-`validateConfiguration` (default `true`) applies to a registry as well as to
-an inline array: a role whose grant could never match is rejected when the
-engine looks it up, and the check denies.
+The engine subscribes to a role or policy registry it is given. Every
+`define`, `remove` and `clear` discards the memoized roles **and every cached
+decision**, so revoking a role is not undone by a cache entry written before
+the revocation. `engine.invalidateRoles()` does the same for a custom source.
+
+`validateConfiguration` (default `true`) rejects a pattern that could never
+match wherever it is written — a role grant, a role's rules, a static rule, or
+a policy's `permissions` — because a malformed pattern in a deny or a lockdown
+policy would fail open in silence. Arrays are checked at construction; a
+registry checks on `define` (`InvalidRoleError` / `InvalidPermissionError`),
+and a custom source is checked when the engine reads it.
 
 A permission registry records descriptions and implications:
 
@@ -232,10 +258,13 @@ await engine.can(actor, "post:read", post, { skipCache: true });
 await engine.invalidateActor("user_1");
 ```
 
-Keys include the actor, the permission and the resource id (from
-`resource.id`, or `options.resourceId`), so two resources never share one
-decision. A `|` inside an actor or resource id is escaped, so two different
-(actor, permission, resource) triples can never share a key either.
+Keys include the actor id, a digest of everything else the actor carries
+(`roles`, `permissions`, `type`, any other field a condition may read), the
+permission and the resource id (from `resource.id`, or `options.resourceId`).
+The same user id with different roles — an admin token in one tenant and a
+viewer token in another, or a demoted token — never shares a decision. A `|`
+inside an actor or resource id is escaped, so two different checks can never
+share a key either.
 
 A check is cached only when the key can describe it completely:
 
@@ -245,7 +274,10 @@ A check is cached only when the key can describe it completely:
 - a check carrying `metadata` is **not cached**, because conditions such as
   `tenantIsolation()` read the tenant from there and it is not part of the
   key;
-- a decision produced by a policy marked `cacheable: false` is not stored;
+- an actor carrying something the digest cannot describe (a function, a class
+  instance, a `Map`) is **not cached**;
+- a decision produced by a policy marked `cacheable: false`, or forced by a
+  condition that threw, is not stored;
 - a TTL of `0` or less means "do not cache".
 
 `deniedPermissions` is evaluated before the cache is consulted, so a deny
@@ -274,7 +306,9 @@ Every failure denies:
 | --------------------------- | ------------------------------------------------------ |
 | Unknown role on the actor   | denied; reported to `onError`; other roles still apply |
 | Malformed permission string | denied, `reason: "invalid_permission"`                 |
-| Condition throws            | rule does not apply                                    |
+| Allow condition throws      | the allow does not apply                               |
+| Deny condition throws       | denied, `reason: "rule_deny"`; reported to `onError`   |
+| Malformed rule/policy pattern | rejected at construction or `define`                 |
 | A deny rule applies         | denied, `reason: "rule_deny"`, even if a policy allows |
 | Policy throws or times out  | denied, `reason: "policy_error:<name>"`                |
 | Role inheritance cycle      | denied; reported to `onError`                          |
@@ -330,8 +364,10 @@ emitter.on((event) => auditLog.write(event));
 const engine = createPermissionEngine({ roles, emitter });
 ```
 
-Every check emits — allowed, denied, and the ones that throw. A handler that
-throws cannot break authorization, but it is reported rather than swallowed.
+Every check emits — allowed, denied, and the ones that throw — including
+`explain()` on the engine and on an Ability, which make the same real
+decision. A handler that throws cannot break authorization, but it is reported
+rather than swallowed.
 
 ## HTTP middleware
 
@@ -340,10 +376,13 @@ import { authorize, createActorMiddleware } from "@zudojs/permissions";
 
 const guard = authorize(engine, "post:update", {
   extractActor: (context) => context.state.get("auth:user"),
-  extractResource: (context) => loadPost(context.request.params.get("id")),
+  // May be async: it is awaited, and a loader that rejects denies (403).
+  extractResource: (context) => loadPost(context.request.getParam?.("id")),
+  // The tenant @zudojs/tenancy resolved and trust-checked — never a header.
   extractMetadata: (context) => ({
-    tenantId: context.request.headers.get("x-tenant"),
+    tenantId: context.state.get<{ tenantId: string }>("tenancy:context")?.tenantId,
   }),
+  onError: (error, source) => logger.warn({ error, source }, "guard denied"),
 });
 ```
 
@@ -357,11 +396,16 @@ const guard = authorize(engine, "post:update", {
   decision.
 - `context.signal` is forwarded, so a client disconnect stops policy
   evaluation.
+- `extractResource` is awaited. A loader that throws or rejects answers
+  **403** (`reason: "resource_error"`) and reports through `onError`; it never
+  lets the request through.
 - `createRequirePermissionsMiddleware(engine, permissions, { mode })` checks
   several permissions, short-circuiting on the first that decides the outcome.
+  An empty list denies in either mode.
 
-`@zudojs/http` is an optional peer dependency; the middleware types are
-mirrored locally so this package works without it.
+The middleware composes with the real `@zudojs/http` pipeline without
+depending on it: the HTTP types are mirrored structurally (headers, params and
+query may be plain objects, as `@zudojs/http` provides them, or maps).
 
 ## Errors
 

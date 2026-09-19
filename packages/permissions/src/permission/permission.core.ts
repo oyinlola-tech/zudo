@@ -6,7 +6,7 @@
 
 import type { Permission } from "../permissionTypes/index.js";
 import { InvalidPermissionError } from "../permissionErrors/index.js";
-import { patternStrMatches } from "../rule/rule.core.js";
+import { patternStrMatches, patternsOverlap } from "../rule/rule.pattern.js";
 
 /**
  * Valid permission format: `resource:action`.
@@ -70,6 +70,27 @@ export function matchesPermission(
   return (
     patternStrMatches(parsed.resource, permission.resource) &&
     patternStrMatches(parsed.action, permission.action)
+  );
+}
+
+/**
+ * Check if two permission patterns can name a common permission.
+ *
+ * This is the test a *deny* needs. For a concrete target it is exactly
+ * {@link matches}; for a wildcard target such as `post:*` it also holds when
+ * the deny is narrower (`post:delete`), which `matches` does not see.
+ *
+ * @example permissionsOverlap("post:delete", "post:*") → true
+ * @example permissionsOverlap("*:delete", "post:*") → true
+ * @example permissionsOverlap("post:delete", "post:read") → false
+ */
+export function permissionsOverlap(a: string, b: string): boolean {
+  const left = parsePermissionSafe(a);
+  const right = parsePermissionSafe(b);
+  if (!left || !right) return false;
+  return (
+    patternsOverlap(left.resource, right.resource) &&
+    patternsOverlap(left.action, right.action)
   );
 }
 

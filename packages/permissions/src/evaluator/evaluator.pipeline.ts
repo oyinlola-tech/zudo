@@ -18,7 +18,12 @@ import type {
   AuthorizationOptions,
 } from "../permissionTypes/index.js";
 import { resolveRolePermissions } from "../role/roleHierarchy.js";
-import { matches } from "../permission/permission.core.js";
+import {
+  matches,
+  permissionsOverlap,
+  parsePermissionSafe,
+} from "../permission/permission.core.js";
+import { isWildcardTarget } from "../rule/rule.pattern.js";
 import {
   AuthorizationAbortedError,
   PermissionResolverError,
@@ -65,6 +70,12 @@ export interface EvaluatorOptions {
   readonly expandImplied?: (permission: string) => readonly string[];
   /** Reports a failure that authorization swallowed to stay fail-closed. */
   readonly onError?: (error: unknown, source: string) => void;
+  /**
+   * Extra decision-cache key scope, read on every evaluation. The engine
+   * passes its configuration generation, so a role change invalidates every
+   * entry written before it.
+   */
+  readonly cacheScope?: () => string;
 }
 
 /** The permissions and rules an actor holds, once everything is resolved. */
@@ -229,6 +240,32 @@ export function selectPolicies(
     .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
 }
 
+/**
+ * Policies narrower than a wildcard target, which may deny it but not grant it.
+ *
+ * `can(actor, "post:*")` asks about every action under `post`. A policy
+ * registered for `post:delete` does not cover that question, so its allow
+ * must not grant it — but its denial is a denial of part of it, and a
+ * wildcard check must not side-step it.
+ */
+function narrowerPolicies(
+  policies: readonly PermissionPolicyDefinition[],
+  applicable: readonly PermissionPolicyDefinition[],
+  permissionStr: string,
+): readonly PermissionPolicyDefinition[] {
+  const target = parsePermissionSafe(permissionStr);
+  if (!target || !isWildcardTarget(target)) return [];
+  return policies
+    .filter(
+      (policy) =>
+        !applicable.includes(policy) &&
+        policy.permissions.some((pattern) =>
+          permissionsOverlap(pattern, permissionStr),
+        ),
+    )
+    .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+}
+
 /** The outcome of running the applicable policies. */
 export interface PolicyOutcome {
   /** `null` when no policy applied. */
@@ -257,8 +294,9 @@ export async function evaluatePolicies(
 
   const permissionStr = `${context.permission.resource}:${context.permission.action}`;
   const applicable = selectPolicies(policies, permissionStr);
+  const denyOnly = narrowerPolicies(policies, applicable, permissionStr);
 
-  if (applicable.length === 0) {
+  if (applicable.length === 0 && denyOnly.length === 0) {
     return { decision: null, cacheable: true, evaluated: [] };
   }
 
@@ -268,7 +306,7 @@ export async function evaluatePolicies(
   const evaluated: string[] = [];
   let cacheable = true;
 
-  for (const policy of applicable) {
+  for (const policy of [...applicable, ...denyOnly]) {
     assertNotAborted(context.signal ?? authOptions?.signal);
     evaluated.push(policy.name);
     if (policy.cacheable === false) cacheable = false;
@@ -310,6 +348,10 @@ export async function evaluatePolicies(
         evaluated,
       };
     }
+  }
+
+  if (applicable.length === 0) {
+    return { decision: null, cacheable, evaluated };
   }
 
   return {
