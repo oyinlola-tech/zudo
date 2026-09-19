@@ -12,3 +12,5 @@ Round 10 fixes:
 - LEAF-13: `safeStringify` tracks the ancestor path, so a shared, non-cyclic sub-object is no longer printed as `[Circular]`.
 - LEAF-14: `sanitizeFragment` strips U+2028/U+2029 and the bidi marks, embeddings, overrides and isolates.
 - New classes that other packages defined locally (additive; consumers not switched yet): `TransactionError` and its 10 subclasses, `MiddlewareLimitExceededError`, `MiddlewareDepthExceededError`, `MiddlewareRateLimitError`, `MiddlewareAbortedError`, `TraversalLimitError`, `HttpMiddlewareError`, `HttpMiddlewarePipelineError`, `HttpRequestGuardError`, `OpenAPIError`, `AuthError`, `OAuthError`, `CqrsError`, `ObservabilityError`, `InvalidConstantError`, `ConstantContextError`. Also new: `ErrorCode.OAUTH_*` (the values equal `@zudojs/auth-oauth`'s code strings).
+- tooling/CONV-01 (phase 2): new `CLIValidationError`, `CLIGenerationError`, `CLINotInProjectError` and `CLITemplateError` (moved from `zudojs-cli`, same constructors, all `ApplicationError`s).
+- LEAF-18: `ErrorConstructor<T>` is now `abstract new (...args: never[]) => T` instead of `any[]`. Every constructor is still assignable.

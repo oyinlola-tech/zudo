@@ -10,3 +10,4 @@ Round 10 fixes:
 - LEAF-06: `createTimestamp` rejects dates and times that do not exist (`2024-02-30`, `24:00`, minute 60, offset hour 24).
 - LEAF-12 (behaviour change): the immutable sets (`SCHEMA_FORBIDDEN_KEYS`, `HTTP_METHODS`, ...) keep their values in private storage, so `Set.prototype.clear.call(set)` throws. They implement `ReadonlySet` but are no longer `Set` instances.
 - CV-02: `InvalidConstantError` and `ConstantContextError` are now owned by `@zudojs/errors` and re-exported here.
+- SER-03 (phase 2, new API): `SerializationLimits.MAX_BIGINT_DIGITS` (4096), the shared bound on decimal digits accepted when decoding or coercing a BigInt from text. `@zudojs/serialization` and `@zudojs/schema` use it.
