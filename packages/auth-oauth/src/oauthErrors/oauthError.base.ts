@@ -3,8 +3,10 @@
  *
  * @module oauthErrors/oauthError
  *
- * These are defined locally rather than extending `@zudojs/errors` so the
- * package has no `@zudojs/*` dependency at all.
+ * `OAuthError` builds on the shared `OAuthError` in `@zudojs/errors`, so
+ * every class here is a `BaseError` (structured `toJSON`, metadata
+ * redaction, `category`/`severity`). `OAuthErrorCode` values equal the
+ * shared `ErrorCode.OAUTH_*` members.
  *
  * **Secret hygiene.** No constructor here ever interpolates a client secret,
  * an access token, a refresh token or a code verifier into `message`. The
@@ -13,6 +15,8 @@
  * so a provider cannot echo a secret back into your logs. `message` is the
  * first line of `stack`, so keeping it clean keeps the stack clean.
  */
+
+import { OAuthError as SharedOAuthError } from "@zudojs/errors";
 
 /** Stable, machine-readable error codes. */
 export const OAuthErrorCode = {
@@ -53,22 +57,15 @@ export interface OAuthErrorOptions {
  *
  * `expose` says whether the message is safe to hand to an end user; it is
  * `true` for request-caused failures and `false` for configuration ones
- * (which describe your deployment, not the request).
+ * (which describe your deployment, not the request). Defaults: 400,
+ * exposed, code `OAUTH_PROVIDER_REJECTED`.
  */
-export class OAuthError extends Error {
-  override readonly name: string = "OAuthError";
+export class OAuthError extends SharedOAuthError {
   /** Machine-readable code. */
-  readonly code: OAuthErrorCode;
-  /** Suggested HTTP status for a handler that surfaces this. */
-  readonly statusCode: number;
-  /** Whether `message` is safe to return to a client verbatim. */
-  readonly expose: boolean;
+  declare readonly code: OAuthErrorCode;
 
   constructor(message: string, options?: OAuthErrorOptions) {
-    super(message, options?.cause !== undefined ? { cause: options.cause } : {});
-    this.code = options?.code ?? OAuthErrorCode.PROVIDER_REJECTED;
-    this.statusCode = options?.statusCode ?? 400;
-    this.expose = options?.expose ?? true;
+    super(message, options);
   }
 }
 

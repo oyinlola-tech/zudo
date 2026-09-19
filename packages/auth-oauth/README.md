@@ -11,7 +11,9 @@ requests to the provider.
 
 <!-- zudo-docs:end -->
 
-Depends on nothing but Node built-ins (`node:crypto` and the global `fetch`).
+Built on Node built-ins (`node:crypto` and the global `fetch`), plus
+`@zudojs/errors` (the error base classes) and `@zudojs/security` (the IPv6
+helpers behind the SSRF guard).
 
 ```bash
 pnpm add @zudojs/auth-oauth
@@ -208,6 +210,9 @@ Every one of these is covered by a test in `tests/`.
 
 Every failure is an `OAuthError` with a machine-readable `code`, a suggested
 `statusCode`, and `expose` saying whether the message is safe to show a user.
+`OAuthError` extends the shared `OAuthError` from `@zudojs/errors`, so every
+class below is also a `BaseError`, and its codes equal the shared
+`ErrorCode.OAUTH_*` members.
 
 | Class | Code | Status | Exposed |
 | --- | --- | --- | --- |

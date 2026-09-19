@@ -27,12 +27,12 @@
  * you accept endpoint URLs from untrusted operators.
  */
 
-import { OAuthEndpointNotAllowedError } from "../oauthErrors/index.js";
 import {
   embeddedIpv4,
   expandIpv6,
   isNonPublicIpv6Range,
-} from "./oauthIpv6.guard.js";
+} from "@zudojs/security";
+import { OAuthEndpointNotAllowedError } from "../oauthErrors/index.js";
 
 /** Hostnames that are always refused for a server-fetched endpoint. */
 const BLOCKED_HOST_NAMES: ReadonlySet<string> = new Set([
