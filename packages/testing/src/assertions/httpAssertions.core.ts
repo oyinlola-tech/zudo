@@ -6,8 +6,8 @@
 
 import type { HTTPStatusCode } from "../httpTesting/httpStatusCode.type.js";
 import type { TestHTTPResponse } from "../httpTesting/httpResponse.type.js";
-import { findDifference } from "./deepEqual.core.js";
-import { describeValue } from "./deepEqual.describe.js";
+import { findDifference } from "./deepEqual/deepEqual.core.js";
+import { describeValue } from "./deepEqual/deepEqual.describe.js";
 
 /**
  * Asserts that a response has a specific status code.

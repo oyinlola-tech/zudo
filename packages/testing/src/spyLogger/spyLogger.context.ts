@@ -6,7 +6,7 @@
 
 import type { LogMetadata, LogValue, LoggerContext } from "@zudojs/logger";
 
-import { deepEqual } from "../assertions/deepEqual.core.js";
+import { deepEqual } from "../assertions/deepEqual/deepEqual.core.js";
 
 /** Merges two logger contexts, preserving the nested shape. */
 export function mergeLoggerContext(

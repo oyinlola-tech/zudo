@@ -13,6 +13,8 @@
 
 import type { Difference } from "./deepEqual.describe.js";
 import { describeValue } from "./deepEqual.describe.js";
+import { diffMap, diffSet } from "./deepEqual.collections.js";
+import { compareIdentity, errorCauses } from "./deepEqual.identity.js";
 
 /** The constructor-level kind of a value, used to reject cross-type matches. */
 function kindOf(value: unknown): string {
@@ -67,11 +69,20 @@ function diff(
     };
   }
 
+  const mismatch = compareIdentity(actual, expected as object);
+  if (mismatch) return { path, reason: mismatch };
+
   // Guard against cycles: a pair already being compared is assumed equal
   // until proven otherwise elsewhere in the walk.
   const previous = seen.get(actual);
   if (previous === (expected as object)) return undefined;
   seen.set(actual, expected as object);
+
+  const causes = errorCauses(actual, expected as object);
+  if (causes) {
+    const found = diff(causes.actual, causes.expected, `${path}.cause`, seen);
+    if (found) return found;
+  }
 
   if (Array.isArray(actual) && Array.isArray(expected)) {
     if (actual.length !== expected.length) {
@@ -93,55 +104,11 @@ function diff(
   }
 
   if (actual instanceof Map && expected instanceof Map) {
-    if (actual.size !== expected.size) {
-      return {
-        path,
-        reason: `expected ${expected.size} entries, received ${actual.size}`,
-      };
-    }
-    // Keys are matched by identity first and structurally second, so a
-    // Map keyed by objects compares by value like everything else here.
-    const unmatched = [...actual.keys()];
-    for (const [key, value] of expected) {
-      const actualKey = actual.has(key)
-        ? key
-        : findStructuralMatch(unmatched, key, seen);
-      if (actualKey === NO_MATCH) {
-        return { path, reason: `missing key ${describeValue(key)}` };
-      }
-      unmatched.splice(unmatched.indexOf(actualKey), 1);
-      const found = diff(
-        actual.get(actualKey),
-        value,
-        `${path}[${describeValue(key)}]`,
-        seen,
-      );
-      if (found) return found;
-    }
-    return undefined;
+    return diffMap(actual, expected, path, seen, diff);
   }
 
   if (actual instanceof Set && expected instanceof Set) {
-    if (actual.size !== expected.size) {
-      return {
-        path,
-        reason: `expected ${expected.size} items, received ${actual.size}`,
-      };
-    }
-    // `Set.has` is identity-based, so two Sets holding equal but distinct
-    // objects compared unequal. Each expected entry is matched against a
-    // still-unmatched actual entry structurally instead.
-    const unmatched = [...actual];
-    for (const entry of expected) {
-      const match = actual.has(entry)
-        ? entry
-        : findStructuralMatch(unmatched, entry, seen);
-      if (match === NO_MATCH) {
-        return { path, reason: `missing item ${describeValue(entry)}` };
-      }
-      unmatched.splice(unmatched.indexOf(match), 1);
-    }
-    return undefined;
+    return diffSet(actual, expected, path, seen, diff);
   }
 
   if (ArrayBuffer.isView(actual) && ArrayBuffer.isView(expected)) {
@@ -193,27 +160,6 @@ function diff(
   }
 
   return undefined;
-}
-
-const NO_MATCH: unique symbol = Symbol("deepEqual.noMatch");
-
-/**
- * Finds a candidate structurally equal to `expected`. Each probe walks a
- * copy of `seen`: the cycle guard records a pair as "assumed equal" before
- * comparing it, and a probe that fails must not leave that assumption
- * behind for the next candidate.
- */
-function findStructuralMatch(
-  candidates: readonly unknown[],
-  expected: unknown,
-  seen: Map<object, object>,
-): unknown {
-  for (const candidate of candidates) {
-    if (diff(candidate, expected, "", new Map(seen)) === undefined) {
-      return candidate;
-    }
-  }
-  return NO_MATCH;
 }
 
 /**

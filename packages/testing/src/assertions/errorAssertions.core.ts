@@ -6,8 +6,8 @@
 
 import type { BaseError } from "@zudojs/errors";
 
-import { findDifference } from "./deepEqual.core.js";
-import { describeValue } from "./deepEqual.describe.js";
+import { findDifference } from "./deepEqual/deepEqual.core.js";
+import { describeValue } from "./deepEqual/deepEqual.describe.js";
 
 /**
  * Asserts that a function throws an error.

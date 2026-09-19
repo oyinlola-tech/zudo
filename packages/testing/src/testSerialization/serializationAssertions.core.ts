@@ -6,8 +6,8 @@
 
 import { JSONSerializer } from "@zudojs/serialization";
 
-import { findDifference } from "../assertions/deepEqual.core.js";
-import { describeValue } from "../assertions/deepEqual.describe.js";
+import { findDifference } from "../assertions/deepEqual/deepEqual.core.js";
+import { describeValue } from "../assertions/deepEqual/deepEqual.describe.js";
 
 const defaultSerializer = new JSONSerializer();
 

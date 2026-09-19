@@ -30,6 +30,5 @@ export {
   assertRejects,
   assertThrows,
 } from "./errorAssertions.core.js";
-export { deepEqual, findDifference } from "./deepEqual.core.js";
-export { describeValue } from "./deepEqual.describe.js";
-export type { Difference } from "./deepEqual.describe.js";
+export { deepEqual, describeValue, findDifference } from "./deepEqual/index.js";
+export type { Difference } from "./deepEqual/index.js";

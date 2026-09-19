@@ -10,7 +10,7 @@ import type { RecordedEvent } from "../testEventBus/testEventBus.core.js";
 
 import type { RecordedMessage } from "../testMessageBus/testMessageBus.core.js";
 
-import { findDifference } from "./deepEqual.core.js";
+import { findDifference } from "./deepEqual/deepEqual.core.js";
 
 /**
  * Asserts that an event has a specific type.
