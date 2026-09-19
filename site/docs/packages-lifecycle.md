@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/lifecycle — state machine, co
 source: https://zudojs.oyinlola.site/docs/packages-lifecycle
 ---
 
-v1.1.0
+v1.1.1
 
 # @zudojs/lifecycle
 
@@ -60,8 +60,8 @@ The lifecycle manager sits between the application layer and the runtime. Module
 
 | Package | Version | Purpose |
 | --- | --- | --- |
-| @zudojs/errors | 1.0.0 | Error hierarchy (LifecycleError, LifecycleStateError, LifecycleTimeoutError, etc.) |
-| @zudojs/constants | 1.0.0 | LifecycleState, LifecyclePhase enums, valid transitions, and default values |
+| @zudojs/errors | 1.1.0 | Error hierarchy (LifecycleError, LifecycleStateError, LifecycleTimeoutError, etc.) |
+| @zudojs/constants | 1.1.0 | LifecycleState, LifecyclePhase enums, valid transitions, and default values |
 
 > **Internal dependencies:** Packages depend on each other with `workspace:*`, always — including on `main`. They are never hand-pinned to an exact version. At publish time `pnpm` rewrites each `workspace:*` to the exact version of that package in the same release, so a published tarball carries real ranges. Releases go out through `publish-all.sh`, which runs `pnpm -r publish` — it rewrites the ranges and publishes in dependency order. Plain `npm publish` does not understand the `workspace:` protocol and would ship a literal `workspace:*` to the registry.
 
@@ -196,6 +196,8 @@ interface LifecycleRegistrationOptions {
 }
 ```
 
+`timeout`: `Infinity` means no bound; `NaN` or a negative value throws `RangeError` at registration; a timed-out hook is not retried.
+
 ### Interface: LifecycleRetryOptions
 
 ```ts
@@ -306,6 +308,8 @@ interface LifecycleManagerOptions {
   readonly signals?: readonly NodeJS.Signals[];
 }
 ```
+
+`shutdownTimeout`: `Infinity` means no deadline. `handleSignals`: handlers are installed by `start()` (not the constructor) and removed after shutdown; a second signal during shutdown exits with code 1.
 
 ### Class: LifecycleManager
 
@@ -781,7 +785,7 @@ for (const [id, info] of status) {
 }
 
 // 6. Graceful shutdown (triggered by SIGTERM or manually)
-// Signal handlers are already installed — just wait.
+// start() installed the signal handlers; they are removed when shutdown finishes.
 // Or trigger manually:
 await manager.shutdown();
 manager.dispose();
@@ -789,7 +793,7 @@ manager.dispose();
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/lifecycle` exports from its package root at v1.1.0 — **36** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/lifecycle` exports from its package root at v1.1.1 — **36** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 36 exports**
 

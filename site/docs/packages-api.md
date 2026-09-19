@@ -1,10 +1,10 @@
 ---
 title: "@zudojs/api — Transport-agnostic API layer"
-description: "Complete reference for @zudojs/api v1.0.1. Define transport-agnostic operations, interceptors, result types, and execution contexts for the Zudo TypeScript framework."
+description: "Complete reference for @zudojs/api v1.1.0. Define transport-agnostic operations, interceptors, result types, and execution contexts for the Zudo TypeScript framework."
 source: https://zudojs.oyinlola.site/docs/packages-api
 ---
 
-v1.0.1
+v1.1.0
 
 # @zudojs/api
 
@@ -94,7 +94,7 @@ An *operation* is one thing your app can do, such as "get a user" or "create an 
 | --- | --- | --- |
 | name | Unique identifier, e.g. "users.get". | Required. 1–128 characters from A-Z a-z 0-9 . _ : / -. |
 | handler | Async function (input, context) => Promise<output>. | Required. |
-| input | Schema used to validate input before the handler runs. | Optional. Must be a Standard Schema to be enforced. See [Validation](#validation). |
+| input | Schema used to validate input before the handler runs. | Optional. Must be a @zudojs/schema schema (or any safeParse schema) or a Standard Schema; anything else throws in defineOperation. See [Validation](#validation). |
 | output | Schema used to validate what the handler returns. | Optional. Same rule as input. |
 | timeout | Deadline in milliseconds. | Optional. Default 30 000. Must be a positive integer up to 3 600 000. |
 | metadata | Descriptive extras: description, tags, version, deprecated, idempotent, timeout. | Optional. Frozen once registered. tags powers registry.findByTag(). |
@@ -130,9 +130,9 @@ The timeout stops the executor from *waiting*; it cannot stop the handler's code
 
 ## VALIDATION
 
-A *schema* is an object that can check whether a value has the right shape. The executor accepts any schema that follows the [Standard Schema](https://standardschema.dev) spec, which Zod, Valibot, and ArkType all implement. You never import a validation library from `@zudojs/api` itself.
+A *schema* is an object that can check whether a value has the right shape. The executor accepts a `@zudojs/schema` schema (or any schema with a `safeParse` method), or any schema that follows the [Standard Schema](https://standardschema.dev) spec, which Zod, Valibot, and ArkType all implement. You never import a validation library from `@zudojs/api` itself.
 
-When `input` is a schema, the executor validates before calling the handler and hands the handler the schema's cleaned-up value. When `output` is a schema, the handler's return value is validated too, and the cleaned value becomes `result.data`. Any other value in those fields is treated as documentation and ignored.
+When `input` is a schema, the executor validates before calling the handler and hands the handler the schema's cleaned-up value. When `output` is a schema, the handler's return value is validated too, and the cleaned value becomes `result.data`. Any other value in those fields is rejected: `defineOperation` and `register` throw a `TypeError`, and the executor fails closed with a 500 without running the handler.
 
 The example below writes a tiny schema by hand so you can see the whole thing. In a real app you would pass a Zod schema in the same spot with no other changes.
 
@@ -467,7 +467,7 @@ All are re-exported from `@zudojs/errors` and extend `APIError`. Status codes ar
 
 - [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) — the source of every `APIError` class, `ErrorCode`, and `BaseError.toJSON()`.
 - [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) — the HTTP server. Reach for it when you need routes; call the executor from inside a route handler.
-- [@zudojs/schema](https://zudojs.oyinlola.site/docs/packages-schema.md) — schema helpers if you are not already using Zod or Valibot for `input` / `output`.
+- [@zudojs/schema](https://zudojs.oyinlola.site/docs/packages-schema.md) — Zudo's own schema library; its schemas are validated natively as `input` / `output`.
 - [@zudojs/cqrs](https://zudojs.oyinlola.site/docs/packages-cqrs.md) — when you want commands and queries split into separate buses on top of operations.
 - [@zudojs/permissions](https://zudojs.oyinlola.site/docs/packages-permissions.md) — authorization rules you can call from an interceptor. This package has no policy system of its own.
 
@@ -481,25 +481,25 @@ All are re-exported from `@zudojs/errors` and extend `APIError`. Status codes ar
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/api` exports from its package root at v1.0.1 — **57** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/api` exports from its package root at v1.1.0 — **60** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 57 exports**
+**Show all 60 exports**
 
 Classes (16)
 
 `APIAuthenticationError` `APIAuthorizationError` `APIConflictError` `APIDuplicateOperationError` `APIError` `APIExecutor` `APIIdempotencyError` `APIInternalError` `APINotFoundError` `APIOperationNotFoundError` `APIOperationRegistry` `APIRateLimitError` `APITimeoutError` `APIUnavailableError` `APIValidationError` `APIVersionError`
 
-Functions (14)
+Functions (15)
 
-`apiFailure` `apiSuccess` `createAPIContext` `createAPIError` `createContextKey` `createNoopInterceptor` `defineOperation` `isAPIError` `isApiFailure` `isApiSuccess` `isValidRequestId` `normalizeAPIError` `normalizeRequestId` `resolveOperationTimeout`
+`apiFailure` `apiSuccess` `createAPIContext` `createAPIError` `createContextKey` `createNoopInterceptor` `defineOperation` `isAPIError` `isApiFailure` `isAPISchema` `isApiSuccess` `isValidRequestId` `normalizeAPIError` `normalizeRequestId` `resolveOperationTimeout`
 
-Interfaces (11)
+Interfaces (12)
 
-`APIContext` `APIContextKey` `APIErrorOptions` `APIExecutionContext` `APIExecutorOptions` `APIFailure` `APIInterceptor` `APIOperation` `APIOperationMetadata` `APISuccess` `DefineOperationOptions`
+`APIContext` `APIContextKey` `APIErrorOptions` `APIExecutionContext` `APIExecutorOptions` `APIFailure` `APIInterceptor` `APIOperation` `APIOperationMetadata` `APISchemaIssue` `APISuccess` `DefineOperationOptions`
 
-Type aliases (3)
+Type aliases (4)
 
-`AnyAPIOperation` `APIHandler` `APIResult`
+`AnyAPIOperation` `APIHandler` `APIResult` `APISchemaResult`
 
 Constants (12)
 

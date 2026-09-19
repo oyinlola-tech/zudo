@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/validation — schema validatio
 source: https://zudojs.oyinlola.site/docs/packages-validation
 ---
 
-v1.0.1
+v1.0.2
 
 # @zudojs/validation
 
@@ -149,7 +149,7 @@ try {
 }
 ```
 
-All validation errors extend `ValidationError`, which extends `BaseError` from [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md). That means they already carry `statusCode: 400`, `expose: true` and a `toJSON()` that includes `issues`, so an HTTP layer can serialize them without extra code.
+All validation errors extend `ValidationError`, which extends the `ValidationError` of [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) (a `BaseError`). That means they already carry `statusCode: 400`, `expose: true` and a `toJSON()` that includes `issues`, so an HTTP layer can serialize them without extra code.
 
 | Error class | Thrown by | validationCode |
 | --- | --- | --- |
@@ -157,9 +157,9 @@ All validation errors extend `ValidationError`, which extends `BaseError` from [
 | `SchemaValidationError` | `parse`, `parseAsync`, `assertValid`, parser `.parse()` | `VALIDATION_SCHEMA_FAILED` |
 | `ConstraintValidationError` | composer `.assert()`, normalizer and transformer `.normalize()` / `.transform()` | `VALIDATION_CONSTRAINT_FAILED` |
 | `RequiredValidationError`, `InvalidTypeValidationError`, `InvalidFormatValidationError`, `InvalidValueValidationError` | Never thrown by the package. Available for your own code | `VALIDATION_REQUIRED`, `_INVALID_TYPE`, `_INVALID_FORMAT`, `_INVALID_VALUE` |
-| `ValidationResultError` | `unwrapValidation` on a failed result | none (extends `BaseError` directly, not `ValidationError`) |
+| `ValidationResultError` | `unwrapValidation` on a failed result | none (extends `@zudojs/errors`' `ValidationError` directly, not this package's `ValidationError`) |
 
-> **Watch out:** `isValidationError()` returns `false` for `ValidationResultError`, because that class does not extend `ValidationError`. If you use `unwrapValidation`, catch `ValidationResultError` by name.
+> **Watch out:** `isValidationError()` returns `false` for `ValidationResultError`, because that class extends `@zudojs/errors`' `ValidationError`, not this package's. Checking `instanceof` the `@zudojs/errors` class matches both. If you use `unwrapValidation`, catch `ValidationResultError` by name.
 
 ## CONSTRAINTS
 
@@ -195,12 +195,12 @@ Built-in constraints. Those written as `name(arg)` are functions you call; the r
 | Group | Constraints |
 | --- | --- |
 | Any value | `required` (not null or undefined) |
-| Strings | `nonEmptyString`, `minLength(n)`, `maxLength(n)`, `lengthBetween(min, max)`, `matches(regex, message?)`, `email`, `uuid`, `httpUrl`, `ascii`, `digits`, `letters`, `slug` |
+| Strings | `nonEmptyString`, `minLength(n)`, `maxLength(n)`, `lengthBetween(min, max)`, `matches(regex, message?)`, `email` (max 254 characters; same accept set as `ValidationPattern.EMAIL` and `isEmail`), `uuid`, `httpUrl`, `ascii`, `digits`, `letters`, `slug` |
 | Numbers | `min(n)`, `max(n)`, `between(min, max)`, `finiteNumber`, `integer`, `positive`, `nonNegative`, `even`, `odd` |
 | Dates | `isoDate` (a string such as `"2024-02-29"`), `futureDate`, `pastDate` (both take a `Date`) |
 | Arrays | `minItems(n)`, `maxItems(n)`, `exactItems(n)`, `everyItem(constraint)`, `someItem(constraint)` |
 | Membership | `oneOf([...values])`, `noneOf([...values])` |
-| Combining | `combineConstraints(a, b)` (all must pass, one issue), `not(constraint)` |
+| Combining | `combineConstraints(a, b)` (all must pass, one issue), `not(constraint)` (fails closed: wrong-typed input or a throwing inner constraint fails) |
 
 > **Common mistake:** a constraint issue has an empty `path` because a constraint only sees one value. When you check a field of an object, pass the path yourself: `checkConstraints([email], input.email, ["email"])`. Otherwise `toFieldErrors` has nothing to group by.
 
@@ -306,7 +306,7 @@ Transformer helpers: `createValidationTransformer(fn)` gives you `transform()` a
 
 A *registry* is a named collection of rules. You register a schema or a list of constraints under a string name once, then validate by name anywhere. This is useful when the rule name comes from data, for example a field type in a form definition.
 
-This example registers two rules and validates against each by name.
+This example registers two rules and validates against each by name. A rule with both `schema` and `constraints` runs both: the schema first, then the constraints on its output.
 
 ```ts
 import { z, createValidationRegistry, integer, positive } from "@zudojs/validation";
@@ -331,7 +331,7 @@ A `ValidationFactory` is a convenience object that bundles a registry with short
 
 A schema checks *what* a value contains. A structural guard checks whether the value is safe to walk at all. Deeply nested JSON can overflow the call stack, a huge object can exhaust memory, and an object that refers to itself can loop forever in a serializer. Run these guards on raw input before schema validation.
 
-Each guard stops the moment its limit is passed, so a hostile payload costs you the limit, not the payload's full size.
+Each guard stops the moment its limit is passed, so a hostile payload costs you the limit, not the payload's full size. The size guard measures an object's `toJSON()` output when it has one; the cycle and depth guards walk shared subtrees once.
 
 ```ts
 import {
@@ -440,7 +440,7 @@ Everything below is exported from `@zudojs/validation`. Constraints, normalizers
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/validation` exports from its package root at v1.0.1 — **179** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/validation` exports from its package root at v1.0.2 — **179** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 179 exports**
 

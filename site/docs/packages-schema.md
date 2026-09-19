@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/schema — type-safe schema def
 source: https://zudojs.oyinlola.site/docs/packages-schema
 ---
 
-v1.0.1
+v1.1.0
 
 # @zudojs/schema
 
@@ -214,9 +214,10 @@ console.log(Strict.safeParse({
 | `.extend(other)` / `.merge(other)` | Add another object schema's keys (same thing; later keys win). |
 | `.strip()` / `.strict()` / `.passthrough()` | Drop / reject / keep unknown keys. |
 | `.shape` | The shape you passed in, for reading. |
+| `.maxKeys(n)` | Allow up to `n` keys (default 100, `SCHEMA_DEFAULT_MAX_OBJECT_KEYS`); carried through `.pick/.omit/.partial/.extend/.merge`. |
 | `schema.array(item)` | Methods: `.min()`, `.max()`, `.length()`, `.nonempty()`. Max 1000 items unless you set `.max()`. |
 | `schema.tuple([a, b])` | Fixed-length array; position 0 must match `a`, position 1 must match `b`. |
-| `schema.record(value)` | Object with any string keys, every value matching `value`. |
+| `schema.record(value)` | Object with any string keys, every value matching `value`. At most 100 keys by default (`SCHEMA_DEFAULT_MAX_OBJECT_KEYS`); raise with `.maxKeys(n)`. |
 | `schema.map(key, value)`, `schema.set(item)` | A real `Map` / `Set` instance with checked entries. |
 
 > **Tip:** Keys named `__proto__`, `constructor` and `prototype` are always rejected in input. This blocks prototype-pollution attacks without any work on your side.
@@ -248,7 +249,7 @@ console.log(SettingsSchema.parse({ avatar: null }));
 
 ## REFINE AND TRANSFORM
 
-Built-in rules cover types and sizes. For anything else, *refine* adds your own check: a function that gets the already-valid value and returns `true` or `false`, plus the message to report when it returns `false`.
+Built-in rules cover types and sizes. For anything else, *refine* adds your own check: a function that gets the already-valid value and returns `true` or `false`, plus the message to report when it returns `false`. Refine and transform callbacks run only when the inner schema accepted the value.
 
 *Transform* changes the output. Its function receives the valid value and returns something new, possibly of a different type. The schema's output type follows whatever you return.
 
@@ -281,7 +282,7 @@ console.log(Range.safeParse({ from: 5, to: 1 }).success); // false
 
 A *union* means "one of these". The value is tried against each member in order and the first match wins. A *discriminated union* is a union of objects that all carry a tag field (the discriminator); the tag picks the member directly, which is faster and gives clearer errors.
 
-An *intersection* means "both of these"; two object schemas are merged into one result. A *lazy* schema wraps a function that returns the real schema, which lets a schema refer to itself for trees and nested comments.
+An *intersection* means "both of these"; two object schemas are merged into one result (nested objects are merged deeply). A *lazy* schema wraps a function that returns the real schema, which lets a schema refer to itself for trees and nested comments.
 
 This shows all four. The lazy tree needs an explicit type annotation because TypeScript cannot infer a self-referencing type.
 
@@ -338,7 +339,7 @@ console.log(QuerySchema.parse({ page: "3", active: "no" }));
 | `schema.coerce.number()` | Numeric strings like `"42"`, `"3.14"`, `"-1e3"`. Rejects `""`, hex, and anything non-finite. | `int`, `min`, `max`, `positive`, `pipe(numberSchema)`, `optional`, `nullable`, `default`, `refine` |
 | `schema.coerce.boolean()` | `"true"/"1"/"yes"/"on"` and `1` to true; `"false"/"0"/"no"/"off"/""` and `0` to false. Case and spaces ignored. | `optional`, `nullable`, `default` |
 | `schema.coerce.string()` | Numbers, booleans, bigints and valid `Date`s (as ISO). Rejects objects and symbols. | `min`, `max`, `regex`, `pipe(stringSchema)`, `optional`, `nullable`, `default` |
-| `schema.coerce.bigint()` | Safe integers and digit-only strings. | `optional`, `nullable` |
+| `schema.coerce.bigint()` | Safe integers and digit-only strings (at most 4096 digits, `SerializationLimits.MAX_BIGINT_DIGITS`). | `optional`, `nullable` |
 
 ## TYPE INFERENCE
 
@@ -385,7 +386,7 @@ if (!result.success) console.log(result.issues.length); // 1
 | --- | --- | --- |
 | `abortEarly` | Stop after the first issue. | `false` |
 | `maxDepth` | Fail with `max_depth_exceeded` when nesting goes deeper than this. Circular input always fails with `circular_reference`. | `100` |
-| `maxIssues` | Stop recording issues after this many. | unlimited |
+| `maxIssues` | Cap on recorded issues; the first issue is always kept and extra issues still fail the parse (use `countIssues`, not `issues.length`, in custom schemas). | unlimited |
 | `path` | Prefix for every issue path (useful when you validate one part of a bigger value). | `[]` |
 
 ## API REFERENCE
@@ -441,7 +442,7 @@ Everything below is importable from `@zudojs/schema`. Each `schema.x()` also has
 | `SchemaError` | Thrown by `parse()`; has `.issues` and `.hasIssues()`. | Import from `@zudojs/errors`. Status code 400. |
 | `SchemaIssueCode` | Object of every issue code string. | Import from `@zudojs/constants`. |
 
-The package also exports the low-level pieces used to write a custom `Schema` subclass: `createParseContext`, `childContext`, `addIssue`, `failValidation`, `rethrowUnexpected`, `enterComposite`, `leaveComposite`, `isMaxDepthExceeded`, `shouldAbortEarly`, `SchemaValidationSignal` and the individual schema classes. You will not need them for everyday use.
+The package also exports the low-level pieces used to write a custom `Schema` subclass: `createParseContext`, `childContext`, `addIssue`, `failValidation`, `rethrowUnexpected`, `enterComposite`, `leaveComposite`, `isMaxDepthExceeded`, `shouldAbortEarly`, `countIssues`, `SchemaValidationSignal` (an internal control-flow signal; intentionally not a `@zudojs/errors` class) and the individual schema classes. You will not need them for everyday use.
 
 ## COMMON MISTAKES
 
@@ -462,17 +463,17 @@ The package also exports the low-level pieces used to write a custom `Schema` su
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/schema` exports from its package root at v1.0.1 — **93** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/schema` exports from its package root at v1.1.0 — **94** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 93 exports**
+**Show all 94 exports**
 
 Classes (35)
 
 `AnySchema` `ArraySchema` `BigIntSchema` `BooleanSchema` `CoerceBigIntSchema` `CoerceBooleanSchema` `CoerceNumberSchema` `CoerceStringSchema` `DefaultSchema` `DiscriminatedUnionSchema` `EnumSchema` `IntersectionSchema` `LazySchema` `LiteralSchema` `MapSchema` `NeverSchema` `NullableModifierSchema` `NullSchema` `NumberSchema` `ObjectSchema` `OptionalModifierSchema` `OptionalSchema` `RecordSchema` `RefineSchema` `Schema` `SchemaValidationSignal` `SetSchema` `StringSchema` `SymbolSchema` `TransformModifierSchema` `TransformSchema` `TupleSchema` `UndefinedSchema` `UnionSchema` `UnknownSchema`
 
-Functions (45)
+Functions (46)
 
-`addIssue` `anySchema` `arraySchema` `bigintSchema` `booleanSchema` `childContext` `coerceBigIntSchema` `coerceBooleanSchema` `coerceNumberSchema` `coerceStringSchema` `createParseContext` `defaultSchema` `discriminatedUnionSchema` `enterComposite` `enumSchema` `failValidation` `intersectionSchema` `isMaxDepthExceeded` `isSchemaFailure` `isSchemaSuccess` `lazySchema` `leaveComposite` `literalSchema` `mapSchema` `neverSchema` `nullableSchema` `nullSchema` `numberSchema` `objectSchema` `optionalSchema` `recordSchema` `refineSchema` `rethrowUnexpected` `schemaFailure` `schemaSuccess` `setSchema` `shouldAbortEarly` `stringSchema` `symbolSchema` `transformSchema` `tupleSchema` `undefinedSchema` `unionSchema` `unknownSchema` `unwrapSchemaResult`
+`addIssue` `anySchema` `arraySchema` `bigintSchema` `booleanSchema` `childContext` `coerceBigIntSchema` `coerceBooleanSchema` `coerceNumberSchema` `coerceStringSchema` `countIssues` `createParseContext` `defaultSchema` `discriminatedUnionSchema` `enterComposite` `enumSchema` `failValidation` `intersectionSchema` `isMaxDepthExceeded` `isSchemaFailure` `isSchemaSuccess` `lazySchema` `leaveComposite` `literalSchema` `mapSchema` `neverSchema` `nullableSchema` `nullSchema` `numberSchema` `objectSchema` `optionalSchema` `recordSchema` `refineSchema` `rethrowUnexpected` `schemaFailure` `schemaSuccess` `setSchema` `shouldAbortEarly` `stringSchema` `symbolSchema` `transformSchema` `tupleSchema` `undefinedSchema` `unionSchema` `unknownSchema` `unwrapSchemaResult`
 
 Interfaces (6)
 

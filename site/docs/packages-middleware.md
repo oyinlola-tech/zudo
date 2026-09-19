@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/middleware — composable middl
 source: https://zudojs.oyinlola.site/docs/packages-middleware
 ---
 
-v1.0.1
+v1.0.2
 
 # @zudojs/middleware
 
@@ -25,7 +25,7 @@ pnpm add @zudojs/middleware
 yarn add @zudojs/middleware
 ```
 
-> **Peer Dependencies:** @zudojs/middleware depends on @zudojs/errors (workspace package at version 1.0.0). Uses the `BaseError` class for structured error handling in pipeline execution.
+> **Peer Dependencies:** @zudojs/middleware depends on @zudojs/errors (at 1.1.0). Uses the `BaseError` class for structured error handling in pipeline execution.
 
 ## WHAT IT DOES
 
@@ -59,7 +59,7 @@ MESSAGING LAYER (@zudojs/messaging, @zudojs/events)
 
 | Package | Version | Purpose |
 | --- | --- | --- |
-| @zudojs/errors | 1.0.0 | BaseError hierarchy (MiddlewareError, MiddlewareTimeoutError, MiddlewareNextCalledMultipleTimesError) |
+| @zudojs/errors | 1.1.0 | All middleware error classes (MiddlewareError, MiddlewareTimeoutError, MiddlewareNextCalledMultipleTimesError, MiddlewareLimitExceededError, MiddlewareDepthExceededError, MiddlewareRateLimitError, MiddlewareAbortedError) are the @zudojs/errors classes, re-exported |
 
 > **Internal dependencies:** Packages depend on each other with `workspace:*`, always — including on `main`. They are never hand-pinned to an exact version. At publish time `pnpm` rewrites each `workspace:*` to the exact version of that package in the same release, so a published tarball carries real ranges. Releases go out through `publish-all.sh`, which runs `pnpm -r publish` — it rewrites the ranges and publishes in dependency order. Plain `npm publish` does not understand the `workspace:` protocol and would ship a literal `workspace:*` to the registry.
 
@@ -258,12 +258,12 @@ interface LoggingContext {
 
 ### loggingMiddleware
 
-Logs request start, completion time, and errors. Accepts an optional logger function (defaults to `console.log`).
+Logs request start, completion time, and errors. Accepts an optional logger function (for example `(line) => log.info(line)`); without one it writes nothing.
 
 ```ts
 import { loggingMiddleware } from "@zudojs/middleware";
 
-const mw = loggingMiddleware(); // uses console.log
+const mw = loggingMiddleware((line) => console.info(line)); // no sink = no output
 
 // Or provide a custom logger
 const mw2 = loggingMiddleware((msg) => logger.info(msg));
@@ -448,7 +448,7 @@ if (result.success) {
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/middleware` exports from its package root at v1.0.1 — **35** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/middleware` exports from its package root at v1.0.2 — **35** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 35 exports**
 

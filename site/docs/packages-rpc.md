@@ -1,10 +1,10 @@
 ---
 title: "@zudojs/rpc — Remote Procedure Call Documentation"
-description: "Complete documentation for @zudojs/rpc — transport-agnostic RPC infrastructure with typed procedures, middleware, streaming, and reliability utilities."
+description: "Complete documentation for @zudojs/rpc — transport-agnostic RPC infrastructure with typed procedures, middleware, and reliability utilities."
 source: https://zudojs.oyinlola.site/docs/packages-rpc
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/rpc
 
@@ -163,7 +163,7 @@ function createHttpTransport(url: string): RPCTransport {
 
 ## CONTEXT
 
-Every handler gets two arguments: the parsed input, and a **context**. The context is the per-call scratchpad. It holds the original request, the **metadata** (small labelled values like `requestId`, `userId` or `traceId` that travel alongside the payload), an `AbortSignal`, and a key/value store.
+Every handler gets two arguments: the parsed input, and a **context**. The context is the per-call scratchpad. It holds the original request, the **metadata** (small labelled values like `requestId`, `userId` or `traceId` that travel alongside the payload), an `AbortSignal`, and a key/value store. Metadata is written by the caller and is untrusted. The context also carries `auth` (identity your transport verified, passed as `server.handle(request, { auth })`) and `input` (the payload as the input schema parsed it).
 
 The store is how middleware talks to a handler: middleware writes with `context.set()`, the handler reads with `context.get()`.
 
@@ -210,10 +210,10 @@ import {
 import type { RPCMiddleware } from "@zudojs/rpc";
 
 const requireUser: RPCMiddleware = async (context, next) => {
-  if (context.metadata.userId === undefined) {
+  if (typeof context.auth?.userId !== "string") {
     throw new RPCAuthenticationError("Sign in first.");
   }
-  context.set("actor", context.metadata.userId);
+  context.set("actor", context.auth.userId);
   return next();
 };
 
@@ -234,7 +234,7 @@ console.log(response.success, response.error?.code);
 // false "RPC_UNAUTHENTICATED"
 ```
 
-Add `metadata: { userId: "u1" }` to the request and the same call prints `true undefined`. Order matters too: the first middleware in the array is the outermost, so it also sees calls the ones below it reject.
+Pass verified identity as the second argument, `server.handle(request, { auth: { userId: "u1" } })`, and the same call prints `true undefined`. Never authorise on `metadata`: any caller can set `metadata.userId`. Order matters too: the first middleware in the array is the outermost, so it also sees calls the ones below it reject.
 
 > **Danger:** call `next()` exactly once. A second call throws, because re-entering the chain would run the handler — and every middleware below it — twice.
 
@@ -482,9 +482,9 @@ Sixteen classes are defined in [@zudojs/errors](https://zudojs.oyinlola.site/doc
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/rpc` exports from its package root at v1.1.0 — **89** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/rpc` exports from its package root at v1.2.0 — **91** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 89 exports**
+**Show all 91 exports**
 
 Classes (22)
 
@@ -494,13 +494,13 @@ Functions (29)
 
 `assertValidProcedureName` `assertValidRequest` `calculateRetryDelay` `cancelSignal` `combineSignals` `createCancellableSignal` `createNoopRPCInterceptor` `createRPCContext` `createRPCError` `createRPCErrorResponse` `createRPCMetadata` `createRPCProcedure` `createRPCRequest` `createRPCResponse` `createRPCStreamingProcedure` `createTimeout` `getRemainingTime` `isDeadlineExceeded` `isRPCError` `measurePayloadBytes` `parseInput` `parseOutput` `readDeadline` `retry` `runWithTimeout` `throwIfCancelled` `throwIfDeadlineExceeded` `toValidationIssues` `withTimeout`
 
-Interfaces (21)
+Interfaces (22)
 
-`CancellableSignal` `RPCCallOptions` `RPCClientOptions` `RPCContext` `RPCDispatcherOptions` `RPCErrorOptions` `RPCErrorPayload` `RPCInterceptor` `RPCMetadata` `RPCMetadataOptions` `RPCProcedure` `RPCProcedureOptions` `RPCRequest` `RPCRequestLimits` `RPCRequestOptions` `RPCResponse` `RPCRetryOptions` `RPCServerOptions` `RPCStreamingProcedure` `RPCTransport` `RPCTransportRequestOptions`
+`CancellableSignal` `RPCCallOptions` `RPCClientOptions` `RPCContext` `RPCContextOptions` `RPCDispatcherOptions` `RPCErrorOptions` `RPCErrorPayload` `RPCInterceptor` `RPCMetadata` `RPCMetadataOptions` `RPCProcedure` `RPCProcedureOptions` `RPCRequest` `RPCRequestLimits` `RPCRequestOptions` `RPCResponse` `RPCRetryOptions` `RPCServerOptions` `RPCStreamingProcedure` `RPCTransport` `RPCTransportRequestOptions`
 
-Type aliases (7)
+Type aliases (8)
 
-`RPCBackoff` `RPCHandler` `RPCJitter` `RPCMiddleware` `RPCProcedureName` `RPCSchema` `RPCStreamingHandler`
+`RPCAuthContext` `RPCBackoff` `RPCHandler` `RPCJitter` `RPCMiddleware` `RPCProcedureName` `RPCSchema` `RPCStreamingHandler`
 
 Constants (10)
 

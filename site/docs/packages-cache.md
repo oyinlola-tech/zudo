@@ -1,10 +1,10 @@
 ---
 title: "@zudojs/cache — Caching Primitives, Adapters & Invalidation"
-description: "Complete reference for @zudojs/cache v1.0.1. CacheService, MemoryCacheAdapter, tag-based invalidation, distributed locking, metrics, serialization, and middleware pipelines for the Zudo TypeScript framework."
+description: "Complete reference for @zudojs/cache v1.1.0. CacheService, MemoryCacheAdapter, tag-based invalidation, distributed locking, metrics, serialization, and middleware pipelines for the Zudo TypeScript framework."
 source: https://zudojs.oyinlola.site/docs/packages-cache
 ---
 
-v1.0.1
+v1.1.0
 
 # @zudojs/cache
 
@@ -102,7 +102,7 @@ keys.build("user:1");
 
 A *namespace* is a label that groups a set of keys. Two entries with the same key but different namespaces are different entries. A *tenant* is one customer or organisation in an app that serves many; giving each tenant its own namespace keeps their cached data apart.
 
-You can set the namespace once for a whole service with `config.namespace`, or per call with `{ namespace }`. Reads, writes, `clear`, tag invalidation and locks all stay inside the namespace they were given.
+You can set the namespace once for a whole service with `config.namespace`, or per call with `{ namespace }`. Reads, writes, `clear`, tag invalidation and locks all stay inside the namespace they were given. An empty-string namespace is rejected with `CACHE_INVALID_KEY` in the config and per call, so a tenant id that resolved to `""` never falls into the global keyspace.
 
 This stores the same key under two tenants and then clears only one of them.
 
@@ -248,6 +248,8 @@ async function getUser(id: string): Promise<User> {
 ### Tags
 
 A *tag* is a label you attach to an entry when you store it. One entry can carry several tags. Later, `invalidateByTag` deletes every entry that carries any of the tags you name, without you listing the keys.
+
+Tag mappings are per service instance by default. Replicas sharing one adapter must share a tag store: pass `config.tagStore` (any `CacheTagStore`, e.g. Redis-set backed).
 
 This tags three entries and then removes everything tagged `users`.
 
@@ -432,6 +434,7 @@ Everything below is exported from `@zudojs/cache`. Most apps only need the first
 | `serializer` | Copy values on the way in and out (`JsonCacheSerializer`, `RawCacheSerializer`, or your own). | Without one the memory adapter stores objects by reference. |
 | `middlewares` | Functions `(ctx, next) => Promise` wrapping every adapter call. | First entry is outermost. Always return `next()`'s result. |
 | `lockStore` | Where locks are kept. | Default: a fresh in-process store. Pass `defaultLockStore` to share. |
+| `tagStore` | Where tag→key mappings are kept. | Default: a fresh per-instance store. Replicas sharing one adapter must share one (any `CacheTagStore`). |
 
 ### Classes and instances
 
@@ -502,7 +505,7 @@ Every error thrown by this package is a `CacheError` from `@zudojs/errors`, re-e
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/cache` exports from its package root at v1.0.1 — **104** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/cache` exports from its package root at v1.1.0 — **104** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 104 exports**
 

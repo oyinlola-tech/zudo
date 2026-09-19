@@ -1,14 +1,14 @@
 ---
 title: "@zudojs/config — Layered Configuration System"
-description: "Complete reference for @zudojs/config v1.0.1. Layered configuration with sources, stores, resolvers, schema validation, and lifecycle management for the Zudo TypeScript framework."
+description: "Complete reference for @zudojs/config v1.1.0. Layered configuration with sources, stores, resolvers, schema validation, and lifecycle management for the Zudo TypeScript framework."
 source: https://zudojs.oyinlola.site/docs/packages-config
 ---
 
-v1.0.1
+v1.1.0
 
 # @zudojs/config
 
-Layered configuration system for Zudo — environment variables, JSON files, runtime overrides, type-safe schemas, and sensitive value redaction
+Layered configuration system for Zudo — environment variables, in-memory and custom (e.g. remote) sources, runtime overrides, type-safe schemas, and sensitive value redaction
 
 CONFIGURATION ENV VARS REDACTION
 
@@ -212,6 +212,8 @@ configValuesEqual({ a: 1 }, { a: 2 }); // false
 
 Configuration entries wrap values with provenance metadata — tracking where each value came from, its priority, and whether it's sensitive.
 
+Every source's keys and values are screened (`isSensitiveConfigEntry`): password/secret/token/api-key/private-key/credential/auth/dsn/database-url/connection-string/`*_key` names in any segment, nested objects containing them, and URLs with `user:password@` are marked sensitive and redacted.
+
 ### Interface
 
 ```ts
@@ -258,23 +260,26 @@ Sources are the entry point for configuration data. They load key-value pairs fr
 
 ```ts
 enum ConfigSourceType {
-  DEFAULTS    = 'DEFAULTS',     // Priority: -1000
-  ENVIRONMENT = 'ENVIRONMENT',  // process.env
-  FILE        = 'FILE',         // JSON/YAML files
-  MEMORY      = 'MEMORY',       // In-memory object
-  REMOTE      = 'REMOTE',       // HTTP endpoints
-  CUSTOM      = 'CUSTOM',       // User-defined
+  DEFAULTS    = 'defaults',     // createDefaultsConfigSource, priority -1000
+  ENVIRONMENT = 'environment',  // createEnvironmentConfigSource (process.env)
+  FILE        = 'file',         // type tag only — no built-in file loader; use createCustomConfigSource
+  MEMORY      = 'memory',       // createMemoryConfigSource
+  REMOTE      = 'remote',       // type tag for custom remote loaders
+  CUSTOM      = 'custom',       // createCustomConfigSource
 }
 ```
 
 ### Creating Sources
 
 ```ts
+import { readFile } from 'node:fs/promises';
 import {
   createMemoryConfigSource,
   createDefaultsConfigSource,
+  createEnvironmentConfigSource,
   createCustomConfigSource,
-  createConfigSource
+  createConfigSource,
+  ConfigSourceType
 } from '@zudojs/config';
 
 // In-memory source
@@ -295,7 +300,19 @@ const remote = createCustomConfigSource('remote', async (ctx) => {
   const data = await res.json();
   return { values: data, source: 'remote', type: ConfigSourceType.CUSTOM };
 });
+
+// Environment variables
+const envSource = createEnvironmentConfigSource();
+
+// JSON file — there is no built-in file loader, so write one
+const fileSource = createCustomConfigSource('file', async () => ({
+  values: JSON.parse(await readFile('config.json', 'utf8')),
+  source: 'file',
+  type: ConfigSourceType.FILE,
+}));
 ```
+
+`envSource` and `fileSource` are the sources the loader and manager examples below use.
 
 ### Loading Sources
 
@@ -469,7 +486,7 @@ const resolvedPort = port ?? 3000;
 
 `parseConfigBigInt` and `parseConfigDate` follow the same shape.
 
-**They never throw.** An input that cannot be coerced comes back as `undefined`, exactly like a missing one — `parseConfigNumber("abc")` is `undefined`, not `NaN` and not an error. That means `parseConfigNumber(process.env.PORT) ?? 3000` silently falls back to `3000` when `PORT=abc`. If a malformed value should stop startup instead, check for `undefined` yourself, or use `ConfigResolver`, which reports failures as `ConfigResolutionError`. `parseConfigBoolean` accepts `true/1/yes/y/on` and `false/0/no/n/off` case-insensitively; anything else is `undefined`.
+**They never throw.** An input that cannot be coerced comes back as `undefined`, exactly like a missing one — `parseConfigNumber("abc")` is `undefined`, not `NaN` and not an error. That means `parseConfigNumber(process.env.PORT) ?? 3000` silently falls back to `3000` when `PORT=abc`. If a malformed value should stop startup instead, check for `undefined` yourself, or use `ConfigResolver`, which reports failures as `ConfigResolutionError`. `parseConfigNumber` (and the resolver's `number()`) accepts decimal notation only; hex, binary and octal are rejected. `parseConfigBoolean` accepts `true/1/yes/y/on` and `false/0/no/n/off` case-insensitively; anything else is `undefined`.
 
 ## CONFIG SCHEMA
 
@@ -501,7 +518,7 @@ interface ConfigSchema<T> {
   nullable?: boolean;
   default?: T | (() => T);
   description?: string;
-  secret?: boolean;
+  secret?: boolean;  // honoured at any depth; the store entry holding it is redacted whole
   validate?: (value: T, context: ConfigValidationContext) => boolean | string | ConfigValidationIssue | readonly ConfigValidationIssue[];
   transform?: (value: ConfigValue, context: ConfigValidationContext) => T;
 }
@@ -598,6 +615,8 @@ await loader.reload();
 // Load specific sources only
 await loader.loadSources([envSource]);
 ```
+
+Reload rebuilds source values atomically; values a source stopped providing are removed.
 
 ### Managing Sources
 
@@ -782,12 +801,12 @@ All exported enums and their values.
 ### ConfigSourceType
 
 ```ts
-DEFAULTS    = 'DEFAULTS'      // Priority: -1000
-ENVIRONMENT = 'ENVIRONMENT'   // process.env
-FILE        = 'FILE'          // JSON/YAML files
-MEMORY      = 'MEMORY'        // In-memory object
-REMOTE      = 'REMOTE'        // HTTP endpoints
-CUSTOM      = 'CUSTOM'        // User-defined
+DEFAULTS    = 'defaults'      // createDefaultsConfigSource, priority -1000
+ENVIRONMENT = 'environment'   // createEnvironmentConfigSource (process.env)
+FILE        = 'file'          // type tag only — no built-in file loader; use createCustomConfigSource
+MEMORY      = 'memory'        // createMemoryConfigSource
+REMOTE      = 'remote'        // type tag for custom remote loaders
+CUSTOM      = 'custom'        // createCustomConfigSource
 ```
 
 ### ConfigValueType
@@ -969,7 +988,7 @@ ConfigEntry, ConfigEntryOptions, createConfigEntry, updateConfigEntry, isConfigE
 
 configSource
 
-ConfigSourceType, ConfigSourceEntry, ConfigSourceContext, ConfigSourceResult, ConfigSource, ConfigSourceLoader, FunctionConfigSource, ConfigSourceOptions, isConfigSource, createConfigSource, createMemoryConfigSource, createDefaultsConfigSource, createCustomConfigSource, normalizeConfigSourceResult, sortConfigSources, findConfigSource, deduplicateConfigSources, loadConfigSource, loadConfigSources
+ConfigSourceType, ConfigSourceEntry, ConfigSourceContext, ConfigSourceResult, ConfigSource, ConfigSourceLoader, FunctionConfigSource, ConfigSourceOptions, isConfigSource, createConfigSource, createMemoryConfigSource, createDefaultsConfigSource, createCustomConfigSource, createEnvironmentConfigSource, isSensitiveConfigKey, isSensitiveConfigValue, isSensitiveConfigEntry, normalizeConfigSourceResult, sortConfigSources, findConfigSource, deduplicateConfigSources, loadConfigSource, loadConfigSources
 
 configStore
 
@@ -1003,17 +1022,17 @@ ConfigurationError, createConfigurationError, isConfigurationError, missingConfi
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/config` exports from its package root at v1.0.1 — **110** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/config` exports from its package root at v1.1.0 — **113** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 110 exports**
+**Show all 113 exports**
 
 Classes (9)
 
 `ConfigLoader` `ConfigManager` `ConfigManagerValidationError` `ConfigResolutionError` `ConfigResolver` `ConfigSchemaValidationError` `ConfigStore` `ConfigurationError` `ScopedConfigResolver`
 
-Functions (62)
+Functions (65)
 
-`assertValidConfig` `cloneConfigValue` `configEntriesEqual` `configValuesEqual` `configValueToString` `createConfigEntry` `createConfigLoader` `createConfigManager` `createConfigResolver` `createConfigSource` `createConfigStore` `createConfiguration` `createConfigurationError` `createConfigurationFromSources` `createConfigurationFromStore` `createConfigurationFromValues` `createConfigValidationIssue` `createCustomConfigSource` `createDefaultsConfigSource` `createEnvironmentConfigSource` `createInitializedConfiguration` `createMemoryConfigSource` `createValidatedConfiguration` `deduplicateConfigSources` `defineConfigProperty` `findConfigSource` `freezeConfigValue` `getConfigValueType` `initializeConfigManager` `invalidConfigurationError` `isConfigEntry` `isConfigObject` `isConfigPrimitive` `isConfigSource` `isConfigurationError` `isConfigValue` `isUnsafeConfigKey` `loadConfigSource` `loadConfigSources` `loadConfigSourceStrict` `loadConfiguration` `matchesConfigType` `missingConfigurationError` `normalizeConfigSourceResult` `normalizeKey` `parseConfigBigInt` `parseConfigBoolean` `parseConfigDate` `parseConfigNumber` `parseConfigString` `readOwnConfigProperty` `redactConfigValue` `serializeConfigEntry` `sortConfigEntries` `sortConfigSources` `sourceResultsToEntries` `toConfigJsonValue` `toSafeConfigEntry` `updateConfigEntry` `validateConfigObject` `validateConfigValue` `withConfigEntrySource`
+`assertValidConfig` `cloneConfigValue` `configEntriesEqual` `configValuesEqual` `configValueToString` `createConfigEntry` `createConfigLoader` `createConfigManager` `createConfigResolver` `createConfigSource` `createConfigStore` `createConfiguration` `createConfigurationError` `createConfigurationFromSources` `createConfigurationFromStore` `createConfigurationFromValues` `createConfigValidationIssue` `createCustomConfigSource` `createDefaultsConfigSource` `createEnvironmentConfigSource` `createInitializedConfiguration` `createMemoryConfigSource` `createValidatedConfiguration` `deduplicateConfigSources` `defineConfigProperty` `findConfigSource` `freezeConfigValue` `getConfigValueType` `initializeConfigManager` `invalidConfigurationError` `isConfigEntry` `isConfigObject` `isConfigPrimitive` `isConfigSource` `isConfigurationError` `isConfigValue` `isSensitiveConfigEntry` `isSensitiveConfigKey` `isSensitiveConfigValue` `isUnsafeConfigKey` `loadConfigSource` `loadConfigSources` `loadConfigSourceStrict` `loadConfiguration` `matchesConfigType` `missingConfigurationError` `normalizeConfigSourceResult` `normalizeKey` `parseConfigBigInt` `parseConfigBoolean` `parseConfigDate` `parseConfigNumber` `parseConfigString` `readOwnConfigProperty` `redactConfigValue` `serializeConfigEntry` `sortConfigEntries` `sortConfigSources` `sourceResultsToEntries` `toConfigJsonValue` `toSafeConfigEntry` `updateConfigEntry` `validateConfigObject` `validateConfigValue` `withConfigEntrySource`
 
 Interfaces (25)
 

@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/docs — structured document mo
 source: https://zudojs.oyinlola.site/docs/packages-docs
 ---
 
-v1.0.1
+v1.0.2
 
 # @zudojs/docs
 
@@ -158,7 +158,7 @@ The `content` field is an object with a `type`. Four types are accepted.
 | `category` | introduction, guide, tutorial, reference, api, architecture, configuration, deployment, security, migration, examples | Anything else is an `INVALID_CATEGORY` error in validation. |
 | `status` | stable, experimental, beta, deprecated, internal | Free to leave out. |
 | `tags` | string[] | Used by `registry.byTag`. |
-| `visibility` | `"SERVER"` or `"CLIENT"` | Unset means client-visible. `"SERVER"` pages are left out of `generateIndex` by default. |
+| `visibility` | `"SERVER"` or `"CLIENT"` | Only an unset or exactly `"CLIENT"` visibility is client-visible; any other value (including `"server"`) is treated as server-only and left out of `generateIndex` by default. |
 | `deprecated`, `deprecatedMessage` | boolean, string | Set both together. The generator prints a DEPRECATED banner. |
 | `description`, `version`, `metadata` | string, string, object | Carried through to the generators. |
 
@@ -264,7 +264,7 @@ The serializer added quotes around `Notes: draft` because a bare colon would con
 - One level of nesting: `author:` followed by indented `name: value` lines.
 - `# comments` outside quotes are dropped.
 
-The named keys `title`, `description`, `category`, `version`, `status`, `deprecatedMessage` and `visibility` always come back as strings, and `tags` items are always strings. Unknown keys get the parser's best guess.
+The named keys `title`, `description`, `category`, `version`, `status`, `deprecatedMessage` and `visibility` always come back as strings, and `tags` is always an array of strings (`tags: http` → `["http"]`, `tags:` → `[]`). Unknown keys get the parser's best guess.
 
 > **Watch out:** if the closing `---` is missing, `parseFrontmatter` does not throw. It returns `{ metadata: {}, content: raw }` with the whole input untouched. Check `metadata.title` if you need to know parsing worked.
 
@@ -319,7 +319,7 @@ The broken link is only a warning, so on its own it would not have made `valid` 
 | --- | --- | --- |
 | `validateDocument(doc)` | ID shape, required fields, content shape, allowed `category`/`status`/`visibility` values, structured node types. | MISSING_ID, INVALID_ID, MISSING_TITLE, MISSING_CONTENT, INVALID_CONTENT_TYPE, INVALID_CATEGORY, INVALID_STATUS, INVALID_VISIBILITY, INVALID_TAGS, INVALID_NODE (errors); DEPRECATED_WITHOUT_MESSAGE, DEPRECATION_MISMATCH (warnings) |
 | `validateNoDuplicateIds(docs)` | Two documents in the array with the same ID. | DUPLICATE_ID (error) |
-| `validateLinks(doc, ids, options?)` | Markdown `[text](target)` links and structured `link` nodes point at a registered ID. External URLs, `#anchors`, images and links inside code are skipped. | BROKEN_LINK, LINK_VALIDATION_SKIPPED (warnings) |
+| `validateLinks(doc, ids, options?)` | Markdown `[text](target)` links and structured `link` nodes point at a registered ID. Links whose scheme is not http, https, mailto, tel, ftp or ftps are `UNSAFE_LINK` errors; other external URLs, `#anchors`, images and links inside code are skipped. | UNSAFE_LINK (error); BROKEN_LINK, LINK_VALIDATION_SKIPPED (warnings) |
 | `validateNavigation(items, ids)` | Every `documentId` in the tree is registered; no cycles; no empty items. | NAVIGATION_UNKNOWN_DOCUMENT, NAVIGATION_CYCLE (errors); NAVIGATION_DUPLICATE_DOCUMENT, NAVIGATION_EMPTY_ITEM (warnings) |
 | `validateAll(docs, navigation?, options?)` | All of the above, plus pages that are registered but not in the navigation. | NAVIGATION_ORPHAN_DOCUMENT (warning; turn off with `{ reportOrphans: false }`) |
 
@@ -581,7 +581,7 @@ Navigation walkers stop at a depth of 64 and report deeper trees as `NAVIGATION_
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/docs` exports from its package root at v1.0.1 — **103** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/docs` exports from its package root at v1.0.2 — **103** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 103 exports**
 

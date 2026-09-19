@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/crypto — hashing, encryption,
 source: https://zudojs.oyinlola.site/docs/packages-crypto
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/crypto
 
@@ -174,7 +174,7 @@ Use `encrypt` and `decrypt` for raw `Uint8Array` data; they have the same shape.
 
 A *password hash* is a deliberately slow hash with a random *salt* mixed in. Slow means an attacker who steals your database can only try a few guesses per second. The salt means two users with the same password get different hashes.
 
-This package uses scrypt with OWASP defaults (cost 16384, block size 8, parallelization 1, 16-byte salt, 32-byte output). The result is one self-describing string that starts with `v1$scrypt$`, so you can raise the cost later and old hashes still verify.
+This package uses scrypt with OWASP defaults (cost 16384, block size 8, parallelization 5, 16-byte salt, 32-byte output; new hashes must use cost ≥ 16384 (`PASSWORD_HASH.SCRYPT.MIN_COST`, checked by `assertNewHashCost`), older stored hashes still verify). The result is one self-describing string that starts with `v1$scrypt$`, so you can raise the cost later and old hashes still verify.
 
 ```ts
 import { hashPassword, verifyPassword } from "@zudojs/crypto";
@@ -182,9 +182,9 @@ import { hashPassword, verifyPassword } from "@zudojs/crypto";
 // At sign-up: hash and store `encoded`.
 const result = await hashPassword("correct horse battery staple");
 console.log(result.encoded);
-// v1$scrypt$16384$8$1$4P7WMta8PUwwfejUzMN_6w.SL0oONhRA2hbSwz4nKfcb1i4MbDy6mYyKy4KaDAbni0
+// v1$scrypt$16384$8$5$4P7WMta8PUwwfejUzMN_6w.SL0oONhRA2hbSwz4nKfcb1i4MbDy6mYyKy4KaDAbni0
 console.log(result.cost, result.blockSize, result.parallelization);
-// 16384 8 1
+// 16384 8 5
 
 // At login: verify against the stored string.
 console.log(await verifyPassword("correct horse battery staple", result.encoded)); // true
@@ -473,17 +473,17 @@ Everything below is exported from `@zudojs/crypto`. All functions that touch `no
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/crypto` exports from its package root at v1.1.0 — **249** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/crypto` exports from its package root at v1.2.0 — **250** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 249 exports**
+**Show all 250 exports**
 
 Classes (4)
 
 `CryptoError` `CryptoFactory` `CryptoService` `NodeCryptoProvider`
 
-Functions (158)
+Functions (159)
 
-`arrayBufferToBytes` `assertBinaryEncoding` `assertKeyObject` `assertPassword` `bytesToArrayBuffer` `bytesToNumber` `cloneBytes` `concatBytes` `createCryptoError` `createCryptoFactory` `createCryptoKey` `createCryptoService` `createNodeCryptoProvider` `cryptoCipherError` `cryptoHashError` `cryptoKeyDerivationError` `cryptoKeyError` `cryptoKeysEqual` `cryptoKeyToPrivateKey` `cryptoSignatureError` `decode` `decodeBase64Url` `decodeDigest` `decodePasswordHash` `decrypt` `decryptEnvelope` `decryptString` `defaultKeyLength` `deriveKey` `derivePbkdf2` `derivePublicKey` `deriveScrypt` `encode` `encodeDigest` `encodePasswordHash` `encrypt` `encryptEnvelope` `encryptString` `equalDigests` `expectedAsymmetricKeyType` `expectedKeyLength` `exportCryptoKey` `exportPrivateKeyPem` `exportPublicKeyPem` `fillRandomBytes` `fromBase64` `fromBase64Url` `fromHex` `generateApiKey` `generateCryptoKey` `generateCsrfToken` `generateEd25519KeyPair` `generateEmailVerificationCode` `generateLoginCode` `generateOtp` `generatePasswordResetToken` `generateRefreshToken` `generateSalt` `generateSessionToken` `generateToken` `generateVerificationToken` `getCryptoFactory` `getCryptoKeyFingerprint` `getCryptoService` `getDefaultAesGcmConfig` `getDefaultCryptoProvider` `getDefaultPasswordHashConfig` `getDefaultPasswordHashOptions` `hash` `hashPassword` `hashToken` `hashTokenBase64Url` `hashTokenForStorage` `hasTokenPrefix` `hmac` `hmacSha256` `hmacSha384` `hmacSha512` `isAeadAlgorithm` `isArrayBuffer` `isBase64` `isBase64Url` `isBase64UrlString` `isBinaryEncoding` `isBytes` `isCryptoAlgorithm` `isCryptoEncoding` `isCryptoError` `isCryptoKey` `isHashAlgorithm` `isHashAlgorithmName` `isHex` `isHexString` `isHmacAlgorithmName` `isKeyDerivationAlgorithm` `isKeyObject` `isMacAlgorithm` `isPasswordHash` `isPbkdf2Digest` `isSignatureAlgorithm` `isSignatureAlgorithmName` `isSymmetricKeyAlgorithm` `isValidPassword` `isValidToken` `nodeSignatureAlgorithm` `normalizeText` `numberToBytes` `parseCryptoAlgorithm` `parsePositiveInteger` `pbkdf2PasswordAlgorithm` `randomAlphanumeric` `randomBase64` `randomBase64Url` `randomBoolean` `randomBytesSecure` `randomChoice` `randomFromAlphabet` `randomHex` `randomInteger` `randomIntegerBelow` `randomNumericCode` `randomToken` `randomUuid` `removeTokenPrefix` `resetDefaultCryptoProvider` `secureEqual` `secureStringEqual` `setDefaultCryptoProvider` `sha256` `sha3_256` `sha3_384` `sha3_512` `sha384` `sha512` `sign` `signString` `sliceBytes` `timingSafeEqual` `timingSafeEqualEncoded` `timingSafeEqualString` `toBase64` `toBase64Url` `toBytes` `toHex` `toPrivateKey` `toPublicKey` `utf8ByteLength` `utf8Decode` `utf8Encode` `validateParameters` `validatePbkdf2Options` `validatePbkdf2Parameters` `validateScryptOptions` `verify` `verifyPassword` `verifyString` `verifyTokenHash` `wipe`
+`arrayBufferToBytes` `assertBinaryEncoding` `assertKeyObject` `assertNewHashCost` `assertPassword` `bytesToArrayBuffer` `bytesToNumber` `cloneBytes` `concatBytes` `createCryptoError` `createCryptoFactory` `createCryptoKey` `createCryptoService` `createNodeCryptoProvider` `cryptoCipherError` `cryptoHashError` `cryptoKeyDerivationError` `cryptoKeyError` `cryptoKeysEqual` `cryptoKeyToPrivateKey` `cryptoSignatureError` `decode` `decodeBase64Url` `decodeDigest` `decodePasswordHash` `decrypt` `decryptEnvelope` `decryptString` `defaultKeyLength` `deriveKey` `derivePbkdf2` `derivePublicKey` `deriveScrypt` `encode` `encodeDigest` `encodePasswordHash` `encrypt` `encryptEnvelope` `encryptString` `equalDigests` `expectedAsymmetricKeyType` `expectedKeyLength` `exportCryptoKey` `exportPrivateKeyPem` `exportPublicKeyPem` `fillRandomBytes` `fromBase64` `fromBase64Url` `fromHex` `generateApiKey` `generateCryptoKey` `generateCsrfToken` `generateEd25519KeyPair` `generateEmailVerificationCode` `generateLoginCode` `generateOtp` `generatePasswordResetToken` `generateRefreshToken` `generateSalt` `generateSessionToken` `generateToken` `generateVerificationToken` `getCryptoFactory` `getCryptoKeyFingerprint` `getCryptoService` `getDefaultAesGcmConfig` `getDefaultCryptoProvider` `getDefaultPasswordHashConfig` `getDefaultPasswordHashOptions` `hash` `hashPassword` `hashToken` `hashTokenBase64Url` `hashTokenForStorage` `hasTokenPrefix` `hmac` `hmacSha256` `hmacSha384` `hmacSha512` `isAeadAlgorithm` `isArrayBuffer` `isBase64` `isBase64Url` `isBase64UrlString` `isBinaryEncoding` `isBytes` `isCryptoAlgorithm` `isCryptoEncoding` `isCryptoError` `isCryptoKey` `isHashAlgorithm` `isHashAlgorithmName` `isHex` `isHexString` `isHmacAlgorithmName` `isKeyDerivationAlgorithm` `isKeyObject` `isMacAlgorithm` `isPasswordHash` `isPbkdf2Digest` `isSignatureAlgorithm` `isSignatureAlgorithmName` `isSymmetricKeyAlgorithm` `isValidPassword` `isValidToken` `nodeSignatureAlgorithm` `normalizeText` `numberToBytes` `parseCryptoAlgorithm` `parsePositiveInteger` `pbkdf2PasswordAlgorithm` `randomAlphanumeric` `randomBase64` `randomBase64Url` `randomBoolean` `randomBytesSecure` `randomChoice` `randomFromAlphabet` `randomHex` `randomInteger` `randomIntegerBelow` `randomNumericCode` `randomToken` `randomUuid` `removeTokenPrefix` `resetDefaultCryptoProvider` `secureEqual` `secureStringEqual` `setDefaultCryptoProvider` `sha256` `sha3_256` `sha3_384` `sha3_512` `sha384` `sha512` `sign` `signString` `sliceBytes` `timingSafeEqual` `timingSafeEqualEncoded` `timingSafeEqualString` `toBase64` `toBase64Url` `toBytes` `toHex` `toPrivateKey` `toPublicKey` `utf8ByteLength` `utf8Decode` `utf8Encode` `validateParameters` `validatePbkdf2Options` `validatePbkdf2Parameters` `validateScryptOptions` `verify` `verifyPassword` `verifyString` `verifyTokenHash` `wipe`
 
 Interfaces (35)
 

@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/container — a token-based dep
 source: https://zudojs.oyinlola.site/docs/packages-container
 ---
 
-v1.1.0
+v1.1.1
 
 # @zudojs/container
 
@@ -152,7 +152,7 @@ A *provider* is the recipe that tells the container how to produce a value for a
 
 | Method | What it does | Notes |
 | --- | --- | --- |
-| `registerValue(token, value)` | Hands back the exact object you gave it. | Always SINGLETON, whatever scope you pass. |
+| `registerValue(token, value)` | Hands back the exact object you gave it. | Always SINGLETON, whatever scope you pass. Never disposed by the container (the value is yours). |
 | `registerClass(token, Class, { inject })` | Calls `new Class(...deps)`. | `inject` lists the tokens to pass, in constructor order. Omit it for a zero-argument constructor. |
 | `registerFactory(token, fn, inject)` | Calls your function and uses its return value. | Resolved `inject` tokens become the function's arguments. |
 | `registerExisting(token, otherToken)` | Makes `token` an alias for `otherToken`. | Both tokens resolve to the same instance. |
@@ -278,7 +278,7 @@ Scopes can nest: `scope.createScope()` makes a child that sees its parent's SCOP
 
 ## DISPOSAL AND CLEANUP
 
-Some objects hold resources that must be released: database connections, file handles, timers. The container tracks every SINGLETON it creates (and every SCOPED instance a scope creates) and cleans them up when you call `dispose()`.
+Some objects hold resources that must be released: database connections, file handles, timers. The container tracks every SINGLETON it creates (and every SCOPED instance a scope creates) and cleans them up when you call `dispose()`. Values passed to `registerValue()` are not tracked or disposed.
 
 An instance is cleaned up if it has a `dispose()` method (sync or async) or implements `Symbol.dispose` / `Symbol.asyncDispose`. Disposal runs in reverse creation order, so a dependency is closed after the things that used it.
 
@@ -448,7 +448,7 @@ Everything below is exported from `@zudojs/container` unless a note says otherwi
 | `resolveOptional(token)` | Like `resolve`, but returns `undefined` when not registered. | Other failures still throw. |
 | `resolveMany([a, b])` | Resolves several tokens at once. | Returns a tuple typed per token. |
 | `has(token)` / `canResolve(token)` | Is it registered? / Could `resolve` succeed? | `canResolve` counts auto-registrable classes. |
-| `replace(token, provider, options?)` | Swaps a registration. | Disposes the old cached singleton. |
+| `replace(token, provider, options?)` | Swaps a registration. | Evicts and disposes the old cached singleton and every cached consumer built on it; live scopes drop their copies. |
 | `remove(token)` / `clearRegistrations()` | Removes one or all registrations. | Cached singletons are disposed. |
 | `createScope(options?)` | Creates a `ContainerScopeContext`. | `options.name`, `options.metadata`. |
 | `snapshot()` / `restoreSnapshot(snap)` | Save and restore the registration set. | For tests. Refused when registrations are frozen. |
@@ -502,7 +502,7 @@ Everything below is exported from `@zudojs/container` unless a note says otherwi
 - **Forgetting `inject` on a class with constructor arguments.** The container calls `new Service()` with nothing, and the fields are `undefined`. Fix: `registerClass(TOKEN, Service, { inject: [DEP_A, DEP_B] })` in constructor order.
 - **Resolving a SCOPED token from the container.** `ScopedResolutionError`. Fix: `const scope = container.createScope()` and `scope.resolve(TOKEN)`, then `await scope.dispose()`.
 - **Expecting the default to be singleton.** The default is TRANSIENT, so a DB pool factory runs on every resolve. Fix: pass `{ scope: ContainerScope.SINGLETON }` for shared things.
-- **Returning a Promise from a singleton factory.** `AsyncProviderError`. Fix: `const db = await connect()` first, then `registerValue(DB, db)`.
+- **Returning a Promise from a singleton factory.** `AsyncProviderError`. Fix: `const db = await connect()` first, then `registerValue(DB, db)` — and close it yourself, since the container does not dispose registered values.
 
 ## RELATED PACKAGES
 
@@ -513,7 +513,7 @@ Everything below is exported from `@zudojs/container` unless a note says otherwi
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/container` exports from its package root at v1.1.0 — **131** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/container` exports from its package root at v1.1.1 — **131** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 131 exports**
 

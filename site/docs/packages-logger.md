@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/logger — structured logging w
 source: https://zudojs.oyinlola.site/docs/packages-logger
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/logger
 
@@ -61,7 +61,7 @@ LOGGER (@zudojs/logger)
 
 | Package | Version | Purpose |
 | --- | --- | --- |
-| @zudojs/errors | 1.0.0 | Error hierarchy (LoggingError, LoggerTransportError, LoggerFormatterError, etc.) |
+| @zudojs/errors | 1.1.0 | Error hierarchy (LoggingError, LoggerTransportError, LoggerFormatterError, etc.) |
 | Dev dependencies: typescript 7.x, vitest |  |  |
 
 > **Internal dependencies:** Packages depend on each other with `workspace:*`, always — including on `main`. They are never hand-pinned to an exact version. At publish time `pnpm` rewrites each `workspace:*` to the exact version of that package in the same release, so a published tarball carries real ranges. Releases go out through `publish-all.sh`, which runs `pnpm -r publish` — it rewrites the ranges and publishes in dependency order. Plain `npm publish` does not understand the `workspace:` protocol and would ship a literal `workspace:*` to the registry.
@@ -145,7 +145,7 @@ interface Logger {
 | withContext(context) | Returns a scoped logger that injects context into every entry |
 | setLevel(level) | Changes the log level threshold at runtime |
 | enable() / disable() | Toggle the logger on/off without destroying it |
-| flush() | Waits for all buffered transport writes to complete |
+| flush() | Waits for all in-flight writes (including child loggers') and flushes every transport; one failing transport does not stop the others |
 | close() | Flushes and releases all transport resources |
 
 ## CREATING LOGGERS
@@ -468,9 +468,9 @@ type LoggerTransportLike = LoggerTransport | LoggerTransportFunction;
 | Function | Description |
 | --- | --- |
 | createConsoleLoggerTransport() | Writes to console.error / console.warn / console.info / console.debug based on level |
-| createConditionalLoggerTransport(transport, predicate) | Forwards entries only when the predicate returns true |
-| createMultiLoggerTransport(transports) | Fans out entries to multiple transports sequentially |
-| createBufferedLoggerTransport(transport, options?) | Batches entries in memory and flushes by size or interval |
+| createConditionalLoggerTransport(transport, predicate) | Forwards entries only when the predicate returns true. Forwards `flush()`/`close()` to the wrapped transport. |
+| createMultiLoggerTransport(transports) | Fans out entries to every transport (a failing sink does not stop the others; failures are rethrown afterwards). Forwards `flush()`/`close()`. |
+| createBufferedLoggerTransport(transport, options?) | Batches entries in memory and flushes by size or interval; each entry is written independently and a timer-flush failure is rethrown by the next `flush()`/`close()` |
 
 ### Transport Helpers
 
@@ -708,17 +708,17 @@ process.on("SIGTERM", async () => {
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/logger` exports from its package root at v1.1.0 — **142** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/logger` exports from its package root at v1.2.0 — **146** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 142 exports**
+**Show all 146 exports**
 
 Classes (15)
 
 `ContextLogger` `InvalidLoggerEntryError` `InvalidLoggerLevelError` `LoggerConfigurationError` `LoggerDisposedError` `LoggerError` `LoggerFactory` `LoggerFormatterError` `LoggerFormatterNotFoundError` `LoggerManager` `LoggerTimeoutError` `LoggerTransportClosedError` `LoggerTransportError` `LoggerTransportNotFoundError` `ZudojsLogger`
 
-Functions (90)
+Functions (93)
 
-`assertActive` `assertMutable` `childLogger` `closeLogger` `closeLoggerTransport` `createBufferedLoggerTransport` `createChildLogger` `createChildLoggerOptions` `createCompactLoggerFormatter` `createConditionalLoggerTransport` `createConsoleLoggerTransport` `createDefaultLogger` `createDevelopmentLoggerFormatter` `createEntry` `createErrorLoggerEntry` `createFactoryLogger` `createJsonLoggerFormatter` `createLogger` `createLoggerContext` `createLoggerEntry` `createLoggerEntryId` `createLoggerFactory` `createLoggerFormatter` `createLoggerFormatterError` `createLoggerFormatterId` `createLoggerManager` `createLoggerManagerFromLogger` `createLoggerTransport` `createLoggerTransportError` `createLoggerTransportId` `createLogMethods` `createManagedDefaultLogger` `createMultiLoggerTransport` `createProductionLoggerFormatter` `createSecretMatcher` `createStructuredLoggerFormatter` `createTextLoggerFormatter` `disableLogger` `disableLoggerTransport` `dispatchEntry` `dispatchEntrySync` `enableLogger` `enableLoggerTransport` `escapeLogText` `flushLogger` `flushLoggerTransport` `formatLoggerEntry` `getFactoryLogger` `getLoggerEnabled` `getLoggerErrorCause` `getLoggerLevel` `getLoggerLevelNames` `getLoggerLevels` `getLoggerName` `handleInfrastructureError` `hasLogControlCharacters` `initializeLoggerManager` `isLoggerContext` `isLoggerError` `isLoggerFormatter` `isLoggerFormatterFunction` `isLoggerFormatterObject` `isLoggerLevel` `isLoggerLevelName` `isLoggerTransport` `isLoggerTransportFunction` `isLoggerTransportObject` `logAtLevel` `logError` `loggerLevelFromName` `loggerLevelNameFallback` `loggerLevelToName` `mergeLoggerContexts` `mergeLoggerOptions` `normalizeConfiguration` `normalizeLogMetadata` `redactLogValue` `resolveLoggerOptions` `resolveManagedLogger` `serializeLoggerEntry` `serializeLoggerError` `serializeLoggerValue` `serializeTransportEntry` `setLoggerLevel` `shouldLog` `toLoggerError` `validateLoggerOptions` `withContextLogger` `withLoggerContext` `writeLoggerTransport`
+`assertActive` `assertMutable` `childLogger` `closeLogger` `closeLoggerTransport` `createBufferedLoggerTransport` `createChildLogger` `createChildLoggerOptions` `createCompactLoggerFormatter` `createConditionalLoggerTransport` `createConsoleLoggerTransport` `createDefaultLogger` `createDefaultSecretFieldMatcher` `createDevelopmentLoggerFormatter` `createEntry` `createErrorLoggerEntry` `createFactoryLogger` `createJsonLoggerFormatter` `createLogger` `createLoggerContext` `createLoggerEntry` `createLoggerEntryId` `createLoggerFactory` `createLoggerFormatter` `createLoggerFormatterError` `createLoggerFormatterId` `createLoggerManager` `createLoggerManagerFromLogger` `createLoggerTransport` `createLoggerTransportError` `createLoggerTransportId` `createLogMethods` `createManagedDefaultLogger` `createMultiLoggerTransport` `createProductionLoggerFormatter` `createSecretMatcher` `createStructuredLoggerFormatter` `createTextLoggerFormatter` `disableLogger` `disableLoggerTransport` `dispatchEntry` `dispatchEntrySync` `enableLogger` `enableLoggerTransport` `escapeLogText` `flushLogger` `flushLoggerTransport` `formatLoggerEntry` `getFactoryLogger` `getLoggerEnabled` `getLoggerErrorCause` `getLoggerLevel` `getLoggerLevelNames` `getLoggerLevels` `getLoggerName` `handleInfrastructureError` `hasLogControlCharacters` `initializeLoggerManager` `isLoggerContext` `isLoggerError` `isLoggerFormatter` `isLoggerFormatterFunction` `isLoggerFormatterObject` `isLoggerLevel` `isLoggerLevelName` `isLoggerTransport` `isLoggerTransportFunction` `isLoggerTransportObject` `logAtLevel` `logError` `loggerLevelFromName` `loggerLevelNameFallback` `loggerLevelToName` `mergeLoggerContexts` `mergeLoggerOptions` `normalizeConfiguration` `normalizeLogMetadata` `redactLogValue` `resolveLoggerOptions` `resolveManagedLogger` `serializeLoggerEntry` `serializeLoggerError` `serializeLoggerValue` `serializeTransportEntry` `setLoggerLevel` `settleAllOrThrow` `shouldLog` `throwCollectedFailures` `toLoggerError` `validateLoggerOptions` `withContextLogger` `withLoggerContext` `writeLoggerTransport`
 
 Interfaces (25)
 
@@ -728,9 +728,9 @@ Type aliases (8)
 
 `LoggerFormattedOutput` `LoggerFormatterFunction` `LoggerFormatterLike` `LoggerLevelName` `LoggerTransportFunction` `LoggerTransportLike` `LogMetadata` `LogValue`
 
-Constants (3)
+Constants (4)
 
-`DEFAULT_LOGGER_OPTIONS` `DEFAULT_LOGGER_SECRET_PATTERN` `LOGGER_REDACTION_TOKEN`
+`DEFAULT_LOGGER_OPTIONS` `DEFAULT_LOGGER_SECRET_FIELDS` `DEFAULT_LOGGER_SECRET_PATTERN` `LOGGER_REDACTION_TOKEN`
 
 Enums (1)
 

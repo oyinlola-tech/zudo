@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/permissions — RBAC, ABAC, res
 source: https://zudojs.oyinlola.site/docs/packages-permissions
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/permissions
 
@@ -25,7 +25,7 @@ pnpm add @zudojs/permissions
 yarn add @zudojs/permissions
 ```
 
-> **Peer Dependencies:** @zudojs/permissions depends on @zudojs/errors. @zudojs/http is an optional peer dependency for HTTP middleware integration; its types are mirrored locally so the package works without it.
+> **Dependencies:** @zudojs/permissions depends on @zudojs/errors only. Its HTTP middleware composes with the @zudojs/http pipeline structurally — the types are mirrored locally — so no dependency or peer on @zudojs/http is declared.
 
 ## WHAT IT DOES
 
@@ -75,8 +75,8 @@ The permissions engine sits between the application layer and the authorization 
 
 | Package | Version | Purpose |
 | --- | --- | --- |
-| @zudojs/errors | 1.0.0 | Base error classes (AuthorizationError, ErrorCode) |
-| @zudojs/http | 1.0.0 (optional) | HTTP middleware integration (optional peer dependency) |
+| @zudojs/errors | 1.1.0 | Base error classes (AuthorizationError, ErrorCode) |
+| @zudojs/http | — | Not a dependency; the middleware plugs into its pipeline structurally |
 
 > **Internal dependencies:** Packages depend on each other with `workspace:*`, always — including on `main`. They are never hand-pinned to an exact version. At publish time `pnpm` rewrites each `workspace:*` to the exact version of that package in the same release, so a published tarball carries real ranges. Releases go out through `publish-all.sh`, which runs `pnpm -r publish` — it rewrites the ranges and publishes in dependency order. Plain `npm publish` does not understand the `workspace:` protocol and would ship a literal `workspace:*` to the registry.
 
@@ -349,6 +349,8 @@ interface RuleIndex {
 
 Condition combinators for composing ABAC policies. All functions return `PermissionConditionFn`.
 
+> A condition that cannot be evaluated fails closed: an allow whose condition throws does not apply; a deny whose condition throws **applies** (denied, `rule_deny`, reported to `onError`, not cached).
+
 ```ts
 import {
   allOf,
@@ -614,6 +616,8 @@ const roleResolver = createMemoryRoleResolver(roleStore);
 
 ## CACHING
 
+Keys include a digest of the actor's roles, permissions, type and other fields; actors carrying non-plain values are not cached. Role/policy registry changes and `invalidateRoles()` clear the decision cache.
+
 ### PermissionCache Interface
 
 ```ts
@@ -684,7 +688,8 @@ import {
 // Extract actor from request
 const actorMw = createActorMiddleware({
   extractActor: (ctx) => {
-    const userId = ctx.request.headers.get("x-user-id");
+    // Illustration only: in real code take the id from verified auth, not a client header
+    const userId = ctx.request.getHeader?.("x-user-id");
     if (!userId) return undefined;
     return { id: userId, roles: ["editor"] };
   },
@@ -723,9 +728,11 @@ interface AuthorizeMiddlewareOptions {
 
 interface RequirePermissionMiddlewareOptions extends AuthorizeMiddlewareOptions {
   readonly permission: string;
-  readonly extractResource?: (context: HttpMiddlewareContext) => unknown;
+  readonly extractResource?: (context: HttpMiddlewareContext) => unknown | Promise<unknown>;
 }
 ```
+
+`extractResource` may be async and is awaited; a loader that throws or rejects answers 403. An empty list passed to `createRequirePermissionsMiddleware` denies.
 
 ## OBSERVABILITY
 
@@ -888,26 +895,26 @@ console.log(explanation.steps);
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/permissions` exports from its package root at v1.1.0 — **131** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/permissions` exports from its package root at v1.2.0 — **139** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 131 exports**
+**Show all 139 exports**
 
 Classes (14)
 
 `AuthorizationAbortedError` `CircularRoleInheritanceError` `DuplicatePermissionError` `DuplicatePolicyError` `DuplicateRoleError` `InvalidPermissionError` `InvalidRoleError` `PermissionDeniedError` `PermissionError` `PermissionNotFoundError` `PermissionResolverError` `PolicyError` `PolicyTimeoutError` `RoleNotFoundError`
 
-Functions (62)
+Functions (65)
 
-`actorHasPermission` `actorHasRole` `allOf` `always` `anyOf` `assertNotAborted` `authorize` `buildPermission` `compileRules` `createAbility` `createActor` `createActorMiddleware` `createCacheKey` `createForbiddenResponse` `createJsonResponse` `createMemoryPermissionCache` `createMemoryPermissionResolver` `createMemoryRoleResolver` `createPermissionActor` `createPermissionEngine` `createPermissionEventEmitter` `createPermissionRegistry` `createPolicyRegistry` `createRequirePermissionMiddleware` `createRequirePermissionsMiddleware` `createRoleRegistry` `createStaticPermissionResolver` `createStaticRoleResolver` `createUnauthorizedResponse` `evaluate` `evaluatePolicies` `evaluateRules` `evaluateRulesSync` `evaluateWithExplain` `evaluateWithTrace` `extractAction` `extractResource` `findMatchingRules` `formatPermission` `isOwner` `isSystemActor` `isValidPermission` `matches` `matchesPermission` `memoizeRoleLookup` `metadataEquals` `never` `not` `parsePermission` `parsePermissionSafe` `patternStrMatches` `permissionCacheKey` `resolveActorGrants` `resolveActorPermissions` `resolveRolePermissions` `resourceEquals` `ruleMatches` `selectPolicies` `tenantIsolation` `toMetadataMap` `withObservability` `withTimeout`
+`actorCacheDigest` `actorHasPermission` `actorHasRole` `allOf` `always` `anyOf` `assertNotAborted` `authorize` `buildPermission` `compileRules` `createAbility` `createActor` `createActorMiddleware` `createCacheKey` `createForbiddenResponse` `createJsonResponse` `createMemoryPermissionCache` `createMemoryPermissionResolver` `createMemoryRoleResolver` `createPermissionActor` `createPermissionEngine` `createPermissionEventEmitter` `createPermissionRegistry` `createPolicyRegistry` `createRequirePermissionMiddleware` `createRequirePermissionsMiddleware` `createRoleRegistry` `createStaticPermissionResolver` `createStaticRoleResolver` `createUnauthorizedResponse` `evaluate` `evaluatePolicies` `evaluateRules` `evaluateRulesSync` `evaluateWithExplain` `evaluateWithTrace` `extractAction` `extractResource` `findMatchingRules` `formatPermission` `isOwner` `isSystemActor` `isValidPermission` `loadResource` `matches` `matchesPermission` `memoizeRoleLookup` `metadataEquals` `never` `not` `parsePermission` `parsePermissionSafe` `patternStrMatches` `permissionCacheKey` `permissionsOverlap` `resolveActorGrants` `resolveActorPermissions` `resolveRolePermissions` `resourceEquals` `ruleMatches` `selectPolicies` `tenantIsolation` `toMetadataMap` `withObservability` `withTimeout`
 
 Interfaces (46)
 
 `Ability` `ActorMiddlewareOptions` `AuthorizationOptions` `AuthorizeMiddlewareOptions` `DeniedResponseOptions` `EvaluatorOptions` `ExplainResult` `ExplainStep` `HttpMiddlewareContext` `HttpMiddlewareState` `HttpRequestContext` `HttpResponseContext` `MemoryPermissionCacheOptions` `Permission` `PermissionActor` `PermissionCache` `PermissionCheckEvent` `PermissionContext` `PermissionDecision` `PermissionEngine` `PermissionEngineOptions` `PermissionEventEmitter` `PermissionEventEmitterOptions` `PermissionHttpResponse` `PermissionPolicyDefinition` `PermissionRegistry` `PermissionRegistryOptions` `PermissionResolver` `PermissionRule` `PolicyOutcome` `PolicyRegistry` `PolicyRegistryOptions` `PolicySource` `RegisteredPermission` `RequirePermissionMiddlewareOptions` `RequirePermissionsMiddlewareOptions` `ResolvedGrants` `RoleDefinition` `RoleRegistry` `RoleRegistryOptions` `RoleResolution` `RoleResolutionOptions` `RoleResolver` `RoleSource` `RuleEvaluation` `RuleIndex`
 
-Type aliases (6)
+Type aliases (9)
 
-`HttpMiddleware` `PermissionConditionFn` `PermissionEventHandler` `PermissionString` `RuleCombiningAlgorithm` `RuleEffect`
+`HttpMiddleware` `HttpRequestBag` `PermissionConditionFn` `PermissionEventHandler` `PermissionString` `ResourceExtractor` `ResourceOutcome` `RuleCombiningAlgorithm` `RuleEffect`
 
-Constants (3)
+Constants (5)
 
-`ACTOR_STATE_KEY` `DECISION_STATE_KEY` `DECISIONS_STATE_KEY`
+`ACTOR_STATE_KEY` `DECISION_STATE_KEY` `DECISIONS_STATE_KEY` `MAX_ACTOR_DIGEST_LENGTH` `RESOURCE_ERROR_DECISION`

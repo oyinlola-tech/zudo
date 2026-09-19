@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/storage — database, object st
 source: https://zudojs.oyinlola.site/docs/packages-storage
 ---
 
-v1.1.0
+v1.1.1
 
 # @zudojs/storage
 
@@ -152,7 +152,7 @@ Reading is symmetric: `get` returns an `ObjectData` with a `body` stream and an 
 
 ### Keys cannot escape the bucket
 
-A key from a request may be hostile: `../../etc/passwd`. Absolute keys, keys with a null byte, and keys resolving outside the base directory all throw `STORAGE_PATH_TRAVERSAL` (status 400).
+A key from a request may be hostile: `../../etc/passwd`. Keys are opaque, as in S3: absolute keys, keys with a null byte, and keys with a `.` or `..` segment (`tenantA/../tenantB/x`) all throw `STORAGE_PATH_TRAVERSAL` (status 400), and a key with an empty segment (`a//b`) throws `STORAGE_INVALID_KEY`. Keys are never normalised, so a `${tenant}/${key}` prefix cannot be escaped, and no spelling of a key reaches the reserved `.zudo-object-meta` directory.
 
 The check compares paths, not string prefixes, so `/data/store-secrets` is outside `/data/store`. The real path is checked too, so a symlink planted inside cannot redirect a read or write out. A base directory that is itself reached through a symlink is supported; containment is checked against its real location.
 
@@ -476,8 +476,9 @@ Errors are thrown as `StorageError` and `NotFoundError` from `@zudojs/errors`; t
 | STORAGE_INVALID_ROW_BOUND | 400 | limit or offset is not a non-negative safe integer. |
 | STORAGE_INVALID_SORT_DIRECTION | 400 | order is neither ASC nor DESC. |
 | STORAGE_ENTITY_NOT_FOUND | 404 | update() with empty changes on a missing row. A NotFoundError. |
-| STORAGE_INVALID_KEY | 400 | An object key is empty or not a string. |
-| STORAGE_PATH_TRAVERSAL | 400 | A key is absolute, has a null byte, or resolves outside the bucket. |
+| STORAGE_INVALID_KEY | 400 | An object key is empty, not a string, or has an empty segment (a//b). |
+| STORAGE_PATH_TRAVERSAL | 400 | A key is absolute, has a null byte, contains a . or .. segment, or resolves outside the bucket. |
+| ERR_STORAGE_READ | 500 | get, exists or metadata hit an I/O error other than "not found" (EACCES, EIO, ELOOP). Only a missing object reads as null/false. |
 | STORAGE_OBJECT_TOO_LARGE | 413 | A payload exceeds maxObjectBytes. |
 | STORAGE_CONNECTION_POOL_CLOSED | 503 | acquire() after drain(). |
 | STORAGE_CONNECTION_POOL_DRAINING | 503 | A queued acquirer is rejected because draining started. |
@@ -528,7 +529,7 @@ try {
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/storage` exports from its package root at v1.1.0 — **51** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/storage` exports from its package root at v1.1.1 — **51** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 51 exports**
 

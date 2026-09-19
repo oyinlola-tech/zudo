@@ -4,7 +4,7 @@ description: "OAuth 2.0 sign-in for Zudo applications: authorization URLs with P
 source: https://zudojs.oyinlola.site/docs/packages-auth-oauth
 ---
 
-v1.1.1
+v1.2.0
 
 # @zudojs/auth-oauth
 
@@ -35,7 +35,7 @@ When you don't
 
 ## INSTALLATION
 
-There are no peer packages to add. This package depends on nothing but Node built-ins (`node:crypto` and the global `fetch`) and needs Node 24 or newer.
+There are no peer packages to add. This package is built on Node built-ins (`node:crypto` and the global `fetch`) plus `@zudojs/errors` (error base classes) and `@zudojs/security` (IPv6 helpers for the SSRF guard), both installed automatically. It needs Node 24 or newer.
 
 ```bash
 $ npm install @zudojs/auth-oauth
@@ -312,7 +312,7 @@ These are the properties the package enforces for you. None of them is optional 
 
 - **PKCE is always `S256`, with no `plain` fallback.** Every authorization URL carries `code_challenge_method=S256` and a SHA-256 challenge. The `plain` method is not implemented: it sends the verifier itself, which gives no protection against anyone who can read the authorization request.
 - **State is mandatory and compared in constant time.** `createAuthorizationUrl` refuses a missing, blank or under-16-character `state`. `verifyState` uses `timingSafeEqual` on the raw bytes, so the comparison leaks nothing through timing and does not treat different Unicode normalisations as equal.
-- **Endpoint URLs are guarded against internal addresses.** The `tokenUrl` and `userInfoUrl` are fetched by *your server*, which makes them an SSRF sink. Before any request, each must be `https` with no embedded credentials and must not point at a loopback, private (`10/8`, `172.16/12`, `192.168/16`), carrier-grade-NAT, link-local (including the `169.254.169.254` cloud-metadata address), unique-local, multicast or reserved address, nor at names like `localhost`, `*.local`, `*.internal` or `metadata.google.internal` (trailing-dot forms of these names are rejected too).
+- **Endpoint URLs are guarded against internal addresses.** The `tokenUrl` and `userInfoUrl` are fetched by *your server*, which makes them an SSRF sink. Before any request, each must be `https` with no embedded credentials and must not point at a loopback, private (`10/8`, `172.16/12`, `192.168/16`), carrier-grade-NAT, link-local (including the `169.254.169.254` cloud-metadata address), unique-local, multicast or reserved address, nor at names like `localhost`, `*.local`, `*.internal` or `metadata.google.internal` (trailing-dot forms of these names are rejected too). IPv6 literals embedding an IPv4 address (e.g. `[::127.0.0.1]`, NAT64 `[64:ff9b::169.254.169.254]`) are judged as that IPv4 address.
 - **Redirect URIs must match the allowlist.** Every `redirectUri` is parsed, canonicalised (scheme and host case-insensitive, the rest byte-exact, fragments rejected) and must appear in `allowedRedirectUris`. An arbitrary redirect target is never reflected into an authorization request. Browser-facing URLs must be `https`, except on `localhost` / `127.0.0.1` / `[::1]` for local development.
 - **Redirects are not followed.** Provider requests use `redirect: "manual"`, and a 3xx response raises an `OAuthProviderError`. A redirect cannot walk your request to a host that never passed the URL guard.
 - **Responses are bounded and defensively parsed.** Each request is capped in time (`timeoutMs`) and in bytes (`maxResponseBytes`, refused early on an oversized `Content-Length`). Parsed JSON has `__proto__`, `constructor` and `prototype` keys stripped and its depth bounded.
@@ -366,7 +366,7 @@ These are the properties the package enforces for you. None of them is optional 
 
 ### Errors
 
-Every error extends `OAuthError` and carries a `code`, a suggested `statusCode`, and an `expose` flag saying whether the message is safe to show an end user.
+Every error extends `OAuthError`, which extends the shared `OAuthError` from `@zudojs/errors` (a `BaseError`; its codes equal `ErrorCode.OAUTH_*`), and carries a `code`, a suggested `statusCode`, and an `expose` flag saying whether the message is safe to show an end user.
 
 | Name | What it does | Notes |
 | --- | --- | --- |
@@ -405,11 +405,11 @@ Every error extends `OAuthError` and carries a `code`, a suggested `statusCode`,
 - [@zudojs/auth](https://zudojs.oyinlola.site/docs/packages-auth.md) — what happens after this package hands you a profile: your own sessions, JWTs and password login. This package deliberately stops before that.
 - [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) — serves the two routes this flow needs: the one that redirects to the provider and the callback that receives `code` and `state`.
 - [@zudojs/permissions](https://zudojs.oyinlola.site/docs/packages-permissions.md) — deciding what a user may do once you know who they are. OAuth scopes are the provider's permissions, not yours.
-- [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) — the framework-wide error hierarchy. Note that `OAuthError` is deliberately standalone, so this package has no `@zudojs` dependency at all.
+- [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) — the framework-wide error hierarchy. This package's `OAuthError` extends its shared `OAuthError`.
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/auth-oauth` exports from its package root at v1.1.1 — **50** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/auth-oauth` exports from its package root at v1.2.0 — **50** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 50 exports**
 

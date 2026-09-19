@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/feature-flags — deterministic
 source: https://zudojs.oyinlola.site/docs/packages-feature-flags
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/feature-flags
 
@@ -25,7 +25,7 @@ pnpm add @zudojs/feature-flags
 yarn add @zudojs/feature-flags
 ```
 
-> **Peer Dependency:** @zudojs/feature-flags depends on @zudojs/errors (v1.0.0) for its error hierarchy.
+> **Peer Dependency:** @zudojs/feature-flags depends on @zudojs/errors (v1.1.0) for its error hierarchy.
 
 ## WHAT IT DOES
 
@@ -36,7 +36,7 @@ yarn add @zudojs/feature-flags
 - **Multiple providers** — in-memory, environment variables, composite, and cached providers
 - **Rollout bucketing** — deterministic FNV-1a hashing for consistent percentage rollouts
 - **Variant assignment** — weighted variant assignment for A/B testing
-- **Dependency resolution** — flags can depend on other flags with cycle detection
+- **Dependency resolution** — a dependent flag is on only where each prerequisite evaluates on for the same context (state, expiry, rules, rollout), with cycle detection
 - **Snapshots** — evaluate all flags at once for a given context
 
 > **Core Principle:** Feature flags are evaluated locally — no network calls at evaluation time. Providers fetch definitions; the evaluator runs synchronously with deterministic results.
@@ -57,7 +57,7 @@ Feature flags sit between transport and application layers. HTTP handlers check 
 
 | Package | Version | Purpose |
 | --- | --- | --- |
-| @zudojs/errors | 1.0.0 | Feature flag error hierarchy (FeatureFlagError, NotFoundError, ProviderError, etc.) |
+| @zudojs/errors | 1.1.0 | Feature flag error hierarchy (FeatureFlagError, NotFoundError, ProviderError, etc.) |
 
 ## CORE TYPES
 
@@ -177,6 +177,7 @@ interface FeatureFlagAttributeRule {
   readonly attribute: string;
   readonly operator: FeatureFlagOperator;
   readonly value: unknown;
+  readonly result?: FeatureFlagValue; // served on match, default true
 }
 
 // Percentage — deterministic rollout
@@ -232,7 +233,7 @@ type FeatureFlagOperator =
   | "less_than"       // numeric <
   | "less_than_or_equal" // numeric <=
   | "exists"          // attribute exists
-  | "matches";        // regex match
+  | "matches";        // regex match; unsafe (nested-repetition) patterns and inputs > 1024 chars never match
 ```
 
 ### Rule Evaluation
@@ -283,7 +284,7 @@ interface FeatureFlagEvaluation<TValue extends FeatureFlagValue = FeatureFlagVal
 | disabled | Flag is disabled |
 | not_found | Flag does not exist |
 | error | Provider unreachable (`getAll()` or `get()` threw); reported to `onError` |
-| dependency_disabled | A required dependency is disabled |
+| dependency_disabled | A required dependency is not on for this context (disabled, draft, archived, expired, or evaluates false) |
 | expired | Flag is `state: "archived"` or `metadata.expiresAt` is in the past (a schedule rule outside its window simply does not match) |
 
 ### evaluateFlag
@@ -321,6 +322,7 @@ interface FeatureFlagsOptions {
   readonly provider: FeatureFlagProvider;
   readonly defaultContext?: FeatureFlagContext;
   readonly throwOnMissing?: boolean;  // default: false
+  readonly missingFlagTtlMs?: number;  // default: 30_000 — how long a missing flag is remembered
 }
 ```
 
@@ -492,6 +494,7 @@ Wraps a provider with in-memory TTL caching.
 ```ts
 interface CachedProviderOptions {
   readonly ttl?: number;  // default: 30_000 (ms)
+  readonly maxEntries?: number;  // default: 1000 cached flags
 }
 
 function createCachedProvider(
@@ -715,7 +718,7 @@ const flags = [
 ### How It Works
 
 - When evaluating `advanced-feature`, the evaluator checks `base-feature` first
-- If `base-feature` is disabled, the result reason is `dependency_disabled`
+- If `base-feature` is not on for the same context (disabled, draft, archived, expired, or evaluates false), the result reason is `dependency_disabled`
 - Circular dependencies throw `FeatureFlagDependencyError`
 - Dependencies are resolved via the same provider, not the registry
 
@@ -726,6 +729,8 @@ const flags = [
 ```ts
 function isPlainObject(value: unknown): value is Record<string, unknown>;
 ```
+
+Re-export of `isPlainObject` from `@zudojs/types` (deprecated here; import it from types). Returns `false` for `Date` and `Map`.
 
 ### valuesEqual
 
@@ -848,11 +853,11 @@ src/index.ts
 
 Dependencies
 
-@zudojs/errors (1.0.0)
+@zudojs/errors (1.1.0)
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/feature-flags` exports from its package root at v1.1.0 — **55** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/feature-flags` exports from its package root at v1.2.0 — **55** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 55 exports**
 

@@ -218,12 +218,12 @@ The other commands the `zudojs` binary provides:
 | Command | What it does | Notes |
 | --- | --- | --- |
 | `zudojs create [name]` | Scaffolds a new project | Asks questions in a terminal; flags skip them |
-| `zudojs dev` (`d`) | Starts the dev servers for the current project by running each app&rsquo;s `dev` script through the package manager | `--frontend-only`, `--backend-only`, `--port <n>` |
+| `zudojs dev` (`d`) | Starts the dev servers for the current project by running each app’s `dev` script through the package manager | `--frontend-only`, `--backend-only`, `--port <n>` |
 | `zudojs generate <kind> <name>` (`g`) | Writes new files from a template, into `src/` or `apps/api/src/` in a fullstack workspace | `--dry-run` shows the files without writing them |
 | `zudojs add <feature>` | Adds a feature package to the backend app(s) and records it | database, queue, messaging, openapi, observability, security, cache, storage, scheduler, docs |
 | `zudojs doctor` | Checks Node version, the project manifest, package manager, installed dependencies, tsconfig in every app, and declared features | Exits non-zero when an error-level check fails |
 | `zudojs build` (`b`) | Runs the project's own build script | Detects the package manager from the lock file |
-| `zudojs info` | Prints the CLI version, the project&rsquo;s type, architecture and package manager, and its `@zudojs/*` dependencies | Works outside a project too; mentions a newer CLI release when one exists |
+| `zudojs info` | Prints the CLI version, the project’s type, architecture and package manager, and its `@zudojs/*` dependencies | Works outside a project too; mentions a newer CLI release when one exists |
 
 > IN PLAIN WORDS
 >

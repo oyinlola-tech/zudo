@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/database — database clients, 
 source: https://zudojs.oyinlola.site/docs/packages-database
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/database
 
@@ -94,7 +94,7 @@ console.log(alice.name, await users.count());
 await client.disconnect();
 ```
 
-Run it with `DATABASE_URL` set. The console prints `Alice 1`: the created row's name and the number of live rows in the table. The client also logs `Database connected.` and `Database disconnected.` through its default logger.
+Run it with `DATABASE_URL` set. The console prints `Alice 1`: the created row's name and the number of live rows in the table. The client also logs `Database connected.` and `Database disconnected.` through its default logger, a `@zudojs/logger` console logger named `@zudojs/database`.
 
 > **Tip:** the long `ConstructorParameters<...>[0]` type just means "whatever the base class accepts as its first argument". It keeps your repository independent from Prisma's generated types.
 
@@ -110,7 +110,7 @@ You create it with `createDatabaseClient` and either a pre-built `prisma` instan
 | `adapter` | A Prisma driver adapter (for example `new PrismaPg(...)`) used to build a client when `prisma` is absent. | — |
 | `connectionTimeoutMs` | How long `connect()` waits before failing with `ERR_DATABASE_TIMEOUT`. | `10000` |
 | `logging` | Log each query's duration through the logger. | `false` |
-| `logger` | Any object with `debug / info / warn / error`. Use `noopDatabaseLogger` to silence output. | console |
+| `logger` | Any object with `debug / info / warn / error`. Use `noopDatabaseLogger` to silence output. | `@zudojs/logger` console transport (logger name `@zudojs/database`; secret-named metadata redacted; debug/info off when `NODE_ENV=production`) |
 
 This example connects, runs a raw parameterised query with a 2-second deadline, and prints a health check.
 
@@ -270,7 +270,7 @@ If the callback throws, Prisma rolls the transaction back and `withTransaction` 
 | `transactionId`, `metadata` | Attached to the context and to any error thrown. |
 | `signal` | Abort the transaction from outside. The abort is raised inside the Prisma callback, so the transaction is rolled back and the caller rejects with `DatabaseAbortError`. |
 
-PostgreSQL sometimes aborts a `Serializable` transaction because another one touched the same rows. `withTransactionRetry` has the same signature and re-runs the callback (default 3 retries, doubling delay from 100 ms) when `isRetryableTransactionError` says the failure is temporary.
+PostgreSQL sometimes aborts a `Serializable` transaction because another one touched the same rows. `withTransactionRetry` has the same signature and re-runs the callback (default 3 retries, doubling delay from 100 ms, each delay capped at `maxRetryDelayMs`, 30 s by default; pass `jitter: "full"` to spread contending retries) when `isRetryableTransactionError` says the failure is temporary.
 
 > **Danger:** retries re-run the *whole* callback. Anything you do inside it that is not a database write, such as sending an email, can happen more than once.
 
@@ -498,7 +498,7 @@ Everything below is exported from `@zudojs/database`. Internal helpers (cursor e
 | `createDatabase`, `getDatabase`, `connectDatabase`, `disconnectDatabase`, `resetDatabase` | Manage one shared `Database` facade. | `getDatabase` throws if given options after creation. |
 | `createConnectionManager(options)` | Scheduled health checks and reconnect around a client. | Pass `client` to wrap an existing one. |
 | `withTransaction(client, cb, options?)` | Runs `cb(tx, context)` in one transaction. |  |
-| `withTransactionRetry(client, cb, options?)` | Same, retrying temporary failures. | `retries`, `retryDelayMs`, `shouldRetry`. |
+| `withTransactionRetry(client, cb, options?)` | Same, retrying temporary failures. | `retries`, `retryDelayMs`, `maxRetryDelayMs`, `jitter`, `shouldRetry`. |
 | `createTransactionManager(client)`, `createUnitOfWork(client)`, `executeUnitOfWork(client, cb)` | Object-style transaction helpers. | `manager.run()` also returns the context. |
 | `getTransactionContextFromError(error)` | Reads the failed transaction's context from an error. |  |
 | `createQueryBuilder<Fields>()` | New empty builder. |  |
@@ -569,7 +569,7 @@ Everything below is exported from `@zudojs/database`. Internal helpers (cursor e
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/database` exports from its package root at v1.1.0 — **275** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/database` exports from its package root at v1.2.0 — **275** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 275 exports**
 

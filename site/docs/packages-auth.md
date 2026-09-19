@@ -1,10 +1,10 @@
 ---
 title: "@zudojs/auth — JWT, Sessions, RBAC, Password Hashing"
-description: "Complete reference for @zudojs/auth v1.1.0. JWT token management (access + refresh), password hashing (scrypt), session management, RBAC, brute-force lockout, and auth utilities for the Zudo TypeScript framework."
+description: "Complete reference for @zudojs/auth v1.2.0. JWT token management (access + refresh), password hashing (scrypt), session management, RBAC, brute-force lockout, and auth utilities for the Zudo TypeScript framework."
 source: https://zudojs.oyinlola.site/docs/packages-auth
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/auth
 
@@ -18,7 +18,7 @@ AUTH JWT RBAC SESSIONS
 
 You bring the database. The package never reads or writes user rows itself — you hand it three small functions (find a user by login identifier, find a user by id, check a password) and it does the rest.
 
-All cryptography comes from Node's built-in node:crypto: HMAC SHA-256 for signing tokens, scrypt for hashing passwords. There are no third-party crypto dependencies.
+Tokens are signed with HMAC SHA-256 from Node's built-in node:crypto; password hashing (scrypt) is delegated to [@zudojs/crypto](https://zudojs.oyinlola.site/docs/packages-crypto.md). There are no third-party crypto dependencies.
 
 Use it when
 
@@ -168,8 +168,8 @@ Register a user, then check the password twice — once right, once wrong.
 import { hashPassword, verifyPassword, needsRehash } from "@zudojs/auth";
 
 const stored = await hashPassword("hunter2-but-longer");
-console.log(stored.split("$").slice(0, 4).join("$"));
-// scrypt$16384$8$1   (algorithm and cost parameters, then salt$hash)
+console.log(stored.split("$").slice(0, 5).join("$"));
+// v1$scrypt$16384$8$5   (format version, algorithm and cost parameters, then <salt>.<hash>)
 
 console.log(await verifyPassword("hunter2-but-longer", stored)); // true
 console.log(await verifyPassword("wrong", stored));              // false
@@ -178,7 +178,7 @@ console.log(needsRehash(stored));                              // false
 
 Hashing the same password twice gives two different strings, because each hash gets a fresh random *salt* mixed in. That is expected — verifyPassword() reads the salt back out of the stored string.
 
-needsRehash() returns true when a stored hash was made with older settings. Call it right after a successful login, while you still hold the plain password, and re-store a fresh hash if it says so.
+hashPassword returns a [@zudojs/crypto](https://zudojs.oyinlola.site/docs/packages-crypto.md) hash, v1$scrypt$16384$8$5$<salt>.<hash>. Earlier scrypt$… hashes (all parameter sets and the param-less format) still verify, and needsRehash() returns true for every hash that is not a current-parameter crypto scrypt hash. Call it right after a successful login, while you still hold the plain password, and re-store a fresh hash if it says so. hashPassword("") throws AuthError (INVALID_INPUT).
 
 > **verifyPassword never throws**
 >
@@ -317,6 +317,7 @@ createAuthService(config) is the entry point you should use. It is the only path
 | absoluteSessionTtlSeconds | No | Hard ceiling on session age. Strongly recommended. |
 | permissions | No | A PermissionEngine from @zudojs/permissions, used by checkAccess(). |
 | revocationStore | No | Enables refresh-token rotation and replay detection. |
+| allowSessionlessTokens | No | Accept tokens without a sid claim (default false: they are rejected). |
 | loginThrottle | No | Failed-attempt lockout and login rate limiting. |
 | allowInsecureFallbackGuard | No | Opt in to the built-in guard when no engine is configured. Read the warning below first. |
 | fallbackAdminRole | No | Role the fallback guard treats as superuser (default "admin"). |
@@ -399,7 +400,7 @@ verifyPassword: async () => true keeps the example short. Never write that in a 
 
 ### Brute-force lockout
 
-Add loginThrottle and repeated failures start costing the attacker. After maxFailedAttempts (default 5) the identifier is locked for lockoutSeconds (default 900) and login() throws AccountLockedError. Beyond maxAttemptsPerWindow (default 20) it throws AuthRateLimitError instead.
+Add loginThrottle and repeated failures start costing the attacker. After maxFailedAttempts (default 5) the identifier is locked for lockoutSeconds (default 900) and login() throws AccountLockedError. Beyond maxAttemptsPerWindow (default 20) it throws AuthRateLimitError instead. A failure is reserved before the password is checked, so even a parallel burst gets only maxFailedAttempts guesses. Both budgets are per identifier: put a per-IP limiter (createRateLimiter from @zudojs/security) in front of login(). The in-memory store forgets an unlocked failure streak after failureTtlSeconds (default 900) and caps tracked identifiers at maxEntries (default 100 000).
 
 ```ts
 import { createMemoryLoginAttemptStore } from "@zudojs/auth";
@@ -531,14 +532,14 @@ async function currentUserId(authorization: unknown): Promise<string | null> {
 | Name | What it does | Notes |
 | --- | --- | --- |
 | createAuthService(config) | Builds the full auth service. | The entry point for real applications. |
-| hashPassword(password, saltLength?) | Hashes a password with scrypt. | Async. Salt length 16–64 bytes, default 32. |
+| hashPassword(password, saltLength?) | Hashes a password with scrypt (N=16384, r=8, p=5) via @zudojs/crypto. | Async. Salt length 16–64 bytes, default 32. |
 | verifyPassword(password, hash) | Checks a password against a stored hash. | Async. Returns false instead of throwing. |
 | needsRehash(hash) | Says whether a stored hash uses outdated settings. | Call after a successful login. |
 | generateRandomToken(length?) | Random hex string for reset links and similar. | Length in bytes, 16–1024, default 32. |
-| createTokenPair(userId, config, options?) | Mints an access + refresh pair. | Synchronous. No session binding unless you pass sessionId. |
+| createTokenPair(userId, config, options?) | Mints an access + refresh pair. | Synchronous. No session binding unless you pass sessionId; createAuthService() rejects such unbound tokens unless allowSessionlessTokens is true. |
 | verifyAccessToken(token, config) | Verifies an access token. | Returns a result object; only bad config throws. |
 | verifyRefreshToken(token, config) | Verifies a refresh token. | Same shape, refresh secret. |
-| refreshAccessToken(token, config, options?) | Raw exchange of a refresh token for a new pair. | No rotation or revocation. Prefer service.refresh(). |
+| refreshAccessToken(token, config, options?) | Raw exchange of a refresh token for a new pair. | No rotation or revocation. Prefer service.refresh(). A refresh token that carries a sid produces a pair bound to the same sid, so it still dies with logout() when verified through the service. |
 | createMemorySessionStore(options?) | In-process SessionStore. | Development and tests only. |
 | createMemoryTokenRevocationStore(options?) | In-process TokenRevocationStore. | Enables atomic rotation in one process. |
 | createMemoryLoginAttemptStore(options?) | In-process LoginAttemptStore. | Counters are not shared between instances. |
@@ -579,7 +580,7 @@ async function currentUserId(authorization: unknown): Promise<string | null> {
 
 ### Errors
 
-Every error extends AuthError, which extends BaseError from [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md). Each carries an HTTP status code and a message that is safe to show a client — the messages never reveal whether an account exists.
+Every error extends AuthError, re-exported from [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) (a BaseError). Each carries an HTTP status code and a message that is safe to show a client — the messages never reveal whether an account exists.
 
 | Name | Thrown when | Status |
 | --- | --- | --- |
@@ -636,7 +637,7 @@ AuthErrorOptions is exported too, for constructing these yourself. AccountLocked
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/auth` exports from its package root at v1.1.0 — **65** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/auth` exports from its package root at v1.2.0 — **65** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 65 exports**
 

@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/constants — branded types, HT
 source: https://zudojs.oyinlola.site/docs/packages-constants
 ---
 
-v1.0.1
+v1.1.0
 
 # @zudojs/constants
 
@@ -22,16 +22,16 @@ Nothing here talks to a network, a disk, or a clock you did not give it. The pac
 
 When you need it
 
-- &bull; You are writing numbers like `200`, `3600000` or `"production"` by hand in more than one file.
-- &bull; You want TypeScript to catch a typo such as `"prodution"` or `"aplication/json"`.
-- &bull; Two id types are both strings and you keep mixing them up.
-- &bull; A test needs time or randomness to be predictable.
+- You are writing numbers like `200`, `3600000` or `"production"` by hand in more than one file.
+- You want TypeScript to catch a typo such as `"prodution"` or `"aplication/json"`.
+- Two id types are both strings and you keep mixing them up.
+- A test needs time or randomness to be predictable.
 
 When you don't
 
-- &bull; The value belongs to your app alone (a route path, a feature name). Keep that in your own module.
-- &bull; The value can change at run time. That is configuration, not a constant — use `@zudojs/config`.
-- &bull; You need a full validation library. This package holds regexes and limits, not a validator; that is `@zudojs/validation`.
+- The value belongs to your app alone (a route path, a feature name). Keep that in your own module.
+- The value can change at run time. That is configuration, not a constant — use `@zudojs/config`.
+- You need a full validation library. This package holds regexes and limits, not a validator; that is `@zudojs/validation`.
 
 ## INSTALLATION
 
@@ -282,7 +282,7 @@ console.log(ValidationLength.EMAIL, ValidationRange.MAX_PORT);
 
 | Pattern | Matches | Notes |
 | --- | --- | --- |
-| `EMAIL` | An email address. | Pragmatic subset of RFC 5322. Pair it with `ValidationLength.EMAIL` (254). |
+| `EMAIL` | An email address. | Pragmatic subset of RFC 5322. Pair it with `ValidationLength.EMAIL` (254). The same acceptance set as `isEmail` in @zudojs/types. |
 | `UUID` / `UUID_V4` | Any UUID / strictly a version 4 UUID. | Use `UUID_V4` when the version matters. |
 | `IPV4` / `IPV6` | IP addresses. | `IPV6` covers compressed and IPv4-mapped forms. |
 | `ISO_DATE_TIME` / `ISO_DATE` | `2026-01-15T10:30:00.000Z` / `2026-01-15`. | `createTimestamp` uses the first one. |
@@ -344,7 +344,7 @@ console.log(jobs.map((j) => j.name));
 
 A user id and an event id are both strings, so nothing stops you passing one where the other belongs. A *branded type* fixes that: it is the same string at run time, but TypeScript attaches an invisible label to it and refuses to swap one label for another.
 
-You attach the label with a `createX` factory. Nine of them are plain relabelling — `createUserId`, `createEventId`, `createRequestId`, `createCorrelationId`, `createSessionId`, `createTenantId`, `createMessageId`, `createMessageCausationId`, `createTokenId`. Six also validate, and throw `InvalidConstantError` if the string is wrong: `createTimestamp`, `createUrl`, `createEmailAddress`, `createHexString`, `createBase64String`, `createJsonString`.
+You attach the label with a `createX` factory. Eight of them are plain relabelling — `createUserId`, `createEventId`, `createRequestId`, `createCorrelationId`, `createSessionId`, `createMessageId`, `createMessageCausationId`, `createTokenId`. Seven also validate, and throw `InvalidConstantError` if the string is wrong: `createTimestamp` (which also rejects impossible dates such as 30 February), `createUrl`, `createEmailAddress`, `createHexString`, `createBase64String`, `createJsonString`, and `createTenantId` (normalizes, then enforces `[a-z0-9][a-z0-9_-]*`, max 64 — `TENANT_ID_PATTERN`, `MAX_TENANT_ID_LENGTH`).
 
 This labels two ids and shows the compiler catching a swap.
 
@@ -411,7 +411,7 @@ The defaults that go with it are `LIFECYCLE_DEFAULT_TIMEOUT`, `LIFECYCLE_DEFAULT
 
 ### Schema and serialization
 
-`SchemaIssueCode` is the stable list of reasons validation can fail (`"invalid_type"`, `"required"`, `"too_small"`, and so on), which lets you branch on a code instead of matching a message. It ships alongside depth and size defaults and `SCHEMA_FORBIDDEN_KEYS`, an immutable set of the keys that must never be copied into an object.
+`SchemaIssueCode` is the stable list of reasons validation can fail (`"invalid_type"`, `"required"`, `"too_small"`, and so on), which lets you branch on a code instead of matching a message. It ships alongside depth and size defaults and `SCHEMA_FORBIDDEN_KEYS`, an immutable set (not a `Set` instance; `Set.prototype` methods cannot mutate it) of the keys that must never be copied into an object.
 
 ```ts
 import { SCHEMA_FORBIDDEN_KEYS, SchemaIssueCode } from "@zudojs/constants";
@@ -491,9 +491,9 @@ Everything below is exported from `"@zudojs/constants"`. Constant maps are liste
 | `formatDuration(ms)` | Turns milliseconds into `"500ms"`, `"1m 30s"`, `"1d 1h"`. | For logs and UI, not for parsing back. |
 | `buildCacheControl(options)` | Builds a `Cache-Control` header value. | Options: `strategy`, `maxAge`, `staleWhileRevalidate`, `sharedMaxAge` (all seconds). |
 | `comparePriority(a, b)` | Comparator that sorts urgent first. | Negative when `a` is the more urgent. |
-| `createUserId`, `createEventId`, `createRequestId`, `createCorrelationId`, `createSessionId`, `createTenantId`, `createMessageId`, `createMessageCausationId`, `createTokenId` | Attach a brand to a string. | No validation — relabelling only. |
-| `createTimestamp`, `createUrl`, `createEmailAddress`, `createHexString`, `createBase64String`, `createJsonString` | Validate, then attach a brand. | Throw `InvalidConstantError` on bad input. |
-| `createMockClock(fixedTime?)`, `createMockRandom(seed?)` | Deterministic `Clock` / `Random` for tests. | `MockClock` adds `advance(ms)` and `set(timeOrDate)`. |
+| `createUserId`, `createEventId`, `createRequestId`, `createCorrelationId`, `createSessionId`, `createMessageId`, `createMessageCausationId`, `createTokenId` | Attach a brand to a string. | No validation — relabelling only. |
+| `createTimestamp`, `createUrl`, `createEmailAddress`, `createHexString`, `createBase64String`, `createJsonString`, `createTenantId` | Validate, then attach a brand. | Throw `InvalidConstantError` on bad input. |
+| `createMockClock(fixedTime?)`, `createMockRandom(seed?)` | Deterministic `Clock` / `MockRandom` for tests; `MockRandom` is not assignable to `Random`. | `MockClock` adds `advance(ms)` and `set(timeOrDate)`. |
 
 ### Values and constant maps
 
@@ -509,7 +509,7 @@ Everything below is exported from `"@zudojs/constants"`. Constant maps are liste
 | `Limits`, `Defaults`, `Sentinel`, `NONE`, `UNINITIALIZED`, `EMPTY` | Ceilings, fallbacks, and stand-in values. | — |
 | `LifecycleState`, `LifecyclePhase`, `LIFECYCLE_VALID_TRANSITIONS`, `LIFECYCLE_DEFAULT_*` | The lifecycle state machine and its defaults. | Eight `LIFECYCLE_DEFAULT_*` constants. |
 | `SchemaIssueCode`, `SCHEMA_DEFAULT_MAX_DEPTH`, `SCHEMA_DEFAULT_MAX_STRING_LENGTH`, `SCHEMA_DEFAULT_MAX_ARRAY_LENGTH`, `SCHEMA_DEFAULT_MAX_OBJECT_KEYS`, `SCHEMA_STRING_FORMATS` | Validation failure codes, size guards, format regexes. | `SCHEMA_STRING_FORMATS` reuses `ValidationPattern`. |
-| `SerializationFormat`, `SerializationContentType`, `SerializationLimits`, `SerializationTags`, `SERIALIZATION_SCHEMA_VERSION` | Serializer formats, MIME types, limits and tag keys. | `SerializationContentType.MSGPACK` is `"application/x-msgpack"`. |
+| `SerializationFormat`, `SerializationContentType`, `SerializationLimits`, `SerializationTags`, `SERIALIZATION_SCHEMA_VERSION` | Serializer formats, MIME types, limits and tag keys. | `SerializationContentType.MSGPACK` is `"application/x-msgpack"`. `SerializationLimits.MAX_BIGINT_DIGITS` (4096) bounds BigInt text for `@zudojs/serialization` and `@zudojs/schema`'s `coerce.bigint()`. |
 | `systemClock`, `systemRandom` | Real time and CSPRNG-backed randomness. | `systemRandom` is safe for secrets. |
 
 ### Types
@@ -551,9 +551,9 @@ Everything below is exported from `"@zudojs/constants"`. Constant maps are liste
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/constants` exports from its package root at v1.0.1 — **120** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/constants` exports from its package root at v1.1.0 — **124** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 120 exports**
+**Show all 124 exports**
 
 Classes (2)
 
@@ -563,14 +563,14 @@ Functions (32)
 
 `buildCacheControl` `buildContentType` `comparePriority` `createBase64String` `createCorrelationId` `createEmailAddress` `createEventId` `createHexString` `createJsonString` `createMessageCausationId` `createMessageId` `createMockClock` `createMockRandom` `createRequestId` `createSessionId` `createTenantId` `createTimestamp` `createTokenId` `createUrl` `createUserId` `formatDuration` `isClientError` `isDevelopment` `isErrorStatus` `isProduction` `isRedirectStatus` `isServerError` `isSuccessStatus` `isTest` `isValidEnvironment` `resolveEnvironment` `toMilliseconds`
 
-Interfaces (5)
+Interfaces (7)
 
-`CacheControlOptions` `Clock` `MockClock` `Random` `ResolveEnvironmentOptions`
+`CacheControlOptions` `Clock` `MockClock` `MockRandom` `Random` `RandomSource` `ResolveEnvironmentOptions`
 
 Type aliases (31)
 
 `AnyContentType` `AnyHttpHeaderName` `AnyHttpStatusCode` `Base64String` `Brand` `CacheStrategy` `ContentType` `CorrelationId` `EmailAddress` `EntityId` `Environment` `EventId` `HexString` `HttpHeaderName` `HttpMethod` `HttpStatusCode` `JsonString` `LifecyclePhase` `LifecycleState` `MessageCausationId` `MessageId` `Priority` `RequestId` `SchemaIssueCode` `SessionId` `TenantId` `Timestamp` `TimeUnit` `TokenId` `Url` `UserId`
 
-Constants (50)
+Constants (52)
 
-`CacheDuration` `CacheStrategies` `Charset` `ContentTypes` `DefaultRetry` `Defaults` `DefaultTimeout` `EMPTY` `Environments` `ENVIRONMENTS` `HTTP_METHODS` `HttpHeader` `HttpMethods` `HttpStatus` `IDEMPOTENT_HTTP_METHODS` `LIFECYCLE_DEFAULT_CONCURRENCY` `LIFECYCLE_DEFAULT_RETRY_ATTEMPTS` `LIFECYCLE_DEFAULT_RETRY_DELAY` `LIFECYCLE_DEFAULT_RETRY_MAX_DELAY` `LIFECYCLE_DEFAULT_SHUTDOWN_TIMEOUT` `LIFECYCLE_DEFAULT_START_TIMEOUT` `LIFECYCLE_DEFAULT_STOP_TIMEOUT` `LIFECYCLE_DEFAULT_TIMEOUT` `LIFECYCLE_VALID_TRANSITIONS` `Limits` `NODE_ENV_KEY` `NONE` `Priorities` `PriorityWeight` `SAFE_HTTP_METHODS` `SCHEMA_DEFAULT_MAX_ARRAY_LENGTH` `SCHEMA_DEFAULT_MAX_DEPTH` `SCHEMA_DEFAULT_MAX_OBJECT_KEYS` `SCHEMA_DEFAULT_MAX_STRING_LENGTH` `SCHEMA_FORBIDDEN_KEYS` `SCHEMA_STRING_FORMATS` `Sentinel` `SERIALIZATION_SCHEMA_VERSION` `SerializationContentType` `SerializationFormat` `SerializationLimits` `SerializationTags` `systemClock` `systemRandom` `TimeMs` `TimeUnits` `UNINITIALIZED` `ValidationLength` `ValidationPattern` `ValidationRange`
+`CacheDuration` `CacheStrategies` `Charset` `ContentTypes` `DefaultRetry` `Defaults` `DefaultTimeout` `EMPTY` `Environments` `ENVIRONMENTS` `HTTP_METHODS` `HttpHeader` `HttpMethods` `HttpStatus` `IDEMPOTENT_HTTP_METHODS` `LIFECYCLE_DEFAULT_CONCURRENCY` `LIFECYCLE_DEFAULT_RETRY_ATTEMPTS` `LIFECYCLE_DEFAULT_RETRY_DELAY` `LIFECYCLE_DEFAULT_RETRY_MAX_DELAY` `LIFECYCLE_DEFAULT_SHUTDOWN_TIMEOUT` `LIFECYCLE_DEFAULT_START_TIMEOUT` `LIFECYCLE_DEFAULT_STOP_TIMEOUT` `LIFECYCLE_DEFAULT_TIMEOUT` `LIFECYCLE_VALID_TRANSITIONS` `Limits` `MAX_TENANT_ID_LENGTH` `NODE_ENV_KEY` `NONE` `Priorities` `PriorityWeight` `SAFE_HTTP_METHODS` `SCHEMA_DEFAULT_MAX_ARRAY_LENGTH` `SCHEMA_DEFAULT_MAX_DEPTH` `SCHEMA_DEFAULT_MAX_OBJECT_KEYS` `SCHEMA_DEFAULT_MAX_STRING_LENGTH` `SCHEMA_FORBIDDEN_KEYS` `SCHEMA_STRING_FORMATS` `Sentinel` `SERIALIZATION_SCHEMA_VERSION` `SerializationContentType` `SerializationFormat` `SerializationLimits` `SerializationTags` `systemClock` `systemRandom` `TENANT_ID_PATTERN` `TimeMs` `TimeUnits` `UNINITIALIZED` `ValidationLength` `ValidationPattern` `ValidationRange`

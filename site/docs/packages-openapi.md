@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/openapi — the OpenAPI specifi
 source: https://zudojs.oyinlola.site/docs/packages-openapi
 ---
 
-v1.2.0
+v1.3.0
 
 # @zudojs/openapi
 
@@ -174,11 +174,11 @@ manager.addSchema(
 
 const document = manager.generate();
 console.log(JSON.stringify(document.components?.schemas?.Order));
-// {"type":"object","properties":{"id":{"type":"string","format":"uuid"},
+// {"type":"object","properties":{"id":{"type":"string","format":"uuid","maxLength":255},
 //  "total":{"type":"number","minimum":0}},"required":["id","total"]}
 ```
 
-`optional`, `default`, `any` and `unknown` fields are left out of `required`, matching what the runtime accepts; constraints on coerced schemas and factory defaults are carried into the document.
+`optional`, `default`, `any` and `unknown` fields are left out of `required`, matching what the runtime accepts; constraints on coerced schemas and factory defaults are carried into the document. A string or array with no explicit maximum gets the limit the runtime enforces (`maxLength: 255` / `maxItems: 1000`), read from `@zudojs/constants` `SCHEMA_DEFAULT_MAX_STRING_LENGTH` / `SCHEMA_DEFAULT_MAX_ARRAY_LENGTH`.
 
 Point an operation at it with `createComponentReference`, which builds the `$ref` string and escapes names containing `/` or `~`:
 
@@ -401,12 +401,15 @@ console.log(html.includes("swagger-ui-bundle.js")); // true
 | `logo` | Header logo, or `false` for none. | Zudo wordmark |
 | `favicon` | Favicon URL or data URI, or `false`. | Zudo favicon |
 | `customCss` | CSS appended after the built-in theme. | — |
-| `assetsBaseUrl` | Where the viewer's own JS and CSS load from. | public CDN |
+| `assetsBaseUrl` | Where the viewer's own JS and CSS load from. | pinned jsDelivr (`swagger-ui-dist@5.33.0`, `redoc@2.5.4`) with SRI |
+| `assetIntegrity` | SRI hashes for the viewer assets, or `false` to omit `integrity`. | the pinned hashes when `assetsBaseUrl` is unset; none when it is set |
+| `contentSecurityPolicy` | `content-security-policy` header sent by `toUIResponse`, or `false` for none. Ignored by `renderOpenAPIUI`. | restrictive policy from `buildOpenAPIUIContentSecurityPolicy` |
+| `connectSources` | Extra origins "Try it out" may call, added to `connect-src`. The document's absolute `servers` are added automatically. | `[]` |
 | `swaggerOptions` | Extra options passed to `SwaggerUIBundle`. Ignored by ReDoc. | — |
 
 ### Air-gapped deployments
 
-By default the page loads Swagger UI or ReDoc from a public CDN. A machine with no internet access renders a blank page. Host the viewer's files yourself and point `assetsBaseUrl` at them:
+By default the page loads exact, pinned versions of Swagger UI or ReDoc from cdn.jsdelivr.net with Subresource Integrity, and `toUIResponse` sends a restrictive `content-security-policy` header (pass `contentSecurityPolicy: false` to omit it). A machine with no internet access renders a blank page. Host the viewer's files yourself and point `assetsBaseUrl` at them:
 
 ```ts
 manager.toUIResponse({
@@ -433,7 +436,7 @@ const document = new OpenAPIManager({
 }).generate();
 
 console.log(document.info["x-logo"].altText); // 'Zudo'
-console.log(document.info["x-logo"].href);    // 'https://zudo.dev'
+console.log(document.info["x-logo"].href);    // 'https://zudojs.oyinlola.site'
 ```
 
 The `branding` option controls it. There are three ways to use it:
@@ -476,8 +479,8 @@ import {
   ZUDO_SITE_URL,
 } from "@zudojs/openapi";
 
-console.log(zudoLogo().href);        // 'https://zudo.dev'
-console.log(ZUDO_SITE_URL);          // 'https://zudo.dev'
+console.log(zudoLogo().href);        // 'https://zudojs.oyinlola.site'
+console.log(ZUDO_SITE_URL);          // 'https://zudojs.oyinlola.site'
 
 const uri = svgToDataUri(ZUDO_MARK_SVG);
 console.log(uri.startsWith("data:image/svg+xml;charset=utf-8,")); // true
@@ -587,7 +590,7 @@ Serialize any document with `toOpenAPIJSON` or `toOpenAPIYAML`. The YAML is real
 
 ### Errors
 
-All extend `OpenAPIError`, itself a `BaseError` from [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md). They default to status 500 and are not exposed to clients — these are failures while your service builds its own specification, not answers to a request.
+All extend `OpenAPIError`, the [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) class re-exported here (a `BaseError`). They default to status 500 and are not exposed to clients — these are failures while your service builds its own specification, not answers to a request.
 
 | Name | Thrown when | Notes |
 | --- | --- | --- |
@@ -639,26 +642,26 @@ All extend `OpenAPIError`, itself a `BaseError` from [@zudojs/errors](https://zu
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/openapi` exports from its package root at v1.2.0 — **117** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/openapi` exports from its package root at v1.3.0 — **121** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 117 exports**
+**Show all 121 exports**
 
 Classes (17)
 
 `OpenAPIComponentConflictError` `OpenAPIComponentError` `OpenAPIDocumentBuilder` `OpenAPIDocumentError` `OpenAPIError` `OpenAPIManager` `OpenAPIOperationError` `OpenAPIReferenceError` `OpenAPIRegistryImpl` `OpenAPIRouteError` `OpenAPIRouteScannerImpl` `OpenAPISchemaError` `OpenAPISerializationError` `OpenAPIValidationError` `OpenAPIValidatorImpl` `OpenAPIVersionError` `SchemaRegistryImpl`
 
-Functions (22)
+Functions (23)
 
-`buildResponses` `convertRouteToOpenAPI` `convertSchema` `createComponentReference` `createOpenAPIDocumentBuilder` `createOpenAPIError` `createOpenAPIManager` `createOpenAPIValidator` `createSchemaConverter` `escapeJsonPointerSegment` `extractPathParameters` `formatIssuePath` `isOpenAPIError` `isOpenAPIMethod` `isVersion31` `renderOpenAPIUI` `svgToDataUri` `toOpenAPIJSON` `toOpenAPIPath` `toOpenAPIYAML` `unescapeJsonPointerSegment` `zudoLogo`
+`buildOpenAPIUIContentSecurityPolicy` `buildResponses` `convertRouteToOpenAPI` `convertSchema` `createComponentReference` `createOpenAPIDocumentBuilder` `createOpenAPIError` `createOpenAPIManager` `createOpenAPIValidator` `createSchemaConverter` `escapeJsonPointerSegment` `extractPathParameters` `formatIssuePath` `isOpenAPIError` `isOpenAPIMethod` `isVersion31` `renderOpenAPIUI` `svgToDataUri` `toOpenAPIJSON` `toOpenAPIPath` `toOpenAPIYAML` `unescapeJsonPointerSegment` `zudoLogo`
 
-Interfaces (49)
+Interfaces (50)
 
-`OpenAPIComponentRegistration` `OpenAPIComponents` `OpenAPIContact` `OpenAPIDiscriminator` `OpenAPIDocument` `OpenAPIDocumentOptions` `OpenAPIDocumentResponse` `OpenAPIEncoding` `OpenAPIErrorOptions` `OpenAPIExample` `OpenAPIExternalDocumentation` `OpenAPIHeader` `OpenAPIInfo` `OpenAPILicense` `OpenAPILink` `OpenAPILogo` `OpenAPIManagerOptions` `OpenAPIMediaType` `OpenAPIOAuthFlow` `OpenAPIOAuthFlows` `OpenAPIOperation` `OpenAPIParameter` `OpenAPIPathItem` `OpenAPIReference` `OpenAPIRegistry` `OpenAPIRequestBody` `OpenAPIResponse` `OpenAPIRoute` `OpenAPISchema` `OpenAPISecurityRequirement` `OpenAPISecurityScheme` `OpenAPIServer` `OpenAPIServerVariable` `OpenAPITag` `OpenAPIUIOptions` `OpenAPIUIResponse` `OpenAPIValidationIssue` `OpenAPIValidationResult` `OpenAPIValidator` `OpenAPIXml` `RouteInfo` `RouteMetadata` `RouteOpenAPIMetadata` `RouteParameterMetadata` `SchemaConversionOptions` `SchemaConversionResult` `SchemaConverter` `SchemaRegistry` `SchemaRegistryOptions`
+`OpenAPIComponentRegistration` `OpenAPIComponents` `OpenAPIContact` `OpenAPIDiscriminator` `OpenAPIDocument` `OpenAPIDocumentOptions` `OpenAPIDocumentResponse` `OpenAPIEncoding` `OpenAPIErrorOptions` `OpenAPIExample` `OpenAPIExternalDocumentation` `OpenAPIHeader` `OpenAPIInfo` `OpenAPILicense` `OpenAPILink` `OpenAPILogo` `OpenAPIManagerOptions` `OpenAPIMediaType` `OpenAPIOAuthFlow` `OpenAPIOAuthFlows` `OpenAPIOperation` `OpenAPIParameter` `OpenAPIPathItem` `OpenAPIReference` `OpenAPIRegistry` `OpenAPIRequestBody` `OpenAPIResponse` `OpenAPIRoute` `OpenAPISchema` `OpenAPISecurityRequirement` `OpenAPISecurityScheme` `OpenAPIServer` `OpenAPIServerVariable` `OpenAPITag` `OpenAPIUIAssetIntegrity` `OpenAPIUIOptions` `OpenAPIUIResponse` `OpenAPIValidationIssue` `OpenAPIValidationResult` `OpenAPIValidator` `OpenAPIXml` `RouteInfo` `RouteMetadata` `RouteOpenAPIMetadata` `RouteParameterMetadata` `SchemaConversionOptions` `SchemaConversionResult` `SchemaConverter` `SchemaRegistry` `SchemaRegistryOptions`
 
 Type aliases (7)
 
 `ComponentSection` `OpenAPIHttpMethod` `OpenAPIParameterLocation` `OpenAPIPaths` `OpenAPIResponses` `OpenAPIUIRenderer` `OpenAPIVersion`
 
-Constants (22)
+Constants (24)
 
-`COMPONENT_REF_PREFIX` `DEFAULT_MEDIA_TYPE` `DEFAULT_OPENAPI_VERSION` `DEFAULT_SERVER_URL` `DOCUMENT_CACHE_TTL_MS` `MAX_OPERATION_ID_LENGTH` `PATH_TEMPLATE_PARAMETER` `RESPONSE_KEY_PATTERN` `STATUS_CODE_CATEGORIES` `SUPPORTED_OPENAPI_VERSIONS` `ZUDO_FAVICON_DATA_URI` `ZUDO_FAVICON_SVG` `ZUDO_MARK_DARK_DATA_URI` `ZUDO_MARK_DARK_SVG` `ZUDO_MARK_DATA_URI` `ZUDO_MARK_SVG` `ZUDO_SITE_URL` `ZUDO_WORDMARK_DARK_DATA_URI` `ZUDO_WORDMARK_DARK_SVG` `ZUDO_WORDMARK_DATA_URI` `ZUDO_WORDMARK_SVG` `ZUDOLIB_TO_OPENAPI_METHODS`
+`COMPONENT_REF_PREFIX` `DEFAULT_MEDIA_TYPE` `DEFAULT_OPENAPI_VERSION` `DEFAULT_SERVER_URL` `DOCUMENT_CACHE_TTL_MS` `MAX_OPERATION_ID_LENGTH` `PATH_TEMPLATE_PARAMETER` `REDOC_VERSION` `RESPONSE_KEY_PATTERN` `STATUS_CODE_CATEGORIES` `SUPPORTED_OPENAPI_VERSIONS` `SWAGGER_UI_VERSION` `ZUDO_FAVICON_DATA_URI` `ZUDO_FAVICON_SVG` `ZUDO_MARK_DARK_DATA_URI` `ZUDO_MARK_DARK_SVG` `ZUDO_MARK_DATA_URI` `ZUDO_MARK_SVG` `ZUDO_SITE_URL` `ZUDO_WORDMARK_DARK_DATA_URI` `ZUDO_WORDMARK_DARK_SVG` `ZUDO_WORDMARK_DATA_URI` `ZUDO_WORDMARK_SVG` `ZUDOLIB_TO_OPENAPI_METHODS`

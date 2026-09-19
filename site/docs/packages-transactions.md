@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/transactions — transaction li
 source: https://zudojs.oyinlola.site/docs/packages-transactions
 ---
 
-v1.1.0
+v1.1.1
 
 # @zudojs/transactions
 
@@ -416,7 +416,7 @@ You should see `begin place-order`, then `1`, then `commit place-order`, then `0
 
 ### Per-transaction callbacks
 
-`afterCommit()` and `afterRollback()` on the transaction itself register callbacks for that one transaction. Use `afterCommit` for side effects that must not happen unless the data really landed, such as sending an email or publishing an event.
+`afterCommit()` and `afterRollback()` on the transaction itself register callbacks for that one transaction. Use `afterCommit` for side effects that must not happen unless the data really landed, such as sending an email or publishing an event. Inside a `nested` block, releasing the savepoint is not a commit: its callbacks (and `hooks.afterCommit` for the savepoint) move to the enclosing transaction and run only when the outermost transaction commits, or for `afterRollback`, rolls back.
 
 ```ts
 await manager.run(async (transaction) => {
@@ -487,7 +487,7 @@ Everything below is exported from `@zudojs/transactions`. Most apps only need `c
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| `TransactionError` | Base class for every error here. | Extends `BaseError` from [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md). |
+| `TransactionError` | Base class for every error here. | Owned by [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) and re-exported here (all 12 classes), so `instanceof` matches either import. |
 | `TransactionStateError` | The transaction is in the wrong state for what you asked. | Thrown by commit, rollback and illegal transitions. |
 | `TransactionRollbackError` | The commit turned into a rollback, or the rollback itself failed. | This is what a rollback-only or timed-out commit rejects with. |
 | `TransactionCommitError` | The adapter refused the commit. | The driver error is in `cause`. |
@@ -530,9 +530,9 @@ Everything below is exported from `@zudojs/transactions`. Most apps only need `c
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/transactions` exports from its package root at v1.1.0 — **53** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/transactions` exports from its package root at v1.1.1 — **54** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 53 exports**
+**Show all 54 exports**
 
 Classes (12)
 
@@ -542,9 +542,9 @@ Functions (19)
 
 `asSavepointHandle` `canTransition` `createAdapter` `createEmitter` `createInMemoryAdapter` `createNonTransactional` `createParticipant` `createTransaction` `createTransactionContext` `createTransactionManager` `createTransactionRegistry` `createTransitionFunction` `getDefaultContext` `isModifiable` `isTerminal` `isTerminalState` `mergeHooks` `resetDefaultContext` `summarizeTransaction`
 
-Interfaces (13)
+Interfaces (14)
 
-`SavepointHandle` `Transaction` `TransactionAdapter` `TransactionAdapterCapabilities` `TransactionContext` `TransactionErrorContext` `TransactionEvent` `TransactionHookContext` `TransactionHooks` `TransactionManagerOptions` `TransactionOptions` `TransactionRegistry` `TransactionRetryOptions`
+`SavepointHandle` `Transaction` `TransactionAdapter` `TransactionAdapterCapabilities` `TransactionContext` `TransactionErrorContext` `TransactionErrorOptions` `TransactionEvent` `TransactionHookContext` `TransactionHooks` `TransactionManagerOptions` `TransactionOptions` `TransactionRegistry` `TransactionRetryOptions`
 
 Type aliases (8)
 

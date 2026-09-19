@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/scheduler — the time and recu
 source: https://zudojs.oyinlola.site/docs/packages-scheduler
 ---
 
-v1.1.0
+v1.1.1
 
 # @zudojs/scheduler
 
@@ -14,7 +14,7 @@ SCHEDULER CRON JOBS RETRIES TIMERS
 
 ## OVERVIEW
 
-**Scheduling** means telling the computer &ldquo;run this piece of code at this time&rdquo; instead of running it right now. You hand over a function and a time rule; something else watches the clock and calls the function when the moment arrives.
+**Scheduling** means telling the computer “run this piece of code at this time” instead of running it right now. You hand over a function and a time rule; something else watches the clock and calls the function when the moment arrives.
 
 You can do a crude version of this yourself with `setTimeout`. That stops being enough quickly: you need the job to repeat, to stop cleanly when the process shuts down, to give up if it hangs, to retry when it fails, and to not pile up ten copies of itself. This package is that machinery.
 
@@ -22,17 +22,17 @@ Everything happens inside your own process. There is no database, no Redis and n
 
 USE IT WHEN
 
-- &bull; You want housekeeping on a timer — expire sessions, prune logs, refresh a cache.
-- &bull; You want a nightly or weekly task inside a service you already run.
-- &bull; You want a heartbeat or a poll every few seconds.
-- &bull; Missing a run because the process restarted is acceptable.
+- You want housekeeping on a timer — expire sessions, prune logs, refresh a cache.
+- You want a nightly or weekly task inside a service you already run.
+- You want a heartbeat or a poll every few seconds.
+- Missing a run because the process restarted is acceptable.
 
 DO NOT USE IT WHEN
 
-- &bull; The work must survive a restart. Nothing is written to disk.
-- &bull; You run several copies of your service. Each copy runs the job, so it happens twice.
-- &bull; The work is triggered by a user action rather than by the clock — that is a queue.
-- &bull; You need a real IANA time zone such as `America/New_York`. Only UTC and the machine's local zone are supported.
+- The work must survive a restart. Nothing is written to disk.
+- You run several copies of your service. Each copy runs the job, so it happens twice.
+- The work is triggered by a user action rather than by the clock — that is a queue.
+- You need a real IANA time zone such as `America/New_York`. Only UTC and the machine's local zone are supported.
 
 ## INSTALLATION
 
@@ -192,11 +192,11 @@ scheduler.at(new Date(Date.now() - 60_000), "report", { misfire: "skip" });
 >
 >
 >
-> The third misfire value, `"catch-up"`, replays each missed occurrence, rescheduling from the last fire time. `priority` breaks ties between schedules due at the same instant (higher first). A one-shot resumed after its fire time follows its misfire policy: `run-once`/`catch-up` fire it immediately, `skip` retires it.
+> The third misfire value, `"catch-up"`, replays each missed occurrence, rescheduling from the last fire time. `priority` breaks ties between schedules due at the same instant (higher first). A one-shot resumed after its fire time follows its misfire policy: `run-once`/`catch-up` fire it immediately, `skip` retires it. Misfire policies apply to one-shots (`at`, `after`). A schedule added after `start()` fires on time; the timer is re-armed on every add.
 
 ## CRON EXPRESSIONS
 
-A **cron expression** is five values separated by spaces that describe a repeating calendar time, such as &ldquo;02:00 on weekdays&rdquo;. It comes from Unix and it is the standard way to write a recurring schedule.
+A **cron expression** is five values separated by spaces that describe a repeating calendar time, such as “02:00 on weekdays”. It comes from Unix and it is the standard way to write a recurring schedule.
 
 The five fields are always in this order:
 
@@ -210,11 +210,11 @@ The five fields are always in this order:
 
 Each field takes one of these shapes:
 
-- &bull; `*` — every value. &ldquo;Any minute&rdquo;, &ldquo;any month&rdquo;.
-- &bull; A single number — `5` means exactly 5.
-- &bull; A range — `1-5` means 1, 2, 3, 4, 5. The start must not be larger than the end.
-- &bull; A step — `*/15` means every 15th value: 0, 15, 30, 45. `10-30/5` means 10, 15, 20, 25, 30.
-- &bull; A list — `1,15` means 1 and 15. List items can themselves be ranges or steps.
+- `*` — every value. “Any minute”, “any month”.
+- A single number — `5` means exactly 5.
+- A range — `1-5` means 1, 2, 3, 4, 5. The start must not be larger than the end.
+- A step — `*/15` means every 15th value: 0, 15, 30, 45. `10-30/5` means 10, 15, 20, 25, 30.
+- A list — `1,15` means 1 and 15. List items can themselves be ranges or steps.
 
 ### One worked example
 
@@ -256,13 +256,13 @@ Five shorthand macros are also accepted anywhere an expression is:
 >
 >
 >
-> When day-of-month and day-of-week are *both* restricted, cron fires if **either** matches, not both. `0 0 1 * mon` means &ldquo;the 1st of the month, *and* every Monday&rdquo;. This is odd but it is what every cron does, so expressions copied from elsewhere behave the same here.
+> When day-of-month and day-of-week are *both* restricted, cron fires if **either** matches, not both. `0 0 1 * mon` means “the 1st of the month, *and* every Monday”. This is odd but it is what every cron does, so expressions copied from elsewhere behave the same here.
 
-A bad expression throws `CronParseError` the moment you write it, not silently at 2 a.m. Wrong field count, a value out of range (`99 0 * * *`), a zero step (`*/0 * * * *`) and an inverted range (`5-1 * * * *`) are all rejected. An expression that can never happen, such as 30 February (`0 0 30 2 *`), parses but never fires — the search gives up after five years.
+A bad expression throws `CronParseError` the moment you write it, not silently at 2 a.m. Wrong field count, a value out of range (`99 0 * * *`), a zero step (`*/0 * * * *`) and an inverted range (`5-1 * * * *`) are all rejected. An expression that can never happen, such as 30 February (`0 0 30 2 *`), parses, but `scheduler.cron()` rejects it with `InvalidScheduleError` because it has no next fire time within the five-year search (`nextCronDate` returns `null`).
 
 ## TIME ZONES
 
-A cron expression says &ldquo;02:30&rdquo;, but 02:30 *where*? The time zone is what turns those numbers into an actual instant. The same expression fires at different moments in London and in Tokyo.
+A cron expression says “02:30”, but 02:30 *where*? The time zone is what turns those numbers into an actual instant. The same expression fires at different moments in London and in Tokyo.
 
 By default the fields are read in the **machine's local zone**, whatever the operating system is set to. Pass `timezone: "UTC"` to read them in UTC instead. `"Etc/UTC"` is accepted as the same thing.
 
@@ -343,7 +343,7 @@ const scheduler = new Scheduler({ maxConcurrency: 2 });
 
 A job handler that throws does not crash the scheduler, and it does not disappear silently either. It is retried according to the job's retry policy, and whatever survives that is handed to the scheduler's `onError` callback.
 
-A **retry policy** says how many attempts to make and how long to wait between them. `strategy` picks the shape of that wait: `"fixed"` always waits `delay`; `"linear"` waits `delay &times; attempt`; `"exponential"` doubles each time. `maxDelay` caps it, and `jitter: true` randomises it so many failing jobs do not all retry in the same instant.
+A **retry policy** says how many attempts to make and how long to wait between them. `strategy` picks the shape of that wait: `"fixed"` always waits `delay`; `"linear"` waits `delay × attempt`; `"exponential"` doubles each time. `maxDelay` caps it, and `jitter: true` randomises it so many failing jobs do not all retry in the same instant.
 
 This job fails twice and succeeds on the third attempt, then fails permanently the next time round.
 
@@ -562,7 +562,7 @@ Everything below is exported from `@zudojs/scheduler`. Most applications only ne
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/scheduler` exports from its package root at v1.1.0 — **67** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/scheduler` exports from its package root at v1.1.1 — **67** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 67 exports**
 

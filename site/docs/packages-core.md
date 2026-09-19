@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/core — application lifecycle 
 source: https://zudojs.oyinlola.site/docs/packages-core
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/core
 
@@ -235,7 +235,7 @@ container.register(UrlToken, { useFactory: (c) => `postgres://localhost:${c.reso
 console.log(container.resolve(UrlToken));   // "postgres://localhost:5432"
 ```
 
-The optional third argument to `register` is the scope: `"singleton"` (default), `"transient"` (new per `resolve`), or `"scoped"` (one per execution context). Unknown tokens throw `ProviderNotFoundError`; registering twice throws `ProviderAlreadyRegisteredError`.
+The optional third argument to `register` is the scope: `"singleton"` (default), `"transient"` (new per `resolve`), or `"scoped"` (one per execution context; resolving it outside any execution context, or from inside a singleton's factory, throws `DependencyResolutionError`). Unknown tokens throw `ProviderNotFoundError`; registering twice throws `ProviderAlreadyRegisteredError`.
 
 ### Configuration
 
@@ -295,7 +295,7 @@ await storage.run(createExecutionContext({ operation: "checkout" }), saveOrder);
 console.log(storage.get());   // undefined (outside run)
 ```
 
-`require()` outside `run()` throws `ExecutionContextNotFoundError`. The runtime runs every module hook inside a context whose `module` is the module id; the default logger adds its `executionId` to each line, and `"scoped"` providers resolve once per context.
+`require()` outside `run()` throws `ExecutionContextNotFoundError`. The runtime runs every module hook inside a context whose `module` is the module id; the default logger adds its `executionId` to each line, and `"scoped"` providers resolve once per context. `run(ctx, fn)` starts a new execution without the enclosing execution's `ContextValues`; `runDerived()` keeps them.
 
 ## RUNTIME
 
@@ -303,11 +303,12 @@ The *runtime* is the engine that loads, initializes and starts modules, then sto
 
 | Option | What it does | Default |
 | --- | --- | --- |
-| `name`, `mode` | Service name; `"development"`, `"test"` or `"production"` | `"application"`, `"development"` |
+| `name`, `mode` | Service name; `"development"`, `"test"` or `"production"`. `mode` defaults to the mode derived from `NODE_ENV` via `resolveEnvironment()` (@zudojs/constants); `staging` runs as `production`, unset is `development` | `"application"`, from `NODE_ENV` |
 | `startup.timeoutMs`, `shutdown.timeoutMs` | Abort with `RuntimeTimeoutError` after this long (`0` = no limit) | `0`, `30000` |
 | `startup.continueOnInitializeError`, `continueOnStartError` | Keep going when a module throws; report it in `getStatus().bootstrap` instead | `false` |
 | `signals.handleSigint`, `handleSigterm`, `handleSighup` | Stop gracefully on the OS signal | `true`, `true`, `false` |
-| `signals.handleUncaughtException`, `handleUnhandledRejection` | Mark the runtime failed and stop it | `true` |
+| `signals.handleUncaughtException`, `handleUnhandledRejection` | Mark the runtime failed, stop it, then exit with code 1 (opt out with `signals.exitOnFatalError: false`; `signals.fatalExitTimeout`, default 10000 ms, bounds a hanging stop) | `true` |
+| `signals.forceExitOnSecondSignal` | A second signal during shutdown exits with `signals.forceExitCode` (default `1`) | `true` |
 | `diagnostics.startupLogging`, `shutdownLogging` | Print the runtime's own progress lines | `true` |
 
 With `continueOnStartError` on, a broken module does not stop the app. This starts a module whose `onReady` throws and reads the report.
@@ -421,7 +422,7 @@ All extend `FrameworkError`, which extends `ApplicationError` from [@zudojs/erro
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/core` exports from its package root at v1.1.0 — **432** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/core` exports from its package root at v1.2.0 — **432** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 432 exports**
 

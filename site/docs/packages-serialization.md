@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/serialization — JSON serializ
 source: https://zudojs.oyinlola.site/docs/packages-serialization
 ---
 
-v1.0.1
+v1.1.0
 
 # @zudojs/serialization
 
@@ -75,6 +75,8 @@ console.log(back.name, back.age);
 Turn on `preserveTypes` and the serializer walks your value instead of handing it to `JSON.stringify`. Whenever it meets a type JSON cannot express, it writes a small tagged object in its place.
 
 A tagged object looks like `{ "$type": "Date", "$value": "2026-01-15T10:30:00.000Z" }`. The `$type` key says which type it was; `$value` holds a JSON-safe form of it. On the way back, the matching transformer reads the tag and rebuilds the real value.
+
+A plain object of yours that has its own string `$type` is written as `{ "$type": "Object", "$value": { … } }` and read back unchanged, so user data can never be revived as another type. `"Object"` (`ESCAPED_OBJECT_TAG`) is reserved. A tag its transformer rejects reads back as plain data (throws under `strict`). BigInt tags are capped at 4096 decimal digits (`SerializationLimits.MAX_BIGINT_DIGITS`, shared with schema's `coerce.bigint()`).
 
 Pass the option once to `createSerializer` and it applies to every call on that instance — both directions.
 
@@ -407,7 +409,7 @@ Everything below is exported from `@zudojs/serialization`.
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| createSerializer(format, options?) | Creates a serializer for a format. | Only `"json"` is supported. Options: `transformers`, `pretty`, `preserveTypes` — kept as per-instance defaults. |
+| createSerializer(format, options?) | Creates a serializer for a format. | Only `"json"` is supported. Options: `transformers`, plus every serialize/deserialize option (`pretty`, `preserveTypes`, `maxSize`, `maxDepth`, `strict`, …) — kept as per-instance defaults. |
 | createDefaultRegistry() | Returns a registry holding the built-in JSON serializer. | Size 1, name `"json"`. |
 | createEnvelope(data, format?, options?) | Wraps already-serialized data with metadata. | Format defaults to `"json"`; version, contentType and encoding are filled in for you. |
 | unwrapEnvelope(envelope, expectedFormat?) | Validates an envelope and returns its payload. | Throws on a malformed envelope, a newer schema version, or a format mismatch. |
@@ -453,8 +455,13 @@ These are thrown by this package but **defined and exported by [@zudojs/errors](
 | SerializerNotFoundError | `SerializerRegistry.get(name)` finds nothing. | Carries `serializerName`. |
 | TransformerNotFoundError | `TransformerRegistry.get(type)` finds nothing. | Carries `transformerType`. |
 | UnsupportedSerializationFormatError | `createSerializer` gets a format other than `"json"`. | Carries the offending format. |
+| SerializationPayloadTooLargeError | Input or output exceeds `maxSize`. | A `SerializationError`. |
+| SerializationDepthError | Nesting exceeds `maxDepth`. | A `SerializationError`. |
+| InvalidSerializedDataError | Input that is not valid JSON, or an unknown or malformed tag under `strict`. | A `SerializationError`. |
+| TransformerError | A transformer rejects a tag under `strict`, or a transformer claims the reserved `"Object"` tag. | A `SerializationError`. |
+| SerializeError | A value cannot be written, such as an invalid `Date` or an oversized BigInt. | A `SerializationError`. |
 
-Size, depth, circular-reference and envelope problems are reported as plain `Error`s with a descriptive message.
+Circular references are reported by the `@zudojs/validation` guard (`CircularReferenceError`). Envelope problems and a full transformer registry are still plain `Error`s with a descriptive message.
 
 ## COMMON MISTAKES
 
@@ -475,9 +482,9 @@ Size, depth, circular-reference and envelope problems are reported as plain `Err
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/serialization` exports from its package root at v1.0.1 — **30** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/serialization` exports from its package root at v1.1.0 — **31** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 30 exports**
+**Show all 31 exports**
 
 Classes (3)
 
@@ -495,6 +502,6 @@ Type aliases (2)
 
 `SerializationFormat` `SerializedValue`
 
-Constants (6)
+Constants (7)
 
-`BigIntTransformer` `BufferTransformer` `DateTransformer` `ErrorTransformer` `MapTransformer` `SetTransformer`
+`BigIntTransformer` `BufferTransformer` `DateTransformer` `ErrorTransformer` `ESCAPED_OBJECT_TAG` `MapTransformer` `SetTransformer`

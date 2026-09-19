@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/security — input validation, 
 source: https://zudojs.oyinlola.site/docs/packages-security
 ---
 
-v1.0.1
+v1.1.0
 
 # @zudojs/security
 
@@ -270,7 +270,7 @@ console.log(checkCsrf("GET", {}, "user-42", "s3cret"));  // true — nothing to 
 console.log(checkCsrf("POST", {}, "user-42", "s3cret")); // false — no token present
 ```
 
-`verifyDoubleSubmit` passes only when both tokens are present, byte-for-byte equal (compared in constant time), correctly signed, unexpired, and bound to the session id you pass. Comparing the two alone would not be enough.
+`verifyDoubleSubmit` passes only when both tokens are present, byte-for-byte equal (compared in constant time), correctly signed, unexpired, and bound to the session id you pass. Comparing the two alone would not be enough. `validateCsrfToken` and `verifyDoubleSubmit` throw on a secret shorter than 32 characters, and the protected `methods` list is matched case-insensitively.
 
 > **Watch out:** without `sessionId`, a token minted for one user validates for every other user — an attacker can get a token with their own account and replay it against a victim. Pass a session id whenever you have one, and pass the *same* one at generation and at validation.
 
@@ -309,13 +309,13 @@ The object you get back has these members:
 | --- | --- | --- |
 | `check(request)` | Decides one request and records it. | Returns `{ allowed, remaining, resetAt, total }`; `resetAt` is a `Date`. |
 | `middleware(request, response?)` | Same as `check`, but on a denial it also fills in the response object. | Sets status 429, `Retry-After` and a JSON error body, unless you configured your own `handler`. |
-| `reset(key)` | Forgets one client's history. | The key is whatever your `keyGenerator` returns — the IP by default. |
+| `reset(key)` | Forgets one client's history. | The key is whatever your `keyGenerator` returns — by default the IP (IPv6 by /64); passing the raw IP works too. |
 | `clear()` | Forgets every client. | Useful between tests. |
 | `getCount(key)` | How many allowed requests are still inside the window. | Never exceeds `max`. |
 | `destroy()` | Stops the cleanup timer and empties the store. | Call it on shutdown, and in tests. |
 | `size` | How many keys are currently tracked. | A getter, not a method. |
 
-The config takes `max` and `windowMs` (both required; a non-positive value throws a `RangeError`), plus optional `keyGenerator`, `handler`, `skip`, `message` and `maxKeys`. Once the store passes `maxKeys` (100,000 by default) the least recently seen keys are dropped, so a client rotating its identity cannot grow the map without limit.
+The config takes `max` and `windowMs` (both required; a non-positive value throws a `RangeError`), plus optional `keyGenerator`, `handler`, `skip`, `message` and `maxKeys`. Once the store passes `maxKeys` (100,000 by default) the least recently seen keys are dropped, so a client rotating its identity cannot grow the map without limit. The default key generator strips ports, keys IPv4-mapped IPv6 as IPv4, buckets other IPv6 by /64 (`DEFAULT_IPV6_PREFIX_LENGTH`; build your own with `createIpKeyGenerator` / `ipRateLimitKey`), and throws a `ConfigurationError` when `request.ip` is missing or not an address (including `"unknown"`).
 
 ### Finding the client's IP
 
@@ -450,7 +450,7 @@ console.log(validateUrl("not a url").errors);             // [ "URL is malformed
 
 SSRF — Server-Side Request Forgery — is when a user hands you a URL and your server fetches it for them. Your server usually sits inside a private network, so `http://169.254.169.254/` reaches the cloud metadata service and the credentials it hands out.
 
-`isSafeUrl` answers "does this URL point somewhere public?" It allows only `http:` and `https:`, refuses URLs carrying a username or password, and range-checks the address numerically.
+`isSafeUrl` answers "does this URL point somewhere public?" It allows only `http:` and `https:`, refuses URLs carrying a username or password, and range-checks the address numerically. IPv6 forms embedding an IPv4 address (`::a.b.c.d`, `::ffff:0:a.b.c.d`, `64:ff9b::/96`, `2002::/16`) are judged as that IPv4 address; `expandIpv6(address)`, `embeddedIpv4(groups)` and `isNonPublicIpv6Range(groups)` are exported.
 
 ```ts
 import { isSafeUrl, isPrivateHostname } from "@zudojs/security";
@@ -524,7 +524,7 @@ console.log(validateCookieName("a b"));   // "Cookie name contains invalid chara
 console.log(stripSensitiveCookies("session_id=abc; theme=dark")); // "theme=dark"
 ```
 
-> **In plain words:** `stripSensitiveCookies` drops anything named `session`, `token`, `auth` or `jwt`, plus names that start with one of those followed by `_`, `-` or `.`. Pass your own list as the second argument if your cookies are named differently — a cookie it does not recognise is kept.
+> **In plain words:** `stripSensitiveCookies` drops any cookie whose name contains `session`, `sessionid`, `sess`, `sid`, `token`, `auth`, `jwt`, `csrf`, `xsrf` (and `PHPSESSID`/`JSESSIONID`) as a whole word, after ignoring a `__Host-`/`__Secure-` prefix, e.g. `connect.sid`, `access_token`, `__Host-session`. Pass your own list as the second argument if your cookies are named differently — a cookie it does not recognise is kept.
 
 ## HEADERS AND BODY LIMITS
 
@@ -590,7 +590,7 @@ console.log(DEFAULT_BODY_LIMITS.auth); // 262144
 
 > **In plain words:** the four presets are `json` (1 MB), `auth` (256 KB), `upload` (100 MB) and `webhook` (2 MB). A login form looks exactly like any other form on the wire, so the Content-Type cannot tell you it is a login. On those routes pass the purpose yourself: `getBodyLimitForContentType(type, undefined, "auth")`.
 
-Once you know the limit, `validateBodySize(actualSize, maxSize, contentType?)` checks one size, and `createBodySizeChecker(maxSize, contentType?)` returns a reusable `(size) => { allowed, error? }` function for a streaming read.
+Once you know the limit, `validateBodySize(actualSize, maxSize, contentType?)` checks one size, and `createBodySizeChecker(maxSize, contentType?)` returns a reusable `(size) => { allowed, error? }` function for a streaming read. A limit that is `NaN`, infinite, zero or negative throws a `ConfigurationError` instead of silently allowing everything.
 
 ## API REFERENCE
 
@@ -634,8 +634,8 @@ Everything below is exported from the package root, `@zudojs/security`.
 | Name | What it does | Notes |
 | --- | --- | --- |
 | `createRateLimiter(config)` | Builds an in-memory sliding-window limiter. | Returns `{ check, middleware, reset, clear, getCount, destroy, size }`. Create once, at startup. |
-| `extractClientIp(headers, options?)` | Works out the client address. | Ignores forwarding headers unless `trustProxy` is set. Falls back to `remoteAddress`, then `"unknown"`. |
-| `defaultKeyGenerator(request)` | Uses `request.ip` as the key. | Used when you pass no `keyGenerator`. |
+| `extractClientIp(headers, options?)` | Works out the client address. | Ignores forwarding headers unless `trustProxy` is set. Falls back to `remoteAddress`, then `"unknown"`. Ports and IPv6 brackets are stripped from the result. |
+| `defaultKeyGenerator(request)` | Uses `request.ip` as the key (port stripped, IPv6 by /64); throws `ConfigurationError` when it is missing or not an IP. | Used when you pass no `keyGenerator`. |
 | `defaultHandler(request, response)` | Fills in a 429 response. | Sets status, `Retry-After: 60` and a JSON error body. |
 | `rateLimit` | Namespace holding the four functions above. | — |
 
@@ -675,7 +675,7 @@ Everything below is exported from the package root, `@zudojs/security`.
 | `serializeCookie(cookie, config?)` | Same, taking a `ParsedCookie`. | Percent-encodes the value; validates every attribute. |
 | `parseCookieHeader(header, config?)` | Splits a Cookie header. | Returns `{ cookies, errors }`. Does not percent-decode. |
 | `validateCookieName(name)` / `validateCookieValue(value)` | Check one part. | Error message, or `undefined` when fine. |
-| `stripSensitiveCookies(header, names?)` | Removes session-like cookies. | Defaults to `session`, `token`, `auth`, `jwt` and prefixed variants. |
+| `stripSensitiveCookies(header, names?)` | Removes session-like cookies. | Defaults to `DEFAULT_SENSITIVE_COOKIE_NAMES`, matched as whole words anywhere in the name (`isSensitiveCookieName`). |
 | `validateHeaders(headers, config?)` | Checks names, values, counts and sizes. | Returns `{ valid, errors }`. Blocks `x-forwarded-*` by default. |
 | `validateHeaderName(name)` / `validateHeaderValue(name, value, config?)` | Check one header. | Error message, or `undefined`. |
 | `sanitizeHeaderValue(value)` | Strips null bytes and line breaks. | Returns `undefined` if nothing is left. |
@@ -716,22 +716,22 @@ These are TypeScript types only; they disappear at runtime. Each is the config o
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/security` exports from its package root at v1.0.1 — **92** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/security` exports from its package root at v1.1.0 — **102** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 92 exports**
+**Show all 102 exports**
 
-Functions (58)
+Functions (65)
 
-`containsPrototypePollution` `containsSqlInjection` `containsTraversal` `containsXss` `createBodySizeChecker` `createCsrfProtection` `createRateLimiter` `createSecureCookie` `defaultHandler` `defaultKeyGenerator` `detectThreats` `escapeHtml` `extractClientIp` `extractCsrfTokenFromCookies` `extractCsrfTokenFromHeaders` `fullyDecodeUri` `generateCspNonce` `generateCsrfCookie` `generateCsrfToken` `generatePreflightHeaders` `generateSecurityHeaders` `generateSimpleHeaders` `getBodyLimitForContentType` `getDisallowedHeaders` `getMissingSecurityHeaders` `isHopByHopHeader` `isMethodAllowed` `isOriginAllowed` `isPrivateHostname` `isSafeString` `isSafeUrl` `normalizePath` `parseCookieHeader` `parseMediaType` `requiresCsrfProtection` `resolveBodyLimit` `retryAfterSeconds` `sanitizeHeaderValue` `sanitizeObject` `sanitizeString` `serializeCookie` `stripHtml` `stripSensitiveCookies` `validateBodyFraming` `validateBodyLimitConfig` `validateBodySize` `validateContentLength` `validateCookieName` `validateCookieValue` `validateCspDirective` `validateCsrfToken` `validateHeaderName` `validateHeaders` `validateHeaderValue` `validateRequestTarget` `validateUrl` `verifyDoubleSubmit` `withoutStickyFlags`
+`containsPrototypePollution` `containsSqlInjection` `containsTraversal` `containsXss` `createBodySizeChecker` `createCsrfProtection` `createIpKeyGenerator` `createRateLimiter` `createSecureCookie` `defaultHandler` `defaultKeyGenerator` `detectThreats` `embeddedIpv4` `escapeHtml` `expandIpv6` `extractClientIp` `extractCsrfTokenFromCookies` `extractCsrfTokenFromHeaders` `fullyDecodeUri` `generateCspNonce` `generateCsrfCookie` `generateCsrfToken` `generatePreflightHeaders` `generateSecurityHeaders` `generateSimpleHeaders` `getBodyLimitForContentType` `getDisallowedHeaders` `getMissingSecurityHeaders` `ipRateLimitKey` `isHopByHopHeader` `isMethodAllowed` `isNonPublicIpv6Range` `isOriginAllowed` `isPrivateHostname` `isSafeString` `isSafeUrl` `isSensitiveCookieName` `normalizePath` `parseClientIp` `parseCookieHeader` `parseMediaType` `requiresCsrfProtection` `resolveBodyLimit` `retryAfterSeconds` `sanitizeHeaderValue` `sanitizeObject` `sanitizeString` `serializeCookie` `stripHtml` `stripSensitiveCookies` `validateBodyFraming` `validateBodyLimitConfig` `validateBodySize` `validateContentLength` `validateCookieName` `validateCookieValue` `validateCspDirective` `validateCsrfToken` `validateHeaderName` `validateHeaders` `validateHeaderValue` `validateRequestTarget` `validateUrl` `verifyDoubleSubmit` `withoutStickyFlags`
 
-Interfaces (25)
+Interfaces (26)
 
-`BodyLimitConfig` `BodyLimitPresets` `ClientIpOptions` `CookieSecurityConfig` `CorsConfig` `CorsHeaders` `CsrfConfig` `CsrfCookieOptions` `CsrfProtection` `CsrfProtectionOptions` `CsrfTokenOptions` `CsrfVerifiableRequest` `HeaderSecurityConfig` `HeaderValidationResult` `InputSanitizationConfig` `IssuedCsrfToken` `ParsedCookie` `RateLimitConfig` `RateLimiterOptions` `RateLimitRequest` `RateLimitResponse` `RateLimitResult` `SecurityHeadersConfig` `UrlValidationConfig` `UrlValidationResult`
+`BodyLimitConfig` `BodyLimitPresets` `ClientIpOptions` `CookieSecurityConfig` `CorsConfig` `CorsHeaders` `CsrfConfig` `CsrfCookieOptions` `CsrfProtection` `CsrfProtectionOptions` `CsrfTokenOptions` `CsrfVerifiableRequest` `HeaderSecurityConfig` `HeaderValidationResult` `InputSanitizationConfig` `IpKeyOptions` `IssuedCsrfToken` `ParsedCookie` `RateLimitConfig` `RateLimiterOptions` `RateLimitRequest` `RateLimitResponse` `RateLimitResult` `SecurityHeadersConfig` `UrlValidationConfig` `UrlValidationResult`
 
 Type aliases (1)
 
 `RequestTargetConfig`
 
-Constants (8)
+Constants (10)
 
-`cors` `DEFAULT_BODY_LIMITS` `MIN_CSRF_SECRET_LENGTH` `PROTOTYPE_POLLUTION_KEYS` `rateLimit` `SECURITY_HEADER_NAMES` `SQL_INJECTION_PATTERNS` `XSS_PATTERNS`
+`cors` `DEFAULT_BODY_LIMITS` `DEFAULT_IPV6_PREFIX_LENGTH` `DEFAULT_SENSITIVE_COOKIE_NAMES` `MIN_CSRF_SECRET_LENGTH` `PROTOTYPE_POLLUTION_KEYS` `rateLimit` `SECURITY_HEADER_NAMES` `SQL_INJECTION_PATTERNS` `XSS_PATTERNS`

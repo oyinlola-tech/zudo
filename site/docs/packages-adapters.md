@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/adapters — the boundary layer
 source: https://zudojs.oyinlola.site/docs/packages-adapters
 ---
 
-v1.0.1
+v1.1.0
 
 # @zudojs/adapters
 
@@ -55,10 +55,10 @@ Adapters sit below the transport layer. Transport packages use adapters to inter
 
 | Package | Version | Purpose |
 | --- | --- | --- |
-| @zudojs/errors | 1.0.0 | Adapter error hierarchy (AdapterError, AdapterNotFoundError, etc.) |
-| @zudojs/constants | 1.0.0 | Branded types and constants |
-| @zudojs/types | 1.0.0 | Type guards and utility types |
-| @zudojs/lifecycle | 1.0.0 | Lifecycle contracts and state machine |
+| @zudojs/errors | 1.1.0 | Adapter error hierarchy (AdapterError, AdapterNotFoundError, etc.) |
+| @zudojs/constants | 1.1.0 | Branded types and constants |
+| @zudojs/types | 1.1.0 | Type guards and utility types |
+| @zudojs/lifecycle | 1.1.1 | Lifecycle contracts and state machine |
 
 > **Internal dependencies:** Packages depend on each other with `workspace:*`, always — including on `main`. They are never hand-pinned to an exact version. At publish time `pnpm` rewrites each `workspace:*` to the exact version of that package in the same release, so a published tarball carries real ranges. Releases go out through `publish-all.sh`, which runs `pnpm -r publish` — it rewrites the ranges and publishes in dependency order. Plain `npm publish` does not understand the `workspace:` protocol and would ship a literal `workspace:*` to the registry.
 
@@ -297,9 +297,11 @@ const unhealthy = createUnhealthyHealth("Connection pool exhausted");
 ```ts
 interface LifecycleAdapter extends Adapter {
   configure?(options: unknown): Promise<void> | void;
-  health(): Promise<AdapterHealth> | AdapterHealth;
+  health?(): Promise<AdapterHealth> | AdapterHealth;
 }
 ```
+
+`AdapterRegistry.healthAll({ timeout, signal })` runs every `health()` hook and returns an `AdapterHealthReport`, `{ status, adapters }` (the worst status; failing, timed-out or aborted checks are `unhealthy`). `AdapterRegistry.configure(name, options)` calls the adapter's `configure()` and throws `AdapterConfigurationError` if it has none.
 
 ### AdapterOperationOptions
 
@@ -346,7 +348,7 @@ interface HTTPAdapter extends Adapter {
 }
 ```
 
-> **Best With:** `@zudojs/http` (v1.0.0), `@zudojs/security` (v1.0.0)
+> **Best With:** `@zudojs/http` (v1.2.0), `@zudojs/security` (v1.1.0)
 
 ### MESSAGING ADAPTER
 
@@ -368,7 +370,7 @@ interface Subscription {
 }
 ```
 
-> **Best With:** `@zudojs/messaging` (v1.0.0), `@zudojs/events` (v1.0.0)
+> **Best With:** `@zudojs/messaging` (v1.0.2), `@zudojs/events` (v1.1.0)
 
 ### STORAGE ADAPTER
 
@@ -384,7 +386,7 @@ interface StorageAdapter extends Adapter {
 }
 ```
 
-> **Best With:** `@zudojs/storage` (v1.0.0), `@zudojs/cache` (v1.0.0)
+> **Best With:** `@zudojs/storage` (v1.1.1), `@zudojs/cache` (v1.1.0)
 
 ### QUEUE ADAPTER
 
@@ -408,7 +410,7 @@ interface QueueStats {
 }
 ```
 
-> **Best With:** `@zudojs/queue` (v1.0.0)
+> **Best With:** `@zudojs/queue` (v1.2.0)
 
 ### WEBSOCKET ADAPTER
 
@@ -659,32 +661,32 @@ process.on("SIGTERM", async () => {
 
 | Package | Version | Relationship | How They Connect |
 | --- | --- | --- | --- |
-| @zudojs/http | 1.0.0 | Transport | HTTP adapter provides request/response shapes that @zudojs/http consumes |
-| @zudojs/messaging | 1.0.0 | Transport | Message adapter bridges external message providers to the internal message bus |
-| @zudojs/storage | 1.0.0 | Transport | Storage adapter provides the implementation for storage abstractions |
-| @zudojs/queue | 1.0.0 | Transport | Queue adapter provides the implementation for background job processing |
-| @zudojs/scheduler | 1.0.0 | Transport | Scheduler adapter provides the implementation for job scheduling |
-| @zudojs/lifecycle | 1.0.0 | Dependency | Lifecycle contracts integrate with the lifecycle state machine |
-| @zudojs/runtime | 1.0.0 | Consumer | Runtime manages adapter lifecycle (initialize, start, stop, dispose) |
-| @zudojs/errors | 1.0.0 | Dependency | All adapter error types defined in @zudojs/errors |
-| @zudojs/database | 1.0.0 | Consumer | Database clients use storage adapter interface for connection management |
+| @zudojs/http | 1.2.0 | Transport | HTTP adapter provides request/response shapes that @zudojs/http consumes |
+| @zudojs/messaging | 1.0.2 | Transport | Message adapter bridges external message providers to the internal message bus |
+| @zudojs/storage | 1.1.1 | Transport | Storage adapter provides the implementation for storage abstractions |
+| @zudojs/queue | 1.2.0 | Transport | Queue adapter provides the implementation for background job processing |
+| @zudojs/scheduler | 1.1.1 | Transport | Scheduler adapter provides the implementation for job scheduling |
+| @zudojs/lifecycle | 1.1.1 | Dependency | Lifecycle contracts integrate with the lifecycle state machine |
+| @zudojs/runtime | 1.2.0 | Consumer | Runtime manages adapter lifecycle (initialize, start, stop, dispose) |
+| @zudojs/errors | 1.1.0 | Dependency | All adapter error types defined in @zudojs/errors |
+| @zudojs/database | 1.2.0 | Consumer | Database clients use storage adapter interface for connection management |
 
 ## VERSION COMPATIBILITY
 
 > **Internal dependencies:** Packages depend on each other with `workspace:*`, always — including on `main`. They are never hand-pinned to an exact version. At publish time `pnpm` rewrites each `workspace:*` to the exact version of that package in the same release, so a published tarball carries real ranges. Releases go out through `publish-all.sh`, which runs `pnpm -r publish` — it rewrites the ranges and publishes in dependency order. Plain `npm publish` does not understand the `workspace:` protocol and would ship a literal `workspace:*` to the registry.
 
-| Package | adapters v1.0.0 works with | Stability |
+| Package | adapters v1.1.0 works with | Stability |
 | --- | --- | --- |
-| @zudojs/errors | v1.0.0 | STABLE |
-| @zudojs/constants | v1.0.0 | STABLE |
-| @zudojs/types | v1.0.0 | STABLE |
-| @zudojs/lifecycle | v1.0.0 | STABLE |
-| @zudojs/http | v1.0.0 (peer) | PEER |
-| @zudojs/messaging | v1.0.0 | STABLE |
-| @zudojs/storage | v1.0.0 | STABLE |
-| @zudojs/queue | v1.0.0 | STABLE |
-| @zudojs/scheduler | v1.0.0 | STABLE |
-| @zudojs/runtime | v1.0.0 | STABLE |
+| @zudojs/errors | v1.1.0 | STABLE |
+| @zudojs/constants | v1.1.0 | STABLE |
+| @zudojs/types | v1.1.0 | STABLE |
+| @zudojs/lifecycle | v1.1.1 | STABLE |
+| @zudojs/http | v1.2.0 (peer) | PEER |
+| @zudojs/messaging | v1.0.2 | STABLE |
+| @zudojs/storage | v1.1.1 | STABLE |
+| @zudojs/queue | v1.2.0 | STABLE |
+| @zudojs/scheduler | v1.1.1 | STABLE |
+| @zudojs/runtime | v1.2.0 | STABLE |
 
 ## IMPROVEMENTS & RECOMMENDATIONS
 
@@ -763,9 +765,9 @@ import {
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/adapters` exports from its package root at v1.0.1 — **55** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/adapters` exports from its package root at v1.1.0 — **56** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 55 exports**
+**Show all 56 exports**
 
 Classes (13)
 
@@ -775,9 +777,9 @@ Functions (8)
 
 `createAdapterError` `createDegradedHealth` `createHealthyHealth` `createMockAdapter` `createMockAdapterRegistry` `createMockHealth` `createUnhealthyHealth` `isAdapterError`
 
-Interfaces (30)
+Interfaces (31)
 
-`Adapter` `AdapterCapabilities` `AdapterErrorOptions` `AdapterHealth` `AdapterMetadata` `AdapterOperationOptions` `CLIAdapter` `CLIOptions` `CLIResult` `HTTPAdapter` `HTTPListenOptions` `HTTPRequestAdapter` `HTTPRequestLike` `HTTPResponseAdapter` `HTTPResponseLike` `HTTPServerAdapter` `LifecycleAdapter` `MessageAdapter` `MockAdapter` `MockAdapterHealth` `QueueAdapter` `QueueStats` `RuntimeAdapter` `ScheduledJob` `ScheduledTask` `SchedulerAdapter` `StorageAdapter` `Subscription` `WebSocketAdapter` `WebSocketSession`
+`Adapter` `AdapterCapabilities` `AdapterErrorOptions` `AdapterHealth` `AdapterHealthReport` `AdapterMetadata` `AdapterOperationOptions` `CLIAdapter` `CLIOptions` `CLIResult` `HTTPAdapter` `HTTPListenOptions` `HTTPRequestAdapter` `HTTPRequestLike` `HTTPResponseAdapter` `HTTPResponseLike` `HTTPServerAdapter` `LifecycleAdapter` `MessageAdapter` `MockAdapter` `MockAdapterHealth` `QueueAdapter` `QueueStats` `RuntimeAdapter` `ScheduledJob` `ScheduledTask` `SchedulerAdapter` `StorageAdapter` `Subscription` `WebSocketAdapter` `WebSocketSession`
 
 Type aliases (3)
 

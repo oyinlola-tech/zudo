@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/runtime — application lifecyc
 source: https://zudojs.oyinlola.site/docs/packages-runtime
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/runtime
 
@@ -261,7 +261,7 @@ console.log(resolveDependencies(graph).parallelGroups);
 
 ## STARTUP AND SHUTDOWN
 
-`start()` initializes every module in order, then readies them. If any module throws, the runtime rolls back: modules that already started are stopped and destroyed in reverse, the state becomes `failed`, and the original error is re-thrown to you.
+`start()` initializes every module in order, then readies them. If any module throws, the runtime rolls back: modules that already started are stopped and destroyed in reverse, the state becomes `failed`, and the original error is re-thrown to you. A configuration manager that fails to load fails startup with `RuntimeStartError` (`phase: "initialize"`).
 
 `stop()` goes the other way, and is safe to call more than once — stopping an already-stopped runtime does nothing.
 
@@ -289,7 +289,7 @@ Two options bound how long either direction may take. A module whose hook never 
 
 | Option | Default | What it bounds |
 | --- | --- | --- |
-| startupTimeout | 60000 | The whole startup sequence. On expiry, startup fails with a timeout error and rolls back. |
+| startupTimeout | 60000 | The whole startup sequence. On expiry, startup fails with a timeout error and rolls back; no further module hook starts, and a module whose hook finishes late is shut down and destroyed. |
 | shutdownTimeout | 30000 | The whole shutdown sequence. On expiry `stop()` throws `RuntimeStopError` and the state becomes `failed`. |
 
 > **In plain words:** pick a shutdown timeout slightly shorter than your platform's grace period. Kubernetes sends SIGTERM and then SIGKILL 30 seconds later by default, so a 30-second shutdown timeout leaves no room.
@@ -557,6 +557,9 @@ await runtime.stop();
 | runtimeId | generated | Identifier for this runtime instance. |
 | handleSignals | true | Shut down on SIGTERM and SIGINT. |
 | handleFatalErrors | true | Shut down and exit 1 on an uncaught error. |
+| exitOnFatalError | true | Exit 1 after a fatal-error shutdown. |
+| fatalExitTimeout | 10000 | Exit anyway if that shutdown hangs. |
+| forceExitOnSecondSignal | true | A second SIGTERM/SIGINT exits immediately. |
 | startupTimeout | 60000 | Milliseconds allowed for startup. |
 | shutdownTimeout | 30000 | Milliseconds allowed for shutdown. |
 | emitEvents | true | Publish lifecycle events on the bus. |
@@ -629,7 +632,7 @@ await runtime.stop();
 - **Importing test helpers from the package root.** `import { withTestRuntime } from "@zudojs/runtime"` fails — nothing by that name is exported there. Import from `@zudojs/runtime/testing` instead.
 - **Registering a runtime without an id.** `registry.register(apiRuntime)` does not type-check. The signature is `register(id, runtime)`, and registering the same id twice throws.
 - **Expecting a new readiness check to pass.** It is failing until `runReadinessChecks()` runs it, so `runtime.ready` flips to false the moment you register one. Run the checks before reading readiness.
-- **Treating `failed` as the end.** Startup rollback only reaches modules that started. Skipping `stop()` after a failed start leaks whatever the rest had opened.
+- **Treating `failed` as the end.** Startup rollback shuts down started modules and destroys every module whose `onInitialize` ran (including one that threw); a module that finishes after a startup timeout is torn down when it settles, and `stop()` waits for that. Call `stop()` on a failed runtime to release it fully.
 - **Caching `runtime.status` in a variable and reading it later.** Each read builds a fresh snapshot; the one you held onto is frozen in the past. Read `runtime.status` at the moment you need it.
 - **Ignoring `status.shutdownFailures`.** The state reaches `stopped` either way. Only that list tells you a module failed to release its resources.
 
@@ -643,7 +646,7 @@ await runtime.stop();
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/runtime` exports from its package root at v1.1.0 — **90** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/runtime` exports from its package root at v1.2.0 — **90** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 90 exports**
 

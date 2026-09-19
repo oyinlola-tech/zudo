@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/events — the event bus, emitt
 source: https://zudojs.oyinlola.site/docs/packages-events
 ---
 
-v1.0.1
+v1.1.0
 
 # @zudojs/events
 
@@ -201,7 +201,7 @@ The type argument `Event<OrderPayload>` tells TypeScript what `event.payload` lo
 
 > **Common mistake**
 >
-> Changing `event.payload` inside a handler. The bus deep-freezes the event before dispatch, so an assignment like `event.payload.total = 0` throws `TypeError: Cannot assign to read only property` in ES modules. Copy the data you need instead.
+> Changing `event.payload` inside a handler. Handlers receive a deeply frozen copy of the event, so an assignment like `event.payload.total = 0` throws `TypeError: Cannot assign to read only property` in ES modules, and Map/Set/Date values (including `event.timestamp`) throw on mutation. The publisher's own objects are never frozen. Copy the data you need instead.
 
 ## EVENT BUS
 
@@ -485,7 +485,7 @@ Everything below is importable from `"@zudojs/events"`. Only the exports you cal
 | EventHandlerContext | event, type, eventId, correlationId?, causationId?, signal, metadata. | Second argument of every handler. |
 | EventHandlerOptions | id, priority, once, timeoutMs, enabled, description. | Third argument of on(). |
 | EventSubscription | id, active, state, unsubscribe(). | Returned by on(). |
-| EventBusOptions | emitter: { mode, errorMode, freezeEvents, maxListeners }, registry: { allowDuplicateDefinitions, onDuplicateHandlerId }, requireRegistration, middleware, onWarning, onError. | maxListeners defaults to 100 per pattern; more prints a leak warning. |
+| EventBusOptions | emitter: { mode, errorMode, freezeEvents, maxListeners }, registry: { allowDuplicateDefinitions, onDuplicateHandlerId }, requireRegistration, middleware, onWarning, onError. | maxListeners defaults to 100 per pattern; more emits a leak warning (process warning or `onWarning`). |
 | PublishOptions | mode, errorMode, signal, metadata, middleware. | Second argument of publish / publishEvent / emit. |
 | EventPublishResult | See [Reading the result](#event-bus). |  |
 | EventMiddleware | (context, next) => Promise<unknown>. | context.event, context.signal, context.metadata, context.state. |
@@ -529,7 +529,7 @@ All extend `EventError` from `@zudojs/errors` and carry `eventType` and `eventId
   Two buses do not share handlers, so an event published on one never reaches handlers on the other. Create the bus once and pass it around, or register it in your [container](https://zudojs.oyinlola.site/docs/packages-container.md).
 - Adding handlers in a loop without removing them
 
-  Each `on()` call adds another handler. After 100 on the same pattern the bus prints a leak warning to `console.warn`. Keep the subscription and call `unsubscribe()` when the owner goes away.
+  Each `on()` call adds another handler. After 100 on the same pattern the bus emits a leak warning through `process.emitWarning` (type `ZudojsEventsWarning`), or passes it to `onWarning` if you set one. Keep the subscription and call `unsubscribe()` when the owner goes away.
 
 ## RELATED PACKAGES
 
@@ -540,17 +540,17 @@ All extend `EventError` from `@zudojs/errors` and carry `eventType` and `eventId
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/events` exports from its package root at v1.0.1 — **203** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/events` exports from its package root at v1.1.0 — **207** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 203 exports**
+**Show all 207 exports**
 
-Classes (25)
+Classes (28)
 
-`DuplicateEventDefinitionError` `DuplicateEventHandlerError` `EventBus` `EventBusDisposedError` `EventBusStoppedError` `EventDefinitionNotFoundError` `EventDeserializationError` `EventDispatchAbortedError` `EventEmitter` `EventEmitterDisposedError` `EventError` `EventHandlerError` `EventHandlerNotFoundError` `EventListenerLimitExceededError` `EventMiddlewareError` `EventPublishError` `EventRegistry` `EventRegistryDisposedError` `EventSerializationError` `EventSubscriptionClosedError` `EventSubscriptionGroup` `EventSubscriptionHandle` `EventTimeoutError` `EventTypeNotFoundError` `InvalidEventError`
+`DuplicateEventDefinitionError` `DuplicateEventHandlerError` `EventBus` `EventBusDisposedError` `EventBusStoppedError` `EventDefinitionNotFoundError` `EventDeserializationError` `EventDispatchAbortedError` `EventEmitter` `EventEmitterDisposedError` `EventError` `EventHandlerError` `EventHandlerNotFoundError` `EventListenerLimitExceededError` `EventMiddlewareError` `EventPublishError` `EventRegistry` `EventRegistryDisposedError` `EventSerializationError` `EventSubscriptionClosedError` `EventSubscriptionGroup` `EventSubscriptionHandle` `EventTimeoutError` `EventTypeNotFoundError` `FrozenEventDate` `FrozenEventMap` `FrozenEventSet` `InvalidEventError`
 
-Functions (107)
+Functions (108)
 
-`abortableEventMiddleware` `afterEvent` `aroundEvent` `assertEventType` `beforeEvent` `cloneEventPayload` `createAbortError` `createDerivedEvent` `createEvent` `createEventBus` `createEventEmitter` `createEventError` `createEventHandler` `createEventHandlerContext` `createEventHandlerError` `createEventHandlerId` `createEventId` `createEventMiddleware` `createEventMiddlewareContext` `createEventMiddlewareId` `createEventPayload` `createEventRegistry` `createEventSubscription` `createEventSubscriptionGroup` `createEventSubscriptionId` `createEventType` `createEventTypePattern` `createJsonEventPayload` `createObjectEventPayload` `createStartedEventBus` `deepFreeze` `defineEvent` `defineEventType` `defineEventTypes` `definePayloadFactory` `describeEvent` `describeEventPayload` `disableEventHandler` `disableEventMiddleware` `emitParallel` `emitSequential` `enableEventHandler` `enableEventMiddleware` `eventMatchesType` `executeEventHandler` `executeEventMiddleware` `executeEventMiddlewarePipeline` `executeRegisteredEventHandler` `filterEventsByType` `fireAndForgetHandler` `getAllDefinitions` `getAllHandlers` `getEventAction` `getEventNamespace` `getEventPayload` `getEventType` `getEventTypeSegments` `getHandlersForEvent` `getHandlersForType` `getMatchingEventHandlers` `handlerMatchesEvent` `isAbortError` `isChildEventType` `isEvent` `isEventEmitResult` `isEventError` `isEventHandler` `isEventMiddleware` `isEventSubscription` `isFunctionEventHandler` `isFunctionEventMiddleware` `isJsonEventPayload` `isObjectEventHandler` `isObjectEventMiddleware` `isObjectEventPayload` `isPrimitiveEventPayload` `isRegisteredEventMiddleware` `isSameEventNamespace` `isValidEventType` `isValidEventTypePattern` `matchesEventType` `mergeEventPayloads` `normalizeEventType` `normalizeEventTypePattern` `normalizeRegistryEventType` `onceEventHandler` `prioritizedEventHandler` `registryClear` `registryDispose` `registryNotify` `registryRegister` `registryRegisterHandler` `registryUnregister` `registryUnregisterHandler` `setEventHandlerPriority` `sortEventHandlers` `sortEventMiddleware` `stateEventMiddleware` `staticPayload` `stripUndefinedValues` `timingEventMiddleware` `toEventError` `tryNormalizeEventType` `typedEventHandler` `validateEventMiddleware` `validateEventPayload` `withEventMetadata`
+`abortableEventMiddleware` `afterEvent` `aroundEvent` `assertEventType` `beforeEvent` `cloneEventPayload` `createAbortError` `createDerivedEvent` `createEvent` `createEventBus` `createEventEmitter` `createEventError` `createEventHandler` `createEventHandlerContext` `createEventHandlerError` `createEventHandlerId` `createEventId` `createEventMiddleware` `createEventMiddlewareContext` `createEventMiddlewareId` `createEventPayload` `createEventRegistry` `createEventSubscription` `createEventSubscriptionGroup` `createEventSubscriptionId` `createEventType` `createEventTypePattern` `createFrozenEventSnapshot` `createJsonEventPayload` `createObjectEventPayload` `createStartedEventBus` `deepFreeze` `defineEvent` `defineEventType` `defineEventTypes` `definePayloadFactory` `describeEvent` `describeEventPayload` `disableEventHandler` `disableEventMiddleware` `emitParallel` `emitSequential` `enableEventHandler` `enableEventMiddleware` `eventMatchesType` `executeEventHandler` `executeEventMiddleware` `executeEventMiddlewarePipeline` `executeRegisteredEventHandler` `filterEventsByType` `fireAndForgetHandler` `getAllDefinitions` `getAllHandlers` `getEventAction` `getEventNamespace` `getEventPayload` `getEventType` `getEventTypeSegments` `getHandlersForEvent` `getHandlersForType` `getMatchingEventHandlers` `handlerMatchesEvent` `isAbortError` `isChildEventType` `isEvent` `isEventEmitResult` `isEventError` `isEventHandler` `isEventMiddleware` `isEventSubscription` `isFunctionEventHandler` `isFunctionEventMiddleware` `isJsonEventPayload` `isObjectEventHandler` `isObjectEventMiddleware` `isObjectEventPayload` `isPrimitiveEventPayload` `isRegisteredEventMiddleware` `isSameEventNamespace` `isValidEventType` `isValidEventTypePattern` `matchesEventType` `mergeEventPayloads` `normalizeEventType` `normalizeEventTypePattern` `normalizeRegistryEventType` `onceEventHandler` `prioritizedEventHandler` `registryClear` `registryDispose` `registryNotify` `registryRegister` `registryRegisterHandler` `registryUnregister` `registryUnregisterHandler` `setEventHandlerPriority` `sortEventHandlers` `sortEventMiddleware` `stateEventMiddleware` `staticPayload` `stripUndefinedValues` `timingEventMiddleware` `toEventError` `tryNormalizeEventType` `typedEventHandler` `validateEventMiddleware` `validateEventPayload` `withEventMetadata`
 
 Interfaces (36)
 

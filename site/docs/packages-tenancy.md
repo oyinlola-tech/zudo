@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/tenancy — multi-tenant contex
 source: https://zudojs.oyinlola.site/docs/packages-tenancy
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/tenancy
 
@@ -43,7 +43,7 @@ Install the package. It pulls in `@zudojs/errors` and `@zudojs/constants` on its
 $ npm install @zudojs/tenancy
 ```
 
-Add `@zudojs/http` only if you want the HTTP middleware. It is an optional peer dependency; everything else in this package works without it.
+The HTTP middleware plugs into the `@zudojs/http` pipeline without depending on it: it reads headers through `request.getHeader()`, or from a plain object or `Map`. Install `@zudojs/http` if you want its server.
 
 ```bash
 $ npm install @zudojs/http
@@ -254,7 +254,7 @@ try {
 
 ### Conflicts
 
-Two sources naming *different* tenants on one request is the signature of an attempted cross-tenant call. Set `detectConflicts: true` to run every resolver and compare, and the chain throws `TenantResolutionConflictError`. That throwing is the default; pass `throwOnConflict: false` only if you have a good reason to let the highest-priority source win silently.
+Two sources naming *different* tenants on one request is the signature of an attempted cross-tenant call. Set `detectConflicts: true` to run every resolver and compare, and the chain throws `TenantResolutionConflictError`. Conflict detection is off by default — a chain stops at the first resolver that finds a tenant. With it on, throwing is the default; pass `throwOnConflict: false` only if you have a good reason to let the highest-priority source win silently.
 
 ```ts
 // Same `resolvers` array as above.
@@ -393,7 +393,7 @@ console.log(repository.domainsOf(createTenantId("acme")));
 // [ "acme.io", "www.acme.io" ]
 ```
 
-The second argument to `add` registers custom domains. Calling `add` again for the same tenant rebuilds its slug and domain indexes, so an old slug stops resolving instead of quietly serving the record from before the update.
+The second argument to `add` registers custom domains. Calling `add` again for the same tenant rebuilds its slug and domain indexes, so an old slug stops resolving instead of quietly serving the record from before the update. The resolve middleware looks a subdomain or path value up by id, then by slug (`slugLookup`, default `true`).
 
 ### Tenant manager
 
@@ -437,9 +437,9 @@ await manager.invalidate(createTenantId("acme"));
 On every request it does five things in order, and stops at the first that fails:
 
 - 1. Builds a resolver accessor from the request and runs your resolver. No resolution → `404`.
-- 2. Checks the resolution's trust against `minimumTrust`. Too low → `403`.
+- 2. Checks the resolution's trust against `minimumTrust` (default `"verified"`). Too low → `403`.
 - 3. Loads the tenant from the repository. Not found → `404`, with the same body as step 1, so the route cannot be used to probe which tenants exist.
-- 4. Refuses a non-active tenant with `403`, unless `allowInactive` is set.
+- 4. Refuses a non-active tenant with the same `404` as an unknown one, unless `allowInactive` is set.
 - 5. Puts the tenant in request state and runs the rest of the request inside the tenant context.
 
 ```ts
@@ -484,7 +484,7 @@ export const resolveTenant = createResolveTenantMiddleware({
 export const requireTenant = createRequireTenantMiddleware();
 ```
 
-Register `resolveTenant` before `requireTenant`, and both before your routes. With `minimumTrust: "verified"`, a tenant named only by an untrusted header or a URL path is refused.
+Register `resolveTenant` before `requireTenant`, and both before your routes. By default (`minimumTrust: "verified"`) a tenant named only by an untrusted header or a URL path is refused; pass `minimumTrust: "untrusted"` to opt down.
 
 ### Where JWT claims come from
 
@@ -556,7 +556,7 @@ assertTenantOwnership(order, createTenantId("acme"));
 | `createTenantId(value)` | Normalizes and validates a string into a `TenantId`. | Throws `InvalidTenantIdError`. |
 | `tryCreateTenantId(value)` | Same, but returns `undefined` instead of throwing. | What the resolvers use. |
 | `isValidTenantId(value)` | Type guard for a well-formed ID. | Narrows to `TenantId`. |
-| `MAX_TENANT_ID_LENGTH` | Longest accepted ID. | `64`. |
+| `MAX_TENANT_ID_LENGTH` / `TENANT_ID_PATTERN` | Longest accepted ID / allowed characters. | `64` / `[a-z0-9][a-z0-9_-]*`; both re-exported from `@zudojs/constants`, whose `createTenantId` applies the same rule. |
 
 ### Resolution
 
@@ -566,6 +566,7 @@ assertTenantOwnership(order, createTenantId("acme"));
 | `createSubdomainResolver({ baseDomain?, reserved?, allowMultiLabel?, priority? })` | Reads the tenant from the host. | Priority 70, trust `verified`. `www` reserved. |
 | `createHeaderResolver({ headerName?, trust?, priority? })` | Reads the tenant from a header. | `x-tenant-id`, priority 80, trust `untrusted`. |
 | `createPathResolver({ prefix?, priority? })` | Reads the tenant from the first path segment after `prefix`; paths outside the prefix resolve to nothing. | Priority 60, trust `untrusted`. |
+| `createDomainResolver({ registry?, repository?, priority? })` | Maps the host to a tenant through a registered custom domain. | Priority 75, trust `verified`. |
 | `createResolverChain(resolvers, options?)` | Runs resolvers in priority order. | Returns `resolve`, `resolveTenant`, `asResolver`. |
 
 ### Context
@@ -602,7 +603,7 @@ assertTenantOwnership(order, createTenantId("acme"));
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| `createResolveTenantMiddleware(options)` | Resolves, checks and enters the tenant context. | Options: `resolver`, `repository`, `storage`, `minimumTrust`, `allowInactive`, `getClaims`, `notFoundResponse`, `optional` (lets a request that resolves to no tenant continue without one; default `false` → 404). |
+| `createResolveTenantMiddleware(options)` | Resolves, checks and enters the tenant context. | Options: `resolver`, `repository`, `storage`, `minimumTrust` (default `"verified"`), `slugLookup` (default `true`), `allowInactive`, `getClaims`, `notFoundResponse`, `optional` (lets a request that resolves to no tenant continue without one; default `false` → 404). |
 | `createRequireTenantMiddleware({ requirement?, deniedResponse? })` | Enforces tenant presence. | `"required"` (default), `"optional"`, `"forbidden"`. |
 | `createTenantGuardMiddleware({ repository? })` | Re-checks that the tenant in state is active. | Runs after resolve. |
 | `createTenantPropagationMiddleware(storage)` | Re-enters the context from request state. | For later pipeline stages. |
@@ -641,7 +642,7 @@ All extend `TenantError`, which extends `AuthorizationError` from [@zudojs/error
 
 ## COMMON MISTAKES
 
-- **Trusting `x-tenant-id`.** Any client can send that header. If you accept it, a caller picks its own tenant. *Fix:* leave its trust at `untrusted` and set `minimumTrust: "verified"` on the resolve middleware, unless a proxy you control rewrites the header at the edge.
+- **Trusting `x-tenant-id`.** Any client can send that header. If you accept it, a caller picks its own tenant. *Fix:* leave its trust at `untrusted`; the resolve middleware's default `minimumTrust: "verified"` refuses it. Raise its trust only if a proxy you control rewrites the header at the edge.
 - **Swallowing a resolver's throw.** Wrapping `getClaims` in your own `try/catch` that returns `undefined` turns "this credential is forged" into "found nothing", and the chain falls through to a weaker source. *Fix:* let it throw.
 - **Using two context storages.** Middleware writes to one, your service reads the other, and `requireCurrentTenant()` throws on every request. *Fix:* create the storage once and pass the same instance everywhere.
 - **Reading the tenant after the callback ends.** Context only exists inside `run`. A promise started inside and awaited outside sees nothing. *Fix:* `await` the work inside the callback.
@@ -651,33 +652,33 @@ All extend `TenantError`, which extends `AuthorizationError` from [@zudojs/error
 ## RELATED PACKAGES
 
 - [@zudojs/cache](https://zudojs.oyinlola.site/docs/packages-cache.md) — pass the tenant as a cache `namespace` so one tenant's entries can never be read under another's key.
-- [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) — the server the tenancy middleware plugs into. Optional peer dependency.
+- [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) — the server the tenancy middleware plugs into. Not a dependency; the middleware plugs in structurally.
 - [@zudojs/auth](https://zudojs.oyinlola.site/docs/packages-auth.md) — verifies the token whose claims the JWT resolver reads.
 - [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) — the `AuthorizationError` base and the error codes these errors carry.
 - [@zudojs/permissions](https://zudojs.oyinlola.site/docs/packages-permissions.md) — decides what a user may do *within* the tenant that tenancy established.
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/tenancy` exports from its package root at v1.1.0 — **95** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/tenancy` exports from its package root at v1.2.0 — **101** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 95 exports**
+**Show all 101 exports**
 
 Classes (11)
 
 `InvalidTenantIdError` `TenantAccessDeniedError` `TenantAlreadyExistsError` `TenantContextMissingError` `TenantError` `TenantIsolationError` `TenantNotFoundError` `TenantResolutionConflictError` `TenantResolutionError` `TenantTrustLevelError` `TenantUnavailableError`
 
-Functions (37)
+Functions (39)
 
-`assertSameTenant` `assertTenantOwnership` `assertTenantUsable` `assertTrustLevel` `createBadRequest` `createContextManager` `createDomainRegistry` `createForbidden` `createHeaderResolver` `createHttpResolverContext` `createJsonErrorResponse` `createJwtResolver` `createMemoryTenantRepository` `createNotFound` `createPathResolver` `createRequireTenantMiddleware` `createResolverChain` `createResolveTenantMiddleware` `createSubdomainResolver` `createTenantCacheKey` `createTenantContextStorage` `createTenantGuardMiddleware` `createTenantId` `createTenantManager` `createTenantPropagationMiddleware` `createUnauthorized` `getDefaultStorage` `getDefaultTrust` `isTenantActive` `isValidTenantId` `meetsTrustLevel` `resetDefaultStorage` `sameTenant` `summarizeContext` `summarizeTenant` `tenantKey` `tryCreateTenantId`
+`assertSameTenant` `assertTenantOwnership` `assertTenantUsable` `assertTrustLevel` `createBadRequest` `createContextManager` `createDomainRegistry` `createDomainResolver` `createForbidden` `createHeaderResolver` `createHttpResolverContext` `createJsonErrorResponse` `createJwtResolver` `createMemoryTenantRepository` `createNotFound` `createPathResolver` `createRequireTenantMiddleware` `createResolverChain` `createResolveTenantMiddleware` `createSubdomainResolver` `createTenantCacheKey` `createTenantContextStorage` `createTenantGuardMiddleware` `createTenantId` `createTenantManager` `createTenantPropagationMiddleware` `createUnauthorized` `getDefaultStorage` `getDefaultTrust` `isTenantActive` `isValidTenantId` `meetsTrustLevel` `readRequestHeader` `resetDefaultStorage` `sameTenant` `summarizeContext` `summarizeTenant` `tenantKey` `tryCreateTenantId`
 
-Interfaces (35)
+Interfaces (37)
 
-`ContextManagerOptions` `HeaderContext` `HeaderResolverOptions` `HttpMiddlewareContext` `HttpMiddlewareState` `HttpRequestContext` `HttpResolverContext` `HttpResponseContext` `JwtContext` `JwtResolverOptions` `MemoryTenantRepository` `PathContext` `PathResolverOptions` `RequireTenantMiddlewareOptions` `ResolverChainOptions` `ResolveTenantMiddlewareOptions` `SubdomainContext` `SubdomainResolverOptions` `SystemContext` `Tenant` `TenantCache` `TenantClaims` `TenantContext` `TenantContextStorage` `TenantDomain` `TenantExecutionContext` `TenantGuardMiddlewareOptions` `TenantManagerOptions` `TenantRepository` `TenantResolution` `TenantResolutionResult` `TenantResolver` `TenantResolverChain` `TenantResource` `TenantWithDomains`
+`ContextManagerOptions` `DomainContext` `DomainResolverOptions` `HeaderContext` `HeaderResolverOptions` `HttpMiddlewareContext` `HttpMiddlewareState` `HttpRequestContext` `HttpResolverContext` `HttpResponseContext` `JwtContext` `JwtResolverOptions` `MemoryTenantRepository` `PathContext` `PathResolverOptions` `RequireTenantMiddlewareOptions` `ResolverChainOptions` `ResolveTenantMiddlewareOptions` `SubdomainContext` `SubdomainResolverOptions` `SystemContext` `Tenant` `TenantCache` `TenantClaims` `TenantContext` `TenantContextStorage` `TenantDomain` `TenantExecutionContext` `TenantGuardMiddlewareOptions` `TenantManagerOptions` `TenantRepository` `TenantResolution` `TenantResolutionResult` `TenantResolver` `TenantResolverChain` `TenantResource` `TenantWithDomains`
 
-Type aliases (7)
+Type aliases (8)
 
-`ExecutionTenantContext` `HttpMiddleware` `TenantId` `TenantRequirement` `TenantResolutionSource` `TenantStatus` `TenantTrustLevel`
+`ExecutionTenantContext` `HttpMiddleware` `HttpRequestBag` `TenantId` `TenantRequirement` `TenantResolutionSource` `TenantStatus` `TenantTrustLevel`
 
-Constants (5)
+Constants (6)
 
-`DEFAULT_TENANT_CACHE_TTL_MS` `MAX_TENANT_ID_LENGTH` `TENANT_CLAIMS_STATE_KEY` `TENANT_CONTEXT_STATE_KEY` `TENANT_STATE_KEY`
+`DEFAULT_TENANT_CACHE_TTL_MS` `MAX_TENANT_ID_LENGTH` `TENANT_CLAIMS_STATE_KEY` `TENANT_CONTEXT_STATE_KEY` `TENANT_ID_PATTERN` `TENANT_STATE_KEY`

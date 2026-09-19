@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/testing — mock functions, spi
 source: https://zudojs.oyinlola.site/docs/packages-testing
 ---
 
-v1.1.0
+v1.1.1
 
 # @zudojs/testing
 
@@ -277,7 +277,7 @@ await expect(cleanup.dispose()).rejects.toThrow(/cleanup functions failed/);
 
 An assertion here is a plain function that throws an `Error` when the value is wrong and returns quietly when it is right. Your test runner turns that thrown error into a failing test, so these work alongside `expect()` rather than replacing it.
 
-They compare structurally. `deepEqual(a, b)` answers `true` or `false`; `findDifference(actual, expected)` returns `undefined` when they match, or a `{ path, reason }` object pointing at the first place they differ.
+They compare structurally. `deepEqual(a, b)` answers `true` or `false`; `findDifference(actual, expected)` returns `undefined` when they match, or a `{ path, reason }` object pointing at the first place they differ. Objects must share a prototype (`{}` and `Object.create(null)` count as the same); Errors compare name, message and cause; boxed primitives compare their value; typed arrays must share a constructor; distinct Promises/WeakMaps/WeakSets are never equal.
 
 ```ts
 import { it, expect } from "vitest";
@@ -624,7 +624,7 @@ All of these are exported as types only. Mocking: `MockFn`, `SpyFn`, `SpyMethod`
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/testing` exports from its package root at v1.1.0 — **107** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/testing` exports from its package root at v1.1.1 — **107** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 107 exports**
 

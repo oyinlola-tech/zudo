@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/plugins — the controlled exte
 source: https://zudojs.oyinlola.site/docs/packages-plugins
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/plugins
 
@@ -280,13 +280,15 @@ try {
 
 ## MANAGER OPTIONS
 
-`new PluginManager(options)` accepts four optional settings. All of them are about failure: how long to wait, who hears about errors, and what plugins are allowed to ask for.
+`new PluginManager(options)` accepts these optional settings. All of them are about failure: how long to wait, who hears about errors, and what plugins are allowed to ask for.
 
 | Option | What it does | Default |
 | --- | --- | --- |
-| hookTimeout | Milliseconds a single hook may run. A hook that overruns throws `PluginTimeoutError`. | `0` (no limit) |
-| onError(error, pluginName) | Called for each failure during `stop()`. Shutdown continues past the failing plugin. | logs to `console.error` |
+| hookTimeout | Milliseconds a single hook may run. A hook that overruns throws `PluginTimeoutError`. A plugin whose hook timed out is disposed only after waiting up to another `hookTimeout` for that hook; if a timed-out `start()` succeeds, `stop()` runs first. | `0` (no limit) |
+| onError(error, pluginName) | Called for each failure during `stop()`. Shutdown continues past the failing plugin. | logs through the `logger` option (or the context logger); otherwise a `ZudoPluginWarning` process warning |
+| logger | Logger for teardown failures when `onError` is omitted. | context logger |
 | checkVersions | Enforce `version` ranges on dependencies at `start()`. | `true` |
+| events | Event sink (`on`/`off`/`emit`) for `plugin:registered`. Registration happens before any plugin context exists, so lifecycle events sent through `context.events` cannot cover it. | unset (no registration event) |
 | allowedCapabilities | List of strings a plugin's `metadata.capabilities` may contain. Anything else is rejected at `register()`. | unset (allow all) |
 
 This manager gives every hook two seconds and collects shutdown errors instead of printing them.
@@ -348,7 +350,7 @@ await manager.start(createPluginContext({ name: "my-app" }, { events }));
 
 Event names live on `PLUGIN_EVENTS`: `INSTALLING`, `INSTALLED`, `INITIALIZING`, `INITIALIZED`, `STARTING`, `STARTED`, `STOPPING`, `STOPPED`, `DISPOSING`, `DISPOSED` and `FAILED`. Each event payload is a `PluginLifecycleEvent` with `plugin`, `state`, `previousState`, `timestamp` and, on failure, `error`.
 
-> **Note:** `PLUGIN_EVENTS.REGISTERED` exists as a constant, but `register()` does not emit it. Events start with `INSTALLING`. A listener that throws is logged and does not interrupt the lifecycle.
+> **Note:** `register()` emits `PLUGIN_EVENTS.REGISTERED` only through the manager's `events` option, because no plugin context exists yet; events sent through `context.events` start with `INSTALLING`. A listener that throws is logged and does not interrupt the lifecycle.
 
 ## API REFERENCE
 
@@ -433,7 +435,7 @@ All error classes come from `@zudojs/errors` and are re-exported here. Every one
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/plugins` exports from its package root at v1.1.0 — **60** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/plugins` exports from its package root at v1.2.0 — **60** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 60 exports**
 

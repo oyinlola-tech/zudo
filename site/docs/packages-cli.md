@@ -1,10 +1,10 @@
 ---
 title: "@zudojs/cli — Command-Line Interface Framework"
-description: "Complete reference for zudojs-cli v1.1.1. Create, scaffold, generate, and manage Zudo projects with interactive prompts, 11 frontend adapters, 4 package managers, and 13 schematics."
+description: "Complete reference for zudojs-cli v1.2.0. Create, scaffold, generate, and manage Zudo projects with interactive prompts, 11 frontend adapters, 4 package managers, and 13 schematics."
 source: https://zudojs.oyinlola.site/docs/packages-cli
 ---
 
-v1.1.1
+v1.2.0
 
 # @zudojs/cli
 
@@ -84,7 +84,7 @@ The CLI ships with 7 built-in commands. `create` prompts interactively in a term
 | ADD | — | Add a feature package to the project |
 | DOCTOR | — | Run project diagnostics |
 | INFO | — | Show project info and dependencies |
-| DEV | d | Start the development servers (backend, frontend, or both) through the project&rsquo;s package manager (`pnpm run dev`, `npm run dev`, …); `--backend-only`, `--frontend-only`, `--port` |
+| DEV | d | Start the development servers (backend, frontend, or both) through the project’s package manager (`pnpm run dev`, `npm run dev`, …); `--backend-only`, `--frontend-only`, `--port` |
 | BUILD | b | Run the `build` script with the detected package manager; exits non-zero on failure |
 
 ## CREATE
@@ -134,7 +134,7 @@ zudojs create my-project \
 | --package-manager | -p | pnpm | Package manager |
 | --frontend | -f | none | Frontend framework |
 | --frontend-architecture | -F | zudojs-standard | Frontend architecture |
-| --language | -l | typescript | Language |
+| --language | -l | typescript | Language (frontend only; backend projects are TypeScript, and `javascript` is rejected for `--type backend`) |
 | --services | — | — | Comma-separated service names (microservice architecture only) |
 | --no-install | — | false | Skip dependency installation |
 | --no-git | — | false | Skip git initialization |
@@ -158,7 +158,12 @@ zudojs generate controller ProductController
 
 # Dry run (preview files without writing)
 zudojs generate service OrderService --dry-run
+
+# Overwrite files the schematic would change
+zudojs generate service OrderService --force
 ```
+
+Without `--force`, `generate` refuses to overwrite existing files and lists the ones it would change.
 
 ### Available Schematics
 
@@ -251,14 +256,14 @@ zudojs doctor
 
 ## INFO
 
-Display the CLI version, the project&rsquo;s recorded type, architecture and package manager, and the Zudo dependencies of each backend app. Also asks npm whether a newer `zudojs-cli` exists (set `ZUDOJS_NO_UPDATE_CHECK=1` or `CI` to skip that).
+Display the CLI version, the project’s recorded type, architecture and package manager, and the Zudo dependencies of each backend app. Also asks npm whether a newer `zudojs-cli` exists (set `ZUDOJS_NO_UPDATE_CHECK=1` or `CI` to skip that).
 
 ```ts
 zudojs info
 
 // Output:
 // Zudojs CLI
-//   Version: 1.1.0
+//   Version: 1.2.0
 //   Node.js: v24.19.0
 //
 // Project
@@ -331,7 +336,7 @@ Code generators for different project aspects.
 | FrontendGenerator | Generate frontend with framework adapter |
 | FullstackComposer | Compose backend + frontend workspace |
 | IntegrationGenerator | Generate API integration configs |
-| InfrastructureGenerator | Docker, CI/CD, infrastructure files |
+| InfrastructureGenerator | Dockerfiles, docker-compose.yml and .dockerignore |
 
 ## APPLICATION API
 
@@ -432,7 +437,7 @@ interface ProjectConfiguration {
   backend?: {
     architecture: "monolith" | "modular-monolith" | "microservice";
     api?: "rest" | "graphql" | "rpc";
-    database?: "postgresql" | "mysql" | "sqlite" | "mongodb";
+    database?: "postgresql" | "mysql" | "sqlite";
   };
   frontend?: {
     framework: FrontendFramework;
@@ -653,7 +658,7 @@ ReactNativeAdapter
 
 ## COMPLETE EXPORT INDEX
 
-Every name `zudojs-cli` exports from its package root at v1.1.1 — **176** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `zudojs-cli` exports from its package root at v1.2.0 — **176** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 176 exports**
 

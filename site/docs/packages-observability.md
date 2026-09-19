@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/observability — structured lo
 source: https://zudojs.oyinlola.site/docs/packages-observability
 ---
 
-v1.0.1
+v1.1.0
 
 # @zudojs/observability
 
@@ -41,7 +41,7 @@ SKIP IT WHEN
 $ npm install @zudojs/observability
 ```
 
-The only runtime dependency is `@zudojs/errors` at `1.0.0`, which npm installs for you. Node 24 or newer is required — context propagation uses Node's built-in `AsyncLocalStorage`, so this package does not run in a browser.
+The only runtime dependency is `@zudojs/errors` at `1.1.0`, which npm installs for you. Node 24 or newer is required — context propagation uses Node's built-in `AsyncLocalStorage`, so this package does not run in a browser.
 
 > These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest `@zudojs` release.
 
@@ -195,7 +195,7 @@ Percentiles are estimated from bucket boundaries, not from the raw values, so `s
 
 *Cardinality* means how many distinct series a metric produces. A label holding a user ID, an order ID or a raw URL path produces one new series per value, forever. That is a memory leak in your process and a bill in your monitoring vendor.
 
-The registry caps itself at **10,000 series** by default. Past the cap it stops registering new ones and calls `onCardinalityLimit` with the offending metric name. Lower the cap and watch that callback.
+The registry caps itself at **10,000 series** by default. Past the cap it stops registering new ones and calls `onCardinalityLimit` with the offending metric name, once per rejected series; the facade's `onError` hears about each metric name once. Lower the cap and watch that callback.
 
 ```ts
 import { createObservability } from "@zudojs/observability";
@@ -233,7 +233,7 @@ await obs.shutdown();
 
 A *trace* is the story of one request. A *span* is one chapter: a named piece of work with a start, an end, and attached facts. Spans nest — the span for "handle request" is the parent of the span for "query database".
 
-Every span carries a `context` with a `traceId` (shared by every span in the request) and a `spanId` (unique to it). Passing a parent's context into `startSpan` is what links the two.
+Every span carries a `context` with a `traceId` (shared by every span in the request) and a `spanId` (unique to it). Passing a parent's context into `startSpan` links the two; with no parent, `startSpan` joins the active propagation context, and `withSpan(tracer, name, fn)` makes the span itself the active context.
 
 This traces a request with one child step, records an error on the child, and exports both spans.
 
@@ -559,7 +559,7 @@ Everything below is exported from `@zudojs/observability`. Most applications onl
 | `metricKey(type, name, labels?)` | The cache key for one series. | Useful when mirroring the registry's identity rules. |
 | `createTracer(options?)` | A tracer on its own. | Takes `TracerOptions`, including `redactAttribute`. |
 | `createSpan(name, options?)` | A span without a tracer. | No sampling, no processors. |
-| `createSpanContext`, `createChildSpanContext`, `isSampledContext` | Build and inspect span contexts. | For wiring trace headers by hand. |
+| `createSpanContext`, `createChildSpanContext`, `isSampledContext` | Build and inspect span contexts; IDs are validated and an invalid parent starts a fresh trace (`isValidSpanContext`). | For wiring trace headers by hand. |
 | `createAlwaysOnSampler`, `createAlwaysOffSampler`, `createProbabilitySampler(p)`, `createParentBasedSampler(rootOrOptions?)` | The four built-in samplers. | `p` is a fraction in `0`–`1`. |
 | `isSampled(result)`, `isRecording(result)` | Read a `SamplingResult`. | For custom samplers. |
 | `createPropagationContext`, `derivePropagationContext`, `createPropagationManager` | Build contexts and the manager that stores them. | The facade exposes a manager as `obs.propagation`. |
@@ -568,7 +568,7 @@ Everything below is exported from `@zudojs/observability`. Most applications onl
 | `createBatchSpanProcessor`, `createSimpleSpanProcessor`, `createBatchLogProcessor` | Buffer or forward telemetry to an exporter. | Batch options: `batchSize`, `flushIntervalMs`, `maxQueueSize`, `onError`, `onDrop`. |
 | `createRedactor(config?)`, `createStructureRedactor(config?)` | Redact one field, or walk a whole structure. | Used internally when `redaction` is set. |
 | `redactObject(object, config?)`, `redactValue(value, config?)`, `isSensitiveField(key, config?)` | One-shot redaction helpers. | Handy in tests and in your own sinks. |
-| `generateTraceId()`, `generateSpanId()`, `isValidTraceId`, `isValidSpanId` | W3C-shaped IDs: 32 and 16 hex characters. | For parsing inbound trace headers. |
+| `generateTraceId()`, `generateSpanId()`, `isValidTraceId`, `isValidSpanId` | W3C-shaped IDs: 32 and 16 hex characters. | Applied by every context factory: an invalid inbound ID starts a fresh trace. Use `parseTraceparent` / `formatTraceparent` for W3C headers. |
 | `logLevelToName`, `logLevelFromName`, `parseLogLevel`, `shouldLog`, `getLogLevelNames` | Convert between levels and names. | `parseLogLevel` returns `undefined` on junk — good for env vars. |
 | `createLogRecord`, `createErrorLogRecord`, `serializeError` | Build records and serialise thrown values. | For custom transports. |
 | `safeStringify(value, pretty?)` | `JSON.stringify` that cannot throw. | Handles cycles, BigInt, functions, symbols, errors. |
@@ -612,7 +612,7 @@ Everything below is exported from `@zudojs/observability`. Most applications onl
 
 | Name | Thrown when | Notes |
 | --- | --- | --- |
-| `ObservabilityError` | Base class for everything below. | Test with `isObservabilityError(value)`. |
+| `ObservabilityError` | Base class for everything below (defined in `@zudojs/errors` and re-exported). | Test with `isObservabilityError(value)`. |
 | `ObservabilityConfigError` | A name is reused as another metric type, or a sampler probability is out of range. | A programming mistake — fix the call, do not catch it. |
 | `MetricValueError` | A metric receives a negative, `NaN` or infinite value, or invalid histogram boundaries. | Carries the metric name and the offending value. |
 | `ExporterError` | An exporter fails. | Surfaces through `onError` rather than at your call site. |
@@ -647,17 +647,17 @@ Everything below is exported from `@zudojs/observability`. Most applications onl
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/observability` exports from its package root at v1.0.1 — **135** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/observability` exports from its package root at v1.1.0 — **142** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 135 exports**
+**Show all 142 exports**
 
 Classes (25)
 
 `AlwaysOffSampler` `AlwaysOnSampler` `AsyncPropagationManager` `BatchLogProcessor` `BatchSpanProcessor` `ConsoleLogExporter` `ConsoleMetricExporter` `ConsoleSpanExporter` `DefaultCounter` `DefaultGauge` `DefaultHistogram` `DefaultMetricsRegistry` `DefaultObservability` `DefaultSpan` `DefaultTracer` `ExporterError` `MetricValueError` `NoopObservability` `ObservabilityConfigError` `ObservabilityError` `ParentBasedSampler` `PeriodicMetricReader` `ProbabilitySampler` `SimpleSpanProcessor` `StructuredLogger`
 
-Functions (50)
+Functions (56)
 
-`createAlwaysOffSampler` `createAlwaysOnSampler` `createBatchLogProcessor` `createBatchSpanProcessor` `createChildSpanContext` `createConsoleLogExporter` `createConsoleMetricExporter` `createConsoleSpanExporter` `createCounter` `createErrorLogRecord` `createGauge` `createHistogram` `createLogRecord` `createMetricsRegistry` `createNoopObservability` `createObservability` `createParentBasedSampler` `createPeriodicMetricReader` `createProbabilitySampler` `createPropagationContext` `createPropagationManager` `createRedactor` `createSimpleSpanProcessor` `createSpan` `createSpanContext` `createStructuredLogger` `createStructureRedactor` `createTracer` `derivePropagationContext` `generateSpanId` `generateTraceId` `getCurrentContext` `getLogLevelNames` `isObservabilityError` `isRecording` `isSampled` `isSampledContext` `isSensitiveField` `isValidSpanId` `isValidTraceId` `logLevelFromName` `logLevelToName` `metricKey` `parseLogLevel` `redactObject` `redactValue` `requireCurrentContext` `safeStringify` `serializeError` `shouldLog`
+`createAlwaysOffSampler` `createAlwaysOnSampler` `createBatchLogProcessor` `createBatchSpanProcessor` `createChildSpanContext` `createConsoleLogExporter` `createConsoleMetricExporter` `createConsoleSpanExporter` `createCounter` `createErrorLogRecord` `createGauge` `createHistogram` `createLogRecord` `createMetricsRegistry` `createNoopObservability` `createObservability` `createParentBasedSampler` `createPeriodicMetricReader` `createProbabilitySampler` `createPropagationContext` `createPropagationManager` `createRedactor` `createSimpleSpanProcessor` `createSpan` `createSpanContext` `createStructuredLogger` `createStructureRedactor` `createTracer` `derivePropagationContext` `formatTraceparent` `fromLoggerLevel` `generateSpanId` `generateTraceId` `getCurrentContext` `getLogLevelNames` `isObservabilityError` `isRecording` `isSampled` `isSampledContext` `isSensitiveField` `isValidSpanContext` `isValidSpanId` `isValidTraceId` `logLevelFromName` `logLevelToName` `metricKey` `parseLogLevel` `parseTraceparent` `redactObject` `redactValue` `requireCurrentContext` `safeStringify` `serializeError` `shouldLog` `toLoggerLevel` `withSpan`
 
 Interfaces (38)
 
@@ -667,9 +667,9 @@ Type aliases (2)
 
 `LogLevelName` `RedactionMatchMode`
 
-Constants (17)
+Constants (18)
 
-`CIRCULAR_MARKER` `DEFAULT_BUCKET_BOUNDARIES` `DEFAULT_SENSITIVE_FIELDS` `INVALID_PROPAGATION_CONTEXT` `MAX_DEPTH_MARKER` `noopCounter` `noopGauge` `noopHistogram` `noopLogExporter` `noopLogger` `noopMetricExporter` `noopMetricsRegistry` `noopPropagationManager` `noopSpan` `noopSpanExporter` `noopTracer` `TraceFlags`
+`CIRCULAR_MARKER` `DEFAULT_BUCKET_BOUNDARIES` `DEFAULT_SENSITIVE_FIELDS` `INVALID_PROPAGATION_CONTEXT` `MAX_DEPTH_MARKER` `noopCounter` `noopGauge` `noopHistogram` `noopLogExporter` `noopLogger` `noopMetricExporter` `noopMetricsRegistry` `noopPropagationManager` `noopSpan` `noopSpanExporter` `noopTracer` `TraceFlags` `TRACEPARENT_HEADER`
 
 Enums (3)
 

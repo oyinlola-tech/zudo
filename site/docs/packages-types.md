@@ -4,7 +4,7 @@ description: "Documentation for @zudojs/types — shared type guards (isPlainObj
 source: https://zudojs.oyinlola.site/docs/packages-types
 ---
 
-v1.0.0
+v1.1.0
 
 # @zudojs/types
 
@@ -372,8 +372,8 @@ What you should see (line 1 changes every run, the rest never do):
 ```ts
 session_1757376000000_9f1c8b0e-4d2a-4c1b-9a77-6b3f0c2e51da
 1700000005000
-vOnwZynm
-vOnwZynm
+kesVo50h
+kesVo50h
 ```
 
 `FixedClock` also has `set(time)` if you want to jump to an exact millisecond instead of advancing.
@@ -433,7 +433,7 @@ console.log(nodeRandom.string(8).length);
 
 > **Danger:** only call `defineSecureRandom` for a generator backed by `node:crypto`, Web Crypto or a hardware source. Wrapping `Math.random()` in it compiles perfectly and quietly makes every token it produces predictable.
 
-> **In plain words:** `systemRandom.int(max)` draws uniformly for every bound, not just powers of two — it re-draws rather than taking a remainder, so no value comes up more often than another. It throws a `RangeError` if `max` is not a positive integer.
+> **In plain words:** `systemRandom.int(max)` draws uniformly for every bound, not just powers of two — it re-draws rather than taking a remainder, so no value comes up more often than another. It throws a `RangeError` unless `max` is an integer from 1 to `Number.MAX_SAFE_INTEGER` (`MAX_RANDOM_INT_BOUND`); bounds above 232 draw 53 bits.
 
 ## API REFERENCE
 
@@ -451,7 +451,7 @@ Everything below is exported from `@zudojs/types`.
 | `isInteger(value)` | True for a whole number | Negatives and `0` pass |
 | `isDate(value)` | True for a valid `Date` instance | `new Date("nope")` is false |
 | `isUrl(value)` | True for a parseable `http:`/`https:` URL string | Other protocols are false |
-| `isEmail(value)` | True for an email address string | Same acceptance set as the `email` constraint in @zudojs/validation |
+| `isEmail(value)` | True for an email address string | Same acceptance set as `ValidationPattern.EMAIL` in @zudojs/constants (max 254 chars). @zudojs/validation's `email` constraint uses the same pattern and bound. |
 | `isUuid(value)` | True for a UUID of versions 1–8 | Nil and max UUIDs accepted |
 | `isUuidV4(value)` | True for a v4 UUID only | Use when the version matters |
 | `isIsoDateString(value)` | True for an ISO 8601 date, with or without a time | Validates the calendar date; accepts `+02:00` offsets |
@@ -466,7 +466,7 @@ Everything below is exported from `@zudojs/types`.
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| `safeJsonParse<T>(json, fallback)` | Parses JSON, returning `fallback` on failure | `T` is a cast, not a check. Prototype-bearing keys are dropped |
+| `safeJsonParse<T>(json, fallback)` | Parses JSON, returning `fallback` on failure | `T` is a cast, not a check. `__proto__`, `constructor` and `prototype` keys are dropped at every depth, by design |
 | `toString(value, fallback?)` | Converts to a string | Always returns a string. Default fallback `""`; functions use it |
 | `toNumber(value, fallback?)` | Converts to a finite number | Default fallback `NaN`. Refuses `""`, `"0x10"`, `"1e999"`, `Infinity` |
 | `toBoolean(value, fallback?)` | Converts to a boolean | Default fallback `false`. `NaN` uses the fallback |
@@ -474,9 +474,9 @@ Everything below is exported from `@zudojs/types`.
 | `mapToObject(map)` | Turns a `Map` into a plain object | Result has a null prototype; use `Object.hasOwn` |
 | `objectToMap(obj)` | Turns an object into a `Map` | Own enumerable keys only |
 | `snakeToCamel(str)` | `user_name` → `userName` |  |
-| `camelToSnake(str)` | `createdAt` → `created_at` | Handles leading capitals and acronyms |
+| `camelToSnake(str)` | `createdAt` → `created_at` | Handles leading capitals and acronyms; Unicode-aware, keeps punctuation |
 | `kebabToCamel(str)` | `get-user-data` → `getUserData` |  |
-| `camelToKebab(str)` | `primaryButton` → `primary-button` | Handles leading capitals and acronyms |
+| `camelToKebab(str)` | `primaryButton` → `primary-button` | Handles leading capitals and acronyms; Unicode-aware, keeps punctuation |
 
 ### Runtime values and classes
 
@@ -487,7 +487,7 @@ Everything below is exported from `@zudojs/types`.
 | `systemRandom` | The secure `Random` implementation | Uses Web Crypto, falling back to `node:crypto` |
 | `defineSecureRandom(impl)` | Brands your own implementation as a `Random` | The only way to produce a `Random` |
 | `FixedClock` | Test `Clock`: `new FixedClock(ms)`, `now()`, `set(ms)`, `advance(deltaMs)` | Defaults to `0` |
-| `SeededRandom` | Test `PseudoRandom`: `new SeededRandom(seed)` | Defaults to seed `1`. Not assignable to `Random` |
+| `SeededRandom` | Test `PseudoRandom`: `new SeededRandom(seed)` | Defaults to seed `1`. Backed by mulberry32 (sequences differ from earlier releases). Not assignable to `Random` |
 
 ### Interfaces
 
@@ -539,9 +539,9 @@ Everything below is exported from `@zudojs/types`.
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/types` exports from its package root at v1.0.0 — **60** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/types` exports from its package root at v1.1.0 — **61** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 60 exports**
+**Show all 61 exports**
 
 Classes (2)
 
@@ -559,6 +559,6 @@ Type aliases (20)
 
 `AsyncReturnType` `DeepPartial` `DeepReadonly` `DeepRequired` `Maybe` `MaybePromise` `NestedKeyOf` `NestedValueOf` `Nullable` `NumberKeysOf` `OmitByValue` `OptionalKeyNames` `PartialExcept` `PartialKeys` `PickByValue` `Prettify` `RequiredExcept` `RequireKeys` `StringKeysOf` `Undefinable`
 
-Constants (4)
+Constants (5)
 
-`MAX_EMAIL_LENGTH` `systemClock` `systemClockSeconds` `systemRandom`
+`MAX_EMAIL_LENGTH` `MAX_RANDOM_INT_BOUND` `systemClock` `systemClockSeconds` `systemRandom`

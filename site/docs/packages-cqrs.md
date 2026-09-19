@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/cqrs — CQRS primitives for se
 source: https://zudojs.oyinlola.site/docs/packages-cqrs
 ---
 
-v1.0.1
+v1.1.0
 
 # @zudojs/cqrs
 
@@ -251,7 +251,7 @@ Each factory returns a `CqrsMiddleware`. Those taking `options` accept `{ name?,
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| `timingMiddleware(options?)` | Measures downstream duration. | `onTiming` callback, `lastTiming`, `count`. |
+| `timingMiddleware(options?)` | Measures downstream duration. | `onTiming` observer (isolated: its errors never change the outcome; see `onTimingError`), `lastTiming`, `count`. |
 | `errorMiddleware(options?)` | Wraps unknown thrown values in `CqrsError`. | `BaseError` instances pass through. |
 | `validationMiddleware(options?)` | Throws `CqrsValidationError` for a request with no `type`. | Fails earlier than the bus's own check. |
 | `contextMiddleware(options?)` | Adds `metadata.cqrsRequestType` to the context. |  |
@@ -360,7 +360,7 @@ console.log(bus.getCommandTypes(), await bus.execute({ type: "CreateUser" }));
 
 ## ERRORS
 
-Every error extends `CqrsError`, which extends `BaseError` from [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md), so each has a `code`, `statusCode` and `metadata`. `isCqrsError(e)` checks for any of them; `toCqrsError(e)` converts an arbitrary thrown value.
+Every error extends `CqrsError` (defined in @zudojs/errors and re-exported), which extends `BaseError` from [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md), so each has a `code`, `statusCode` and `metadata`. `isCqrsError(e)` checks for any of them; `toCqrsError(e)` converts an arbitrary thrown value.
 
 | Name | What it does | Notes |
 | --- | --- | --- |
@@ -437,7 +437,7 @@ All from `"@zudojs/cqrs"`. Query equivalents mirror the command ones with `Query
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/cqrs` exports from its package root at v1.0.1 — **195** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/cqrs` exports from its package root at v1.1.0 — **195** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 195 exports**
 

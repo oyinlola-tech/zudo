@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/messaging — the in-process me
 source: https://zudojs.oyinlola.site/docs/packages-messaging
 ---
 
-v1.0.1
+v1.0.2
 
 # @zudojs/messaging
 
@@ -202,7 +202,7 @@ Only two things reject the promise instead of returning a result: using a bus af
 
 ### Timeouts and cancellation
 
-Pass `{ timeout: 5000 }` to one dispatch, or `defaultTimeout` to `createMessageBus`, and the bus starts a timer that aborts an `AbortSignal`. You can also pass your own `signal`. Handlers that have not started yet are skipped and the result fails with `MessageDispatchAbortedError` inside a `MessageHandlerError`.
+Pass `{ timeout: 5000 }` to one dispatch, or `defaultTimeout` to `createMessageBus`, and the bus starts a timer that aborts an `AbortSignal`. You can also pass your own `signal`. Handlers that have not started yet are skipped and the result fails with a bare `MessageDispatchAbortedError` as `result.error` (not wrapped in a `MessageHandlerError`).
 
 > **Watch out:** A handler that is already running is not interrupted. Long handlers should check `context.signal.aborted` between steps and stop themselves. A timed-out dispatch comes back with `result.error instanceof MessageTimeoutError`.
 
@@ -239,7 +239,7 @@ What you should see: `→ ping [msg:…]`, then `← ping in 0.2ms`, then `pong`
 
 The middleware context (`MessageMiddlewareContext`) exposes `message`, the dispatch `context`, the abort `signal`, an `executionId`, and a shared `state` Map you can use to pass values between middleware. A middleware can also be an object with a `handle` method.
 
-> **Watch out:** If middleware throws, the dispatch result is `success: false` and `result.error` is exactly what you threw (not wrapped). Calling `next()` twice throws `"next() called multiple times"`. The `priority` option on `use()` is accepted but not applied yet; order is registration order.
+> **Watch out:** If middleware throws, the dispatch result is `success: false` and `result.error` is exactly what you threw (not wrapped). Calling `next()` twice throws `MiddlewareNextCalledMultipleTimesError` (from `@zudojs/errors`, a `MiddlewareError`); the pipeline is `compose` from `@zudojs/middleware`. The `priority` option on `use()` is accepted but not applied yet; order is registration order.
 
 ## CONTEXT, CORRELATION AND CAUSATION
 
@@ -409,7 +409,7 @@ All error classes live in `@zudojs/errors` and are re-exported here. Only the fi
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/messaging` exports from its package root at v1.0.1 — **69** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/messaging` exports from its package root at v1.0.2 — **69** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 69 exports**
 

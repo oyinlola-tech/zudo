@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/queue — background job proces
 source: https://zudojs.oyinlola.site/docs/packages-queue
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/queue
 
@@ -153,7 +153,7 @@ The third argument to `queue.add()` is a `JobOptions` object. Every field is opt
 | `delay` | Milliseconds to wait before the job may run | `0` |
 | `scheduledAt` | A `Date` before which the job may not run | now |
 | `priority` | Higher numbers run first; ties run oldest-first | `50` |
-| `timeout` | Milliseconds before a running job is aborted and failed | `30000` |
+| `timeout` | Milliseconds before a running job is aborted and failed. A timeout aborts `context.signal`; the job's slot and its retry wait up to `timeoutGraceMs` (default 5000) for the processor to stop, so honour the signal. | `30000` |
 | `deduplicationKey` | Reject a second job with the same key while the first exists | none |
 | `metadata` | Any extra data you want stored on the job | none |
 
@@ -273,7 +273,7 @@ Each entry is a `DeadLetterJob`: a copy of the `job` as it was when it ran out o
 
 ## WORKERS
 
-A **worker** is a loop that repeatedly asks a queue "anything to do?", claims one job, and runs it. The in-memory queue already contains such a loop, which is why the Quick Start needed no worker. A separate `Worker` is useful when you want its own concurrency limit, its own middleware, start/stop control, or per-worker statistics.
+A **worker** is a loop that repeatedly asks a queue "anything to do?", claims one job, and runs it. The in-memory queue already contains such a loop, which is why the Quick Start needed no worker. Creating a `Worker` switches that loop off as a consumer (`queue.setAutoProcess(false)`), so the worker is the only thing running jobs and `worker.stop()` really stops consumption. A separate `Worker` is useful when you want its own concurrency limit, its own middleware, start/stop control, or per-worker statistics.
 
 A worker never runs a processor itself. It calls `queue.claimNextJob()` (which marks the job `active` so nobody else takes it) and then `queue.runJob()`, so retries, dead-lettering and middleware all still apply.
 
@@ -314,7 +314,8 @@ await queue.close();
 | `timeoutMs` | Timeout for jobs that carry none of their own | queue default (30 s) |
 | `middleware` | Extra middleware run after the queue's own | none |
 | `drainTimeout` | How long `stop()` waits for running jobs before forcing | `30000` |
-| `onError` | Called for poll failures and drain timeouts | logs to console |
+| `onError` | Called for poll failures and drain timeouts | `logger.error`, else `process.emitWarning` |
+| `logger` | Receives errors when no `onError` is given | none |
 
 > **Common mistake:** calling `start()` twice. A worker can only start from `created` or `stopped`; anything else throws `WorkerLifecycleError`. Check `worker.isRunning()` first.
 
@@ -486,6 +487,9 @@ Everything below is exported from `@zudojs/queue` unless a note says otherwise.
 | `retainSettledJobs` | Finished jobs kept before the oldest are dropped | `1000` |
 | `closeTimeout` | How long `close()` waits for running jobs | `30000` |
 | `stalledAfter` / `maxStalledCount` | Reclaim a job left `active` by a dead consumer; dead-letter after N stalls | `0` (off) / `3` |
+| `autoProcess` | Whether the queue's own loop claims and runs jobs; creating a `Worker` turns it off | `true` |
+| `timeoutGraceMs` | After a timeout, how long the slot and the retry wait for the processor to settle | `5000` |
+| `contextCarriers` | Context (tenant, correlation id, trace ids) carried from `add()` into the processor; see `captureContext` / `runWithContext` and the README section "Carrying context across the queue" | none |
 
 ### Types and constants
 
@@ -537,29 +541,29 @@ These are thrown by the queue but live in `@zudojs/errors`. Import them from the
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/queue` exports from its package root at v1.1.0 — **81** in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/queue` exports from its package root at v1.2.0 — **85** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 81 exports**
+**Show all 85 exports**
 
 Classes (2)
 
 `InMemoryQueue` `InMemoryQueueEventEmitter`
 
-Functions (39)
+Functions (41)
 
-`assertProcessor` `calculateRetryDelay` `createBackoffOptions` `createExponentialBackoff` `createFixedBackoff` `createInMemoryDeadLetterStore` `createInMemoryQueue` `createInMemoryQueueEventEmitter` `createJob` `createJobContext` `createJobErrorResult` `createJobId` `createJobName` `createJobProgress` `createJobResult` `createJsonSerializer` `createLoggingMiddleware` `createMiddlewareChain` `createNoopQueueEventEmitter` `createProcessorRegistry` `createQueue` `createQueueManager` `createQueueName` `createQueueRegistry` `createTimeoutMiddleware` `createWorker` `incrementJobAttempt` `isJob` `isJobContext` `isJobId` `isJobName` `isProcessor` `isQueue` `isQueueName` `isWorker` `mergeJobOptions` `moveToDeadLetter` `shouldRetry` `updateJobState`
+`assertProcessor` `calculateRetryDelay` `captureContext` `createBackoffOptions` `createExponentialBackoff` `createFixedBackoff` `createInMemoryDeadLetterStore` `createInMemoryQueue` `createInMemoryQueueEventEmitter` `createJob` `createJobContext` `createJobErrorResult` `createJobId` `createJobName` `createJobProgress` `createJobResult` `createJsonSerializer` `createLoggingMiddleware` `createMiddlewareChain` `createNoopQueueEventEmitter` `createProcessorRegistry` `createQueue` `createQueueManager` `createQueueName` `createQueueRegistry` `createTimeoutMiddleware` `createWorker` `incrementJobAttempt` `isJob` `isJobContext` `isJobId` `isJobName` `isProcessor` `isQueue` `isQueueName` `isWorker` `mergeJobOptions` `moveToDeadLetter` `runWithContext` `shouldRetry` `updateJobState`
 
-Interfaces (24)
+Interfaces (25)
 
-`BackoffOptions` `DeadLetterJob` `DeadLetterStore` `Job` `JobContext` `JobInput` `JobOptions` `JobProgress` `JobResult` `ProcessorInfo` `ProcessorRegistry` `Queue` `QueueEventEmitter` `QueueInfo` `QueueLogger` `QueueManager` `QueueMiddlewareContext` `QueueOptions` `QueueRegistry` `QueueStats` `Serializer` `Worker` `WorkerOptions` `WorkerStats`
+`BackoffOptions` `DeadLetterJob` `DeadLetterStore` `Job` `JobContext` `JobInput` `JobOptions` `JobProgress` `JobResult` `ProcessorInfo` `ProcessorRegistry` `Queue` `QueueContextCarrier` `QueueEventEmitter` `QueueInfo` `QueueLogger` `QueueManager` `QueueMiddlewareContext` `QueueOptions` `QueueRegistry` `QueueStats` `Serializer` `Worker` `WorkerOptions` `WorkerStats`
 
 Type aliases (9)
 
 `BackoffStrategy` `JobId` `JobName` `JobPriority` `Processor` `QueueEventMap` `QueueMiddleware` `QueueName` `WorkerLifecycleState`
 
-Constants (4)
+Constants (5)
 
-`DEFAULT_JOB_OPTIONS` `JobPriorityLevels` `JsonSerializer` `PassthroughSerializer`
+`CONTEXT_METADATA_KEY` `DEFAULT_JOB_OPTIONS` `JobPriorityLevels` `JsonSerializer` `PassthroughSerializer`
 
 Enums (3)
 
