@@ -10,7 +10,10 @@ import type {
   LifecycleRegistration,
   LifecycleRegistrationOptions,
 } from "../lifecycleComponent/lifecycleComponent.type.js";
-import { DependencyGraph } from "../lifecycleInternal/index.js";
+import {
+  DependencyGraph,
+  assertTimeoutBudget,
+} from "../lifecycleInternal/index.js";
 
 /**
  * Registry for lifecycle components.
@@ -31,6 +34,10 @@ export class LifecycleRegistry {
     }
 
     const id = options.id ?? component.name;
+
+    if (options.timeout !== undefined) {
+      assertTimeoutBudget(`Component "${id}" timeout`, options.timeout);
+    }
 
     if (this._registrations.has(id)) {
       throw new Error(`Component "${id}" is already registered`);

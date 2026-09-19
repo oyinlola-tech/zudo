@@ -11,3 +11,9 @@ export {
 } from "./topologicalSort.core.js";
 export type { TopologicalStage } from "./topologicalSort.core.js";
 export { withTimeout, withAbort, withConcurrency } from "./asyncUtils.core.js";
+export {
+  MAX_TIMER_DELAY,
+  assertTimeoutBudget,
+  isBounded,
+  toTimerDelay,
+} from "./timeoutBudget.core.js";

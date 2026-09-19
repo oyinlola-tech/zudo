@@ -22,15 +22,23 @@ import { LifecycleEventEmitter } from "../lifecycleEvents/lifecycleEvents.core.j
 import { installSignalHandlers } from "../lifecycleSignal/lifecycleSignal.handler.js";
 import { performStartup } from "./lifecycleManager.startup.js";
 import { performShutdown } from "./lifecycleManager.shutdown.js";
+import { assertTimeoutBudget } from "../lifecycleInternal/index.js";
 import type { LifecycleManagerContext } from "./lifecycleManager.context.js";
 
 /** Options for creating a lifecycle manager. */
 export interface LifecycleManagerOptions {
   /** Maximum concurrent component operations. */
   readonly concurrency?: number;
-  /** Global shutdown timeout in ms. */
+  /**
+   * Global shutdown timeout in ms. `Infinity` means no deadline; NaN
+   * and negative values are rejected by the constructor.
+   */
   readonly shutdownTimeout?: number;
-  /** Whether to automatically install signal handlers. */
+  /**
+   * Whether to install SIGINT/SIGTERM handlers. They are installed by
+   * `start()` (not the constructor) and removed once shutdown finishes,
+   * and a second signal during shutdown exits with code 1.
+   */
   readonly handleSignals?: boolean;
   /** Signals to listen for. */
   readonly signals?: readonly NodeJS.Signals[];
@@ -53,8 +61,14 @@ export class LifecycleManager {
   private readonly _ctx: LifecycleManagerContext;
   private _startPromise?: Promise<void>;
   private _removeSignalHandlers?: () => void;
+  private readonly _handleSignals: boolean;
+  private readonly _signals: readonly NodeJS.Signals[] | undefined;
 
   constructor(options: LifecycleManagerOptions = {}) {
+    if (options.shutdownTimeout !== undefined) {
+      assertTimeoutBudget("shutdownTimeout", options.shutdownTimeout);
+    }
+
     this._ctx = {
       registry: new LifecycleRegistry(),
       state: new LifecycleStateMachine("application"),
@@ -70,14 +84,12 @@ export class LifecycleManager {
       controller: new AbortController(),
     };
 
-    if (options.handleSignals !== false) {
-      this._removeSignalHandlers = installSignalHandlers({
-        signals: options.signals,
-        handler: () => {
-          void this.shutdown();
-        },
-      });
-    }
+    // Installing in the constructor disabled Ctrl-C for the whole
+    // process as soon as a manager existed (tests, libraries), and the
+    // listener outlived shutdown, so a process with a leaked handle
+    // could no longer be interrupted.
+    this._handleSignals = options.handleSignals !== false;
+    this._signals = options.signals;
   }
 
   /** Registers a component with the lifecycle manager. */
@@ -104,7 +116,20 @@ export class LifecycleManager {
     if (this._startPromise) {
       return this._startPromise;
     }
-    this._startPromise = performStartup(this._ctx);
+    if (this._handleSignals && this._removeSignalHandlers === undefined) {
+      this._removeSignalHandlers = installSignalHandlers({
+        signals: this._signals,
+        handler: () => {
+          void this.shutdown();
+        },
+      });
+    }
+    this._startPromise = performStartup(this._ctx).catch(async (error) => {
+      // A failed startup rolls back through the shared shutdown.
+      await this._ctx.shutdownPromise?.catch(() => undefined);
+      this.releaseSignalHandlers();
+      throw error;
+    });
     return this._startPromise;
   }
 
@@ -115,7 +140,16 @@ export class LifecycleManager {
   public async shutdown(): Promise<void> {
     // performShutdown is itself single-flight, so a shutdown started by
     // startup rollback and one started here are the SAME run.
-    return performShutdown(this._ctx);
+    try {
+      await performShutdown(this._ctx);
+    } finally {
+      this.releaseSignalHandlers();
+    }
+  }
+
+  private releaseSignalHandlers(): void {
+    this._removeSignalHandlers?.();
+    this._removeSignalHandlers = undefined;
   }
 
   /** Returns the current application state. */
@@ -160,8 +194,7 @@ export class LifecycleManager {
    * component teardown — call `shutdown()` first for that.
    */
   public dispose(): void {
-    this._removeSignalHandlers?.();
-    this._removeSignalHandlers = undefined;
+    this.releaseSignalHandlers();
     this._ctx.events.clear();
   }
 }

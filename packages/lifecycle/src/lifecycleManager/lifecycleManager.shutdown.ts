@@ -8,6 +8,7 @@ import { LifecyclePhase, LifecycleState } from "@zudojs/constants";
 import { buildExecutionPlan } from "../lifecyclePlan/lifecyclePlan.core.js";
 import { createLifecycleContext } from "../lifecycleContext/lifecycleContext.type.js";
 import type { LifecycleManagerContext } from "./lifecycleManager.context.js";
+import { isBounded, toTimerDelay } from "../lifecycleInternal/index.js";
 import {
   emitComponentFailed,
   recordResult,
@@ -67,6 +68,14 @@ async function runShutdown(ctx: LifecycleManagerContext): Promise<void> {
     );
   }
 
+  // Hooks abandoned by a component timeout are still running; stopping
+  // their component now would overlap its own start().
+  await raceDeadline(
+    ctx,
+    ctx.executor.settleAbandoned(),
+    Math.max(deadline - Date.now(), 1),
+  );
+
   // The shutdown deadline used to be checked only BETWEEN the two
   // phases, so a single hook that never settled hung shutdown (and the
   // process) forever. Race the whole phase against the remaining
@@ -112,6 +121,14 @@ async function raceDeadline(
   phase: Promise<void>,
   remainingMs: number,
 ): Promise<void> {
+  // An unbounded budget (shutdownTimeout: Infinity) waits for the phase.
+  // Handing Infinity to setTimeout fired after 1 ms and abandoned every
+  // stop()/dispose() while reporting the application DISPOSED.
+  if (!isBounded(remainingMs)) {
+    await phase.catch(() => {});
+    return;
+  }
+
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const expiry = new Promise<void>((resolve) => {
@@ -122,7 +139,7 @@ async function raceDeadline(
         ),
       );
       resolve();
-    }, remainingMs);
+    }, toTimerDelay(remainingMs));
   });
 
   try {

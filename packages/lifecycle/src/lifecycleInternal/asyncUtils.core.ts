@@ -5,10 +5,19 @@
  */
 
 import { LifecycleTimeoutError } from "@zudojs/errors";
+import {
+  assertTimeoutBudget,
+  isBounded,
+  toTimerDelay,
+} from "./timeoutBudget.core.js";
 
 /**
  * Executes an async operation with a timeout.
  * Throws LifecycleTimeoutError if the timeout is exceeded.
+ *
+ * `Infinity` runs the operation unbounded; values above the largest
+ * timer delay are clamped to it. NaN or a negative value rejects with a
+ * RangeError instead of arming a 1 ms timer.
  */
 export async function withTimeout<T>(
   fn: () => Promise<T>,
@@ -16,10 +25,16 @@ export async function withTimeout<T>(
   componentId: string,
   phase: string,
 ): Promise<T> {
+  assertTimeoutBudget("timeout", timeoutMs);
+
+  if (!isBounded(timeoutMs)) {
+    return fn();
+  }
+
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new LifecycleTimeoutError(componentId, phase, timeoutMs));
-    }, timeoutMs);
+    }, toTimerDelay(timeoutMs));
 
     // The timer must be cleared on EVERY exit path. A synchronously
     // throwing `fn` used to escape before `.catch` was attached,

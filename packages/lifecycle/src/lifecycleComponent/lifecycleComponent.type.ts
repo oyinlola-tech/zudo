@@ -44,7 +44,10 @@ export interface LifecycleRegistrationOptions {
   /** If true, application startup fails when this component fails. Defaults to true. */
   readonly critical?: boolean;
 
-  /** Timeout in ms for individual component operations. */
+  /**
+   * Timeout in ms for individual component operations. `Infinity` means
+   * no bound; NaN and negative values are rejected at registration.
+   */
   readonly timeout?: number;
 
   /** Retry configuration for failed operations. */

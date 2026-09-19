@@ -115,14 +115,26 @@ lifecycle.
 ```typescript
 createLifecycleManager({
   concurrency: 10,        // parallel component operations per stage
-  shutdownTimeout: 30_000, // global shutdown deadline (ms)
-  handleSignals: true,     // install process signal handlers
+  shutdownTimeout: 30_000, // global shutdown deadline (ms); Infinity = none
+  handleSignals: true,     // install signal handlers on start()
   signals: ["SIGINT", "SIGTERM"], // defaults to DEFAULT_SHUTDOWN_SIGNALS
 });
 ```
 
 Per-component: `id`, `dependsOn`, `priority`, `critical`, `timeout`,
 `retry: { attempts, delay, maxDelay, backoff }`.
+
+`timeout` and `shutdownTimeout` accept `Infinity` for "no bound"; NaN and
+negative values throw a `RangeError` when registered or constructed, and
+finite values above 2^31-1 ms are clamped to the largest timer delay.
+`retry` covers hooks that fail; a hook that times out is not retried,
+because it is still running and a second call would overlap it.
+`shutdown()` waits (within its deadline) for such an abandoned hook to
+settle before calling `stop()`.
+
+With `handleSignals`, SIGINT/SIGTERM listeners are installed by `start()`,
+not by the constructor, and removed once shutdown finishes. A second
+signal while shutdown is running exits the process with code 1.
 
 ## Use Cases
 

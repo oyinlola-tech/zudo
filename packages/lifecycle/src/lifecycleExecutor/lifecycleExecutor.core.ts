@@ -12,7 +12,10 @@ import type {
 import type { LifecycleContext } from "../lifecycleContext/lifecycleContext.type.js";
 import { withTimeout, withConcurrency } from "../lifecycleInternal/index.js";
 import { getComponentMethod } from "../lifecyclePhase/index.js";
-import { LifecycleComponentError } from "@zudojs/errors";
+import {
+  LifecycleComponentError,
+  LifecycleTimeoutError,
+} from "@zudojs/errors";
 
 /** Result of executing a component hook. */
 export interface ExecutionResult {
@@ -32,6 +35,21 @@ export interface ExecutionResult {
  * Executes lifecycle component hooks with timeout, retry, and concurrency support.
  */
 export class LifecycleExecutor {
+  /** Hook invocations still running after their timeout fired. */
+  private readonly abandoned = new Set<Promise<unknown>>();
+
+  /**
+   * Resolves once every hook abandoned by a timeout has settled.
+   *
+   * Shutdown waits on this before stopping components, so `stop()`
+   * never overlaps a `start()` that is still running.
+   */
+  public async settleAbandoned(): Promise<void> {
+    while (this.abandoned.size > 0) {
+      await Promise.allSettled([...this.abandoned]);
+    }
+  }
+
   /**
    * Executes a single component hook.
    */
@@ -73,15 +91,17 @@ export class LifecycleExecutor {
         break;
       }
 
+      let invocation: Promise<void> | undefined;
+
       try {
         await withTimeout(
-          async () => {
-            const result = (
-              hook as (ctx: LifecycleContext) => Promise<void> | void
-            ).call(registration.component, context);
-            if (result instanceof Promise) {
-              await result;
-            }
+          () => {
+            invocation = (async () => {
+              await (
+                hook as (ctx: LifecycleContext) => Promise<void> | void
+              ).call(registration.component, context);
+            })();
+            return invocation;
           },
           registration.timeout,
           registration.id,
@@ -96,6 +116,17 @@ export class LifecycleExecutor {
         };
       } catch (error) {
         lastError = error;
+
+        // A timed-out hook is still running; withTimeout cannot cancel
+        // it. Retrying would run the same start() concurrently (three
+        // listen() calls on one port), so a timeout is final and the
+        // abandoned invocation is tracked for shutdown to wait on.
+        if (error instanceof LifecycleTimeoutError && invocation) {
+          const abandoned = invocation.catch(() => undefined);
+          this.abandoned.add(abandoned);
+          void abandoned.finally(() => this.abandoned.delete(abandoned));
+          break;
+        }
 
         if (attempt < maxAttempts - 1) {
           const delay = calculateDelay(retryConfig, attempt);
