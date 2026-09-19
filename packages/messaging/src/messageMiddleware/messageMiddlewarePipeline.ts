@@ -4,7 +4,7 @@
  * @module messageMiddleware/messageMiddlewarePipeline
  */
 
-import { MiddlewareNextCalledMultipleTimesError } from "@zudojs/errors";
+import { compose } from "@zudojs/middleware";
 
 import type {
   MessageMiddleware,
@@ -21,44 +21,6 @@ import type {
   MessageCorrelationId,
   MessageCausationId,
 } from "../message/messageType.type.js";
-
-/**
- * Compose an array of middleware into a single function.
- *
- * The returned function executes middleware in order.
- * If no middleware is provided, the handler is called directly.
- */
-function compose<TResult>(
-  middlewareList: readonly MessageMiddleware<Message, TResult>[],
-  handler: (context: MessageMiddlewareContext<Message>) => Promise<TResult>,
-): (context: MessageMiddlewareContext<Message>) => Promise<TResult> {
-  if (middlewareList.length === 0) {
-    return handler;
-  }
-
-  return async (
-    context: MessageMiddlewareContext<Message>,
-  ): Promise<TResult> => {
-    let index = -1;
-
-    async function dispatch(i: number): Promise<TResult> {
-      if (i <= index) {
-        throw new MiddlewareNextCalledMultipleTimesError(
-          `message-middleware#${i - 1}`,
-        );
-      }
-      index = i;
-
-      if (i < middlewareList.length) {
-        const mw = middlewareList[i]!;
-        return mw(context, () => dispatch(i + 1));
-      }
-      return handler(context);
-    }
-
-    return dispatch(0);
-  };
-}
 
 /**
  * Resolves a MessageMiddlewareLike to a plain MessageMiddleware function.
@@ -126,8 +88,11 @@ export async function runMessagePipeline<TResult>(
 
   const pipelineStart = performance.now();
 
-  const composed = compose<TResult>(resolvedMiddleware, async (ctx) =>
-    handler(message, ctx),
+  // Unbounded depth: the list length is fixed by the registered middleware.
+  const composed = compose<MessageMiddlewareContext<Message>, TResult>(
+    resolvedMiddleware,
+    async (ctx) => handler(message, ctx),
+    { maxDepth: Number.POSITIVE_INFINITY },
   );
 
   const context: MessageMiddlewareContext<Message> = {

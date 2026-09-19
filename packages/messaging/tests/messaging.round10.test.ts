@@ -70,3 +70,27 @@ describe("MSG-02", () => {
     expect(error).toBeInstanceOf(MiddlewareError);
   });
 });
+
+describe("MSG-02 (phase 2): built on @zudojs/middleware compose", () => {
+  it("names the offending middleware the way the shared composer does", async () => {
+    const bus = createMessageBus();
+    bus.use(async (_ctx, next) => {
+      await next();
+      return next();
+    });
+    bus.on("x", async () => 1);
+    const result = await bus.send(createMessage({ type: "x", payload: {} }));
+    const error = (result as { readonly error?: unknown }).error;
+    expect((error as MiddlewareError).middlewareName).toBe("middleware[0]");
+  });
+
+  it("keeps long pipelines working (no depth ceiling)", async () => {
+    const bus = createMessageBus();
+    for (let i = 0; i < 150; i += 1) {
+      bus.use(async (_ctx, next) => next());
+    }
+    bus.on("x", async () => 7);
+    const result = await bus.send(createMessage({ type: "x", payload: {} }));
+    expect(result.success).toBe(true);
+  });
+});
