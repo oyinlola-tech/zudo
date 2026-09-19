@@ -61,3 +61,15 @@ describe("XP-02", () => {
     for (const level of [0, 1, 2, 3, 4, 5]) expect(toLoggerLevel(fromLoggerLevel(level)!)).toBe(level);
   });
 });
+
+describe("H5 / CONV-01: ObservabilityError is the @zudojs/errors class", () => {
+  it("re-exports the shared base; subclasses keep instanceof and names", async () => {
+    const shared = await import("@zudojs/errors");
+    const obs = await import("../src/index.js");
+    expect(obs.ObservabilityError).toBe(shared.ObservabilityError);
+    const err = new obs.MetricValueError("m", Number.NaN, "not finite");
+    expect(err).toBeInstanceOf(shared.ObservabilityError);
+    expect(err.name).toBe("MetricValueError");
+    expect(obs.isObservabilityError(new shared.ObservabilityError("x"))).toBe(true);
+  });
+});

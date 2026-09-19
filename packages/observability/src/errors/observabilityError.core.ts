@@ -7,35 +7,15 @@
  * layer are reported through `ObservabilityConfig.onError` instead.
  */
 
-import {
-  BaseError,
-  ErrorCode,
-  ErrorCategory,
-  ErrorSeverity,
-} from "@zudojs/errors";
+import { ErrorCode, ObservabilityError } from "@zudojs/errors";
 
-/** Base error for all observability failures. */
-export class ObservabilityError extends BaseError {
-  constructor(
-    message: string,
-    options?: {
-      readonly code?: ErrorCode;
-      readonly metadata?: Readonly<Record<string, unknown>>;
-      readonly cause?: unknown;
-    },
-  ) {
-    super(message, {
-      code: options?.code ?? ErrorCode.OPERATION_FAILED,
-      category: ErrorCategory.INTERNAL,
-      severity: ErrorSeverity.ERROR,
-      statusCode: 500,
-      expose: false,
-      metadata: options?.metadata as never,
-      cause: options?.cause,
-    });
-    this.name = "ObservabilityError";
-  }
-}
+/**
+ * Base error for all observability failures (500, not exposed). Owned by
+ * `@zudojs/errors` and re-exported here, so `instanceof` matches across
+ * both import paths.
+ */
+export { ObservabilityError };
+export type { ObservabilityErrorOptions } from "@zudojs/errors";
 
 /** An exporter failed to deliver telemetry. */
 export class ExporterError extends ObservabilityError {
