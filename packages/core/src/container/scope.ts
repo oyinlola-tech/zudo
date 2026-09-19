@@ -16,7 +16,9 @@ export type Scope =
    * example the current ExecutionContext of an HTTP request,
    * background job, message consumption, or RPC call).
    *
-   * When no scope is active, scoped providers behave as transient.
+   * Resolving a scoped provider with no active scope, or from inside a
+   * singleton's construction (a captive dependency), throws a
+   * DependencyResolutionError.
    */
   | "scoped"
 

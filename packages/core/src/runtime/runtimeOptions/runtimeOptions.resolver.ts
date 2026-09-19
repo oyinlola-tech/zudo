@@ -34,6 +34,7 @@ export function resolveRuntimeOptions(
   validateRuntimeName(options.name);
   validateRuntimeTimeout(startup.timeoutMs, "startup");
   validateRuntimeTimeout(shutdown.timeoutMs, "shutdown");
+  validateRuntimeTimeout(signals.fatalExitTimeout, "fatal exit");
 
   const resolved: ResolvedRuntimeOptions = {
     name: options.name ?? DEFAULT_RUNTIME_OPTIONS.name,
@@ -94,6 +95,12 @@ export function resolveRuntimeOptions(
         DEFAULT_RUNTIME_OPTIONS.signals.forceExitOnSecondSignal,
       forceExitCode:
         signals.forceExitCode ?? DEFAULT_RUNTIME_OPTIONS.signals.forceExitCode,
+      exitOnFatalError:
+        signals.exitOnFatalError ??
+        DEFAULT_RUNTIME_OPTIONS.signals.exitOnFatalError,
+      fatalExitTimeout:
+        signals.fatalExitTimeout ??
+        DEFAULT_RUNTIME_OPTIONS.signals.fatalExitTimeout,
     },
 
     diagnostics: {
@@ -132,4 +139,5 @@ export function validateRuntimeOptions(options: RuntimeOptions): void {
   validateRuntimeName(options.name);
   validateRuntimeTimeout(options.startup?.timeoutMs, "startup");
   validateRuntimeTimeout(options.shutdown?.timeoutMs, "shutdown");
+  validateRuntimeTimeout(options.signals?.fatalExitTimeout, "fatal exit");
 }

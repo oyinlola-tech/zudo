@@ -368,10 +368,8 @@ describe("application execution-context propagation", () => {
     const container = app.applicationContext!.getContainer();
     container.register(ScopedToken, { useFactory: () => ({}) }, "scoped");
 
-    /* No execution context: scoped behaves as transient. */
-    expect(container.resolve(ScopedToken)).not.toBe(
-      container.resolve(ScopedToken),
-    );
+    /* No execution context: a scoped resolution is rejected (CORE-01). */
+    expect(() => container.resolve(ScopedToken)).toThrow(/outside any scope/);
 
     const first = await storage.run(
       createExecutionContext({ operation: "request-1" }),

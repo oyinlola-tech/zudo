@@ -83,6 +83,7 @@ export class ModuleLifecycleManager {
           this.loader,
           this.states,
           this.contextStorage,
+          options.signal,
         );
       } catch (error) {
         await this.rollbackAfterFailure(error, { stopFirst: false });
@@ -107,6 +108,7 @@ export class ModuleLifecycleManager {
           this.loader,
           this.states,
           this.contextStorage,
+          options.signal,
         );
       } catch (error) {
         await this.rollbackAfterFailure(error, { stopFirst: true });

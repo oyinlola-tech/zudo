@@ -291,9 +291,9 @@ describe("Container scoping and diagnostics", () => {
     const container = new BarrelContainer({ currentScope: () => current });
     container.register(LoggerToken, { useClass: ConsoleLogger }, "scoped");
 
-    // No active scope: behaves as transient.
-    expect(container.resolve(LoggerToken)).not.toBe(
-      container.resolve(LoggerToken),
+    // No active scope: rejected rather than silently transient (CORE-01).
+    expect(() => container.resolve(LoggerToken)).toThrow(
+      DependencyResolutionError,
     );
 
     const request = {};

@@ -72,6 +72,8 @@ const app = await Application.create({
 });
 ```
 
+A failed `lifecycle.start()` stops, in reverse order, every participant whose `start()` completed, so a retry starts from the first one again. `dispose()` only reaches participants whose `initialize()` ran.
+
 ## Runtime
 
 `createRuntime(dependencies, options)` returns a single-use runtime:
@@ -83,14 +85,14 @@ FAILED is reachable from every non-terminal state via fail() or a failure.
 
 - `start()` loads, initializes, and starts modules through the bootstrap pipeline; `getStatus().bootstrap` reports counts, errors, and duration.
 - `stop()` stops and destroys modules through the shutdown pipeline; `getStatus().shutdown` reports the same.
-- `startup.timeoutMs` / `shutdown.timeoutMs` abort the pipeline with a `RuntimeTimeoutError`; the abandoned pipeline can never surface an unhandled rejection.
+- `startup.timeoutMs` / `shutdown.timeoutMs` abort the pipeline with a `RuntimeTimeoutError`; the abandoned pipeline can never surface an unhandled rejection. A timed-out bootstrap starts no further phase or module hook; the hook still running finishes, and the runtime then stops and destroys whatever it brought up. `stop()` waits for that teardown.
 - `continueOnInitializeError` / `continueOnStartError` (and the stop/destroy equivalents) make the runtime finish with `success: false` and the failures listed instead of throwing.
 - Every error the runtime throws extends `RuntimeError` (which itself extends `RuntimeError` from `@zudojs/errors`), so `isRuntimeError()` from either package recognises it.
 - `runtime.context` is the runtime's immutable `RuntimeExecutionContext` (`executionId` = runtime id, `service` = runtime name, `metadata.runtimeId/runtimeName/runtimeMode/runtimeRole` plus `RuntimeOptions.metadata`); `runtime.timing` holds the state-transition timestamps; `runtime.contextStorage` is the `ContextStorage` the context is established in (`RuntimeDependencies.contextStorage`, default `getDefaultContextStorage()`).
 
 ### Signals
 
-When `signals.handleSigint` / `handleSigterm` / `handleSighup` are on (SIGINT and SIGTERM default to on), the runtime registers handlers on start and removes them on stop, failure, or dispose. The first signal triggers a graceful `stop()`. A second signal during shutdown is logged and ignored unless `signals.forceExitOnSecondSignal` is explicitly enabled, in which case the process exits with `signals.forceExitCode`. `handleUncaughtException` / `handleUnhandledRejection` mark the runtime failed and stop it. The runtime never calls `process.exit()` otherwise.
+When `signals.handleSigint` / `handleSigterm` / `handleSighup` are on (SIGINT and SIGTERM default to on), the runtime registers handlers on start and removes them on stop, failure, or dispose. The first signal triggers a graceful `stop()`. A second signal during shutdown exits the process with `signals.forceExitCode` (default 1); set `signals.forceExitOnSecondSignal: false` to log and ignore it instead. `handleUncaughtException` / `handleUnhandledRejection` mark the runtime failed, stop it, and then exit the process with code 1, because the installed handler suppresses Node's own crash and the process would otherwise end with code 0. `signals.fatalExitTimeout` (default 10000 ms) bounds a shutdown that hangs; set `signals.exitOnFatalError: false` to stop the runtime and keep the process running. The runtime never calls `process.exit()` otherwise.
 
 ## Modules
 
@@ -126,14 +128,14 @@ onInitialize → onReady → onShutdown → onDestroy
 
 ## Execution context
 
-There is one execution-context model: the immutable `ExecutionContext` (`createExecutionContext`, `deriveExecutionContext`, `withExecutionMetadata`) propagated by `ContextStorage`, which wraps `AsyncLocalStorage`. `run(context, fn)` and `runDerived(overrides, fn)` establish a context for the callback and everything it awaits, `runWithValues(context, values, fn)` additionally binds a `ContextValues` collection (read back with `getValues()`), and `capture()` / `runSnapshot(snapshot, fn)` carry a context across queue or timer boundaries. `getDefaultContextStorage()` is the process-wide instance every component uses unless another is injected.
+There is one execution-context model: the immutable `ExecutionContext` (`createExecutionContext`, `deriveExecutionContext`, `withExecutionMetadata`) propagated by `ContextStorage`, which wraps `AsyncLocalStorage`. `run(context, fn)` and `runDerived(overrides, fn)` establish a context for the callback and everything it awaits, `runWithValues(context, values, fn)` additionally binds a `ContextValues` collection (read back with `getValues()`; `run()` starts a new execution without the enclosing execution's values, `runDerived()` keeps them), and `capture()` / `runSnapshot(snapshot, fn)` carry a context across queue or timer boundaries. `getDefaultContextStorage()` is the process-wide instance every component uses unless another is injected.
 
 Propagation is real at runtime:
 
 - `runtime.start()` and `runtime.stop()` run the bootstrap and shutdown pipelines inside `runtime.contextStorage.run(runtime.context, ...)`.
 - Each module hook (`onInitialize`, `onReady`, `onShutdown`, `onDestroy`) runs in a context derived from it: `module` is the module id, `operation` is the hook name, and `{ moduleId, phase }` is merged into `metadata`. `ModuleLifecycleOptions.contextStorage` selects the storage (default: the shared one).
 - `Application.start()` / `stop()` / `shutdown()` run lifecycle participants inside the runtime's context as well.
-- `createApplication` threads one storage (`CreateApplicationOptions.contextStorage`) through the `ApplicationContext` (`getContextStorage()`), the container's `currentScope` (so `"scoped"` providers resolve once per execution context), the module lifecycle, the runtime, and the logger.
+- `createApplication` threads one storage (`CreateApplicationOptions.contextStorage`) through the `ApplicationContext` (`getContextStorage()`), the container's `currentScope` (so `"scoped"` providers resolve once per execution context; resolving one outside any execution context, or from a singleton's factory, throws a `DependencyResolutionError`), the module lifecycle, the runtime, and the logger.
 
 ```typescript
 import { defineModule, getDefaultContextStorage } from "@zudojs/core";

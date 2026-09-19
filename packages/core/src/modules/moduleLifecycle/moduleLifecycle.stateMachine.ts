@@ -233,6 +233,7 @@ export async function executeLifecyclePhase(
   loader: ModuleLoader,
   states: LifecycleStateMap,
   contextStorage?: ContextStorage,
+  signal?: AbortSignal,
 ): Promise<{
   readonly completed: readonly ModuleId[];
   readonly failed: readonly ModuleId[];
@@ -245,6 +246,7 @@ export async function executeLifecyclePhase(
   const requiredDependencyPhases = REQUIRED_DEPENDENCY_PHASES[hook];
 
   for (const moduleId of order) {
+    if (signal?.aborted) break;
     const registration = registry.get(moduleId);
     if (!registration?.instance) continue;
     const module = registration.instance;

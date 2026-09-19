@@ -65,7 +65,9 @@ export function createBootstrapPipelineState(): BootstrapPipelineState {
  *   throws; the thrown error is NOT pushed to `errors` here — the
  *   caller records it exactly once.
  * - Once `signal` is aborted (timeout) the pipeline stops publishing
- *   phase changes so an abandoned run cannot mutate the owner.
+ *   phase changes so an abandoned run cannot mutate the owner, starts
+ *   no further phase, and the lifecycle manager starts no further
+ *   module hook.
  */
 export async function executeBootstrapPipeline(
   options: ResolvedBootstrapOptions,
@@ -88,14 +90,18 @@ export async function executeBootstrapPipeline(
     await loadModules(services.moduleLoader, identity, state, publish, log);
   }
 
-  if (options.initializeModules) {
+  // Every phase and every module hook checks the signal: a timed-out
+  // bootstrap must not bring modules up after the runtime has already
+  // reported a failed start.
+  if (options.initializeModules && !signal.aborted) {
     await runLifecyclePhase(
       "initializing",
       "initialized",
       () =>
-        services.moduleLifecycle.initialize(
-          phaseOptions(options.continueOnInitializeError),
-        ),
+        services.moduleLifecycle.initialize({
+          ...phaseOptions(options.continueOnInitializeError),
+          signal,
+        }),
       services.moduleLifecycle,
       options.continueOnInitializeError,
       (count) => {
@@ -109,14 +115,15 @@ export async function executeBootstrapPipeline(
     );
   }
 
-  if (options.startModules) {
+  if (options.startModules && !signal.aborted) {
     await runLifecyclePhase(
       "starting",
       "started",
       () =>
-        services.moduleLifecycle.start(
-          phaseOptions(options.continueOnStartError),
-        ),
+        services.moduleLifecycle.start({
+          ...phaseOptions(options.continueOnStartError),
+          signal,
+        }),
       services.moduleLifecycle,
       options.continueOnStartError,
       (count) => {

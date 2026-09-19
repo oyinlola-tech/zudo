@@ -1,5 +1,6 @@
 import type { Logger } from "../../logging/core/logger.js";
 import { InvalidStateError } from "../../errors/exceptions.js";
+import { rollbackStartedParticipants } from "./lifecycle.rollback.js";
 
 /** Lifecycle states supported by the Zudojs application runtime. */
 export const LifecycleState = {
@@ -48,9 +49,12 @@ type LifecyclePhase = "initialize" | "start" | "stop" | "dispose";
  *
  *   CREATED → INITIALIZING → INITIALIZED → STARTING → RUNNING
  *   RUNNING → STOPPING → STOPPED → (STARTING → RUNNING) restart
- *   any phase failure → FAILED; initialize()/start() retry from FAILED
- *   resume with the participant that failed; stop() from FAILED unwinds
- *   whatever started.
+ *   any phase failure → FAILED; initialize() retries from FAILED resume
+ *   with the participant that failed. A failed start() is rolled back:
+ *   every participant whose start() completed is stopped in reverse
+ *   order, so a retry starts again from the first one. dispose() only
+ *   reaches participants whose initialize() ran (including one that
+ *   threw, which may have acquired resources before failing).
  *
  * Concurrent callers of the same phase share the in-flight promise.
  */
@@ -61,6 +65,8 @@ export class Lifecycle {
   private readonly continueOnShutdownError: boolean;
   private initializedCount = 0;
   private startedCount = 0;
+  /** Participants whose initialize() was invoked, whether or not it threw. */
+  private initializeAttempted = 0;
   private disposed = false;
   private failedPhase: LifecyclePhase | undefined;
   private initializePromise: Promise<void> | undefined;
@@ -239,7 +245,8 @@ export class Lifecycle {
     this.disposed = true;
     const errors: unknown[] = [];
 
-    for (let i = this.participants.length - 1; i >= 0; i--) {
+    // A participant whose initialize() never ran has nothing to release.
+    for (let i = this.initializeAttempted - 1; i >= 0; i--) {
       const participant = this.participants[i]!;
       try {
         this.logger?.debug("Disposing lifecycle participant", {
@@ -257,6 +264,7 @@ export class Lifecycle {
 
     this.initializedCount = 0;
     this.startedCount = 0;
+    this.initializeAttempted = 0;
 
     if (errors.length > 0 && !this.continueOnShutdownError) {
       this.state = LifecycleState.FAILED;
@@ -305,6 +313,7 @@ export class Lifecycle {
         this.logger?.debug("Initializing lifecycle participant", {
           participant: participant.name,
         });
+        this.initializeAttempted = Math.max(this.initializeAttempted, i + 1);
         await participant.initialize?.();
         this.initializedCount = i + 1;
       }
@@ -335,9 +344,17 @@ export class Lifecycle {
       this.state = LifecycleState.RUNNING;
       this.logger?.info("Application startup completed");
     } catch (error) {
+      this.logger?.error("Application startup failed", error);
+      // Roll back rather than leave earlier participants running until
+      // someone remembers to call shutdown().
+      await rollbackStartedParticipants(
+        this.participants,
+        this.startedCount,
+        this.logger,
+      );
+      this.startedCount = 0;
       this.state = LifecycleState.FAILED;
       this.failedPhase = "start";
-      this.logger?.error("Application startup failed", error);
       throw error;
     }
   }

@@ -66,7 +66,7 @@ export function validateRuntimeName(name: string | undefined): void {
  */
 export function validateRuntimeTimeout(
   timeout: number | undefined,
-  field: "startup" | "shutdown",
+  field: "startup" | "shutdown" | "fatal exit",
 ): void {
   if (timeout === undefined) {
     return;

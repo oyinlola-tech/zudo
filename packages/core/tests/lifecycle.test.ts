@@ -304,7 +304,7 @@ describe("Lifecycle", () => {
       expect(lifecycle.getState()).toBe(LifecycleState.RUNNING);
     });
 
-    it("should resume startup from the failed participant on retry", async () => {
+    it("should roll back a failed start and restart from the first participant on retry", async () => {
       const order: string[] = [];
       let fail = true;
       const lifecycle = new Lifecycle();
@@ -339,7 +339,9 @@ describe("Lifecycle", () => {
       await lifecycle.start();
 
       expect(lifecycle.getState()).toBe(LifecycleState.RUNNING);
-      expect(order).toEqual(["first", "flaky", "flaky", "third"]);
+      // CORE-05: the failed start rolled "first" back, so the retry
+      // starts it again instead of assuming it is still running.
+      expect(order).toEqual(["first", "flaky", "first", "flaky", "third"]);
     });
 
     it("should throw on error during start", async () => {
@@ -446,6 +448,8 @@ describe("Lifecycle", () => {
       );
 
       await expect(lifecycle.start()).rejects.toThrow("boom");
+      // CORE-05: the failed start already rolled "first" back.
+      expect(stops).toEqual(["first"]);
       await lifecycle.stop();
 
       expect(stops).toEqual(["first"]);
@@ -557,6 +561,8 @@ describe("Lifecycle", () => {
         }),
       );
 
+      // CORE-05: only initialized participants are disposed.
+      await lifecycle.initialize();
       await lifecycle.dispose();
 
       expect(order).toEqual(["second", "first"]);
@@ -580,6 +586,7 @@ describe("Lifecycle", () => {
         }),
       );
 
+      await lifecycle.initialize();
       await expect(lifecycle.dispose()).rejects.toThrow(AggregateError);
     });
   });
@@ -646,6 +653,7 @@ describe("Lifecycle", () => {
       const lifecycle = new Lifecycle();
 
       lifecycle.register(createParticipant("test", { dispose: disposeFn }));
+      await lifecycle.initialize();
       await lifecycle.dispose();
       await lifecycle.dispose();
 

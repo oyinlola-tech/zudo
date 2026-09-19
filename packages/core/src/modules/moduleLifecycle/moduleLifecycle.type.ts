@@ -127,6 +127,14 @@ export interface ModuleLifecyclePhaseOptions {
    * runtime that drives it.
    */
   readonly continueOnError?: boolean;
+
+  /**
+   * Abandons the phase once aborted: no further module hook is started.
+   * A hook already running completes and its module keeps the phase it
+   * reached, so a later stop()/destroy() tears it down. The runtime
+   * passes its startup-timeout signal here.
+   */
+  readonly signal?: AbortSignal;
 }
 
 import { ModuleOperationError } from "../moduleError/moduleError.lifecycle.js";

@@ -42,9 +42,21 @@ export class ContextStorage {
    *
    * The context is automatically available to all asynchronous
    * operations created within the callback.
+   *
+   * A new execution starts without ContextValues: values bound by an
+   * enclosing `runWithValues` belong to that execution (its tenant,
+   * user, transaction) and must not leak into an unrelated one started
+   * from inside its async scope, such as a listener or consumer created
+   * during a request. Re-entering the execution that is already current
+   * keeps its values. Use `runDerived` or `runWithValues` to carry
+   * values on purpose.
    */
   public run<T>(context: ExecutionContext, callback: () => T): T {
-    return this.storage.run(context, callback);
+    if (context === this.storage.getStore()) {
+      return this.storage.run(context, callback);
+    }
+
+    return this.storage.run(context, () => this.valuesStorage.exit(callback));
   }
 
   /**

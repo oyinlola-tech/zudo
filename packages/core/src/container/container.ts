@@ -7,6 +7,7 @@ import {
   InvalidProviderError,
   DependencyResolutionError,
 } from "../errors/exceptions.js";
+import { assertScopedResolvable } from "./container.lifetime.js";
 
 /**
  * Internal representation of a registered dependency.
@@ -37,8 +38,8 @@ export interface ContainerOptions {
    *   new Container({ currentScope: () => storage.get() })
    *
    * "scoped" providers resolve to one instance per returned object.
-   * When it returns undefined and no explicit scope is active, scoped
-   * providers behave as transient.
+   * When it returns undefined and no explicit scope is active, resolving
+   * a scoped provider throws a DependencyResolutionError.
    */
   readonly currentScope?: () => object | undefined;
 }
@@ -55,6 +56,8 @@ export class Container {
   private readonly currentScope: (() => object | undefined) | undefined;
   private readonly resolving: Token<unknown>[] = [];
   private activeScope: object | undefined;
+  /** The singleton under construction, if any; see assertScopedResolvable. */
+  private captor: Token<unknown> | undefined;
 
   public constructor(options: ContainerOptions = {}) {
     this.currentScope = options.currentScope;
@@ -141,6 +144,10 @@ export class Container {
       return registration.instance as T;
     }
 
+    if (registration.scope === "scoped") {
+      assertScopedResolvable(token, this.captor, scopeKey, this.resolving);
+    }
+
     if (registration.scope === "scoped" && scopeKey) {
       if (registration.scopedInstances.has(scopeKey)) {
         return registration.scopedInstances.get(scopeKey) as T;
@@ -183,8 +190,12 @@ export class Container {
     }
 
     const previousScope = this.activeScope;
+    const previousCaptor = this.captor;
     this.resolving.push(token);
     this.activeScope = scopeKey;
+    if (registration.scope === "singleton") {
+      this.captor = token;
+    }
 
     try {
       if ("useFactory" in provider) {
@@ -203,6 +214,7 @@ export class Container {
     } finally {
       this.resolving.pop();
       this.activeScope = previousScope;
+      this.captor = previousCaptor;
     }
   }
 }

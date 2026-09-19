@@ -605,7 +605,11 @@ describe("DefaultRuntime", () => {
     const harness = await createHarness([{ id: "a" }]);
     const exit = vi.fn();
     (harness.signalTarget as unknown as { exit: unknown }).exit = exit;
-    const runtime = harness.create();
+    // A second signal force-exits by default (X-01); opt out here to
+    // observe the graceful path on its own.
+    const runtime = harness.create({
+      signals: { forceExitOnSecondSignal: false },
+    });
     await runtime.start();
 
     harness.signalTarget.emit("SIGINT");
@@ -671,8 +675,10 @@ describe("RuntimeSignalManager", () => {
     return { target, exit, manager, handlers };
   }
 
-  it("ignores a second signal by default and never exits", async () => {
-    const { target, exit, manager, handlers } = createManager();
+  it("ignores a second signal when force exit is disabled", async () => {
+    const { target, exit, manager, handlers } = createManager({
+      forceExitOnSecondSignal: false,
+    });
     manager.register(handlers);
     manager.register(handlers);
 
@@ -909,7 +915,9 @@ describe("runtime context and options", () => {
 
   it("resolves defaults and new signal options", () => {
     const resolved = resolveRuntimeOptions();
-    expect(resolved.signals.forceExitOnSecondSignal).toBe(false);
+    expect(resolved.signals.forceExitOnSecondSignal).toBe(true);
+    expect(resolved.signals.exitOnFatalError).toBe(true);
+    expect(resolved.signals.fatalExitTimeout).toBe(10_000);
     expect(resolved.signals.forceExitCode).toBe(1);
     expect(resolved.environment).toEqual({});
     expect(resolved.startup).toEqual(DEFAULT_RUNTIME_OPTIONS.startup);

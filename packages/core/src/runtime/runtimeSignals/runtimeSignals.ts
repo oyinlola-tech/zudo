@@ -1,5 +1,19 @@
 import type { Logger } from "../../logging/core/logger.js";
 import type { RuntimeSignalOptions } from "../runtimeOptions/runtimeOptions.type.js";
+import {
+  DEFAULT_FATAL_EXIT_TIMEOUT,
+  runFatalHandler,
+} from "./runtimeSignals.fatal.js";
+
+/**
+ * Fatal-exit settings are optional on the manager so that a
+ * hand-assembled `signals` object from before they existed still
+ * type-checks; they default to exiting after 10 seconds.
+ */
+type ManagerSignalOptions = Required<
+  Omit<RuntimeSignalOptions, "exitOnFatalError" | "fatalExitTimeout">
+> &
+  Pick<RuntimeSignalOptions, "exitOnFatalError" | "fatalExitTimeout">;
 
 /**
  * Termination signals the runtime can react to.
@@ -47,7 +61,7 @@ export interface RuntimeSignalHandlers {
  * Options for the signal manager.
  */
 export interface RuntimeSignalManagerOptions {
-  readonly signals: Required<RuntimeSignalOptions>;
+  readonly signals: ManagerSignalOptions;
   readonly target?: RuntimeSignalTarget;
   readonly logger?: Logger;
 }
@@ -61,12 +75,15 @@ export interface RuntimeSignalManagerOptions {
  *   `unregister()`; both are idempotent.
  * - The first termination signal triggers `onSignal` (graceful stop).
  * - A second termination signal while the first is still being
- *   handled is logged and ignored, unless `forceExitOnSecondSignal`
- *   is on, in which case `target.exit(forceExitCode)` is called.
+ *   handled exits with `forceExitCode` when `forceExitOnSecondSignal`
+ *   is on (the default), and is logged and ignored otherwise.
+ * - An uncaught exception or unhandled rejection runs the fatal
+ *   handler and then exits with code 1, unless `exitOnFatalError` is
+ *   off; `fatalExitTimeout` bounds a shutdown that hangs.
  * - `process.exit` is never called otherwise.
  */
 export class RuntimeSignalManager {
-  private readonly _signals: Required<RuntimeSignalOptions>;
+  private readonly _signals: ManagerSignalOptions;
   private readonly _target: RuntimeSignalTarget | undefined;
   private readonly _logger: Logger | undefined;
   private readonly _listeners = new Map<
@@ -155,14 +172,14 @@ export class RuntimeSignalManager {
         };
       case "uncaughtException":
         return ((error: unknown) => {
-          this.run(
+          this.runFatal(
             () => this._handlers?.onUncaughtException(error),
             "uncaughtException",
           );
         }) as (...args: never[]) => void;
       case "unhandledRejection":
         return ((reason: unknown) => {
-          this.run(
+          this.runFatal(
             () => this._handlers?.onUnhandledRejection(reason),
             "unhandledRejection",
           );
@@ -197,6 +214,24 @@ export class RuntimeSignalManager {
       signal,
     });
     this.run(() => this._handlers?.onSignal(signal), signal);
+  }
+
+  private runFatal(
+    handler: () => void | Promise<void> | undefined,
+    event: RuntimeProcessEvent,
+  ): void {
+    runFatalHandler(
+      handler,
+      this._target,
+      {
+        exitOnFatalError: this._signals.exitOnFatalError ?? true,
+        fatalExitTimeout:
+          this._signals.fatalExitTimeout ?? DEFAULT_FATAL_EXIT_TIMEOUT,
+        exitCode: 1,
+      },
+      this._logger,
+      event,
+    );
   }
 
   private run(

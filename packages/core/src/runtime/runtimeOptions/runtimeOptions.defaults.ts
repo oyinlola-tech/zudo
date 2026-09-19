@@ -33,8 +33,10 @@ export const DEFAULT_RUNTIME_OPTIONS: Readonly<
     handleSighup: false,
     handleUncaughtException: true,
     handleUnhandledRejection: true,
-    forceExitOnSecondSignal: false,
+    forceExitOnSecondSignal: true,
     forceExitCode: 1,
+    exitOnFatalError: true,
+    fatalExitTimeout: 10_000,
   },
 
   diagnostics: {

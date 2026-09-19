@@ -177,6 +177,7 @@ export class DefaultRuntime implements Runtime {
   private _startPromise: Promise<void> | undefined;
   private _stopPromise: Promise<void> | undefined;
   private _unwound = false;
+  private _unwindPromise: Promise<void> | undefined;
 
   public constructor(
     dependencies: RuntimeDependencies,
@@ -387,9 +388,14 @@ export class DefaultRuntime implements Runtime {
       this._logger.error("Runtime failed to start.", error, this.logContext());
 
       // The module subsystem has already rolled back when the module
-      // lifecycle manager threw; a timed-out bootstrap is still
-      // running and must not be unwound concurrently.
-      if (!(error instanceof RuntimeTimeoutError)) {
+      // lifecycle manager threw. A timed-out bootstrap is still
+      // running: its teardown is queued behind the lifecycle manager's
+      // lock, so it runs once the in-flight hook settles and reaches
+      // every module that came up late. start() rejects now; stop()
+      // waits for that teardown.
+      if (error instanceof RuntimeTimeoutError) {
+        void this.unwind();
+      } else {
         await this.unwind();
       }
 
@@ -426,7 +432,12 @@ export class DefaultRuntime implements Runtime {
    * Best-effort module unwinding used after a failure. Errors are
    * logged and swallowed; the runtime stays FAILED.
    */
-  private async unwind(): Promise<void> {
+  private unwind(): Promise<void> {
+    this._unwindPromise ??= this.performUnwind();
+    return this._unwindPromise;
+  }
+
+  private async performUnwind(): Promise<void> {
     if (this._unwound) return;
 
     try {

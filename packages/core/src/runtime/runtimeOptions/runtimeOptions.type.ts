@@ -69,12 +69,27 @@ export interface RuntimeSignalOptions {
   /**
    * When a second termination signal arrives while a graceful stop is
    * already in progress, exit the process immediately with
-   * `forceExitCode`. Off by default: the second signal is logged and
-   * ignored.
+   * `forceExitCode`. On by default, matching `@zudojs/runtime`: an
+   * operator pressing Ctrl-C again on a stuck shutdown is asking for
+   * exactly that. Set to `false` to log and ignore the second signal.
    */
   readonly forceExitOnSecondSignal?: boolean;
   /** Exit code used by `forceExitOnSecondSignal`. Defaults to 1. */
   readonly forceExitCode?: number;
+  /**
+   * After an uncaught exception or unhandled rejection has stopped the
+   * runtime, exit the process with code 1. On by default: the
+   * installed handler suppresses Node's own crash, so without this the
+   * process exited 0 and supervisors never restarted or alerted. Set to
+   * `false` to stop the runtime and leave the process running.
+   */
+  readonly exitOnFatalError?: boolean;
+  /**
+   * How long that fatal-error shutdown may take before the process
+   * exits anyway, in milliseconds. `0` waits for the shutdown however
+   * long it takes. Defaults to 10000.
+   */
+  readonly fatalExitTimeout?: number;
 }
 
 /**
