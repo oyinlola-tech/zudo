@@ -2,7 +2,10 @@
  * Transaction error types.
  */
 
-export { TransactionError } from "./transactionError.base.js";
+export {
+  TransactionError,
+  type TransactionErrorOptions,
+} from "./transactionError.base.js";
 
 export {
   TransactionStateError,
