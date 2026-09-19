@@ -28,6 +28,11 @@
  */
 
 import { OAuthEndpointNotAllowedError } from "../oauthErrors/index.js";
+import {
+  embeddedIpv4,
+  expandIpv6,
+  isNonPublicIpv6Range,
+} from "./oauthIpv6.guard.js";
 
 /** Hostnames that are always refused for a server-fetched endpoint. */
 const BLOCKED_HOST_NAMES: ReadonlySet<string> = new Set([
@@ -84,36 +89,20 @@ function isNonPublicIpv4(octets: readonly number[]): boolean {
   return false;
 }
 
-/** Whether an IPv6 literal (already stripped of brackets) is non-public. */
+/**
+ * Whether an IPv6 literal (already stripped of brackets) is non-public.
+ *
+ * Any form embedding an IPv4 address (compatible `::/96`, mapped, translated,
+ * NAT64 `64:ff9b::/96`, 6to4) is judged as that IPv4 address. The WHATWG
+ * parser serialises `[::127.0.0.1]` as `[::7f00:1]`, which the old
+ * dotted-form regex never matched. An unparseable literal fails closed.
+ */
 function isNonPublicIpv6(raw: string): boolean {
-  const host = raw.toLowerCase();
-  if (host === "::" || host === "::1") return true;
-  // IPv4-mapped / -compatible: judge the embedded IPv4 address.
-  const mapped = /^::(?:ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host);
-  const embedded = mapped?.[1];
-  if (embedded !== undefined) {
-    const octets = parseIpv4(embedded);
-    return octets === undefined ? true : isNonPublicIpv4(octets);
-  }
-  // The WHATWG URL parser rewrites `::ffff:127.0.0.1` as `::ffff:7f00:1`,
-  // so the hex form has to be decoded back to its embedded IPv4 address.
-  const hexMapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
-  const high = hexMapped?.[1];
-  const low = hexMapped?.[2];
-  if (high !== undefined && low !== undefined) {
-    const word1 = Number.parseInt(high, 16);
-    const word2 = Number.parseInt(low, 16);
-    return isNonPublicIpv4([
-      (word1 >> 8) & 0xff,
-      word1 & 0xff,
-      (word2 >> 8) & 0xff,
-      word2 & 0xff,
-    ]);
-  }
-  if (/^f[cd][0-9a-f]{2}:/.test(host)) return true; // fc00::/7 unique local
-  if (/^fe[89ab][0-9a-f]:/.test(host)) return true; // fe80::/10 link-local
-  if (/^ff[0-9a-f]{2}:/.test(host)) return true; // ff00::/8 multicast
-  return false;
+  const groups = expandIpv6(raw);
+  if (!groups) return true;
+  const embedded = embeddedIpv4(groups);
+  if (embedded) return isNonPublicIpv4(embedded);
+  return isNonPublicIpv6Range(groups);
 }
 
 /**

@@ -175,7 +175,11 @@ Every one of these is covered by a test in `tests/`.
   endpoints (token, user-info) additionally may not point at a loopback,
   private, CGNAT, link-local, unique-local, multicast or reserved address, at
   `169.254.169.254` and friends, or at a `localhost` / `*.local` / `*.internal`
-  / `metadata.google.internal` name. Redirects are not followed
+  / `metadata.google.internal` name. IPv6 literals that embed an IPv4
+  address (`[::127.0.0.1]`, `[::ffff:0:a9fe:a9fe]`, NAT64
+  `[64:ff9b::169.254.169.254]`, 6to4 `2002::/16`) are judged as that IPv4
+  address, and the local-use NAT64 prefix `64:ff9b:1::/48` is refused.
+  Redirects are not followed
   (`redirect: "manual"`), so a 3xx cannot walk the request somewhere that never
   passed the guard.
   **Limit:** the check is on the literal host; DNS is not resolved, so DNS
