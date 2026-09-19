@@ -11,3 +11,4 @@ Round 10 fixes.
 - **data/VAL-05 / cross/CV-02:** `ValidationError` and `ValidationResultError` now extend `@zudojs/errors`' `ValidationError`, so `instanceof` and `isValidationError()` from `@zudojs/errors` catch them. Public fields are unchanged.
 - **data/VAL-06 (fail-closed):** `not(constraint)` carries the inner constraint's guard and treats a throw as a failure. Behaviour change: `not(matches(...))` now rejects non-strings.
 - **data/VAL-07:** `everyItem` / `someItem` read every index, so holes in a sparse array are checked.
+- **LEAF-10 (security):** `ValidationError.toJSON()` and `ValidationResultError.toJSON()` no longer overwrite the base class's redacted `issues` with the raw ones, and `ValidationError`'s `context` is serialized from the redacted metadata. Behaviour change: serialized issues carry `receivedType` (etc.) instead of the submitted value, and sensitive context keys are `[REDACTED]`. The raw values remain on the error instance.
