@@ -4,6 +4,7 @@ import type {
 } from "./runtimeOptions.type.js";
 
 import { DEFAULT_RUNTIME_OPTIONS } from "./runtimeOptions.defaults.js";
+import { resolveDefaultRuntimeMode } from "./runtimeOptions.mode.js";
 
 import {
   validateRuntimeName,
@@ -29,7 +30,9 @@ export function resolveRuntimeOptions(
    * accepted silently and make the environment report neither
    * production, development, nor test.
    */
-  assertRuntimeMode(options.mode ?? DEFAULT_RUNTIME_OPTIONS.mode);
+  const mode =
+    options.mode ?? resolveDefaultRuntimeMode(options.environment?.variables);
+  assertRuntimeMode(mode);
   assertRuntimeRole(options.role ?? DEFAULT_RUNTIME_OPTIONS.role);
   validateRuntimeName(options.name);
   validateRuntimeTimeout(startup.timeoutMs, "startup");
@@ -38,7 +41,7 @@ export function resolveRuntimeOptions(
 
   const resolved: ResolvedRuntimeOptions = {
     name: options.name ?? DEFAULT_RUNTIME_OPTIONS.name,
-    mode: options.mode ?? DEFAULT_RUNTIME_OPTIONS.mode,
+    mode,
     role: options.role ?? DEFAULT_RUNTIME_OPTIONS.role,
 
     startup: {

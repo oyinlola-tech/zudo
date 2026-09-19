@@ -360,8 +360,9 @@ export class ConfigurationManager {
 
     if (!this.missingSetConfigurationWarned) {
       this.missingSetConfigurationWarned = true;
-      console.warn(
+      process.emitWarning(
         "ConfigurationManager: the configured ConfigurationProvider does not implement setConfiguration(); loaded configuration will not be pushed into the provider.",
+        { type: "ZudojsCoreWarning", code: "ZUDOJS_CONFIG_PROVIDER_NO_SET" },
       );
     }
   }

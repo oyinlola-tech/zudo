@@ -121,6 +121,7 @@ export interface RuntimeEnvironmentOverrides {
  */
 export interface RuntimeOptions {
   readonly name?: string;
+  /** Omitted: derived from NODE_ENV by `resolveEnvironment()` (@zudojs/constants); staging runs as production. */
   readonly mode?: RuntimeMode;
   readonly role?: RuntimeRole;
   readonly startup?: RuntimeStartupOptions;
