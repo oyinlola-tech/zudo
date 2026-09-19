@@ -9,6 +9,7 @@ import {
   InvalidConstantError,
   ConstantContextError,
   SCHEMA_FORBIDDEN_KEYS,
+  SerializationLimits,
   ValidationPattern,
   createEmailAddress,
   createMockRandom,
@@ -102,5 +103,12 @@ describe("CV-02 (constants)", () => {
   it("re-exports the @zudojs/errors classes", () => {
     expect(InvalidConstantError).toBe(sharedErrors.InvalidConstantError);
     expect(ConstantContextError).toBe(sharedErrors.ConstantContextError);
+  });
+});
+
+describe("SER-03 (phase 2)", () => {
+  it("exposes the shared BigInt digit bound", () => {
+    expect(SerializationLimits.MAX_BIGINT_DIGITS).toBe(4096);
+    expect(Object.isFrozen(SerializationLimits)).toBe(true);
   });
 });

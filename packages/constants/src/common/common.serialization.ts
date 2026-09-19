@@ -46,6 +46,12 @@ export const SerializationLimits = Object.freeze({
   MAX_TRANSFORMERS: 256,
   /** Maximum length of a type tag string. */
   MAX_TYPE_TAG_LENGTH: 128,
+  /**
+   * Maximum number of decimal digits accepted when decoding or coercing a
+   * BigInt from text. `BigInt()` parsing is quadratic in the digit count, so
+   * an unbounded string is a CPU denial-of-service vector.
+   */
+  MAX_BIGINT_DIGITS: 4096,
 } as const);
 
 /** Type-tag sentinel keys for JSON representation. */
