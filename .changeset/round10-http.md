@@ -20,3 +20,10 @@ Round 10 fixes.
 - **HTTP-14:** `HttpServer` counts requests and fires `onRequest` / `onResponse`.
 - **HTTP-15:** static middleware evaluates conditionals with `evaluateConditionalRequest` (ETag lists, weak tags, `*`, `If-Modified-Since`, 412).
 - **HTTP-16 (behaviour change):** `createCorsMiddleware` throws `ConfigurationError` at construction for a wildcard origin (including the default) with `credentials: true`.
+
+Round 10 phase 2:
+
+- HTTP-11: `parseSignedCookie` compares signatures with `@zudojs/crypto`'s `timingSafeEqualString`; the local constant-time helper is gone. `signCookieValue` keeps `node:crypto` `createHmac` because it is synchronous and every `@zudojs/crypto` HMAC helper is async.
+- CONV-02: `HttpRequestGuardError`, `HttpMiddlewareError` (+ `HttpMiddlewareErrorOptions`) and `HttpMiddlewarePipelineError` are re-exported from `@zudojs/errors`. **Behaviour change:** `HttpRequestGuardError` is now a `BaseError` (code `HTTP_REQUEST_REJECTED`, category `validation`, `expose: false`, a status outside 400-499 falls back to 400) instead of a plain `Error`, and its `errors` array is a frozen copy.
+- events/H6: contexts created by `NodeHTTPAdapter`, `NodeContextAdapter` and `adaptNodeContext` get a `@zudojs/logger` console logger (`createDefaultLogger("http")`) instead of a `console.*` shim. **Behaviour change:** secret metadata fields are printed as `[REDACTED]`, output uses the logger's text format, and the context logger now implements the full `Logger` interface (`debug`, `child`, …) instead of only `info`/`warn`/`error`.
+- Rate limiting: `createRateLimitMiddleware` counts a request whose `remoteAddress` is missing or not an IP in one shared bucket (new export `UNKNOWN_CLIENT_RATE_LIMIT_IP`, `0.0.0.0`). Such a request used to hit `@zudojs/security`'s `ConfigurationError` and fail with a 500.

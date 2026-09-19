@@ -9,3 +9,4 @@ Round 10 fixes:
 - CONV-02: the default leak warning is emitted through `process.emitWarning` (type `ZudojsEventsWarning`, code `ZUDOJS_EVENTS_HANDLER_LIMIT`) instead of `console.warn`.
 
 Behaviour changes: publishers can mutate their payload objects after publishing; handlers see a copy (so `e.payload.obj !== originalObj`), and instances of user classes inside a payload are passed by reference and are no longer frozen; mutating a Map/Set/Date in a dispatched event now throws a TypeError; the leak warning no longer prints via `console.warn` (it appears as a Node process warning).
+- MSG-02 (phase 2): `executeEventMiddlewarePipeline` is built on `compose` from `@zudojs/middleware`. Behaviour is unchanged (descending priority, abort checks before every stage and the terminal, `EventMiddlewareError` for a double `next()` and for a middleware's own errors, downstream errors passed through untouched, no depth ceiling). The pipeline file also drops below 150 lines.

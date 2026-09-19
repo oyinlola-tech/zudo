@@ -13,3 +13,4 @@ Round 10 fixes.
 - **cross/CV-01:** removed the `@zudojs/http` peer dependency (higher tier, never imported).
 
 Behaviour changes: header/path-only tenancy is refused by default; suspended tenants answer 404 instead of 403 in the resolve middleware; the guard's 403 body no longer names the tenant or its status; `TenantId` brand changed to the shared one (values from either package are accepted by both).
+- **leaf/X-05 (phase 2):** `createTenantId` now delegates to `createTenantId` in `@zudojs/constants` and rethrows its rejection as `InvalidTenantIdError`, so both packages apply one rule (NFKC, trim, lowercase, `[a-z0-9][a-z0-9_-]*`, 64 characters). `MAX_TENANT_ID_LENGTH` is re-exported from constants (still 64), and `TENANT_ID_PATTERN` is newly exported. `TenantId` was already the constants brand. No behaviour change for callers.

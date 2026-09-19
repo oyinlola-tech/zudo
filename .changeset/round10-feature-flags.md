@@ -11,3 +11,4 @@ Round 10 fixes.
 - **FF-05 (convention):** `isPlainObject` now matches `@zudojs/types` semantics (false for `Date`, `Map`, class instances) and is deprecated in favour of `@zudojs/types`.
 
 Behaviour changes: dependents turn off where their prerequisite is archived, expired or not rolled out for the subject; non-boolean flags no longer serve `true` from an attribute rule without `result`; nested-quantifier `matches` patterns never match; a missing key is not re-fetched for 30 s; `isPlainObject(new Date())` is `false`.
+- **authz/FF-05 (phase 2):** `isPlainObject` is now a re-export of the `@zudojs/types` function (same semantics as the round-10 local copy; the export is kept and marked deprecated in favour of importing from `@zudojs/types`).
