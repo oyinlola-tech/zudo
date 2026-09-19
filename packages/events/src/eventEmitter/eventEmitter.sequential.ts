@@ -54,12 +54,14 @@ export async function emitSequential<TEvent extends Event>(
       throw createAbortError(event, results, errors);
     }
 
-    if (handler.once) {
-      if (!hooks.isRegistered(handler.id)) {
-        // Already consumed by an overlapping dispatch.
-        continue;
-      }
+    // Checked for every handler, not only once-handlers: a handler
+    // unsubscribed (or a bus disposed) by an earlier handler in this
+    // same dispatch must not run.
+    if (!hooks.isRegistered(handler.id)) {
+      continue;
+    }
 
+    if (handler.once) {
       hooks.removeOnce(handler.id);
     }
 

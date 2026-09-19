@@ -47,12 +47,12 @@ export async function emitParallel<TEvent extends Event>(
    * an overlapping dispatch cannot invoke them a second time.
    */
   const runnable = handlers.filter((handler) => {
-    if (!handler.once) {
-      return true;
-    }
-
     if (!hooks.isRegistered(handler.id)) {
       return false;
+    }
+
+    if (!handler.once) {
+      return true;
     }
 
     hooks.removeOnce(handler.id);

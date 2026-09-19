@@ -52,8 +52,9 @@ await bus.publishEvent({
 - Handler priorities, one-time handlers, per-handler timeouts
 - Wildcard subscriptions (`"user.*"`, `"*"`)
 - Event registry for typed definitions; handlers registered on the registry are dispatched by the bus
-- Deep-frozen events (`freezeEvents`, on by default) so handlers cannot alter what other handlers see
-- Listener-leak warnings (`maxListeners`) and an `onError` hook for fire-and-forget publishes
+- Deep-frozen events (`freezeEvents`, on by default) so handlers cannot alter what other handlers see: handlers receive a frozen *copy* (`createFrozenEventSnapshot`), so the publisher's own objects are never frozen, and Map, Set and Date values (including `event.timestamp`) become read-only variants that throw on mutation. Class instances are passed by reference.
+- A handler unsubscribed by an earlier handler in the same dispatch, or left over after the bus is disposed mid-dispatch, does not run
+- Listener-leak warnings (`maxListeners`, reported through `onWarning` or, by default, `process.emitWarning` with type `ZudojsEventsWarning`) and an `onError` hook for fire-and-forget publishes
 - Typed error classes from `@zudojs/errors` (`EventHandlerError`, `EventMiddlewareError`, `EventDispatchAbortedError`, …)
 
 ## Lifecycle

@@ -59,7 +59,7 @@ export interface EventEmitterOptions {
 
   /**
    * Receives leak warnings. Only applies to the private store.
-   * Defaults to console.warn.
+   * Defaults to `process.emitWarning` (type `ZudojsEventsWarning`).
    */
   readonly onWarning?: (warning: EventRegistryWarning) => void;
 }

@@ -12,7 +12,7 @@ import type { EventTypePattern } from "../eventTypes/eventType.type.js";
 
 import { createEvent, isEvent } from "../eventTypes/eventDefinition.type.js";
 
-import { deepFreeze } from "../eventTypes/eventPayload.type.js";
+import { createFrozenEventSnapshot } from "../eventTypes/eventSnapshot.freeze.js";
 
 import type {
   EventHandlerLike,
@@ -141,11 +141,16 @@ export class EventEmitter {
 
     const errorMode = options.errorMode ?? this.options.errorMode;
 
-    const dispatched = this.options.freezeEvents ? deepFreeze(event) : event;
-
     const handlers = this.store.getHandlersForEvent(
-      dispatched,
+      event,
     ) as readonly RegisteredEventHandler<TEvent>[];
+
+    // Handlers receive a frozen COPY: freezing the event in place froze
+    // the publisher's own objects, even when nobody was subscribed.
+    const dispatched =
+      this.options.freezeEvents && handlers.length > 0
+        ? createFrozenEventSnapshot(event)
+        : event;
 
     const context = createEventHandlerContext(dispatched, {
       signal: options.signal,
@@ -168,7 +173,15 @@ export class EventEmitter {
     }
 
     const hooks = {
-      isRegistered: (handlerId: string) => this.store.hasHandler(handlerId),
+      // A bus disposed mid-dispatch has no registered handlers left.
+      isRegistered: (handlerId: string) => {
+        if (this.disposed) return false;
+        try {
+          return this.store.hasHandler(handlerId);
+        } catch {
+          return false;
+        }
+      },
 
       removeOnce: (handlerId: string) => {
         this.store.unregisterHandler(handlerId);

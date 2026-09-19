@@ -85,8 +85,27 @@ interface ResolvedRegistryOptions {
   ) => void;
 }
 
+/**
+ * Default leak-warning sink: Node's process warning channel (the same one
+ * `EventEmitter` uses for `MaxListenersExceededWarning`), which honours
+ * `--no-warnings` and `process.on("warning")`, instead of writing to the
+ * console directly. A no-op where `process.emitWarning` is unavailable.
+ */
 function defaultWarning(warning: EventRegistryWarning): void {
-  console.warn(`[@zudojs/events] ${warning.message}`);
+  const emit = (
+    globalThis as {
+      readonly process?: {
+        readonly emitWarning?: (
+          message: string,
+          options: { readonly type: string; readonly code: string },
+        ) => void;
+      };
+    }
+  ).process?.emitWarning;
+  emit?.(`[@zudojs/events] ${warning.message}`, {
+    type: "ZudojsEventsWarning",
+    code: "ZUDOJS_EVENTS_HANDLER_LIMIT",
+  });
 }
 
 /**

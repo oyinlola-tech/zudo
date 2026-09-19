@@ -75,13 +75,13 @@ export interface EventRegistryOptions {
 
   /**
    * Maximum handlers per event pattern before a leak warning is
-   * emitted through `onWarning` (or console.warn). Use 0 to
+   * emitted through `onWarning` (or `process.emitWarning`). Use 0 to
    * disable. Defaults to 100.
    */
   readonly maxHandlersPerPattern?: number;
 
   /**
-   * Receives limit warnings. Defaults to console.warn.
+   * Receives limit warnings. Defaults to `process.emitWarning` (type `ZudojsEventsWarning`).
    */
   readonly onWarning?: (warning: EventRegistryWarning) => void;
 

@@ -75,3 +75,10 @@ export {
   defineEventTypes,
   defineEventType,
 } from "./eventType.type.js";
+
+export {
+  createFrozenEventSnapshot,
+  FrozenEventDate,
+  FrozenEventMap,
+  FrozenEventSet,
+} from "./eventSnapshot.freeze.js";

@@ -70,7 +70,7 @@ export interface EventBusOptions {
   readonly requireRegistration?: boolean;
   readonly middleware?: readonly EventBusMiddlewareItem[];
   /**
-   * Receives leak warnings. Defaults to console.warn.
+   * Receives leak warnings. Defaults to `process.emitWarning` (type `ZudojsEventsWarning`).
    */
   readonly onWarning?: (warning: EventRegistryWarning) => void;
   /**
