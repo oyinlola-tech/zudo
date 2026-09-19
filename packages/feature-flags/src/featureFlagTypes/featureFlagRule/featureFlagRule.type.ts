@@ -44,12 +44,22 @@ export interface FeatureFlagTenantRule {
   readonly value: FeatureFlagValue;
 }
 
-/** Target by attribute matching. */
+/**
+ * Target by attribute matching.
+ *
+ * `value` is the comparison operand, not what the rule serves. What a match
+ * serves is `result`, which defaults to `true` — so on a non-boolean flag an
+ * attribute rule must set `result`, and one that does not is skipped rather
+ * than serving a boolean from a string, number or object flag.
+ */
 export interface FeatureFlagAttributeRule {
   readonly type: "attribute";
   readonly attribute: string;
   readonly operator: FeatureFlagOperator;
+  /** The operand the attribute is compared against. */
   readonly value: unknown;
+  /** The value served when the rule matches. Default: `true`. */
+  readonly result?: FeatureFlagValue;
 }
 
 /** Percentage-based rollout — deterministic per subject. */

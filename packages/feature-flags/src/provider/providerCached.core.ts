@@ -18,6 +18,12 @@ import type {
 export interface CachedProviderOptions {
   /** Time-to-live in milliseconds (default: 30,000). */
   readonly ttl?: number;
+  /**
+   * Most per-key entries held (default: 1,000). Past it, expired entries are
+   * swept and then the oldest evicted. Every distinct key asked for used to
+   * stay in the map for good, misses included.
+   */
+  readonly maxEntries?: number;
 }
 
 interface CacheEntry {
@@ -37,6 +43,7 @@ export function createCachedProvider(
   options: CachedProviderOptions = {},
 ): RefreshableFeatureFlagProvider {
   const ttl = options.ttl ?? 30_000;
+  const maxEntries = options.maxEntries ?? 1_000;
   const flagCache = new Map<string, CacheEntry>();
   let listCache:
     | { readonly flags: readonly FeatureFlag[]; readonly expiresAt: number }
@@ -44,6 +51,20 @@ export function createCachedProvider(
 
   function isExpired(entry: { expiresAt: number }): boolean {
     return Date.now() > entry.expiresAt;
+  }
+
+  function remember(key: string, entry: CacheEntry): void {
+    flagCache.delete(key);
+    flagCache.set(key, entry);
+    if (flagCache.size <= maxEntries) return;
+    for (const [cachedKey, cached] of flagCache) {
+      if (isExpired(cached)) flagCache.delete(cachedKey);
+    }
+    while (flagCache.size > maxEntries) {
+      const oldest = flagCache.keys().next();
+      if (oldest.done === true) break;
+      flagCache.delete(oldest.value);
+    }
   }
 
   function clear(): void {
@@ -76,7 +97,7 @@ export function createCachedProvider(
       if (cached && !isExpired(cached)) return cached.value;
 
       const flag = await inner.get(key);
-      flagCache.set(key, { value: flag, expiresAt: Date.now() + ttl });
+      remember(key, { value: flag, expiresAt: Date.now() + ttl });
       return flag;
     },
 

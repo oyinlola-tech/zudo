@@ -61,7 +61,7 @@ interface FeatureFlag {
   state?: "active" | "archived" | "draft";
   visibility?: "client" | "server";
   rules?: FeatureFlagRule[]; // evaluated in order, first match wins
-  dependencies?: string[]; // other flags that must be enabled
+  dependencies?: string[]; // other flags that must be on for the same context
   metadata?: { expiresAt?: Date /* … */ };
 }
 ```
@@ -76,7 +76,7 @@ from JSON does — and expires the flag just the same.
 | `static`     | always                                          |
 | `user`       | `context.userId` is in `users`                  |
 | `tenant`     | `context.tenantId` is in `tenants`              |
-| `attribute`  | `attribute` compared to `value` with `operator` |
+| `attribute`  | `attribute` compared to `value` with `operator`; serves `result` (default `true`) |
 | `percentage` | the subject's bucket falls inside `percentage`  |
 | `schedule`   | now is between `startAt` and `endAt`            |
 | `variant`    | always, assigning a variant by weight           |
@@ -92,9 +92,25 @@ Operators: `equals`, `not_equals`, `contains`, `starts_with`, `ends_with`,
 Attribute paths use dot notation and are resolved against the context first,
 then `context.attributes`. Only **own** properties are traversed:
 `__proto__`, `constructor` and `prototype` never resolve, so a rule cannot
-accidentally (or deliberately) target everyone through the prototype chain. A
-`matches` pattern that does not compile, or is longer than 512 characters,
-matches nothing instead of throwing.
+accidentally (or deliberately) target everyone through the prototype chain.
+
+An attribute rule's `value` is the comparison operand; what a match serves is
+`result`, which defaults to `true`. On a non-boolean flag set `result`:
+
+```typescript
+{ key: "theme", enabled: true, defaultValue: "light",
+  rules: [{ type: "attribute", attribute: "plan", operator: "equals", value: "pro", result: "dark" }] }
+```
+
+An attribute rule without `result` on a non-boolean flag is skipped, rather
+than serving `true` from a string flag.
+
+A `matches` pattern matches nothing, instead of throwing or hanging, when it
+does not compile, is longer than 512 characters, or could backtrack
+catastrophically — a repeated group that itself repeats or alternates
+(`(a+)+`, `(a|aa)*`, `(\w+\s?){2,}`) or a backreference. It is tested only
+against values up to 1,024 characters. Patterns used for targeting, such as
+`@example\.com$` or `^(beta|alpha)-`, are unaffected.
 
 ## Rollouts and variants
 
@@ -111,9 +127,13 @@ is 90/10.
 ## Dependencies
 
 A flag may declare `dependencies`. It evaluates normally only when every
-dependency — transitively — exists and is enabled; otherwise the result is
-`dependency_disabled` with the declared default. Cycles resolve to disabled;
-a shared dependency reached down two branches is not a cycle.
+dependency is **on for the same context**: the prerequisite is evaluated —
+state, expiry, rules, rollout, and its own dependencies — and must not be
+disabled, draft, archived or expired, nor evaluate to `false`, `null` or
+`undefined`. A prerequisite rolled out to 10% keeps its dependents off for the
+other 90%. Otherwise the result is `dependency_disabled` with the declared
+default. Cycles resolve to disabled; a shared dependency reached down two
+branches is not a cycle.
 
 `evaluateFlag()` on its own has no registry and cannot resolve dependencies,
 so it reports `dependency_disabled` for any flag that declares them unless
@@ -143,6 +163,13 @@ const provider = createCachedProvider(
 and `createCompositeProvider` forward those announcements — the cache is
 dropped first, and the composite announces its merged view — so the stack
 above still propagates a change made to `remoteProvider`.
+
+`createCachedProvider` holds at most `maxEntries` keys (default 1,000),
+sweeping expired entries and then evicting the oldest. `createFeatureFlags`
+remembers a key the provider does not know for `missingFlagTtlMs` (default
+30 s, at most 1,000 keys; `0` disables it), so request-supplied keys cannot
+turn every evaluation into a remote round trip. The memory is dropped on
+every reload.
 
 `createEnvironmentProvider` parses `true`/`false` and numbers; anything else,
 including an empty `FEATURE_X=`, stays a string.

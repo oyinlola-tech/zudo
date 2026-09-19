@@ -7,6 +7,10 @@
  */
 
 import type { FeatureFlagOperator } from "../featureFlagTypes/featureFlagRule/featureFlagRule.type.js";
+import {
+  isUnsafePattern,
+  MAX_MATCH_INPUT_LENGTH,
+} from "./evaluatorPattern.safety.js";
 
 /**
  * Path segments that must never be traversed.
@@ -67,7 +71,8 @@ const MAX_CACHED_PATTERNS = 256;
  *
  * A pattern that does not compile used to throw out of rule evaluation and
  * out of `isEnabled()` with it. A flag whose configuration is broken must
- * fall back to its default, not take the caller down.
+ * fall back to its default, not take the caller down. A pattern that could
+ * backtrack catastrophically is treated the same way: it never matches.
  */
 function compilePattern(pattern: string): RegExp | null {
   if (pattern.length > MAX_PATTERN_LENGTH) return null;
@@ -77,7 +82,7 @@ function compilePattern(pattern: string): RegExp | null {
 
   let compiled: RegExp | null;
   try {
-    compiled = new RegExp(pattern);
+    compiled = isUnsafePattern(pattern) ? null : new RegExp(pattern);
   } catch {
     compiled = null;
   }
@@ -171,6 +176,7 @@ export function matchAttribute(
       if (typeof actual !== "string" || typeof expected !== "string") {
         return false;
       }
+      if (actual.length > MAX_MATCH_INPUT_LENGTH) return false;
       const pattern = compilePattern(expected);
       return pattern !== null && pattern.test(actual);
     }

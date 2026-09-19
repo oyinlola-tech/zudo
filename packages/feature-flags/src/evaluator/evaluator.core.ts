@@ -140,6 +140,16 @@ export function evaluateFlag<
 
   for (let i = 0; i < flag.rules.length; i++) {
     const rule = flag.rules[i]!;
+    // An attribute rule with no `result` serves `true`, which is only a
+    // value of a boolean flag. On any other flag it is skipped, rather than
+    // handing `get<string>()` a boolean.
+    if (
+      rule.type === "attribute" &&
+      rule.result === undefined &&
+      typeof flag.defaultValue !== "boolean"
+    ) {
+      continue;
+    }
     const result = evaluateRule(rule, context, flag.key);
 
     if (result.matched) {

@@ -7,12 +7,22 @@
 import type { FeatureFlagValue } from "../featureFlagTypes/featureFlagRule/featureFlagValue.type.js";
 
 /**
- * Check if a value is a plain object (not null, not array).
+ * Check if a value is a plain object: created by `{}` / `Object.create(null)`,
+ * not an array, a `Date`, a `Map` or any other class instance.
+ *
+ * Same semantics as `isPlainObject` in `@zudojs/types`, which owns it; this
+ * copy used to answer `true` for a `Date` or a `Map`.
+ *
+ * @deprecated Import `isPlainObject` from `@zudojs/types`. This re-implementation
+ *   is kept only so the public export does not disappear; it will become a
+ *   re-export once `@zudojs/types` is a dependency of this package.
  */
 export function isPlainObject(
   value: unknown,
 ): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
 /**

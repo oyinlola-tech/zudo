@@ -22,6 +22,10 @@ import {
   FeatureFlagProviderError,
 } from "../featureFlagErrors/featureFlagError.types.js";
 import { resolveDependencies, mergeContext } from "./featureFlags.resolve.js";
+import {
+  createMissCache,
+  DEFAULT_MISSING_FLAG_TTL_MS,
+} from "./featureFlags.missCache.js";
 
 /** Options for creating a FeatureFlags instance. */
 export interface FeatureFlagsOptions {
@@ -47,6 +51,13 @@ export interface FeatureFlagsOptions {
    * handles itself.
    */
   readonly throwOnProviderError?: boolean;
+  /**
+   * How long a key the provider does not know is remembered as missing, in
+   * ms. Default: 30,000. At most 1,000 missing keys are kept. `0` asks the
+   * provider on every evaluation, as before. The memory is dropped on every
+   * reload (`refresh()`, a provider change notification).
+   */
+  readonly missingFlagTtlMs?: number;
 }
 
 /** The public FeatureFlags API. */
@@ -87,7 +98,9 @@ export function createFeatureFlags(options: FeatureFlagsOptions): FeatureFlags {
     throwOnMissing = false,
     onError,
     throwOnProviderError = false,
+    missingFlagTtlMs = DEFAULT_MISSING_FLAG_TTL_MS,
   } = options;
+  const misses = createMissCache(missingFlagTtlMs);
 
   let registry: FeatureFlagRegistry = createFeatureFlagRegistry();
   let loaded = false;
@@ -115,6 +128,7 @@ export function createFeatureFlags(options: FeatureFlagsOptions): FeatureFlags {
       const flags = await provider.getAll();
       registry = createFeatureFlagRegistry(flags);
       loaded = true;
+      misses.clear();
       return true;
     } catch (error) {
       return handleProviderError(error, "FeatureFlagProvider.getAll");
@@ -138,10 +152,12 @@ export function createFeatureFlags(options: FeatureFlagsOptions): FeatureFlags {
   async function resolveFlag(key: string): Promise<FlagLookup> {
     const known = registry.get(key);
     if (known) return { flag: known, reachable: true };
+    if (misses.has(key)) return { flag: undefined, reachable: true };
 
     try {
       const flag = await provider.get(key);
       if (flag) registry.set(flag);
+      else if (loaded) misses.add(key);
       return { flag, reachable: true };
     } catch (error) {
       handleProviderError(error, "FeatureFlagProvider.get");
@@ -159,6 +175,7 @@ export function createFeatureFlags(options: FeatureFlagsOptions): FeatureFlags {
   let unsubscribe: Unsubscribe | undefined = provider.subscribe?.((flags) => {
     registry = createFeatureFlagRegistry(flags);
     loaded = true;
+    misses.clear();
   });
 
   const api: FeatureFlags = {
@@ -218,7 +235,7 @@ export function createFeatureFlags(options: FeatureFlagsOptions): FeatureFlags {
       const dependenciesSatisfied =
         !flag.dependencies ||
         flag.dependencies.length === 0 ||
-        resolveDependencies(key, registry);
+        resolveDependencies(key, registry, undefined, undefined, mergedCtx);
 
       return evaluateFlag<T>(flag, mergedCtx, { dependenciesSatisfied });
     },
@@ -240,7 +257,13 @@ export function createFeatureFlags(options: FeatureFlagsOptions): FeatureFlags {
         const dependenciesSatisfied =
           !flag.dependencies ||
           flag.dependencies.length === 0 ||
-          resolveDependencies(flag.key, registry);
+          resolveDependencies(
+            flag.key,
+            registry,
+            undefined,
+            undefined,
+            mergedCtx,
+          );
         results.set(
           flag.key,
           evaluateFlag(flag, mergedCtx, { dependenciesSatisfied }),

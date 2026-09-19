@@ -60,7 +60,7 @@ export function evaluateRule(
         actual = resolvePath(context.attributes, rule.attribute);
       }
       const matched = matchAttribute(actual, rule.operator, rule.value);
-      return { matched, value: matched ? true : undefined };
+      return { matched, value: matched ? (rule.result ?? true) : undefined };
     }
 
     case "percentage": {
