@@ -18,8 +18,15 @@ import {
 describe("tooling/ADP-01", () => {
   it("aggregates health from adapters that implement health()", async () => {
     const registry = new AdapterRegistry();
-    registry.register(createMockAdapter({ name: "Db", health: () => createHealthyHealth() }));
-    registry.register(createMockAdapter({ name: "cache", health: async () => createDegradedHealth("slow") }));
+    registry.register(
+      createMockAdapter({ name: "Db", health: () => createHealthyHealth() }),
+    );
+    registry.register(
+      createMockAdapter({
+        name: "cache",
+        health: async () => createDegradedHealth("slow"),
+      }),
+    );
     registry.register(createMockAdapter({ name: "plain" }));
 
     const report = await registry.healthAll();
@@ -29,8 +36,17 @@ describe("tooling/ADP-01", () => {
 
   it("reports a throwing or slow check as unhealthy instead of throwing", async () => {
     const registry = new AdapterRegistry();
-    registry.register(createMockAdapter({ name: "boom", health: () => { throw new Error("down"); } }));
-    registry.register(createMockAdapter({ name: "slow", health: () => new Promise(() => {}) }));
+    registry.register(
+      createMockAdapter({
+        name: "boom",
+        health: () => {
+          throw new Error("down");
+        },
+      }),
+    );
+    registry.register(
+      createMockAdapter({ name: "slow", health: () => new Promise(() => {}) }),
+    );
 
     const report = await registry.healthAll({ timeout: 20 });
     expect(report.status).toBe("unhealthy");
@@ -46,7 +62,9 @@ describe("tooling/ADP-01", () => {
 
     await registry.configure("CFG", { port: 1 });
     expect(configure).toHaveBeenCalledWith({ port: 1 });
-    await expect(registry.configure("bare", {})).rejects.toBeInstanceOf(AdapterConfigurationError);
+    await expect(registry.configure("bare", {})).rejects.toBeInstanceOf(
+      AdapterConfigurationError,
+    );
   });
 
   it("createMockAdapter keeps health and configure", () => {
