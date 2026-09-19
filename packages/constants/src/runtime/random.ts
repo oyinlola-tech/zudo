@@ -11,9 +11,16 @@ import {
 } from "node:crypto";
 
 /**
- * Provides deterministic randomness for testing.
+ * Brand marking an implementation as cryptographically secure.
+ *
+ * Without it any object with the four method names would satisfy
+ * {@link Random}, including the seeded {@link createMockRandom} generator,
+ * so a predictable test double could be injected where tokens are minted.
  */
-export interface Random {
+declare const SecureRandomBrand: unique symbol;
+
+/** The randomness operations shared by {@link Random} and {@link MockRandom}. */
+export interface RandomSource {
   /**
    * Returns a random float between 0 (inclusive) and 1 (exclusive).
    */
@@ -35,6 +42,31 @@ export interface Random {
   randomBytes(length: number): Uint8Array;
 }
 
+/**
+ * Cryptographically secure randomness, safe for tokens, session ids and
+ * salts. Branded: only {@link systemRandom} (or an implementation cast
+ * deliberately) satisfies it, and {@link MockRandom} never does.
+ *
+ * The richer, separately-branded `Random` in `@zudojs/types` is the
+ * long-term owner of this contract.
+ */
+export interface Random extends RandomSource {
+  /** @internal Marks the implementation as unpredictable. */
+  readonly [SecureRandomBrand]: true;
+}
+
+/**
+ * A seeded, fully predictable generator for tests.
+ *
+ * Structurally distinct from {@link Random} (it lacks the security brand and
+ * carries `deterministic: true`), so the compiler rejects it wherever a
+ * secure generator is required.
+ */
+export interface MockRandom extends RandomSource {
+  /** Marks this as a deterministic generator, not a secure one. */
+  readonly deterministic: true;
+}
+
 /** Alphanumeric alphabet used by `randomString`. */
 const RANDOM_STRING_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -49,7 +81,7 @@ const RANDOM_FLOAT_WORDS = new Uint32Array(2);
  * security-sensitive values. `random()` builds a 53-bit float in `[0, 1)`
  * from 64 bits of `crypto.getRandomValues` output.
  */
-export const systemRandom: Random = {
+export const systemRandom: Random = ({
   random: () => {
     getRandomValues(RANDOM_FLOAT_WORDS);
     // 21 high bits from word 0 and all 32 bits of word 1 = 53 bits of
@@ -68,7 +100,7 @@ export const systemRandom: Random = {
     return result;
   },
   randomBytes: (length) => new Uint8Array(cryptoRandomBytes(length)),
-};
+} satisfies RandomSource) as Random;
 
 /**
  * Creates a mock random with a seeded sequence for deterministic testing.
@@ -77,7 +109,7 @@ export const systemRandom: Random = {
  * with `Math.imul` for exact 32-bit arithmetic. Outputs are always in
  * `[0, 1)`. Not cryptographically secure — tests only.
  */
-export function createMockRandom(seed: number = 1): Random {
+export function createMockRandom(seed: number = 1): MockRandom {
   let state = seed >>> 0;
 
   function next(): number {
@@ -86,6 +118,7 @@ export function createMockRandom(seed: number = 1): Random {
   }
 
   return {
+    deterministic: true,
     random: next,
     randomInt: (min, max) => Math.floor(next() * (max - min + 1)) + min,
     randomString: (length) => {

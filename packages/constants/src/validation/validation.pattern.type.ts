@@ -13,14 +13,18 @@
  */
 export const ValidationPattern = Object.freeze({
   /**
-   * Simplified email pattern (pragmatic subset of RFC 5322).
+   * Structural email pattern — the monorepo's one acceptance set.
    *
-   * The domain part rejects consecutive dots, leading/trailing dots, and
-   * labels that start or end with a hyphen. Combine with
-   * `ValidationLength.EMAIL` (254) for a length bound.
+   * Accepts exactly what `isEmail` in `@zudojs/types` accepts: at most 254
+   * characters (RFC 5321), no `..` anywhere, a local part free of
+   * whitespace, `@`, `,`, `;`, `<`, `>`, `"`, `[`, `]` and `\\`, and a
+   * domain of two or more hyphen-safe labels. Deliberately structural, not a
+   * full RFC 5322 parser: `o'brien@example.com` and `user@host.123` pass,
+   * deliverability is a verification step's job. The length bound is a
+   * lookahead, so it runs before the label pattern can backtrack.
    */
   EMAIL:
-    /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/,
+    /^(?=[\s\S]{1,254}$)(?![\s\S]*\.\.)[^\s@,;<>"[\]\\]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i,
   /** UUID — any version/variant nibble (use UUID_V4 for strict v4). */
   UUID: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
   /** UUID v4 (strict: version nibble 4, RFC 4122 variant). */

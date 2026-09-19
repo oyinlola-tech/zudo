@@ -11,19 +11,15 @@ import {
   type RequestId,
   type CorrelationId,
   type SessionId,
-  type TenantId,
   type MessageId,
   type MessageCausationId,
   type TokenId,
-  type Timestamp,
   type Url,
-  type EmailAddress,
   type HexString,
   type Base64String,
   type JsonString,
 } from "./common.type.js";
 import { ContentTypes, Charset } from "../http/httpContentType.type.js";
-import { ValidationPattern } from "../validation/validation.pattern.type.js";
 import { InvalidConstantError } from "../constantsErrors/constantsError.base.js";
 
 /** Sentinel value indicating absence of a value. */
@@ -152,13 +148,6 @@ export function createSessionId(id: string): SessionId {
 }
 
 /**
- * Create a branded TenantId from a raw string.
- */
-export function createTenantId(id: string): TenantId {
-  return id as TenantId;
-}
-
-/**
  * Create a branded MessageId from a raw string.
  */
 export function createMessageId(id: string): MessageId {
@@ -180,24 +169,6 @@ export function createTokenId(id: string): TokenId {
 }
 
 /**
- * Create a branded Timestamp from an ISO 8601 string.
- *
- * @throws {InvalidConstantError} if the input is not a valid ISO 8601
- * date-time string (e.g. `2024-01-01T00:00:00.000Z`).
- */
-export function createTimestamp(iso: string): Timestamp {
-  if (
-    !ValidationPattern.ISO_DATE_TIME.test(iso) ||
-    Number.isNaN(Date.parse(iso))
-  ) {
-    throw new InvalidConstantError(
-      `Invalid ISO 8601 timestamp: ${JSON.stringify(iso)}`,
-    );
-  }
-  return iso as Timestamp;
-}
-
-/**
  * Create a branded Url from a raw string.
  *
  * @throws {InvalidConstantError} if the input is not a parseable URL.
@@ -207,20 +178,6 @@ export function createUrl(url: string): Url {
     throw new InvalidConstantError(`Invalid URL: ${JSON.stringify(url)}`);
   }
   return url as Url;
-}
-
-/**
- * Create a branded EmailAddress from a raw string.
- *
- * @throws {InvalidConstantError} if the input is not a valid email address.
- */
-export function createEmailAddress(email: string): EmailAddress {
-  if (email.length > 254 || !ValidationPattern.EMAIL.test(email)) {
-    throw new InvalidConstantError(
-      `Invalid email address: ${JSON.stringify(email)}`,
-    );
-  }
-  return email as EmailAddress;
 }
 
 /**

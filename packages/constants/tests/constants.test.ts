@@ -112,7 +112,7 @@ import {
   // Runtime
   type Clock,
   type MockClock,
-  type Random,
+  type MockRandom,
   systemClock,
   createMockClock,
   systemRandom,
@@ -847,8 +847,8 @@ describe("systemRandom (crypto-backed, finding 3)", () => {
 
 describe("createMockRandom (finding 2)", () => {
   it("is deterministic for the same seed", () => {
-    const a: Random = createMockRandom(42);
-    const b: Random = createMockRandom(42);
+    const a: MockRandom = createMockRandom(42);
+    const b: MockRandom = createMockRandom(42);
     for (let i = 0; i < 20; i++) {
       expect(a.random()).toBe(b.random());
     }

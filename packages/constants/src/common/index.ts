@@ -36,17 +36,22 @@ export {
   createRequestId,
   createCorrelationId,
   createSessionId,
-  createTenantId,
   createMessageId,
   createMessageCausationId,
   createTokenId,
-  createTimestamp,
   createUrl,
-  createEmailAddress,
   createHexString,
   createBase64String,
   createJsonString,
 } from "./common.constant.js";
+
+export {
+  createTenantId,
+  createTimestamp,
+  createEmailAddress,
+  TENANT_ID_PATTERN,
+  MAX_TENANT_ID_LENGTH,
+} from "./common.factory.js";
 
 export {
   SerializationFormat,

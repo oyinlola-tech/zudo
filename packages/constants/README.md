@@ -37,7 +37,11 @@ formatDuration(150_000); // "2m 30s"
 All constant objects are `Object.freeze`d `as const` maps, and every map has a
 matching literal-union type (`HttpStatusCode`, `HttpMethod`, `Environment`,
 `LifecycleState`, `SchemaIssueCode`, ...). Sets such as `HTTP_METHODS` and
-`SCHEMA_FORBIDDEN_KEYS` are immutable at runtime: `add`/`delete`/`clear` throw.
+`SCHEMA_FORBIDDEN_KEYS` are immutable at runtime: `add`/`delete`/`clear` throw,
+and their values live in a private store, so `Set.prototype.clear.call(set)`
+cannot empty them either. They implement `ReadonlySet` but are not `Set`
+instances (`instanceof Set` is `false`); copy with `new Set(value)` when a
+mutable set is needed.
 
 ## Modules
 
@@ -87,7 +91,11 @@ formatDuration(4_500_000); // "1h 15m"
 - Branded types (`UserId`, `EventId`, `Timestamp`, `Url`, `EmailAddress`, ...)
   with `createX` factories — the validating ones (`createTimestamp`,
   `createUrl`, `createEmailAddress`, `createHexString`, `createBase64String`,
-  `createJsonString`) throw `InvalidConstantError` on bad input
+  `createJsonString`, `createTenantId`) throw `InvalidConstantError` on bad
+  input. `createTimestamp` rejects impossible dates such as `2024-02-30`;
+  `createTenantId` NFKC-normalizes, trims and lowercases, then enforces
+  `TENANT_ID_PATTERN` (`[a-z0-9][a-z0-9_-]*`) and `MAX_TENANT_ID_LENGTH` (64),
+  the same rule as `@zudojs/tenancy`
 - `Limits`, `Defaults`, `Sentinel` and sentinels `NONE`, `UNINITIALIZED`, `EMPTY`
 - Lifecycle state machine: `LifecycleState`, `LifecyclePhase`, `LIFECYCLE_VALID_TRANSITIONS`, timeouts/retries
 - Schema constants: `SchemaIssueCode`, `SCHEMA_FORBIDDEN_KEYS` (immutable at runtime), `SCHEMA_STRING_FORMATS`
@@ -98,6 +106,9 @@ formatDuration(4_500_000); // "1h 15m"
 - `ValidationPattern` — the single source of truth for regexes (EMAIL, UUID,
   UUID_V4, IPV4, IPV6, ISO_DATE_TIME, URL, SEMVER, PHONE, FILE_NAME, ...).
   `SCHEMA_STRING_FORMATS` re-exports these rather than redefining them.
+  `EMAIL` accepts exactly what `isEmail` in `@zudojs/types` accepts
+  (structural, at most 254 characters, no `..`; `o'brien@example.com` and
+  `user@host.123` pass).
 - `ValidationLength`, `ValidationRange`
 
 ```typescript
@@ -122,6 +133,9 @@ ValidationLength.EMAIL; // 254
 - Injectable `Clock` / `Random` interfaces with `systemClock` / `systemRandom`
   (fully `node:crypto`-backed, safe for tokens and salts) and deterministic
   `createMockClock()` / `createMockRandom(seed)` for tests
+- `Random` is branded: `createMockRandom` returns a `MockRandom`
+  (`deterministic: true`), which the compiler refuses wherever a `Random` is
+  required, so a predictable generator cannot mint tokens by accident
 - `MockClock` adds `advance(ms)` and `set(timestampOrDate)`
 
 ```typescript
@@ -144,5 +158,6 @@ systemRandom.randomString(32); // CSPRNG-backed
 
 ### Errors
 
-- `InvalidConstantError`, `ConstantContextError` (built on `@zudojs/errors`;
-  error codes themselves live in `@zudojs/errors`)
+- `InvalidConstantError`, `ConstantContextError`, re-exported from
+  `@zudojs/errors` (which owns them), so `instanceof` matches either import
+  path
