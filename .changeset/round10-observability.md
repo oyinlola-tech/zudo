@@ -11,3 +11,4 @@ Round 10 audit fixes.
 - XP-02: new `toLoggerLevel` / `fromLoggerLevel` convert between this package's `LogLevel` (higher = more severe) and `@zudojs/logger`'s inverted `LoggerLevel` numbers.
 
 Behaviour changes: spans started inside `propagation.run()` are now children of the ambient context (previously a new trace); non-W3C trace/span IDs passed to the context factories are no longer kept verbatim; the facade's `onError` reports cardinality once per metric name instead of once per rejected series.
+- CONV-01 / H5 (phase 2): `ObservabilityError` is now the `@zudojs/errors` class, re-exported (same constructor and defaults). `ExporterError`, `ObservabilityConfigError` and `MetricValueError` stay as thin subclasses, so `instanceof ObservabilityError` matches across both import paths.

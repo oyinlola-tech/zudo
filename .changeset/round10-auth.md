@@ -11,3 +11,8 @@ Round 10 security fixes:
 - AUTH-05: `maxAttemptsPerWindow` is documented as a per-identifier budget, with a recommendation to put a per-IP limiter in front of `login()`.
 - CRYPTO-01: new password hashes use scrypt N=2^14, r=8, p=5 (OWASP). Existing `scrypt$16384$8$1$…` hashes and the param-less legacy format still verify, and `needsRehash()` now returns `true` for them.
 - XPKG-01 (partial): the local `generateCsrfToken` is marked `@deprecated` in favour of `@zudojs/security`. Delegating hashing to `@zudojs/crypto` waits on adding the dependency.
+
+Round 10 phase 2:
+
+- XPKG-01: `hashPassword` delegates to `@zudojs/crypto` and returns its `v1$scrypt$16384$8$5$<salt>.<hash>` format (32-byte salt, 64-byte key). `verifyPassword` sends `v1$…` hashes to `@zudojs/crypto` and keeps a legacy verifier for `scrypt$N$r$p$…` and the param-less `scrypt<salt>$…` format, so every stored hash still verifies. `needsRehash()` returns `true` for every hash that is not a current-parameter crypto scrypt hash (all legacy hashes, PBKDF2, other salt/key sizes). The unknown-user dummy hash is a crypto-format hash. Session ids come from `@zudojs/crypto` `randomHex`. **Behaviour change:** new hash strings start with `v1$scrypt$`, and `hashPassword("")` now throws `AuthError` (`INVALID_INPUT`). `generateRandomToken`, `generateTokenId` and the deprecated `generateCsrfToken` stay on `node:crypto` because they are synchronous and every `@zudojs/crypto` random helper is async.
+- CONV-02: `AuthError` and `AuthErrorOptions` are now re-exported from `@zudojs/errors`; every auth error subclass extends the shared class.

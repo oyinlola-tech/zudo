@@ -10,3 +10,4 @@ Round 10 fixes:
 - INF-12: when a lock's `release()` throws after the critical section already failed, the critical section's error is rethrown and the release error is attached to it as a non-enumerable `suppressed` property. It used to be replaced by the release error.
 
 Behaviour changes: `namespace: ""` now throws. Values with a `$type` field are readable.
+- **infra/SER-02 residual (phase 2):** `stripUnsafeKeys` (and so `JsonCacheSerializer` with `preserveTypes: false`) uses `SCHEMA_FORBIDDEN_KEYS` from `@zudojs/constants` instead of a local copy of the list. Same three keys; no behaviour change.

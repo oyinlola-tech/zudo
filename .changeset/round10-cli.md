@@ -13,3 +13,5 @@ Round 10 audit fixes.
 - An unparsable frontend package.json fails the scaffold instead of being replaced; unpinned frontend dependencies get caret ranges instead of `"latest"` (tooling/CLI-07).
 - `zudojs add constructor`/`__proto__` reports "Unknown feature" instead of crashing (tooling/CLI-08).
 - `--language javascript` is rejected for backend projects and warned about for fullstack (frontend only) (tooling/CLI-09).
+- tooling/CONV-01 (phase 2): `CLIValidationError`, `CLIGenerationError`, `CLINotInProjectError` and `CLITemplateError` now live in `@zudojs/errors`; `zudojs-cli` re-exports the same classes (same constructors and behaviour). Requires the matching `@zudojs/errors` release.
+- LEAF-16 (phase 2, behaviour change in generated apps): the generated `src/app.ts` resolves `NODE_ENV` with `resolveEnvironment()` from `@zudojs/constants` instead of an exact-match list, so `prod`/`Production` run as production and an unknown value warns once.
