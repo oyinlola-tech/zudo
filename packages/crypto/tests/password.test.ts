@@ -20,7 +20,7 @@ describe("hashPassword", async () => {
     const result = await hashPassword("mySecurePassword123");
     expect(result.cost).toBe(16384);
     expect(result.blockSize).toBe(8);
-    expect(result.parallelization).toBe(1);
+    expect(result.parallelization).toBe(5);
   });
 });
 

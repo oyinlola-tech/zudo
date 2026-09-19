@@ -21,6 +21,8 @@ import {
   PASSWORD_FORMAT_VERSION,
 } from "./cryptoPassword.codec.js";
 
+import { assertNewHashCost } from "./cryptoPassword.helper.js";
+
 /**
  * Options for `hashPassword` including an optional provider override.
  */
@@ -47,8 +49,9 @@ export async function hashPassword(
   const cost = options.cost ?? PASSWORD_HASH.SCRYPT.COST;
   const blockSize = options.blockSize ?? PASSWORD_HASH.SCRYPT.BLOCK_SIZE;
   const parallelization =
-    options.parallelization ?? PASSWORD_HASH.SCRYPT.PARALLELIZATION;
+    options.parallelization ?? PASSWORD_HASH.SCRYPT.PASSWORD_PARALLELIZATION;
 
+  assertNewHashCost(cost);
   validateParameters({
     saltBytes,
     keyBytes,

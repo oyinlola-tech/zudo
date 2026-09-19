@@ -13,6 +13,7 @@ import {
   encodePasswordHash,
   pbkdf2PasswordAlgorithm,
 } from "../../../cryptoPassword/cryptoPassword.codec.js";
+import { assertNewHashCost } from "../../../cryptoPassword/cryptoPassword.helper.js";
 import { deriveKey } from "./nodeCryptoProvider.derivation.js";
 import { keyDerivationError } from "../../../cryptoErrors/cryptoErrors.helper.js";
 
@@ -20,9 +21,10 @@ import { keyDerivationError } from "../../../cryptoErrors/cryptoErrors.helper.js
  * Hashes a password with scrypt (default) or PBKDF2 and returns the
  * self-describing, versioned encoding produced by `encodePasswordHash`.
  *
- * The encoded string is validated against `PASSWORD_HASH.LIMITS`, so the
- * provider refuses insecure parameters (short salts, tiny work factors)
- * instead of producing a hash that can never be verified.
+ * The encoded string is validated against `PASSWORD_HASH.LIMITS`, and a
+ * scrypt cost below `PASSWORD_HASH.SCRYPT.MIN_COST` (or PBKDF2 iterations
+ * below `PBKDF2.MIN_ITERATIONS`) is refused, so the provider does not mint
+ * hashes with short salts or tiny work factors.
  */
 export async function hashPassword(
   password: CryptoInput,
@@ -39,8 +41,9 @@ export async function hashPassword(
       const cost = options?.memoryCost ?? PASSWORD_HASH.SCRYPT.COST;
       const blockSize = options?.blockSize ?? PASSWORD_HASH.SCRYPT.BLOCK_SIZE;
       const parallelization =
-        options?.parallelism ?? PASSWORD_HASH.SCRYPT.PARALLELIZATION;
+        options?.parallelism ?? PASSWORD_HASH.SCRYPT.PASSWORD_PARALLELIZATION;
 
+      assertNewHashCost(cost);
       // Validate before deriving so invalid parameters fail fast.
       const placeholder = new Uint8Array(keyBytes);
       encodePasswordHash({

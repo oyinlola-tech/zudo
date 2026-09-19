@@ -3,10 +3,14 @@ import { TimeMs } from "@zudojs/constants";
 /**
  * Password hashing constants.
  *
- * Defaults follow current OWASP Password Storage Cheat Sheet guidance:
- * scrypt N=2^14, r=8, p=1 (minimum) and PBKDF2-HMAC-SHA256 with 600 000
- * iterations. `LIMITS` bounds parameters that are read back from stored
- * hashes so that a tampered or foreign record cannot force unbounded work.
+ * Defaults follow the OWASP Password Storage Cheat Sheet: scrypt N=2^14,
+ * r=8, p=5 (OWASP's N=2^14 row; p=1 is only adequate at N=2^17) and
+ * PBKDF2-HMAC-SHA256 with 600 000 iterations. `LIMITS` bounds parameters
+ * that are read back from stored hashes so that a tampered or foreign
+ * record cannot force unbounded work.
+ *
+ * New hashes are held to `SCRYPT.MIN_COST`; verification still accepts
+ * older stored hashes down to `LIMITS.MIN_SCRYPT_COST`.
  */
 export const PASSWORD_HASH = Object.freeze({
   SALT_BYTES: 16,
@@ -15,7 +19,15 @@ export const PASSWORD_HASH = Object.freeze({
   SCRYPT: Object.freeze({
     COST: 16_384,
     BLOCK_SIZE: 8,
+    /**
+     * Default `p` for key derivation (`deriveScrypt`). Left at 1: changing
+     * it would silently change every key derived with default options.
+     */
     PARALLELIZATION: 1,
+    /** Default `p` for new *password hashes* (OWASP N=2^14, r=8, p=5). */
+    PASSWORD_PARALLELIZATION: 5,
+    /** Floor on the cost of *new* hashes; `LIMITS.MIN_SCRYPT_COST` bounds verification. */
+    MIN_COST: 16_384,
   }),
 
   PBKDF2: Object.freeze({

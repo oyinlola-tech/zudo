@@ -48,7 +48,7 @@ const sessionToken = await generateToken({ bytes: 32, prefix: "sess_" });
 
 - Hashing: SHA-256/384/512 and SHA3-256/384/512, HMAC (keys of at least 16 bytes)
 - Authenticated encryption: AES-256-GCM with strict IV (12 bytes) and tag (16 bytes) validation, plus a versioned string envelope
-- Password hashing: scrypt (default, OWASP parameters) and PBKDF2-HMAC (provider level), versioned self-describing encoding, bounded parameters on verification
+- Password hashing: scrypt (default N=2^14, r=8, p=5 — the OWASP row for that N) and PBKDF2-HMAC (provider level), versioned self-describing encoding, bounded parameters on verification. New hashes must use a cost of at least `PASSWORD_HASH.SCRYPT.MIN_COST` (16 384); older stored hashes with a smaller cost still verify. Key derivation (`deriveScrypt`) keeps p=1 by default, so derived keys do not change
 - Key derivation: PBKDF2 (sha256/384/512, 600 000 iterations by default) and scrypt (cost, block size, parallelization, memory bound); every work factor and the output length are capped by `PASSWORD_HASH.LIMITS`, so a value read from configuration cannot request unbounded CPU or memory
 - Digital signatures: Ed25519, RSA-SHA256/384/512, ECDSA-SHA256/384/512; the algorithm label is bound to the key type
 - Secure random: unbiased integers up to 2^48, UUID v4, bytes, alphabets, numeric codes

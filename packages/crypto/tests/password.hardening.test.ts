@@ -27,9 +27,9 @@ describe("hashPassword salt/key options", () => {
   });
 
   it("derives exactly scrypt(N, r, p) over the encoded salt", async () => {
-    const result = await hashPassword("pw", { cost: 1024, blockSize: 4 });
+    const result = await hashPassword("pw", { cost: 16_384, blockSize: 4 });
     expect(Buffer.from(result.hash)).toEqual(
-      scryptSync("pw", result.salt, 32, { N: 1024, r: 4, p: 1 }),
+      scryptSync("pw", result.salt, 32, { N: 16_384, r: 4, p: 5 }),
     );
   });
 
@@ -134,9 +134,9 @@ describe("PBKDF2 password hashes", () => {
 
 describe("CryptoFactory password defaults", () => {
   it("merges per-call options on top of configured defaults", async () => {
-    const factory = createCryptoFactory({ password: { cost: 1024 } });
+    const factory = createCryptoFactory({ password: { cost: 32_768 } });
     const result = await factory.createPasswordHash("pw", { keyBytes: 48 });
-    expect(result.cost).toBe(1024);
+    expect(result.cost).toBe(32_768);
     expect(result.hash.length).toBe(48);
   });
 
