@@ -6,11 +6,12 @@
  *  1. A three.js hero backdrop — a lattice of wireframe modules with a red
  *     diagonal traced through it, the same idea as the logo: structure, with
  *     one path running through the layers.
- *  2. jQuery interactions — scroll reveals, animated counters, ticker control
- *     and card tilt.
+ *  2. Plain-DOM interactions — scroll reveals, animated counters, ticker
+ *     control, card tilt and the docs reading-progress bar. No library: an
+ *     earlier jQuery version cost about 1.3 s of LCP on slow mobile.
  *
- * Both libraries are loaded from a CDN only when the page can actually use
- * them. Everything degrades to the plain static page if a load fails, if the
+ * three.js is loaded from a CDN only on wide screens that can use it.
+ * Everything degrades to the plain static page if a load fails, if the
  * viewer prefers reduced motion, or if the device looks too small or too slow.
  *
  * Design brief: motion 2/10. Slow, structural, never decorative.
@@ -19,7 +20,6 @@
   'use strict';
 
   var THREE_URL = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
-  var JQUERY_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js';
 
   var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var lowPower =
@@ -253,7 +253,7 @@
   }
 
   /* ======================================================================
-     2. jQuery interactions
+     2. Interactions (plain DOM; no library, so nothing extra on the critical path)
      ====================================================================== */
 
   function initReveals() {
@@ -315,64 +315,67 @@
   }
 
   function initInteractions() {
-    var wants =
-      document.querySelector('[data-reveal]') ||
-      document.querySelector('[data-count]') ||
-      document.querySelector('.ticker') ||
-      document.querySelector('.doc-sidebar');   // docs pages get the progress bar
-    if (!wants) return;
+    tickerControls();
+    cardTilt();
+    activeNavProgress();
+  }
 
-    loadScript(JQUERY_URL).then(function () {
-      var $ = window.jQuery;
-      if (!$) return;
-      $(function () {
-        tickerControls($);
-        cardTilt($);
-        activeNavProgress($);
-      });
-    }).catch(function () {
-      /* Ticker pause, tilt and the progress bar are optional polish. */
+  function tickerControls() {
+    // Pause while a pointer is over it, so a name can actually be read.
+    Array.prototype.forEach.call(document.querySelectorAll('.ticker'), function (ticker) {
+      function pause() { ticker.classList.add('is-paused'); }
+      function play() { ticker.classList.remove('is-paused'); }
+      ticker.addEventListener('mouseenter', pause);
+      ticker.addEventListener('focusin', pause);
+      ticker.addEventListener('mouseleave', play);
+      ticker.addEventListener('focusout', play);
     });
   }
 
-  function tickerControls($) {
-    var $ticker = $('.ticker');
-    if (!$ticker.length) return;
-    // Pause while a pointer is over it, so a name can actually be read.
-    $ticker.on('mouseenter focusin', function () { $(this).addClass('is-paused'); })
-           .on('mouseleave focusout', function () { $(this).removeClass('is-paused'); });
-  }
-
-  function cardTilt($) {
+  function cardTilt() {
     if (reduceMotion || !window.matchMedia('(pointer: fine)').matches) return;
     // A 2px shift towards the cursor. Enough to feel alive, not enough to wobble.
-    $('.feature-card, .pkg-card').on('pointermove', function (e) {
-      var r = this.getBoundingClientRect();
-      var dx = (e.clientX - r.left) / r.width - 0.5;
-      var dy = (e.clientY - r.top) / r.height - 0.5;
-      this.style.setProperty('--tilt-x', (dx * 4).toFixed(2) + 'px');
-      this.style.setProperty('--tilt-y', (dy * 4).toFixed(2) + 'px');
-    }).on('pointerleave', function () {
-      this.style.removeProperty('--tilt-x');
-      this.style.removeProperty('--tilt-y');
+    Array.prototype.forEach.call(document.querySelectorAll('.feature-card, .pkg-card'), function (card) {
+      card.addEventListener('pointermove', function (e) {
+        var r = card.getBoundingClientRect();
+        var dx = (e.clientX - r.left) / r.width - 0.5;
+        var dy = (e.clientY - r.top) / r.height - 0.5;
+        card.style.setProperty('--tilt-x', (dx * 4).toFixed(2) + 'px');
+        card.style.setProperty('--tilt-y', (dy * 4).toFixed(2) + 'px');
+      });
+      card.addEventListener('pointerleave', function () {
+        card.style.removeProperty('--tilt-x');
+        card.style.removeProperty('--tilt-y');
+      });
     });
   }
 
-  function activeNavProgress($) {
+  function activeNavProgress() {
     // .doc-sidebar is in the served HTML; .doc-main is added later by docs.js,
     // so keying off it here would race.
     if (!document.querySelector('.doc-sidebar')) return;
-    var $bar = $('<div class="read-progress" aria-hidden="true"><i></i></div>');
-    $('body').append($bar);
-    var $fill = $bar.find('i');
+    var bar = document.createElement('div');
+    bar.className = 'read-progress';
+    bar.setAttribute('aria-hidden', 'true');
+    var fill = document.createElement('i');
+    bar.appendChild(fill);
+    document.body.appendChild(bar);
 
+    var queued = false;
     function update() {
+      queued = false;
       var h = document.documentElement;
       var max = h.scrollHeight - h.clientHeight;
       var pct = max > 0 ? (h.scrollTop || document.body.scrollTop) / max : 0;
-      $fill.css('transform', 'scaleX(' + Math.min(1, Math.max(0, pct)) + ')');
+      fill.style.transform = 'scaleX(' + Math.min(1, Math.max(0, pct)) + ')';
     }
-    $(window).on('scroll resize', update);
+    function schedule() {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(update);
+    }
+    window.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
     update();
   }
 
