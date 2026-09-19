@@ -24,6 +24,8 @@ import {
 } from "../httpTrustProxy/httpTrustProxy.ip.js";
 import { assertSafeHeaderValue } from "../httpHeaders/security/index.js";
 
+import { assertProxyPathContained } from "./httpProxy.pathGuard.js";
+
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -383,7 +385,16 @@ function parseProxyURL(target: string): URL {
 /* Path Handling                                                              */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Joins a request path onto a proxy base path.
+ *
+ * @throws {HttpError} 400 when `requestPath` contains a `.` / `..` segment
+ *   (plain or percent-encoded), which an upstream would resolve outside
+ *   `basePath`.
+ */
 export function joinProxyPath(basePath: string, requestPath: string): string {
+  assertProxyPathContained(requestPath);
+
   const base = normalizeProxyPath(basePath);
 
   const request = requestPath.startsWith("/") ? requestPath : `/${requestPath}`;

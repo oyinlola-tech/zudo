@@ -400,6 +400,12 @@ export function readNodeRequestBody(
 /* Response Result Detection                                                  */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Whether a value has the shape of a response init.
+ *
+ * @deprecated No longer used by the Node adapter: a plain object returned
+ * from a handler is always sent as JSON. Kept for API compatibility.
+ */
 export function isResponseContextLike(value: unknown): value is {
   readonly status?: number;
 

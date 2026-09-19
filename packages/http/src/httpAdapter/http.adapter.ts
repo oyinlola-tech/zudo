@@ -133,7 +133,12 @@ export interface HttpAdapter {
 
   start?(): void | Promise<void>;
 
-  stop?(): void | Promise<void>;
+  /**
+   * Stops the adapter. `options.graceMs` bounds how long in-flight requests
+   * may run before their connections are closed; `HttpServer.stop()` passes
+   * its `gracefulShutdownTimeout` here.
+   */
+  stop?(options?: HttpAdapterStopOptions): void | Promise<void>;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -308,7 +313,7 @@ export abstract class BaseHttpAdapter implements HttpAdapter {
     this.started = true;
   }
 
-  async stop(): Promise<void> {
+  async stop(_options?: HttpAdapterStopOptions): Promise<void> {
     if (!this.started) {
       return;
     }
@@ -492,9 +497,20 @@ export async function startAdapter(adapter: HttpAdapter): Promise<void> {
   }
 }
 
-export async function stopAdapter(adapter: HttpAdapter): Promise<void> {
+/**
+ * Options passed to {@link HttpAdapter.stop}.
+ */
+export interface HttpAdapterStopOptions {
+  /** Milliseconds in-flight requests may run before connections are closed. */
+  readonly graceMs?: number;
+}
+
+export async function stopAdapter(
+  adapter: HttpAdapter,
+  options?: HttpAdapterStopOptions,
+): Promise<void> {
   if (adapter.stop) {
-    await adapter.stop();
+    await adapter.stop(options);
   }
 }
 
@@ -522,6 +538,18 @@ export function isHttpAdapter(value: unknown): value is HttpAdapter {
 /* Result Normalization                                                       */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Turns a handler's return value into a response.
+ *
+ * Only an `HttpResponseContext` is treated as a response; `undefined`/`null`
+ * is an empty 200. **Every other value, including any plain object, is
+ * data** and is sent as `application/json`. To answer with a status, headers
+ * or a raw body, return `createResponseContext({ status, headers, body })`.
+ *
+ * A plain object used to count as a response init whenever it had any of
+ * eight common keys, so `{ status: "ok" }` became a 500 and a row with a
+ * `body` or `metadata` column was silently emptied or truncated.
+ */
 export function normalizeHandlerResult(
   result: HttpHandlerResult,
 ): HttpResponseContext {
@@ -533,13 +561,16 @@ export function normalizeHandlerResult(
     return createResponseContext();
   }
 
-  if (isResponseContextInit(result)) {
-    return createResponseContext(result);
-  }
-
   return createResponseContext().json(result);
 }
 
+/**
+ * Whether a value has the shape of a response init.
+ *
+ * @deprecated No longer used to interpret handler results: a plain object
+ * returned from a handler is always sent as JSON (see
+ * {@link normalizeHandlerResult}). Kept for API compatibility.
+ */
 export function isResponseContextInit(
   value: unknown,
 ): value is ResponseContextInit {

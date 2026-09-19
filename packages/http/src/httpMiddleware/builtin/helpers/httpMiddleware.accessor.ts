@@ -8,6 +8,8 @@ import type { HttpRequestContext as RequestContext } from "../../../httpRequest/
 
 import type { HttpResponseContext as ResponseContext } from "../../../httpResponse/httpResponse.context.js";
 
+import { getCanonicalPath } from "../../../httpRequest/target/httpRequest.target.js";
+
 export function getRequestMethod(request: RequestContext): string {
   const value = (
     request as unknown as {
@@ -79,11 +81,7 @@ export function getContextSignal(
 }
 
 export function extractPathname(value: string): string {
-  try {
-    return new URL(value, "http://zudojs.local").pathname;
-  } catch {
-    return value.split("?")[0] ?? value;
-  }
+  return getCanonicalPath(value);
 }
 
 export function performanceNow(): number {

@@ -30,3 +30,11 @@ export {
   assertRequestAllowed,
   HttpRequestGuardError,
 } from "./httpSecurity.guard.js";
+
+export type {
+  NodeAdapterSecurityOption,
+  NodeAdapterSecurityOptions,
+  NodeRequestGuard,
+} from "./httpSecurity.nodeGuard.js";
+
+export { createNodeRequestGuard } from "./httpSecurity.nodeGuard.js";

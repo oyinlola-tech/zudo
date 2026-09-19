@@ -10,11 +10,14 @@ import type { HttpAdapterOptions } from "../http.adapter.js";
 
 import type { TrustProxy } from "../../httpTrustProxy/httpTrustProxy.core.js";
 
+import type { NodeAdapterSecurityOptions } from "../../httpSecurity/httpSecurity.nodeGuard.js";
+
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
 /* -------------------------------------------------------------------------- */
 
-export interface NodeAdapterOptions extends HttpAdapterOptions {
+export interface NodeAdapterOptions
+  extends HttpAdapterOptions, NodeAdapterSecurityOptions {
   readonly host?: string;
 
   readonly port?: number;

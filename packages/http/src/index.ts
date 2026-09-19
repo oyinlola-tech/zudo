@@ -8,8 +8,6 @@
  * This is intentional — consumers can import from either path.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 export * from "./httpProtocol/index.js";
 export * from "./httpTypes/index.js";
 export * from "./httpConstants/index.js";

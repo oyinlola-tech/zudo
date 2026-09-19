@@ -36,6 +36,8 @@ import {
   validateShutdownTimeout,
 } from "../factory/httpServer.factory.js";
 
+const SHUTDOWN_CLOSE_MARGIN_MS = 1_000;
+
 export class HttpServer {
   readonly name: string;
 
@@ -285,7 +287,23 @@ export class HttpServer {
     return this;
   }
 
-  private adapterHandler(handler: HttpHandler): void {
+  /**
+   * Installs `handler` on the adapter, wrapped so every dispatch is counted
+   * (`requests`, `onRequest`) and its completion reported (`onResponse`).
+   * Nothing called `recordRequest`/`recordResponse` before, so the counter
+   * and both events stayed at zero.
+   */
+  private adapterHandler(application: HttpHandler): void {
+    const handler: HttpHandler = async (request) => {
+      this.recordRequest();
+
+      try {
+        return await application(request);
+      } finally {
+        this.recordResponse();
+      }
+    };
+
     const adapter = this.adapter as HttpAdapter & {
       handler?: HttpHandler;
       setHandler?: (value: HttpHandler) => void;
@@ -429,17 +447,27 @@ export class HttpServer {
     await startAdapter(this.adapter);
   }
 
+  /**
+   * The adapter is told the shutdown timeout as its grace period, so
+   * in-flight requests get the documented `gracefulShutdownTimeout` rather
+   * than the Node adapter's hidden 10 s default.
+   */
+  /*
+   * The adapter gets the full timeout as its grace period and then destroys
+   * the remaining sockets; the margin only lets that close complete before
+   * the stop is reported as timed out.
+   */
   private async performStop(force: boolean, timeout: number): Promise<void> {
     if (force) {
-      await stopAdapter(this.adapter);
+      await stopAdapter(this.adapter, { graceMs: 0 });
 
       return;
     }
 
     try {
       await withTimeout(
-        stopAdapter(this.adapter),
-        timeout,
+        stopAdapter(this.adapter, { graceMs: timeout }),
+        timeout + SHUTDOWN_CLOSE_MARGIN_MS,
         "HTTP server shutdown timed out.",
       );
     } catch (error) {
@@ -449,7 +477,7 @@ export class HttpServer {
        * rebind the port. Escalate to a forced stop before rethrowing.
        */
       try {
-        await stopAdapter(this.adapter);
+        await stopAdapter(this.adapter, { graceMs: 0 });
       } catch {
         /* The original timeout is the more useful error. */
       }

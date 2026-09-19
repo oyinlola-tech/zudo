@@ -8,6 +8,8 @@
  * from Node.js, Bun, Deno, or another HTTP runtime.
  */
 
+import { parseRequestTarget } from "./target/httpRequest.target.js";
+
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -247,7 +249,16 @@ export class HttpRequestContext {
   /* ------------------------------------------------------------------------ */
 
   get query(): RequestQuery {
-    return Object.freeze(Object.fromEntries(this.queryMap));
+    const query = Object.create(null) as Record<
+      string,
+      string | readonly string[] | undefined
+    >;
+
+    for (const [name, value] of this.queryMap) {
+      query[name] = value;
+    }
+
+    return Object.freeze(query);
   }
 
   hasQuery(name: string): boolean {
@@ -568,26 +579,19 @@ export function isRequestContext(value: unknown): value is HttpRequestContext {
 /* URL Helpers                                                                */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Returns the canonical path of a request-target. An origin-form target such
+ * as `//host/admin` stays a path; it is never parsed as an authority.
+ */
 export function getPathname(url: string): string {
-  try {
-    const parsed = new URL(url, "http://zudojs.invalid");
-
-    return parsed.pathname || "/";
-  } catch {
-    const pathname = url.split("?", 1)[0];
-
-    return pathname || "/";
-  }
+  return parseRequestTarget(url).pathname || "/";
 }
 
+/**
+ * Returns the search parameters of a request-target.
+ */
 export function getSearchParams(url: string): URLSearchParams {
-  try {
-    return new URL(url, "http://zudojs.invalid").searchParams;
-  } catch {
-    const query = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
-
-    return new URLSearchParams(query);
-  }
+  return parseRequestTarget(url).searchParams;
 }
 
 /* -------------------------------------------------------------------------- */

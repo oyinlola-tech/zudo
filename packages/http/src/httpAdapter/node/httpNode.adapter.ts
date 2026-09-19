@@ -21,11 +21,12 @@ import {
   createResponseContext,
 } from "../../httpResponse/httpResponse.context.js";
 
-import type { ResponseContextInit } from "../../httpResponse/core/httpResponse.type.js";
+import { BaseHttpAdapter, normalizeHandlerResult } from "../http.adapter.js";
 
-import { BaseHttpAdapter } from "../http.adapter.js";
-
-import type { HttpHandlerResult } from "../http.adapter.js";
+import type {
+  HttpAdapterStopOptions,
+  HttpHandlerResult,
+} from "../http.adapter.js";
 
 import type { HttpResponseWriter } from "../../httpResponse/httpResponse.writer.js";
 
@@ -50,6 +51,10 @@ import {
 
 import { NodeResponseWriter } from "./httpNode.response.js";
 
+import { compileTrustProxy } from "../../httpTrustProxy/httpTrustProxy.compilation.js";
+
+import { createNodeRequestGuard, type NodeRequestGuard } from "../../httpSecurity/httpSecurity.nodeGuard.js";
+
 import { createNodeRequestContext } from "./httpNode.request.js";
 
 import { resolveErrorResponse } from "../httpAdapter.errorResponse.js";
@@ -63,7 +68,6 @@ import {
   closeServer,
   readNodeRequestBody,
   NodeRequestBodyTooLargeError,
-  isResponseContextLike,
 } from "./httpNode.server.js";
 
 /* -------------------------------------------------------------------------- */
@@ -95,6 +99,8 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
   private readonly shutdownGraceMs: number | undefined;
 
   private readonly events: NodeAdapterEvents;
+
+  private readonly requestGuard: NodeRequestGuard | undefined;
 
   private server: Server | undefined;
 
@@ -156,7 +162,13 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
 
     this.trustProxy = options.trustProxy;
 
+    if (options.trustProxy !== undefined) {
+      compileTrustProxy(options.trustProxy);
+    }
+
     this.events = options.events ?? {};
+
+    this.requestGuard = createNodeRequestGuard(options.security);
 
     this.server = options.server;
 
@@ -205,7 +217,7 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
 
     return createNodeRequestContext(input, {
       maxBodySize: this.maxBodySize,
-      trustProxy: this.trustProxy as boolean | string | readonly string[],
+      trustProxy: this.trustProxy,
     });
   }
 
@@ -243,6 +255,12 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
     const request = input.request;
 
     const response = input.response;
+
+    if (this.requestGuard && !this.requestGuard(request).allowed) {
+      await this.writeBadRequest(response);
+
+      return;
+    }
 
     let context: HttpRequestContext;
 
@@ -315,20 +333,12 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
     return this.handler(request);
   }
 
+  /**
+   * Plain objects are data and are sent as JSON; see
+   * `normalizeHandlerResult`.
+   */
   private normalizeResult(result: HttpHandlerResult): HttpResponseContext {
-    if (result instanceof HttpResponseContext) {
-      return result;
-    }
-
-    if (result === undefined || result === null) {
-      return createResponseContext();
-    }
-
-    if (isResponseContextLike(result)) {
-      return createResponseContext(result as ResponseContextInit);
-    }
-
-    return createResponseContext().json(result);
+    return normalizeHandlerResult(result);
   }
 
   private async handleNodeError(
@@ -518,14 +528,24 @@ export class NodeHttpAdapter extends BaseHttpAdapter {
     await super.start();
   }
 
-  override async stop(): Promise<void> {
+  /**
+   * Closes the server. The grace period is `options.graceMs` (the server's
+   * `gracefulShutdownTimeout`), capped by an explicit `shutdownGraceMs`;
+   * with neither it is 10 s.
+   */
+  override async stop(options: HttpAdapterStopOptions = {}): Promise<void> {
     if (!this.server || !this.server.listening) {
       await super.stop();
 
       return;
     }
 
-    await closeServer(this.server, { graceMs: this.shutdownGraceMs });
+    const graceMs =
+      options.graceMs === undefined
+        ? this.shutdownGraceMs
+        : Math.min(options.graceMs, this.shutdownGraceMs ?? Infinity);
+
+    await closeServer(this.server, { graceMs });
 
     if (this.clientErrorListener) {
       this.server.off("clientError", this.clientErrorListener);

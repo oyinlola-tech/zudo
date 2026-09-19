@@ -146,10 +146,13 @@ function buildListPredicate(
  * - `"loopback"`, `"linklocal"`, `"uniquelocal"` / `"private"` — named ranges.
  * - an IP address, a CIDR range, a comma-separated list of either, or an array
  *   of the same.
+ * - a hop count `n`: trust the `n` hops nearest the server (the socket peer
+ *   is hop `0`), as Express/`proxy-addr` do. `0` trusts nothing.
  * - a custom predicate `(address, hopIndexFromPeer) => boolean`.
  *
- * Throws `TypeError` on a string that is none of the above rather than
- * returning a predicate that can never match.
+ * Throws `TypeError` on a string that is none of the above, or on a hop
+ * count that is not a non-negative integer, rather than returning a
+ * predicate that can never match.
  */
 export function compileTrustProxy(trustProxy: TrustProxy): TrustProxyPredicate {
   if (typeof trustProxy === "function") {
@@ -158,6 +161,10 @@ export function compileTrustProxy(trustProxy: TrustProxy): TrustProxyPredicate {
 
   if (trustProxy === true) {
     return () => true;
+  }
+
+  if (typeof trustProxy === "number") {
+    return compileHopCount(trustProxy);
   }
 
   /* Anything that is not a string or a list (including `false`, `undefined`
@@ -181,4 +188,19 @@ export function compileTrustProxy(trustProxy: TrustProxy): TrustProxyPredicate {
   compilationCache.set(trustProxy, predicate);
 
   return predicate;
+}
+
+/**
+ * Hop-count trust. The numeric form was typed and documented ("trust N
+ * proxies") but fell through to "trust nothing", so behind a load balancer
+ * every client shared the balancer's address.
+ */
+function compileHopCount(hops: number): TrustProxyPredicate {
+  if (!Number.isSafeInteger(hops) || hops < 0) {
+    throw new TypeError(
+      `trustProxy hop count must be a non-negative integer, got ${hops}.`,
+    );
+  }
+
+  return (_address, index) => index < hops;
 }

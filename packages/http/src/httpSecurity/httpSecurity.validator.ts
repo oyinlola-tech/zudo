@@ -62,11 +62,13 @@ export function validateHost(
   host: string | undefined,
   config?: Partial<HTTPSecurityConfig>,
 ): SecurityValidationResult {
-  if (!host) {
-    return { valid: false, errors: ["Missing Host header"] };
-  }
-
   const cfg = resolveConfig(config);
+
+  if (!host) {
+    return cfg.requireHost
+      ? { valid: false, errors: ["Missing Host header"] }
+      : { valid: true, errors: [] };
+  }
   if (cfg.allowedHosts.length === 0) {
     return { valid: true, errors: [] };
   }

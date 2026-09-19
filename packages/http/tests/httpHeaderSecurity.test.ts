@@ -360,7 +360,9 @@ describe("httpCookies", () => {
   });
 
   it("keeps spaces percent-encoded in the value", () => {
-    expect(serializeCookie("a", "x y")).toBe("a=x%20y");
+    expect(serializeCookie("a", "x y")).toBe(
+      "a=x%20y; Path=/; HttpOnly; Secure; SameSite=Lax",
+    );
   });
 
   it("enforces the __Host- prefix rules", () => {
@@ -376,7 +378,9 @@ describe("httpCookies", () => {
       serializeCookie("__Host-sid", "v", { secure: true, path: "/x" }),
     ).toThrow(TypeError);
 
-    expect(() => serializeCookie("__Secure-sid", "v")).toThrow(TypeError);
+    expect(() =>
+      serializeCookie("__Secure-sid", "v", { secure: false }),
+    ).toThrow(TypeError);
   });
 
   it("signs with a keyed MAC and verifies in constant time", () => {

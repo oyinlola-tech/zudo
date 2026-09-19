@@ -6,14 +6,15 @@
  * Requires: npm install sharp
  */
 
-import type {
-  HttpMiddleware,
-  HttpMiddlewareContext,
-} from "../../httpMiddleware.type.js";
+import type { HttpMiddleware } from "../../httpMiddleware.type.js";
 
-import type { HttpResponseContext as ResponseContext } from "../../../httpResponse/httpResponse.context.js";
-
-import { applyHeadersToResponse } from "../helpers/index.js";
+import {
+  applyCompressedBody,
+  getResponseBytes,
+  getResponseMediaType,
+  loadOptionalModule,
+  type MediaCompressionErrorHandler,
+} from "../helpers/index.js";
 
 export interface ImageCompressionOptions {
   readonly quality?: number;
@@ -27,33 +28,45 @@ export interface ImageCompressionMiddlewareOptions {
   readonly enabled?: boolean;
   readonly defaultQuality?: number;
   readonly defaultFormat?: "jpeg" | "png" | "webp" | "avif";
+  /** Upper bound on the output width; applied to every image. */
   readonly maxWidth?: number;
+  /** Upper bound on the output height; applied to every image. */
   readonly maxHeight?: number;
   readonly contentTypeMap?: Record<string, ImageCompressionOptions>;
+  /**
+   * Called when compression fails. The original response is still served.
+   * Defaults to a no-op.
+   */
+  readonly onError?: MediaCompressionErrorHandler;
 }
+
+interface SharpPipeline {
+  resize(options: Record<string, unknown>): SharpPipeline;
+  jpeg(options: { quality: number }): SharpPipeline;
+  png(options: { quality: number }): SharpPipeline;
+  webp(options: { quality: number }): SharpPipeline;
+  avif(options: { quality: number }): SharpPipeline;
+  toBuffer(): Promise<Buffer>;
+}
+
+type SharpFactory = (input: Buffer) => SharpPipeline;
 
 const DEFAULT_QUALITY = 80;
 const DEFAULT_FORMAT = "jpeg";
-
-async function getSharp() {
-  try {
-    const mod = await import("sharp");
-    return (mod as any).default ?? mod;
-  } catch {
-    throw new Error("Sharp is not installed. Run: npm install sharp");
-  }
-}
 
 export async function compressImage(
   buffer: Buffer,
   options: ImageCompressionOptions = {},
 ): Promise<Buffer> {
-  const sharpInstance = await getSharp();
+  const sharp = await loadOptionalModule<SharpFactory>(
+    "sharp",
+    "npm install sharp",
+  );
 
   const quality = options.quality ?? DEFAULT_QUALITY;
   const format = options.format ?? DEFAULT_FORMAT;
 
-  let pipeline = sharpInstance(buffer);
+  let pipeline = sharp(buffer);
 
   if (options.width || options.height) {
     pipeline = pipeline.resize({
@@ -64,79 +77,63 @@ export async function compressImage(
     });
   }
 
-  switch (format) {
-    case "jpeg":
-      return pipeline.jpeg({ quality }).toBuffer();
-    case "png":
-      return pipeline.png({ quality }).toBuffer();
-    case "webp":
-      return pipeline.webp({ quality }).toBuffer();
-    case "avif":
-      return pipeline.avif({ quality }).toBuffer();
-    default:
-      return pipeline.toBuffer();
-  }
+  return pipeline[format]({ quality }).toBuffer();
 }
 
+function capDimension(
+  requested: number | undefined,
+  max: number | undefined,
+): number | undefined {
+  if (max === undefined) {
+    return requested;
+  }
+
+  return requested === undefined ? max : Math.min(requested, max);
+}
+
+/**
+ * Compresses `image/*` responses. Status, headers and body are read from the
+ * response returned by `next()`, and `maxWidth` / `maxHeight` cap every
+ * output.
+ */
 export function createImageCompressionMiddleware(
   options: ImageCompressionMiddlewareOptions = {},
 ): HttpMiddleware {
   const enabled = options.enabled ?? true;
-  const defaultQuality = options.defaultQuality ?? DEFAULT_QUALITY;
-  const defaultFormat = options.defaultFormat ?? DEFAULT_FORMAT;
   const contentTypeMap = options.contentTypeMap ?? {};
 
-  return async (
-    context: HttpMiddlewareContext,
-    next: () => Promise<ResponseContext>,
-  ) => {
-    if (!enabled) {
-      return next();
-    }
-
+  return async (_context, next) => {
     const response = await next();
 
-    const contentType = context.response.headers["content-type"] as
-      string | undefined;
+    const mediaType = getResponseMediaType(response);
 
-    if (!contentType || !contentType.startsWith("image/")) {
+    if (!enabled || !mediaType?.startsWith("image/")) {
       return response;
     }
 
-    const body = context.response.body;
-    if (!Buffer.isBuffer(body) && typeof body !== "string") {
+    const buffer = getResponseBytes(response);
+
+    if (!buffer || buffer.length === 0) {
       return response;
     }
 
-    const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body);
+    const mapped = contentTypeMap[mediaType] ?? {};
 
-    const compressionOptions = contentTypeMap[contentType] ?? {
-      quality: defaultQuality,
-      format: defaultFormat,
-    };
+    const format = mapped.format ?? options.defaultFormat ?? DEFAULT_FORMAT;
 
     try {
-      const compressed = await compressImage(buffer, compressionOptions);
-      const newContentType =
-        compressionOptions.format === "jpeg"
-          ? "image/jpeg"
-          : compressionOptions.format === "png"
-            ? "image/png"
-            : compressionOptions.format === "webp"
-              ? "image/webp"
-              : compressionOptions.format === "avif"
-                ? "image/avif"
-                : contentType;
+      const compressed = await compressImage(buffer, {
+        ...mapped,
+        quality: mapped.quality ?? options.defaultQuality ?? DEFAULT_QUALITY,
+        format,
+        width: capDimension(mapped.width, options.maxWidth),
+        height: capDimension(mapped.height, options.maxHeight),
+      });
 
-      const headers = new Headers(response.headers as Record<string, string>);
-      headers.set("content-type", newContentType);
-      headers.set(
-        "cache-control",
-        headers.get("cache-control") ?? "public, max-age=86400",
-      );
+      return applyCompressedBody(response, compressed, `image/${format}`);
+    } catch (error) {
+      options.onError?.(error, response);
 
-      return applyHeadersToResponse(response, headers).setBody(compressed);
-    } catch {
       return response;
     }
   };

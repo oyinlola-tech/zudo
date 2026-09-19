@@ -4,11 +4,12 @@
  * @module httpMiddleware/builtin/cors
  */
 
+import { isOriginAllowed, type CorsConfig } from "@zudojs/security";
+
 import type {
   HttpMiddleware,
   HttpMiddlewareContext,
 } from "../../httpMiddleware.type.js";
-
 
 import { applyHeadersToResponse } from "../helpers/index.js";
 
@@ -64,41 +65,35 @@ function getRequestMethod(context: HttpMiddlewareContext): string {
 }
 
 /**
- * Decides whether an origin is allowed.
- *
- * The previous implementation ignored the request origin entirely and wrote
- * `Access-Control-Allow-Origin: *` on every response, so the documented
- * "reflect the origin" pattern allowed every origin on the internet.
+ * The `@zudojs/security` CORS configuration for this middleware's origin
+ * policy. `allowOrigin` defaults to `"*"`; a predicate is bound to the
+ * request context because `@zudojs/security` predicates take the origin only.
+ */
+function toSecurityCorsConfig(
+  options: CorsMiddlewareOptions,
+  context?: HttpMiddlewareContext,
+): CorsConfig {
+  const configured = options.allowOrigin ?? "*";
+
+  const origin =
+    typeof configured === "function"
+      ? (value: string) =>
+          context !== undefined && configured(value, context)
+      : configured;
+
+  return { origin, credentials: options.credentials === true };
+}
+
+/**
+ * Decides whether an origin is allowed, delegating to `@zudojs/security`'s
+ * `isOriginAllowed` so origin matching has one implementation.
  */
 function resolveAllowedOrigin(
   origin: string,
   context: HttpMiddlewareContext,
   options: CorsMiddlewareOptions,
 ): string | undefined {
-  const configured = options.allowOrigin ?? "*";
-
-  if (typeof configured === "function") {
-    return configured(origin, context) ? origin : undefined;
-  }
-
-  const list = typeof configured === "string" ? [configured] : configured;
-
-  if (list.includes("*")) {
-    if (options.credentials) {
-      /*
-       * A wildcard origin with credentials is forbidden by the spec, and
-       * reflecting the request origin instead would authorise every origin
-       * to read authenticated responses.
-       */
-      throw new TypeError(
-        "CORS: a wildcard allowOrigin cannot be combined with credentials.",
-      );
-    }
-
-    return "*";
-  }
-
-  return list.includes(origin) ? origin : undefined;
+  return isOriginAllowed(origin, toSecurityCorsConfig(options, context));
 }
 
 function appendVary(headers: Headers, value: string): void {
@@ -119,9 +114,19 @@ function appendVary(headers: Headers, value: string): void {
   }
 }
 
+/**
+ * Creates the CORS middleware.
+ *
+ * @throws {ConfigurationError} At construction when a wildcard origin
+ *   (including the default `"*"`) is combined with `credentials: true`.
+ *   This used to be accepted and then fail every cross-origin request with a
+ *   500, which tests that send no `Origin` never noticed.
+ */
 export function createCorsMiddleware(
   options: CorsMiddlewareOptions = {},
 ): HttpMiddleware {
+  isOriginAllowed(undefined, toSecurityCorsConfig(options));
+
   return async (context, next) => {
     const origin = getRequestHeader(context, "origin");
 

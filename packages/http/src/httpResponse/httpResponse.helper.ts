@@ -5,9 +5,13 @@
  */
 
 import type {
+  CookieOptions,
   ResponseHeaders,
   ResponseCookie,
+  SameSite,
 } from "./core/httpResponse.type.js";
+
+import { withSecureCookieDefaults } from "../httpCookies/httpCookies.defaults.js";
 
 import { assertSafeRedirect } from "../httpRedirect/http.redirect.js";
 
@@ -166,7 +170,10 @@ export function serializeResponseCookie(cookie: ResponseCookie): string {
     throw new TypeError(`Invalid cookie name: ${JSON.stringify(name)}`);
   }
 
-  const opts = cookie.options ?? {};
+  const opts = withSecureCookieDefaults<SameSite, CookieOptions>(
+    cookie.options,
+    "Lax",
+  );
 
   if (name.startsWith("__Host-")) {
     if (!opts.secure) {

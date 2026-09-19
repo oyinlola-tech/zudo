@@ -17,6 +17,10 @@ import { extname, join, resolve, sep } from "node:path";
 
 import { applyHeadersToResponse } from "../helpers/index.js";
 
+import { parseRequestTarget } from "../../../httpRequest/target/httpRequest.target.js";
+
+import { evaluateConditionalRequest } from "../../../httpConditional/httpConditional.core.js";
+
 export interface StaticMiddlewareOptions {
   readonly root: string;
   readonly index?: string | string[];
@@ -204,7 +208,7 @@ export function createStaticMiddleware(
     let url: URL;
 
     try {
-      url = new URL(context.request.url, "http://zudojs.invalid");
+      url = parseRequestTarget(context.request.url);
     } catch {
       return next();
     }
@@ -281,10 +285,27 @@ export function createStaticMiddleware(
      * support makes range-aware clients misbehave.
      */
 
-    const ifNoneMatch = context.request.headers["if-none-match"];
-    if (ifNoneMatch === etag) {
+    /*
+     * RFC 9110 section 13.2.2 evaluation: `If-None-Match` lists, weak tags
+     * and `*`, then `If-Modified-Since`, plus `If-Match` /
+     * `If-Unmodified-Since` (412). An exact string compare missed all of
+     * those and re-sent the whole file.
+     */
+    const headers = context.request.headers;
+    const conditional = evaluateConditionalRequest(
+      context.request.method,
+      {
+        ifMatch: headers["if-match"],
+        ifNoneMatch: headers["if-none-match"],
+        ifModifiedSince: headers["if-modified-since"],
+        ifUnmodifiedSince: headers["if-unmodified-since"],
+      },
+      { etag, lastModified },
+    );
+
+    if (conditional.statusCode !== undefined) {
       return applyHeadersToResponse(context.response, responseHeaders).setStatus(
-        304,
+        conditional.statusCode,
       );
     }
 

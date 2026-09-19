@@ -5,6 +5,8 @@ import {
 
 import type { HTTPRequest, HTTPResponse } from "../httpTypes/http.types.js";
 
+import { withSecureCookieDefaults } from "./httpCookies.defaults.js";
+
 /* -------------------------------------------------------------------------- */
 /* Cookie Types                                                               */
 /* -------------------------------------------------------------------------- */
@@ -189,11 +191,23 @@ export function parseCookies(header: string | undefined): CookieCollection {
 /* Serialize Cookie                                                           */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Serializes a `Set-Cookie` header value.
+ *
+ * Unset attributes take the secure defaults (`Path=/; HttpOnly; Secure;
+ * SameSite=Lax`, see `DEFAULT_COOKIE_ATTRIBUTES`); pass `httpOnly: false`,
+ * `secure: false`, another `sameSite` or `path` to override them.
+ */
 export function serializeCookie(
   name: string,
   value: CookieValue,
-  options: CookieOptions = {},
+  cookieOptions: CookieOptions = {},
 ): string {
+  const options = withSecureCookieDefaults<CookieSameSite, CookieOptions>(
+    cookieOptions,
+    "lax",
+  );
+
   validateCookieName(name);
 
   validateCookiePrefix(name, options);
@@ -388,19 +402,36 @@ export interface SignedCookie {
   readonly signature: string;
 }
 
+/**
+ * Serializes a signed cookie. The MAC covers the cookie **name** as well as
+ * the value, so a signature minted for one cookie is not accepted for
+ * another; read it back with `parseSignedCookie(value, secret, name)`.
+ */
 export function serializeSignedCookie(
   name: string,
   value: string,
   options: SignedCookieOptions,
 ): string {
-  const signature = signCookieValue(value, options.secret);
+  const signature = signCookieValue(bindCookieName(name, value), options.secret);
 
   return serializeCookie(name, `${value}.${signature}`, options);
 }
 
+/**
+ * Verifies a signed cookie value and returns the original value, or
+ * `undefined` when the signature does not match.
+ *
+ * Pass the cookie's `name`: the signature produced by
+ * `serializeSignedCookie` is bound to it, so a value lifted from another
+ * signed cookie (for example a user-chosen display name replayed as
+ * `session_user`) is rejected. Without `name` only a legacy, value-only
+ * signature (from `signCookieValue(value, secret)`) verifies, and
+ * name-bound signatures never do.
+ */
 export function parseSignedCookie(
   value: string | undefined,
   secret: string,
+  name?: string,
 ): string | undefined {
   if (!value) {
     return undefined;
@@ -416,7 +447,10 @@ export function parseSignedCookie(
 
   const signature = value.slice(separator + 1);
 
-  const expected = signCookieValue(originalValue, secret);
+  const expected = signCookieValue(
+    name === undefined ? originalValue : bindCookieName(name, originalValue),
+    secret,
+  );
 
   if (!timingSafeEqual(signature, expected)) {
     return undefined;
@@ -433,6 +467,16 @@ export function parseSignedCookie(
  * @returns The base64url signature.
  * @throws {TypeError} If the secret is empty.
  */
+/**
+ * The MAC input for a name-bound signature. A cookie name is an RFC 6265
+ * token and cannot contain `=`, so the encoding is unambiguous.
+ */
+function bindCookieName(name: string, value: string): string {
+  validateCookieName(name);
+
+  return `${name}=${value}`;
+}
+
 export function signCookieValue(value: string, secret: string): string {
   if (!secret) {
     throw new TypeError("Cookie signing secret cannot be empty.");

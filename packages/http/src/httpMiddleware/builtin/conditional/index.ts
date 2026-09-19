@@ -12,3 +12,5 @@ export {
   createResponseMiddleware,
   createShortCircuitMiddleware,
 } from "./httpMiddleware.conditional.js";
+
+export type { PathMiddlewareOptions } from "./httpMiddleware.conditional.js";

@@ -3,17 +3,26 @@
  *
  * @module httpMiddleware/builtin/video
  *
- * Requires: npm install fluent-ffmpeg
+ * Requires: npm install fluent-ffmpeg (and an ffmpeg binary)
  */
 
-import type {
-  HttpMiddleware,
-  HttpMiddlewareContext,
-} from "../../httpMiddleware.type.js";
+import { Readable } from "node:stream";
 
-import type { HttpResponseContext as ResponseContext } from "../../../httpResponse/httpResponse.context.js";
+import type { HttpMiddleware } from "../../httpMiddleware.type.js";
 
-import { applyHeadersToResponse } from "../helpers/index.js";
+import {
+  applyCompressedBody,
+  getResponseBytes,
+  getResponseMediaType,
+  loadOptionalModule,
+  type MediaCompressionErrorHandler,
+} from "../helpers/index.js";
+
+import {
+  CONTAINER_TYPES,
+  DEFAULT_VIDEO_FORMAT as DEFAULT_FORMAT,
+  buildOutputOptions,
+} from "./httpMiddleware.video.options.js";
 
 export interface VideoCompressionOptions {
   readonly bitrate?: string;
@@ -29,6 +38,8 @@ export interface VideoCompressionOptions {
     | "veryslow";
   readonly crf?: number;
   readonly format?: "mp4" | "webm" | "mov";
+  /** Input container; defaults to `mp4`. */
+  readonly inputFormat?: string;
   readonly scale?: { readonly width?: number; readonly height?: number };
 }
 
@@ -36,104 +47,95 @@ export interface VideoCompressionMiddlewareOptions {
   readonly enabled?: boolean;
   readonly contentTypeMap?: Record<string, VideoCompressionOptions>;
   readonly tempDir?: string;
+  /**
+   * Called when compression fails. The original response is still served.
+   */
+  readonly onError?: MediaCompressionErrorHandler;
 }
 
-const DEFAULT_CRF = 28;
-const DEFAULT_PRESET = "medium";
-const DEFAULT_FORMAT = "mp4";
-
-async function getFfmpeg() {
-  try {
-    const mod = await import("fluent-ffmpeg");
-    return (mod as any).default ?? mod;
-  } catch {
-    throw new Error(
-      "fluent-ffmpeg is not installed. Run: npm install fluent-ffmpeg",
-    );
-  }
+interface FfmpegCommand {
+  input(source: Readable): FfmpegCommand;
+  inputFormat(format: string): FfmpegCommand;
+  outputOptions(options: readonly string[]): FfmpegCommand;
+  format(format: string): FfmpegCommand;
+  on(event: "error", listener: (error: Error) => void): FfmpegCommand;
+  pipe(): NodeJS.ReadableStream;
 }
 
+type FfmpegFactory = () => FfmpegCommand;
+
+/**
+ * Transcodes a video held in memory.
+ *
+ * `fluent-ffmpeg`'s export is a factory: `input()` exists only on the
+ * command it returns. Calling it on the module (as this did) threw
+ * `ffmpegInstance.input is not a function` on every call.
+ */
 export async function compressVideo(
   inputBuffer: Buffer,
   options: VideoCompressionOptions = {},
 ): Promise<Buffer> {
-  const ffmpegInstance = await getFfmpeg();
-  const crf = options.crf ?? DEFAULT_CRF;
-  const preset = options.preset ?? DEFAULT_PRESET;
-  const format = options.format ?? DEFAULT_FORMAT;
+  const ffmpeg = await loadOptionalModule<FfmpegFactory>(
+    "fluent-ffmpeg",
+    "npm install fluent-ffmpeg",
+  );
 
   return new Promise((resolve, reject) => {
-    const outputBuffer: Buffer[] = [];
+    const chunks: Buffer[] = [];
 
-    ffmpegInstance
-      .input(inputBuffer)
-      .inputFormat("mp4")
-      .outputOptions([
-        `-crf ${crf}`,
-        `-preset ${preset}`,
-        "-movflags +faststart",
-      ])
-      .format(format)
-      .on("end", () => {
-        resolve(Buffer.concat(outputBuffer));
-      })
-      .on("error", (err: Error) => {
-        reject(err);
-      })
-      .pipe((err: Error | null, stdout: NodeJS.ReadableStream) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        stdout.on("data", (chunk: Buffer) => {
-          outputBuffer.push(chunk);
-        });
-      });
+    const output = ffmpeg()
+      .input(Readable.from([inputBuffer]))
+      .inputFormat(options.inputFormat ?? "mp4")
+      .outputOptions(buildOutputOptions(options))
+      .format(options.format ?? DEFAULT_FORMAT)
+      .on("error", reject)
+      .pipe();
+
+    output.on("data", (chunk: Buffer) => chunks.push(chunk));
+    output.on("end", () => resolve(Buffer.concat(chunks)));
+    output.on("error", reject);
   });
 }
 
+/**
+ * Compresses `video/*` responses, reading status, headers and body from the
+ * response returned by `next()`.
+ */
 export function createVideoCompressionMiddleware(
   options: VideoCompressionMiddlewareOptions = {},
 ): HttpMiddleware {
   const enabled = options.enabled ?? true;
 
-  return async (
-    context: HttpMiddlewareContext,
-    next: () => Promise<ResponseContext>,
-  ) => {
-    if (!enabled) {
-      return next();
-    }
-
+  return async (_context, next) => {
     const response = await next();
 
-    const contentType = context.response.headers["content-type"] as
-      string | undefined;
+    const mediaType = getResponseMediaType(response);
 
-    if (!contentType || !contentType.startsWith("video/")) {
+    if (!enabled || !mediaType?.startsWith("video/")) {
       return response;
     }
 
-    const body = context.response.body;
-    if (!Buffer.isBuffer(body)) {
+    const body = getResponseBytes(response);
+
+    if (!body || body.length === 0) {
       return response;
     }
 
-    const compressionOptions = options.contentTypeMap?.[contentType] ?? {};
+    const compression = options.contentTypeMap?.[mediaType] ?? {};
+
+    const format = compression.format ?? DEFAULT_FORMAT;
 
     try {
-      const compressed = await compressVideo(body, compressionOptions);
-      const newContentType = "video/mp4";
+      const compressed = await compressVideo(body, compression);
 
-      const headers = new Headers(response.headers as Record<string, string>);
-      headers.set("content-type", newContentType);
-      headers.set(
-        "cache-control",
-        headers.get("cache-control") ?? "public, max-age=86400",
+      return applyCompressedBody(
+        response,
+        compressed,
+        CONTAINER_TYPES[format] ?? "video/mp4",
       );
+    } catch (error) {
+      options.onError?.(error, response);
 
-      return applyHeadersToResponse(response, headers).setBody(compressed);
-    } catch {
       return response;
     }
   };

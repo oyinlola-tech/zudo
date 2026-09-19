@@ -5,3 +5,4 @@
  */
 
 export * from "./http.cookies.js";
+export * from "./httpCookies.defaults.js";

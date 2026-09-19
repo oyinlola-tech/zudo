@@ -22,7 +22,9 @@ import type { NodeRequestOptions } from "./httpNode.type.js";
 
 import { removePort, extractPort } from "./httpNode.server.js";
 
-import { decodeQueryComponent } from "../../httpQuery/http.query.js";
+import { parseQueryString } from "../../httpQuery/http.query.js";
+
+import { findRequestTargetViolation } from "../../httpRequest/target/httpRequest.target.js";
 
 /* -------------------------------------------------------------------------- */
 /* Proxy Trust                                                                */
@@ -190,26 +192,27 @@ export function getNodeRemoteAddress(
 /**
  * Parses the request-target's query string into a flat record.
  *
- * Every value is attacker-controlled. `decodeURIComponent` throws on a
- * malformed sequence such as `%E0`, and this ran before the adapter's
- * try/catch, so one such request tore the connection down instead of being
- * answered. Decoding is delegated to the query module's non-throwing
- * decoder, which also gives `+` its form-encoding meaning. A pair is split on
- * its **first** `=` so `a=b=c` keeps the value `b=c`.
+ * Every value is attacker-controlled, so decoding never throws (a malformed
+ * `%E0` is kept raw) and `+` has its form-encoding meaning. This uses the same
+ * parser as the router's `ctx.query` (`parseQueryString`), so both agree: a
+ * repeated name is an array (`?role=user&role=admin` gives
+ * `["user", "admin"]`), the record has a `null` prototype, and
+ * `__proto__` / `constructor` / `prototype` are dropped. Previously the last
+ * value silently won here while the router returned the array.
  */
 export function parseNodeQuery(
   request: IncomingMessage,
-): Readonly<Record<string, string>> {
+): Readonly<Record<string, string | readonly string[]>> {
   const url = request.url;
 
   if (!url) {
-    return Object.freeze({});
+    return Object.freeze(Object.create(null) as Record<string, string>);
   }
 
   const questionIndex = url.indexOf("?");
 
   if (questionIndex === -1) {
-    return Object.freeze({});
+    return Object.freeze(Object.create(null) as Record<string, string>);
   }
 
   const hashIndex = url.indexOf("#", questionIndex + 1);
@@ -219,31 +222,7 @@ export function parseNodeQuery(
     hashIndex === -1 ? undefined : hashIndex,
   );
 
-  if (!queryString) {
-    return Object.freeze({});
-  }
-
-  const params: Record<string, string> = {};
-
-  for (const pair of queryString.split("&")) {
-    if (pair === "") {
-      continue;
-    }
-
-    const separator = pair.indexOf("=");
-
-    const rawKey = separator === -1 ? pair : pair.slice(0, separator);
-
-    const rawValue = separator === -1 ? "" : pair.slice(separator + 1);
-
-    const key = decodeQueryComponent(rawKey);
-
-    if (key) {
-      params[key] = decodeQueryComponent(rawValue);
-    }
-  }
-
-  return Object.freeze(params);
+  return Object.freeze(parseQueryString(queryString));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -254,6 +233,14 @@ export function createNodeRequestContext(
   request: IncomingMessage,
   options: NodeRequestOptions = {},
 ): HttpRequestContext {
+  const url = request.url ?? "/";
+
+  const violation = findRequestTargetViolation(url);
+
+  if (violation !== undefined) {
+    throw new TypeError(violation);
+  }
+
   const headers = getNodeRequestHeaders(request);
 
   const protocol = getNodeRequestProtocol(request, options);
@@ -265,8 +252,6 @@ export function createNodeRequestContext(
   const remoteAddress = getNodeRemoteAddress(request, options);
 
   const query = parseNodeQuery(request);
-
-  const url = request.url ?? "/";
 
   return createRequestContext({
     method: (request.method as string)?.toUpperCase() ?? "GET",

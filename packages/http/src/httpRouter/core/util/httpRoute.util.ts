@@ -7,6 +7,10 @@
 
 import type { HttpRequestContext as RequestContext } from "../../../httpRequest/httpRequest.context.js";
 
+import { parseRequestTarget } from "../../../httpRequest/target/httpRequest.target.js";
+
+import { parseQueryString } from "../../../httpQuery/http.query.js";
+
 import { InvalidRoutePatternError } from "../error/httpRouter.error.js";
 
 export function getRequestMethod(request: RequestContext): string {
@@ -43,28 +47,28 @@ export function getRequestSignal(
   ).signal;
 }
 
+/**
+ * Parses a request-target with the canonical parser shared by the request
+ * context and path-scoped middleware.
+ */
 export function parseUrl(value: string): URL {
-  try {
-    return new URL(value, "http://zudojs.local");
-  } catch {
-    return new URL("/", "http://zudojs.local");
-  }
+  return parseRequestTarget(value);
 }
 
+/**
+ * Builds the router's query record.
+ *
+ * Uses the same parser as the Node adapter's `request.query`
+ * (`parseQueryString`): a repeated name is an array, the record has a `null`
+ * prototype, and `__proto__` / `constructor` / `prototype` are dropped. The
+ * two used to disagree (`ctx.query.role` an array, `request.getQuery("role")`
+ * the last value), which let middleware and handlers read different values
+ * for the same parameter.
+ */
 export function parseQuery(
   params: URLSearchParams,
 ): Readonly<Record<string, string | string[]>> {
-  const result: Record<string, string | string[]> = {};
-
-  for (const key of new Set(Array.from(params.keys()))) {
-    const values = params.getAll(key);
-
-    result[key] = values.length > 1 ? values : (values[0] ?? "");
-  }
-
-  return Object.freeze({
-    ...result,
-  });
+  return Object.freeze(parseQueryString(params.toString()));
 }
 
 /* -------------------------------------------------------------------------- */

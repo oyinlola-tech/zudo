@@ -17,6 +17,8 @@ import {
   extractPathname,
 } from "../helpers/index.js";
 
+import { normalizePath } from "../../../httpRouter/core/util/httpRoute.util.js";
+
 import {
   isWebResponse,
   bufferWebResponse,
@@ -45,18 +47,47 @@ export function createConditionalMiddleware(
   };
 }
 
+/**
+ * Options for {@link createPathMiddleware}.
+ */
+export interface PathMiddlewareOptions {
+  /**
+   * Match the path case-sensitively. Defaults to `false`, the router's
+   * default, so a guard scoped to `/admin` also covers `/Admin`, which the
+   * router would dispatch to the same route.
+   */
+  readonly caseSensitive?: boolean;
+}
+
+/**
+ * Runs `middleware` only for requests addressed to `path`.
+ *
+ * The request path is normalised exactly as the router normalises it before
+ * matching: it is read with the canonical request-target parser, repeated
+ * slashes are collapsed, a trailing slash is ignored and (by default) case is
+ * ignored. An exact, case-sensitive comparison let `/Admin`, `/admin/` and
+ * `/admin//` skip a guard on `/admin` while the router still served the
+ * protected route.
+ */
 export function createPathMiddleware(
   path: string,
   middleware: HttpMiddleware,
+  options: PathMiddlewareOptions = {},
 ): HttpMiddleware {
-  const targetPath = extractPathname(path);
+  const caseSensitive = options.caseSensitive === true;
+
+  const canonical = (value: string): string => {
+    const normalized = normalizePath(value);
+
+    return caseSensitive ? normalized : normalized.toLowerCase();
+  };
+
+  const targetPath = canonical(extractPathname(path));
 
   return createConditionalMiddleware((context) => {
     const url = getRequestUrl(context.request);
 
-    const pathname = extractPathname(url);
-
-    return pathname === targetPath;
+    return canonical(extractPathname(url)) === targetPath;
   }, middleware);
 }
 

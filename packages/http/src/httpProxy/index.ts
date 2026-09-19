@@ -6,3 +6,4 @@
  */
 
 export * from "./http.proxy.js";
+export * from "./httpProxy.pathGuard.js";

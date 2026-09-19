@@ -310,14 +310,13 @@ describe("built-in CORS middleware", () => {
   });
 
   it("refuses a wildcard origin combined with credentials", async () => {
-    const middleware = createCorsMiddleware({
-      allowOrigin: "*",
-      credentials: true,
-    });
-
-    await expect(
-      middleware(contextFor({ origin: "https://evil.example" }), passthrough),
-    ).rejects.toThrow(TypeError);
+    // Round 10 (HTTP-16): rejected when the middleware is created.
+    expect(() =>
+      createCorsMiddleware({
+        allowOrigin: "*",
+        credentials: true,
+      }),
+    ).toThrow(/wildcard/);
   });
 
   it("answers a preflight without calling downstream (HTTPB-08)", async () => {

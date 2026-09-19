@@ -20,6 +20,11 @@ import { getStatusText } from "../httpResponse/core/httpResponse.statusText.js";
 
 import { isValidHeaderFieldValue } from "../httpHeaders/security/index.js";
 
+import {
+  HttpMiddlewareError,
+  HttpMiddlewarePipelineError,
+} from "../httpMiddleware/httpMiddleware.error.js";
+
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -60,11 +65,28 @@ const MAX_UNWRAP_DEPTH = 8;
 /* -------------------------------------------------------------------------- */
 
 /**
- * Locates the innermost error that carries an HTTP status.
+ * Whether `error` is one of the pipeline's own wrappers. These are added by
+ * the framework on the way out and always report 500, so they are looked
+ * through; nothing else is.
+ */
+function isFrameworkWrapper(error: object): boolean {
+  return (
+    error instanceof HttpMiddlewareError ||
+    error instanceof HttpMiddlewarePipelineError
+  );
+}
+
+/**
+ * Locates the error whose status answers the request.
  *
- * The innermost one wins because outer errors are wrappers added on the way
- * out (middleware, pipeline, adapter); the error the application actually
- * threw sits at the bottom of the chain.
+ * The **outermost** error that carries a status wins. Only the framework's
+ * own wrappers (`HttpMiddlewareError`, `HttpMiddlewarePipelineError`) are
+ * unwrapped. An application that throws
+ * `new HttpError(502, "Bad Gateway", { cause: upstream401 })` is mapping an
+ * upstream failure on purpose; taking the innermost status sent the client
+ * the upstream's 401, its message and its `WWW-Authenticate` header.
+ * An error that is neither a wrapper nor carries a status ends the search
+ * (generic 500), so a `cause` the application attached is never exposed.
  */
 function findStatusError(
   error: unknown,
@@ -87,6 +109,12 @@ function findStatusError(
     readonly errors?: unknown;
   };
 
+  if (!isFrameworkWrapper(error)) {
+    return isHttpStatus(candidate.statusCode)
+      ? (candidate as StatusErrorLike)
+      : undefined;
+  }
+
   const nested: unknown[] = [];
 
   if (Array.isArray(candidate.errors)) {
@@ -105,10 +133,6 @@ function findStatusError(
     }
   }
 
-  if (isHttpStatus(candidate.statusCode)) {
-    return candidate as StatusErrorLike;
-  }
-
   return undefined;
 }
 
@@ -124,8 +148,8 @@ function isHttpStatus(value: unknown): value is number {
 /**
  * Builds the default response for an unhandled error.
  *
- * - An error (or any error in its `cause` / `errors` chain) with a 4xx/5xx
- *   `statusCode` is answered with that status.
+ * - The outermost error with a 4xx/5xx `statusCode` (looking through the
+ *   pipeline's own wrappers only) is answered with that status.
  * - Its `message` and `code` are included only when the error opts in with
  *   `expose: true` (the `@zudojs/errors` default for 4xx); otherwise the
  *   body carries the status text alone, so a 5xx never leaks internals.

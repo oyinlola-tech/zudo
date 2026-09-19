@@ -14,6 +14,7 @@ export * from "./helpers/index.js";
 export * from "./static/index.js";
 export * from "./image/index.js";
 export * from "./video/index.js";
+export * from "./rateLimit/index.js";
 
 /** State middleware — identity pass-through. */
 export function createStateMiddleware(): import("../httpMiddleware.type.js").HttpMiddleware {

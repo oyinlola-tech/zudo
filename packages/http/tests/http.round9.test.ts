@@ -104,10 +104,11 @@ describe("HTTP-R9-01: request normalisation failures answer 400, not a reset", (
   it("answers a malformed percent-encoded query with 200 and the raw value", async () => {
     await withAdapter(
       {
-        handler: async (request) => ({
-          status: 200,
-          body: JSON.stringify(request.query),
-        }),
+        handler: async (request) =>
+          http.createResponseContext({
+            status: 200,
+            body: JSON.stringify(request.query),
+          }),
       },
       async (port) => {
         const response = await rawRequest(port, "/?a=%E0");
@@ -122,10 +123,11 @@ describe("HTTP-R9-01: request normalisation failures answer 400, not a reset", (
   it("splits on the first '=' and decodes '+' as a space", async () => {
     await withAdapter(
       {
-        handler: async (request) => ({
-          status: 200,
-          body: JSON.stringify(request.query),
-        }),
+        handler: async (request) =>
+          http.createResponseContext({
+            status: 200,
+            body: JSON.stringify(request.query),
+          }),
       },
       async (port) => {
         const response = await rawRequest(port, "/?a=b=c&q=x+y&flag");
@@ -178,13 +180,15 @@ describe("HTTP-R9-02: response cookies cannot inject attributes", () => {
       options: { httpOnly: true },
     });
 
-    expect(serialized).toBe("sid=x%3B%20Domain%3Devil.com; HttpOnly");
+    expect(serialized).toBe(
+      "sid=x%3B%20Domain%3Devil.com; Path=/; HttpOnly; Secure; SameSite=Lax",
+    );
   });
 
   it("leaves an already valid value untouched", () => {
     expect(
       http.serializeResponseCookie({ name: "token", value: "abc.DEF-123_=" }),
-    ).toBe("token=abc.DEF-123_=");
+    ).toBe("token=abc.DEF-123_=; Path=/; HttpOnly; Secure; SameSite=Lax");
   });
 
   it("rejects an invalid name, a bad prefix and an attribute carrying ';'", () => {
@@ -204,7 +208,7 @@ describe("HTTP-R9-02: response cookies cannot inject attributes", () => {
       http.serializeResponseCookie({
         name: "__Host-sid",
         value: "x",
-        options: { path: "/" },
+        options: { path: "/", secure: false },
       }),
     ).toThrow(/Secure/);
 
@@ -212,6 +216,7 @@ describe("HTTP-R9-02: response cookies cannot inject attributes", () => {
       http.serializeResponseCookie({
         name: "__Secure-sid",
         value: "x",
+        options: { secure: false },
       }),
     ).toThrow(/Secure/);
 
@@ -229,7 +234,7 @@ describe("HTTP-R9-02: response cookies cannot inject attributes", () => {
         value: "x",
         options: { path: "/", secure: true },
       }),
-    ).toBe("__Host-sid=x; Path=/; Secure");
+    ).toBe("__Host-sid=x; Path=/; HttpOnly; Secure; SameSite=Lax");
   });
 
   it("emits the safe form on the wire", async () => {
@@ -245,7 +250,7 @@ describe("HTTP-R9-02: response cookies cannot inject attributes", () => {
         const response = await rawRequest(port, "/");
 
         expect(response.headers["set-cookie"]).toEqual([
-          "sid=x%3B%20Domain%3Devil.com",
+          "sid=x%3B%20Domain%3Devil.com; Path=/; HttpOnly; Secure; SameSite=Lax",
         ]);
       },
     );
@@ -447,7 +452,8 @@ describe("HTTP-R9-05: thrown HttpErrors keep their status, message and headers",
         handler: async () => {
           throw http.notFound("nope");
         },
-        errorHandler: async () => ({ status: 418, body: "teapot" }),
+        errorHandler: async () =>
+          http.createResponseContext({ status: 418, body: "teapot" }),
       },
       async (port) => {
         const response = await rawRequest(port, "/");
@@ -616,7 +622,8 @@ describe("HTTP-R9-09: static middleware serves files under the Node adapter", ()
 
         const traversal = await rawRequest(port, "/pub/%2e%2e/%2e%2e/etc/passwd");
 
-        expect(traversal.status).toBe(404);
+        // Round 10 (HTTP-04): dot segments are refused by the adapter.
+        expect(traversal.status).toBe(400);
       },
     );
   });

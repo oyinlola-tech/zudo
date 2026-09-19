@@ -6,6 +6,8 @@
 
 export type TrustProxy =
   | boolean
+  /** Hop count: trust the `n` hops nearest the server (the peer is hop 0). */
+  | number
   | "all"
   | "linklocal"
   | "loopback"

@@ -28,6 +28,12 @@ export interface HTTPSecurityConfig {
   /** Allowed Host header values. Empty = allow all. */
   readonly allowedHosts?: readonly string[];
   /**
+   * Whether a request without a Host header is rejected (default: true).
+   * The Node adapter relaxes this for HTTP/1.0 requests, where Host is
+   * optional and some load-balancer health checks omit it.
+   */
+  readonly requireHost?: boolean;
+  /**
    * Whether `X-Forwarded-*` headers may be trusted (default: `false`).
    *
    * Consumed by `httpTrustProxy` and the adapter, not by `guardRequest`. For a
@@ -55,6 +61,7 @@ export const DEFAULT_SECURITY_CONFIG: Required<HTTPSecurityConfig> =
     maxUrlLength: 2048,
     maxQueryLength: 4096,
     allowedHosts: [],
+    requireHost: true,
     trustProxy: false,
     maxRequestIdLength: 128,
     requestIdPattern: /^[a-zA-Z0-9_-]+$/,
