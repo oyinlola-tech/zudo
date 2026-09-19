@@ -1,3 +1,5 @@
+import { isPlainObject } from "@zudojs/types";
+
 import type {
   PaginationInput,
   SortInput,
@@ -378,13 +380,4 @@ function validateFieldName(field: string): void {
   ) {
     throw new TypeError(`Invalid query field name "${String(field)}".`);
   }
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    !(value instanceof Date)
-  );
 }
