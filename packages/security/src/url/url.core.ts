@@ -9,6 +9,11 @@ import type {
   UrlValidationConfig,
   UrlValidationResult,
 } from "../types/security.type.js";
+import {
+  embeddedIpv4,
+  expandIpv6,
+  isNonPublicIpv6Range,
+} from "./url.ipv6.js";
 
 /** Default maximum URL length. */
 const DEFAULT_MAX_URL_LENGTH = 2048;
@@ -370,39 +375,18 @@ function isPrivateIpv4(octets: readonly number[]): boolean {
 /**
  * True when an IPv6 hostname (already stripped of brackets) is private.
  *
- * Also unwraps IPv4-mapped and IPv4-compatible forms, so `::ffff:127.0.0.1`
- * is recognised as loopback rather than treated as an opaque v6 address.
+ * Every form that embeds an IPv4 address — IPv4-compatible `::a.b.c.d`,
+ * mapped `::ffff:a.b.c.d`, translated `::ffff:0:a.b.c.d`, NAT64
+ * `64:ff9b::a.b.c.d` and 6to4 `2002::/16` — is judged as that IPv4
+ * address, whichever spelling it arrives in (WHATWG serialises
+ * `[::127.0.0.1]` as `[::7f00:1]`). An unparseable literal fails closed.
  */
 function isPrivateIpv6(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-
-  if (host === "::1" || host === "::" || host === "::0") return true;
-
-  // IPv4-mapped (::ffff:127.0.0.1) and IPv4-compatible (::127.0.0.1)
-  const mapped = /^::(?:ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host);
-  if (mapped?.[1]) {
-    const octets = parseIpv4(mapped[1]);
-    return octets ? isPrivateIpv4(octets) : true;
-  }
-
-  // Hex-form IPv4-mapped: ::ffff:7f00:1
-  const hexMapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
-  if (hexMapped?.[1] && hexMapped[2]) {
-    const high = parseInt(hexMapped[1], 16);
-    const low = parseInt(hexMapped[2], 16);
-    const octets = [high >> 8, high & 0xff, low >> 8, low & 0xff];
-    return isPrivateIpv4(octets);
-  }
-
-  const firstGroup = host.split(":")[0] ?? "";
-  const leading = parseInt(firstGroup.padEnd(4, "0"), 16);
-
-  // fc00::/7 unique local
-  if ((leading & 0xfe00) === 0xfc00) return true;
-  // fe80::/10 link-local
-  if ((leading & 0xffc0) === 0xfe80) return true;
-
-  return false;
+  const groups = expandIpv6(hostname);
+  if (!groups) return true;
+  const embedded = embeddedIpv4(groups);
+  if (embedded) return isPrivateIpv4(embedded);
+  return isNonPublicIpv6Range(groups);
 }
 
 /**

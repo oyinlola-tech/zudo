@@ -97,6 +97,8 @@ export {
   validateCookieName,
   validateCookieValue,
   stripSensitiveCookies,
+  DEFAULT_SENSITIVE_COOKIE_NAMES,
+  isSensitiveCookieName,
 } from "./cookie/index.js";
 
 /* ─── CORS ───────────────────────────────────────────────────────────────── */
@@ -138,8 +140,16 @@ export {
   retryAfterSeconds,
   createRateLimiter,
   extractClientIp,
+  createIpKeyGenerator,
+  ipRateLimitKey,
+  parseClientIp,
+  DEFAULT_IPV6_PREFIX_LENGTH,
 } from "./rateLimit/index.js";
-export type { RateLimiterOptions, ClientIpOptions } from "./rateLimit/index.js";
+export type {
+  RateLimiterOptions,
+  ClientIpOptions,
+  IpKeyOptions,
+} from "./rateLimit/index.js";
 export { rateLimit } from "./rateLimit/rateLimit.namespace.js";
 
 /* ─── Security Headers ───────────────────────────────────────────────────── */

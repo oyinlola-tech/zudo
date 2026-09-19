@@ -8,6 +8,11 @@ import type {
   CookieSecurityConfig,
   ParsedCookie,
 } from "../types/security.type.js";
+import { ValidationError } from "@zudojs/errors";
+import {
+  DEFAULT_SENSITIVE_COOKIE_NAMES,
+  isSensitiveCookieName,
+} from "./cookie.sensitive.js";
 
 /** Maximum cookie header size (4KB). */
 const MAX_COOKIE_HEADER_SIZE = 4096;
@@ -135,7 +140,7 @@ export function parseCookieHeader(
  * @param cookie - The cookie to serialize.
  * @param config - Optional security configuration for defaults.
  * @returns The serialized Set-Cookie header value.
- * @throws {Error} when the name, value, or an attribute is unsafe.
+ * @throws {ValidationError} when the name, value, or an attribute is unsafe.
  */
 export function serializeCookie(
   cookie: ParsedCookie,
@@ -143,7 +148,7 @@ export function serializeCookie(
 ): string {
   const nameError = validateCookieName(cookie.name);
   if (nameError) {
-    throw new Error(`Cannot serialize cookie: ${nameError}`);
+    throw new ValidationError(`Cannot serialize cookie: ${nameError}`);
   }
 
   // Percent-encode unless the value is already a bare cookie-octet string, so
@@ -154,7 +159,7 @@ export function serializeCookie(
 
   const valueError = validateCookieValue(encodedValue);
   if (valueError) {
-    throw new Error(`Cannot serialize cookie "${cookie.name}": ${valueError}`);
+    throw new ValidationError(`Cannot serialize cookie "${cookie.name}": ${valueError}`);
   }
 
   const parts = [`${cookie.name}=${encodedValue}`];
@@ -171,7 +176,7 @@ export function serializeCookie(
 
   if (cookie.maxAge !== undefined) {
     if (!Number.isInteger(cookie.maxAge)) {
-      throw new Error(
+      throw new ValidationError(
         `Cannot serialize cookie "${cookie.name}": Max-Age must be an integer, got ${cookie.maxAge}`,
       );
     }
@@ -180,7 +185,7 @@ export function serializeCookie(
 
   if (cookie.expires) {
     if (Number.isNaN(cookie.expires.getTime())) {
-      throw new Error(
+      throw new ValidationError(
         `Cannot serialize cookie "${cookie.name}": Expires is an invalid Date`,
       );
     }
@@ -194,14 +199,14 @@ export function serializeCookie(
   // SameSite=None is only honoured on a Secure cookie; without it browsers
   // reject the cookie outright, which fails as a silent loss of state.
   if (sameSite === "none" && !secure) {
-    throw new Error(
+    throw new ValidationError(
       `Cannot serialize cookie "${cookie.name}": SameSite=None requires the Secure attribute`,
     );
   }
 
   // Partitioned (CHIPS) likewise requires Secure.
   if (cookie.partitioned && !secure) {
-    throw new Error(
+    throw new ValidationError(
       `Cannot serialize cookie "${cookie.name}": Partitioned requires the Secure attribute`,
     );
   }
@@ -229,7 +234,7 @@ export function serializeCookie(
 /** Throws when an attribute value could terminate the attribute or the header. */
 function assertSafeAttribute(attribute: string, value: string): void {
   if (ATTRIBUTE_UNSAFE.test(value)) {
-    throw new Error(
+    throw new ValidationError(
       `Cookie ${attribute} contains invalid characters (injection risk): ${JSON.stringify(value)}`,
     );
   }
@@ -243,7 +248,7 @@ function assertSafeAttribute(attribute: string, value: string): void {
  * @param options - Optional cookie attributes.
  * @param config - Optional security configuration.
  * @returns The serialized Set-Cookie header value.
- * @throws {Error} when the name, value, or an attribute is unsafe.
+ * @throws {ValidationError} when the name, value, or an attribute is unsafe.
  */
 export function createSecureCookie(
   name: string,
@@ -305,34 +310,30 @@ export function validateCookieValue(value: string): string | undefined {
 /**
  * Strips security-sensitive cookies from a cookie header.
  *
- * Matching is on the whole name and on `name`-prefixed variants (`session`
- * also strips `session_id` and `session-token`), because the sensitive cookie
- * in a real deployment is rarely named exactly `session`.
+ * A cookie is stripped when any configured name appears in its name as a
+ * whole word (words are split on `.`, `-`, `_` and camelCase, after a
+ * `__Host-`/`__Secure-` prefix is dropped). So `session` strips `session`,
+ * `session_id`, `__Host-session` and `next-auth.session-token`, and the
+ * defaults also strip `connect.sid`, `PHPSESSID`, `access_token` and
+ * `refresh_token`, which the old prefix-only match let through.
  *
  * @param cookieHeader - The raw Cookie header.
- * @param sensitiveNames - Names of cookies to strip (case-insensitive).
+ * @param sensitiveNames - Names of cookies to strip (case-insensitive;
+ *   default {@link DEFAULT_SENSITIVE_COOKIE_NAMES}).
  * @returns The cleaned cookie header.
  */
 export function stripSensitiveCookies(
   cookieHeader: string,
-  sensitiveNames: readonly string[] = ["session", "token", "auth", "jwt"],
+  sensitiveNames: readonly string[] = DEFAULT_SENSITIVE_COOKIE_NAMES,
 ): string {
-  const lowerSensitive = sensitiveNames.map((n) => n.toLowerCase());
-
   return cookieHeader
     .split(";")
     .map((pair) => pair.trim())
     .filter((pair) => {
       const eqIndex = pair.indexOf("=");
       if (eqIndex === -1) return false;
-      const name = pair.slice(0, eqIndex).trim().toLowerCase();
-      return !lowerSensitive.some(
-        (sensitive) =>
-          name === sensitive ||
-          name.startsWith(`${sensitive}_`) ||
-          name.startsWith(`${sensitive}-`) ||
-          name.startsWith(`${sensitive}.`),
-      );
+      const name = pair.slice(0, eqIndex).trim();
+      return !isSensitiveCookieName(name, sensitiveNames);
     })
     .join("; ");
 }

@@ -250,7 +250,12 @@ describe("SEC-05: rate limiter", () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(1_000);
-      const rl = createRateLimiter({ max: 5, windowMs: 600_000, maxKeys: 3 });
+      const rl = createRateLimiter({
+        max: 5,
+        windowMs: 600_000,
+        maxKeys: 3,
+        keyGenerator: (request) => request.ip ?? "",
+      });
       limiters.push(rl);
 
       rl.check({ ip: "a" });

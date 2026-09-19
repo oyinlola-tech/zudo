@@ -6,6 +6,7 @@
 
 import type { CorsConfig } from "../types/security.type.js";
 import { withoutStickyFlags } from "../input/input.core.js";
+import { ConfigurationError } from "@zudojs/errors";
 
 /** Default CORS configuration (restrictive). */
 const DEFAULT_CORS_CONFIG: Required<Omit<CorsConfig, "origin">> & {
@@ -47,7 +48,7 @@ function assertConfigCoherent(config: CorsConfig): void {
     origin === "*" || (Array.isArray(origin) && origin.includes("*"));
 
   if (hasWildcard) {
-    throw new Error(
+    throw new ConfigurationError(
       'CORS: credentials cannot be combined with a wildcard origin ("*"). ' +
         "Enumerate the allowed origins, or supply a function or RegExp.",
     );

@@ -21,6 +21,7 @@
 
 import type { CsrfConfig } from "../types/security.type.js";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { ConfigurationError } from "@zudojs/errors";
 
 /** Default token expiration (1 hour). */
 const DEFAULT_EXPIRATION = 3600;
@@ -48,14 +49,14 @@ export const MIN_CSRF_SECRET_LENGTH = 32;
 
 /** Rejects a secret too short to be worth signing with. */
 function assertUsableSecret(secret: string): void {
-  if (secret.length === 0) {
-    throw new Error(
+  if (typeof secret !== "string" || secret.length === 0) {
+    throw new ConfigurationError(
       "CSRF secret cannot be empty: pass a random string of at least " +
         `${MIN_CSRF_SECRET_LENGTH} characters, e.g. randomBytes(32).toString("hex")`,
     );
   }
   if (secret.length < MIN_CSRF_SECRET_LENGTH) {
-    throw new Error(
+    throw new ConfigurationError(
       `CSRF secret is too short: got ${secret.length} characters, expected at least ` +
         `${MIN_CSRF_SECRET_LENGTH}. The signature is HMAC-SHA256, so a shorter ` +
         'secret adds no strength. Generate one with randomBytes(32).toString("hex").',
@@ -145,16 +146,23 @@ export function generateCsrfToken(
  * @param options - Maximum lifetime and session binding, or a bare expiration
  *   in seconds for backwards compatibility.
  * @returns True if the token is valid, unexpired, and bound to this session.
+ * @throws {ConfigurationError} when the secret is empty or shorter than
+ *   {@link MIN_CSRF_SECRET_LENGTH}, exactly as `generateCsrfToken` does.
  */
 export function validateCsrfToken(
   token: string,
   secret: string,
   options?: number | CsrfTokenOptions,
 ): boolean {
+  // Same bar as `generateCsrfToken`: a verifier configured with
+  // `process.env.CSRF_SECRET ?? ""` otherwise accepted tokens anyone can sign
+  // with an empty HMAC key.
+  assertUsableSecret(secret);
   const opts: CsrfTokenOptions =
     typeof options === "number" ? { expiration: options } : (options ?? {});
   const maxTtl = opts.expiration ?? DEFAULT_EXPIRATION;
 
+  if (typeof token !== "string") return false;
   const parts = token.split(":");
 
   if (parts.length !== 3) {
@@ -222,6 +230,7 @@ export function verifyDoubleSubmit(
   secret: string,
   options?: number | CsrfTokenOptions,
 ): boolean {
+  assertUsableSecret(secret);
   if (!cookieToken || !requestToken) {
     return false;
   }
@@ -248,8 +257,12 @@ export function requiresCsrfProtection(
     return false;
   }
 
+  // HTTP methods are case-sensitive on the wire but configured by hand;
+  // comparing a lower-case `methods: ["post"]` against the upper-cased
+  // request method used to protect nothing, silently.
+  const upper = method.toUpperCase();
   const methods = config?.methods ?? DEFAULT_METHODS;
-  return methods.includes(method.toUpperCase());
+  return methods.some((m) => String(m).toUpperCase() === upper);
 }
 
 /**
@@ -433,7 +446,7 @@ export interface CsrfProtection {
  *
  * @param config - Secret, lifetime, cookie/header names, protected methods.
  * @returns Protection bound to that configuration.
- * @throws {Error} when the secret is missing or shorter than
+ * @throws {ConfigurationError} when the secret is missing or shorter than
  *   {@link MIN_CSRF_SECRET_LENGTH}.
  */
 export function createCsrfProtection(

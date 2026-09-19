@@ -106,6 +106,20 @@ own rate-limit bucket. Set `trustProxy` to the number of proxies you actually
 operate; entries are then read in from the right, and everything to the left of
 your own hops is ignored.
 
+The address it returns has any port and IPv6 brackets removed (some proxies
+append `client-ip:port`, which used to give every TCP connection its own
+bucket). The default key generator then keys IPv4 as-is, IPv4-mapped IPv6 as
+IPv4, and other IPv6 by its **/64**, so one host cannot rotate through its own
+prefix. Use `createIpKeyGenerator({ ipv6PrefixLength })` for another prefix,
+and `ipRateLimitKey(ip)` to compute the key yourself; `getCount(ip)` and
+`reset(ip)` accept the raw address.
+
+**The default key generator throws a `ConfigurationError` when `ip` is
+missing or is not an address** (including the `"unknown"` placeholder
+`extractClientIp` returns when it has nothing to go on). Those requests used
+to share one `"unknown"` bucket, so one client could starve everyone else.
+Always pass `remoteAddress`, or supply your own `keyGenerator`.
+
 ## CORS
 
 ```typescript
@@ -159,6 +173,7 @@ const { token, setCookie } = csrf.issue({ sessionId });
 setHeader("Set-Cookie", setCookie);
 
 // Verify — safe to call on every request; safe methods return true.
+// `methods` (default POST, PUT, PATCH, DELETE) is matched case-insensitively.
 if (!csrf.verify(
   { method: request.method, headers: request.headers, cookieHeader: request.headers.cookie },
   { sessionId },
@@ -195,6 +210,11 @@ if (requiresCsrfProtection(request.method)) {
 }
 ```
 
+`validateCsrfToken` and `verifyDoubleSubmit` hold the secret to the same
+32-character minimum as `generateCsrfToken`, and throw `ConfigurationError`
+otherwise — a verifier given `process.env.CSRF_SECRET ?? ""` used to accept
+tokens signed with an empty key.
+
 The cookie is `Secure` and `HttpOnly` by default, which suits the synchroniser
 token pattern where the server renders the token into the page. For the
 double-submit pattern — where client script reads the cookie back — pass
@@ -215,8 +235,12 @@ isSafeUrl("gopher://internal/"); // false — protocol not allowlisted
 ```
 
 Addresses are range-checked numerically (127/8, 10/8, 172.16/12, 192.168/16,
-169.254/16, 100.64/10, 0/8, `::1`, `fc00::/7`, `fe80::/10`), and only `http:`
-and `https:` are permitted unless you widen `allowedProtocols`.
+169.254/16, 100.64/10, 0/8, `::1`, `fc00::/7`, `fe80::/10`, `fec0::/10`,
+`ff00::/8`), and only `http:` and `https:` are permitted unless you widen
+`allowedProtocols`. IPv6 forms that embed an IPv4 address — `::a.b.c.d`,
+`::ffff:a.b.c.d`, `::ffff:0:a.b.c.d`, NAT64 `64:ff9b::/96` and 6to4
+`2002::/16` — are judged as that IPv4 address, whatever spelling the URL
+parser gives them; the local-use NAT64 prefix `64:ff9b:1::/48` is refused.
 
 **This cannot stop DNS rebinding.** A public hostname may resolve to a private
 address, and may resolve differently between the check and the connection. For
@@ -246,6 +270,13 @@ reached the caller with `errors: []`. Values are otherwise accepted leniently
 (spaces, commas and quoted-string wrappers are common in the wild); use
 `validateCookieValue` where you want the strict `cookie-octet` rule.
 
+`stripSensitiveCookies(header)` removes a cookie when a sensitive word appears
+anywhere in its name as a whole word (split on `.`, `-`, `_` and camelCase,
+after dropping a `__Host-`/`__Secure-` prefix). The defaults
+(`DEFAULT_SENSITIVE_COOKIE_NAMES`) cover `session`, `sid`, `token`, `auth`,
+`jwt`, `csrf` and the framework defaults `connect.sid`, `PHPSESSID` and
+`JSESSIONID`; `theme` or `sidebar` survive.
+
 ```typescript
 createSecureCookie("sid", value, { maxAge: 3600 });
 // sid=…; Max-Age=3600; Secure; HttpOnly; SameSite=Lax
@@ -261,9 +292,17 @@ detectThreats(input); // ordered: SQL_INJECTION, XSS, NULL_BYTE, CONTROL_CHARACT
 escapeHtml(text);
 ```
 
-`detectThreats` and `containsSqlInjection` are heuristics with a high
-false-positive rate on ordinary prose — useful for logging and alerting, never a
-substitute for parameterised queries or contextual output encoding.
+`detectThreats`, `containsSqlInjection` and `containsXss` are heuristics with a
+high false-positive rate on ordinary prose — useful for logging and alerting,
+never a substitute for parameterised queries or contextual output encoding.
+`containsXss` decodes HTML character references (`jav&#x61;script:`,
+`javascript&colon;`) and ignores whitespace inside a scheme before matching.
+
+Body limits must be finite numbers above zero: `validateBodySize`,
+`validateContentLength` and `createBodySizeChecker` throw `ConfigurationError`
+for `NaN` (what `Number(process.env.BODY_LIMIT)` gives when the variable is
+unset), and `validateBodyLimitConfig` reports it — a `NaN` limit used to allow
+any body.
 `escapeHtml` covers element text and quoted attribute values; unquoted
 attributes, `<script>` bodies and URL positions need their own encoding.
 

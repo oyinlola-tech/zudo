@@ -10,6 +10,7 @@ import type {
   RateLimitResponse,
   RateLimitResult,
 } from "../types/security.type.js";
+import { createIpKeyGenerator, ipRateLimitKey } from "./rateLimit.clientKey.js";
 
 /** Default window: 1 minute. */
 const DEFAULT_WINDOW_MS = 60_000;
@@ -38,12 +39,19 @@ interface RateLimitEntry {
 /**
  * Default key generator using IP address.
  *
+ * The port is stripped, IPv4-mapped IPv6 is keyed as IPv4, and IPv6 is
+ * bucketed by /64 (see {@link createIpKeyGenerator} for another prefix).
+ *
  * @param request - The rate limit request.
  * @returns The rate limit key.
+ * @throws {ConfigurationError} when `request.ip` is missing or not an IP
+ *   address; requests used to share a single `"unknown"` bucket.
  */
 export function defaultKeyGenerator(request: RateLimitRequest): string {
-  return request.ip ?? "unknown";
+  return ipKeyGenerator(request);
 }
+
+const ipKeyGenerator = createIpKeyGenerator();
 
 /**
  * Default handler when rate limit is exceeded.
@@ -132,6 +140,9 @@ export function createRateLimiter(config: RateLimiterOptions) {
 
   const store = new Map<string, RateLimitEntry>();
   const keyGenerator = config.keyGenerator ?? defaultKeyGenerator;
+  /** Lets `reset`/`getCount` take a raw address under the default keys. */
+  const storeKey = (key: string): string =>
+    config.keyGenerator || store.has(key) ? key : (ipRateLimitKey(key) ?? key);
   // `config.message` was declared and documented but never read: the default
   // handler always emitted the built-in string.
   const message = config.message ?? DEFAULT_MESSAGE;
@@ -267,7 +278,7 @@ export function createRateLimiter(config: RateLimiterOptions) {
    * Resets the rate limit for a specific key.
    */
   function reset(key: string): void {
-    store.delete(key);
+    store.delete(storeKey(key));
   }
 
   /**
@@ -281,7 +292,7 @@ export function createRateLimiter(config: RateLimiterOptions) {
    * Gets the current count for a key.
    */
   function getCount(key: string): number {
-    const entry = store.get(key);
+    const entry = store.get(storeKey(key));
     if (!entry) return 0;
 
     const windowStart = Date.now() - config.windowMs;
@@ -308,104 +319,4 @@ export function createRateLimiter(config: RateLimiterOptions) {
       return store.size;
     },
   };
-}
-
-/** Options controlling how far forwarding headers are trusted. */
-export interface ClientIpOptions {
-  /**
-   * Number of reverse proxies you operate in front of this service.
-   *
-   * `X-Forwarded-For` is appended to by every hop, so the entries closest to
-   * the right are the ones your own infrastructure added. With `trustProxy: 1`
-   * the last entry is used, with `2` the second-to-last, and so on. Entries to
-   * the left of your proxies were supplied by the client and are ignored.
-   *
-   * Defaults to `0`: no forwarding header is trusted at all.
-   */
-  readonly trustProxy?: number;
-  /** The connection's remote address, used when no header is trusted. */
-  readonly remoteAddress?: string;
-}
-
-/**
- * Extracts the client IP from request headers.
- *
- * **Forwarding headers are not trusted by default.** Any client can send
- * `X-Forwarded-For`, so taking its leftmost entry — the historical behaviour —
- * hands the caller control of their own rate-limit bucket, and rotating it
- * defeats the limiter entirely. Pass `trustProxy` set to the number of proxies
- * you actually run, together with the socket's `remoteAddress`.
- *
- * @param headers - Request headers.
- * @param options - Proxy trust configuration.
- * @returns The client IP address, or "unknown".
- */
-export function extractClientIp(
-  headers: Record<string, string | string[] | undefined>,
-  options?: ClientIpOptions,
-): string {
-  const trustProxy = options?.trustProxy ?? 0;
-  const fallback = options?.remoteAddress ?? "unknown";
-
-  if (trustProxy <= 0) {
-    return fallback;
-  }
-
-  const raw = lookupHeader(headers, "x-forwarded-for");
-  if (raw !== undefined) {
-    const chain = raw
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0);
-
-    // Walk in from the right: index 0 from the end is the address our own
-    // outermost proxy observed, and each additional trusted hop steps left.
-    const index = chain.length - trustProxy;
-    const candidate = chain[Math.max(0, index)];
-    if (candidate && isPlausibleIp(candidate)) {
-      return candidate;
-    }
-  }
-
-  const realIp = lookupHeader(headers, "x-real-ip");
-  if (realIp !== undefined && isPlausibleIp(realIp.trim())) {
-    return realIp.trim();
-  }
-
-  return fallback;
-}
-
-/** Case-insensitive header lookup that flattens repeated fields. */
-function lookupHeader(
-  headers: Record<string, string | string[] | undefined>,
-  name: string,
-): string | undefined {
-  for (const key of Object.keys(headers)) {
-    if (key.toLowerCase() !== name) continue;
-    const value = headers[key];
-    if (typeof value === "string") return value;
-    if (Array.isArray(value) && value.length > 0) return value.join(",");
-  }
-  return undefined;
-}
-
-/**
- * Rejects values that are not addresses at all.
- *
- * A forwarding header is text, and a hostname or arbitrary string in it would
- * otherwise become a rate-limit key of the attacker's choosing.
- */
-function isPlausibleIp(value: string): boolean {
-  const host = value.startsWith("[")
-    ? value.slice(1, value.indexOf("]") === -1 ? undefined : value.indexOf("]"))
-    : value.split(":").length > 2
-      ? value
-      : (value.split(":")[0] ?? value);
-
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
-    return host.split(".").every((octet) => Number(octet) <= 255);
-  }
-
-  // Any hex-and-colon string is accepted as an IPv6 candidate.
-  return /^[0-9a-fA-F:]+$/.test(host) && host.includes(":");
 }

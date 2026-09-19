@@ -51,8 +51,12 @@ describe("SEC-R9-01: a window longer than 2^31 - 1 ms does not overflow the clea
 });
 
 describe("SEC-R9-02: key-cap eviction is O(1) and stays least-recently-seen", () => {
+  // The default key generator now refuses non-IP keys; these tests use
+  // arbitrary labels to exercise eviction order only.
+  const rawKey = (request: { readonly ip?: string }): string => request.ip ?? "";
+
   it("evicts the least recently seen key, not the least recently created", () => {
-    const limiter = createRateLimiter({ max: 5, windowMs: 60_000, maxKeys: 3 });
+    const limiter = createRateLimiter({ max: 5, windowMs: 60_000, maxKeys: 3, keyGenerator: rawKey });
 
     try {
       limiter.check({ ip: "a" });
@@ -74,7 +78,7 @@ describe("SEC-R9-02: key-cap eviction is O(1) and stays least-recently-seen", ()
 
   it("does not sort the whole store for every rotated key past the cap", () => {
     const cap = 50_000;
-    const limiter = createRateLimiter({ max: 5, windowMs: 60_000, maxKeys: cap });
+    const limiter = createRateLimiter({ max: 5, windowMs: 60_000, maxKeys: cap, keyGenerator: rawKey });
 
     try {
       for (let i = 0; i < cap; i++) limiter.check({ ip: `k${i}` });

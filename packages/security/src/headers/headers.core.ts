@@ -6,6 +6,7 @@
 
 import type { SecurityHeadersConfig } from "../types/security.type.js";
 import { randomBytes } from "node:crypto";
+import { ConfigurationError } from "@zudojs/errors";
 
 /** Security header names. */
 export const SECURITY_HEADER_NAMES = {
@@ -71,7 +72,7 @@ export function generateSecurityHeaders(
   if (config) {
     for (const [key, value] of Object.entries(config)) {
       if (typeof value === "string" && /[\r\n\x00]/.test(value)) {
-        throw new Error(
+        throw new ConfigurationError(
           `Security header "${key}" contains CRLF or null bytes (injection risk)`,
         );
       }

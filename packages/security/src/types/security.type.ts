@@ -256,6 +256,9 @@ export const SQL_INJECTION_PATTERNS = [
   /(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|EXECUTE|UNION|FETCH|DECLARE|TRUNCATE|COMMENT|ALTER)\b)/i,
   /(--|#|\/\*|\*\/)/,
   /('\s*(OR|AND)\s*')/i,
+  /'\s*(OR|AND)\b/i,
+  /'\s*\|\|/,
+  /\b(PG_SLEEP|SLEEP|BENCHMARK)\s*\(|\bWAITFOR\s+DELAY\b/i,
   /(;\s*(DROP|DELETE|INSERT|UPDATE))/i,
 ] as const;
 

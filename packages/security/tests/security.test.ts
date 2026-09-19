@@ -715,8 +715,8 @@ describe("Rate Limiting", () => {
       expect(defaultKeyGenerator({ ip: "192.168.1.1" })).toBe("192.168.1.1");
     });
 
-    it("uses unknown when no IP", () => {
-      expect(defaultKeyGenerator({})).toBe("unknown");
+    it("refuses to key a request with no IP (round 10: no shared bucket)", () => {
+      expect(() => defaultKeyGenerator({})).toThrow(/RateLimitRequest\.ip/);
     });
   });
 

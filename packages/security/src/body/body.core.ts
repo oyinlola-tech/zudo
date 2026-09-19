@@ -8,6 +8,7 @@ import type {
   BodyLimitConfig,
   BodyLimitPresets,
 } from "../types/security.type.js";
+import { assertBodyLimit, isUsableBodyLimit } from "./body.guard.js";
 
 /** Default body limits for common use cases. */
 export const DEFAULT_BODY_LIMITS: BodyLimitPresets = {
@@ -28,7 +29,10 @@ const DEFAULT_MAX_BODY_SIZE = 1_048_576;
  * Validates the Content-Length header value.
  *
  * @param contentLength - The Content-Length header value.
+ * @param maxSize - Optional maximum in bytes.
  * @returns An error message if invalid, or undefined.
+ * @throws {ConfigurationError} when `maxSize` is given but is `NaN`,
+ *   infinite or not above 0.
  */
 export function validateContentLength(
   contentLength: string | undefined,
@@ -51,6 +55,7 @@ export function validateContentLength(
     return `Content-Length is not a safe integer: ${contentLength}`;
   }
 
+  if (maxSize !== undefined) assertBodyLimit(maxSize);
   if (maxSize !== undefined && parsed > maxSize) {
     return `Content-Length ${parsed} exceeds maximum ${maxSize} bytes`;
   }
@@ -131,6 +136,8 @@ export function validateBodyFraming(
  * @param maxSize - The maximum allowed size in bytes.
  * @param contentType - Optional content type for context in error messages.
  * @returns An error message if too large, or undefined.
+ * @throws {ConfigurationError} when `maxSize` is `NaN`, infinite or not
+ *   above 0 — it used to disable the check.
  */
 export function validateBodySize(
   actualSize: number,
@@ -138,6 +145,11 @@ export function validateBodySize(
   contentType?: string,
 ): string | undefined {
   const limit = maxSize ?? DEFAULT_MAX_BODY_SIZE;
+  assertBodyLimit(limit);
+
+  if (!Number.isFinite(actualSize) || actualSize < 0) {
+    return `Body size is not a valid byte count: ${actualSize}`;
+  }
 
   if (actualSize > limit) {
     const context = contentType ? ` for ${contentType}` : "";
@@ -243,7 +255,7 @@ export function getBodyLimitForContentType(
 export function validateBodyLimitConfig(
   config: BodyLimitConfig,
 ): string | undefined {
-  if (config.maxSize <= 0) {
+  if (!isUsableBodyLimit(config.maxSize)) {
     return `Body limit maxSize must be positive, got: ${config.maxSize}`;
   }
 
@@ -314,11 +326,13 @@ export function resolveBodyLimit(
  * @param maxSize - The maximum body size in bytes.
  * @param contentType - Optional content type to check against.
  * @returns A function that checks if a size is within limits.
+ * @throws {ConfigurationError} when `maxSize` is not a finite number above 0.
  */
 export function createBodySizeChecker(
   maxSize: number,
   contentType?: string,
 ): (size: number) => { allowed: boolean; error?: string } {
+  assertBodyLimit(maxSize);
   return (size: number) => {
     const error = validateBodySize(size, maxSize, contentType);
     return {

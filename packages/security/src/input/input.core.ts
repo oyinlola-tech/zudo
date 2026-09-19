@@ -10,6 +10,7 @@ import {
   SQL_INJECTION_PATTERNS,
   XSS_PATTERNS,
 } from "../types/security.type.js";
+import { containsObfuscatedScheme, decodeHtmlEntities } from "./input.decode.js";
 
 /**
  * Null byte and control character patterns.
@@ -50,7 +51,14 @@ export function containsSqlInjection(input: string): boolean {
  * @returns True if XSS patterns are detected.
  */
 export function containsXss(input: string): boolean {
-  return XSS_PATTERNS.some((pattern) => pattern.test(input));
+  if (XSS_PATTERNS.some((pattern) => pattern.test(input))) return true;
+  // Entity-encoded payloads (`jav&#x61;script:`, `javascript&colon;`,
+  // `java&#x09;script:`) are decoded by the browser but not by a regex.
+  const decoded = decodeHtmlEntities(input);
+  if (decoded !== input && XSS_PATTERNS.some((pattern) => pattern.test(decoded))) {
+    return true;
+  }
+  return containsObfuscatedScheme(decoded);
 }
 
 /**
