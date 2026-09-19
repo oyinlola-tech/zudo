@@ -32,7 +32,11 @@ export interface LoginAttemptStore {
   get(identifier: string): Promise<LoginAttemptRecord>;
   /** Count an attempt (before credentials are checked). */
   recordAttempt(identifier: string): Promise<LoginAttemptRecord>;
-  /** Count a failed authentication. */
+  /**
+   * Count a failed authentication. Must be atomic: `createAuthService()`
+   * reserves a failure *before* checking the password and relies on
+   * concurrent calls seeing distinct, increasing counts.
+   */
   recordFailure(identifier: string): Promise<LoginAttemptRecord>;
   /** Lock an identifier until `until` (Unix milliseconds). */
   lock(identifier: string, until: number): Promise<void>;
@@ -55,8 +59,14 @@ export interface LoginThrottleConfig {
   readonly lockoutSeconds?: number;
   /**
    * Attempts allowed per identifier inside the store's rate-limit window
-   * (default: 20). Exceeding it throws `AuthRateLimitError`. This bounds the
-   * scrypt work an attacker can force the server to perform.
+   * (default: 20). Exceeding it throws `AuthRateLimitError`.
+   *
+   * This is a *per-identifier* budget: it bounds the password guesses
+   * against one account, not the scrypt work the server can be made to do.
+   * Every new identifier starts with a fresh budget, and unknown identifiers
+   * still burn a full scrypt verification, so an attacker rotating
+   * identifiers is not limited by it. Put a per-IP limiter (for example
+   * `createRateLimiter` from `@zudojs/security`) in front of `login()`.
    */
   readonly maxAttemptsPerWindow?: number;
   /**

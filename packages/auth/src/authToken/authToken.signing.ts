@@ -116,6 +116,11 @@ export function signToken(payload: TokenPayload, secret: string): JwtToken {
  * Never throws for untrusted input: every failure is reported as
  * `{ valid: false, error }`. Oversized tokens are rejected before anything
  * is decoded.
+ *
+ * The signature segment is compared as the canonical base64url *string*,
+ * not as decoded bytes: lenient base64 decoding ignores non-alphabet
+ * characters and non-zero trailing bits, which gave one issued token an
+ * unbounded number of accepted spellings.
  */
 export function verifyToken(
   token: JwtToken,
@@ -141,8 +146,8 @@ export function verifyToken(
   const signatureInput = `${headerB64}.${bodyB64}`;
   const expectedSignature = hmacSha256(signatureInput, secret);
 
-  const sigBuffer = Buffer.from(signature, "base64url");
-  const expectedBuffer = Buffer.from(expectedSignature, "base64url");
+  const sigBuffer = Buffer.from(signature, "utf-8");
+  const expectedBuffer = Buffer.from(expectedSignature, "utf-8");
 
   if (
     sigBuffer.length !== expectedBuffer.length ||

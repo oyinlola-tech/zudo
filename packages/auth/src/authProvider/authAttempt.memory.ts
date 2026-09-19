@@ -11,14 +11,18 @@ import type {
   LoginAttemptRecord,
   LoginAttemptStore,
 } from "../authTypes/authAttempt.type.js";
+import { evictOne, isStale, isUnlocked } from "./authAttempt.eviction.js";
 
 const DEFAULT_WINDOW_SECONDS = 60;
 const DEFAULT_PURGE_INTERVAL_MS = 60_000;
+const DEFAULT_FAILURE_TTL_SECONDS = 900;
+const DEFAULT_MAX_ENTRIES = 100_000;
 
 interface AttemptEntry {
   failures: number;
   attempts: number;
   windowStart: number;
+  lastFailureAt: number;
   lockedUntil?: number;
 }
 
@@ -30,13 +34,25 @@ const EMPTY: LoginAttemptRecord = { failures: 0, attempts: 0 };
  * @param options.windowSeconds - Rate-limit window length (default: 60).
  * @param options.purgeIntervalMs - Minimum gap between sweeps of stale
  *   entries (default: 60000).
+ * @param options.failureTtlSeconds - Idle time after which an unlocked
+ *   failure streak is forgotten and its entry evicted (default: 900).
+ *   Without it, every identifier with one failure was kept forever, so
+ *   spraying random identifiers grew the map without bound.
+ * @param options.maxEntries - Hard cap on tracked identifiers (default:
+ *   100000). At the cap the oldest unlocked entry is evicted; locked
+ *   entries are only evicted when every entry is locked.
  */
 export function createMemoryLoginAttemptStore(options?: {
   readonly windowSeconds?: number;
   readonly purgeIntervalMs?: number;
+  readonly failureTtlSeconds?: number;
+  readonly maxEntries?: number;
 }): LoginAttemptStore {
   const windowMs = (options?.windowSeconds ?? DEFAULT_WINDOW_SECONDS) * 1000;
   const purgeIntervalMs = options?.purgeIntervalMs ?? DEFAULT_PURGE_INTERVAL_MS;
+  const failureTtlMs =
+    (options?.failureTtlSeconds ?? DEFAULT_FAILURE_TTL_SECONDS) * 1000;
+  const maxEntries = options?.maxEntries ?? DEFAULT_MAX_ENTRIES;
   const entries = new Map<string, AttemptEntry>();
   let lastPurge = 0;
 
@@ -44,11 +60,7 @@ export function createMemoryLoginAttemptStore(options?: {
     if (now - lastPurge < purgeIntervalMs) return;
     lastPurge = now;
     for (const [key, entry] of entries) {
-      const locked = entry.lockedUntil !== undefined && entry.lockedUntil > now;
-      const fresh = now - entry.windowStart < windowMs;
-      if (!locked && !fresh && entry.failures === 0) {
-        entries.delete(key);
-      }
+      if (isStale(entry, now, windowMs, failureTtlMs)) entries.delete(key);
     }
   }
 
@@ -56,8 +68,16 @@ export function createMemoryLoginAttemptStore(options?: {
     maybePurge(now);
     let entry = entries.get(identifier);
     if (!entry) {
-      entry = { failures: 0, attempts: 0, windowStart: now };
+      if (entries.size >= maxEntries) evictOne(entries, now);
+      entry = { failures: 0, attempts: 0, windowStart: now, lastFailureAt: 0 };
       entries.set(identifier, entry);
+    }
+    if (
+      entry.failures > 0 &&
+      isUnlocked(entry, now) &&
+      now - entry.lastFailureAt >= failureTtlMs
+    ) {
+      entry.failures = 0;
     }
     if (now - entry.windowStart >= windowMs) {
       entry.windowStart = now;
@@ -100,6 +120,7 @@ export function createMemoryLoginAttemptStore(options?: {
     async recordFailure(identifier: string): Promise<LoginAttemptRecord> {
       const entry = load(identifier, Date.now());
       entry.failures++;
+      entry.lastFailureAt = Date.now();
       return snapshot(entry);
     },
 

@@ -18,6 +18,7 @@ import type {
 } from "../authTypes/authToken.type.js";
 import type { SessionStore, SessionId } from "../authTypes/authSession.type.js";
 import type { LoginThrottleConfig } from "../authTypes/authAttempt.type.js";
+import { createLoginThrottleGate } from "./authProvider.throttle.js";
 import type { GuardContext, GuardResult } from "../authTypes/authRbac.type.js";
 import type { PermissionEngine } from "@zudojs/permissions";
 import {
@@ -33,9 +34,7 @@ import { assertTokenSecrets } from "../authToken/authToken.signing.js";
 import { assertPositiveSeconds } from "../authSession/authSession.core.js";
 import {
   AccountDeactivatedError,
-  AccountLockedError,
   AuthConfigurationError,
-  AuthRateLimitError,
   InvalidCredentialsError,
   SessionExpiredError,
   TokenExpiredError,
@@ -50,28 +49,11 @@ import {
  * the unknown-user path takes comparable time to the wrong-password path and
  * the response time does not disclose whether an account exists.
  */
-const DUMMY_PASSWORD_HASH = `scrypt$16384$8$1$${"0".repeat(64)}$${"0".repeat(
+const DUMMY_PASSWORD_HASH = `scrypt$16384$8$5$${"0".repeat(64)}$${"0".repeat(
   128,
 )}`;
 
-const DEFAULT_MAX_FAILED_ATTEMPTS = 5;
-const DEFAULT_LOCKOUT_SECONDS = 900;
-const DEFAULT_MAX_ATTEMPTS_PER_WINDOW = 20;
-const DEFAULT_WINDOW_SECONDS = 60;
-
-/**
- * The key under which an identifier's login attempts are counted.
- *
- * Identifiers are emails or usernames, which consumers almost always
- * resolve case-insensitively. Counting the raw string gave
- * `alice@example.com`, `Alice@example.com` and ` alice@example.com` three
- * independent attempt budgets against one account — a lockout bypass that
- * cost the attacker nothing. Trimming, NFKC-folding and lower-casing keeps
- * unknown and known identifiers throttled identically while closing that.
- */
-export function throttleKey(identifier: string): string {
-  return String(identifier).normalize("NFKC").trim().toLowerCase();
-}
+export { throttleKey } from "./authProvider.throttle.js";
 
 /** User lookup function provided by the consumer, keyed by login identifier. */
 export type UserLookup = (identifier: string) => Promise<AuthUser | null>;
@@ -137,6 +119,18 @@ export interface AuthServiceConfig {
   readonly allowInsecureFallbackGuard?: boolean;
   /** Role name the fallback guard treats as superuser (default: "admin"). */
   readonly fallbackAdminRole?: string;
+  /**
+   * Accept access and refresh tokens that carry no `sid` claim (default:
+   * `false`).
+   *
+   * Every pair `login()` mints is session-bound, so by default
+   * `verifyToken()` and `refresh()` reject a token without a `sid`: such a
+   * token cannot be revoked by `logout()` or `logoutAll()`, and accepting
+   * it let a session-less refresh chain outlive "sign out everywhere". Set
+   * this only if you also mint tokens with the standalone `createTokenPair()`
+   * and verify them through this service.
+   */
+  readonly allowSessionlessTokens?: boolean;
 }
 
 /**
@@ -191,6 +185,7 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
     loginThrottle,
     allowInsecureFallbackGuard,
     fallbackAdminRole,
+    allowSessionlessTokens,
   } = config;
 
   // Fail at construction, not at the first login: a bad secret or a NaN
@@ -201,42 +196,7 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
   assertPositiveSeconds(sessionTtlSeconds, "sessionTtlSeconds");
   assertPositiveSeconds(absoluteSessionTtlSeconds, "absoluteSessionTtlSeconds");
 
-  const maxFailedAttempts =
-    loginThrottle?.maxFailedAttempts ?? DEFAULT_MAX_FAILED_ATTEMPTS;
-  const lockoutSeconds =
-    loginThrottle?.lockoutSeconds ?? DEFAULT_LOCKOUT_SECONDS;
-  const maxAttemptsPerWindow =
-    loginThrottle?.maxAttemptsPerWindow ?? DEFAULT_MAX_ATTEMPTS_PER_WINDOW;
-  const windowSeconds = loginThrottle?.windowSeconds ?? DEFAULT_WINDOW_SECONDS;
-
-  /** Throw if the identifier is locked out or over its attempt budget. */
-  async function enforceThrottle(identifier: string): Promise<void> {
-    if (!loginThrottle) return;
-    const key = throttleKey(identifier);
-    const now = Date.now();
-    const current = await loginThrottle.store.get(key);
-    if (current.lockedUntil !== undefined && current.lockedUntil > now) {
-      throw new AccountLockedError(undefined, {
-        retryAfterSeconds: Math.ceil((current.lockedUntil - now) / 1000),
-      });
-    }
-    const updated = await loginThrottle.store.recordAttempt(key);
-    if (updated.attempts > maxAttemptsPerWindow) {
-      throw new AuthRateLimitError(undefined, {
-        retryAfterSeconds: windowSeconds,
-      });
-    }
-  }
-
-  /** Record a failed authentication and lock the identifier if warranted. */
-  async function recordFailure(identifier: string): Promise<void> {
-    if (!loginThrottle) return;
-    const key = throttleKey(identifier);
-    const updated = await loginThrottle.store.recordFailure(key);
-    if (updated.failures >= maxFailedAttempts) {
-      await loginThrottle.store.lock(key, Date.now() + lockoutSeconds * 1000);
-    }
-  }
+  const throttle = createLoginThrottleGate(loginThrottle);
 
   /**
    * Reject the token unless the session it was issued against is still
@@ -246,9 +206,10 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
     payload: TokenPayload,
   ): Promise<SessionId | undefined> {
     const sid = payload.sid;
-    // Tokens minted by `createTokenPair` directly carry no `sid`; they cannot
-    // be forged, and there is no session to check for them.
-    if (!sid) return undefined;
+    if (!sid) {
+      if (allowSessionlessTokens) return undefined;
+      throw new TokenInvalidError("Token is not bound to a session");
+    }
     const session = await sessionStore.get(sid);
     if (!session) {
       throw new SessionExpiredError("Session is no longer active");
@@ -290,7 +251,7 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
       context?: { readonly userAgent?: string; readonly ip?: string },
     ): Promise<LoginResult> {
       const identifier = credentials.identifier;
-      await enforceThrottle(identifier);
+      const slot = await throttle.begin(identifier);
 
       const user = await findUser(identifier);
 
@@ -304,13 +265,13 @@ export function createAuthService(config: AuthServiceConfig): AuthService {
       }
 
       if (!user || !authenticated) {
-        await recordFailure(identifier);
+        await throttle.fail(identifier, slot);
         throw new InvalidCredentialsError();
       }
 
       // The credentials were correct, so the attempt counter is cleared even
       // if the account turns out to be unusable.
-      await loginThrottle?.store.reset(throttleKey(identifier));
+      await throttle.succeed(identifier);
 
       // Account state is only disclosed once the password has been proven,
       // so it cannot be probed without a valid credential.

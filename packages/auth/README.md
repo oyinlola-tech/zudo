@@ -92,7 +92,7 @@ const auth = createAuthService({
     store: createMemoryLoginAttemptStore({ windowSeconds: 60 }),
     maxFailedAttempts: 5, // -> AccountLockedError (423)
     lockoutSeconds: 900,
-    maxAttemptsPerWindow: 20, // -> AuthRateLimitError (429)
+    maxAttemptsPerWindow: 20, // -> AuthRateLimitError (429), per identifier
   },
 
   // Optional: real permission matching. Without it, `checkAccess()` throws
@@ -120,8 +120,28 @@ await auth.logoutAll(user.id); // sign out everywhere
 `verifyToken()` and `refresh()` require that session to still exist, so
 `logout()` / `logoutAll()` invalidate outstanding access **and** refresh
 tokens immediately rather than leaving them live for their natural lifetime.
-Tokens minted with the standalone `createTokenPair()` carry no `sid` and are
-therefore not session-bound.
+Tokens minted with the standalone `createTokenPair()` carry no `sid`, so no
+logout can revoke them. **The service therefore rejects a token without a
+`sid` (`TokenInvalidError`) unless you set `allowSessionlessTokens: true`.**
+Accepting them by default let a session-less refresh chain outlive
+`logoutAll()`.
+
+### Brute-force lockout
+
+A failure is reserved *before* the password is checked and cleared on
+success, so a parallel burst gets exactly `maxFailedAttempts` guesses before
+the lockout, not `maxAttemptsPerWindow`. Custom `LoginAttemptStore`s must make
+`recordFailure` atomic for this to hold.
+
+The budgets are **per identifier**. An attacker rotating identifiers is not
+limited by them, and every unknown identifier still costs one scrypt
+verification, so put a per-IP limiter (`createRateLimiter` from
+`@zudojs/security`) in front of `login()`.
+
+`createMemoryLoginAttemptStore({ failureTtlSeconds, maxEntries })` forgets an
+unlocked failure streak after `failureTtlSeconds` of inactivity (default 900)
+and caps the tracked identifiers at `maxEntries` (default 100 000, oldest
+unlocked evicted first), so spraying identifiers cannot grow it without bound.
 
 ### Refresh-token rotation
 
@@ -166,7 +186,9 @@ The `jwt` namespace bundles `createTokenPair`, `verifyAccessToken`,
 `jwt.refreshAccessToken()` is the **non-rotating** variant: it checks the
 signature, expiry and type and nothing else — no revocation store, no user
 re-load, no session check — so a stolen refresh token stays replayable for its
-full lifetime. Use `auth.refresh()` for anything user-facing.
+full lifetime. Use `auth.refresh()` for anything user-facing. A refresh token
+that carries a `sid` produces a pair with the same `sid`, so the new tokens
+still die with that session when verified through the service.
 
 Tokens are capped at 8 KB and every segment is bounds-checked before it is
 decoded, so an oversized `Authorization` header is rejected without
@@ -177,10 +199,14 @@ allocating.
 ```typescript
 import { hashPassword, verifyPassword, needsRehash } from "@zudojs/auth";
 
-const hash = await hashPassword("plain-text-password"); // scrypt N=16384,r=8,p=1
+const hash = await hashPassword("plain-text-password"); // scrypt N=16384,r=8,p=5
 const ok = await verifyPassword("plain-text-password", hash);
 if (needsRehash(hash)) { /* re-hash on next successful login */ }
 ```
+
+New hashes use OWASP's N=2^14, r=8, p=5 row. Hashes written with the earlier
+p=1 default (and the param-less legacy format) still verify, and
+`needsRehash()` returns `true` for them so they upgrade on the next login.
 
 - `createAuthService()` validates its configuration up front: bad or
   identical secrets, a non-positive or `NaN` `sessionTtlSeconds` /

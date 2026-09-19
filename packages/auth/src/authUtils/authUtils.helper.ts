@@ -120,6 +120,10 @@ export function extractUserId(token: unknown): string | null {
 /**
  * Generate a CSRF token.
  *
+ * @deprecated This returns an unbound random value that nothing in the
+ *   framework can validate. Use `generateCsrfToken` / `validateCsrfToken`
+ *   (or `createCsrfProtection`) from `@zudojs/security`, which produce
+ *   session-bound, HMAC-signed tokens.
  * @returns Random hex string for CSRF protection
  */
 export function generateCsrfToken(): string {

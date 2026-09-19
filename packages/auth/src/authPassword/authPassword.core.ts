@@ -31,10 +31,18 @@ export const MAX_PASSWORD_BYTES = 1024;
 /** Default key length for scrypt. */
 const KEY_LENGTH = 64;
 
-/** Scrypt parameters (N, r, p). */
+/**
+ * Scrypt parameters (N, r, p) for new hashes: the OWASP Password Storage
+ * Cheat Sheet's N=2^14, r=8, p=5 row. Hashes written with the earlier p=1
+ * default still verify (the parameters are stored in the hash) and report
+ * `needsRehash() === true`, so they upgrade on the next successful login.
+ */
 const SCRYPT_N = 16384;
 const SCRYPT_R = 8;
-const SCRYPT_P = 1;
+const SCRYPT_P = 5;
+
+/** The fixed parameters of the param-less legacy format (≤ 0.1.1). */
+const LEGACY_PARAMS: ScryptParams = Object.freeze({ N: 16384, r: 8, p: 1 });
 
 interface ScryptParams {
   readonly N: number;
@@ -211,7 +219,7 @@ function parseHash(hashedPassword: string): ParsedHash | null {
   // between the prefix and the salt, params not stored).
   if (parts.length === 2 && parts[0]!.startsWith("scrypt")) {
     return {
-      params: { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P },
+      params: LEGACY_PARAMS,
       salt: parts[0]!.slice(6),
       hash: parts[1]!,
       legacy: true,

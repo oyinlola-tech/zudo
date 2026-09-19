@@ -128,6 +128,12 @@ export function verifyRefreshToken(
  * user so deactivation and role changes take effect, and validates the
  * session. This function exists for callers who manage all of that
  * themselves.
+ *
+ * A session-bound refresh token (one with a `sid` claim) yields a pair bound
+ * to the same session, so the new tokens still die with `logout()` /
+ * `logoutAll()` when verified through `createAuthService()`. Earlier
+ * versions dropped the `sid`, turning a logged-out session's refresh token
+ * into a permanent, unbound token chain.
  */
 export function refreshAccessToken(
   refreshToken: JwtToken,
@@ -137,7 +143,9 @@ export function refreshAccessToken(
   const result = verifyRefreshToken(refreshToken, config);
   if (!result.valid || !result.payload) return null;
 
+  const sid = result.payload.sid;
   return createTokenPair(result.payload.sub, config, {
     roles: options?.roles ?? result.payload.roles,
+    ...(sid ? { sessionId: sid } : {}),
   });
 }
