@@ -22,6 +22,12 @@ import {
   shouldRetry,
 } from "../retryPolicy/retryPolicy.core.js";
 import { moveToDeadLetter } from "../deadLetter/deadLetter.core.js";
+import type { QueueContextCarrier } from "../contextCarrier/contextCarrier.type.js";
+import { runWithContext } from "../contextCarrier/contextCarrier.core.js";
+import {
+  DEFAULT_TIMEOUT_GRACE_MS,
+  settleWithin,
+} from "./inMemoryQueue.settle.js";
 
 import { JobMaxAttemptsError } from "@zudojs/errors";
 
@@ -56,6 +62,8 @@ export interface ProcessJobDependencies<TData> {
     jobId: JobId,
     timer: ReturnType<typeof setTimeout>,
   ) => void;
+  /** Forgets a retry timer once it has fired. */
+  readonly deregisterRetryTimer?: (jobId: JobId) => void;
   /** Invoked whenever a job reaches a terminal state. */
   readonly onSettled?: (job: Job<TData>) => void;
   /** Whether the owning queue has been disposed. */
@@ -89,7 +97,14 @@ function isJobResult(value: unknown): value is JobResult {
 export async function processJob<TData>(
   job: Job<TData>,
   processor: Processor<TData>,
-  options: { timeoutMs?: number; abortController?: AbortController },
+  options: {
+    timeoutMs?: number;
+    abortController?: AbortController;
+    /** See `QueueOptions.timeoutGraceMs`. */
+    timeoutGraceMs?: number;
+    /** See `QueueOptions.contextCarriers`. */
+    contextCarriers?: readonly QueueContextCarrier[];
+  },
   deps: ProcessJobDependencies<TData>,
 ): Promise<void> {
   const { jobs, emitter, counters } = deps;
@@ -132,14 +147,23 @@ export async function processJob<TData>(
     ...deps.middleware,
   ]);
 
+  // The processor promise itself, so a failure (a timeout above all) can
+  // wait for it to stop before the slot and the retry are released.
+  let running: Promise<JobResult | void> | undefined;
+
   try {
-    const result = await middlewareChain({
-      job: updatedJob,
-      context,
-      next: async () => {
-        return processor(updatedJob, context) as Promise<JobResult | void>;
-      },
-    });
+    const result = await runWithContext(options.contextCarriers, updatedJob, () =>
+      middlewareChain({
+        job: updatedJob,
+        context,
+        next: async () => {
+          running = Promise.resolve(
+            processor(updatedJob, context) as Promise<JobResult | void>,
+          );
+          return running;
+        },
+      }),
+    );
 
     if (isJobResult(result) && !result.success) {
       await handleJobFailure(updatedJob, result.error ?? "Job failed", deps);
@@ -159,6 +183,10 @@ export async function processJob<TData>(
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+    await settleWithin(
+      running,
+      options.timeoutGraceMs ?? DEFAULT_TIMEOUT_GRACE_MS,
+    );
     await handleJobFailure(updatedJob, errorMessage, deps);
   } finally {
     counters.processedCount++;
@@ -208,6 +236,7 @@ export async function handleJobFailure<TData>(
     const delay = calculateRetryDelay(incrementedJob.attempt, backoff);
 
     const timer = setTimeout(() => {
+      deps.deregisterRetryTimer?.(job.id);
       if (deps.isDisposed()) {
         return;
       }

@@ -1,6 +1,7 @@
 import type { QueueEventEmitter } from "./queueEmitter.type.js";
 
 import type { QueueEventMap } from "../queue/queue.type.js";
+import { reportQueueError } from "../queue/queue.report.js";
 
 type EventName = keyof QueueEventMap;
 
@@ -37,7 +38,7 @@ export class InMemoryQueueEventEmitter implements QueueEventEmitter {
       options.onHandlerError ??
       ((error, event) => {
         queueMicrotask(() => {
-          console.error(
+          reportQueueError(
             `[@zudojs/queue] Listener for "${event}" threw.`,
             error,
           );

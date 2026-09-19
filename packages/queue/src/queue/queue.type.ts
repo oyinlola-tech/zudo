@@ -12,6 +12,8 @@ import type { QueueMiddleware } from "../middleware/middleware.type.js";
 
 import type { QueueEventEmitter } from "../queueEmitter/queueEmitter.type.js";
 
+import type { QueueContextCarrier } from "../contextCarrier/contextCarrier.type.js";
+
 import type {
   DeadLetterJob,
   DeadLetterStore,
@@ -24,6 +26,8 @@ import type {
  */
 export interface QueueLogger {
   info(message: string, data?: Record<string, unknown>): void;
+  /** Receives failures that have no caller to reject (poll errors). */
+  error?(message: string, data?: Record<string, unknown>): void;
 }
 
 /**
@@ -91,6 +95,28 @@ export interface QueueOptions {
    * reclaimed again. Defaults to 3.
    */
   readonly maxStalledCount?: number;
+  /**
+   * Whether the queue's own poller claims and runs jobs. Defaults to
+   * `true`. Creating a `Worker` for the queue turns it off, so the worker —
+   * with its middleware, timeout and concurrency — is the only consumer.
+   */
+  readonly autoProcess?: boolean;
+  /**
+   * After a job times out, how long its concurrency slot and its retry wait
+   * for the processor to actually settle, in milliseconds. Defaults to 5000.
+   *
+   * A timeout aborts `context.signal`; a processor that ignores the signal
+   * keeps running. Without the wait, the retry started beside it and one
+   * job ran several times at once. Past this grace the processor is
+   * abandoned and the job fails anyway, so processors must honour the
+   * signal.
+   */
+  readonly timeoutGraceMs?: number;
+  /**
+   * Context carried from `add()` into the processor (tenant, correlation
+   * id, trace ids). See {@link QueueContextCarrier}.
+   */
+  readonly contextCarriers?: readonly QueueContextCarrier[];
 }
 
 /**
@@ -188,6 +214,11 @@ export interface Queue<TData = unknown> {
   getDeadLetterJobs(): Promise<readonly DeadLetterJob<TData>[]>;
   /** Close the queue, draining in-flight jobs first. */
   close(): Promise<void>;
+  /**
+   * Turns the queue's own poller on or off as a consumer. `createWorker`
+   * turns it off so a worker is never racing the queue for jobs.
+   */
+  setAutoProcess?(enabled: boolean): void;
 }
 
 /**

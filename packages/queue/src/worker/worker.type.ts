@@ -1,4 +1,4 @@
-import type { Queue } from "../queue/queue.type.js";
+import type { Queue, QueueLogger } from "../queue/queue.type.js";
 
 import type { QueueMiddleware } from "../middleware/middleware.type.js";
 
@@ -28,10 +28,13 @@ export interface WorkerOptions {
   readonly drainTimeout?: number;
   /**
    * Invoked for errors raised outside a job — a failing poll, a job that
-   * threw, or a drain that timed out. Defaults to reporting on the
-   * console. Poll errors are never left as unhandled rejections.
+   * threw, or a drain that timed out. Defaults to `logger.error`, or to
+   * `process.emitWarning` without a logger. Poll errors are never left as
+   * unhandled rejections.
    */
   readonly onError?: (error: unknown) => void;
+  /** Receives errors when no `onError` is given. */
+  readonly logger?: QueueLogger;
 }
 
 /**

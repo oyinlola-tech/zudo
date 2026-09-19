@@ -31,6 +31,7 @@ import type {
 } from "../deadLetter/deadLetter.type.js";
 
 import { processJob } from "./inMemoryQueue.processing.js";
+import { captureContext } from "../contextCarrier/contextCarrier.core.js";
 import type { QueueCounters } from "./inMemoryQueue.processing.js";
 import {
   scheduleJob,
@@ -66,6 +67,8 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
   private readonly middleware: QueueMiddleware[];
   private paused = false;
   private disposed = false;
+  /** Whether the internal poller claims jobs; see `setAutoProcess`. */
+  private autoProcess: boolean;
   private activeCount = 0;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly scheduledTimers: Map<JobId, ReturnType<typeof setTimeout>> =
@@ -100,6 +103,19 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
     this.emitter = options?.eventEmitter ?? createNoopQueueEventEmitter();
     this.deadLetterStore =
       this.options.deadLetterStore ?? createInMemoryDeadLetterStore<TData>();
+    this.autoProcess = this.options.autoProcess ?? true;
+  }
+
+  /**
+   * Turns the internal poller on or off as a consumer.
+   *
+   * While off, the poller still promotes scheduled jobs and reclaims stalled
+   * ones, but claims nothing: an external `Worker` is the only consumer, so
+   * stopping it really stops consumption and its middleware, timeout and
+   * concurrency apply to every job.
+   */
+  setAutoProcess(enabled: boolean): void {
+    this.autoProcess = enabled;
   }
 
   async add(
@@ -118,7 +134,13 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
       });
     }
 
-    const mergedOptions = { ...this.options.defaultJobOptions, ...options };
+    const merged = { ...this.options.defaultJobOptions, ...options };
+    const metadata = captureContext(
+      this.options.contextCarriers,
+      merged.metadata,
+    );
+    const mergedOptions =
+      metadata === merged.metadata ? merged : { ...merged, metadata };
 
     if (mergedOptions.deduplicationKey) {
       const existing = this.deduplicationIndex.get(
@@ -516,6 +538,12 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
         {
           timeoutMs: job.timeoutMs ?? options?.timeoutMs,
           abortController,
+          ...(this.options.timeoutGraceMs !== undefined
+            ? { timeoutGraceMs: this.options.timeoutGraceMs }
+            : {}),
+          ...(this.options.contextCarriers
+            ? { contextCarriers: this.options.contextCarriers }
+            : {}),
         },
         {
           jobs: this.jobs,
@@ -527,6 +555,9 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
             : this.middleware,
           registerRetryTimer: (jobId, timer) => {
             this.retryTimers.set(jobId, timer);
+          },
+          deregisterRetryTimer: (jobId) => {
+            this.retryTimers.delete(jobId);
           },
           onSettled: (settled) => this.recordSettled(settled),
           isDisposed: () => this.disposed,
@@ -541,7 +572,6 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
     } finally {
       this.activeCount--;
       this.inFlight.delete(job.id);
-      this.retryTimers.delete(job.id);
     }
   }
 
@@ -551,7 +581,7 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
 
     let processed = 0;
 
-    while (this.activeCount < concurrency) {
+    while (this.autoProcess && this.activeCount < concurrency) {
       // `claimNextJob` only returns jobs that have a registered
       // processor and moves them out of `waiting`, so this loop always
       // terminates. Returning an unrunnable job here is what previously

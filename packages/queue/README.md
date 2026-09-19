@@ -49,9 +49,6 @@ await queue.add(
 // The queue polls in the background; give it a tick before reading counts.
 await new Promise((resolve) => setTimeout(resolve, 100));
 
-// The queue polls in the background; give it a tick before reading counts.
-await new Promise((resolve) => setTimeout(resolve, 100));
-
 // Jobs that exhaust their attempts land here rather than vanishing.
 console.log((await queue.getDeadLetterJobs()).length);
 console.log(await queue.getStats());
@@ -74,6 +71,58 @@ await queue.close();
   mid-job
 - Bounded retention of settled jobs, so a long-lived queue does not grow without
   limit
+
+## Workers, timeouts and context
+
+**One consumer at a time.** `queue.process()` registers a processor and, by
+default, the queue's own poller runs jobs. Creating a `Worker` for the queue
+turns that poller off as a consumer (`queue.setAutoProcess(false)`), so the
+worker's `middleware`, `timeoutMs` and `concurrency` apply to every job, and
+`worker.stop()` really stops consumption. Pass `autoProcess: false` to keep the
+queue from consuming before any worker exists.
+
+**Timeouts are cooperative.** A timeout aborts `context.signal`; honour it. The
+job's concurrency slot and its retry wait up to `timeoutGraceMs` (5000 ms by
+default) for the processor to settle, so a retry never runs beside the attempt
+it replaces. A processor still running after the grace period is abandoned.
+
+**Carrying context across the queue.** AsyncLocalStorage does not follow a job
+into the poller or worker that runs it. A `QueueContextCarrier` captures a value
+at `add()` into job metadata and restores it around the middleware and the
+processor:
+
+```typescript
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+import type { QueueContextCarrier } from "@zudojs/queue";
+
+const tenants = new AsyncLocalStorage<{ tenantId: string }>();
+
+const tenantCarrier: QueueContextCarrier<string> = {
+  key: "tenantId",
+  capture: () => tenants.getStore()?.tenantId,
+  restore: (tenantId, run) => tenants.run({ tenantId }, run),
+};
+
+const jobs = createInMemoryQueue<{ id: number }>(createQueueName("reports"), {
+  contextCarriers: [tenantCarrier],
+});
+jobs.process("build", async () => {
+  console.log("building for", tenants.getStore()?.tenantId); // "acme"
+});
+
+await tenants.run({ tenantId: "acme" }, () => jobs.add("build", { id: 1 }));
+await new Promise((resolve) => setTimeout(resolve, 100));
+await jobs.close();
+```
+
+Keep captured values small and serializable (ids, not live objects). With
+`@zudojs/tenancy`, capture the tenant id and restore it with the tenant context
+storage's `run`.
+
+Errors with no caller to receive them (a worker's failing poll, a throwing event
+listener) go to `logger.error` when a logger is configured, and otherwise to
+`process.emitWarning`, never to `console`.
 
 ## Use Cases
 

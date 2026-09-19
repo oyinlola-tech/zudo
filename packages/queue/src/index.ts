@@ -55,3 +55,6 @@ export * from "./inMemoryQueue/index.js";
 
 // Dead letter
 export * from "./deadLetter/index.js";
+
+// Context propagation across the queue boundary
+export * from "./contextCarrier/index.js";

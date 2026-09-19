@@ -15,6 +15,8 @@ import {
 
 import { WorkerLifecycleError } from "@zudojs/errors";
 
+import { reportQueueError } from "../queue/queue.report.js";
+
 /** How long `stop()` waits for in-flight jobs before forcing a stop. */
 const DEFAULT_DRAIN_TIMEOUT_MS = 30_000;
 
@@ -24,6 +26,11 @@ const DEFAULT_DRAIN_TIMEOUT_MS = 30_000;
  * The worker claims each job before running it, so a job is never picked
  * up twice — by this worker on its next poll, or by another worker on the
  * same queue.
+ *
+ * Creating a worker turns the queue's own poller off as a consumer
+ * (`queue.setAutoProcess(false)`), so the worker — with its middleware,
+ * timeout and concurrency — is the only thing running jobs, and `stop()`
+ * really stops consumption.
  */
 export function createWorker<TData>(
   id: string,
@@ -40,11 +47,17 @@ export function createWorker<TData>(
   let polling = false;
   let abortController: AbortController | null = null;
 
+  queue.setAutoProcess?.(false);
+
   const onError =
     options?.onError ??
     ((error: unknown) => {
       queueMicrotask(() => {
-        console.error(`[@zudojs/queue] Worker "${id}" poll failed.`, error);
+        reportQueueError(
+          `[@zudojs/queue] Worker "${id}" poll failed.`,
+          error,
+          options?.logger,
+        );
       });
     });
 
