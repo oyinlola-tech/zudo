@@ -7,6 +7,8 @@
  * Date, and Buffer-like binary data to be handled safely.
  */
 
+import { SCHEMA_FORBIDDEN_KEYS } from "@zudojs/constants";
+
 /**
  * Primitive configuration values.
  */
@@ -54,24 +56,22 @@ export type ResolvedConfigValue =
     };
 
 /**
- * Object keys that must never be copied onto plain objects.
+ * Checks whether an object key is unsafe to copy onto plain objects.
  *
  * Assigning these keys (most notably "__proto__") on a plain object
  * mutates its prototype instead of creating an own property, which
  * enables prototype-pollution attacks via untrusted configuration
- * payloads such as JSON.parse output.
- */
-const UNSAFE_CONFIG_KEYS: ReadonlySet<string> = new Set([
-  "__proto__",
-  "constructor",
-  "prototype",
-]);
-
-/**
- * Checks whether an object key is unsafe to copy onto plain objects.
+ * payloads such as JSON.parse output. The key set is
+ * `SCHEMA_FORBIDDEN_KEYS` from `@zudojs/constants`, shared with
+ * `@zudojs/schema`, `@zudojs/validation` and `@zudojs/cache`.
+ *
+ * The package itself never needs this check to stay safe: every key
+ * write goes through {@link defineConfigProperty}, which keeps such keys
+ * as inert own properties. Use it when copying configuration into code
+ * that assigns with `target[key] = value` or `Object.assign`.
  */
 export function isUnsafeConfigKey(key: string): boolean {
-  return UNSAFE_CONFIG_KEYS.has(key);
+  return SCHEMA_FORBIDDEN_KEYS.has(key);
 }
 
 /**
