@@ -73,12 +73,20 @@ export interface CqrsTiming {
 export interface TimingMiddlewareOptions extends MiddlewareOptions {
   /**
    * Receives the measurement after each execution (success or failure).
-   * Errors thrown by the callback propagate to the caller.
+   * The callback is an observer: if it throws or rejects, the error is
+   * passed to `onTimingError` (when given) and otherwise discarded. It
+   * never changes the outcome of the command or query.
    *
    * Optional: measurements are always exposed through
    * `TimingMiddleware.lastTiming` as well.
    */
   readonly onTiming?: (timing: CqrsTiming) => void | Promise<void>;
+
+  /**
+   * Receives any error thrown by `onTiming`. Errors thrown here are
+   * discarded as well.
+   */
+  readonly onTimingError?: (error: unknown, timing: CqrsTiming) => void;
 
   /**
    * Monotonic clock in milliseconds. Defaults to `performance.now()`.
@@ -121,6 +129,15 @@ export function timingMiddleware(
     );
   }
 
+  if (
+    options.onTimingError !== undefined &&
+    typeof options.onTimingError !== "function"
+  ) {
+    throw new InvalidMiddlewareError(
+      "timingMiddleware onTimingError must be a function.",
+    );
+  }
+
   if (options.now !== undefined && typeof options.now !== "function") {
     throw new InvalidMiddlewareError(
       "timingMiddleware now must be a function.",
@@ -142,8 +159,17 @@ export function timingMiddleware(
 
     count += 1;
 
-    if (onTiming) {
+    if (!onTiming) {
+      return;
+    }
+    try {
       await onTiming(timing);
+    } catch (error) {
+      try {
+        options.onTimingError?.(error, timing);
+      } catch {
+        return;
+      }
     }
   };
 

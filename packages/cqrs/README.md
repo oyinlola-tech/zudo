@@ -109,6 +109,10 @@ Validation and handler resolution run at the end of the middleware pipeline,
 so middleware observes `InvalidCommandError` / `CommandHandlerNotFoundError`
 like any other failure. Each middleware may call `next()` at most once.
 
+`onTiming` is an observer: if it throws, the command or query still
+succeeds (or fails with its own error). Pass `onTimingError` to see those
+observer failures.
+
 ## Features
 
 - Command bus for write operations
