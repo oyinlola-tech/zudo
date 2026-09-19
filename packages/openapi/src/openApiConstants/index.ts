@@ -14,8 +14,3 @@ export {
   DEFAULT_SERVER_URL,
   DOCUMENT_CACHE_TTL_MS,
 } from "./openApiConstants.core.js";
-
-export {
-  SCHEMA_IMPLICIT_MAX_STRING_LENGTH,
-  SCHEMA_IMPLICIT_MAX_ARRAY_LENGTH,
-} from "./openApiConstants.schemaLimits.js";

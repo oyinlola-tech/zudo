@@ -1,9 +1,10 @@
+import {
+  SCHEMA_DEFAULT_MAX_ARRAY_LENGTH,
+  SCHEMA_DEFAULT_MAX_STRING_LENGTH,
+} from "@zudojs/constants";
+
 import type { OpenAPISchema } from "../openApiTypes/openApiTypes.core.js";
 import { DEFAULT_OPENAPI_VERSION } from "../openApiConstants/openApiConstants.core.js";
-import {
-  SCHEMA_IMPLICIT_MAX_ARRAY_LENGTH,
-  SCHEMA_IMPLICIT_MAX_STRING_LENGTH,
-} from "../openApiConstants/openApiConstants.schemaLimits.js";
 
 /**
  * Converts `@zudojs/schema` schemas into OpenAPI schema objects.
@@ -269,7 +270,7 @@ function convertString(
       ? { minLength: exact, maxLength: exact }
       : {
           ...(num(c["min"]) !== undefined ? { minLength: num(c["min"]) } : {}),
-          maxLength: num(c["max"]) ?? SCHEMA_IMPLICIT_MAX_STRING_LENGTH,
+          maxLength: num(c["max"]) ?? SCHEMA_DEFAULT_MAX_STRING_LENGTH,
         }),
     ...(pattern instanceof RegExp
       ? { pattern: pattern.source }
@@ -495,7 +496,7 @@ function convertSchemaNode(
               ...(num(c["min"]) !== undefined
                 ? { minItems: num(c["min"]) }
                 : {}),
-              maxItems: num(c["max"]) ?? SCHEMA_IMPLICIT_MAX_ARRAY_LENGTH,
+              maxItems: num(c["max"]) ?? SCHEMA_DEFAULT_MAX_ARRAY_LENGTH,
             }),
       };
     }

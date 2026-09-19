@@ -18,19 +18,10 @@ import {
   renderOpenAPIUI,
   ZUDO_SITE_URL,
 } from "../src/index.js";
-import {
-  SCHEMA_IMPLICIT_MAX_ARRAY_LENGTH,
-  SCHEMA_IMPLICIT_MAX_STRING_LENGTH,
-} from "../src/openApiConstants/index.js";
 
 const INFO = { title: "T", version: "1" };
 
 describe("OPENAPI-01", () => {
-  it("mirrors the parser's implicit ceilings exactly", () => {
-    expect(SCHEMA_IMPLICIT_MAX_STRING_LENGTH).toBe(SCHEMA_DEFAULT_MAX_STRING_LENGTH);
-    expect(SCHEMA_IMPLICIT_MAX_ARRAY_LENGTH).toBe(SCHEMA_DEFAULT_MAX_ARRAY_LENGTH);
-  });
-
   it("emits the effective maxLength/maxItems the server enforces", () => {
     const shape = s.object({ name: s.string(), tags: s.array(s.string()) });
     const m = new OpenAPIManager({ info: INFO });
