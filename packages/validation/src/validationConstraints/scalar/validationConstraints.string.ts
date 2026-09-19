@@ -1,3 +1,5 @@
+import { ValidationLength, ValidationPattern } from "@zudojs/constants";
+
 import type { ValidationConstraint } from "../validationConstraints.base.js";
 
 import {
@@ -104,25 +106,19 @@ export function matches(
   });
 }
 
-/** RFC 5321 path limit; mirrors `ValidationLength.EMAIL` in `@zudojs/constants`. */
-const EMAIL_MAX_LENGTH = 254;
-
 /**
  * Requires a valid email-like format.
  *
  * Deliberately structural, not a full RFC 5322 parser: it rejects the shapes
  * that are certainly wrong and leaves deliverability to a verification step.
- * Accepts exactly what `ValidationPattern.EMAIL` (`@zudojs/constants`) and
- * `isEmail` (`@zudojs/types`) accept, including the 254-character bound,
- * which is checked before the pattern so a long label cannot backtrack.
+ * Uses `ValidationPattern.EMAIL` from `@zudojs/constants`, the monorepo's one
+ * acceptance set (shared with `isEmail` in `@zudojs/types`). The 254-character
+ * bound is checked first so an oversized value is rejected without a scan.
  */
 export const email = createConstraint<string>(
   (value) =>
-    value.length <= EMAIL_MAX_LENGTH &&
-    !value.includes("..") &&
-    /^[^\s@,;<>"[\]\\]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/iu.test(
-      value,
-    ),
+    value.length <= ValidationLength.EMAIL &&
+    ValidationPattern.EMAIL.test(value),
   {
     name: "email",
     code: "invalid_email",
