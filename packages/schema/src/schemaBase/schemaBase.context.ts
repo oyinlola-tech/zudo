@@ -69,6 +69,12 @@ export function isMaxDepthExceeded(ctx: SchemaParseContext): boolean {
  * catch it with `catch {}`. That swallowed genuine faults too — a `RangeError`
  * from stack exhaustion, a `TypeError` from a buggy refinement — and reported
  * them as ordinary validation failures, or in the recursive case as *success*.
+ *
+ * Deliberately NOT a `@zudojs/errors` class (round 10 VAL-05/CV-02, declined):
+ * it is a control-flow signal, never surfaced to callers. `parse()` converts
+ * it to a `SchemaError` and `safeParse()` to a result, so no consumer sees or
+ * serializes it. A `BaseError` subclass would pay for redaction, cause chains
+ * and a stack-bearing `toJSON()` on every failed branch of a union.
  */
 export class SchemaValidationSignal extends Error {
   public override readonly name = "SchemaValidationSignal";

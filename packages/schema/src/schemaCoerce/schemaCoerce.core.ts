@@ -12,7 +12,7 @@
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
 import { addIssue, failValidation } from "../schemaBase/index.js";
-import { SchemaIssueCode } from "@zudojs/constants";
+import { SchemaIssueCode, SerializationLimits } from "@zudojs/constants";
 import { NumberSchema } from "../schemaPrimitives/schemaNumber.core.js";
 import { StringSchema } from "../schemaPrimitives/schemaString.core.js";
 import {
@@ -22,8 +22,13 @@ import {
 import { DefaultSchema } from "../schemaModifiers/schemaDefault.core.js";
 import { RefineSchema } from "../schemaModifiers/schemaRefine.core.js";
 
-/** Longest digit string accepted by BigInt coercion. */
-const MAX_BIGINT_DIGITS = 4096;
+/**
+ * Longest digit run accepted by BigInt coercion (shared with
+ * `@zudojs/serialization` through `SerializationLimits.MAX_BIGINT_DIGITS`).
+ */
+const BIGINT_TEXT_PATTERN = new RegExp(
+  `^[+-]?\\d{1,${SerializationLimits.MAX_BIGINT_DIGITS}}$`,
+);
 
 /**
  * Coerces input to a number before validating.
@@ -296,7 +301,7 @@ export class CoerceBigIntSchema extends Schema<bigint> {
       const trimmed = input.trim();
       // Bound the digit count: BigInt parsing is superlinear, so an
       // attacker-supplied million-digit string is a CPU denial of service.
-      if (/^[+-]?\d+$/.test(trimmed) && trimmed.length <= MAX_BIGINT_DIGITS) {
+      if (BIGINT_TEXT_PATTERN.test(trimmed)) {
         try {
           return BigInt(trimmed);
         } catch {

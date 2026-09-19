@@ -247,6 +247,7 @@ export class ObjectSchema<
       // Narrowing a schema must not quietly relax it: a `.strict()` schema
       // stays strict, and any explicit requiredKeys survive.
       unknownKeys: this._config.unknownKeys,
+      maxKeys: this._config.maxKeys,
       requiredKeys: this._intersectRequired(kept),
     });
   }
@@ -268,6 +269,7 @@ export class ObjectSchema<
     return new ObjectSchema({
       shape: newShape as SchemaShape,
       unknownKeys: this._config.unknownKeys,
+      maxKeys: this._config.maxKeys,
       requiredKeys: this._intersectRequired(kept),
     });
   }
@@ -286,6 +288,7 @@ export class ObjectSchema<
     return new ObjectSchema({
       shape: newShape as SchemaShape,
       unknownKeys: this._config.unknownKeys,
+      maxKeys: this._config.maxKeys,
       // Every key is optional now, so an explicit required list cannot survive.
     });
   }
@@ -301,6 +304,7 @@ export class ObjectSchema<
     return new ObjectSchema({
       shape: newShape as SchemaShape,
       unknownKeys: this._config.unknownKeys,
+      maxKeys: this._config.maxKeys,
       requiredKeys: new Set(Object.keys(newShape)),
     });
   }
@@ -317,6 +321,7 @@ export class ObjectSchema<
     return new ObjectSchema({
       shape: newShape,
       unknownKeys: this._config.unknownKeys,
+      maxKeys: this._config.maxKeys,
       ...(requiredKeys.size > 0 ? { requiredKeys } : {}),
     });
   }
