@@ -6,6 +6,8 @@
  * suspicious requests before they reach the router.
  */
 
+import { HttpRequestGuardError } from "@zudojs/errors";
+
 import type { HTTPSecurityConfig } from "./httpSecurity.config.js";
 import {
   validateHeaders,
@@ -107,24 +109,13 @@ export function createRequestGuard(
 }
 
 /**
- * Error thrown by {@link assertRequestAllowed}.
- *
- * Carries the status the response should use and the individual validation
- * failures, so a caller can log the detail without returning it to the client.
+ * Error thrown by {@link assertRequestAllowed}: the shared
+ * `HttpRequestGuardError` from `@zudojs/errors` (a `BaseError`, code
+ * `HTTP_REQUEST_REJECTED`, not exposed). It carries the status the response
+ * should use and the individual validation failures, so a caller can log
+ * the detail without returning it to the client.
  */
-export class HttpRequestGuardError extends Error {
-  readonly statusCode: number;
-
-  readonly errors: readonly string[];
-
-  constructor(result: GuardResult) {
-    super(`Request rejected by security guard: ${result.errors.join("; ")}`);
-
-    this.name = "HttpRequestGuardError";
-    this.statusCode = result.statusCode;
-    this.errors = result.errors;
-  }
-}
+export { HttpRequestGuardError };
 
 /**
  * Runs the guard and throws {@link HttpRequestGuardError} when the request is

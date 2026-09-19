@@ -9,11 +9,19 @@
  * already resolved through its `trustProxy` setting, so forwarded headers
  * only count when the adapter trusts the peer that sent them.
  *
+ * A request with no usable client address (a Unix-socket peer, a context
+ * built without `remoteAddress`, a destroyed socket) is counted in one
+ * shared bucket, {@link UNKNOWN_CLIENT_RATE_LIMIT_IP}. The `@zudojs/security`
+ * default key generator refuses such a request with a `ConfigurationError`,
+ * which would otherwise surface as a 500, and skipping the limiter for it
+ * would give it unlimited requests.
+ *
  * @module httpMiddleware/builtin/rateLimit
  */
 
 import {
   createRateLimiter,
+  parseClientIp,
   type RateLimiterOptions,
   type RateLimitRequest,
   type RateLimitResponse,
@@ -22,6 +30,13 @@ import {
 import type { HttpMiddleware } from "../../httpMiddleware.type.js";
 
 import { createResponseContext } from "../../../httpResponse/httpResponse.context.js";
+
+/**
+ * The `ip` given to the limiter for a request whose `remoteAddress` is
+ * missing or is not an IP address. `0.0.0.0` is never a real peer address,
+ * so these requests share one bucket without colliding with a client.
+ */
+export const UNKNOWN_CLIENT_RATE_LIMIT_IP = "0.0.0.0";
 
 /**
  * The limiter instance returned by `@zudojs/security`'s `createRateLimiter`.
@@ -52,7 +67,7 @@ export function createRateLimitMiddleware(
     const request = context.request;
 
     const limitRequest: RateLimitRequest = {
-      ip: request.remoteAddress,
+      ip: clientIpOf(request.remoteAddress),
       method: request.method,
       path: request.path,
       headers: request.headers,
@@ -72,4 +87,11 @@ export function createRateLimitMiddleware(
 
     return response.setBody(rejection.body ?? "Too Many Requests");
   };
+}
+
+function clientIpOf(remoteAddress: string | undefined): string {
+  return typeof remoteAddress === "string" &&
+    parseClientIp(remoteAddress) !== undefined
+    ? remoteAddress
+    : UNKNOWN_CLIENT_RATE_LIMIT_IP;
 }

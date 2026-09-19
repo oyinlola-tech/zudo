@@ -69,7 +69,16 @@ answers 502 and never exposes the cause.
 - **CORS** origin matching is `@zudojs/security`'s `isOriginAllowed`, and a
   wildcard origin with `credentials: true` throws when the middleware is
   created. **Rate limiting**: `createRateLimitMiddleware({ max, windowMs })`
-  wraps `@zudojs/security`'s `createRateLimiter`.
+  wraps `@zudojs/security`'s `createRateLimiter`. Requests with no usable
+  client address share one bucket (`UNKNOWN_CLIENT_RATE_LIMIT_IP`,
+  `0.0.0.0`): they are limited together, never unlimited and never a 500.
+- Signed-cookie signatures are compared with `@zudojs/crypto`'s constant-time
+  `timingSafeEqualString`.
+- Contexts built by the stock adapters log through a `@zudojs/logger` console
+  logger named `http`, which redacts secret metadata fields (`authorization`,
+  `password`, `apiKey`, …).
+- `HttpRequestGuardError`, `HttpMiddlewareError` and
+  `HttpMiddlewarePipelineError` are the `@zudojs/errors` classes, re-exported.
 - `HttpServer.stop()` gives in-flight requests the full
   `gracefulShutdownTimeout`.
 

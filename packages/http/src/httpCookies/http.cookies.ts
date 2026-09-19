@@ -1,7 +1,6 @@
-import {
-  createHmac,
-  timingSafeEqual as cryptoTimingSafeEqual,
-} from "node:crypto";
+import { createHmac } from "node:crypto";
+
+import { timingSafeEqualString } from "@zudojs/crypto";
 
 import type { HTTPRequest, HTTPResponse } from "../httpTypes/http.types.js";
 
@@ -452,21 +451,13 @@ export function parseSignedCookie(
     secret,
   );
 
-  if (!timingSafeEqual(signature, expected)) {
+  if (!timingSafeEqualString(signature, expected)) {
     return undefined;
   }
 
   return originalValue;
 }
 
-/**
- * Signs a cookie value with HMAC-SHA256.
- *
- * @param value - The value to authenticate.
- * @param secret - The signing key.
- * @returns The base64url signature.
- * @throws {TypeError} If the secret is empty.
- */
 /**
  * The MAC input for a name-bound signature. A cookie name is an RFC 6265
  * token and cannot contain `=`, so the encoding is unambiguous.
@@ -477,6 +468,18 @@ function bindCookieName(name: string, value: string): string {
   return `${name}=${value}`;
 }
 
+/**
+ * Signs a cookie value with HMAC-SHA256.
+ *
+ * Synchronous by contract, so the MAC is computed with `node:crypto`: every
+ * `@zudojs/crypto` HMAC helper is asynchronous. Verification compares with
+ * `@zudojs/crypto`'s constant-time `timingSafeEqualString`.
+ *
+ * @param value - The value to authenticate.
+ * @param secret - The signing key.
+ * @returns The base64url signature.
+ * @throws {TypeError} If the secret is empty.
+ */
 export function signCookieValue(value: string, secret: string): string {
   if (!secret) {
     throw new TypeError("Cookie signing secret cannot be empty.");
@@ -637,27 +640,4 @@ function normalizePriority(value: CookiePriority): string {
     default:
       throw new TypeError(`Invalid cookie priority: ${String(value)}`);
   }
-}
-
-/* -------------------------------------------------------------------------- */
-/* Hash Helpers                                                               */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Compares two signatures in constant time.
- *
- * @param left - The candidate signature.
- * @param right - The expected signature.
- * @returns `true` if the two are byte-identical.
- */
-function timingSafeEqual(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left, "utf8");
-
-  const rightBuffer = Buffer.from(right, "utf8");
-
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-
-  return cryptoTimingSafeEqual(leftBuffer, rightBuffer);
 }

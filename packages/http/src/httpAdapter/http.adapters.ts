@@ -10,13 +10,13 @@ import type {
   HTTPState,
 } from "../httpTypes/http.types.js";
 
-import type { Logger } from "@zudojs/logger";
-
 import { createHTTPContext } from "../httpContext/http.context.js";
 
 import { createHTTPRequest } from "../httpRequest/http.request.js";
 
 import { createHTTPResponse } from "../httpResponse/http.response.js";
+
+import { createDefaultContextLogger } from "./httpAdapter.logger.js";
 
 /* -------------------------------------------------------------------------- */
 /* Adapter Contracts                                                          */
@@ -69,7 +69,7 @@ export class NodeHTTPAdapter<
       response,
       state: options.state ?? ({} as State),
       signal: options.signal,
-      logger: createFallbackLogger() as unknown as Logger,
+      logger: createDefaultContextLogger(),
     });
   }
 }
@@ -151,7 +151,7 @@ export class NodeContextAdapter<
       response,
       state: options.state ?? ({} as State),
       signal: options.signal,
-      logger: createFallbackLogger() as unknown as Logger,
+      logger: createDefaultContextLogger(),
     });
   }
 }
@@ -255,7 +255,7 @@ export function adaptNodeContext<State extends HTTPState = HTTPState>(
     response: adaptNodeResponse(response),
     state: options.state ?? ({} as State),
     signal: options.signal,
-    logger: createFallbackLogger() as unknown as Logger,
+    logger: createDefaultContextLogger(),
   });
 }
 
@@ -276,42 +276,4 @@ export function isHTTPAdapter(value: unknown): value is HTTPAdapter {
     typeof candidate.createResponse === "function" &&
     typeof candidate.createContext === "function"
   );
-}
-
-/* -------------------------------------------------------------------------- */
-/* Fallback Logger                                                             */
-/* -------------------------------------------------------------------------- */
-
-function createFallbackLogger(): {
-  info: (message: string, metadata?: Record<string, unknown>) => void;
-
-  warn: (message: string, metadata?: Record<string, unknown>) => void;
-
-  error: (message: string, metadata?: Record<string, unknown>) => void;
-} {
-  return {
-    info(message, metadata) {
-      if (metadata !== undefined) {
-        console.info(message, metadata);
-      } else {
-        console.info(message);
-      }
-    },
-
-    warn(message, metadata) {
-      if (metadata !== undefined) {
-        console.warn(message, metadata);
-      } else {
-        console.warn(message);
-      }
-    },
-
-    error(message, metadata) {
-      if (metadata !== undefined) {
-        console.error(message, metadata);
-      } else {
-        console.error(message);
-      }
-    },
-  };
 }
