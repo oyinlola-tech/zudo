@@ -136,7 +136,7 @@
 
     if (!toc.querySelector('.text-xs') && !Object.keys(linked).length) {
       var label = document.createElement('div');
-      label.className = 'text-xs font-bold uppercase tracking-wider mb-4 text-black/40';
+      label.className = 'text-xs font-bold uppercase tracking-wider mb-4 text-black/60';
       label.textContent = 'On this page';
       host.appendChild(label);
     }
