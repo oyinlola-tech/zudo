@@ -217,8 +217,10 @@ on a coercing schema (`coerce.number().int().min(1)`) are carried through.
 
 `@zudojs/schema` caps every string at 255 characters and every array at 1000
 items unless the schema sets its own `.max()`. The emitted `maxLength` /
-`maxItems` carry that effective limit, so a client generated from the
-document is never told it may send a payload the server rejects.
+`maxItems` carry that effective limit (read from `@zudojs/constants`'
+`SCHEMA_DEFAULT_MAX_STRING_LENGTH` / `SCHEMA_DEFAULT_MAX_ARRAY_LENGTH`, the same
+constants the parser uses), so a client generated from the document is never
+told it may send a payload the server rejects.
 
 A property is listed in `required` exactly when the object parser rejects
 its absence: fields wrapped in `optional`, fields with a `default`, and
@@ -376,7 +378,8 @@ still produces a pointer that resolves.
 
 ## Errors
 
-All errors extend `OpenAPIError` (a `BaseError` from `@zudojs/errors`) and
+All errors extend `OpenAPIError`, which is the `@zudojs/errors` class
+re-exported (a `BaseError`), and
 default to status 500, not exposed — these are failures while a service builds
 or validates its own specification, not responses to a client request:
 

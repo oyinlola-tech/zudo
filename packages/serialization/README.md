@@ -104,8 +104,10 @@ RPC peer or a request body.
   cannot stop the consumer with `{"$type":"anything"}` or
   `{"$type":"Date","$value":"nope"}`, and a bad record stays readable. Pass
   `strict: true` to make either an error instead.
-- **BigInt tags are capped at 4096 decimal digits**, checked before `BigInt()`
-  runs; serializing a larger BigInt throws.
+- **BigInt tags are capped at 4096 decimal digits**
+  (`SerializationLimits.MAX_BIGINT_DIGITS` from `@zudojs/constants`, shared
+  with `@zudojs/schema`'s `coerce.bigint()`), checked before `BigInt()` runs;
+  serializing a larger BigInt throws.
 
 ## Errors
 
