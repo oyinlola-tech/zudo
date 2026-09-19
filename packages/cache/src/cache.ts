@@ -45,9 +45,10 @@ import {
   DEFAULT_SEPARATOR,
   DEFAULT_TTL_MS,
 } from "./constants.js";
-import { DefaultKeyBuilder } from "./key-builder.js";
+import { assertNonEmptyNamespace, DefaultKeyBuilder } from "./key-builder.js";
 import { createCacheStore, DefaultCacheStore } from "./store.js";
-import { assertValidTag, createTagStore, InMemoryTagStore } from "./tags.js";
+import { assertValidTag, createTagStore } from "./tags.js";
+import type { CacheTagStore } from "./types-tags.js";
 import {
   CacheInvalidationManager,
   createInvalidationManager,
@@ -70,7 +71,9 @@ interface NamespaceOptions {
 export class CacheService implements CacheHealthChecker {
   private readonly store: DefaultCacheStore;
   private readonly keyBuilder: CacheKeyBuilder;
-  private readonly tagStore: InMemoryTagStore;
+  private readonly tagStore: CacheTagStore;
+  /** False when the tag store was injected and may be shared with peers. */
+  private readonly ownsTagStore: boolean;
   private readonly invalidation: CacheInvalidationManager;
   private readonly lockManager: CacheLockManager;
   private readonly metrics: InMemoryCacheMetrics | null;
@@ -97,6 +100,7 @@ export class CacheService implements CacheHealthChecker {
         : DEFAULT_TTL_MS;
     this.serializer = options.config?.serializer ?? null;
     this.namespace = options.config?.namespace;
+    assertNonEmptyNamespace(this.namespace);
     this.separator = options.config?.separator ?? DEFAULT_SEPARATOR;
     this.metrics =
       options.config?.collectStats !== false ? createCacheMetrics() : null;
@@ -120,7 +124,8 @@ export class CacheService implements CacheHealthChecker {
           ? { namespace: options.config.namespace }
           : {}),
       });
-    this.tagStore = createTagStore();
+    this.tagStore = options.config?.tagStore ?? createTagStore();
+    this.ownsTagStore = options.config?.tagStore === undefined;
     // Route invalidation through the instrumented store so metrics and
     // events fire for invalidation-driven deletions too.
     this.invalidation = createInvalidationManager({
@@ -186,7 +191,7 @@ export class CacheService implements CacheHealthChecker {
         // The entry now carries exactly the tags of this write. Mappings
         // left over from an earlier write would let `invalidateByTag` on a
         // tag the entry no longer has delete the new value.
-        this.tagStore.removeKey(fullKey);
+        await this.tagStore.removeKey?.(fullKey);
         if (options?.tags && options.tags.length > 0)
           await this.tagStore.add(fullKey, options.tags, this.tagScope(options));
       }
@@ -205,7 +210,7 @@ export class CacheService implements CacheHealthChecker {
     const fullKey = this.keyBuilder.build(key, options);
     try {
       const result = await this.store.delete(fullKey);
-      this.tagStore.removeKey(fullKey);
+      await this.tagStore.removeKey?.(fullKey);
       return result;
     } catch (error) {
       if (this.failSilently) return { deleted: false, key };
@@ -246,7 +251,7 @@ export class CacheService implements CacheHealthChecker {
       );
       try {
         const result = await this.store.clear({ pattern });
-        this.purgeTagsMatching(pattern);
+        await this.purgeTagsMatching(pattern);
         return result;
       } catch (error) {
         if (this.failSilently) return { cleared: 0 };
@@ -255,7 +260,7 @@ export class CacheService implements CacheHealthChecker {
     }
     try {
       const result = await this.store.clear();
-      this.tagStore.clear();
+      await this.tagStore.clear?.();
       return result;
     } catch (error) {
       if (this.failSilently) return { cleared: 0 };
@@ -531,7 +536,9 @@ export class CacheService implements CacheHealthChecker {
     // Drop service-local state so a reconnect does not resurrect stale
     // in-flight computations or tag mappings.
     this.inFlight.clear();
-    this.tagStore.clear();
+    // An injected store may be shared with other instances: their mappings
+    // are not this instance's to drop.
+    if (this.ownsTagStore) await this.tagStore.clear?.();
   }
 
   /* ---- Internals ---- */
@@ -569,6 +576,7 @@ export class CacheService implements CacheHealthChecker {
   /** The namespace scope applied to tag registrations and lookups. */
   private tagScope(options?: NamespaceOptions): { namespace?: CacheNamespace } {
     const namespace = options?.namespace ?? this.namespace;
+    assertNonEmptyNamespace(namespace);
     return namespace !== undefined ? { namespace } : {};
   }
 
@@ -582,10 +590,12 @@ export class CacheService implements CacheHealthChecker {
     return pattern;
   }
 
-  private purgeTagsMatching(pattern: string): void {
+  private async purgeTagsMatching(pattern: string): Promise<void> {
+    const store = this.tagStore;
+    if (!store.trackedKeys || !store.removeKey) return;
     const matches = createGlobMatcher(pattern, { separator: this.separator });
-    for (const key of this.tagStore.trackedKeys()) {
-      if (matches(key)) this.tagStore.removeKey(key);
+    for (const key of await store.trackedKeys()) {
+      if (matches(key)) await store.removeKey(key);
     }
   }
 

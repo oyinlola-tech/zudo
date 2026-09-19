@@ -3,6 +3,7 @@ import type { CacheTTL } from "./types-values.js";
 import type { CacheMiddleware } from "./types-metrics.js";
 import type { CacheSerializer } from "./types-health.js";
 import type { CacheLockStore } from "./types-lock.js";
+import type { CacheTagStore } from "./types-tags.js";
 
 export interface CacheConfig {
   readonly enabled?: boolean;
@@ -46,6 +47,14 @@ export interface CacheConfig {
    * processes.
    */
   readonly lockStore?: CacheLockStore;
+  /**
+   * Tag store backing `set({ tags })` and `invalidateByTag`. Defaults to a
+   * fresh in-process store per service, which means tag invalidation only
+   * sees entries written by the same instance. Replicas sharing one adapter
+   * (one Redis) must share a tag store too, e.g. one backed by Redis sets.
+   * An injected store is never flushed by `disconnect()`.
+   */
+  readonly tagStore?: CacheTagStore;
 }
 
 /**

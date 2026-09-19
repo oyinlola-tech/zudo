@@ -246,8 +246,16 @@ export class CacheLockManager {
     // `release()` returning false is the one signal that the lease expired or
     // was taken over mid-critical-section. Surfacing it is the whole point of
     // minting a fencing token. An error thrown by `fn` still wins, so the
-    // real cause is never masked.
-    const released = await lock.release();
+    // real cause is never masked — including by `release()` itself throwing
+    // (a distributed store that is down). The release error is then attached
+    // to the thrown error as a non-enumerable `suppressed` property.
+    let released = false;
+    try {
+      released = await lock.release();
+    } catch (releaseError) {
+      if (failed) throw attachSuppressed(failure, releaseError);
+      throw releaseError;
+    }
     if (failed) throw failure;
     if (!released || leaseLost) {
       const code: CacheErrorCode = "CACHE_LOCK_LOST";
@@ -263,6 +271,28 @@ export class CacheLockManager {
     }
     return value!;
   }
+}
+
+/**
+ * Record a secondary error on the primary one without replacing it, mirroring
+ * `SuppressedError.suppressed`. Only an extensible object that does not
+ * already carry `suppressed` is annotated; the primary is returned either way.
+ */
+function attachSuppressed(primary: unknown, secondary: unknown): unknown {
+  if (
+    typeof primary === "object" &&
+    primary !== null &&
+    Object.isExtensible(primary) &&
+    !Object.hasOwn(primary, "suppressed")
+  ) {
+    Object.defineProperty(primary, "suppressed", {
+      value: secondary,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return primary;
 }
 
 function sleep(ms: number): Promise<void> {

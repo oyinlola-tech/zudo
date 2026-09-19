@@ -18,13 +18,15 @@ const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 /**
  * Strips prototype-polluting own keys from a freshly deserialized value.
  *
- * This is defence in depth at the trust boundary: a cached payload can come
- * from a shared backing store, a restored backup, or another writer, so the
- * bytes are not necessarily ones this process serialized. `@zudojs/errors`'
- * sibling `@zudojs/serialization` accepts an `allowUnsafeKeys` option but
- * the published build does not implement it, and `JSON.parse` leaves
- * `__proto__` as a genuine own property — which re-triggers the setter on
- * any later spread or `Object.assign`. Both routes are closed here.
+ * A cached payload can come from a shared backing store, a restored backup,
+ * or another writer, so the bytes are not necessarily ones this process
+ * serialized. `JSON.parse` leaves `__proto__` as a genuine own property,
+ * which re-triggers the setter on any later spread or `Object.assign`.
+ *
+ * `JsonCacheSerializer` needs this only for `preserveTypes: false`: on the
+ * type-preserving path `@zudojs/serialization` already drops these keys
+ * (`allowUnsafeKeys: false`), but its plain-JSON fast path returns
+ * `JSON.parse` output untouched.
  */
 export function stripUnsafeKeys<T>(value: T): T {
   const seen = new Set<object>();
@@ -114,14 +116,15 @@ export class JsonCacheSerializer implements CacheSerializer<unknown, string> {
   }
 
   deserialize(value: string): unknown {
+    // Not `strict`: strict mode throws on any `$type` the registry does not
+    // know, so a domain object carrying a `$type` discriminator could be
+    // written but never read back, poisoning its key. An unknown tag is
+    // ordinary data.
     const parsed = this.inner.deserialize(value, {
       preserveTypes: this.preserveTypes,
-      // Stated at the call site even though the published sibling build
-      // ignores them; `stripUnsafeKeys` enforces the intent regardless.
-      strict: true,
       allowUnsafeKeys: false,
     });
-    return stripUnsafeKeys(parsed);
+    return this.preserveTypes ? parsed : stripUnsafeKeys(parsed);
   }
 }
 

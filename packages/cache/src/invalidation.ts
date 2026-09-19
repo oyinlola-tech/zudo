@@ -74,7 +74,7 @@ export class CacheInvalidationManager {
       if (result.deleted) cleared++;
       // The key is gone from the cache, so every tag mapping it still has
       // (in any scope) is dead too.
-      this.tagStore.removeKey?.(key);
+      await this.tagStore.removeKey?.(key);
     }
 
     for (const tag of tags) {
@@ -139,7 +139,7 @@ export class CacheInvalidationManager {
    */
   async flushAll(): Promise<CacheClearResult> {
     const result = await this.adapter.clear();
-    this.tagStore.clear?.();
+    await this.tagStore.clear?.();
     return result;
   }
 }

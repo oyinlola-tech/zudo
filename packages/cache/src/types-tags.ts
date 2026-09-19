@@ -31,8 +31,19 @@ export interface CacheTagStore {
     tag: CacheTag,
     options?: CacheTagOptions,
   ): Promise<CacheClearResult>;
-  /** Removes all tag mappings for a key, across every namespace. */
-  removeKey?(key: CacheKey): void;
-  /** Removes all tag mappings. */
-  clear?(): void;
+  /**
+   * Removes all tag mappings for a key, across every namespace.
+   *
+   * May be async: `CacheService` awaits it, so a shared (e.g. Redis-backed)
+   * store can complete the removal before the write is reported.
+   */
+  removeKey?(key: CacheKey): void | Promise<void>;
+  /** Removes all tag mappings. May be async. */
+  clear?(): void | Promise<void>;
+  /**
+   * Every key that currently has at least one tag mapping. Used to drop the
+   * mappings of keys removed by a pattern clear; when absent, those mappings
+   * are left for the next write or tag invalidation of the key.
+   */
+  trackedKeys?(): readonly CacheKey[] | Promise<readonly CacheKey[]>;
 }

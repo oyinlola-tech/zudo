@@ -20,6 +20,27 @@ import {
 import { cacheInvalidKeyError } from "./errors.js";
 import { assertValidPatternPart } from "./utils.js";
 
+/**
+ * Rejects an empty-string namespace.
+ *
+ * `""` is falsy, so it used to be dropped as "no namespace" and moved a
+ * tenant whose id failed to resolve into the shared global keyspace. A
+ * namespace is either absent (`undefined`) or a valid identity part.
+ *
+ * @param namespace - The namespace to check.
+ * @throws {CacheError} `CACHE_INVALID_KEY` when `namespace` is `""`.
+ */
+export function assertNonEmptyNamespace(
+  namespace: CacheNamespace | undefined,
+): void {
+  if (namespace === "") {
+    throw cacheInvalidKeyError(
+      namespace,
+      "Cache namespace must not be empty. Omit it for the unscoped keyspace.",
+    );
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /* Default Key Builder                                                        */
 /* -------------------------------------------------------------------------- */
@@ -41,6 +62,7 @@ export class DefaultKeyBuilder implements CacheKeyBuilder {
   }) {
     this.globalPrefix = options?.prefix ?? DEFAULT_PREFIX;
     this.globalSeparator = options?.separator ?? DEFAULT_SEPARATOR;
+    assertNonEmptyNamespace(options?.namespace);
     this.currentNamespace = options?.namespace;
   }
 
@@ -59,7 +81,7 @@ export class DefaultKeyBuilder implements CacheKeyBuilder {
       parts.push(prefix);
     }
 
-    if (namespace) {
+    if (namespace !== undefined) {
       parts.push(namespace);
     }
 
@@ -97,7 +119,7 @@ export class DefaultKeyBuilder implements CacheKeyBuilder {
 
     const identityParts: string[] = [];
     if (prefix) identityParts.push(prefix);
-    if (namespace) identityParts.push(namespace);
+    if (namespace !== undefined) identityParts.push(namespace);
     for (const part of identityParts) this.validatePart(part, separator);
 
     assertValidPatternPart(pattern, separator);

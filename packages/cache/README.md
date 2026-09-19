@@ -80,6 +80,34 @@ await cache.withLock("import", runImport, { namespace: tenantId });
 In glob patterns, `*` matches within a single key segment and never crosses
 the `:` separator; `**` as a whole segment spans namespaces deliberately.
 
+An empty-string namespace is rejected with `CACHE_INVALID_KEY`, in the config
+and per call. A tenant id that failed to resolve to `""` can therefore never
+fall through to the unscoped global keyspace. Omit `namespace` to use that
+keyspace deliberately.
+
+## Tags across instances
+
+By default each `CacheService` keeps its tag mappings in process, so
+`invalidateByTag` only sees entries written by the same instance. Replicas that
+share one adapter must also share a tag store. Pass any `CacheTagStore`
+implementation (for example one backed by Redis sets) as `config.tagStore`:
+
+```typescript
+const tagStore = createTagStore(); // or your shared implementation
+const a = createCacheService({ adapter, config: { tagStore } });
+const b = createCacheService({ adapter, config: { tagStore } });
+
+await a.set("user.1", user, { tags: ["users"] });
+await b.invalidateByTag(["users"]); // clears the entry a wrote
+```
+
+## Serialization
+
+`JsonCacheSerializer` preserves `Date`, `BigInt`, `Map`, `Set` and `Uint8Array`
+by default and drops `__proto__`, `constructor` and `prototype` keys on read.
+A value with its own `$type` field (a domain discriminator) is ordinary data
+and reads back unchanged.
+
 ## Observability
 
 ```typescript
