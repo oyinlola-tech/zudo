@@ -38,7 +38,10 @@ function findStructuralMatch(
   accept: (candidate: unknown) => boolean = () => true,
 ): unknown {
   for (const candidate of candidates) {
-    if (walk(candidate, expected, "", new Map(seen)) === undefined && accept(candidate)) {
+    if (
+      walk(candidate, expected, "", new Map(seen)) === undefined &&
+      accept(candidate)
+    ) {
       return candidate;
     }
   }
@@ -58,14 +61,22 @@ export function diffMap(
   walk: DiffWalker,
 ): Difference | undefined {
   if (actual.size !== expected.size) {
-    return { path, reason: `expected ${expected.size} entries, received ${actual.size}` };
+    return {
+      path,
+      reason: `expected ${expected.size} entries, received ${actual.size}`,
+    };
   }
   const unmatched = [...actual.keys()];
   for (const [key, value] of expected) {
     let actualKey: unknown = key;
     if (!unmatched.includes(key)) {
-      actualKey = findStructuralMatch(walk, unmatched, key, seen, (candidate) =>
-        walk(actual.get(candidate), value, "", new Map(seen)) === undefined,
+      actualKey = findStructuralMatch(
+        walk,
+        unmatched,
+        key,
+        seen,
+        (candidate) =>
+          walk(actual.get(candidate), value, "", new Map(seen)) === undefined,
       );
       if (actualKey === NO_MATCH) {
         actualKey = findStructuralMatch(walk, unmatched, key, seen);
@@ -75,7 +86,12 @@ export function diffMap(
       return { path, reason: `missing key ${describeValue(key)}` };
     }
     unmatched.splice(unmatched.indexOf(actualKey), 1);
-    const found = walk(actual.get(actualKey), value, `${path}[${describeValue(key)}]`, seen);
+    const found = walk(
+      actual.get(actualKey),
+      value,
+      `${path}[${describeValue(key)}]`,
+      seen,
+    );
     if (found) return found;
   }
   return undefined;
@@ -90,7 +106,10 @@ export function diffSet(
   walk: DiffWalker,
 ): Difference | undefined {
   if (actual.size !== expected.size) {
-    return { path, reason: `expected ${expected.size} items, received ${actual.size}` };
+    return {
+      path,
+      reason: `expected ${expected.size} items, received ${actual.size}`,
+    };
   }
   const unmatched = [...actual];
   for (const entry of expected) {

@@ -37,7 +37,9 @@ describe("tooling/TEST-01", () => {
     expect(deepEqual(new User(1), new Admin(1))).toBe(false);
     expect(deepEqual(new User(1), { id: 1 })).toBe(false);
     expect(deepEqual(new User(1), new User(1))).toBe(true);
-    expect(deepEqual(Object.assign(Object.create(null), { a: 1 }), { a: 1 })).toBe(true);
+    expect(
+      deepEqual(Object.assign(Object.create(null), { a: 1 }), { a: 1 }),
+    ).toBe(true);
   });
 
   it("compares boxed primitives by value", () => {
@@ -53,7 +55,9 @@ describe("tooling/TEST-01", () => {
 
   it("requires the same typed-array constructor", () => {
     expect(deepEqual(new Uint8Array([1, 0]), new Uint16Array([1]))).toBe(false);
-    expect(deepEqual(new Uint8Array([1, 2]), new Uint8Array([1, 2]))).toBe(true);
+    expect(deepEqual(new Uint8Array([1, 2]), new Uint8Array([1, 2]))).toBe(
+      true,
+    );
   });
 
   it("does not let an identity hit remove an unrelated unmatched Set item", () => {
@@ -68,16 +72,41 @@ describe("tooling/TEST-01", () => {
     const A = { v: 1 };
     const A2 = { v: 1 };
     const B = { v: 2 };
-    const actual = new Map<object, number>([[A, 1], [B, 2]]);
-    expect(deepEqual(actual, new Map<object, number>([[A2, 1], [A, 1]]))).toBe(false);
-    expect(deepEqual(actual, new Map<object, number>([[A2, 1], [B, 2]]))).toBe(true);
+    const actual = new Map<object, number>([
+      [A, 1],
+      [B, 2],
+    ]);
+    expect(
+      deepEqual(
+        actual,
+        new Map<object, number>([
+          [A2, 1],
+          [A, 1],
+        ]),
+      ),
+    ).toBe(false);
+    expect(
+      deepEqual(
+        actual,
+        new Map<object, number>([
+          [A2, 1],
+          [B, 2],
+        ]),
+      ),
+    ).toBe(true);
   });
 
   it("prefers the structurally equal Map key whose value also matches", () => {
     const A = { v: 1 };
     const A3 = { v: 1 };
-    const actual = new Map<object, number>([[A, 1], [A3, 2]]);
-    const expected = new Map<object, number>([[{ v: 1 }, 2], [{ v: 1 }, 1]]);
+    const actual = new Map<object, number>([
+      [A, 1],
+      [A3, 2],
+    ]);
+    const expected = new Map<object, number>([
+      [{ v: 1 }, 2],
+      [{ v: 1 }, 1],
+    ]);
     expect(deepEqual(actual, expected)).toBe(true);
   });
 

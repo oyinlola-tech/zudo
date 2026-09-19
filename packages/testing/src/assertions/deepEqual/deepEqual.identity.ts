@@ -34,7 +34,10 @@ function prototypeName(value: object): string {
  * internal slot, not in an own key. Returns the unboxed value, or a sentinel
  * when `value` is not boxed.
  */
-function unbox(value: object): { readonly boxed: boolean; readonly value?: unknown } {
+function unbox(value: object): {
+  readonly boxed: boolean;
+  readonly value?: unknown;
+} {
   const tag = Object.prototype.toString.call(value);
   switch (tag) {
     case "[object Number]":
@@ -70,10 +73,14 @@ function isOpaque(value: object): boolean {
  * @param expected - The object it should equal.
  * @returns A mismatch reason, or undefined when the pair may be walked.
  */
-export function compareIdentity(actual: object, expected: object): IdentityMismatch {
+export function compareIdentity(
+  actual: object,
+  expected: object,
+): IdentityMismatch {
   const actualProto = Object.getPrototypeOf(actual) as object | null;
   const expectedProto = Object.getPrototypeOf(expected) as object | null;
-  const bothPlain = isPlainPrototype(actualProto) && isPlainPrototype(expectedProto);
+  const bothPlain =
+    isPlainPrototype(actualProto) && isPlainPrototype(expectedProto);
   if (!bothPlain && actualProto !== expectedProto) {
     return `expected instance of ${prototypeName(expected)}, received ${prototypeName(actual)}`;
   }
@@ -110,7 +117,8 @@ export function errorCauses(
   actual: object,
   expected: object,
 ): { readonly actual: unknown; readonly expected: unknown } | undefined {
-  if (!(actual instanceof Error) || !(expected instanceof Error)) return undefined;
+  if (!(actual instanceof Error) || !(expected instanceof Error))
+    return undefined;
   if (!("cause" in actual) && !("cause" in expected)) return undefined;
   return { actual: actual.cause, expected: expected.cause };
 }

@@ -67,6 +67,13 @@ assertResponseBody(response, { id: "u_1", roles: new Set(["admin"]) });
 - Assertions compare structurally, not by `JSON.stringify`. `Map`, `Set`,
   `Date`, `BigInt`, `undefined` values and key order are all handled, and a
   circular value reports a mismatch instead of throwing a `TypeError`.
+- Types are compared too: two objects must share a prototype (a class
+  instance never equals a plain object or an instance of another class;
+  `{}` and `Object.create(null)` count as the same), Errors must match on
+  `name`, `message` and `cause`, boxed primitives on their value, and typed
+  arrays on their constructor. Distinct Promises, WeakMaps and WeakSets are
+  never equal. A serializer that turns an Error into `{}` fails
+  `assertSerializesCorrectly`.
 - `createStub()` answers `then` with `undefined`, so awaiting a stub — or
   returning one from an async factory — resolves rather than hanging.
 - `cleanup.dispose()` rejects with an `AggregateError` when any cleanup fails,
