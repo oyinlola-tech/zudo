@@ -58,7 +58,7 @@ describe("OPENAPI-R9-02 transform schemas resolve their source", () => {
       s.transform(s.string().min(1), (value: string) => value.length),
     );
     expect(warnings).toEqual([]);
-    expect(schema).toEqual({ type: "string", minLength: 1 });
+    expect(schema).toEqual({ type: "string", minLength: 1, maxLength: 255 });
   });
 
   it("still accepts the standalone TransformSchema shape (`_base`)", () => {
@@ -73,7 +73,7 @@ describe("OPENAPI-R9-02 transform schemas resolve their source", () => {
 describe("OPENAPI-R9-03 default factories are resolved, not emitted", () => {
   it("invokes a default factory once and emits its value", () => {
     const { schema } = convertSchema(s.string().default(() => "fallback"));
-    expect(schema).toEqual({ type: "string", default: "fallback" });
+    expect(schema).toEqual({ type: "string", maxLength: 255, default: "fallback" });
     expect(JSON.parse(JSON.stringify(schema))).toHaveProperty(
       "default",
       "fallback",
@@ -86,7 +86,7 @@ describe("OPENAPI-R9-03 default factories are resolved, not emitted", () => {
         throw new Error("no default available");
       }),
     );
-    expect(schema).toEqual({ type: "string" });
+    expect(schema).toEqual({ type: "string", maxLength: 255 });
     expect(warnings).toEqual([
       expect.stringContaining("no default available"),
     ]);
@@ -109,6 +109,7 @@ describe("OPENAPI-R9-04 required mirrors what the object parser accepts", () => 
     expect(schema.required).toEqual(["id"]);
     expect(schema.properties?.["role"]).toEqual({
       type: "string",
+      maxLength: 255,
       default: "user",
     });
   });

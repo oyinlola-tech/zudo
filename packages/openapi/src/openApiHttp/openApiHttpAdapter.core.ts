@@ -33,6 +33,10 @@ import {
   zudoLogo,
   type OpenAPIUIOptions,
 } from "../openApiUi/openApiUi.core.js";
+import {
+  buildOpenAPIUIContentSecurityPolicy,
+  documentServerUrls,
+} from "../openApiUi/openApiUi.csp.js";
 
 /** Options for {@link OpenAPIManager}. */
 export interface OpenAPIManagerOptions {
@@ -367,11 +371,21 @@ export class OpenAPIManager {
               ? this.logo
               : undefined,
     });
+    const csp =
+      options.contentSecurityPolicy === false
+        ? undefined
+        : (options.contentSecurityPolicy ??
+          buildOpenAPIUIContentSecurityPolicy(options, [
+            ...documentServerUrls(this.getDocument()),
+            ...(options.connectSources ?? []),
+          ]));
     return Object.freeze({
       status: 200 as const,
       headers: Object.freeze({
         "content-type": "text/html; charset=utf-8",
         "cache-control": "public, max-age=300",
+        "x-content-type-options": "nosniff",
+        ...(csp === undefined ? {} : { "content-security-policy": csp }),
       }),
       body,
     });

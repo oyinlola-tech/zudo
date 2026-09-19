@@ -59,4 +59,4 @@ export const ZUDO_WORDMARK_DARK_DATA_URI = svgToDataUri(ZUDO_WORDMARK_DARK_SVG);
 export const ZUDO_FAVICON_DATA_URI = svgToDataUri(ZUDO_FAVICON_SVG);
 
 /** Where the logo links by default. */
-export const ZUDO_SITE_URL = "https://zudo.dev";
+export const ZUDO_SITE_URL = "https://zudojs.oyinlola.site";

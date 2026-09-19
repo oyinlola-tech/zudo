@@ -1,5 +1,9 @@
 import type { OpenAPISchema } from "../openApiTypes/openApiTypes.core.js";
 import { DEFAULT_OPENAPI_VERSION } from "../openApiConstants/openApiConstants.core.js";
+import {
+  SCHEMA_IMPLICIT_MAX_ARRAY_LENGTH,
+  SCHEMA_IMPLICIT_MAX_STRING_LENGTH,
+} from "../openApiConstants/openApiConstants.schemaLimits.js";
 
 /**
  * Converts `@zudojs/schema` schemas into OpenAPI schema objects.
@@ -14,6 +18,7 @@ import { DEFAULT_OPENAPI_VERSION } from "../openApiConstants/openApiConstants.co
  * Field names as of `@zudojs/schema@0.1.0`:
  *   object   `_config.shape`, `_config.requiredKeys` (a Set), `_config.unknownKeys`
  *   array    `_config.itemSchema`, `_config.min`, `_config.max`, `_config.length`
+ *            (no `max` means the parser's implicit ceiling, which is emitted)
  *   string   `_config.min|max|length|pattern|format`
  *   number   `_config.min|max|int|gt|lt|multipleOf`
  *   coerce.string / coerce.number
@@ -264,7 +269,7 @@ function convertString(
       ? { minLength: exact, maxLength: exact }
       : {
           ...(num(c["min"]) !== undefined ? { minLength: num(c["min"]) } : {}),
-          ...(num(c["max"]) !== undefined ? { maxLength: num(c["max"]) } : {}),
+          maxLength: num(c["max"]) ?? SCHEMA_IMPLICIT_MAX_STRING_LENGTH,
         }),
     ...(pattern instanceof RegExp
       ? { pattern: pattern.source }
@@ -490,9 +495,7 @@ function convertSchemaNode(
               ...(num(c["min"]) !== undefined
                 ? { minItems: num(c["min"]) }
                 : {}),
-              ...(num(c["max"]) !== undefined
-                ? { maxItems: num(c["max"]) }
-                : {}),
+              maxItems: num(c["max"]) ?? SCHEMA_IMPLICIT_MAX_ARRAY_LENGTH,
             }),
       };
     }

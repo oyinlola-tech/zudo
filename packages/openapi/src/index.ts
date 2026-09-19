@@ -55,6 +55,10 @@ export {
   ZUDO_WORDMARK_DARK_DATA_URI,
   ZUDO_FAVICON_DATA_URI,
   ZUDO_SITE_URL,
+  SWAGGER_UI_VERSION,
+  REDOC_VERSION,
+  buildOpenAPIUIContentSecurityPolicy,
+  type OpenAPIUIAssetIntegrity,
   type OpenAPIUIOptions,
   type OpenAPIUIRenderer,
 } from "./openApiUi/index.js";

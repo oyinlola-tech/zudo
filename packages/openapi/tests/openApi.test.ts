@@ -244,7 +244,7 @@ describe("OpenAPIRouteScannerImpl", () => {
 
 describe("convertSchema", () => {
   it("converts primitives", () => {
-    expect(convertSchema(schema.string()).schema).toEqual({ type: "string" });
+    expect(convertSchema(schema.string()).schema).toEqual({ type: "string", maxLength: 255 });
     expect(convertSchema(schema.number()).schema).toEqual({ type: "number" });
     expect(convertSchema(schema.boolean()).schema).toEqual({ type: "boolean" });
   });
@@ -258,7 +258,7 @@ describe("convertSchema", () => {
     );
     expect(result.schema).toEqual({
       type: "object",
-      properties: { id: { type: "string" }, nickname: { type: "string" } },
+      properties: { id: { type: "string", maxLength: 255 }, nickname: { type: "string", maxLength: 255 } },
       required: ["id"],
     });
     expect(result.warnings).toEqual([]);
@@ -280,7 +280,7 @@ describe("convertSchema", () => {
     );
     expect(result.schema).toEqual({
       type: "array",
-      items: { type: "string" },
+      items: { type: "string", maxLength: 255 },
       minItems: 1,
       maxItems: 10,
     });
@@ -313,14 +313,14 @@ describe("convertSchema", () => {
       schema.union([schema.string(), schema.number()]),
     );
     expect(result.schema.anyOf).toEqual([
-      { type: "string" },
+      { type: "string", maxLength: 255 },
       { type: "number" },
     ]);
   });
 
   it("reads an optional's inner schema from _inner (OA-01)", () => {
     const result = convertSchema(schema.optional(schema.string()));
-    expect(result.schema).toEqual({ type: "string" });
+    expect(result.schema).toEqual({ type: "string", maxLength: 255 });
     expect(result.warnings).toEqual([]);
   });
 
@@ -344,12 +344,12 @@ describe("convertSchema", () => {
 
   it("expresses nullability the way each version does (OA-17)", () => {
     expect(convertSchema(schema.nullable(schema.string())).schema).toEqual({
-      type: ["string", "null"],
+      type: ["string", "null"], maxLength: 255,
     });
     expect(
       convertSchema(schema.nullable(schema.string()), { version: "3.0.3" })
         .schema,
-    ).toEqual({ type: "string", nullable: true });
+    ).toEqual({ type: "string", nullable: true, maxLength: 255 });
   });
 
   it("converts the remaining constructs instead of dropping them (OA-18)", () => {
@@ -360,13 +360,13 @@ describe("convertSchema", () => {
     expect(convertSchema(schema.set(schema.string())).schema).toEqual({
       type: "array",
       uniqueItems: true,
-      items: { type: "string" },
+      items: { type: "string", maxLength: 255 },
     });
     expect(
       convertSchema(schema.tuple([schema.string(), schema.number()])).schema,
     ).toEqual({
       type: "array",
-      prefixItems: [{ type: "string" }, { type: "number" }],
+      prefixItems: [{ type: "string", maxLength: 255 }, { type: "number" }],
       minItems: 2,
       maxItems: 2,
     });
@@ -380,7 +380,7 @@ describe("convertSchema", () => {
     ).toHaveLength(2);
     expect(
       convertSchema(schema.withDefault(schema.string(), "x")).schema,
-    ).toEqual({ type: "string", default: "x" });
+    ).toEqual({ type: "string", maxLength: 255, default: "x" });
   });
 
   it("stops on a recursive schema instead of overflowing the stack (OA-02)", () => {
@@ -392,7 +392,7 @@ describe("convertSchema", () => {
 
   it("resolves a lazy schema, and survives one that recurses (OA-02)", () => {
     const resolved = convertSchema(schema.lazy(() => schema.string()));
-    expect(resolved.schema).toEqual({ type: "string" });
+    expect(resolved.schema).toEqual({ type: "string", maxLength: 255 });
 
     const recursive: Record<string, unknown> = {};
     recursive["_type"] = "lazy";
@@ -911,7 +911,7 @@ describe("OpenAPIManager", () => {
     const document = manager.generate();
     expect(document.components?.schemas?.["User"]).toEqual({
       type: "object",
-      properties: { id: { type: "string" } },
+      properties: { id: { type: "string", maxLength: 255 } },
       required: ["id"],
     });
   });
@@ -1050,7 +1050,7 @@ describe("branding", () => {
     const document = new OpenAPIManager({ info }).generate();
     expect(document.info["x-logo"]).toEqual(zudoLogo());
     expect(document.info["x-logo"]?.url).toBe(ZUDO_MARK_DATA_URI);
-    expect(document.info["x-logo"]?.href).toBe("https://zudo.dev");
+    expect(document.info["x-logo"]?.href).toBe("https://zudojs.oyinlola.site");
   });
 
   it("keeps a logo the caller supplied", () => {
@@ -1084,7 +1084,7 @@ describe("branding", () => {
     expect(html).toContain("swagger-ui-bundle.js");
     expect(html).toContain('"url":"/openapi.json"');
     expect(html).toContain("<title>Orders</title>");
-    expect(html).toContain('href="https://zudo.dev"');
+    expect(html).toContain('href="https://zudojs.oyinlola.site"');
   });
 
   it("renders a ReDoc page on request", () => {

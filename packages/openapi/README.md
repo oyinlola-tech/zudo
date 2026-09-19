@@ -94,13 +94,33 @@ manager. Both accept the same options:
 | `logo`           | Header logo, or `false` for none                    | Zudo wordmark      |
 | `favicon`        | Favicon URL or data URI, or `false`                 | Zudo favicon       |
 | `customCss`      | CSS appended after the built-in theme               | —                  |
-| `assetsBaseUrl`  | Where the viewer's own JS and CSS load from         | public CDN         |
+| `assetsBaseUrl`  | Where the viewer's own JS and CSS load from         | pinned jsDelivr    |
+| `assetIntegrity` | SRI hashes `{ script?, stylesheet? }`, or `false`   | pinned hashes      |
+| `contentSecurityPolicy` | CSP header from `toUIResponse`, or `false`   | restrictive policy |
+| `connectSources` | Extra origins "Try it out" may call                 | —                  |
 | `swaggerOptions` | Forwarded to `SwaggerUIBundle`; ignored by ReDoc    | —                  |
+
+By default the viewer loads from exact, pinned versions on jsDelivr
+(`swagger-ui-dist@5.33.0`, `redoc@2.5.4`; exported as `SWAGGER_UI_VERSION`
+and `REDOC_VERSION`) with Subresource Integrity hashes, so a changed or
+compromised CDN file is refused by the browser instead of running on your
+API's origin.
+
+`toUIResponse` also sends `x-content-type-options: nosniff` and a
+`content-security-policy` built by `buildOpenAPIUIContentSecurityPolicy`:
+scripts only from the asset origin plus the hash of the page's one inline
+bootstrap script, `default-src 'none'`, no plugins, no `<base>`, framing
+only by the same origin, and `connect-src` limited to the page's origin, the
+spec URL and every absolute `servers[].url` in the document (the servers
+"Try it out" calls). Add more with `connectSources`, replace the policy with
+a string, or pass `contentSecurityPolicy: false` to send none.
 
 `assetsBaseUrl` points the viewer's assets at a self-hosted copy, which is what
 an air-gapped deployment needs — the default CDN renders a blank page with no
 egress. Swagger UI loads `swagger-ui.css` and `swagger-ui-bundle.js` from that
-base; ReDoc loads `redoc.standalone.js`.
+base; ReDoc loads `redoc.standalone.js`. A self-hosted copy gets no
+`integrity` attribute unless you pass `assetIntegrity`, since it may be a
+different build.
 
 ```typescript
 manager.toUIResponse({ specUrl: "/openapi.json", assetsBaseUrl: "/vendor/swagger" });
@@ -122,7 +142,7 @@ default, so a spec opened in one of them shows a logo rather than nothing.
 
 ```typescript
 new OpenAPIManager({ info }).generate().info["x-logo"];
-// { url: "data:image/svg+xml;…", href: "https://zudo.dev", altText: "Zudo", … }
+// { url: "data:image/svg+xml;…", href: "https://zudojs.oyinlola.site", altText: "Zudo", … }
 ```
 
 The `branding` option controls it, and the same value is used by
@@ -148,7 +168,8 @@ can show them without a network request: `ZUDO_MARK_SVG`, `ZUDO_MARK_DARK_SVG`,
 `ZUDO_WORDMARK_SVG`, `ZUDO_WORDMARK_DARK_SVG`, `ZUDO_FAVICON_SVG`, a
 `*_DATA_URI` counterpart for each, plus `ZUDO_SITE_URL`, `zudoLogo(overrides?)`
 and `svgToDataUri(svg)`. The types are `OpenAPIUIOptions`,
-`OpenAPIUIRenderer`, `OpenAPIUIResponse` and `OpenAPILogo`.
+`OpenAPIUIRenderer`, `OpenAPIUIResponse`, `OpenAPIUIAssetIntegrity` and
+`OpenAPILogo`.
 
 ## Schemas
 
@@ -179,9 +200,9 @@ produces
 {
   "type": "object",
   "properties": {
-    "id": { "type": "string", "format": "uuid" },
+    "id": { "type": "string", "format": "uuid", "maxLength": 255 },
     "age": { "type": "integer", "minimum": 0 },
-    "nickname": { "type": "string" }
+    "nickname": { "type": "string", "maxLength": 255 }
   },
   "required": ["id", "age"]
 }
@@ -193,6 +214,11 @@ refinements, transforms, lazy schemas, bigints and the coercion wrappers are
 all converted, along with string and number constraints (`min`, `max`,
 `length`, `pattern`, `format`, `int`, `multipleOf`, `gt`, `lt`). Constraints
 on a coercing schema (`coerce.number().int().min(1)`) are carried through.
+
+`@zudojs/schema` caps every string at 255 characters and every array at 1000
+items unless the schema sets its own `.max()`. The emitted `maxLength` /
+`maxItems` carry that effective limit, so a client generated from the
+document is never told it may send a payload the server rejects.
 
 A property is listed in `required` exactly when the object parser rejects
 its absence: fields wrapped in `optional`, fields with a `default`, and
