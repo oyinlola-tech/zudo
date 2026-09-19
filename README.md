@@ -2,6 +2,8 @@
 
 A modular TypeScript framework for building scalable, maintainable, and production-ready applications — backend, frontend, or fullstack.
 
+**Documentation:** [zudojs.vercel.app](https://zudojs.vercel.app) · [Getting started](https://zudojs.vercel.app/docs/getting-started) · [Packages](https://zudojs.vercel.app/docs/packages)
+
 ---
 
 ## What is Zudojs?
