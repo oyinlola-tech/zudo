@@ -34,8 +34,10 @@ export interface SubdomainResolverOptions {
 
 /**
  * Strip the port from an authority, handling bracketed IPv6 literals.
+ *
+ * Shared with the domain resolver; not part of the public API.
  */
-function hostnameOf(host: string): string | undefined {
+export function hostnameOf(host: string): string | undefined {
   const trimmed = host.trim();
   if (trimmed.length === 0) return undefined;
 

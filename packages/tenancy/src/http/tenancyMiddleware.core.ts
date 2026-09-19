@@ -5,7 +5,7 @@
  *
  * @module http/tenancyMiddleware
  *
- * Requires @zudojs/http as a peer dependency.
+ * Composes with the @zudojs/http pipeline structurally; no dependency on it.
  */
 
 import type {
@@ -33,6 +33,7 @@ import {
   createUnauthorized,
 } from "./httpHelpers.js";
 import { meetsTrustLevel } from "../security/guard.core.js";
+import { loadResolvedTenant } from "./httpSupport/index.js";
 import {
   TenantResolutionConflictError,
   TenantResolutionError,
@@ -57,12 +58,20 @@ export interface ResolveTenantMiddlewareOptions {
   /** Tenant context storage for propagation. */
   readonly storage: TenantContextStorage;
   /**
-   * Minimum trust the resolution must carry. Defaults to `untrusted`.
+   * Minimum trust the resolution must carry. Defaults to `verified`.
    *
-   * Set this on any route where a tenant resolved from a URL path or an
-   * unverified header must not be honoured.
+   * A tenant resolved from a client-supplied header or a URL path is
+   * `untrusted`, so by default it is refused (403): the client would be
+   * choosing which tenant's context its request runs in. Pass
+   * `minimumTrust: "untrusted"` to opt down explicitly, only on routes where
+   * something else ties the tenant to the principal.
    */
   readonly minimumTrust?: TenantTrustLevel;
+  /**
+   * Fall back to `repository.findBySlug` when a subdomain or path resolution
+   * names no tenant by id. Default: `true`.
+   */
+  readonly slugLookup?: boolean;
   /**
    * Whether a non-active tenant may proceed. Defaults to false.
    *
@@ -111,7 +120,18 @@ export interface RequireTenantMiddlewareOptions {
 export function createResolveTenantMiddleware(
   options: ResolveTenantMiddlewareOptions,
 ): HttpMiddleware {
-  const minimumTrust = options.minimumTrust ?? "untrusted";
+  const minimumTrust = options.minimumTrust ?? "verified";
+  const slugLookup = options.slugLookup !== false;
+  // Unknown and unavailable tenants get the same answer, so a caller cannot
+  // learn which tenant ids exist or which of them are suspended.
+  const notFound = (resolution: TenantResolution | undefined) =>
+    options.notFoundResponse
+      ? {
+          status: 404,
+          body: options.notFoundResponse(resolution),
+          headers: { "content-type": "application/json" },
+        }
+      : createNotFound("Tenant not found");
 
   return async (context, next) => {
     let resolution: TenantResolution | undefined;
@@ -140,34 +160,21 @@ export function createResolveTenantMiddleware(
 
     if (!resolution) {
       if (options.optional) return next();
-
-      return options.notFoundResponse
-        ? {
-            status: 404,
-            body: options.notFoundResponse(resolution),
-            headers: { "content-type": "application/json" },
-          }
-        : createNotFound("Tenant not found");
+      return notFound(resolution);
     }
 
     if (!meetsTrustLevel(resolution.trust, minimumTrust)) {
       return createForbidden("Tenant could not be established for this route");
     }
 
-    const tenant = await options.repository.findById(resolution.tenantId);
+    const tenant = await loadResolvedTenant(
+      options.repository,
+      resolution,
+      slugLookup,
+    );
 
-    if (!tenant) {
-      return options.notFoundResponse
-        ? {
-            status: 404,
-            body: options.notFoundResponse(resolution),
-            headers: { "content-type": "application/json" },
-          }
-        : createNotFound("Tenant not found");
-    }
-
-    if (!options.allowInactive && tenant.status !== "active") {
-      return createForbidden("Tenant is not available");
+    if (!tenant || (!options.allowInactive && tenant.status !== "active")) {
+      return notFound(resolution);
     }
 
     const tenantContext: TenantContext = {

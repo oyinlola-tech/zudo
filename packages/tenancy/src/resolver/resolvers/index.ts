@@ -14,6 +14,11 @@ export type {
   SubdomainContext,
   SubdomainResolverOptions,
 } from "./subdomainResolver.core.js";
+export { createDomainResolver } from "./domainResolver.core.js";
+export type {
+  DomainContext,
+  DomainResolverOptions,
+} from "./domainResolver.core.js";
 export { createPathResolver } from "./pathResolver.core.js";
 export type { PathContext, PathResolverOptions } from "./pathResolver.core.js";
 export { createJwtResolver } from "./jwtResolver.core.js";

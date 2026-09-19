@@ -10,6 +10,7 @@
  */
 
 import type { HttpMiddlewareContext } from "./httpTypes.js";
+import { readRequestHeader } from "./httpSupport/index.js";
 
 /** Claims extracted from a verified token. */
 export interface TenantClaims {
@@ -42,11 +43,11 @@ export function createHttpResolverContext(
 ): HttpResolverContext {
   return {
     getHeader(name: string): string | undefined {
-      return context.request.headers.get(name.toLowerCase());
+      return readRequestHeader(context.request, name);
     },
 
     getHost(): string | undefined {
-      return context.request.headers.get("host");
+      return readRequestHeader(context.request, "host");
     },
 
     getPath(): string | undefined {

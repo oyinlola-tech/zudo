@@ -18,31 +18,42 @@ npm install @zudojs/tenancy
 
 ```typescript
 import {
+  createDomainResolver,
   createJwtResolver,
   createMemoryTenantRepository,
   createResolveTenantMiddleware,
   createResolverChain,
   createSubdomainResolver,
   createTenantContextStorage,
+  createTenantId,
 } from "@zudojs/tenancy";
 
 const storage = createTenantContextStorage();
 const repository = createMemoryTenantRepository();
+repository.add(
+  { id: createTenantId("t-1001"), name: "Acme", slug: "acme", status: "active", metadata: {} },
+  ["acme.io"], // custom domain
+);
 
 const resolver = createResolverChain([
   createJwtResolver(), // priority 100, trusted
+  createDomainResolver({ repository }), // priority 75: acme.io → t-1001
   createSubdomainResolver({ baseDomain: "example.com" }), // priority 70
 ]);
 
-// Resolves the tenant, enforces its status and the route's trust floor,
-// then runs the rest of the request inside the tenant context.
+// Resolves the tenant, enforces its status and the route's trust floor
+// (default "verified"), then runs the rest of the request inside the tenant
+// context. acme.example.com reaches t-1001 through its slug.
 const middleware = createResolveTenantMiddleware({
   resolver: resolver.asResolver(),
   repository,
   storage,
-  minimumTrust: "verified",
 });
 ```
+
+The middleware runs inside the real `@zudojs/http` pipeline without
+depending on it: headers are read through `request.getHeader()` when present,
+and otherwise from a plain object or a `Map`, case-insensitively.
 
 Read the current tenant anywhere downstream:
 
@@ -61,13 +72,17 @@ const tenant = context.requireCurrentTenant();
 | `subdomain`, `domain` | `verified`    | host-derived                |
 | `header`, `path`      | `untrusted`   | client-supplied on the wire |
 
-`x-tenant-id` is untrusted by default. Raise it with
-`createHeaderResolver({ trust: "verified" })` only where a trusted proxy
-strips and re-sets the header at the edge.
+`createResolveTenantMiddleware` requires `verified` trust by default, so a
+tenant named only by `x-tenant-id` or a URL path is refused (403) — otherwise
+an unauthenticated client picks the tenant its request runs in. Raise the
+header with `createHeaderResolver({ trust: "verified" })` only where a trusted
+proxy strips and re-sets it at the edge, or pass `minimumTrust: "untrusted"`
+explicitly on routes where something else ties the tenant to the principal.
 
 ## Features
 
-- Tenant resolution from JWT claims, subdomain, custom domain, header, or path
+- Tenant resolution from JWT claims, subdomain (by id or slug), custom domain
+  (`createDomainResolver`), header, or path
 - Resolver chains with trust grading and conflict detection
 - AsyncLocalStorage context propagation
 - Tenant repository with slug and custom-domain indexes
@@ -79,12 +94,22 @@ strips and re-sets the header at the edge.
   returning `undefined` means "found nothing" and advances to the next
   resolver — so a failed JWT verification can never fall through to a
   client-supplied header.
-- Resolvers disagreeing about the tenant throws by default.
+- Conflict detection is **opt-in**: by default a chain stops at the first
+  resolver that finds a tenant (highest priority wins) and does not look at
+  the others. Pass `createResolverChain(resolvers, { detectConflicts: true })`
+  to run them all and throw `TenantResolutionConflictError` when they
+  disagree; the middleware answers that with 403.
 - Tenant ids are normalized (NFKC, trimmed, lowercased) and constrained to
   `^[a-z0-9][a-z0-9_-]*$`, so an id cannot forge a separator in a cache key,
   a schema name, or a path. `tenantKey` escapes its segments as well.
 - Non-active tenants are refused during resolution. Pass `allowInactive` on
   routes that exist to serve suspended tenants.
+- An unknown tenant and a non-active one get the same `404 Tenant not found`,
+  and the guard middleware answers `403 Tenant is not available` without the
+  id or status, so a caller cannot enumerate tenants or learn which are
+  suspended.
+- A subdomain or path value is looked up by id first, then by slug
+  (`repository.findBySlug`); pass `slugLookup: false` to turn that off.
 - A request that resolves to no tenant at all is answered `404`. Pass
   `optional: true` to `createResolveTenantMiddleware` on routes where a tenant
   may be absent; a tenant that _was_ named but is unknown, untrusted or

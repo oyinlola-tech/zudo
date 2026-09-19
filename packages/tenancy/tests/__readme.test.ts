@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   createContextManager,
+  createDomainResolver,
   createJwtResolver,
   createMemoryTenantRepository,
   createResolveTenantMiddleware,
@@ -19,8 +20,14 @@ describe("README example", () => {
     const storage = createTenantContextStorage();
     const repository = createMemoryTenantRepository();
 
+    repository.add(
+      { id: createTenantId("t-1001"), name: "Acme", slug: "acme", status: "active", metadata: {} },
+      ["acme.io"],
+    );
+
     const resolver = createResolverChain<HttpResolverContext>([
       createJwtResolver() as TenantResolver<HttpResolverContext>,
+      createDomainResolver({ repository }) as TenantResolver<HttpResolverContext>,
       createSubdomainResolver({
         baseDomain: "example.com",
       }) as TenantResolver<HttpResolverContext>,
@@ -30,9 +37,24 @@ describe("README example", () => {
       resolver: resolver.asResolver(),
       repository,
       storage,
-      minimumTrust: "verified",
     });
-    expect(typeof middleware).toBe("function");
+    for (const host of ["acme.example.com", "acme.io"]) {
+      let seen: string | undefined;
+      await middleware(
+        {
+          request: { path: "/", headers: { host } },
+          state: new Map<string, unknown>(),
+          signal: new AbortController().signal,
+          metadata: {},
+        } as never,
+        async () => {
+          const current = storage.get();
+          seen = current?.mode === "tenant" ? current.tenant.id : undefined;
+          return { status: 200, headers: {} };
+        },
+      );
+      expect(seen).toBe("t-1001");
+    }
 
     const context = createContextManager({ storage });
     const tenant = {

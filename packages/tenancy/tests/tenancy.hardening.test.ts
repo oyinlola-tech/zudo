@@ -232,7 +232,9 @@ describe("resolve tenant middleware", () => {
       },
     )) as { status: number };
 
-    expect(response.status).toBe(403);
+    // Round 10 (TEN-05): answered like an unknown tenant, so status does
+    // not leak.
+    expect(response.status).toBe(404);
     expect(reached).toBe(false);
   });
 

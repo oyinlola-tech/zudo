@@ -4,13 +4,19 @@
  * @module tenancyTypes/tenantIdentity
  */
 
+import type { TenantId } from "@zudojs/constants";
+
 import { InvalidTenantIdError } from "../tenancyErrors/tenancyError.types.js";
 
-/** Branded tenant ID type. */
-declare const TenantIdBrand: unique symbol;
-
-/** A unique, validated tenant identifier. */
-export type TenantId = string & { readonly [TenantIdBrand]: true };
+/**
+ * A tenant identifier.
+ *
+ * Owned by `@zudojs/constants` and re-exported here, so the monorepo has one
+ * branded `TenantId`: a value typed by either package is accepted by both.
+ * Tenancy used to declare its own, incompatible brand. `createTenantId` below
+ * is the validating constructor; the one in `@zudojs/constants` only brands.
+ */
+export type { TenantId };
 
 /**
  * Characters a tenant id may contain.

@@ -52,14 +52,10 @@ export function createTenantGuardMiddleware(
       ? await options.repository.findById(tenant.id)
       : tenant;
 
-    if (!current) {
-      return createForbidden(`Tenant "${tenant.id}" is no longer available`);
-    }
-
-    if (current.status !== "active") {
-      return createForbidden(
-        `Tenant "${current.id}" is not available (status: ${current.status})`,
-      );
+    // One answer for "gone" and "not active", naming neither the tenant nor
+    // its status: the body goes to the client, which must not learn either.
+    if (!current || current.status !== "active") {
+      return createForbidden("Tenant is not available");
     }
 
     return next();
