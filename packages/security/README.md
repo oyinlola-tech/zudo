@@ -242,6 +242,12 @@ Addresses are range-checked numerically (127/8, 10/8, 172.16/12, 192.168/16,
 `2002::/16` — are judged as that IPv4 address, whatever spelling the URL
 parser gives them; the local-use NAT64 prefix `64:ff9b:1::/48` is refused.
 
+The building blocks are exported for other guards: `expandIpv6(address)`
+returns the eight 16-bit groups (or `undefined`), `embeddedIpv4(groups)`
+returns the embedded IPv4 octets for the forms above (or `undefined`), and
+`isNonPublicIpv6Range(groups)` is `true` for `fc00::/7`, `fe80::/10`,
+`fec0::/10`, `ff00::/8` and `64:ff9b:1::/48`.
+
 **This cannot stop DNS rebinding.** A public hostname may resolve to a private
 address, and may resolve differently between the check and the connection. For
 outbound requests that must be safe, resolve the hostname yourself, run

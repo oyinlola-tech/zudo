@@ -73,6 +73,9 @@ export {
   isPrivateHostname,
   containsTraversal,
   fullyDecodeUri,
+  expandIpv6,
+  embeddedIpv4,
+  isNonPublicIpv6Range,
 } from "./url/index.js";
 export type { RequestTargetConfig } from "./url/index.js";
 
