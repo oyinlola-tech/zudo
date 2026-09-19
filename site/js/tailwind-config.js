@@ -4,6 +4,8 @@ tailwind.config = {
       colors: {
         'zudo-red': '#C0392B',
         'zudo-red-dark': '#A93226',
+        'zudo-red-light': '#F1948A',
+        'zudo-red-soft': '#E35D4F',
         'zudo-blue': '#2471A3',
         'zudo-blue-dark': '#1A5276',
         'zudo-yellow': '#D4AC0D',
@@ -27,7 +29,7 @@ tailwind.config = {
         'zudo-code-mauve': '#CBA6F7',
         'zudo-code-text': '#CDD6F4',
         'zudo-code-muted': '#6C7086',
-        'zudo-code-comment': '#6C7086',
+        'zudo-code-comment': '#9399B2',
         'zudo-code-peach': '#FAB387',
       },
       borderWidth: {

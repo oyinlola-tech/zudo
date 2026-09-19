@@ -179,7 +179,7 @@
     if (!slot) return;
 
     function col(title, cls, items) {
-      return '<div class="zf-col"><h4 class="' + cls + '">' + title + '</h4><ul>' + items.map(function (i) {
+      return '<div class="zf-col"><h2 class="' + cls + '">' + title + '</h2><ul>' + items.map(function (i) {
         var ext = i[2] ? ' target="_blank" rel="noopener"' : '';
         return '<li><a href="' + i[1] + '"' + ext + '>' + i[0] + (i[2] ? '<span class="ext">↗</span>' : '') + '</a></li>';
       }).join('') + '</ul></div>';

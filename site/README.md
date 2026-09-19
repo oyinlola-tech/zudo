@@ -10,15 +10,18 @@ site/
 ├── sponsors.html           # Sponsorship page
 ├── design.md               # Design system notes
 ├── vercel.json             # Clean-URL rewrites + headers
+├── tailwind.config.cjs     # Build-time Tailwind config (reads js/tailwind-config.js)
 ├── css/
-│   ├── site.css            # Shared: tokens, header, footer, search, docs shell, copy buttons
+│   ├── tailwind.css        # Compiled Tailwind utilities (generated: pnpm site:css)
+│   ├── tailwind.src.css    # Tailwind entry file
+│   ├── site.css            # Shared: self-hosted @font-face, tokens, header, footer, search, docs shell
 │   ├── home.css            # Landing page (hero terminal, ticker, cards)
 │   ├── docs.css            # Documentation pages (typography, code, callouts, tables)
 │   ├── errors.css          # Error pages
 │   ├── packages.css        # Package index filters
 │   └── playground.css      # Terminal playground
 ├── js/
-│   ├── tailwind-config.js  # Shared Tailwind theme (colours, border-3, brutal shadows)
+│   ├── tailwind-config.js  # Tailwind theme (colours, border-3, brutal shadows), source for the build
 │   ├── components.js       # Header, footer, global search (Ctrl+K), copy buttons — every page
 │   ├── playground.js       # Terminal playground (TypeScript via lazy-loaded Babel)
 │   ├── docs.js             # Docs: active sidebar, mobile drawer, TOC + scroll spy, tables
@@ -37,13 +40,15 @@ site/
     ├── zudo-logo-icon.svg      # App-icon tile (navy)
     ├── zudo-favicon.svg        # Favicon (red tile)
     ├── favicon-32.png, apple-touch-icon.png
+    ├── fonts/                  # Self-hosted Inter + JetBrains Mono (woff2, latin + latin-ext; SIL OFL)
     └── og-image.png            # Social share image (1200×630)
 ```
 
 ## Every page
 
 Each page contains only two placeholders, `<div id="zudo-nav"></div>` and
-`<div id="zudo-footer"></div>`, and loads `css/site.css` + `js/components.js`.
+`<div id="zudo-footer"></div>`, and loads `css/site.css`, `css/tailwind.css` and
+`js/components.js` (all scripts use `defer`).
 The header, footer, global search and copy buttons are rendered from
 `components.js`, so a change there applies to every page.
 
@@ -51,6 +56,20 @@ The playground (`playground.js` + `playground.css`) is also loaded on every
 page. Open it with the `>_` button in the header, the floating launcher, or
 Ctrl+` . Any link with `data-playground="<example-id>"` opens it with that
 example loaded.
+
+## Styles and fonts
+
+Tailwind is compiled ahead of time, not run in the browser. After adding or
+changing Tailwind classes in any page or script, or editing
+`js/tailwind-config.js`, rebuild the stylesheet and commit the result:
+
+```bash
+pnpm site:css
+```
+
+Fonts are served from `assets/fonts/` (declared at the top of `css/site.css`),
+and each page preloads `inter-latin.woff2`. No page loads Google Fonts or the
+Tailwind CDN.
 
 ## Deployment
 
