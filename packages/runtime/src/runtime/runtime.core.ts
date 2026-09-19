@@ -200,6 +200,9 @@ export class DefaultRuntime implements Runtime {
     this.signalHandler = new SignalHandler(this.logger, {
       handleSignals: this.options.handleSignals,
       handleFatalErrors: this.options.handleFatalErrors,
+      forceExitOnSecondSignal: this.options.forceExitOnSecondSignal,
+      exitOnFatalError: this.options.exitOnFatalError,
+      fatalExitTimeout: this.options.fatalExitTimeout,
     });
 
     this.readinessTracker = new ReadinessTracker({
@@ -520,6 +523,10 @@ export class DefaultRuntime implements Runtime {
       }
 
       this.transitionTo("failed");
+
+      // A rolled-back runtime owns nothing, so it must not keep owning the
+      // process's signals and fatal-error handlers either.
+      this.signalHandler.unregister();
 
       throw runtimeError;
     }

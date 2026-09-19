@@ -49,6 +49,12 @@ export function validateRuntimeOptions(options: ResolvedRuntimeOptions): void {
     throw new Error("Startup timeout must be positive.");
   }
 
+  if (!Number.isFinite(options.fatalExitTimeout) || options.fatalExitTimeout < 0) {
+    throw new Error(
+      `Fatal exit timeout must be a finite, non-negative number, got ${options.fatalExitTimeout}.`,
+    );
+  }
+
   if (options.readinessCheckTimeout < 0) {
     throw new Error(
       `Readiness check timeout must be zero or positive, got ${options.readinessCheckTimeout}. Use 0 to run checks without a bound.`,

@@ -10,14 +10,19 @@ describe("declared options are honoured", () => {
       onInitialize: () => new Promise<void>(() => {}),
     } as never;
 
-    const rt = createTestRuntime([hang], { startupTimeout: 60 });
+    const rt = createTestRuntime([hang], {
+      startupTimeout: 60,
+      shutdownTimeout: 60,
+    });
 
     const started = Date.now();
     await expect(rt.start()).rejects.toThrow(/timed out/i);
     expect(Date.now() - started).toBeLessThan(3000);
     expect(rt.state).toBe("failed");
 
-    await rt.stop();
+    // The hung onInitialize is still running, so stop() cannot report a
+    // clean teardown; it waits (bounded by shutdownTimeout) and says so.
+    await expect(rt.stop()).rejects.toThrow(/shutdown exceeded/i);
   });
 
   it("startupTimeout leaves no timer armed on a fast start", async () => {

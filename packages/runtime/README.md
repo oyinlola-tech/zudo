@@ -132,6 +132,9 @@ createRuntime(dependencies, {
   runtimeId: "rt_custom", // generated when omitted
   handleSignals: true, // SIGTERM/SIGINT trigger a graceful stop
   handleFatalErrors: true, // uncaughtException/unhandledRejection
+  exitOnFatalError: true, // exit(1) once a fatal-error shutdown finishes
+  fatalExitTimeout: 10_000, // exit(1) anyway if that shutdown hangs
+  forceExitOnSecondSignal: true, // a second SIGTERM/SIGINT exits at once
   startupTimeout: 60_000,
   shutdownTimeout: 30_000,
   emitEvents: true,
@@ -142,6 +145,17 @@ createRuntime(dependencies, {
   metadata: { region: "eu-west-1" },
 });
 ```
+
+`startupTimeout` abandons the startup: no further module hook starts,
+and a module whose `onInitialize` or `onReady` finishes after the timeout
+is shut down and destroyed as soon as it settles. `stop()` waits for that
+teardown (bounded by `shutdownTimeout`), so a stopped runtime never has a
+live module behind it. A second `stop()` after a shutdown timeout joins
+the teardown still running rather than calling `onShutdown` again.
+
+A configuration manager that fails to load fails startup with a
+`RuntimeStartError` (`phase: "initialize"`) instead of letting modules
+initialize against partial configuration.
 
 `parallelInitialization` initializes modules that share a dependency depth
 concurrently. They do not depend on one another by construction, but

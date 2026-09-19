@@ -18,8 +18,11 @@ import { createModuleEventPayload } from "../runtimeEvents/runtimeEvents.core.js
 
 import { resolveDependencies } from "../dependencyGraph/index.js";
 
+import { LifecycleCancellation } from "./lifecycle.cancellation.js";
+
 import {
   RuntimeDependencyError,
+  RuntimeStartError,
   RuntimeStateError,
 } from "../runtimeError/index.js";
 
@@ -30,17 +33,23 @@ export class LifecycleManager {
   private readonly modules: ReadonlyMap<string, Module>;
   private readonly logger: Logger;
   private readonly options: {
-    readonly shutdownTimeout: number;
     readonly continueOnFailure: boolean;
     readonly parallelInitialization: boolean;
   };
   private readonly onModuleEvent: ModuleEventListener | undefined;
   private readonly runtimeId: string;
   private initializedModules: string[] = [];
+  /**
+   * Modules whose `onInitialize` threw. They may have acquired resources
+   * before failing, so teardown still runs their `onDestroy`, matching
+   * `@zudojs/lifecycle` and `@zudojs/core`.
+   */
+  private failedInitializations: string[] = [];
   private startedModules: string[] = [];
   private readonly configuration: ConfigurationManager;
   private readonly application: ModuleContext["application"] | undefined;
   private readonly contexts = new Map<string, ModuleContext>();
+  private readonly cancellation = new LifecycleCancellation();
 
   public constructor(
     modules: ReadonlyMap<string, Module>,
@@ -55,7 +64,6 @@ export class LifecycleManager {
     this.onModuleEvent = options.onModuleEvent;
     this.runtimeId = options.runtimeId ?? "";
     this.options = {
-      shutdownTimeout: options.shutdownTimeout ?? 30_000,
       continueOnFailure: options.continueOnFailure ?? false,
       // Defaults to sequential: initializing a whole depth group at once
       // is a real behaviour change for modules that assume ordering
@@ -111,13 +119,33 @@ export class LifecycleManager {
       return;
     }
 
+    // Fail closed: a configuration that did not load must not let
+    // modules initialize against partial or unvalidated state.
     try {
       await this.configuration.initialize();
     } catch (error) {
-      this.logger.warn("Configuration failed to load.", {
-        error: error instanceof Error ? error.message : String(error),
+      throw new RuntimeStartError("Configuration failed to load.", {
+        phase: "initialize",
+        ...(error instanceof Error && { cause: error }),
       });
     }
+  }
+
+  /**
+   * Abandons an in-flight startup.
+   *
+   * No further module hook is started, and any module whose hook is
+   * still running when it settles is shut down and destroyed rather than
+   * left running with no owner. Called on a startup timeout and by
+   * {@link rollback}.
+   */
+  public cancel(): void {
+    this.cancellation.cancel();
+  }
+
+  /** Whether the current startup has been abandoned by {@link cancel}. */
+  public get cancelled(): boolean {
+    return this.cancellation.isCancelled;
   }
 
   /**
@@ -129,7 +157,9 @@ export class LifecycleManager {
     // Reset the per-run bookkeeping. Appending across runs would make a
     // stop-then-start cycle initialize and stop every module twice.
     this.initializedModules = [];
+    this.failedInitializations = [];
     this.startedModules = [];
+    this.cancellation.reset();
 
     await this.ensureConfigurationReady();
     const succeeded: string[] = [];
@@ -144,6 +174,10 @@ export class LifecycleManager {
       : depGraph.order.map((moduleId) => [moduleId] as readonly string[]);
 
     for (const group of groups) {
+      if (this.cancellation.isCancelled) {
+        break;
+      }
+
       const results = await Promise.all(
         group.map((moduleId) => this.initializeModule(moduleId)),
       );
@@ -151,9 +185,8 @@ export class LifecycleManager {
       for (const result of results) {
         if (result.failure) {
           failed.push(result.failure);
-        } else {
+        } else if (!result.abandoned) {
           succeeded.push(result.moduleId);
-          this.initializedModules.push(result.moduleId);
         }
       }
 
@@ -175,7 +208,11 @@ export class LifecycleManager {
    */
   private async initializeModule(
     moduleId: string,
-  ): Promise<{ moduleId: string; failure?: LifecycleFailure }> {
+  ): Promise<{
+    moduleId: string;
+    failure?: LifecycleFailure;
+    abandoned?: boolean;
+  }> {
     const module = this.modules.get(moduleId);
 
     if (!module) {
@@ -196,8 +233,26 @@ export class LifecycleManager {
 
     try {
       if (module.onInitialize) {
-        await module.onInitialize(this.createModuleContext(module));
+        await this.cancellation.track(
+          moduleId,
+          Promise.resolve(module.onInitialize(this.createModuleContext(module))),
+        );
       }
+
+      if (this.cancellation.isCancelled) {
+        await this.cancellation.release(
+          module,
+          this.createModuleContext(module),
+          false,
+          this.logger,
+        );
+        return { moduleId, abandoned: true };
+      }
+
+      // Recorded as soon as it succeeds, not after its whole depth group:
+      // a rollback that runs while a sibling is still initializing must
+      // still reach this module.
+      this.initializedModules.push(moduleId);
 
       const durationMs = Date.now() - startedAt;
 
@@ -220,6 +275,17 @@ export class LifecycleManager {
         error: failure.error,
       });
 
+      if (this.cancellation.isCancelled) {
+        await this.cancellation.release(
+          module,
+          this.createModuleContext(module),
+          false,
+          this.logger,
+        );
+      } else {
+        this.failedInitializations.push(moduleId);
+      }
+
       this.emitModuleEvent("runtime.module.failed", moduleId, "failed", {
         durationMs: failure.durationMs,
         error: failure.error,
@@ -238,8 +304,9 @@ export class LifecycleManager {
     const succeeded: string[] = [];
     const failed: LifecycleFailure[] = [];
 
-    for (const moduleId of this.initializedModules) {
+    for (const moduleId of [...this.initializedModules]) {
       const module = this.modules.get(moduleId);
+      if (this.cancellation.isCancelled) break;
       if (!module) continue;
 
       const moduleStartTime = Date.now();
@@ -249,7 +316,24 @@ export class LifecycleManager {
       try {
         if (module.onReady) {
           const context = this.createModuleContext(module);
-          await module.onReady(context);
+          await this.cancellation
+            .track(moduleId, Promise.resolve(module.onReady(context)))
+            .catch(async (error: unknown) => {
+              if (this.cancellation.isCancelled) {
+                await this.cancellation.release(module, context, false, this.logger);
+              }
+              throw error;
+            });
+        }
+
+        if (this.cancellation.isCancelled) {
+          await this.cancellation.release(
+            module,
+            this.createModuleContext(module),
+            true,
+            this.logger,
+          );
+          break;
         }
 
         succeeded.push(moduleId);
@@ -303,11 +387,17 @@ export class LifecycleManager {
     const succeeded: string[] = [];
     const failed: LifecycleFailure[] = [];
 
+    await this.cancellation.settle();
+
     const reversedModules = [...this.startedModules].reverse();
 
     for (const moduleId of reversedModules) {
       const module = this.modules.get(moduleId);
       if (!module) continue;
+
+      // Removed before its hook runs, so a second stop() (for example
+      // after a shutdown timeout) never calls onShutdown on it again.
+      this.startedModules = this.startedModules.filter((id) => id !== moduleId);
 
       const moduleStartTime = Date.now();
 
@@ -365,7 +455,13 @@ export class LifecycleManager {
     const succeeded: string[] = [];
     const failed: LifecycleFailure[] = [];
 
-    const reversedModules = [...this.startedModules, ...this.initializedModules]
+    await this.cancellation.settle();
+
+    const reversedModules = [
+      ...this.startedModules,
+      ...this.initializedModules,
+      ...this.failedInitializations,
+    ]
       .filter((id, index, arr) => arr.indexOf(id) === index)
       .reverse();
 
@@ -406,6 +502,7 @@ export class LifecycleManager {
     // rebuilds the lists from scratch.
     this.startedModules = [];
     this.initializedModules = [];
+    this.failedInitializations = [];
     this.contexts.clear();
 
     return Object.freeze({
@@ -427,6 +524,8 @@ export class LifecycleManager {
    */
   public async rollback(): Promise<readonly LifecycleFailure[]> {
     const failures: LifecycleFailure[] = [];
+
+    this.cancellation.cancel();
 
     for (const moduleId of [...this.startedModules].reverse()) {
       const module = this.modules.get(moduleId);
@@ -451,9 +550,14 @@ export class LifecycleManager {
       }
     }
 
-    for (const moduleId of [...this.initializedModules].reverse()) {
+    for (const moduleId of [
+      ...this.initializedModules,
+      ...this.failedInitializations,
+    ].reverse()) {
       const module = this.modules.get(moduleId);
-      if (!module?.onDestroy) continue;
+      // A module whose hook is still running is torn down by the
+      // cancellation once that hook settles, never concurrently with it.
+      if (!module?.onDestroy || this.cancellation.isRunning(moduleId)) continue;
 
       const startedAt = Date.now();
 
@@ -478,6 +582,7 @@ export class LifecycleManager {
     // later shutdown does not stop modules a second time.
     this.startedModules = [];
     this.initializedModules = [];
+    this.failedInitializations = [];
     this.contexts.clear();
 
     return failures;

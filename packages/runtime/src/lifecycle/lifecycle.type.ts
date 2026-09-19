@@ -88,6 +88,12 @@ export type ModuleEventListener = (
  * Options for lifecycle management.
  */
 export interface LifecycleManagerOptions {
+  /**
+   * @deprecated Has no effect. Shutdown is bounded as a whole by
+   * `RuntimeOptions.shutdownTimeout`; bounding each module's hook here
+   * would let `onDestroy` run while a timed-out `onShutdown` is still
+   * closing the same resources.
+   */
   readonly shutdownTimeout?: number;
   readonly continueOnFailure?: boolean;
   /**

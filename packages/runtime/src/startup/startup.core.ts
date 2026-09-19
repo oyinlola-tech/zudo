@@ -30,6 +30,7 @@ const MAX_TIMER_DELAY = 2_147_483_647;
 async function withStartupTimeout<T>(
   operation: Promise<T>,
   timeoutMs: number,
+  onTimeout: () => void,
 ): Promise<T> {
   if (timeoutMs <= 0) {
     return operation;
@@ -42,10 +43,13 @@ async function withStartupTimeout<T>(
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new RuntimeTimeoutError("startup", timeoutMs)),
-      Math.min(timeoutMs, MAX_TIMER_DELAY),
-    );
+    timer = setTimeout(() => {
+      // Abandon the startup before reporting the timeout, so no further
+      // module hook starts and a hook still running tears its module
+      // down when it settles instead of leaving it live.
+      onTimeout();
+      reject(new RuntimeTimeoutError("startup", timeoutMs));
+    }, Math.min(timeoutMs, MAX_TIMER_DELAY));
 
     timer.unref?.();
   });
@@ -73,6 +77,7 @@ export async function executeStartup(
   return withStartupTimeout(
     runStartup(lifecycle, runtimeId, eventBus, logger, emitEvents),
     startupTimeout,
+    () => lifecycle.cancel(),
   );
 }
 
@@ -89,6 +94,10 @@ async function runStartup(
   // Per-module `runtime.module.*` events are emitted by the lifecycle
   // manager, which is the only layer that knows which module is running.
   const initResult = await lifecycle.initialize();
+
+  if (lifecycle.cancelled) {
+    return;
+  }
 
   if (initResult.failed.length > 0) {
     const failure = initResult.failed[0]!;
@@ -126,6 +135,10 @@ async function runStartup(
   });
 
   const startResult = await lifecycle.start();
+
+  if (lifecycle.cancelled) {
+    return;
+  }
 
   if (startResult.failed.length > 0) {
     const failure = startResult.failed[0]!;

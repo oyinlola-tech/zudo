@@ -22,6 +22,39 @@ import {
 const MAX_TIMER_DELAY = 2_147_483_647;
 
 /**
+ * Teardown still running for a lifecycle, including one abandoned by a
+ * shutdown timeout. A later stop() joins it instead of calling every
+ * module's `onShutdown` a second time while the first is still closing.
+ */
+const inProgress = new WeakMap<
+  LifecycleManager,
+  Promise<readonly LifecycleFailure[]>
+>();
+
+/**
+ * Starts the teardown for `lifecycle`, or joins the one already running.
+ */
+function shutdownOnce(
+  lifecycle: LifecycleManager,
+  logger: Logger,
+): Promise<readonly LifecycleFailure[]> {
+  const existing = inProgress.get(lifecycle);
+
+  if (existing !== undefined) {
+    logger.warn("A previous shutdown is still running; waiting for it.");
+    return existing;
+  }
+
+  const teardown = performShutdown(lifecycle, logger).finally(() => {
+    inProgress.delete(lifecycle);
+  });
+
+  inProgress.set(lifecycle, teardown);
+
+  return teardown;
+}
+
+/**
  * Result of a shutdown attempt.
  */
 export interface ShutdownResult {
@@ -64,7 +97,7 @@ export async function executeShutdown(
 
   logger.info("Initiating graceful shutdown.", { timeoutMs: shutdownTimeout });
 
-  const stopPromise = performShutdown(lifecycle, logger);
+  const stopPromise = shutdownOnce(lifecycle, logger);
 
   // The shutdown promise keeps running if the timeout wins; attach a
   // handler now so its eventual rejection is never unhandled.

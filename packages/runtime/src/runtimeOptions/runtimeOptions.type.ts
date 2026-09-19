@@ -40,6 +40,28 @@ export interface RuntimeOptions {
   readonly handleFatalErrors?: boolean;
 
   /**
+   * Whether a second SIGTERM/SIGINT during shutdown exits immediately
+   * with code 1.
+   * @default true
+   */
+  readonly forceExitOnSecondSignal?: boolean;
+
+  /**
+   * Whether an uncaught exception or unhandled rejection exits the
+   * process with code 1 once shutdown finishes. Set to `false` to stop
+   * the runtime but leave the process running.
+   * @default true
+   */
+  readonly exitOnFatalError?: boolean;
+
+  /**
+   * How long a fatal-error shutdown may take before the process exits
+   * anyway, in milliseconds.
+   * @default 10000
+   */
+  readonly fatalExitTimeout?: number;
+
+  /**
    * Graceful shutdown timeout in milliseconds.
    * @default 30000
    */
@@ -110,6 +132,9 @@ export interface ResolvedRuntimeOptions {
   readonly applicationVersion: string;
   readonly handleSignals: boolean;
   readonly handleFatalErrors: boolean;
+  readonly forceExitOnSecondSignal: boolean;
+  readonly exitOnFatalError: boolean;
+  readonly fatalExitTimeout: number;
   readonly shutdownTimeout: number;
   readonly startupTimeout: number;
   readonly emitEvents: boolean;
@@ -126,6 +151,9 @@ export interface ResolvedRuntimeOptions {
 export const DEFAULT_RUNTIME_OPTIONS = Object.freeze({
   handleSignals: true,
   handleFatalErrors: true,
+  forceExitOnSecondSignal: true,
+  exitOnFatalError: true,
+  fatalExitTimeout: 10_000,
   shutdownTimeout: 30_000,
   startupTimeout: 60_000,
   emitEvents: true,
