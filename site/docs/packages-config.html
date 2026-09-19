@@ -182,7 +182,7 @@
         <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-black font-black text-sm border-2 border-black">v1.0.1</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/config</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
-          Layered configuration system for Zudo — environment variables, JSON files, runtime overrides, type-safe schemas, and sensitive value redaction
+          Layered configuration system for Zudo — environment variables, in-memory and custom (e.g. remote) sources, runtime overrides, type-safe schemas, and sensitive value redaction
         </p>
         <div class="flex flex-wrap gap-2 mt-4">
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">CONFIGURATION</span>
@@ -384,6 +384,7 @@ yarn add @zudojs/config</div>
       <section id="config-entry" class="mb-16" aria-labelledby="config-entry-heading">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="config-entry-heading">CONFIG ENTRY</h2>
         <p class="mb-4 text-gray-700">Configuration entries wrap values with provenance metadata — tracking where each value came from, its priority, and whether it's sensitive.</p>
+        <p class="mb-4 text-gray-700">Every source's keys and values are screened (<code>isSensitiveConfigEntry</code>): password/secret/token/api-key/private-key/credential/auth/dsn/database-url/connection-string/<code>*_key</code> names in any segment, nested objects containing them, and URLs with <code>user:password@</code> are marked sensitive and redacted.</p>
 
         <h3 class="text-lg font-bold mb-3">Interface</h3>
         <div class="code-block mb-6"><span class="kw">interface</span> <span class="tp">ConfigEntry</span>&lt;<span class="tp">T</span>&gt; {
@@ -425,20 +426,23 @@ yarn add @zudojs/config</div>
 
         <h3 class="text-lg font-bold mb-3">Source Types</h3>
         <div class="code-block mb-6"><span class="kw">enum</span> <span class="tp">ConfigSourceType</span> {
-  DEFAULTS    = <span class="str">'DEFAULTS'</span>,     <span class="cm">// Priority: -1000</span>
-  ENVIRONMENT = <span class="str">'ENVIRONMENT'</span>,  <span class="cm">// process.env</span>
-  FILE        = <span class="str">'FILE'</span>,         <span class="cm">// JSON/YAML files</span>
-  MEMORY      = <span class="str">'MEMORY'</span>,       <span class="cm">// In-memory object</span>
-  REMOTE      = <span class="str">'REMOTE'</span>,       <span class="cm">// HTTP endpoints</span>
-  CUSTOM      = <span class="str">'CUSTOM'</span>,       <span class="cm">// User-defined</span>
+  DEFAULTS    = <span class="str">'defaults'</span>,     <span class="cm">// createDefaultsConfigSource, priority -1000</span>
+  ENVIRONMENT = <span class="str">'environment'</span>,  <span class="cm">// createEnvironmentConfigSource (process.env)</span>
+  FILE        = <span class="str">'file'</span>,         <span class="cm">// type tag only — no built-in file loader; use createCustomConfigSource</span>
+  MEMORY      = <span class="str">'memory'</span>,       <span class="cm">// createMemoryConfigSource</span>
+  REMOTE      = <span class="str">'remote'</span>,       <span class="cm">// type tag for custom remote loaders</span>
+  CUSTOM      = <span class="str">'custom'</span>,       <span class="cm">// createCustomConfigSource</span>
 }</div>
 
         <h3 class="text-lg font-bold mb-3">Creating Sources</h3>
-        <div class="code-block mb-6"><span class="kw">import</span> {
+        <div class="code-block mb-6"><span class="kw">import</span> { <span class="fn">readFile</span> } <span class="kw">from</span> <span class="str">'node:fs/promises'</span>;
+<span class="kw">import</span> {
   <span class="fn">createMemoryConfigSource</span>,
   <span class="fn">createDefaultsConfigSource</span>,
+  <span class="fn">createEnvironmentConfigSource</span>,
   <span class="fn">createCustomConfigSource</span>,
-  <span class="fn">createConfigSource</span>
+  <span class="fn">createConfigSource</span>,
+  <span class="tp">ConfigSourceType</span>
 } <span class="kw">from</span> <span class="str">'@zudojs/config'</span>;
 
 <span class="cm">// In-memory source</span>
@@ -458,7 +462,18 @@ yarn add @zudojs/config</div>
   <span class="kw">const</span> res = <span class="kw">await</span> <span class="fn">fetch</span>(<span class="str">'https://api.example.com/config'</span>);
   <span class="kw">const</span> data = <span class="kw">await</span> res.<span class="fn">json</span>();
   <span class="kw">return</span> { values: data, source: <span class="str">'remote'</span>, type: <span class="tp">ConfigSourceType</span>.CUSTOM };
-});</div>
+});
+
+<span class="cm">// Environment variables</span>
+<span class="kw">const</span> envSource = <span class="fn">createEnvironmentConfigSource</span>();
+
+<span class="cm">// JSON file — there is no built-in file loader, so write one</span>
+<span class="kw">const</span> fileSource = <span class="fn">createCustomConfigSource</span>(<span class="str">'file'</span>, <span class="kw">async</span> () => ({
+  values: JSON.<span class="fn">parse</span>(<span class="kw">await</span> <span class="fn">readFile</span>(<span class="str">'config.json'</span>, <span class="str">'utf8'</span>)),
+  source: <span class="str">'file'</span>,
+  type: <span class="tp">ConfigSourceType</span>.FILE,
+}));</div>
+        <p class="mt-3 mb-6 text-sm"><code>envSource</code> and <code>fileSource</code> are the sources the loader and manager examples below use.</p>
 
         <h3 class="text-lg font-bold mb-3">Loading Sources</h3>
         <div class="code-block"><span class="kw">import</span> { <span class="fn">loadConfigSources</span> } <span class="kw">from</span> <span class="str">'@zudojs/config'</span>;
@@ -601,7 +616,7 @@ dbPool.<span class="fn">number</span>(<span class="str">'maxSize'</span>); <span
 <span class="kw">const</span> resolvedPort = port ?? <span class="num">3000</span>;</div>
         <p class="mt-3 text-sm"><code>parseConfigBigInt</code> and <code>parseConfigDate</code> follow the same shape.</p>
         <div class="border-2 border-black bg-zudo-yellow/20 p-4 mt-4">
-          <strong class="text-zudo-yellow">They never throw.</strong> An input that cannot be coerced comes back as <code>undefined</code>, exactly like a missing one &mdash; <code>parseConfigNumber("abc")</code> is <code>undefined</code>, not <code>NaN</code> and not an error. That means <code>parseConfigNumber(process.env.PORT) ?? 3000</code> silently falls back to <code>3000</code> when <code>PORT=abc</code>. If a malformed value should stop startup instead, check for <code>undefined</code> yourself, or use <code>ConfigResolver</code>, which reports failures as <code>ConfigResolutionError</code>. <code>parseConfigBoolean</code> accepts <code>true/1/yes/y/on</code> and <code>false/0/no/n/off</code> case-insensitively; anything else is <code>undefined</code>.</div>
+          <strong class="text-zudo-yellow">They never throw.</strong> An input that cannot be coerced comes back as <code>undefined</code>, exactly like a missing one &mdash; <code>parseConfigNumber("abc")</code> is <code>undefined</code>, not <code>NaN</code> and not an error. That means <code>parseConfigNumber(process.env.PORT) ?? 3000</code> silently falls back to <code>3000</code> when <code>PORT=abc</code>. If a malformed value should stop startup instead, check for <code>undefined</code> yourself, or use <code>ConfigResolver</code>, which reports failures as <code>ConfigResolutionError</code>. <code>parseConfigNumber</code> (and the resolver's <code>number()</code>) accepts decimal notation only; hex, binary and octal are rejected. <code>parseConfigBoolean</code> accepts <code>true/1/yes/y/on</code> and <code>false/0/no/n/off</code> case-insensitively; anything else is <code>undefined</code>.</div>
       </section>
 
       <!-- ==================== SECTION: CONFIG SCHEMA ==================== -->
@@ -630,7 +645,7 @@ dbPool.<span class="fn">number</span>(<span class="str">'maxSize'</span>); <span
   nullable?: <span class="tp">boolean</span>;
   default?: <span class="tp">T</span> | (() => <span class="tp">T</span>);
   description?: <span class="tp">string</span>;
-  secret?: <span class="tp">boolean</span>;
+  secret?: <span class="tp">boolean</span>;  <span class="cm">// honoured at any depth; the store entry holding it is redacted whole</span>
   validate?: (value: <span class="tp">T</span>, context: <span class="tp">ConfigValidationContext</span>) => <span class="tp">boolean</span> | <span class="tp">string</span> | <span class="tp">ConfigValidationIssue</span> | <span class="kw">readonly</span> <span class="tp">ConfigValidationIssue</span>[];
   transform?: (value: <span class="tp">ConfigValue</span>, context: <span class="tp">ConfigValidationContext</span>) => <span class="tp">T</span>;
 }
@@ -716,6 +731,7 @@ dbPool.<span class="fn">number</span>(<span class="str">'maxSize'</span>); <span
 
 <span class="cm">// Load specific sources only</span>
 <span class="kw">await</span> loader.<span class="fn">loadSources</span>([envSource]);</div>
+        <p class="mb-6 text-sm">Reload rebuilds source values atomically; values a source stopped providing are removed.</p>
 
         <h3 class="text-lg font-bold mb-3">Managing Sources</h3>
         <div class="code-block mb-6">loader.<span class="fn">addSource</span>(newSource);
@@ -885,12 +901,12 @@ manager.<span class="fn">removeSource</span>(<span class="str">'old-source'</spa
         <p class="mb-4 text-gray-700">All exported enums and their values.</p>
 
         <h3 class="text-lg font-bold mb-3">ConfigSourceType</h3>
-        <div class="code-block mb-6">DEFAULTS    = <span class="str">'DEFAULTS'</span>      <span class="cm">// Priority: -1000</span>
-ENVIRONMENT = <span class="str">'ENVIRONMENT'</span>   <span class="cm">// process.env</span>
-FILE        = <span class="str">'FILE'</span>          <span class="cm">// JSON/YAML files</span>
-MEMORY      = <span class="str">'MEMORY'</span>        <span class="cm">// In-memory object</span>
-REMOTE      = <span class="str">'REMOTE'</span>        <span class="cm">// HTTP endpoints</span>
-CUSTOM      = <span class="str">'CUSTOM'</span>        <span class="cm">// User-defined</span></div>
+        <div class="code-block mb-6">DEFAULTS    = <span class="str">'defaults'</span>      <span class="cm">// createDefaultsConfigSource, priority -1000</span>
+ENVIRONMENT = <span class="str">'environment'</span>   <span class="cm">// createEnvironmentConfigSource (process.env)</span>
+FILE        = <span class="str">'file'</span>          <span class="cm">// type tag only — no built-in file loader; use createCustomConfigSource</span>
+MEMORY      = <span class="str">'memory'</span>        <span class="cm">// createMemoryConfigSource</span>
+REMOTE      = <span class="str">'remote'</span>        <span class="cm">// type tag for custom remote loaders</span>
+CUSTOM      = <span class="str">'custom'</span>        <span class="cm">// createCustomConfigSource</span></div>
 
         <h3 class="text-lg font-bold mb-3">ConfigValueType</h3>
         <div class="code-block mb-6">STRING = <span class="str">'STRING'</span>  |  NUMBER = <span class="str">'NUMBER'</span>  |  BOOLEAN = <span class="str">'BOOLEAN'</span>
@@ -1114,7 +1130,7 @@ manager.<span class="fn">subscribe</span>((status) => {
 
           <div class="border-2 border-black">
             <div class="bg-zudo-black text-white px-4 py-2 font-bold text-sm">configSource</div>
-            <div class="px-4 py-3 text-sm font-mono">ConfigSourceType, ConfigSourceEntry, ConfigSourceContext, ConfigSourceResult, ConfigSource, ConfigSourceLoader, FunctionConfigSource, ConfigSourceOptions, isConfigSource, createConfigSource, createMemoryConfigSource, createDefaultsConfigSource, createCustomConfigSource, normalizeConfigSourceResult, sortConfigSources, findConfigSource, deduplicateConfigSources, loadConfigSource, loadConfigSources</div>
+            <div class="px-4 py-3 text-sm font-mono">ConfigSourceType, ConfigSourceEntry, ConfigSourceContext, ConfigSourceResult, ConfigSource, ConfigSourceLoader, FunctionConfigSource, ConfigSourceOptions, isConfigSource, createConfigSource, createMemoryConfigSource, createDefaultsConfigSource, createCustomConfigSource, createEnvironmentConfigSource, isSensitiveConfigKey, isSensitiveConfigValue, isSensitiveConfigEntry, normalizeConfigSourceResult, sortConfigSources, findConfigSource, deduplicateConfigSources, loadConfigSource, loadConfigSources</div>
           </div>
 
           <div class="border-2 border-black">
@@ -1168,17 +1184,17 @@ manager.<span class="fn">subscribe</span>((status) => {
       <!-- EXPORT INDEX -->
       <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
-        <p class="mb-5 text-sm">Every name <code>@zudojs/config</code> exports from its package root at v1.0.1 &mdash; <strong>110</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/config</code> exports from its package root at v1.1.0 &mdash; <strong>113</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
         <details class="border-2 border-black p-5 bg-white">
-          <summary class="font-bold cursor-pointer select-none">Show all 110 exports</summary>
+          <summary class="font-bold cursor-pointer select-none">Show all 113 exports</summary>
           <div class="mt-5">
           <div class="mb-5">
             <div class="font-bold text-sm uppercase tracking-wider mb-2">Classes <span class="text-black/40 font-normal">(9)</span></div>
             <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigLoader</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigManagerValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigResolutionError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigResolver</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigSchemaValidationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigStore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ScopedConfigResolver</code></div>
           </div>
           <div class="mb-5">
-            <div class="font-bold text-sm uppercase tracking-wider mb-2">Functions <span class="text-black/40 font-normal">(62)</span></div>
-            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertValidConfig</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cloneConfigValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">configEntriesEqual</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">configValuesEqual</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">configValueToString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigLoader</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigResolver</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigStore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfiguration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationFromSources</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationFromStore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationFromValues</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigValidationIssue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCustomConfigSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createDefaultsConfigSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createEnvironmentConfigSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createInitializedConfiguration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createMemoryConfigSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createValidatedConfiguration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">deduplicateConfigSources</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">defineConfigProperty</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">findConfigSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">freezeConfigValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getConfigValueType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">initializeConfigManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">invalidConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isConfigEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isConfigObject</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isConfigPrimitive</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isConfigSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isConfigValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isUnsafeConfigKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">loadConfigSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">loadConfigSources</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">loadConfigSourceStrict</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">loadConfiguration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">matchesConfigType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">missingConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeConfigSourceResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseConfigBigInt</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseConfigBoolean</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseConfigDate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseConfigNumber</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseConfigString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">readOwnConfigProperty</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">redactConfigValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">serializeConfigEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sortConfigEntries</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sortConfigSources</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sourceResultsToEntries</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toConfigJsonValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toSafeConfigEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">updateConfigEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateConfigObject</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateConfigValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withConfigEntrySource</code></div>
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Functions <span class="text-black/40 font-normal">(65)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">assertValidConfig</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">cloneConfigValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">configEntriesEqual</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">configValuesEqual</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">configValueToString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigLoader</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigResolver</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigStore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfiguration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationFromSources</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationFromStore</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigurationFromValues</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createConfigValidationIssue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createCustomConfigSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createDefaultsConfigSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createEnvironmentConfigSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createInitializedConfiguration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createMemoryConfigSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createValidatedConfiguration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">deduplicateConfigSources</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">defineConfigProperty</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">findConfigSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">freezeConfigValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">getConfigValueType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">initializeConfigManager</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">invalidConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isConfigEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isConfigObject</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isConfigPrimitive</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isConfigSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isConfigValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSensitiveConfigEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSensitiveConfigKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isSensitiveConfigValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isUnsafeConfigKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">loadConfigSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">loadConfigSources</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">loadConfigSourceStrict</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">loadConfiguration</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">matchesConfigType</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">missingConfigurationError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeConfigSourceResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseConfigBigInt</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseConfigBoolean</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseConfigDate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseConfigNumber</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseConfigString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">readOwnConfigProperty</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">redactConfigValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">serializeConfigEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sortConfigEntries</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sortConfigSources</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">sourceResultsToEntries</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toConfigJsonValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toSafeConfigEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">updateConfigEntry</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateConfigObject</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">validateConfigValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">withConfigEntrySource</code></div>
           </div>
           <div class="mb-5">
             <div class="font-bold text-sm uppercase tracking-wider mb-2">Interfaces <span class="text-black/40 font-normal">(25)</span></div>

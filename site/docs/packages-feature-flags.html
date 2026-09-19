@@ -167,7 +167,7 @@ yarn add @zudojs/feature-flags</div>
           <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Multiple providers</strong> — in-memory, environment variables, composite, and cached providers</li>
           <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Rollout bucketing</strong> — deterministic FNV-1a hashing for consistent percentage rollouts</li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Variant assignment</strong> — weighted variant assignment for A/B testing</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Dependency resolution</strong> — flags can depend on other flags with cycle detection</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Dependency resolution</strong> — a dependent flag is on only where each prerequisite evaluates on for the same context (state, expiry, rules, rollout), with cycle detection</li>
           <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Snapshots</strong> — evaluate all flags at once for a given context</li>
         </ul>
 
@@ -348,6 +348,7 @@ yarn add @zudojs/feature-flags</div>
   <span class="kw">readonly</span> attribute: <span class="tp">string</span>;
   <span class="kw">readonly</span> operator: <span class="tp">FeatureFlagOperator</span>;
   <span class="kw">readonly</span> value: <span class="tp">unknown</span>;
+  <span class="kw">readonly</span> result?: <span class="tp">FeatureFlagValue</span>; <span class="cm">// served on match, default true</span>
 }
 
 <span class="cm">// Percentage — deterministic rollout</span>
@@ -400,7 +401,7 @@ yarn add @zudojs/feature-flags</div>
   | <span class="str">"less_than"</span>       <span class="cm">// numeric &lt;</span>
   | <span class="str">"less_than_or_equal"</span> <span class="cm">// numeric &lt;=</span>
   | <span class="str">"exists"</span>          <span class="cm">// attribute exists</span>
-  | <span class="str">"matches"</span>;        <span class="cm">// regex match</span></div>
+  | <span class="str">"matches"</span>;        <span class="cm">// regex match; unsafe (nested-repetition) patterns and inputs &gt; 1024 chars never match</span></div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Rule Evaluation</h3>
         <div class="code-block"><span class="kw">interface</span> <span class="tp">RuleEvaluationResult</span> {
@@ -454,7 +455,7 @@ yarn add @zudojs/feature-flags</div>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">disabled</td><td class="p-3">Flag is disabled</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">not_found</td><td class="p-3">Flag does not exist</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">error</td><td class="p-3">Provider unreachable (<code>getAll()</code> or <code>get()</code> threw); reported to <code>onError</code></td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">dependency_disabled</td><td class="p-3">A required dependency is disabled</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">dependency_disabled</td><td class="p-3">A required dependency is not on for this context (disabled, draft, archived, expired, or evaluates false)</td></tr>
               <tr><td class="p-3 font-mono text-sm">expired</td><td class="p-3">Flag is <code>state: "archived"</code> or <code>metadata.expiresAt</code> is in the past (a schedule rule outside its window simply does not match)</td></tr>
             </tbody>
           </table>
@@ -488,6 +489,7 @@ yarn add @zudojs/feature-flags</div>
   <span class="kw">readonly</span> provider: <span class="tp">FeatureFlagProvider</span>;
   <span class="kw">readonly</span> defaultContext?: <span class="tp">FeatureFlagContext</span>;
   <span class="kw">readonly</span> throwOnMissing?: <span class="tp">boolean</span>;  <span class="cm">// default: false</span>
+  <span class="kw">readonly</span> missingFlagTtlMs?: <span class="tp">number</span>;  <span class="cm">// default: 30_000 — how long a missing flag is remembered</span>
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Returned API</h3>
@@ -630,6 +632,7 @@ provider.<span class="fn">delete</span>(<span class="str">"new-ui"</span>);</div
         <p class="mb-3 text-sm">Wraps a provider with in-memory TTL caching.</p>
         <div class="code-block"><span class="kw">interface</span> <span class="tp">CachedProviderOptions</span> {
   <span class="kw">readonly</span> ttl?: <span class="tp">number</span>;  <span class="cm">// default: 30_000 (ms)</span>
+  <span class="kw">readonly</span> maxEntries?: <span class="tp">number</span>;  <span class="cm">// default: 1000 cached flags</span>
 }
 
 <span class="kw">function</span> <span class="fn">createCachedProvider</span>(
@@ -854,7 +857,7 @@ registry.<span class="fn">size</span>;            <span class="cm">// 2</span></
         <h3 class="text-lg font-bold mb-3 mt-6">How It Works</h3>
         <ul class="space-y-2 mb-6">
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> When evaluating <code>advanced-feature</code>, the evaluator checks <code>base-feature</code> first</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> If <code>base-feature</code> is disabled, the result reason is <code>dependency_disabled</code></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> If <code>base-feature</code> is not on for the same context (disabled, draft, archived, expired, or evaluates false), the result reason is <code>dependency_disabled</code></li>
           <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> Circular dependencies throw <code>FeatureFlagDependencyError</code></li>
           <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> Dependencies are resolved via the same provider, not the registry</li>
         </ul>
@@ -866,6 +869,7 @@ registry.<span class="fn">size</span>;            <span class="cm">// 2</span></
 
         <h3 class="text-lg font-bold mb-3 mt-6">isPlainObject</h3>
         <div class="code-block"><span class="kw">function</span> <span class="fn">isPlainObject</span>(value: <span class="tp">unknown</span>): value <span class="kw">is</span> <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">unknown</span>&gt;;</div>
+        <p class="mt-3 mb-3 text-sm">Re-export of <code>isPlainObject</code> from <code>@zudojs/types</code> (deprecated here; import it from types). Returns <code>false</code> for <code>Date</code> and <code>Map</code>.</p>
 
         <h3 class="text-lg font-bold mb-3 mt-6">valuesEqual</h3>
         <div class="code-block"><span class="kw">function</span> <span class="fn">valuesEqual</span>(

@@ -291,7 +291,7 @@ console.<span class="fn">log</span>(bad.success, bad.success ? bad.data : bad.is
   }
 }</div>
 
-        <p class="mb-3">All validation errors extend <code>ValidationError</code>, which extends <code>BaseError</code> from <a href="/docs/packages-errors" class="text-zudo-blue underline">@zudojs/errors</a>. That means they already carry <code>statusCode: 400</code>, <code>expose: true</code> and a <code>toJSON()</code> that includes <code>issues</code>, so an HTTP layer can serialize them without extra code.</p>
+        <p class="mb-3">All validation errors extend <code>ValidationError</code>, which extends the <code>ValidationError</code> of <a href="/docs/packages-errors" class="text-zudo-blue underline">@zudojs/errors</a> (a <code>BaseError</code>). That means they already carry <code>statusCode: 400</code>, <code>expose: true</code> and a <code>toJSON()</code> that includes <code>issues</code>, so an HTTP layer can serialize them without extra code.</p>
 
         <table class="doc-table mb-4">
           <thead><tr><th>Error class</th><th>Thrown by</th><th>validationCode</th></tr></thead>
@@ -300,12 +300,12 @@ console.<span class="fn">log</span>(bad.success, bad.success ? bad.data : bad.is
             <tr><td><code>SchemaValidationError</code></td><td><code>parse</code>, <code>parseAsync</code>, <code>assertValid</code>, parser <code>.parse()</code></td><td><code>VALIDATION_SCHEMA_FAILED</code></td></tr>
             <tr><td><code>ConstraintValidationError</code></td><td>composer <code>.assert()</code>, normalizer and transformer <code>.normalize()</code> / <code>.transform()</code></td><td><code>VALIDATION_CONSTRAINT_FAILED</code></td></tr>
             <tr><td><code>RequiredValidationError</code>, <code>InvalidTypeValidationError</code>, <code>InvalidFormatValidationError</code>, <code>InvalidValueValidationError</code></td><td>Never thrown by the package. Available for your own code</td><td><code>VALIDATION_REQUIRED</code>, <code>_INVALID_TYPE</code>, <code>_INVALID_FORMAT</code>, <code>_INVALID_VALUE</code></td></tr>
-            <tr><td><code>ValidationResultError</code></td><td><code>unwrapValidation</code> on a failed result</td><td>none (extends <code>BaseError</code> directly, not <code>ValidationError</code>)</td></tr>
+            <tr><td><code>ValidationResultError</code></td><td><code>unwrapValidation</code> on a failed result</td><td>none (extends <code>@zudojs/errors</code>&rsquo; <code>ValidationError</code> directly, not this package&rsquo;s <code>ValidationError</code>)</td></tr>
           </tbody>
         </table>
 
         <div class="callout callout-warning">
-          <strong class="text-zudo-yellow">Watch out:</strong> <code>isValidationError()</code> returns <code>false</code> for <code>ValidationResultError</code>, because that class does not extend <code>ValidationError</code>. If you use <code>unwrapValidation</code>, catch <code>ValidationResultError</code> by name.
+          <strong class="text-zudo-yellow">Watch out:</strong> <code>isValidationError()</code> returns <code>false</code> for <code>ValidationResultError</code>, because that class extends <code>@zudojs/errors</code>&rsquo; <code>ValidationError</code>, not this package&rsquo;s. Checking <code>instanceof</code> the <code>@zudojs/errors</code> class matches both. If you use <code>unwrapValidation</code>, catch <code>ValidationResultError</code> by name.
         </div>
       </section>
 
@@ -342,12 +342,12 @@ console.<span class="fn">log</span>(<span class="fn">checkConstraints</span>([in
           <thead><tr><th>Group</th><th>Constraints</th></tr></thead>
           <tbody>
             <tr><td>Any value</td><td><code>required</code> (not null or undefined)</td></tr>
-            <tr><td>Strings</td><td><code>nonEmptyString</code>, <code>minLength(n)</code>, <code>maxLength(n)</code>, <code>lengthBetween(min, max)</code>, <code>matches(regex, message?)</code>, <code>email</code>, <code>uuid</code>, <code>httpUrl</code>, <code>ascii</code>, <code>digits</code>, <code>letters</code>, <code>slug</code></td></tr>
+            <tr><td>Strings</td><td><code>nonEmptyString</code>, <code>minLength(n)</code>, <code>maxLength(n)</code>, <code>lengthBetween(min, max)</code>, <code>matches(regex, message?)</code>, <code>email</code> (max 254 characters; same accept set as <code>ValidationPattern.EMAIL</code> and <code>isEmail</code>), <code>uuid</code>, <code>httpUrl</code>, <code>ascii</code>, <code>digits</code>, <code>letters</code>, <code>slug</code></td></tr>
             <tr><td>Numbers</td><td><code>min(n)</code>, <code>max(n)</code>, <code>between(min, max)</code>, <code>finiteNumber</code>, <code>integer</code>, <code>positive</code>, <code>nonNegative</code>, <code>even</code>, <code>odd</code></td></tr>
             <tr><td>Dates</td><td><code>isoDate</code> (a string such as <code>"2024-02-29"</code>), <code>futureDate</code>, <code>pastDate</code> (both take a <code>Date</code>)</td></tr>
             <tr><td>Arrays</td><td><code>minItems(n)</code>, <code>maxItems(n)</code>, <code>exactItems(n)</code>, <code>everyItem(constraint)</code>, <code>someItem(constraint)</code></td></tr>
             <tr><td>Membership</td><td><code>oneOf([...values])</code>, <code>noneOf([...values])</code></td></tr>
-            <tr><td>Combining</td><td><code>combineConstraints(a, b)</code> (all must pass, one issue), <code>not(constraint)</code></td></tr>
+            <tr><td>Combining</td><td><code>combineConstraints(a, b)</code> (all must pass, one issue), <code>not(constraint)</code> (fails closed: wrong-typed input or a throwing inner constraint fails)</td></tr>
           </tbody>
         </table>
 
@@ -465,7 +465,7 @@ console.<span class="fn">log</span>(<span class="fn">validateAndTransform</span>
         <p class="mb-4 leading-relaxed">
           A <em>registry</em> is a named collection of rules. You register a schema or a list of constraints under a string name once, then validate by name anywhere. This is useful when the rule name comes from data, for example a field type in a form definition.
         </p>
-        <p class="mb-3">This example registers two rules and validates against each by name.</p>
+        <p class="mb-3">This example registers two rules and validates against each by name. A rule with both <code>schema</code> and <code>constraints</code> runs both: the schema first, then the constraints on its output.</p>
         <div class="code-block mb-4"><span class="kw">import</span> { z, <span class="fn">createValidationRegistry</span>, <span class="fn">integer</span>, <span class="fn">positive</span> } <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
 
 <span class="kw">const</span> registry = <span class="fn">createValidationRegistry</span>();
@@ -493,7 +493,7 @@ console.<span class="fn">log</span>(registry.<span class="fn">has</span>(<span c
         <p class="mb-4 leading-relaxed">
           A schema checks <em>what</em> a value contains. A structural guard checks whether the value is safe to walk at all. Deeply nested JSON can overflow the call stack, a huge object can exhaust memory, and an object that refers to itself can loop forever in a serializer. Run these guards on raw input before schema validation.
         </p>
-        <p class="mb-3">Each guard stops the moment its limit is passed, so a hostile payload costs you the limit, not the payload's full size.</p>
+        <p class="mb-3">Each guard stops the moment its limit is passed, so a hostile payload costs you the limit, not the payload's full size. The size guard measures an object&rsquo;s <code>toJSON()</code> output when it has one; the cycle and depth guards walk shared subtrees once.</p>
         <div class="code-block mb-4"><span class="kw">import</span> {
   <span class="fn">assertDepthWithinLimit</span>, <span class="fn">assertSizeWithinLimit</span>, <span class="fn">hasCircularReference</span>, <span class="fn">getSerializationDepth</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
