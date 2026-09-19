@@ -101,6 +101,13 @@ const page = await users.findAll({ orderBy: "email", limit: 20, offset: 0 });
   inside the store cannot redirect a read or write out of it. A base directory
   that is itself reached through a symlink (macOS's `tmpdir()`, a mounted
   volume) is fine: containment is checked against its real location.
+- `LocalObjectStorage` keys are opaque, as they are in S3: a key containing a
+  `.`, `..` or empty path segment (`a/../b`, `./a`, `a//b`) is refused, never
+  normalised. `${tenant}/${userKey}` therefore cannot climb into another
+  tenant's prefix, and no spelling of a key reaches `.zudo-object-meta`.
+- `get`, `exists` and `metadata` answer `null`/`false` only when the object is
+  missing. Any other I/O failure (EACCES, EIO, a symlink loop) throws a
+  `StorageError` with code `ERR_STORAGE_READ`.
 - `ConnectionPool` reserves a slot before awaiting the factory, so concurrent
   `acquire()` calls cannot overshoot `max`, and ignores a connection released
   twice rather than handing it to two callers.

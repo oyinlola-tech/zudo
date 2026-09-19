@@ -27,6 +27,11 @@ import {
   writeAtomic,
 } from "./localObjectStorage.write.js";
 import {
+  assertResolvedNotReserved,
+  rethrowUnlessMissing,
+} from "./objectKey/index.js";
+import {
+  SIDECAR_DIR,
   assertNotReserved,
   readAttributes,
   removeAttributes,
@@ -101,7 +106,8 @@ export class LocalObjectStorage implements ObjectStorage {
     try {
       stats = await stat(filePath);
       buffer = await readFile(filePath);
-    } catch {
+    } catch (error) {
+      rethrowUnlessMissing(error, key);
       return null;
     }
 
@@ -150,7 +156,8 @@ export class LocalObjectStorage implements ObjectStorage {
       // not an object: `get("a")` returns null, so `exists("a")` must not
       // claim otherwise.
       return (await stat(filePath)).isFile();
-    } catch {
+    } catch (error) {
+      rethrowUnlessMissing(error, key);
       return false;
     }
   }
@@ -166,7 +173,8 @@ export class LocalObjectStorage implements ObjectStorage {
         size: stats.size,
         lastModified: stats.mtime,
       };
-    } catch {
+    } catch (error) {
+      rethrowUnlessMissing(error, key);
       return null;
     }
   }
@@ -182,6 +190,7 @@ export class LocalObjectStorage implements ObjectStorage {
   private async resolve(key: string): Promise<string> {
     assertNotReserved(key);
     const filePath = resolveKeyPath(this.basePath, key);
+    assertResolvedNotReserved(this.basePath, filePath, SIDECAR_DIR, key);
     await assertRealPathContained(this.basePath, filePath, key);
     return filePath;
   }

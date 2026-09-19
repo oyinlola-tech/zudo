@@ -18,6 +18,7 @@ import {
   sep,
 } from "node:path";
 import { StorageError } from "@zudojs/errors";
+import { assertCanonicalKey } from "./objectKey/index.js";
 
 /** Raised when a key resolves outside the store's base directory. */
 function traversal(key: string): StorageError {
@@ -63,7 +64,8 @@ export function isContained(basePath: string, candidate: string): boolean {
  * @param basePath - An absolute base directory.
  * @param key - The caller-supplied object key.
  * @returns The absolute path the key addresses.
- * @throws {StorageError} when the key escapes the base directory.
+ * @throws {StorageError} when the key escapes the base directory, or contains
+ *   a `.`, `..` or empty segment (keys are opaque and never normalised).
  */
 export function resolveKeyPath(basePath: string, key: string): string {
   if (typeof key !== "string" || key.length === 0) {
@@ -75,6 +77,7 @@ export function resolveKeyPath(basePath: string, key: string): string {
 
   if (key.includes("\0")) throw traversal(key);
   if (isAbsolute(key)) throw traversal(key);
+  assertCanonicalKey(key);
 
   const resolved = resolve(join(basePath, key));
   if (!isContained(basePath, resolved)) throw traversal(key);
