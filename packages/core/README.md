@@ -49,6 +49,8 @@ await app.start(); // restart: a fresh runtime is created
 await app.shutdown(); // stop + dispose; cannot be restarted afterwards
 ```
 
+When `runtime.mode` is omitted, it is derived from `NODE_ENV` with `resolveEnvironment()` from `@zudojs/constants` (`prod` / `Production` → `"production"`, `staging` → `"production"`, `test` → `"test"`, unset → `"development"`).
+
 `createApplication` wires the standard graph (container, configuration manager, logger, module registry/loader/lifecycle, runtime, application lifecycle). Every piece can also be assembled by hand:
 
 ```typescript
