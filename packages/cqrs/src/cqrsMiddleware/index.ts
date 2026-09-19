@@ -6,3 +6,4 @@
  */
 
 export * from "./cqrsMiddleware.core.js";
+export * from "./cqrsMiddleware.compose.js";

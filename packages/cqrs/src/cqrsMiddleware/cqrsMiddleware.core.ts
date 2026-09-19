@@ -13,7 +13,6 @@ import {
   CqrsError,
   CqrsValidationError,
   InvalidMiddlewareError,
-  MiddlewareExecutionError,
 } from "../cqrsErrors/cqrsError.base.js";
 
 /**
@@ -435,51 +434,6 @@ export function queryMiddleware(middleware: QueryMiddleware): CqrsMiddleware {
     return middleware(request as Query, context, async (query, nextContext) =>
       next(query, nextContext),
     );
-  };
-}
-
-/**
- * Combines multiple middleware functions into a single middleware.
- *
- * Each middleware may call `next()` at most once per execution; a second
- * call throws `MiddlewareExecutionError`. The command and query buses
- * build their pipelines with this function, so the same rule applies
- * there.
- */
-export function composeMiddleware(
-  middleware: readonly CqrsMiddleware[],
-): CqrsMiddleware {
-  const stack = [...middleware];
-
-  return async (request, context, terminal) => {
-    let index = -1;
-
-    const dispatch = async (
-      currentIndex: number,
-      currentRequest: Command | Query,
-      currentContext?: CqrsContext,
-    ): Promise<unknown> => {
-      if (currentIndex <= index) {
-        throw new MiddlewareExecutionError();
-      }
-
-      index = currentIndex;
-
-      const current = stack[currentIndex];
-
-      if (!current) {
-        return terminal(currentRequest, currentContext);
-      }
-
-      return current(
-        currentRequest,
-        currentContext,
-        (nextRequest, nextContext) =>
-          dispatch(currentIndex + 1, nextRequest, nextContext),
-      );
-    };
-
-    return dispatch(0, request, context);
   };
 }
 

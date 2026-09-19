@@ -14,7 +14,7 @@ import {
   InvalidCommandError,
 } from "../cqrsErrors/cqrsError.base.js";
 
-import { composeMiddleware } from "../cqrsMiddleware/cqrsMiddleware.core.js";
+import { composeMiddleware } from "../cqrsMiddleware/cqrsMiddleware.compose.js";
 
 import {
   assertExecutableHandler,

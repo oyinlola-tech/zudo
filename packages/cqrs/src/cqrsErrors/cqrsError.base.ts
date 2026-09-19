@@ -1,28 +1,19 @@
 import {
   BaseError,
+  CqrsError,
   ErrorCategory,
   ErrorCode,
   ErrorSeverity,
-  type BaseErrorOptions,
   type ErrorMetadata,
 } from "@zudojs/errors";
 
 /**
  * Base error for failures originating from the CQRS package.
+ *
+ * Owned by `@zudojs/errors` and re-exported here, so
+ * `instanceof CqrsError` matches across both packages.
  */
-export class CqrsError extends BaseError {
-  constructor(message: string, options: BaseErrorOptions = {}) {
-    super(message, {
-      ...options,
-      code: options.code ?? ErrorCode.INTERNAL_ERROR,
-      category: options.category ?? ErrorCategory.SYSTEM,
-      severity: options.severity ?? ErrorSeverity.ERROR,
-      statusCode: options.statusCode ?? 500,
-      expose: options.expose ?? false,
-      isOperational: options.isOperational ?? true,
-    });
-  }
-}
+export { CqrsError };
 
 /**
  * Thrown when a CQRS request is invalid.
