@@ -19,6 +19,7 @@ import { FrontendGenerator } from "../generators/frontend/frontendGenerator.core
 import { FullstackComposer } from "../generators/fullstack/fullstackComposer.core.js";
 import { IntegrationGenerator } from "../generators/integration/integrationGenerator.core.js";
 import { InfrastructureGenerator } from "../generators/infrastructure/infrastructure.generator.js";
+import { layoutFullstackBackend } from "../generators/fullstack/fullstackBackend.layout.js";
 import { BackendGenerator } from "../generators/backend/backend.generator.js";
 import { RollbackManager } from "../rollback/rollbackManager.core.js";
 import {
@@ -51,7 +52,9 @@ const VALID_ARCHITECTURES = [
   "modular-monolith",
   "microservice",
 ] as const;
-const VALID_DATABASES = ["postgresql", "mysql", "sqlite", "mongodb"] as const;
+// No mongodb: there is no adapter for it, and it used to be accepted and
+// scaffolded as PostgreSQL (tooling/CLI-04).
+const VALID_DATABASES = ["postgresql", "mysql", "sqlite"] as const;
 const VALID_PACKAGE_MANAGERS = ["npm", "pnpm", "yarn", "bun"] as const;
 const SERVICE_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const VALID_FRONTENDS = [
@@ -406,6 +409,22 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
     throw new CLIValidationError("Project name is required.");
   }
 
+  // Backend templates only emit TypeScript. `--language javascript` used to
+  // be accepted and ignored (tooling/CLI-09); in a fullstack project it
+  // applies to the frontend only, which is said out loud.
+  if (answers.language === "javascript") {
+    if (answers.projectType === "backend") {
+      throw new CLIValidationError(
+        "Backend projects are generated in TypeScript only; --language javascript is not supported for --type backend.",
+      );
+    }
+    if (answers.projectType === "fullstack") {
+      context.logger.warn(
+        "--language javascript applies to the frontend (apps/web) only; the backend is generated in TypeScript.",
+      );
+    }
+  }
+
   await createProject(answers, context);
 }
 
@@ -614,17 +633,15 @@ async function generateFullstackProject(
 
   // Uses the same BackendGenerator the generator registry exposes rather
   // than a third private copy of the architecture switch.
-  const backendFiles = await new BackendGenerator().generate(
-    options,
-    join(projectPath, "apps/api"),
+  const backend = layoutFullstackBackend(
+    options.architecture,
+    await new BackendGenerator().generate(options, join(projectPath, "apps/api")),
   );
 
-  // The backend template may carry its own workspace definition; nested in
-  // apps/api it would create a second workspace root, so strip it.
-  delete backendFiles["pnpm-workspace.yaml"];
-
-  await writeFileTree(join(projectPath, "apps/api"), backendFiles);
-  rollback.trackDirectory(join(projectPath, "apps/api"));
+  await writeFileTree(join(projectPath, backend.directory), backend.files);
+  for (const directory of backend.createdDirectories) {
+    rollback.trackDirectory(join(projectPath, directory));
+  }
 
   const integrationGenerator = new IntegrationGenerator();
   await integrationGenerator.generate({
@@ -662,6 +679,7 @@ async function generateFullstackProject(
       database: options.database ?? "postgresql",
       packageManager: options.packageManager,
       services: options.services,
+      appDirectory: "apps/api",
     },
     projectPath,
   );

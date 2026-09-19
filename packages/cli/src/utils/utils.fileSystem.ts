@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile as writeFileAsync } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 
+import { activeWriteCapture } from "./utils.writeGuard.js";
+
 function assertSafePath(basePath: string, filePath: string): void {
   const resolved = join(basePath, filePath);
   const relativePath = relative(basePath, resolved);
@@ -19,6 +21,11 @@ export async function writeFile(
   assertSafePath(basePath, filePath);
 
   const fullPath = join(basePath, filePath);
+  const capture = activeWriteCapture();
+  if (capture) {
+    capture.set(fullPath, content);
+    return;
+  }
   await mkdir(dirname(fullPath), { recursive: true });
   await writeFileAsync(fullPath, content);
 }

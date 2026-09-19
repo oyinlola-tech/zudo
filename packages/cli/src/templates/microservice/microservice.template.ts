@@ -28,6 +28,7 @@ import { normalizeName } from "../../utils/utils.name.js";
 import {
   RUNTIME_APP_DEPENDENCIES,
   moduleSpec,
+  renderAppPackageDockerfile,
   renderAppFile,
   renderModuleFile,
   renderServerFile,
@@ -216,15 +217,6 @@ MIT
   // Shared types
   files["src/types/index.ts"] = ``;
 
-  // Install command used inside Dockerfiles (no lockfile is generated, so
-  // never use `npm ci`; enable corepack for pnpm/yarn on bare node images).
-  const dockerInstall =
-    options.packageManager === "pnpm"
-      ? "corepack enable && pnpm install"
-      : options.packageManager === "yarn"
-        ? "corepack enable && yarn install"
-        : "npm install";
-
   const appTsconfig = `{
   "compilerOptions": {
     "target": "ES2024",
@@ -279,22 +271,11 @@ MIT
 
   files["apps/gateway/tsconfig.json"] = appTsconfig;
 
-  files["apps/gateway/Dockerfile"] = `FROM node:24-alpine AS builder
-WORKDIR /app
-COPY apps/gateway/package.json ./
-RUN ${dockerInstall}
-COPY apps/gateway/tsconfig.json ./
-COPY apps/gateway/src ./src
-RUN npx tsc
-
-FROM node:24-alpine AS runtime
-WORKDIR /app
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./
-EXPOSE 3000
-CMD ["node", "dist/server.js"]
-`;
+  files["apps/gateway/Dockerfile"] = renderAppPackageDockerfile({
+    appPath: "apps/gateway",
+    port: 3000,
+    packageManager: options.packageManager,
+  });
 
   files["apps/gateway/src/index.ts"] =
     `export { createApp } from "./app.js";
@@ -358,23 +339,11 @@ CMD ["node", "dist/server.js"]
 
     files[`apps/services/${svcName}/tsconfig.json`] = appTsconfig;
 
-    files[`apps/services/${svcName}/Dockerfile`] =
-      `FROM node:24-alpine AS builder
-WORKDIR /app
-COPY apps/services/${svcName}/package.json ./
-RUN ${dockerInstall}
-COPY apps/services/${svcName}/tsconfig.json ./
-COPY apps/services/${svcName}/src ./src
-RUN npx tsc
-
-FROM node:24-alpine AS runtime
-WORKDIR /app
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./
-EXPOSE ${port}
-CMD ["node", "dist/server.js"]
-`;
+    files[`apps/services/${svcName}/Dockerfile`] = renderAppPackageDockerfile({
+      appPath: `apps/services/${svcName}`,
+      port,
+      packageManager: options.packageManager,
+    });
 
     // Service structure (modular monolith per service)
     const svcDirs = [
@@ -418,7 +387,9 @@ CMD ["node", "dist/server.js"]
     files[`apps/services/${svcName}/src/modules/index.ts`] =
       `export { ${svcModule.className} } from "./${svcName}.module.js";\n`;
 
-    files[`apps/services/${svcName}/src/server.ts`] = renderServerFile();
+    files[`apps/services/${svcName}/src/server.ts`] = renderServerFile("./app.js", {
+      defaultPort: port,
+    });
 
     for (const dir of svcDirs) {
       files[`apps/services/${svcName}/src/${dir}/index.ts`] = "";

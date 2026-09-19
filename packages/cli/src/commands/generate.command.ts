@@ -6,9 +6,12 @@
  * backend lives, then places the schematic accordingly.
  */
 
+import { join } from "node:path";
+
 import type { CLIContext } from "../cliType/cliType.type.js";
 import { generateService } from "../generators/service/service.generator.js";
 import { generateModule } from "../generators/module/module.generator.js";
+import type { ModuleRegistration } from "../generators/module/module.registration.js";
 import { generateCommand } from "../generators/command/command.generator.js";
 import { generateQuery } from "../generators/query/query.generator.js";
 import { generateController } from "../generators/controller/controller.generator.js";
@@ -26,6 +29,7 @@ import {
   assertSafePathSegment,
 } from "../utils/utils.name.js";
 import { resolveProjectLayout } from "../resolvers/layout/projectLayout.core.js";
+import { captureWrites, findWriteConflicts } from "../utils/utils.writeGuard.js";
 
 const VALID_SCHEMATICS = [
   "service",
@@ -47,6 +51,7 @@ interface GenerateOptions {
   readonly service?: string;
   readonly module?: string;
   readonly dryRun: boolean;
+  readonly onModuleRegistered?: (registration: ModuleRegistration) => void;
   readonly architecture?: string;
 }
 
@@ -98,9 +103,15 @@ function getArchitectureRoot(
       }
       // `--service <name>` selects which app the schematic belongs to.
       // Without it the gateway app — the one app always generated — is used.
-      return serviceName !== undefined
-        ? `apps/services/${serviceName}/src`
-        : "apps/gateway/src";
+      // Modules go to that app's src/modules, next to the scaffolded ones,
+      // so they can be registered in its app.ts.
+      {
+        const appRoot =
+          serviceName !== undefined
+            ? `apps/services/${serviceName}/src`
+            : "apps/gateway/src";
+        return schematic === "module" ? `${appRoot}/modules` : appRoot;
+      }
 
     case "monolith":
     default:
@@ -122,7 +133,13 @@ function backendPrefix(cwd: string): string {
   const layout = resolveProjectLayout(cwd);
   const [first] = layout?.backendDirs ?? [];
 
-  if (layout?.projectType === "fullstack" && first !== undefined && first !== cwd) {
+  // Only a monolith fullstack backend lives in apps/api; a microservice
+  // fullstack project keeps apps/gateway and apps/services at the root.
+  if (
+    layout?.projectType === "fullstack" &&
+    first !== undefined &&
+    first === join(cwd, "apps", "api")
+  ) {
     return "apps/api/";
   }
 
@@ -135,6 +152,7 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
   const service = context.values.service as string | undefined;
   const moduleName = context.values.module as string | undefined;
   const dryRun = context.values["dry-run"] === true;
+  const force = context.values.force === true;
 
   if (
     !schematic ||
@@ -188,14 +206,40 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
     );
   }
 
+  const schematicOptions: GenerateOptions = {
+    service,
+    module: moduleName,
+    dryRun,
+    architecture: architecture ?? undefined,
+  };
+
+  if (!dryRun && !force) {
+    const planned = await captureWrites(() =>
+      runSchematic(schematic, name, schematicOptions, cwd),
+    );
+    const conflicts = findWriteConflicts(cwd, planned);
+    if (conflicts.length > 0) {
+      throw new CLIValidationError(
+        `Refusing to overwrite existing files:\n${conflicts
+          .map((file) => `  - ${file}`)
+          .join("\n")}\nRe-run with --force to overwrite them.`,
+      );
+    }
+  }
+
   const result = await runSchematic(
     schematic,
     name,
     {
-      service,
-      module: moduleName,
-      dryRun,
-      architecture: architecture ?? undefined,
+      ...schematicOptions,
+      onModuleRegistered: (registration) => {
+        if (registration.registered) return;
+        context.logger.warn(
+          `Could not register the module in app.ts automatically. Add:\n${registration.manualSteps
+            .map((step) => `  ${step}`)
+            .join("\n")}`,
+        );
+      },
     },
     cwd,
   );
@@ -242,7 +286,7 @@ async function runSchematic(
 
       case "module":
         return await generateModule(
-          { name, feature: true, basePath, dryRun },
+          { name, feature: true, basePath, dryRun, onRegistered: options.onModuleRegistered },
           cwd,
         );
 

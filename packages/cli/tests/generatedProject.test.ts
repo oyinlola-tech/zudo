@@ -118,7 +118,9 @@ describe("monolith template", () => {
   it("does not import unused logger in server.ts", () => {
     const files = generateMonolithFiles(scaffoldOptions());
     expect(files["src/server.ts"]).not.toContain('import { logger }');
-    expect(files["src/server.ts"]).not.toContain("const server =");
+    // server.ts now owns a real @zudojs/http server (tooling/CLI-01).
+    expect(files["src/server.ts"]).toContain("createHttpServer(");
+    expect(files["src/server.ts"]).toContain("await server.start();");
   });
 });
 
@@ -230,7 +232,10 @@ describe("InfrastructureGenerator", () => {
     const compose = files["docker-compose.yml"]!;
     expect(compose).toContain('"3001:3001"');
     expect(compose).toContain('"3002:3002"');
-    expect(compose).not.toContain('"3000:3000"');
+    // The gateway (apps/gateway) is the app on 3000 that the fullstack
+    // frontend calls; it used to be missing from this compose (CLI-02).
+    expect(compose).toContain('"3000:3000"');
+    expect(compose).toContain("dockerfile: apps/gateway/Dockerfile");
   });
 
   it("emits mysql-specific env, image, port, and URL for mysql", async () => {

@@ -12,3 +12,8 @@ export {
 export { normalizeName, toPascalCase, toCamelCase } from "./utils.name.js";
 export { detectArchitecture } from "./utils.detect.js";
 export { execCommand, runStreaming } from "./utils.exec.js";
+export {
+  activeWriteCapture,
+  captureWrites,
+  findWriteConflicts,
+} from "./utils.writeGuard.js";

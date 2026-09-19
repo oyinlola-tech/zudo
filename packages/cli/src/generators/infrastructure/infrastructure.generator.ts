@@ -6,6 +6,12 @@
 
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
 import { CLIValidationError } from "../../errors/index.js";
+import { resolveDatabaseAdapter } from "../../adapters/databases/databaseAdapter.resolver.js";
+import { resolveMicroserviceServices } from "../../templates/microservice/microservice.template.js";
+import {
+  renderAppPackageDockerfile,
+  renderWorkspaceAppDockerfile,
+} from "../../templates/shared/dockerfile.template.js";
 
 export interface InfrastructureOptions {
   readonly projectName: string;
@@ -13,6 +19,11 @@ export interface InfrastructureOptions {
   readonly database: string;
   readonly packageManager: string;
   readonly services?: readonly string[];
+  /**
+   * Directory holding the non-microservice server, relative to the project
+   * root. The fullstack scaffold passes `"apps/api"`; defaults to `"."`.
+   */
+  readonly appDirectory?: string;
 }
 
 const SERVICE_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
@@ -30,6 +41,10 @@ export class InfrastructureGenerator {
     options: InfrastructureOptions,
     basePath: string,
   ): Promise<void> {
+    // Rejects engines with no adapter (e.g. mongodb) instead of falling
+    // through to a postgres container.
+    resolveDatabaseAdapter(options.database);
+
     for (const service of options.services ?? []) {
       if (!SERVICE_NAME_PATTERN.test(service)) {
         throw new CLIValidationError(
@@ -49,47 +64,34 @@ export class InfrastructureGenerator {
       files["docker-compose.yml"] = this.getDockerCompose(options);
       files[".dockerignore"] = "node_modules\ndist\n.git\n.env\n";
 
-      const services = options.services ?? ["gateway"];
-      for (const service of services) {
-        files[`apps/services/${service}/Dockerfile`] =
-          this.getServiceDockerfile(options);
-      }
+      // The gateway lives at apps/gateway and each service at
+      // apps/services/<name>, as the microservice template writes them;
+      // each Dockerfile builds from the project root with its app path.
+      files["apps/gateway/Dockerfile"] = renderAppPackageDockerfile({
+        appPath: "apps/gateway",
+        port: 3000,
+        packageManager: options.packageManager,
+      });
+      resolveMicroserviceServices(options.services ?? []).forEach((service, i) => {
+        files[`apps/services/${service}/Dockerfile`] = renderAppPackageDockerfile({
+          appPath: `apps/services/${service}`,
+          port: 3001 + i,
+          packageManager: options.packageManager,
+        });
+      });
     } else {
       files["docker-compose.yml"] = this.getSimpleDockerCompose(options);
       files[".dockerignore"] = "node_modules\ndist\n.git\n.env\n";
-      files["Dockerfile"] = this.getAppDockerfile(options);
+      files["Dockerfile"] = renderWorkspaceAppDockerfile({
+        appDirectory: options.appDirectory ?? ".",
+        port: 3000,
+        packageManager: options.packageManager,
+      });
     }
 
     files["migrations/.gitkeep"] = "";
 
     return files;
-  }
-
-  /**
-   * Install and build commands for Dockerfiles.
-   *
-   * Generated projects have no lockfile yet, so never use `npm ci` or
-   * `--frozen-lockfile`. pnpm and yarn need `corepack enable` on the bare
-   * node:24-alpine image; bun is not available there so it falls back to npm.
-   */
-  private getDockerCommands(options: InfrastructureOptions): {
-    install: string;
-    build: string;
-  } {
-    switch (options.packageManager) {
-      case "pnpm":
-        return {
-          install: "corepack enable && pnpm install",
-          build: "pnpm run build",
-        };
-      case "yarn":
-        return {
-          install: "corepack enable && yarn install",
-          build: "yarn run build",
-        };
-      default:
-        return { install: "npm install", build: "npm run build" };
-    }
   }
 
   private getDatabaseCompose(
@@ -146,47 +148,12 @@ volumes:
 `;
   }
 
-  private getAppDockerfile(options: InfrastructureOptions): string {
-    const { install, build } = this.getDockerCommands(options);
-
-    return `FROM node:24-alpine AS builder
-WORKDIR /app
-COPY . .
-RUN ${install}
-RUN ${build}
-
-FROM node:24-alpine
-WORKDIR /app
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./
-EXPOSE 3000
-CMD ["node", "dist/server.js"]
-`;
-  }
-
-  private getServiceDockerfile(options: InfrastructureOptions): string {
-    const { install, build } = this.getDockerCommands(options);
-
-    return `FROM node:24-alpine AS builder
-WORKDIR /app
-COPY . .
-RUN ${install}
-RUN ${build}
-
-FROM node:24-alpine
-WORKDIR /app
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./
-EXPOSE 3000
-CMD ["node", "dist/server.js"]
-`;
-  }
-
   private getSimpleDockerCompose(options: InfrastructureOptions): string {
     const db = this.getDatabaseCompose(options);
     const databaseUrl = this.getDatabaseUrl(options);
+
+    const appDirectory = (options.appDirectory ?? ".").replace(/^\.\/?/, "").replace(/\/$/, "");
+    const src = appDirectory === "" ? "src" : `${appDirectory}/src`;
 
     return `services:
   app:
@@ -197,33 +164,35 @@ CMD ["node", "dist/server.js"]
       - DATABASE_URL=${databaseUrl}
 ${db ? "    depends_on:\n      - db\n" : ""}    develop:
       watch:
-        - path: src/
+        - path: ${src}/
           action: sync
-          target: /app/src
+          target: /app/${src}
 ${db ? `\n${this.getDbServiceBlock(db)}` : ""}`;
   }
 
   private getDockerCompose(options: InfrastructureOptions): string {
-    const services = options.services ?? ["gateway"];
+    const services = resolveMicroserviceServices(options.services ?? []);
     const db = this.getDatabaseCompose(options);
     const databaseUrl = this.getDatabaseUrl(options);
-
-    let serviceDefs = "";
-
-    for (let i = 0; i < services.length; i++) {
-      const service = services[i]!;
-      const port = 3001 + i;
-      serviceDefs += `
-  ${service}:
+    const dependsOn = db ? "    depends_on:\n      - db\n" : "";
+    const block = (name: string, appPath: string, port: number): string => `
+  ${name}:
     build:
-      context: apps/services/${service}
+      context: .
+      dockerfile: ${appPath}/Dockerfile
     ports:
       - "${port}:${port}"
     environment:
       - PORT=${port}
       - DATABASE_URL=${databaseUrl}
-${db ? "    depends_on:\n      - db\n" : ""}`;
-    }
+${dependsOn}`;
+
+    const serviceDefs = [
+      block("gateway", "apps/gateway", 3000),
+      ...services.map((service, i) =>
+        block(service, `apps/services/${service}`, 3001 + i),
+      ),
+    ].join("");
 
     return `services:${serviceDefs}${db ? `\n${this.getDbServiceBlock(db)}` : ""}`;
   }

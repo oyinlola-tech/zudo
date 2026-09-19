@@ -105,7 +105,11 @@ export async function runAddCommand(context: CLIContext): Promise<void> {
     );
   }
 
-  const packages = FEATURE_PACKAGES[feature];
+  // Own keys only: `constructor` or `__proto__` resolved to Object.prototype
+  // members and crashed with "packages.join is not a function".
+  const packages = Object.hasOwn(FEATURE_PACKAGES, feature)
+    ? FEATURE_PACKAGES[feature]
+    : undefined;
 
   if (!packages) {
     throw new CLIValidationError(

@@ -10,3 +10,4 @@ export {
   type ResolvedDependency,
   type DependencyConflict,
 } from "./dependencyResolver.core.js";
+export { DEFAULT_DEPENDENCY_VERSIONS } from "./dependencyVersions.constant.js";

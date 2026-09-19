@@ -5,3 +5,7 @@
  */
 
 export { FullstackComposer } from "./fullstackComposer.core.js";
+export {
+  layoutFullstackBackend,
+  type FullstackBackendLayout,
+} from "./fullstackBackend.layout.js";

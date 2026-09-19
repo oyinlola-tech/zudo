@@ -5,6 +5,7 @@
  */
 
 import type { DependencyRequirement } from "../../adapters/frontend/frontendAdapter.type.js";
+import { DEFAULT_DEPENDENCY_VERSIONS } from "./dependencyVersions.constant.js";
 
 /**
  * Resolved dependency with version.
@@ -103,9 +104,15 @@ export class DependencyResolver {
         continue;
       }
 
+      const version = req.version ?? DEFAULT_DEPENDENCY_VERSIONS.get(req.name);
+      if (version === undefined) {
+        warnings.push(
+          `No version range known for "${req.name}"; it is recorded as "latest", which is not reproducible.`,
+        );
+      }
       const resolved: ResolvedDependency = {
         name: req.name,
-        version: req.version ?? "latest",
+        version: version ?? "latest",
         type: req.type,
       };
 

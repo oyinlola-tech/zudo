@@ -82,26 +82,13 @@ ${options.modules.map((m) => `    new ${m.className}(),`).join("\n")}
       ? ""
       : `\n      metadata: { port: ${options.port} },`;
 
-  return `import type { Environment } from "@zudojs/constants";
+  return `import { resolveEnvironment } from "@zudojs/constants";
 import { createContainer } from "@zudojs/container";
 import type { Module } from "@zudojs/core";
 import { createEventBus } from "@zudojs/events";
 import { createLogger } from "@zudojs/logger";
 import { createRuntime, type Runtime } from "@zudojs/runtime";
 ${imports}
-
-const ENVIRONMENTS: readonly Environment[] = [
-  "development",
-  "test",
-  "staging",
-  "production",
-];
-
-/** Narrows NODE_ENV to a framework Environment without an unchecked cast. */
-function resolveEnvironment(): Environment {
-  const value = process.env["NODE_ENV"];
-  return ENVIRONMENTS.find((candidate) => candidate === value) ?? "development";
-}
 
 /**
  * Assembles the application runtime.
@@ -121,6 +108,8 @@ ${registration}
     {
       applicationName: ${literal(options.applicationName)},
       applicationVersion: "0.1.0",
+      // NODE_ENV is read the same way the framework reads it: \`prod\` and
+      // \`Production\` are production, an unknown value warns once.
       environment: resolveEnvironment(),
       // Signals are handled explicitly in server.ts.
       handleSignals: false,${metadata}
@@ -130,33 +119,6 @@ ${registration}
   runtime.registerReadinessCheck("modules", () => runtime.state === "running");
 
   return runtime;
-}
-`;
-}
-
-/**
- * Renders `src/server.ts`: the process entry point. Starts the runtime and
- * stops it cleanly on SIGINT/SIGTERM.
- */
-export function renderServerFile(appImportPath = "./app.js"): string {
-  return `import { createApp } from ${literal(appImportPath)};
-
-const runtime = createApp();
-
-await runtime.start();
-
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.once(signal, () => {
-    void runtime
-      .stop()
-      .then(() => {
-        process.exit(0);
-      })
-      .catch((error: unknown) => {
-        console.error(error);
-        process.exit(1);
-      });
-  });
 }
 `;
 }

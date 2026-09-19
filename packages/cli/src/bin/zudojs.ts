@@ -63,7 +63,7 @@ app.register(
       {
         name: "database",
         short: "d",
-        description: "Database engine (postgresql, mysql, sqlite, mongodb)",
+        description: "Database engine (postgresql, mysql, sqlite)",
         type: "string",
         defaultValue: "postgresql",
       },
@@ -190,6 +190,12 @@ app.register(
       {
         name: "dry-run",
         description: "Show what would be generated without writing files",
+        type: "boolean",
+        defaultValue: false,
+      },
+      {
+        name: "force",
+        description: "Overwrite existing files the schematic would change",
         type: "boolean",
         defaultValue: false,
       },

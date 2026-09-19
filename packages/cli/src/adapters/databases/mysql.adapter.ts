@@ -16,9 +16,9 @@ export class MySqlAdapter implements DatabaseAdapter {
     return ["@zudojs/database"];
   }
 
-  getEnvironmentVariables(): Record<string, string> {
+  getEnvironmentVariables(dbName = "mydb"): Record<string, string> {
     return {
-      DATABASE_URL: "mysql://localhost:3306/mydb",
+      DATABASE_URL: this.getConnectionString(dbName),
     };
   }
 }

@@ -12,7 +12,8 @@ export interface DatabaseAdapter {
 
   getDependencies(): readonly string[];
 
-  getEnvironmentVariables(): Record<string, string>;
+  /** Environment variables for a database named `dbName` (default "mydb"). */
+  getEnvironmentVariables(dbName?: string): Record<string, string>;
 }
 
 export class PostgresAdapter implements DatabaseAdapter {
@@ -27,9 +28,9 @@ export class PostgresAdapter implements DatabaseAdapter {
     return ["@zudojs/database"];
   }
 
-  getEnvironmentVariables(): Record<string, string> {
+  getEnvironmentVariables(dbName = "mydb"): Record<string, string> {
     return {
-      DATABASE_URL: "postgresql://localhost:5432/mydb",
+      DATABASE_URL: this.getConnectionString(dbName),
     };
   }
 }

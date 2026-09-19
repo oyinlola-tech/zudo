@@ -23,6 +23,7 @@ import type {
   ResolvedDependency,
 } from "../../resolvers/dependency/dependencyResolver.core.js";
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
+import { CLIGenerationError } from "../../errors/index.js";
 
 /** Outcome of running the frontend pipeline for a single adapter. */
 export interface FrontendPipelineResult {
@@ -149,10 +150,16 @@ async function recordDependencies(
   } = {};
 
   if (existsSync(pkgPath)) {
+    // Fail the scaffold rather than replace an unparsable package.json with
+    // one holding only dependencies: that silently dropped name, scripts and
+    // type (tooling/CLI-07).
     try {
       pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as typeof pkg;
-    } catch {
-      pkg = {};
+    } catch (error) {
+      throw new CLIGenerationError(
+        `Could not parse ${pkgPath}; refusing to overwrite it with only the resolved dependencies.`,
+        error,
+      );
     }
   }
 
@@ -163,7 +170,7 @@ async function recordDependencies(
     const merged = { ...(target ?? {}) };
     for (const entry of entries) {
       if (!(entry.name in merged)) {
-        merged[entry.name] = entry.version || "latest";
+        merged[entry.name] = entry.version;
       }
     }
     return merged;

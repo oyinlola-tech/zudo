@@ -81,6 +81,27 @@ block of `package.json`. Every follow-up command reads those; no
 ranges, and projects created for pnpm carry a `pnpm-workspace.yaml` that
 allows esbuild's build script, which pnpm 10+ would otherwise refuse to run.
 
+- **A running server.** `src/server.ts` starts the runtime and serves HTTP
+  with `@zudojs/http` on `PORT` (default 3000; each microservice app on its
+  own port), answering `GET /health`. SIGINT/SIGTERM stop the HTTP server,
+  then the runtime.
+- **Databases:** `--database postgresql|mysql|sqlite` sets `DATABASE_URL` in
+  `.env.example` and the database container. `mongodb` is not supported.
+- **Language:** backend code is TypeScript. `--language javascript` is
+  rejected for `--type backend`; in a fullstack project it applies to the
+  frontend only.
+- **Fullstack + microservice:** the gateway and services are written at
+  `apps/gateway` and `apps/services/<name>`, next to `apps/web`, and are part
+  of the root workspace.
+
+### Generating code
+
+`zudojs generate module <name>` writes a runtime module (a `BaseModule`
+subclass), exports it from the modules barrel and registers it in `app.ts`.
+`zudojs generate` refuses to overwrite a file that already exists and would
+change, and lists those files; pass `--force` to overwrite them. Barrels are
+only appended to. `--dry-run` lists the files without writing anything.
+
 ## Commands
 
 | Command    | Description                                                              |

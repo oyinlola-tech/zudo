@@ -16,9 +16,9 @@ export class SqliteAdapter implements DatabaseAdapter {
     return ["@zudojs/database"];
   }
 
-  getEnvironmentVariables(): Record<string, string> {
+  getEnvironmentVariables(dbName = "mydb"): Record<string, string> {
     return {
-      DATABASE_URL: "sqlite:mydb.db",
+      DATABASE_URL: this.getConnectionString(dbName),
     };
   }
 }

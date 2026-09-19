@@ -98,7 +98,12 @@ export class FullstackComposer {
     context: FullstackGenerationContext,
   ): Promise<void> {
     const packageManager = this.getPackageManager(context);
-    const workspaceGlobs = ["apps/*", "packages/*"];
+    // A microservice backend lives at apps/gateway and apps/services/<name>
+    // (tooling/CLI-02); `apps/*` alone does not reach the services.
+    const workspaceGlobs =
+      context.project.backend?.architecture === "microservice"
+        ? ["apps/*", "apps/services/*", "packages/*"]
+        : ["apps/*", "packages/*"];
 
     const scriptFor = (script: string): string => {
       switch (packageManager) {

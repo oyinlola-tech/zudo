@@ -33,6 +33,7 @@
  */
 
 import type { ScaffoldOptions } from "../../types/index.js";
+import { renderDatabaseEnv } from "../../adapters/databases/databaseAdapter.resolver.js";
 import { ZUDOJS_PACKAGES_VERSION } from "../../constants/index.js";
 import { normalizeName } from "../../utils/utils.name.js";
 import {
@@ -134,7 +135,7 @@ export function generateModularMonolithFiles(
 
   files[".env.example"] = `NODE_ENV=development
 PORT=3000
-DATABASE_URL=postgresql://localhost:5432/${nameSlug}
+${renderDatabaseEnv(options.database, nameSlug)}
 `;
 
   files[".gitignore"] = `node_modules/

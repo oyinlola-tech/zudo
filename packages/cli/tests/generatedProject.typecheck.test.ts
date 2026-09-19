@@ -164,6 +164,25 @@ async function typecheck(projectDir: string): Promise<string> {
   }
 }
 
+/**
+ * Keeps only diagnostics reported in the generated project's own files.
+ *
+ * `@zudojs/*` imports resolve to package *source* here, and some packages
+ * (e.g. `@zudojs/http`) are written against the DOM lib that a generated
+ * Node project does not load. An installed project reads their built
+ * `.d.ts` under `skipLibCheck`, so errors inside package sources say nothing
+ * about the generated code. Paths outside the project print as `../…`.
+ */
+function generatedDiagnostics(output: string): string {
+  const kept: string[] = [];
+  let keep = false;
+  for (const line of output.split("\n")) {
+    if (/^\S/.test(line)) keep = !line.startsWith("../");
+    if (keep) kept.push(line);
+  }
+  return kept.join("\n").trim();
+}
+
 const architectures: ReadonlyArray<
   readonly [string, () => Record<string, string>]
 > = [
@@ -197,7 +216,7 @@ describe.each(architectures)(
       "type-checks against the real @zudojs packages",
       async () => {
         const dir = await scaffold(name, generate());
-        const diagnostics = await typecheck(dir);
+        const diagnostics = generatedDiagnostics(await typecheck(dir));
         expect(diagnostics, `${name} generated project failed to compile`).toBe(
           "",
         );

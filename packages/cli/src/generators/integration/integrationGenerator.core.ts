@@ -8,6 +8,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ProjectConfiguration } from "../../types/projectConfiguration.type.js";
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
+import { renderDatabaseEnv } from "../../adapters/databases/databaseAdapter.resolver.js";
 
 /**
  * Integration generation context.
@@ -79,7 +80,7 @@ export class IntegrationGenerator {
       `VITE_API_URL=http://localhost:${backendPort}`,
       "",
       "# Database",
-      "DATABASE_URL=postgresql://localhost:5432/mydb",
+      renderDatabaseEnv(context.project.backend?.database, "mydb"),
       "",
     ];
 
@@ -98,7 +99,11 @@ export class IntegrationGenerator {
    * Ends with a "/" when non-empty so it can be prefixed directly.
    */
   private getBackendPath(context: IntegrationContext): string {
-    return context.project.type === "fullstack" ? "apps/api/" : "";
+    if (context.project.type !== "fullstack") return "";
+    // A microservice backend's public entry point is the gateway (CLI-02).
+    return context.project.backend?.architecture === "microservice"
+      ? "apps/gateway/"
+      : "apps/api/";
   }
 
   private generateApiClient(context: IntegrationContext): string {

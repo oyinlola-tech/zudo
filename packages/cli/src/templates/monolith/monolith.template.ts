@@ -39,6 +39,7 @@
  */
 
 import type { ScaffoldOptions } from "../../types/index.js";
+import { renderDatabaseEnv } from "../../adapters/databases/databaseAdapter.resolver.js";
 import { ZUDOJS_PACKAGES_VERSION } from "../../constants/index.js";
 import { normalizeName, toPascalCase } from "../../utils/utils.name.js";
 import {
@@ -155,7 +156,7 @@ export function generateMonolithFiles(
   files[".env.example"] = `NODE_ENV=development
 PORT=3000
 
-DATABASE_URL=postgresql://localhost:5432/${nameSlug}
+${renderDatabaseEnv(options.database, nameSlug)}
 JWT_SECRET=change-this-in-production
 `;
 
@@ -214,7 +215,9 @@ MIT
   files["src/index.ts"] = `export { createApp } from "./app.js";
 `;
 
-  files["src/server.ts"] = renderServerFile();
+  files["src/server.ts"] = renderServerFile("./app.js", {
+    healthControllerImport: "./controllers/index.js",
+  });
 
   // Normalized: the name becomes a file path segment and a class name.
   const moduleName = normalizeName(options.services[0] ?? "app") || "app";
