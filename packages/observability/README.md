@@ -74,6 +74,12 @@ await obs.logger.flush();
 Every record carries `traceId` and `spanId` when a propagation context is
 active, so logs and traces line up without threading IDs by hand.
 
+`LogLevel` here counts upward in severity (`TRACE = 0 … FATAL = 5`), the
+opposite of `@zudojs/logger`'s `LoggerLevel` (`FATAL = 0 … TRACE = 5`).
+Never pass a raw level number between the two; convert with
+`toLoggerLevel(LogLevel.ERROR)` (→ `1`) and `fromLoggerLevel(1)`
+(→ `LogLevel.ERROR`).
+
 ## Redaction
 
 Redaction is off unless you configure it, and on once you do. The logger
@@ -149,6 +155,10 @@ const obs = createObservability({
 });
 ```
 
+`metrics.onCardinalityLimit` fires once per rejected series, and the facade
+raises `onError` once per metric name, so a label explosion is one report
+rather than one per metric call.
+
 One metric name may only ever be one type: registering `counter("latency")`
 and then `histogram("latency")` throws, because a document carrying the same
 name as two types is rejected wholesale by OTLP and Prometheus.
@@ -223,6 +233,38 @@ obs.propagation.current(); // undefined outside a run() scope
 
 `current()` returns `undefined` when there is no active context, so "no trace"
 stays distinguishable from a real one.
+
+A span started without an explicit `parent` joins the active context, so the
+span and the log records written in the same scope share one `traceId`. To
+make a span itself the active context — so logs inside it carry its `spanId`
+and nested spans become its children — use `withSpan` (or
+`tracer.startActiveSpan` on a `DefaultTracer`). It ends the span when the
+callback returns or its promise settles, and records a throw or rejection:
+
+```typescript
+import { withSpan } from "@zudojs/observability";
+
+const rows = await withSpan(obs.tracer, "db.query", async (span) => {
+  span.setAttribute("db.system", "postgresql");
+  obs.logger.info("querying"); // carries this span's traceId and spanId
+  return [1, 2, 3];
+});
+```
+
+Inbound trace IDs are validated. `parseTraceparent` reads a W3C
+`traceparent` header and returns `undefined` for anything malformed;
+`formatTraceparent` writes one for an outgoing request. A parent or
+propagation context whose trace or span ID is not valid W3C hex is never
+joined — the span starts a fresh trace instead:
+
+```typescript
+import { formatTraceparent, parseTraceparent } from "@zudojs/observability";
+
+const parent = parseTraceparent(request.headers["traceparent"]);
+const span = obs.tracer.startSpan("handle", { parent }); // fresh trace if absent
+const outgoing = formatTraceparent(span.context); // "00-<trace>-<span>-01"
+span.end();
+```
 
 ## Exporters
 

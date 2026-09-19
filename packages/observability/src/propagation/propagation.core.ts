@@ -11,23 +11,40 @@ import type {
   PropagationContextOptions,
   PropagationManager,
 } from "../types.js";
-import { generateSpanId, generateTraceId } from "../internal/index.js";
+import {
+  generateSpanId,
+  generateTraceId,
+  isValidSpanId,
+  isValidTraceId,
+} from "../internal/index.js";
 
 const storage = new AsyncLocalStorage<PropagationContext>();
 
-/** Creates a new propagation context. */
+/**
+ * Creates a new propagation context.
+ *
+ * Supplied trace and span IDs are validated: an invalid `traceId` or
+ * `parentSpanId` starts a fresh trace (and drops the untrusted sampling
+ * flags), and an invalid `spanId` is replaced.
+ */
 export function createPropagationContext(
   options?: PropagationContextOptions,
 ): PropagationContext {
+  const joins =
+    (options?.traceId === undefined || isValidTraceId(options.traceId)) &&
+    (options?.parentSpanId === undefined ||
+      isValidSpanId(options.parentSpanId));
+  const spanId = options?.spanId;
   return {
-    traceId: options?.traceId ?? generateTraceId(),
-    spanId: options?.spanId ?? generateSpanId(),
-    parentSpanId: options?.parentSpanId,
+    traceId: (joins ? options?.traceId : undefined) ?? generateTraceId(),
+    spanId:
+      spanId !== undefined && isValidSpanId(spanId) ? spanId : generateSpanId(),
+    parentSpanId: joins ? options?.parentSpanId : undefined,
     requestId: options?.requestId,
     correlationId: options?.correlationId,
     userId: options?.userId,
     service: options?.service,
-    traceFlags: options?.traceFlags,
+    traceFlags: joins ? options?.traceFlags : undefined,
     baggage: options?.baggage
       ? Object.freeze({ ...options.baggage })
       : undefined,

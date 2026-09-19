@@ -64,6 +64,9 @@ const DEFAULT_MAX_SERIES = 10_000;
 /** Upper bound on the detached series kept for callers past the cap. */
 const MAX_OVERFLOW_SERIES = 1_024;
 
+/** Upper bound on the rejected series remembered for de-duplicated reporting. */
+const MAX_REJECTED_KEYS = 10_000;
+
 /**
  * In-memory metrics registry. Creates, caches, and manages metrics.
  */
@@ -89,6 +92,12 @@ export class DefaultMetricsRegistry implements MetricsRegistry {
    * documented ceiling is not quietly doubled by the overflow path.
    */
   private readonly maxOverflow: number;
+  /**
+   * Series already reported to `onCardinalityLimit`. Kept apart from the
+   * overflow cache, whose small bound made the callback re-fire for every
+   * repeat of an already-rejected series once it was full.
+   */
+  private readonly rejected = new Set<string>();
 
   constructor(options?: MetricsRegistryOptions) {
     this.maxSeries = options?.maxSeries ?? DEFAULT_MAX_SERIES;
@@ -136,7 +145,10 @@ export class DefaultMetricsRegistry implements MetricsRegistry {
       // working, but never let the registry itself grow.
       const cached = this.overflow.get(key);
       if (cached) return cached;
-      this.onCardinalityLimit?.(name, this.metrics.size);
+      if (!this.rejected.has(key)) {
+        if (this.rejected.size < MAX_REJECTED_KEYS) this.rejected.add(key);
+        this.onCardinalityLimit?.(name, this.metrics.size);
+      }
       const detached = this.create(type, name, labels);
       if (this.overflow.size < this.maxOverflow) this.overflow.set(key, detached);
       return detached;
@@ -257,6 +269,7 @@ export class DefaultMetricsRegistry implements MetricsRegistry {
   clear(): void {
     this.metrics.clear();
     this.overflow.clear();
+    this.rejected.clear();
     this.typeByName.clear();
   }
 }

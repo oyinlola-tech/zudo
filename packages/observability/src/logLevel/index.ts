@@ -11,3 +11,4 @@ export {
   shouldLog,
   getLogLevelNames,
 } from "./logLevel.type.js";
+export { toLoggerLevel, fromLoggerLevel } from "./logLevel.bridge.js";

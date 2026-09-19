@@ -99,6 +99,8 @@ export {
   parseLogLevel,
   shouldLog,
   getLogLevelNames,
+  toLoggerLevel,
+  fromLoggerLevel,
 } from "./logLevel/index.js";
 
 /* ─── Log Record ────────────────────────────────────────────────────────── */
@@ -122,6 +124,9 @@ export {
   requireCurrentContext,
   AsyncPropagationManager,
   createPropagationManager,
+  parseTraceparent,
+  formatTraceparent,
+  TRACEPARENT_HEADER,
 } from "./propagation/index.js";
 
 /* ─── Metrics ───────────────────────────────────────────────────────────── */
@@ -151,8 +156,10 @@ export {
   createSpanContext,
   createChildSpanContext,
   isSampledContext,
+  isValidSpanContext,
   DefaultTracer,
   createTracer,
+  withSpan,
   type TracerOptions,
 } from "./tracing/index.js";
 

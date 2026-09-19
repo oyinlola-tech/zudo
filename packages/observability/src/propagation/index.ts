@@ -12,3 +12,8 @@ export {
   AsyncPropagationManager,
   createPropagationManager,
 } from "./propagation.core.js";
+export {
+  parseTraceparent,
+  formatTraceparent,
+  TRACEPARENT_HEADER,
+} from "./propagation.traceparent.js";

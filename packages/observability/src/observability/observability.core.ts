@@ -271,10 +271,15 @@ function buildPipeline(config: ObservabilityConfig): TelemetryPipeline {
 
   /* ── Metrics ─────────────────────────────────────────────────────────── */
 
+  // onError hears about each over-cardinality metric name once: a label
+  // explosion is one problem, not one Error allocation per metric call.
+  const reportedNames = new Set<string>();
   const metrics = new DefaultMetricsRegistry({
     ...(config.metrics ?? {}),
     onCardinalityLimit: (name, size) => {
       config.metrics?.onCardinalityLimit?.(name, size);
+      if (reportedNames.has(name) || reportedNames.size >= 1_024) return;
+      reportedNames.add(name);
       config.onError?.(
         new Error(
           `Metric "${name}" exceeded the registry's series limit (${size}); ` +

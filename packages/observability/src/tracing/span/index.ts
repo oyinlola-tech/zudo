@@ -9,4 +9,5 @@ export {
   createSpanContext,
   createChildSpanContext,
   isSampledContext,
+  isValidSpanContext,
 } from "./spanContext.type.js";

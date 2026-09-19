@@ -246,8 +246,15 @@ function walk(
       const redacted = redactField(key, entry, compiled);
       // A field the matcher replaced is done — never walk into it, or a
       // nested object under a sensitive key would leak through its children.
-      result[key] =
-        redacted === entry ? walk(entry, compiled, depth + 1, seen) : redacted;
+      // defineProperty, not assignment: an own `__proto__` key (JSON.parse
+      // makes one) would otherwise replace the output's prototype.
+      Object.defineProperty(result, key, {
+        value:
+          redacted === entry ? walk(entry, compiled, depth + 1, seen) : redacted,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
     seen.delete(value);
     return result;

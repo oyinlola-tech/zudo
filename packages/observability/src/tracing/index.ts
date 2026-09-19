@@ -10,9 +10,11 @@ export {
   createSpanContext,
   createChildSpanContext,
   isSampledContext,
+  isValidSpanContext,
 } from "./span/index.js";
 export {
   DefaultTracer,
   createTracer,
+  withSpan,
   type TracerOptions,
 } from "./tracer/index.js";

@@ -22,6 +22,8 @@ import {
   createSpanContext,
 } from "../span/spanContext.type.js";
 import { AlwaysOnSampler } from "../../sampling/index.js";
+import { resolveSpanParent } from "./tracer.parent.js";
+import { withSpan } from "./tracer.active.js";
 
 /** Options for {@link DefaultTracer}. */
 export interface TracerOptions {
@@ -73,13 +75,13 @@ export class DefaultTracer implements Tracer {
   }
 
   startSpan(name: string, options?: SpanOptions): Span {
-    // Build the context first so the sampler can key on the real trace ID,
-    // then stamp the decision into traceFlags so children inherit it.
-    const base = options?.parent
-      ? createChildSpanContext(options.parent)
-      : createSpanContext();
+    // Join the explicit parent, else the ambient propagation context. Build
+    // the context first so the sampler can key on the real trace ID, then
+    // stamp the decision into traceFlags so children inherit it.
+    const { parent, samplerParent } = resolveSpanParent(options?.parent);
+    const base = parent ? createChildSpanContext(parent) : createSpanContext();
 
-    const decision = this.sampler.shouldSample(options?.parent, base.traceId);
+    const decision = this.sampler.shouldSample(samplerParent, base.traceId);
     const sampled = decision.decision === "RECORD_AND_SAMPLE";
     const recording = decision.decision !== "DO_NOT_RECORD";
 
@@ -117,6 +119,18 @@ export class DefaultTracer implements Tracer {
     }
 
     return span;
+  }
+
+  /**
+   * Starts a span and runs `fn` with it as the active context.
+   * @see withSpan
+   */
+  startActiveSpan<T>(
+    name: string,
+    fn: (span: Span) => T,
+    options?: SpanOptions,
+  ): T {
+    return withSpan(this, name, fn, options);
   }
 
   private notifyEnd(readable: ReadableSpan): void {

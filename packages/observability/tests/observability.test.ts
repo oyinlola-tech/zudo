@@ -218,28 +218,28 @@ describe("PropagationContext", () => {
 
   it("creates a context with custom IDs", () => {
     const ctx = createPropagationContext({
-      traceId: "abc123",
-      spanId: "def456",
+      traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+      spanId: "00f067aa0ba902b7",
       requestId: "req1",
     });
-    expect(ctx.traceId).toBe("abc123");
-    expect(ctx.spanId).toBe("def456");
+    expect(ctx.traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
+    expect(ctx.spanId).toBe("00f067aa0ba902b7");
     expect(ctx.requestId).toBe("req1");
   });
 
   it("derives a child context", () => {
-    const parent = createPropagationContext({ traceId: "trace1" });
+    const parent = createPropagationContext({ traceId: "4bf92f3577b34da6a3ce929d0e0e4736" });
     const child = derivePropagationContext(parent);
-    expect(child.traceId).toBe("trace1");
+    expect(child.traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
     expect(child.parentSpanId).toBe(parent.spanId);
     expect(child.spanId).not.toBe(parent.spanId);
   });
 
   it("derives with overrides", () => {
-    const parent = createPropagationContext({ traceId: "trace1" });
+    const parent = createPropagationContext({ traceId: "4bf92f3577b34da6a3ce929d0e0e4736" });
     const child = derivePropagationContext(parent, { correlationId: "corr1" });
     expect(child.correlationId).toBe("corr1");
-    expect(child.traceId).toBe("trace1");
+    expect(child.traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
   });
 });
 
@@ -256,11 +256,11 @@ describe("AsyncPropagationManager", () => {
 
   it("derives context from current", async () => {
     const manager = new AsyncPropagationManager();
-    const ctx = createPropagationContext({ traceId: "t1", requestId: "r1" });
+    const ctx = createPropagationContext({ traceId: "4bf92f3577b34da6a3ce929d0e0e4736", requestId: "r1" });
 
     await manager.run(ctx, () => {
       const derived = manager.derive({ correlationId: "c1" });
-      expect(derived.traceId).toBe("t1");
+      expect(derived.traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
       expect(derived.requestId).toBe("r1");
       expect(derived.correlationId).toBe("c1");
     });
@@ -430,9 +430,9 @@ describe("SpanContext", () => {
   });
 
   it("creates child context", () => {
-    const parent = createSpanContext({ traceId: "abc" });
+    const parent = createSpanContext({ traceId: "4bf92f3577b34da6a3ce929d0e0e4736" });
     const child = createChildSpanContext(parent);
-    expect(child.traceId).toBe("abc");
+    expect(child.traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
     expect(child.parentSpanId).toBe(parent.spanId);
   });
 });
@@ -487,9 +487,9 @@ describe("Span", () => {
   });
 
   it("creates with parent context", () => {
-    const parent = createSpanContext({ traceId: "abc" });
+    const parent = createSpanContext({ traceId: "4bf92f3577b34da6a3ce929d0e0e4736" });
     const span = createSpan("child", { parent });
-    expect(span.context.traceId).toBe("abc");
+    expect(span.context.traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
     expect(span.context.parentSpanId).toBe(parent.spanId);
   });
 

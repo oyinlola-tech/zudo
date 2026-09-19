@@ -9,3 +9,4 @@ export {
   createTracer,
   type TracerOptions,
 } from "./tracer.core.js";
+export { withSpan } from "./tracer.active.js";
