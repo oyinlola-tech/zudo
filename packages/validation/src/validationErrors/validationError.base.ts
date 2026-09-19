@@ -8,7 +8,7 @@ import {
   toFieldErrors,
 } from "../validationResult/validationResult.type.js";
 import {
-  BaseError,
+  ValidationError as SharedValidationError,
   ErrorCode,
   ErrorCategory,
   ErrorSeverity,
@@ -62,10 +62,17 @@ export interface ValidationErrorOptions {
   readonly context?: Readonly<Record<string, unknown>>;
 }
 
-/** Base error for validation failures. */
-export class ValidationError extends BaseError {
+/**
+ * Base error for validation failures.
+ *
+ * A thin subclass of `@zudojs/errors`' `ValidationError`, so a consumer that
+ * catches the shared class (or calls its `isValidationError`) also catches
+ * errors thrown by this package. It used to extend `BaseError` directly and
+ * was an unrelated class with the same name.
+ */
+export class ValidationError extends SharedValidationError {
   public readonly validationCode: ValidationErrorCode;
-  public readonly issues: readonly ValidationIssue[];
+  declare public readonly issues: readonly ValidationIssue[];
   public readonly context?: Readonly<Record<string, unknown>>;
   public readonly timestamp: number;
 
@@ -82,11 +89,11 @@ export class ValidationError extends BaseError {
       expose: true,
       cause: options.cause,
       metadata: { ...(options.context as ErrorMetadata | undefined) },
+      issues,
     });
 
     this.name = "ValidationError";
     this.validationCode = options.code ?? ValidationErrorCode.UNKNOWN;
-    this.issues = Object.freeze([...issues]);
     this.context = options.context;
     this.timestamp = Date.now();
   }

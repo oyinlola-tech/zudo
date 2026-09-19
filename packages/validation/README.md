@@ -57,9 +57,20 @@ assertNoCircularReference(body);
   `test()` stateful and flip the answer on alternate calls.
 - Constraints carry an optional type guard, so wrong-typed input at a trust
   boundary reports as a validation failure rather than a `TypeError`.
-- The depth and size guards count a shared subtree once per occurrence, the way
-  a serializer expands it, and walk iteratively so deeply nested input cannot
-  exhaust the stack inside the check.
+- The size guard counts a shared subtree once per occurrence, the way a
+  serializer expands it, and measures what `toJSON()` returns when a value has
+  one. The cycle and depth guards walk a shared subtree once, so a small graph
+  of shared nodes cannot cost exponential time. All guards walk iteratively, so
+  deeply nested input cannot exhaust the stack inside the check, and handle
+  sparse arrays (a hole counts as `undefined`).
+- `ValidationError` and `ValidationResultError` extend `@zudojs/errors`'
+  `ValidationError`, so `instanceof` and `isValidationError()` from either
+  package catch them.
+- `not(constraint)` fails closed: a wrong-typed value, or one that makes the
+  inner constraint throw, fails. `everyItem`/`someItem` read every index,
+  holes included.
+- A registry rule that declares both `schema` and `constraints` runs the schema,
+  then the constraints on the parsed value.
 
 ## Features
 

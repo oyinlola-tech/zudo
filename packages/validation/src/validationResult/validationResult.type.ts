@@ -3,7 +3,7 @@
  */
 
 import {
-  BaseError,
+  ValidationError as SharedValidationError,
   ErrorCode,
   ErrorCategory,
   ErrorSeverity,
@@ -157,9 +157,12 @@ export function combine<T extends readonly unknown[]>(results: {
     : success(data as unknown as T);
 }
 
-/** Error thrown when attempting to unwrap a failed validation result. */
-export class ValidationResultError extends BaseError {
-  public readonly issues: readonly ValidationIssue[];
+/**
+ * Error thrown when attempting to unwrap a failed validation result.
+ * Extends `@zudojs/errors`' `ValidationError`.
+ */
+export class ValidationResultError extends SharedValidationError {
+  declare public readonly issues: readonly ValidationIssue[];
 
   constructor(issues: readonly ValidationIssue[]) {
     super(formatIssues(issues) || "Validation failed.", {
@@ -169,10 +172,10 @@ export class ValidationResultError extends BaseError {
       statusCode: 400,
       expose: true,
       metadata: { issueCount: issues.length },
+      issues,
     });
 
     this.name = "ValidationResultError";
-    this.issues = Object.freeze([...issues]);
   }
 
   public override toJSON() {

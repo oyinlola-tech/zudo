@@ -158,11 +158,26 @@ export function not<T>(
   constraint: ValidationConstraint<T>,
   options: ConstraintOptions<T> = {},
 ): ValidationConstraint<T> {
-  return createConstraint<T>((value) => !runConstraint(constraint, value), {
-    name: options.name ?? `not_${constraint.name}`,
-    code: options.code ?? "negated_constraint_failed",
-    message: options.message ?? `Value must not satisfy ${constraint.name}.`,
-  });
+  // Negation must not fail open. A value of the wrong type, or one that makes
+  // the inner check throw, used to count as "does not satisfy" and pass, so
+  // `not(matches(/<script/))` accepted `["<script>"]`. The inner guard is
+  // carried over and a throw is a failure.
+  const guard = options.guard ?? constraint.guard;
+  return createConstraint<T>(
+    (value) => {
+      try {
+        return !constraint.validate(value);
+      } catch {
+        return false;
+      }
+    },
+    {
+      name: options.name ?? `not_${constraint.name}`,
+      code: options.code ?? "negated_constraint_failed",
+      message: options.message ?? `Value must not satisfy ${constraint.name}.`,
+      ...(guard ? { guard } : {}),
+    },
+  );
 }
 
 /**

@@ -49,6 +49,27 @@ function chargeFor(value: unknown): number {
 }
 
 /**
+ * What `JSON.stringify` will actually write for a node: the result of its
+ * `toJSON()` when it has one. Measuring the object's own keys instead let a
+ * class whose `toJSON` returns megabytes estimate at a dozen bytes. Dates and
+ * binary views keep their existing flat and byte-length charges.
+ */
+function resolveToJson(value: unknown): unknown {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    value instanceof Date ||
+    ArrayBuffer.isView(value)
+  ) {
+    return value;
+  }
+  const toJSON = (value as { toJSON?: unknown }).toJSON;
+  return typeof toJSON === "function"
+    ? (toJSON as (key: string) => unknown).call(value, "")
+    : value;
+}
+
+/**
  * Estimate the byte size of a value as JSON without allocating a string.
  *
  * A value referenced from several places is charged once per occurrence, the
@@ -69,6 +90,7 @@ export function estimateSerializedSize(
       maxDepth: MAX_MEASURABLE_DEPTH,
       maxCost: maxBytes,
       charge: chargeFor,
+      resolve: resolveToJson,
     }).cost;
   } catch (error) {
     if (error instanceof TraversalLimitError) {
@@ -94,6 +116,7 @@ export function assertSizeWithinLimit(value: unknown, maxSize: number): void {
       maxDepth: MAX_MEASURABLE_DEPTH,
       maxCost: maxSize,
       charge: chargeFor,
+      resolve: resolveToJson,
     });
   } catch (error) {
     if (error instanceof TraversalLimitError && error.halt === "budget") {

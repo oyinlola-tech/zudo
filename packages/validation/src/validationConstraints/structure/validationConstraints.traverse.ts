@@ -18,6 +18,8 @@
  * check would fail inside itself before it could report anything.
  */
 
+import { childrenOf, isContainer } from "./validationConstraints.children.js";
+
 /** Why a traversal stopped early. */
 export type TraversalHalt = "depth" | "budget" | "cycle";
 
@@ -43,6 +45,11 @@ export interface TraversalVisitor {
   readonly failOnCycle?: boolean;
   /** Cost contributed by a single node, excluding its children. */
   charge?(value: unknown): number;
+  /**
+   * Maps a node to the value actually walked in its place, e.g. the result
+   * of `toJSON()` when measuring what `JSON.stringify` will write.
+   */
+  resolve?(value: unknown): unknown;
 }
 
 /** What a completed traversal observed. */
@@ -62,39 +69,6 @@ interface Frame {
   readonly leave?: object;
 }
 
-/** Whether a value has children worth descending into. */
-function isContainer(value: unknown): value is object {
-  return (
-    typeof value === "object" && value !== null && !ArrayBuffer.isView(value)
-  );
-}
-
-/** The child values of a container, as [pathSegment, value] pairs. */
-function childrenOf(value: object): Array<[string, unknown]> {
-  if (Array.isArray(value)) {
-    return value.map((child, index) => [`[${index}]`, child]);
-  }
-
-  if (value instanceof Map) {
-    const children: Array<[string, unknown]> = [];
-    let index = 0;
-    for (const [key, entry] of value) {
-      children.push([`.key(${index})`, key], [`[${String(key)}]`, entry]);
-      index++;
-    }
-    return children;
-  }
-
-  if (value instanceof Set) {
-    return [...value].map((entry, index) => [`.item(${index})`, entry]);
-  }
-
-  if (value instanceof Date || value instanceof RegExp) return [];
-
-  const record = value as Record<string, unknown>;
-  return Object.keys(record).map((key) => [`.${key}`, record[key]]);
-}
-
 /**
  * Walk a value graph within explicit depth and cost bounds.
  *
@@ -111,6 +85,12 @@ export function traverse(
 ): TraversalReport {
   const maxCost = visitor.maxCost ?? Number.POSITIVE_INFINITY;
   const onPath = new Set<object>();
+  // Without a per-node charge, a subtree already walked from some depth need
+  // not be walked again from the same depth or a shallower one: it holds no
+  // cycle (the walk would have halted) and cannot reach deeper than before.
+  // Re-walking it made a DAG of n shared `[node, node]` pairs cost 2^n.
+  // Only cost accounting must expand every occurrence, as a serializer does.
+  const walkedAt = visitor.charge ? undefined : new Map<object, number>();
   const stack: Frame[] = [{ value: root, depth: 0, path: rootPath }];
 
   let cost = 0;
@@ -124,7 +104,8 @@ export function traverse(
       continue;
     }
 
-    const { value, depth, path } = frame;
+    const { depth, path } = frame;
+    const value = visitor.resolve ? visitor.resolve(frame.value) : frame.value;
 
     cost += visitor.charge?.(value) ?? 0;
     if (cost > maxCost) throw new TraversalLimitError("budget", path, cost);
@@ -146,10 +127,14 @@ export function traverse(
       continue;
     }
 
+    const previous = walkedAt?.get(value);
+    if (previous !== undefined && depth <= previous) continue;
+
     if (depth >= visitor.maxDepth) {
       throw new TraversalLimitError("depth", path, depth + 1);
     }
 
+    walkedAt?.set(value, depth);
     onPath.add(value);
     stack.push({ value: undefined, depth, path, leave: value });
 

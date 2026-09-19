@@ -24,6 +24,22 @@ function itemHolds<T>(
 }
 
 /**
+ * Whether any item's constraint result equals `want`, reading every index.
+ * `Array.prototype.every`/`some` skip holes, so `new Array(3)` passed any
+ * `everyItem` constraint.
+ */
+function scanItems<T>(
+  values: readonly unknown[],
+  constraint: ValidationConstraint<T>,
+  want: boolean,
+): boolean {
+  for (let i = 0; i < values.length; i++) {
+    if (itemHolds(constraint, values[i]) === want) return true;
+  }
+  return false;
+}
+
+/**
  * Requires an array to contain at least a given number of items.
  */
 export function minItems<T>(
@@ -78,7 +94,7 @@ export function everyItem<T>(
   constraint: ValidationConstraint<T>,
 ): ValidationConstraint<readonly T[]> {
   return createConstraint<readonly T[]>(
-    (values) => values.every((value) => itemHolds(constraint, value)),
+    (values) => !scanItems(values, constraint, false),
     {
       name: `every_${constraint.name}`,
       code: "item_constraint_failed",
@@ -95,7 +111,7 @@ export function someItem<T>(
   constraint: ValidationConstraint<T>,
 ): ValidationConstraint<readonly T[]> {
   return createConstraint<readonly T[]>(
-    (values) => values.some((value) => itemHolds(constraint, value)),
+    (values) => scanItems(values, constraint, true),
     {
       name: `some_${constraint.name}`,
       code: "some_item_constraint_failed",

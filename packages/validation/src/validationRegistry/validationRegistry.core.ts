@@ -124,13 +124,21 @@ export class ValidationRegistry {
    * Constraints receive whatever the caller passed, which at a trust boundary
    * is arbitrary JSON. `checkConstraints` guards and catches internally, so a
    * wrong-typed value reports as a validation failure rather than escaping as
-   * a `TypeError` and turning a 400 into a 500.
+   * a `TypeError` and turning a 400 into a 500. A rule with both `schema`
+   * and `constraints` runs the schema first, then the constraints on its
+   * parsed output.
    */
   public validate<T>(name: string, value: unknown): ValidationResult<T> {
     const rule = this.require<T>(name);
-    if (rule.schema) return validate(rule.schema, value);
-    if (rule.constraints && rule.constraints.length > 0)
-      return checkConstraints(rule.constraints, value as T);
+    const constraints = rule.constraints ?? [];
+    // A rule may declare both. The constraints used to be skipped whenever a
+    // schema was present; now they run on the schema's parsed output.
+    if (rule.schema) {
+      const parsed = validate(rule.schema, value);
+      if (!parsed.success || constraints.length === 0) return parsed;
+      return checkConstraints(constraints, parsed.data);
+    }
+    if (constraints.length > 0) return checkConstraints(constraints, value as T);
     throw new TypeError(
       `Validation rule "${name}" has no validation implementation.`,
     );
