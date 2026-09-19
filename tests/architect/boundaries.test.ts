@@ -33,6 +33,18 @@ function getPackages() {
   return packages;
 }
 
+// Tier and cycle checks follow peerDependencies as well as dependencies: a
+// peer is still a runtime requirement, so declaring an upward edge as a peer
+// must not slip it past the gate. devDependencies are deliberately excluded.
+function runtimeDependencyNames(pkg) {
+  return [
+    ...new Set([
+      ...Object.keys(pkg.dependencies),
+      ...Object.keys(pkg.peerDependencies),
+    ]),
+  ];
+}
+
 describe("Architecture Boundaries", () => {
   const packages = getPackages();
 
@@ -62,7 +74,7 @@ describe("Architecture Boundaries", () => {
     ).toEqual([]);
   });
 
-  it("has no tier violations in regular dependencies", () => {
+  it("has no tier violations in dependencies or peerDependencies", () => {
     const errors = [];
 
     for (const pkg of packages) {
@@ -74,7 +86,7 @@ describe("Architecture Boundaries", () => {
         continue;
       }
 
-      for (const depName of Object.keys(pkg.dependencies)) {
+      for (const depName of runtimeDependencyNames(pkg)) {
         if (!depName.startsWith("@zudojs/")) continue;
 
         const depKey = packageNameToKey(depName);
@@ -103,7 +115,7 @@ describe("Architecture Boundaries", () => {
     const cycles = [];
 
     for (const pkg of packages) {
-      const deps = Object.keys(pkg.dependencies).filter((d) =>
+      const deps = runtimeDependencyNames(pkg).filter((d) =>
         d.startsWith("@zudojs/"),
       );
       graph.set(pkg.name, deps);
@@ -137,6 +149,14 @@ describe("Architecture Boundaries", () => {
       cycles,
       `Circular dependencies found:\n${cycles.join("\n")}`,
     ).toEqual([]);
+  });
+
+  it("follows peerDependencies when checking tiers", () => {
+    const upward = runtimeDependencyNames({
+      dependencies: {},
+      peerDependencies: { "@zudojs/http": "workspace:*" },
+    });
+    expect(upward).toContain("@zudojs/http");
   });
 
   it("all packages have known tiers", () => {

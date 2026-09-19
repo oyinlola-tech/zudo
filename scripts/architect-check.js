@@ -4,7 +4,10 @@
  * Validates:
  * 1. No package depends on a package from a higher tier.
  * 2. No circular dependencies exist.
+ *    Both follow dependencies and peerDependencies.
  * 3. All internal @zudojs/* dependencies use the "workspace:*" protocol.
+ * 4. No workflow templates an untrusted `${{ }}` field into a run: script.
+ * 5. AGENTS.md size rules (warnings; errors with --strict-sizes).
  *
  * Run with: node architect:check.js
  */
@@ -14,9 +17,16 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { TIERS, packageNameToKey } from "./package-tiers.js";
+import {
+  checkInstallScript,
+  checkWorkflowInjection,
+  collectSizeViolations,
+} from "./workflow-check.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const packagesDir = join(__dirname, "..", "packages");
+const rootDir = join(__dirname, "..");
+const packagesDir = join(rootDir, "packages");
+const strictSizes = process.argv.includes("--strict-sizes");
 
 
 // Read all package directories
@@ -33,8 +43,10 @@ function getPackages() {
         packages.push({
           dir: entry.name,
           name: pkg.name,
+          private: pkg.private === true,
           dependencies: pkg.dependencies || {},
           peerDependencies: pkg.peerDependencies || {},
+          devDependencies: pkg.devDependencies || {},
         });
       }
     }
@@ -74,6 +86,22 @@ function checkWorkspaceProtocol(packages) {
   return errors;
 }
 
+// The edges the tier and cycle checks follow.
+//
+// peerDependencies count: a peer is a runtime requirement the consumer must
+// satisfy, so declaring an upward edge as a peer instead of a dependency is
+// still an upward edge. Ignoring peers let tenancy and permissions (tier 1)
+// declare @zudojs/http (tier 3) without the gate noticing. devDependencies
+// are excluded on purpose: tests may exercise a package against a higher tier.
+function runtimeDependencyNames(pkg) {
+  return [
+    ...new Set([
+      ...Object.keys(pkg.dependencies),
+      ...Object.keys(pkg.peerDependencies),
+    ]),
+  ];
+}
+
 // Check tier violations
 function checkTierViolations(packages) {
   const errors = [];
@@ -87,7 +115,7 @@ function checkTierViolations(packages) {
       continue;
     }
 
-    const deps = Object.keys(pkg.dependencies);
+    const deps = runtimeDependencyNames(pkg);
 
     for (const depName of deps) {
       if (!depName.startsWith("@zudojs/")) continue;
@@ -120,7 +148,7 @@ function checkCircularDependencies(packages) {
 
   // Build adjacency list
   for (const pkg of packages) {
-    const deps = Object.keys(pkg.dependencies).filter((d) =>
+    const deps = runtimeDependencyNames(pkg).filter((d) =>
       d.startsWith("@zudojs/"),
     );
     graph.set(pkg.name, deps);
@@ -163,8 +191,45 @@ function main() {
   const versionErrors = checkWorkspaceProtocol(packages);
   const tierViolations = checkTierViolations(packages);
   const cycles = checkCircularDependencies(packages);
+  const injections = checkWorkflowInjection(join(rootDir, ".github", "workflows"));
+  const sizes = collectSizeViolations(packagesDir, rootDir);
+  const installErrors = checkInstallScript(join(rootDir, "install-all.sh"), packages);
 
   let hasErrors = false;
+
+  if (injections.length > 0) {
+    console.log("❌ Workflow Script Injection:");
+    for (const error of injections) {
+      console.log(`  - ${error}`);
+    }
+    console.log();
+    hasErrors = true;
+  }
+
+  if (installErrors.length > 0) {
+    console.log("❌ install-all.sh Drift:");
+    for (const error of installErrors) {
+      console.log(`  - ${error}`);
+    }
+    console.log();
+    hasErrors = true;
+  }
+
+  if (sizes.length > 0) {
+    console.log(
+      `${strictSizes ? "❌" : "⚠️ "} AGENTS.md size rules: ${sizes.length} breach(es)` +
+        (strictSizes ? "" : " (warning; pass --strict-sizes to fail)"),
+    );
+    const shown = strictSizes ? sizes : sizes.slice(0, 10);
+    for (const breach of shown) {
+      console.log(`  - ${breach}`);
+    }
+    if (shown.length < sizes.length) {
+      console.log(`  … and ${sizes.length - shown.length} more (run with --strict-sizes to list all)`);
+    }
+    console.log();
+    if (strictSizes) hasErrors = true;
+  }
 
   if (versionErrors.length > 0) {
     console.log("❌ Internal Dependency Protocol Errors:");
@@ -198,6 +263,7 @@ function main() {
     console.log("   - All internal dependencies use workspace:*");
     console.log("   - No tier violations");
     console.log("   - No circular dependencies");
+    console.log("   - No untrusted fields templated into workflow scripts");
     process.exit(0);
   } else {
     console.log("❌ Architecture check failed.");

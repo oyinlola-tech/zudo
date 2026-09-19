@@ -1,53 +1,64 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# Installs every published Zudo package into the current project.
+#
+# One `pnpm add` call, so a bad name fails the whole install up front instead
+# of leaving a half-installed project. The CLI is published as `zudojs-cli`
+# (not `@zudojs/cli`) and is added as a dev dependency.
+#
+# The package list is checked against packages/*/package.json by
+# `pnpm architect:check`, so it cannot drift from what is published.
+set -euo pipefail
 
-echo "Installing all Zudojs packages..."
+PM="${PM:-pnpm}"
 
 PACKAGES=(
-  "@zudojs/core"
-  "@zudojs/errors"
-  "@zudojs/types"
-  "@zudojs/constants"
-  "@zudojs/config"
-  "@zudojs/logger"
-  "@zudojs/crypto"
-  "@zudojs/container"
-  "@zudojs/events"
-  "@zudojs/messaging"
-  "@zudojs/middleware"
-  "@zudojs/validation"
-  "@zudojs/schema"
-  "@zudojs/serialization"
-  "@zudojs/cqrs"
-  "@zudojs/database"
-  "@zudojs/auth"
-  "@zudojs/http"
-  "@zudojs/cache"
-  "@zudojs/queue"
-  "@zudojs/tenancy"
-  "@zudojs/permissions"
-  "@zudojs/feature-flags"
-  "@zudojs/lifecycle"
-  "@zudojs/observability"
-  "@zudojs/security"
-  "@zudojs/transactions"
-  "@zudojs/storage"
   "@zudojs/adapters"
   "@zudojs/api"
-  "@zudojs/cli"
+  "@zudojs/auth"
+  "@zudojs/auth-oauth"
+  "@zudojs/cache"
+  "@zudojs/config"
+  "@zudojs/constants"
+  "@zudojs/container"
+  "@zudojs/core"
+  "@zudojs/cqrs"
+  "@zudojs/crypto"
+  "@zudojs/database"
   "@zudojs/docs"
+  "@zudojs/errors"
+  "@zudojs/events"
+  "@zudojs/feature-flags"
+  "@zudojs/http"
+  "@zudojs/lifecycle"
+  "@zudojs/logger"
+  "@zudojs/messaging"
+  "@zudojs/middleware"
+  "@zudojs/observability"
   "@zudojs/openapi"
+  "@zudojs/permissions"
   "@zudojs/plugins"
+  "@zudojs/queue"
   "@zudojs/rpc"
   "@zudojs/runtime"
   "@zudojs/scheduler"
+  "@zudojs/schema"
+  "@zudojs/security"
+  "@zudojs/serialization"
+  "@zudojs/storage"
+  "@zudojs/tenancy"
   "@zudojs/testing"
+  "@zudojs/transactions"
+  "@zudojs/types"
+  "@zudojs/validation"
 )
 
-for pkg in "${PACKAGES[@]}"; do
-  echo "Installing $pkg..."
-  npm install "$pkg"
-done
+DEV_PACKAGES=(
+  "zudojs-cli"
+)
+
+echo "Installing ${#PACKAGES[@]} Zudo packages with $PM..."
+"$PM" add "${PACKAGES[@]}"
+"$PM" add -D "${DEV_PACKAGES[@]}"
 
 echo ""
-echo "All Zudojs packages installed!"
+echo "All Zudo packages installed."
