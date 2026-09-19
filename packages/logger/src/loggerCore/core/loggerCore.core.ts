@@ -83,11 +83,19 @@ export class ZudojsLogger implements Logger, ZudojsLoggerContext {
   private readonly _pending = new Set<Promise<void>>();
   private readonly _dispatchFailures: unknown[] = [];
   private _droppedFailures = 0;
+  private readonly _root: ZudojsLogger | undefined;
 
+  /**
+   * @param root - The logger this one was derived from. A child's
+   *   dispatches are tracked by its root, so the root's flush()/close()
+   *   drains them, and a child reports itself disposed once its root is.
+   */
   constructor(
     options: LoggerOptions = {},
     contextStorage?: LoggerContextStorage,
+    root?: ZudojsLogger,
   ) {
+    this._root = root;
     this._configuration = resolveLoggerOptions(options);
     this._contextStorage = contextStorage ?? createLoggerContextStorage();
     this._configuration = normalizeConfiguration(this._configuration);
@@ -162,7 +170,7 @@ export class ZudojsLogger implements Logger, ZudojsLoggerContext {
   }
 
   assertActive(): void {
-    assertActiveHelper(this._disposed, this._configuration.name);
+    assertActiveHelper(this.isDisposed(), this._configuration.name);
   }
   assertMutable(): void {
     assertMutableHelper(this._configuration.mutable);
@@ -174,7 +182,7 @@ export class ZudojsLogger implements Logger, ZudojsLoggerContext {
     );
   }
   isDisposed(): boolean {
-    return this._disposed;
+    return this._disposed || (this._root?.isDisposed() ?? false);
   }
   markDisposed(): void {
     this._disposed = true;
@@ -185,10 +193,14 @@ export class ZudojsLogger implements Logger, ZudojsLoggerContext {
   }
 
   createChildLogger(options: LoggerOptions): Logger {
-    return new ZudojsLogger(options, this._contextStorage);
+    return new ZudojsLogger(options, this._contextStorage, this._root ?? this);
   }
 
   trackDispatch(dispatch: Promise<void>): void {
+    if (this._root) {
+      this._root.trackDispatch(dispatch);
+      return;
+    }
     // A dispatch rejects only when handleError threw — i.e. when
     // `throwTransportErrors` is on and an asynchronous transport failed.
     // Nothing can throw from the log call that started it, so the failure
@@ -215,6 +227,9 @@ export class ZudojsLogger implements Logger, ZudojsLoggerContext {
   }
 
   async drainDispatches(): Promise<void> {
+    if (this._root) {
+      return this._root.drainDispatches();
+    }
     // A dispatch can start further dispatches (a transport that logs),
     // so drain until the set is genuinely empty.
     while (this._pending.size > 0) {

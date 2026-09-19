@@ -26,7 +26,7 @@ export function createCompactLoggerFormatter(
 ): LoggerFormatter<string> {
   return createLoggerFormatter(
     (entry) => {
-      const level = entry.levelName.toUpperCase();
+      const level = escapeLogText(entry.levelName.toUpperCase());
 
       const logger = entry.logger ? ` ${escapeLogText(entry.logger)}:` : "";
 

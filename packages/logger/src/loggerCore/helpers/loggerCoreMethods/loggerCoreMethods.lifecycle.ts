@@ -10,6 +10,8 @@ import { isLoggerTransport } from "../../../loggerTransport/loggerTransportGuard
 
 import { LoggerConfigurationError } from "../../../loggerErrors/loggerError.base.js";
 
+import { throwCollectedFailures } from "../../../loggerErrors/loggerError.helpers.js";
+
 import type { ZudojsLoggerContext } from "../../core/loggerCore.core.js";
 
 /**
@@ -66,81 +68,77 @@ export function disableLogger(ctx: ZudojsLoggerContext): void {
 }
 
 /**
- * Flushes all transport buffers.
+ * Flushes (and optionally closes) every configured transport, isolating
+ * each one: a failing sink is collected and the walk continues, so one
+ * bad transport cannot leave every later transport unflushed/unclosed.
  */
-export async function flushLogger(ctx: ZudojsLoggerContext): Promise<void> {
-  ctx.assertActive();
+async function settleTransports(
+  ctx: ZudojsLoggerContext,
+  close: boolean,
+  failures: unknown[],
+): Promise<void> {
+  for (const transport of ctx.configuration.transports) {
+    if (!isLoggerTransport(transport)) continue;
+    const registered = createLoggerTransport(transport);
+    if (!close && !registered.enabled) continue;
+    const steps = close
+      ? [() => registered.flush?.(), () => registered.close?.()]
+      : [() => registered.flush?.()];
+    for (const step of steps) {
+      try {
+        await step();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+  }
+}
 
-  // In-flight dispatches must land in the transports before those
-  // transports are asked to flush, otherwise flush() is a no-op for
-  // everything logged in the same tick. A dispatch failure (surfaced
-  // when `throwTransportErrors` is on) is rethrown only after the
-  // transports have still been flushed.
-  let failure: unknown;
-  let failed = false;
+/** Drains in-flight dispatches, collecting (not throwing) a failure. */
+async function drainInto(
+  ctx: ZudojsLoggerContext,
+  failures: unknown[],
+): Promise<void> {
   try {
     await ctx.drainDispatches();
   } catch (error) {
-    failure = error;
-    failed = true;
+    failures.push(error);
   }
+}
 
-  for (const transport of ctx.configuration.transports) {
-    if (!isLoggerTransport(transport)) {
-      continue;
-    }
-
-    const registered = createLoggerTransport(transport);
-
-    if (!registered.enabled) {
-      continue;
-    }
-
-    if (registered.flush) {
-      await registered.flush();
-    }
-  }
-
-  if (failed) throw failure;
+/**
+ * Flushes all transport buffers.
+ *
+ * In-flight dispatches land in the transports before they are flushed.
+ * Every transport is flushed even when a dispatch or another transport
+ * failed; the failures are rethrown afterwards (several as one
+ * AggregateError).
+ */
+export async function flushLogger(ctx: ZudojsLoggerContext): Promise<void> {
+  ctx.assertActive();
+  const failures: unknown[] = [];
+  await drainInto(ctx, failures);
+  await settleTransports(ctx, false, failures);
+  throwCollectedFailures(failures, "Logger flush failed.");
 }
 
 /**
  * Closes all transports and marks logger as disposed.
+ *
+ * Closing is terminal: every transport is flushed and closed and the
+ * logger is marked disposed even when a dispatch or a transport failed;
+ * the failures are rethrown afterwards.
  */
 export async function closeLogger(ctx: ZudojsLoggerContext): Promise<void> {
   if (ctx.isDisposed()) {
     return;
   }
-
-  // Closing is terminal: transports are flushed and closed and the logger
-  // is marked disposed even when a dispatch failed; the failure is rethrown
-  // afterwards.
-  let failure: unknown;
-  let failed = false;
+  const failures: unknown[] = [];
   try {
-    await ctx.drainDispatches();
-  } catch (error) {
-    failure = error;
-    failed = true;
+    await drainInto(ctx, failures);
+    await settleTransports(ctx, true, failures);
+  } finally {
+    ctx.markDisposed();
   }
-
-  for (const transport of ctx.configuration.transports) {
-    if (!isLoggerTransport(transport)) {
-      continue;
-    }
-
-    const registered = createLoggerTransport(transport);
-
-    if (registered.flush) {
-      await registered.flush();
-    }
-
-    if (registered.close) {
-      await registered.close();
-    }
-  }
-
-  ctx.markDisposed();
-
-  if (failed) throw failure;
+  throwCollectedFailures(failures, "Logger close failed.");
 }

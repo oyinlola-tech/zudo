@@ -69,7 +69,7 @@ export function createTextLoggerFormatter(
       // output. Colour codes are emitted only on explicit opt-in, and
       // only around the fixed level name — never around user text,
       // which stays escaped.
-      const levelTag = `[${entry.levelName.toUpperCase()}]`;
+      const levelTag = `[${escapeLogText(entry.levelName.toUpperCase())}]`;
 
       parts.push(
         context.colors ? colorizeLevel(entry.levelName, levelTag) : levelTag,

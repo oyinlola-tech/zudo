@@ -9,11 +9,14 @@
  * therefore escaped here first.
  */
 
+import { createDefaultSecretFieldMatcher } from "../loggerEntry.secretFields.js";
+
 /**
- * Matches C0 control characters plus DEL — everything that can forge a
- * record boundary or drive a terminal.
+ * Matches C0 controls, DEL, C1 controls (NEL, CSI) and the Unicode
+ * line/paragraph separators — everything that can forge a record
+ * boundary or drive a terminal.
  */
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/g;
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
 
 /**
  * Replacement token written in place of a redacted value.
@@ -21,10 +24,13 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/g;
 export const LOGGER_REDACTION_TOKEN = "[REDACTED]";
 
 /**
- * Field names treated as secrets by default.
+ * Legacy substring pattern for secret field names.
  *
- * Matching is case-insensitive and substring-based so `dbPassword`,
- * `X-Api-Key` and `refresh_token` are all covered.
+ * @deprecated No longer the default: it redacted `passenger`/`compass`
+ * and missed `auth`, `sessionId`, `ssn`, `cardNumber`, `cvv` and `otp`.
+ * The default is now the word-based matcher over
+ * `DEFAULT_LOGGER_SECRET_FIELDS`. Pass this as `redact.pattern` to opt
+ * back into the old behaviour.
  */
 export const DEFAULT_LOGGER_SECRET_PATTERN =
   /(pass(word|wd)?|secret|token|api[-_.]?key|private[-_.]?key|credential|authorization|cookie)/i;
@@ -44,8 +50,9 @@ export interface LoggerRedactionOptions {
   readonly keys?: readonly string[];
 
   /**
-   * Field-name pattern. Defaults to DEFAULT_LOGGER_SECRET_PATTERN.
-   * Pass a pattern that never matches to rely on `keys` alone.
+   * Field-name pattern. When omitted, the word-based default matcher over
+   * `DEFAULT_LOGGER_SECRET_FIELDS` is used. Pass a pattern that never
+   * matches to rely on `keys` alone.
    */
   readonly pattern?: RegExp;
 
@@ -59,8 +66,8 @@ export interface LoggerRedactionOptions {
  * Escapes control characters that could forge log records.
  *
  * CR, LF, TAB and the ANSI escape byte become printable escapes; every
- * other C0 control character and DEL becomes `\xNN`. Ordinary text,
- * including every non-ASCII character, is returned unchanged.
+ * other C0/C1 control character and DEL becomes `\xNN`, and U+2028 /
+ * U+2029 become `\u2028` / `\u2029`. All other text is unchanged.
  */
 export function escapeLogText(value: string): string {
   return value.replace(CONTROL_CHARACTERS, (character) => {
@@ -73,6 +80,10 @@ export function escapeLogText(value: string): string {
         return "\\t";
       case "\u001b":
         return "\\u001b";
+      case "\u2028":
+        return "\\u2028";
+      case "\u2029":
+        return "\\u2029";
       default: {
         const code = character.charCodeAt(0);
         return `\\x${code.toString(16).padStart(2, "0")}`;
@@ -98,16 +109,22 @@ export function createSecretMatcher(
     return () => false;
   }
 
+  const exact = new Set((options.keys ?? []).map((key) => key.toLowerCase()));
+  const configured = options.pattern;
+
+  if (configured === undefined) {
+    const isDefaultSecret = createDefaultSecretFieldMatcher();
+    return (key: string): boolean =>
+      exact.has(key.toLowerCase()) || isDefaultSecret(key);
+  }
+
   // Copy the pattern without `g`/`y`: those flags make `test()` advance
   // `lastIndex`, so a shared pattern would match a secret-named field on
   // one entry and let it through unredacted on the next.
-  const configured = options.pattern ?? DEFAULT_LOGGER_SECRET_PATTERN;
   const pattern =
     configured.global || configured.sticky
       ? new RegExp(configured.source, configured.flags.replace(/[gy]/gu, ""))
       : configured;
-
-  const exact = new Set((options.keys ?? []).map((key) => key.toLowerCase()));
 
   return (key: string): boolean =>
     exact.has(key.toLowerCase()) || pattern.test(key);

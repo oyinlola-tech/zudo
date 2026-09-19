@@ -45,6 +45,15 @@ Built in: `createConsoleLoggerTransport`, and the composites
 `createBufferedLoggerTransport`. File and HTTP transports are not
 included — implement the `LoggerTransport` interface for those.
 
+The multi and conditional composites forward `flush()` and `close()` to
+the transports they wrap, so a buffered or file transport nested inside
+is drained and released by the logger's own `flush()`/`close()`. The
+multi transport writes to every sink even when one throws; the failures
+are reported afterwards (several as one `AggregateError`). The buffered
+transport writes each entry independently, so a failing write loses only
+that entry, and a failure from a timer-triggered flush is rethrown by the
+next `flush()` or `close()`.
+
 `transportTimeout` (default 10s) bounds every transport write, so a
 transport that stops responding cannot hang `flush()` or `close()`.
 
@@ -54,21 +63,35 @@ log call itself; a failure from an asynchronous transport (or with
 `asynchronous: true`) cannot, so it is rethrown by the next `flush()` or
 `close()`, which still flush and close the transports first.
 
+`flush()` and `close()` isolate each transport: one that throws does not
+stop the rest from being flushed and closed, and `close()` always leaves
+the logger disposed. The failures are rethrown afterwards (several as one
+`AggregateError`).
+
 ## Flushing
 
 Dispatch completes synchronously when every transport is synchronous.
 With an asynchronous transport — or with `asynchronous: true`, which
 always defers so the caller stays off the transport's critical path —
 writes are in flight until drained. `flush()` and `close()` drain them,
-so nothing is lost at exit.
+including writes started by child loggers (`child()`, `withContext()`),
+so nothing is lost at exit. A child reports itself disposed once its root
+logger is closed.
 
 ## Secret redaction
 
 Redaction is **on by default**. Metadata and context fields whose NAME
-looks like a secret — password, secret, token, api key, private key,
-credential, authorization, cookie — are replaced with `"[REDACTED]"`
-before the entry reaches any formatter or transport. Nested objects,
-arrays and getters are all covered.
+looks like a secret are replaced with `"[REDACTED]"` before the entry
+reaches any formatter or transport. Names are split into words
+(`x-api-key`, `api_key` and `apiKey` all read as `api key`) and matched
+against `DEFAULT_LOGGER_SECRET_FIELDS` — password, passphrase, secret,
+token, jwt, bearer, auth, authorization, cookie, session, sid,
+credential, api key, private key, client secret, card number, cvv, ssn,
+pin, otp and more — so `sessionId` and `cardNumber` are redacted while
+`passenger` and `authorId` are not. Nested objects, arrays and getters
+are all covered. Passing `redact.pattern` replaces the word matcher with
+your own RegExp (the old substring default is still exported as
+`DEFAULT_LOGGER_SECRET_PATTERN`).
 
 ```typescript
 logger.info("login", { user: "alice", password: "hunter2" });
@@ -80,11 +103,14 @@ createLogger({ redact: { enabled: false } }); // opt out
 
 ## Log injection
 
-Text-shaped formatters escape control characters in the message, the
-logger name, metadata keys and values, context values and source
-locations. A newline or ANSI escape inside attacker-supplied text
-becomes `\n` / `\u001b` rather than forging an extra log record or
-driving the operator's terminal. The JSON formatter relies on
+Text-shaped formatters escape control characters (C0, DEL, C1 and
+U+2028/U+2029) in the message, the level, the logger name, metadata keys
+and values, context values, source locations and error stacks. A newline
+or ANSI escape inside attacker-supplied text becomes `\n` / `\u001b`
+rather than forging an extra log record or driving the operator's
+terminal. In a stack trace only the frame lines break the line: the
+error's name and message are escaped as one line, and every frame line is
+indented so none can start at column 0 and pass for a record. The JSON formatter relies on
 `JSON.stringify`, which escapes the same characters.
 
 Metadata is normalized before serialization, so circular references

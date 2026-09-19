@@ -58,3 +58,34 @@ export function createLoggerFormatterError(
     { formatterName, cause },
   );
 }
+
+/**
+ * Rethrows collected failures: the single failure itself, or an
+ * AggregateError when more than one step failed. Does nothing when the
+ * list is empty.
+ */
+export function throwCollectedFailures(
+  failures: readonly unknown[],
+  message: string,
+): void {
+  if (failures.length === 0) return;
+  if (failures.length === 1) throw failures[0];
+  throw new AggregateError(failures, message);
+}
+
+/**
+ * Runs every step even when earlier ones fail, then rethrows the
+ * collected failures via {@link throwCollectedFailures}.
+ */
+export async function settleAllOrThrow(
+  steps: readonly (() => unknown)[],
+  message: string,
+): Promise<void> {
+  const results = await Promise.allSettled(
+    steps.map(async (step) => step()),
+  );
+  const failures = results.flatMap((result) =>
+    result.status === "rejected" ? [result.reason as unknown] : [],
+  );
+  throwCollectedFailures(failures, message);
+}

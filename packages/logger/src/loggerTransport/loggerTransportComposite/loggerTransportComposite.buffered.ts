@@ -16,7 +16,12 @@ import {
   writeLoggerTransport,
 } from "../loggerTransport.core.js";
 
-import { isLoggerTransportObject } from "../loggerTransportGuard.js";
+import {
+  closeLoggerTransport,
+  flushLoggerTransport,
+} from "../loggerTransportHelpers/loggerTransportHelpers.js";
+
+import { throwCollectedFailures } from "../../loggerErrors/loggerError.helpers.js";
 
 /**
  * Creates a transport that buffers entries before forwarding
@@ -30,15 +35,52 @@ export function createBufferedLoggerTransport(
   const maxSize = options.maxSize ?? 100;
   const flushInterval = options.flushInterval ?? 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let deferredFailure: { readonly error: unknown } | undefined;
 
-  const flush = async (): Promise<void> => {
+  // Each entry is written on its own: one failing write used to abort the
+  // loop after the whole batch had already been spliced out, losing every
+  // entry behind it. Only the entries that actually failed are dropped.
+  const drain = async (): Promise<void> => {
     if (buffer.length === 0) {
       return;
     }
     const entries = buffer.splice(0, buffer.length);
+    const failures: unknown[] = [];
     for (const entry of entries) {
-      await writeLoggerTransport(transport, entry);
+      try {
+        await writeLoggerTransport(transport, entry);
+      } catch (error) {
+        failures.push(error);
+      }
     }
+    throwCollectedFailures(
+      failures,
+      `${failures.length} buffered log entries failed to write.`,
+    );
+  };
+
+  // A failure from a timer-triggered drain has no caller to reach, so it
+  // is kept and rethrown by the next explicit flush()/close().
+  const takeDeferredFailure = (): unknown[] => {
+    if (!deferredFailure) return [];
+    const { error } = deferredFailure;
+    deferredFailure = undefined;
+    return [error];
+  };
+
+  const flush = async (): Promise<void> => {
+    const failures = takeDeferredFailure();
+    try {
+      await drain();
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await flushLoggerTransport(transport);
+    } catch (error) {
+      failures.push(error);
+    }
+    throwCollectedFailures(failures, "Buffered logger transport flush failed.");
   };
 
   const scheduleFlush = (): void => {
@@ -48,9 +90,9 @@ export function createBufferedLoggerTransport(
     timer = setTimeout(async () => {
       timer = undefined;
       try {
-        await flush();
-      } catch {
-        /* deliberate no-op */
+        await drain();
+      } catch (error) {
+        deferredFailure ??= { error };
       }
     }, flushInterval);
     // A pending flush is housekeeping, not work: left referenced it kept a
@@ -65,7 +107,7 @@ export function createBufferedLoggerTransport(
     async write(entry) {
       buffer.push(entry);
       if (buffer.length >= maxSize) {
-        await flush();
+        await drain();
       } else {
         scheduleFlush();
       }
@@ -76,10 +118,18 @@ export function createBufferedLoggerTransport(
         clearTimeout(timer);
         timer = undefined;
       }
-      await flush();
-      if (isLoggerTransportObject(transport) && transport.close) {
-        await transport.close();
+      const failures: unknown[] = [];
+      try {
+        await flush();
+      } catch (error) {
+        failures.push(error);
       }
+      try {
+        await closeLoggerTransport(transport);
+      } catch (error) {
+        failures.push(error);
+      }
+      throwCollectedFailures(failures, "Buffered logger transport close failed.");
     },
   };
 
