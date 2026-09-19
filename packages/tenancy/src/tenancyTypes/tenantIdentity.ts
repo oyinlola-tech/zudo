@@ -4,7 +4,12 @@
  * @module tenancyTypes/tenantIdentity
  */
 
-import type { TenantId } from "@zudojs/constants";
+import {
+  createTenantId as createConstantsTenantId,
+  MAX_TENANT_ID_LENGTH,
+  TENANT_ID_PATTERN,
+  type TenantId,
+} from "@zudojs/constants";
 
 import { InvalidTenantIdError } from "../tenancyErrors/tenancyError.types.js";
 
@@ -13,29 +18,27 @@ import { InvalidTenantIdError } from "../tenancyErrors/tenancyError.types.js";
  *
  * Owned by `@zudojs/constants` and re-exported here, so the monorepo has one
  * branded `TenantId`: a value typed by either package is accepted by both.
- * Tenancy used to declare its own, incompatible brand. `createTenantId` below
- * is the validating constructor; the one in `@zudojs/constants` only brands.
+ * Tenancy used to declare its own, incompatible brand.
  */
 export type { TenantId };
 
 /**
- * Characters a tenant id may contain.
+ * Maximum accepted tenant id length, and the allowed character pattern.
  *
- * Deliberately narrow. A tenant id is concatenated into cache keys, log lines,
- * schema names and file paths, so anything that could act as a separator or a
- * path segment in one of those contexts is rejected here rather than escaped
- * at every use site.
+ * Both are owned by `@zudojs/constants` and re-exported, so tenancy and
+ * constants apply one rule. A tenant id is concatenated into cache keys, log
+ * lines, schema names and file paths, so anything that could act as a
+ * separator or a path segment is rejected rather than escaped at every use.
  */
-const TENANT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/u;
-
-/** Maximum accepted tenant id length. */
-export const MAX_TENANT_ID_LENGTH = 64;
+export { MAX_TENANT_ID_LENGTH, TENANT_ID_PATTERN };
 
 /**
  * Create a validated TenantId.
  *
- * Input is trimmed, Unicode-normalized and lowercased before validation, so
- * two spellings of the same identifier cannot become two tenants.
+ * Delegates to `createTenantId` in `@zudojs/constants` (NFKC-normalize,
+ * trim, lowercase, then {@link TENANT_ID_PATTERN} and
+ * {@link MAX_TENANT_ID_LENGTH}), so the two packages cannot disagree, and
+ * rethrows its rejection as this package's {@link InvalidTenantIdError}.
  *
  * @param value - The candidate identifier.
  * @returns The normalized, validated tenant id.
@@ -43,18 +46,11 @@ export const MAX_TENANT_ID_LENGTH = 64;
  */
 export function createTenantId(value: string): TenantId {
   if (typeof value !== "string") throw new InvalidTenantIdError(String(value));
-
-  const normalized = value.normalize("NFKC").trim().toLowerCase();
-
-  if (normalized.length === 0 || normalized.length > MAX_TENANT_ID_LENGTH) {
+  try {
+    return createConstantsTenantId(value);
+  } catch {
     throw new InvalidTenantIdError(value);
   }
-
-  if (!TENANT_ID_PATTERN.test(normalized)) {
-    throw new InvalidTenantIdError(value);
-  }
-
-  return normalized as TenantId;
 }
 
 /**

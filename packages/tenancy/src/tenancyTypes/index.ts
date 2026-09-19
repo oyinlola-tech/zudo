@@ -7,6 +7,7 @@
 export {
   type TenantId,
   MAX_TENANT_ID_LENGTH,
+  TENANT_ID_PATTERN,
   createTenantId,
   tryCreateTenantId,
   isValidTenantId,
