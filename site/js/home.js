@@ -40,13 +40,15 @@
     var names = command();
     if (!names.length) return;
     var text = 'npm install ' + names.join(' ');
-    var done = function () {
-      copy.textContent = 'Copied';
-      copy.classList.add('is-done');
+    var show = function (label, ok) {
+      copy.textContent = label;
+      copy.classList.toggle('is-done', ok);
       setTimeout(function () { copy.textContent = 'Copy'; copy.classList.remove('is-done'); }, 1600);
     };
-    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, done);
-    else done();
+    var failed = function () { show('Press Ctrl+C', false); };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function () { show('Copied', true); }, failed);
+    } else failed();
   });
 
   render();

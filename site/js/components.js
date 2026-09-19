@@ -22,7 +22,7 @@
     up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
     mark: '<svg class="zh-mark" viewBox="0 0 80 80" aria-hidden="true"><g fill="currentColor"><rect x="6" y="6" width="12" height="12"/><rect x="20" y="6" width="12" height="12"/><rect x="34" y="6" width="12" height="12"/><rect x="48" y="6" width="12" height="12"/><rect x="62" y="6" width="12" height="12"/><rect fill="#C0392B" x="48" y="20" width="12" height="12"/><rect fill="#C0392B" x="34" y="34" width="12" height="12"/><rect fill="#C0392B" x="20" y="48" width="12" height="12"/><rect x="6" y="62" width="12" height="12"/><rect x="20" y="62" width="12" height="12"/><rect x="34" y="62" width="12" height="12"/><rect x="48" y="62" width="12" height="12"/><rect x="62" y="62" width="12" height="12"/></g></svg>',
     word: '<svg class="zh-wordmark" viewBox="0 0 220 44" fill="none" aria-hidden="true"><g stroke="currentColor" stroke-width="12" stroke-linecap="square" stroke-linejoin="miter"><path d="M6 6H34L6 38H34"/><path d="M64 6V38H92V6"/><path d="M122 6H140L150 16V28L140 38H122Z"/><path d="M180 6H208V38H180Z"/></g></svg>',
-    giant: '<svg class="zf-giant" viewBox="0 0 220 44" fill="none" aria-hidden="true" focusable="false"><g stroke="currentColor" stroke-width="12" stroke-linecap="square" stroke-linejoin="miter"><path d="M6 6H34M6 38H34"/><path stroke="#C0392B" d="M34 6L6 38"/><path d="M64 6V38H92V6"/><path d="M122 6H140L150 16V28L140 38H122Z"/><path d="M180 6H208V38H180Z"/></g></svg>',
+    giant: '<svg class="zf-giant" viewBox="0 0 220 44" fill="none" aria-hidden="true" focusable="false"><g stroke="currentColor" stroke-width="12" stroke-linecap="square" stroke-linejoin="miter"><path d="M6 6H34M6 38H34"/><polygon fill="#C0392B" stroke="none" points="26,12 40,12 14,32 0,32"/><path d="M64 6V38H92V6"/><path d="M122 6H140L150 16V28L140 38H122Z"/><path d="M180 6H208V38H180Z"/></g></svg>',
   };
 
   /* ---------- navigation model ---------- */
@@ -189,7 +189,7 @@
       '<footer class="zf" id="zudoFooter">' +
         '<div class="zf-inner">' +
           '<div class="zf-cta">' +
-            '<div><h2>Start with one package.<br><span>Add the rest when you need it.</span></h2>' +
+            '<div><h2>Start with one package.<br><span>Add the rest later.</span></h2>' +
               '<p>Every @zudojs package installs on its own and shares the same contracts, so adding one later never means rewriting the ones you have.</p></div>' +
             '<div class="zf-cta-actions">' +
               '<div class="zf-install"><code><span class="p">$</span>npm install @zudojs/core</code>' +
