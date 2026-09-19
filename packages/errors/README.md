@@ -2,6 +2,12 @@
 
 Shared error base class, error codes, and error handling utilities for the Zudojs framework.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-errors](https://zudojs.oyinlola.site/docs/packages-errors) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-errors.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

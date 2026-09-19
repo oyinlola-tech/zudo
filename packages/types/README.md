@@ -2,6 +2,12 @@
 
 Shared type guards, utility types, and type converters for the Zudojs framework.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-types](https://zudojs.oyinlola.site/docs/packages-types) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-types.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

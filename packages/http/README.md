@@ -2,6 +2,12 @@
 
 HTTP primitives, request handling, routing, middleware, and server infrastructure for Zudojs applications.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-http](https://zudojs.oyinlola.site/docs/packages-http) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-http.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

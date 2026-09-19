@@ -2,6 +2,12 @@
 
 Cache abstraction with a memory adapter, namespaced tags, locking, events, middleware, and metrics for Zudojs applications.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-cache](https://zudojs.oyinlola.site/docs/packages-cache) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-cache.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

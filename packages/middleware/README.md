@@ -2,6 +2,12 @@
 
 Composable middleware pipeline with composition, priority ordering, execution tracking, error handling, and built-in middleware.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-middleware](https://zudojs.oyinlola.site/docs/packages-middleware) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-middleware.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

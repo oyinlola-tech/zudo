@@ -2,6 +2,12 @@
 
 Generic authorization engine with RBAC, ABAC, resource authorization, wildcards, role hierarchy, policies, and abilities.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-permissions](https://zudojs.oyinlola.site/docs/packages-permissions) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-permissions.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

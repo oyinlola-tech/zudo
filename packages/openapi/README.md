@@ -2,6 +2,12 @@
 
 OpenAPI 3.0 and 3.1 specification generation, validation, and serialization for Zudojs applications.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-openapi](https://zudojs.oyinlola.site/docs/packages-openapi) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-openapi.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

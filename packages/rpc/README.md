@@ -2,6 +2,12 @@
 
 Type-safe RPC — define procedures, apply middleware, dispatch calls, and serve them over your own transport.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-rpc](https://zudojs.oyinlola.site/docs/packages-rpc) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-rpc.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## When to use
 
 Import this when you need:

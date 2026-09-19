@@ -2,6 +2,12 @@
 
 Security primitives for input validation, header security, CORS, CSRF protection, rate limiting, and security headers.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-security](https://zudojs.oyinlola.site/docs/packages-security) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-security.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

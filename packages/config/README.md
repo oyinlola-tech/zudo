@@ -3,6 +3,12 @@
 Layered configuration management with multiple sources, priority-based
 merging, schema validation, and sensitive-value redaction.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-config](https://zudojs.oyinlola.site/docs/packages-config) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-config.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

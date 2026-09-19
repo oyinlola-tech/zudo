@@ -2,6 +2,12 @@
 
 Test helpers, fixtures, mocks, and assertions for Zudojs applications.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-testing](https://zudojs.oyinlola.site/docs/packages-testing) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-testing.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

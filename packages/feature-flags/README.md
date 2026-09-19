@@ -2,6 +2,12 @@
 
 Feature flag system with deterministic rollouts, rule engine, providers, variants, snapshots, and evaluation context.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-feature-flags](https://zudojs.oyinlola.site/docs/packages-feature-flags) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-feature-flags.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

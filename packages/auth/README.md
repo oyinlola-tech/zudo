@@ -4,6 +4,12 @@ Authentication primitives: JWT access/refresh tokens, server-side sessions,
 scrypt password hashing, brute-force lockout, and RBAC delegation to
 [`@zudojs/permissions`](https://www.npmjs.com/package/@zudojs/permissions).
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-auth](https://zudojs.oyinlola.site/docs/packages-auth) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-auth.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

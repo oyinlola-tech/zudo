@@ -2,6 +2,12 @@
 
 Token-based dependency injection container for managing application dependencies and service lifetimes.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-container](https://zudojs.oyinlola.site/docs/packages-container) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-container.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

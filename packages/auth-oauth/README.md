@@ -5,6 +5,12 @@ default, mandatory anti-CSRF `state` with a timing-safe check, an SSRF guard on
 every endpoint URL, a redirect-URI allowlist, and size- and time-bounded
 requests to the provider.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-auth-oauth](https://zudojs.oyinlola.site/docs/packages-auth-oauth) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-auth-oauth.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 Depends on nothing but Node built-ins (`node:crypto` and the global `fetch`).
 
 ```bash

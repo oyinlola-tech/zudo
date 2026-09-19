@@ -2,6 +2,12 @@
 
 JSON serialization with optional type preservation, a transformer registry, and an envelope for cross-service payloads.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-serialization](https://zudojs.oyinlola.site/docs/packages-serialization) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-serialization.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

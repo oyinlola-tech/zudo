@@ -2,6 +2,12 @@
 
 Event-driven architecture with event bus, emitter, middleware, and registry for decoupled communication.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-events](https://zudojs.oyinlola.site/docs/packages-events) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-events.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

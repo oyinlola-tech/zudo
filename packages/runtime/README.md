@@ -2,6 +2,12 @@
 
 Application lifecycle orchestrator with dependency ordering, rollback, signals, and readiness checks.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-runtime](https://zudojs.oyinlola.site/docs/packages-runtime) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-runtime.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

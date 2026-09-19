@@ -2,6 +2,12 @@
 
 Application lifecycle management, execution context propagation, and runtime orchestration for Zudojs applications.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-core](https://zudojs.oyinlola.site/docs/packages-core) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-core.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

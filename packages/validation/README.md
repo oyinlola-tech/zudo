@@ -2,6 +2,12 @@
 
 Schema validation with Zod integration, constraints, parsers, composers, circular detection, and depth/size checks.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-validation](https://zudojs.oyinlola.site/docs/packages-validation) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-validation.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

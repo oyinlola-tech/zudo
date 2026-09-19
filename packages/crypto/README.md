@@ -2,6 +2,12 @@
 
 Cryptographic primitives for hashing, authenticated encryption, password hashing, digital signatures, key derivation, opaque tokens, and secure random generation. Everything is backed by `node:crypto` through a swappable provider.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-crypto](https://zudojs.oyinlola.site/docs/packages-crypto) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-crypto.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

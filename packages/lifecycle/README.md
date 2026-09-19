@@ -3,6 +3,12 @@
 Application and component lifecycle orchestration with a state machine,
 dependency ordering, graceful shutdown, rollback, and signal handling.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-lifecycle](https://zudojs.oyinlola.site/docs/packages-lifecycle) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-lifecycle.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

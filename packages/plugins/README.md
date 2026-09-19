@@ -2,6 +2,12 @@
 
 Plugin manager, registry, dependency resolver, lifecycle controller, events, and diagnostics. The basis for extending a Zudojs app with third-party functionality.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-plugins](https://zudojs.oyinlola.site/docs/packages-plugins) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-plugins.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## When to use
 
 Import this when you need:

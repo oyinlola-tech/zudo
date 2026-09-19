@@ -2,6 +2,12 @@
 
 Type-safe schema definition, parsing, and validation engine for data contracts.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-schema](https://zudojs.oyinlola.site/docs/packages-schema) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-schema.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

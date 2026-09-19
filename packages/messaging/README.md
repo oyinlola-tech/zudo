@@ -2,6 +2,12 @@
 
 In-process message bus infrastructure with handlers, middleware, and publish/subscribe patterns.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-messaging](https://zudojs.oyinlola.site/docs/packages-messaging) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-messaging.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

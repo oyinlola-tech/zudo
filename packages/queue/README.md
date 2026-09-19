@@ -2,6 +2,12 @@
 
 Background job and asynchronous task infrastructure with in-memory and adapter-based queue implementations.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-queue](https://zudojs.oyinlola.site/docs/packages-queue) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-queue.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

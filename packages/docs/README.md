@@ -2,6 +2,12 @@
 
 Documentation infrastructure with structured document model, registry, validation, navigation, frontmatter parsing, and markdown/JSON generation.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-docs](https://zudojs.oyinlola.site/docs/packages-docs) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-docs.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

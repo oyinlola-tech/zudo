@@ -2,6 +2,12 @@
 
 In-process scheduling for delayed, recurring and cron-driven jobs.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-scheduler](https://zudojs.oyinlola.site/docs/packages-scheduler) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-scheduler.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

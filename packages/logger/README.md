@@ -3,6 +3,12 @@
 Structured logging with transports, formatters, log levels, secret
 redaction, and context propagation for Zudojs applications.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-logger](https://zudojs.oyinlola.site/docs/packages-logger) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-logger.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

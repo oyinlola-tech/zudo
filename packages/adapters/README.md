@@ -2,6 +2,12 @@
 
 Boundary layer between Zudojs and external platforms with adapter contracts, registry, capabilities, and transport abstractions.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-adapters](https://zudojs.oyinlola.site/docs/packages-adapters) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-adapters.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

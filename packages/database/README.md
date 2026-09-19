@@ -6,6 +6,12 @@ that translates to Prisma `where` clauses, managed transactions, keyset
 pagination with signed cursors, migration and seed runners guarded by advisory
 locks, health checks with reconnect, and a bounded in-memory cache.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-database](https://zudojs.oyinlola.site/docs/packages-database) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-database.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

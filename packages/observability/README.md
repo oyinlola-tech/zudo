@@ -2,6 +2,12 @@
 
 Structured logging, metrics, tracing, context propagation, and telemetry exporters for Zudojs applications.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-observability](https://zudojs.oyinlola.site/docs/packages-observability) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-observability.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

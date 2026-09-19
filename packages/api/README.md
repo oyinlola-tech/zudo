@@ -2,6 +2,12 @@
 
 Higher-level API layer — operation definitions, execution context, interceptors, and a transport-agnostic executor. Sits above `@zudojs/http` and `@zudojs/cqrs`.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-api](https://zudojs.oyinlola.site/docs/packages-api) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-api.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## When to use
 
 Import this when you need:

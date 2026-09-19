@@ -2,6 +2,12 @@
 
 Transaction lifecycle and coordination with state machine, AsyncLocalStorage context propagation, savepoints, hooks, and adapter abstraction.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-transactions](https://zudojs.oyinlola.site/docs/packages-transactions) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-transactions.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

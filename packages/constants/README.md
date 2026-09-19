@@ -2,6 +2,12 @@
 
 Shared constants, enums, branded types, and type-safe literals for the Zudojs framework.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-constants](https://zudojs.oyinlola.site/docs/packages-constants) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-constants.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

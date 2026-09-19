@@ -2,6 +2,12 @@
 
 Command Query Responsibility Segregation (CQRS) primitives for separating read and write operations.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-cqrs](https://zudojs.oyinlola.site/docs/packages-cqrs) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-cqrs.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

@@ -2,6 +2,12 @@
 
 Multi-tenant context and isolation: tenant resolution, context propagation, resolver chains, and guard middleware.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-tenancy](https://zudojs.oyinlola.site/docs/packages-tenancy) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-tenancy.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash

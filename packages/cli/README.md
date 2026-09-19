@@ -2,6 +2,12 @@
 
 Command-line interface for scaffolding, generating, and managing Zudojs framework projects.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-cli](https://zudojs.oyinlola.site/docs/packages-cli) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-cli.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ### First time

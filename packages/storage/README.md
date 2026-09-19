@@ -2,6 +2,12 @@
 
 Storage abstractions including database, object storage, repository, serialization, locking, and lifecycle.
 
+<!-- zudo-docs:start -->
+
+**Documentation:** [zudojs.oyinlola.site/docs/packages-storage](https://zudojs.oyinlola.site/docs/packages-storage) · **For AI agents:** [Markdown version](https://zudojs.oyinlola.site/docs/packages-storage.md), [llms.txt](https://zudojs.oyinlola.site/llms.txt)
+
+<!-- zudo-docs:end -->
+
 ## Installation
 
 ```bash
