@@ -1,6 +1,9 @@
 /**
- * Event middleware pipeline execution for Zudojs.
+ * Event middleware pipeline execution for Zudojs, built on `compose` from
+ * `@zudojs/middleware`.
  */
+
+import { compose, type Middleware } from "@zudojs/middleware";
 
 import type { Event } from "../eventTypes/eventDefinition.type.js";
 
@@ -18,10 +21,7 @@ import type {
   EventMiddlewarePipelineResult,
 } from "./eventMiddleware.type.js";
 
-import {
-  sortEventMiddleware,
-  executeEventMiddleware,
-} from "./eventMiddleware.helper.js";
+import { sortEventMiddleware, executeEventMiddleware } from "./eventMiddleware.helper.js";
 
 /**
  * Executes a middleware pipeline.
@@ -49,76 +49,58 @@ export async function executeEventMiddlewarePipeline<
 ): Promise<EventMiddlewarePipelineResult<TResult>> {
   const started = performance.now();
 
-  const activeMiddleware = sortEventMiddleware(
-    middleware.filter((item) => item.enabled),
-  );
-
   const executions: EventMiddlewareExecution<TResult>[] = [];
 
-  let index = -1;
+  const stages = sortEventMiddleware(middleware.filter((item) => item.enabled))
+    .map((current) => toStage(current, executions));
 
-  const dispatch = async (currentIndex: number): Promise<TResult> => {
-    if (context.signal.aborted) {
-      throw createAbortError(context);
-    }
-
-    if (currentIndex === activeMiddleware.length) {
+  const run = compose<EventMiddlewareContext<TEvent>, TResult>(
+    stages,
+    async (ctx) => {
+      throwIfAborted(ctx);
       return terminal();
-    }
+    },
+    { maxDepth: Number.POSITIVE_INFINITY },
+  );
 
-    if (currentIndex <= index) {
-      throw new EventMiddlewareError(
-        "Event middleware called next() more than once.",
-        {
-          eventType: context.event?.type,
-          eventId: context.event?.id,
-        },
-      );
-    }
+  const result = await run(context);
 
-    index = currentIndex;
+  return { result, executions, duration: performance.now() - started };
+}
 
-    const current = activeMiddleware[currentIndex];
-
-    if (!current) {
-      return terminal();
-    }
+/**
+ * Adapts one registered middleware to the shared composer: checks the
+ * abort signal, rejects a second next() with an EventMiddlewareError,
+ * records the execution, and wraps only the middleware's own errors.
+ */
+function toStage<TEvent extends Event, TResult>(
+  current: RegisteredEventMiddleware<TEvent, TResult>,
+  executions: EventMiddlewareExecution<TResult>[],
+): Middleware<EventMiddlewareContext<TEvent>, TResult> {
+  return async (context, advance) => {
+    throwIfAborted(context);
 
     const middlewareStarted = performance.now();
+    const eventType = context.event?.type;
+    const eventId = context.event?.id;
 
     let nextCalled = false;
-
-    /**
-     * Errors that surfaced through next() belong to downstream
-     * code, not to this middleware; they must pass through
-     * unwrapped.
-     */
     let downstreamThrew = false;
-
     let downstreamError: unknown;
 
-    const next = async () => {
+    const next = async (): Promise<TResult> => {
       if (nextCalled) {
         throw new EventMiddlewareError(
           `Middleware "${current.id}" called next() more than once.`,
-          {
-            middlewareId: current.id,
-
-            eventType: context.event?.type,
-            eventId: context.event?.id,
-          },
+          { middlewareId: current.id, eventType, eventId },
         );
       }
-
       nextCalled = true;
-
       try {
-        return await dispatch(currentIndex + 1);
+        return await advance();
       } catch (error) {
         downstreamThrew = true;
-
         downstreamError = error;
-
         throw error;
       }
     };
@@ -129,65 +111,38 @@ export async function executeEventMiddlewarePipeline<
         context,
         next,
       );
-
       executions.push({
         middlewareId: current.id,
-
         result,
-
         duration: performance.now() - middlewareStarted,
       });
-
       return result;
     } catch (error) {
-      if (downstreamThrew && error === downstreamError) {
-        throw error;
-      }
-
       if (
+        (downstreamThrew && error === downstreamError) ||
         error instanceof EventMiddlewareError ||
         error instanceof EventDispatchAbortedError
       ) {
         throw error;
       }
-
-      throw new EventMiddlewareError(
-        `Event middleware "${current.id}" failed.`,
-        {
-          middlewareId: current.id,
-
-          eventType: context.event?.type,
-          eventId: context.event?.id,
-
-          cause: toEventError(error, {
-            eventType: context.event?.type,
-            eventId: context.event?.id,
-          }),
-        },
-      );
+      throw new EventMiddlewareError(`Event middleware "${current.id}" failed.`, {
+        middlewareId: current.id,
+        eventType,
+        eventId,
+        cause: toEventError(error, { eventType, eventId }),
+      });
     }
-  };
-
-  const result = await dispatch(0);
-
-  return {
-    result,
-
-    executions,
-
-    duration: performance.now() - started,
   };
 }
 
 /**
- * Creates the abort error thrown when the pipeline observes an
- * aborted signal.
+ * Throws the abort error when the pipeline observes an aborted signal.
  */
-function createAbortError(
-  context: EventMiddlewareContext<Event>,
-): EventDispatchAbortedError {
-  return new EventDispatchAbortedError("Event dispatch was aborted.", {
-    eventType: context.event?.type,
-    eventId: context.event?.id,
-  });
+function throwIfAborted(context: EventMiddlewareContext<Event>): void {
+  if (context.signal.aborted) {
+    throw new EventDispatchAbortedError("Event dispatch was aborted.", {
+      eventType: context.event?.type,
+      eventId: context.event?.id,
+    });
+  }
 }
