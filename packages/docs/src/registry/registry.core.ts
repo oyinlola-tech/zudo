@@ -20,22 +20,28 @@ export type DocumentVisibilityFilter = "SERVER" | "CLIENT" | "ALL";
 export interface GetAllOptions {
   /**
    * Which documents to return. `"CLIENT"` returns documents whose
-   * `visibility` is `"CLIENT"` or unset; `"SERVER"` returns only
-   * server-only documents; `"ALL"` (default) returns everything.
+   * `visibility` is exactly `"CLIENT"` or unset; `"SERVER"` returns every
+   * other document, including unrecognised values (fail closed); `"ALL"`
+   * (default) returns everything.
    */
   readonly visibility?: DocumentVisibilityFilter;
 }
 
 /**
  * Returns true when `document` should be included for the given filter.
+ *
+ * Fails closed: only an unset `visibility` or exactly `"CLIENT"` is client
+ * visible. Any other value (`"server"`, a typo, a non-string from parsed
+ * frontmatter) is treated as server-only, so it never reaches a client index.
  */
 export function matchesVisibility(
   document: DocumentationDocument,
   filter: DocumentVisibilityFilter = "ALL",
 ): boolean {
   if (filter === "ALL") return true;
-  if (filter === "SERVER") return document.visibility === "SERVER";
-  return document.visibility !== "SERVER";
+  const visibility: unknown = document.visibility;
+  const clientVisible = visibility === undefined || visibility === "CLIENT";
+  return filter === "CLIENT" ? clientVisible : !clientVisible;
 }
 
 /**

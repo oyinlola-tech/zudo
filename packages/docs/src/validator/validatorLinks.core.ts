@@ -8,6 +8,7 @@ import {
   stripFencedCodeBlocks,
   stripLinkDecorations,
 } from "../utils/utils.helper.js";
+import { isSafeLinkHref } from "../utils/utils.href.js";
 import {
   toValidationResult,
   type ValidationResult,
@@ -31,8 +32,15 @@ export interface ValidateLinksOptions {
  * Matches `[text](target)` and `![alt](target)` links. Group 1 is the
  * optional image bang, group 2 the target (optionally `<…>` wrapped
  * and followed by a `"title"`).
+ *
+ * Linear by construction: link text cannot contain `[`/`]` and a target
+ * cannot contain `(`/`)`, so each start scans only to the next opener; the
+ * target is non-empty, so leading whitespace is never split between two
+ * quantifiers; and whitespace is `[ \t]` (the old `\s` ran across lines).
+ * The old pattern took ~30 s on a 99 KB run of `[`.
  */
-const LINK_PATTERN = /(!?)\[[^\]\n]*\]\(\s*(<[^>\n]*>|[^)\s]*)(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)/g;
+const LINK_PATTERN =
+  /(!?)\[[^[\]\n]*\]\((?:[ \t]*(<[^<>\n]*>|[^()\s<>]+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?)?[ \t]*\)/g;
 
 /** `scheme:` (mailto:, ftp:, http:) or protocol-relative `//`. */
 const EXTERNAL_PATTERN = /^([a-zA-Z][a-zA-Z0-9+.-]*:|\/\/)/;
@@ -41,7 +49,9 @@ const EXTERNAL_PATTERN = /^([a-zA-Z][a-zA-Z0-9+.-]*:|\/\/)/;
  * Validates internal links in a document's markdown content and in
  * structured `link` nodes.
  *
- * Skipped (never reported): images, anchors (`#…`), any target with a
+ * A target whose scheme is not allowed (http, https, mailto, tel, ftp, ftps).(`javascript:`,
+ * `data:`, `vbscript:` …) is reported as an `UNSAFE_LINK` error.
+ * Skipped (never reported): images, anchors (`#…`), other targets with a
  * URL scheme or `//` prefix, links inside fenced or inline code.
  * Relative targets (`./x`, `../x`, `/x`) are resolved against the
  * document ID with `resolveDocumentLink`; bare targets are looked up
@@ -107,6 +117,15 @@ function checkTarget(
   const target = rawTarget.trim();
 
   if (target === "" || target.startsWith("#")) return;
+  if (!isSafeLinkHref(target)) {
+    issues.push({
+      severity: "error",
+      code: "UNSAFE_LINK",
+      message: `Document "${document.id}" links to "${rawTarget}", whose scheme is not allowed (http, https, mailto, tel, ftp, ftps).`,
+      documentId: document.id,
+    });
+    return;
+  }
   if (EXTERNAL_PATTERN.test(target)) return;
 
   const stripped = stripLinkDecorations(target);
@@ -131,7 +150,13 @@ function checkTarget(
   });
 }
 
-/** Blanks out inline code spans so links inside them are ignored. */
+/**
+ * Blanks out inline code spans so links inside them are ignored. The
+ * lookarounds anchor each attempt at a whole backtick run, so a long run is
+ * not re-scanned from every position inside it.
+ */
 function stripInlineCode(markdown: string): string {
-  return markdown.replace(/(`+)[^`\n][\s\S]*?\1/g, (m) => " ".repeat(m.length));
+  return markdown.replace(/(?<!`)(`+)(?![`\n])[\s\S]*?(?<!`)\1(?!`)/g, (m) =>
+    " ".repeat(m.length),
+  );
 }

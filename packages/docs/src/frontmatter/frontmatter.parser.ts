@@ -5,7 +5,8 @@
  * and extracts metadata alongside the remaining content.
  *
  * Supported subset:
- * - `key: scalar` (strings, canonical numbers, booleans, null)
+ * - `key: scalar` (strings, lossless numbers, booleans, null)
+ * - `[]` / `{}` as empty collections; `tags` always parses to a string list
  * - single- and double-quoted strings with escapes
  * - `key:` followed by `- item` lines (list of scalars)
  * - one level of nested mapping (`key:` followed by indented `sub: value`)
@@ -20,6 +21,12 @@ import type {
   ParsedFrontmatter,
   FrontmatterMetadata,
 } from "./frontmatter.types.js";
+import {
+  STRING_LIST_KEYS,
+  emptyCollection,
+  losslessNumber,
+  parseInlineList,
+} from "./frontmatter.values.js";
 
 const FRONTMATTER_DELIMITER = "---";
 
@@ -28,9 +35,6 @@ const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 /** Valid frontmatter key syntax. */
 const KEY_PATTERN = /^[A-Za-z_][\w.-]*$/;
-
-/** Canonical number: optional sign, no leading zeros, optional fraction. */
-const CANONICAL_NUMBER = /^-?(0|[1-9]\d*)(\.\d+)?$/;
 
 /**
  * Keys whose values are declared as strings in `FrontmatterMetadata`.
@@ -45,9 +49,6 @@ const STRING_KEYS = new Set([
   "deprecatedMessage",
   "visibility",
 ]);
-
-/** Keys whose list items are always strings. */
-const STRING_LIST_KEYS = new Set(["tags"]);
 
 /**
  * Parses YAML-like frontmatter from a markdown string.
@@ -82,11 +83,10 @@ export function parseFrontmatter(raw: string): ParsedFrontmatter {
   }
 
   const yamlLines = lines.slice(start + 1, end);
-  const remainingContent = lines
-    .slice(end + 1)
-    .join("\n")
-    .replace(/^\s*\n/, "")
-    .trimStart();
+  // Drop only the one blank separator line that serializeFrontmatter writes.
+  // Trimming more stripped the indentation of a leading code block.
+  const bodyStart = lines[end + 1]?.trim() === "" ? end + 2 : end + 1;
+  const remainingContent = lines.slice(bodyStart).join("\n");
 
   const metadata = parseYamlLike(yamlLines);
 
@@ -111,7 +111,9 @@ function parseYamlLike(lines: readonly string[]): FrontmatterMetadata {
     } else if (currentMap) {
       result[currentKey] = Object.freeze(currentMap);
     } else {
-      result[currentKey] = "";
+      result[currentKey] = STRING_LIST_KEYS.has(currentKey)
+        ? Object.freeze([])
+        : "";
     }
 
     currentKey = null;
@@ -166,9 +168,12 @@ function parseYamlLike(lines: readonly string[]): FrontmatterMetadata {
       continue;
     }
 
-    result[entry.key] = STRING_KEYS.has(entry.key)
-      ? parseStringScalar(entry.value)
-      : parseScalar(entry.value);
+    result[entry.key] = STRING_LIST_KEYS.has(entry.key)
+      ? parseInlineList(entry.value, parseStringScalar)
+      : (emptyCollection(entry.value) ??
+        (STRING_KEYS.has(entry.key)
+          ? parseStringScalar(entry.value)
+          : parseScalar(entry.value)));
   }
 
   flush();
@@ -228,8 +233,8 @@ function stripComment(line: string): string {
  * Parses a scalar YAML value into its appropriate JS type.
  *
  * Quoted strings are unquoted (with escape handling) and never coerced.
- * Only canonical numbers within the safe-integer range become numbers;
- * anything else stays a string.
+ * A numeric literal becomes a number only when the conversion is lossless
+ * (`String(Number(text)) === text`); anything else stays a string.
  */
 function parseScalar(value: string): string | number | boolean | null {
   if (value.length >= 2) {
@@ -249,14 +254,7 @@ function parseScalar(value: string): string | number | boolean | null {
   if (value === "false") return false;
   if (value === "null" || value === "~") return null;
 
-  if (CANONICAL_NUMBER.test(value)) {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed) && Math.abs(parsed) <= Number.MAX_SAFE_INTEGER) {
-      return parsed;
-    }
-  }
-
-  return value;
+  return losslessNumber(value) ?? value;
 }
 
 /** Parses a scalar that must remain a string (unquotes, never coerces). */

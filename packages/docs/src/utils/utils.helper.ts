@@ -97,7 +97,7 @@ export function stripLinkDecorations(link: string): string {
  * headings and links inside them are not interpreted.
  */
 export function stripFencedCodeBlocks(markdown: string): string {
-  return markdown.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[^\n]*$/gm, "");
+  return markdown.replace(/^(`{3,}(?!`)|~{3,}(?!~))[^\n]*\n[\s\S]*?^\1[^\n]*$/gm, "");
 }
 
 /**
@@ -137,61 +137,10 @@ export function extractHeadings(
 
 /** Trims a heading and removes ATX closing hashes (`# Title #`). */
 function cleanHeadingText(text: string): string {
-  return text.replace(/\s+#+\s*$/, "").trim();
-}
-
-const HTML_TAG = /<\/?[a-zA-Z][^>\n]*>/g;
-
-/**
- * Removes HTML tags until the result stops changing. A single pass is not
- * enough: stripping the inner tag of `<<b>b>x` re-forms `<b>x`, so a lone pass
- * can leave a tag behind in text that is later rendered as HTML.
- */
-function stripHtmlTags(text: string): string {
-  let current = text;
-  let previous: string;
-  do {
-    previous = current;
-    current = current.replace(HTML_TAG, "");
-  } while (current !== previous);
-  return current;
-}
-
-/**
- * Strips markdown formatting to plain text.
- */
-export function stripMarkdown(markdown: string): string {
-  return (
-    stripHtmlTags(
-      // fenced code blocks: keep the code, drop the fences
-      markdown.replace(/^(`{3,}|~{3,})[^\n]*\n([\s\S]*?)^\1[^\n]*$/gm, "$2"),
-    )
-      // images before links
-      .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-      // headings
-      .replace(/^#{1,6}\s+/gm, "")
-      .replace(/\s+#+\s*$/gm, "")
-      // emphasis (bold before italic, non-greedy)
-      .replace(/\*\*(.+?)\*\*/g, "$1")
-      .replace(/__(.+?)__/g, "$1")
-      .replace(/\*(.+?)\*/g, "$1")
-      .replace(/(^|[^\w])_(.+?)_(?=[^\w]|$)/g, "$1$2")
-      .replace(/~~(.+?)~~/g, "$1")
-      // inline code
-      .replace(/`([^`]+)`/g, "$1")
-      // blockquotes, list markers
-      .replace(/^\s*>\s?/gm, "")
-      .replace(/^\s*[-*+]\s+/gm, "")
-      .replace(/^\s*\d+\.\s+/gm, "")
-      // tables: drop separator rows, unpipe cells
-      .replace(/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/gm, "")
-      .replace(/^\s*\|/gm, "")
-      .replace(/\|\s*$/gm, "")
-      .replace(/\s*\|\s*/g, " ")
-      // horizontal rules
-      .replace(/^\s*([-*_]\s*){3,}$/gm, "")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim()
-  );
+  const trimmed = text.trim();
+  const withoutHashes = trimmed.replace(/(?<!#)#+$/, "");
+  const last = withoutHashes.at(-1);
+  return withoutHashes !== trimmed && (last === " " || last === "\t")
+    ? withoutHashes.trim()
+    : trimmed;
 }

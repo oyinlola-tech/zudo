@@ -13,7 +13,7 @@ export {
   stripFencedCodeBlocks,
   extractTitleFromMarkdown,
   extractHeadings,
-  stripMarkdown,
 } from "./utils.helper.js";
+export { stripMarkdown } from "./utils.markdownText.js";
 
 export { deepFreeze, deepFreezeClone } from "./utils.freeze.js";

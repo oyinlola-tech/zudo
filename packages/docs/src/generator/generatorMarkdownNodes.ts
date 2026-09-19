@@ -3,10 +3,14 @@
  *
  * Every value is escaped for the position it is written to, so
  * untrusted node content cannot break out of a table, code fence,
- * heading or link.
+ * heading or link. Text outside code blocks is HTML-escaped (`&`, `<`,
+ * `>`), and a link whose href uses a scheme outside `SAFE_LINK_SCHEMES`
+ * (http, https, mailto, tel, ftp, ftps) is written as plain text, so a structured document from
+ * untrusted JSON cannot produce live HTML or a `javascript:` link.
  */
 
 import type { DocumentationNode } from "../docsTypes/index.js";
+import { escapeHtmlText, isSafeLinkHref } from "../utils/utils.href.js";
 
 const CALLOUT_LABELS: ReadonlyMap<string, string> = new Map([
   ["note", "NOTE"],
@@ -33,7 +37,7 @@ export function nodesToMarkdown(nodes: readonly DocumentationNode[]): string {
       }
 
       case "paragraph":
-        lines.push(node.value);
+        lines.push(escapeHtmlText(node.value));
         lines.push("");
         break;
 
@@ -55,7 +59,11 @@ export function nodesToMarkdown(nodes: readonly DocumentationNode[]): string {
         break;
 
       case "link":
-        lines.push(`[${escapeLinkText(node.value)}](${escapeLinkHref(node.href)})`);
+        lines.push(
+          isSafeLinkHref(node.href)
+            ? `[${escapeLinkText(node.value)}](${escapeLinkHref(node.href)})`
+            : escapeLinkText(node.value),
+        );
         lines.push("");
         break;
 
@@ -71,7 +79,7 @@ export function nodesToMarkdown(nodes: readonly DocumentationNode[]): string {
 
       case "quote":
         for (const line of node.value.split(/\r?\n/)) {
-          lines.push(`> ${line}`);
+          lines.push(`> ${escapeHtmlText(line)}`);
         }
         lines.push("");
         break;
@@ -84,9 +92,9 @@ export function nodesToMarkdown(nodes: readonly DocumentationNode[]): string {
           CALLOUT_LABELS.get(node.kind) ??
           singleLine(String(node.kind)).toUpperCase();
         const [first = "", ...rest] = node.value.split(/\r?\n/);
-        lines.push(`> **${label}:** ${first}`);
+        lines.push(`> **${label}:** ${escapeHtmlText(first)}`);
         for (const line of rest) {
-          lines.push(`> ${line}`);
+          lines.push(`> ${escapeHtmlText(line)}`);
         }
         lines.push("");
         break;
@@ -134,15 +142,16 @@ export function sanitizeLanguage(language: string | undefined): string {
 
 /** Escapes `|` and newlines so a value stays inside its table cell. */
 export function tableCell(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");
+  return escapeHtmlText(value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|"))
+    .replace(/\r?\n/g, "<br>");
 }
 
 function singleLine(value: string): string {
-  return value.replace(/\r?\n/g, " ");
+  return escapeHtmlText(value.replace(/\r?\n/g, " "));
 }
 
 function listItem(value: string): string {
-  return value.replace(/\r?\n/g, "\n  ");
+  return escapeHtmlText(value).replace(/\r?\n/g, "\n  ");
 }
 
 function escapeLinkText(value: string): string {
@@ -155,6 +164,8 @@ function escapeLinkText(value: string): string {
 }
 
 function escapeLinkHref(href: string): string {
-  const clean = href.replace(/[\r\n]/g, "");
+  // `&` is escaped so a character reference cannot spell out a scheme
+  // (`&#106;avascript:`) once the renderer decodes it.
+  const clean = href.replace(/[\r\n]/g, "").replace(/&/g, "&amp;");
   return /[\s()]/.test(clean) ? `<${clean.replace(/[<>]/g, "")}>` : clean;
 }

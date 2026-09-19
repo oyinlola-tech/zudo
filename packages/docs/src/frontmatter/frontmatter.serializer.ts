@@ -8,6 +8,7 @@
  */
 
 import type { FrontmatterMetadata } from "./frontmatter.types.js";
+import { losslessNumber } from "./frontmatter.values.js";
 
 const FRONTMATTER_DELIMITER = "---";
 
@@ -35,7 +36,11 @@ export function serializeFrontmatter(
     if (value === undefined || value === null) continue;
     if (!isSerializableKey(key)) continue;
 
-    if (Array.isArray(value)) {
+    if (Array.isArray(value) && value.length === 0) {
+      lines.push(`${key}: []`);
+    } else if (isPlainObject(value) && !hasSerializableEntry(value)) {
+      lines.push(`${key}: {}`);
+    } else if (Array.isArray(value)) {
       lines.push(`${key}:`);
       for (const item of value) {
         lines.push(`  - ${formatScalar(item)}`);
@@ -95,7 +100,7 @@ function needsQuotes(value: string): boolean {
   if (/^[-?[\]{}*&!|>%@`,]/.test(value)) return true;
   if (value === "true" || value === "false") return true;
   if (value === "null" || value === "~") return true;
-  if (/^-?(0|[1-9]\d*)(\.\d+)?$/.test(value)) return true;
+  if (losslessNumber(value) !== undefined) return true;
   return false;
 }
 
@@ -109,6 +114,13 @@ function quote(value: string): string {
       .replace(/\r/g, "\\r")
       .replace(/\t/g, "\\t") +
     '"'
+  );
+}
+
+/** Whether a mapping has at least one entry the serializer would write. */
+function hasSerializableEntry(value: Record<string, unknown>): boolean {
+  return Object.entries(value).some(
+    ([key, entry]) => entry !== undefined && entry !== null && isSerializableKey(key),
   );
 }
 

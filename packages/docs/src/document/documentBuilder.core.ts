@@ -17,6 +17,7 @@ import type {
 } from "../docsTypes/index.js";
 import { deepFreezeClone } from "../utils/utils.freeze.js";
 import { isValidDocumentId } from "../utils/utils.helper.js";
+import { toTagList } from "./documentBuilder.normalize.js";
 
 /**
  * Options for creating a document via the builder.
@@ -77,7 +78,7 @@ export function createDocument(
     description: options.description,
     content: options.content,
     category: options.category,
-    tags: options.tags ? [...options.tags] : undefined,
+    tags: toTagList(options.tags as readonly string[] | string | undefined),
     version: options.version,
     status: options.status,
     metadata: options.metadata,
