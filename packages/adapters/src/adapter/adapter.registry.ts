@@ -21,6 +21,10 @@ import {
   AdapterNotFoundError,
 } from "@zudojs/errors";
 
+import { collectAdapterHealth, configureAdapter } from "./adapter.health.js";
+import type { AdapterHealthReport } from "./adapter.health.js";
+import type { AdapterOperationOptions } from "../lifecycle/lifecycle.type.js";
+
 /** A capability an adapter can declare. */
 export type AdapterCapabilityName = keyof AdapterCapabilities;
 
@@ -210,6 +214,25 @@ export class AdapterRegistry {
       (adapter) => adapter.stop?.(),
       "One or more adapters failed to stop.",
     );
+  }
+
+  /**
+   * Checks the health of every adapter that implements `health()`. Failures,
+   * timeouts (`options.timeout`) and aborts (`options.signal`) are reported
+   * as `"unhealthy"` entries rather than thrown.
+   */
+  async healthAll(options?: AdapterOperationOptions): Promise<AdapterHealthReport> {
+    return collectAdapterHealth([...this.adapters.entries()], options);
+  }
+
+  /**
+   * Passes options to one adapter's `configure()` hook.
+   *
+   * @throws {AdapterNotFoundError} If no adapter with the name is registered.
+   * @throws {AdapterConfigurationError} If the adapter has no `configure()`.
+   */
+  async configure(name: string, options: unknown): Promise<void> {
+    await configureAdapter(this.normalizeName(name), this.require(name), options);
   }
 
   /**

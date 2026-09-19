@@ -94,7 +94,23 @@ const health = createDegradedHealth("replica lag above threshold");
 ```
 
 A `LifecycleAdapter` adds optional `configure(options)` and `health()` to the
-base contract.
+base contract. The registry calls them:
+
+```typescript
+import { AdapterRegistry, createHealthyHealth, createMockAdapter } from "@zudojs/adapters";
+
+const registry = new AdapterRegistry();
+registry.register(
+  createMockAdapter({ name: "db", health: () => createHealthyHealth(), configure: () => {} }),
+);
+
+await registry.configure("db", { poolSize: 10 }); // throws if the adapter has no configure()
+const report = await registry.healthAll({ timeout: 2_000 });
+report.status; // worst of the per-adapter statuses: "healthy" | "degraded" | "unhealthy"
+report.adapters.db; // AdapterHealth; throwing, timed-out or aborted checks are "unhealthy"
+```
+
+Adapters without `health()` are left out of `report.adapters`.
 
 ## Transport contracts
 

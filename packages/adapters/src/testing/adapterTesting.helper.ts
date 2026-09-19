@@ -7,14 +7,21 @@
 import type { Adapter } from "../adapter/adapter.type.js";
 import type { AdapterCapabilities } from "../capabilities/capabilities.type.js";
 import { AdapterRegistry } from "../adapter/adapter.registry.js";
-import type { AdapterHealth } from "../lifecycle/lifecycle.type.js";
+import type {
+  AdapterHealth,
+  LifecycleAdapter,
+} from "../lifecycle/lifecycle.type.js";
 
 /**
  * Creates a minimal mock adapter for testing.
+ *
+ * Accepts the `LifecycleAdapter` hooks too: `health` and `configure` are
+ * forwarded when given, so the result can be exercised with
+ * `AdapterRegistry.healthAll()` and `configure()`.
  */
 export function createMockAdapter(
-  overrides: Partial<Adapter> & { name: string } = { name: "mock" },
-): Adapter {
+  overrides: Partial<LifecycleAdapter> & { name: string } = { name: "mock" },
+): LifecycleAdapter {
   const capabilities: AdapterCapabilities = {
     http: false,
     websocket: false,
@@ -39,6 +46,8 @@ export function createMockAdapter(
     start: overrides.start,
     stop: overrides.stop,
     dispose: overrides.dispose,
+    ...(overrides.health ? { health: overrides.health } : {}),
+    ...(overrides.configure ? { configure: overrides.configure } : {}),
   };
 }
 
