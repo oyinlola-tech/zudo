@@ -229,6 +229,8 @@ await assertDatabaseHealth(client); // throws DatabaseUnhealthyError with the re
 - `BaseRepository` with CRUD, `createMany` / `deleteMany`, soft delete (`softDelete`, `restore`, `findDeleted`, `withDeleted`), transaction rebinding (`withTransaction`), and `findByQuery`
 - Query builder and 40 filter helpers that translate to Prisma `where` / `orderBy` / `select` / `include`
 - Managed transactions with context, error enrichment, and `withTransactionRetry` (serialization failures retried by default)
+  with exponential backoff capped by `maxRetryDelayMs` (30 s by default, never above the
+  2^31-1 ms timer limit) and optional `jitter: "full"`
 - Offset pagination and keyset pagination with HMAC-signed, shape-validated cursors
 - Migration and seed runners using PostgreSQL advisory locks, per-item transactions, and BIGINT versioning
 - Advisory and row locks with `lock_timeout`, `SKIP LOCKED` / `NOWAIT`, and namespaced keys

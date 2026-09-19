@@ -15,6 +15,7 @@ import type {
   TransactionIsolationLevel,
   TransactionOptions,
 } from "../databaseType/databaseType.type.js";
+import { computeRetryDelay } from "./transaction.backoff.js";
 
 /**
  * Transaction state.
@@ -63,6 +64,18 @@ export interface TransactionRetryOptions extends ManagedTransactionOptions {
    * Base delay between attempts (doubles each retry). Defaults to 100 ms.
    */
   readonly retryDelayMs?: number;
+
+  /**
+   * Ceiling for a single retry delay. Defaults to 30000 ms, and never
+   * exceeds the timer maximum (2^31-1 ms).
+   */
+  readonly maxRetryDelayMs?: number;
+
+  /**
+   * `"full"` spreads each delay uniformly over `[0, delay]` so contending
+   * callers do not retry in lockstep. Defaults to `"none"`.
+   */
+  readonly jitter?: "none" | "full";
 
   /**
    * Predicate deciding whether an error is retryable. Defaults to
@@ -209,7 +222,13 @@ export async function withTransactionRetry<TResult>(
         throw error;
       }
       attempt += 1;
-      const delay = retryDelayMs * Math.pow(2, attempt - 1);
+      const delay = computeRetryDelay(attempt, {
+        retryDelayMs,
+        ...(options.maxRetryDelayMs !== undefined
+          ? { maxRetryDelayMs: options.maxRetryDelayMs }
+          : {}),
+        ...(options.jitter !== undefined ? { jitter: options.jitter } : {}),
+      });
       if (delay > 0) await sleep(delay);
     }
   }
