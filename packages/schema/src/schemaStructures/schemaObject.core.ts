@@ -8,13 +8,19 @@ import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
 import {
   addIssue,
+  countIssues,
   childContext,
   failValidation,
   enterComposite,
   leaveComposite,
   rethrowUnexpected,
 } from "../schemaBase/index.js";
-import { SchemaIssueCode, SCHEMA_FORBIDDEN_KEYS } from "@zudojs/constants";
+import {
+  SchemaIssueCode,
+  SCHEMA_FORBIDDEN_KEYS,
+  SCHEMA_DEFAULT_MAX_OBJECT_KEYS,
+} from "@zudojs/constants";
+import { checkKeyCount } from "./schemaRecord.core.js";
 
 /** Shape type — record of property names to schemas. */
 export type SchemaShape = Record<string, Schema<unknown>>;
@@ -27,6 +33,8 @@ interface ObjectSchemaConfig {
   readonly shape: SchemaShape;
   readonly unknownKeys?: UnknownKeyStrategy;
   readonly requiredKeys?: ReadonlySet<string>;
+  /** Key ceiling for `strict`/`passthrough` input (never below the shape). */
+  readonly maxKeys?: number;
 }
 
 /**
@@ -96,9 +104,20 @@ export class ObjectSchema<
     obj: Record<string, unknown>,
   ): TOutput {
     const result: Record<string, unknown> = {};
+    const inputKeys = Object.keys(obj);
+
+    // `strip` only ever reads the shape's keys; the other strategies walk
+    // every input key, so they are bounded before doing so.
+    if ((this._config.unknownKeys ?? "strip") !== "strip") {
+      const limit = Math.max(
+        this._config.maxKeys ?? SCHEMA_DEFAULT_MAX_OBJECT_KEYS,
+        this._keys.length,
+      );
+      if (!checkKeyCount(ctx, inputKeys.length, limit)) failValidation();
+    }
 
     // Check for prototype pollution keys
-    for (const key of Object.keys(obj)) {
+    for (const key of inputKeys) {
       if (SCHEMA_FORBIDDEN_KEYS.has(key)) {
         addIssue(ctx, {
           code: SchemaIssueCode.INVALID_KEY,
@@ -319,6 +338,14 @@ export class ObjectSchema<
     return new ObjectSchema({ ...this._config, unknownKeys: "strict" });
   }
 
+  /**
+   * Sets the key ceiling applied in `strict`/`passthrough` mode (default
+   * `SCHEMA_DEFAULT_MAX_OBJECT_KEYS`, 100, and never below the shape size).
+   */
+  public maxKeys(limit: number): ObjectSchema<TOutput> {
+    return new ObjectSchema({ ...this._config, maxKeys: limit });
+  }
+
   /** Sets unknown keys strategy to passthrough. */
   public passthrough(): ObjectSchema<TOutput> {
     return new ObjectSchema({ ...this._config, unknownKeys: "passthrough" });
@@ -358,7 +385,7 @@ function probeUndefined(
 
   try {
     const value = schema._parse(probeCtx, undefined);
-    return probeCtx.issues.length === 0
+    return countIssues(probeCtx) === 0
       ? { accepted: true, value }
       : { accepted: false };
   } catch (error) {

@@ -6,7 +6,7 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
-import { addIssue, failValidation } from "../schemaBase/index.js";
+import { addIssue, countIssues, failValidation } from "../schemaBase/index.js";
 import { describeThrown } from "../schemaBase/schemaBase.describe.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
@@ -25,7 +25,11 @@ export class RefineSchema<T> extends Schema<T> {
   }
 
   public _parse(ctx: SchemaParseContext, input: unknown): T {
+    const before = countIssues(ctx);
     const value = this._inner._parse(ctx, input);
+    // An inner object/array records its issues and returns the partial value
+    // instead of throwing. The callback must never see data that failed.
+    if (countIssues(ctx) > before) failValidation();
 
     let passed: boolean;
     try {

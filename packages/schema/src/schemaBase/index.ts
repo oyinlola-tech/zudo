@@ -21,6 +21,7 @@ export {
   isSchemaSuccess,
   isSchemaFailure,
   unwrapSchemaResult,
+  countIssues,
 } from "./schemaBase.result.js";
 export {
   createParseContext,

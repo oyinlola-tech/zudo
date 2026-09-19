@@ -88,6 +88,8 @@ export class ArraySchema<TOutput> extends Schema<TOutput[]> {
     // A default ceiling, so an unbounded array schema does not validate a
     // million attacker-supplied elements. Callers who need more say so with
     // an explicit `.max()`.
+    // This is also the explicit `.max()` check: a second, separate check for
+    // `c.max` reported the same TOO_LARGE issue twice.
     const hardMax = c.max ?? SCHEMA_DEFAULT_MAX_ARRAY_LENGTH;
     if (length > hardMax) {
       addIssue(ctx, {
@@ -106,16 +108,6 @@ export class ArraySchema<TOutput> extends Schema<TOutput[]> {
         path: [...ctx.path],
         message: `Array must have at least ${c.min} items`,
         expected: `>= ${c.min}`,
-        received: String(length),
-      });
-      failed = true;
-    }
-    if (c.max !== undefined && length > c.max) {
-      addIssue(ctx, {
-        code: SchemaIssueCode.TOO_LARGE,
-        path: [...ctx.path],
-        message: `Array must have at most ${c.max} items`,
-        expected: `<= ${c.max}`,
         received: String(length),
       });
       failed = true;

@@ -12,7 +12,11 @@ import type {
   SchemaMetadata,
 } from "./schemaBase.type.js";
 import { createParseContext } from "./schemaBase.context.js";
-import { schemaSuccess, schemaFailure } from "./schemaBase.result.js";
+import {
+  schemaSuccess,
+  schemaFailure,
+  countIssues,
+} from "./schemaBase.result.js";
 import { SchemaValidationSignal } from "./schemaBase.context.js";
 import { describeThrown } from "./schemaBase.describe.js";
 import { SchemaError } from "@zudojs/errors";
@@ -52,7 +56,7 @@ export abstract class Schema<TOutput, TInput = TOutput> {
       // collect issues on the context and return a partial value. Without
       // this check `parse` would hand back that partial value while
       // `safeParse` reported the very same input as invalid.
-      if (ctx.issues.length > 0) {
+      if (countIssues(ctx) > 0) {
         throw new SchemaError("Validation failed", {
           issues: [...ctx.issues],
         });
@@ -81,7 +85,7 @@ export abstract class Schema<TOutput, TInput = TOutput> {
     const ctx = createParseContext(options);
     try {
       const data = this._parse(ctx, input);
-      if (ctx.issues.length > 0) {
+      if (countIssues(ctx) > 0) {
         return schemaFailure([...ctx.issues]);
       }
       return schemaSuccess(data);

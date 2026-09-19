@@ -8,6 +8,7 @@ import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext, SchemaIssue } from "../schemaBase/index.js";
 import {
   addIssue,
+  countIssues,
   failValidation,
   rethrowUnexpected,
 } from "../schemaBase/index.js";
@@ -62,7 +63,7 @@ export class UnionSchema<
       const childCtx = branchContext(ctx);
       try {
         const result = schema._parse(childCtx, input);
-        if (childCtx.issues.length === 0) {
+        if (countIssues(childCtx) === 0) {
           return result as UnionOutput<TSchemas>;
         }
         branchIssues.push(childCtx.issues);

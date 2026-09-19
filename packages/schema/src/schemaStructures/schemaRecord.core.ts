@@ -14,7 +14,11 @@ import {
   leaveComposite,
   rethrowUnexpected,
 } from "../schemaBase/index.js";
-import { SchemaIssueCode, SCHEMA_FORBIDDEN_KEYS } from "@zudojs/constants";
+import {
+  SchemaIssueCode,
+  SCHEMA_FORBIDDEN_KEYS,
+  SCHEMA_DEFAULT_MAX_OBJECT_KEYS,
+} from "@zudojs/constants";
 import { StringSchema } from "../schemaPrimitives/index.js";
 
 /**
@@ -26,8 +30,17 @@ export class RecordSchema<TValue> extends Schema<Record<string, TValue>> {
   constructor(
     private readonly _keySchema: Schema<string>,
     private readonly _valueSchema: Schema<TValue>,
+    private readonly _maxKeys: number = SCHEMA_DEFAULT_MAX_OBJECT_KEYS,
   ) {
     super();
+  }
+
+  /**
+   * Sets the maximum number of keys accepted (default
+   * `SCHEMA_DEFAULT_MAX_OBJECT_KEYS`, 100). Raise it for large maps.
+   */
+  public maxKeys(limit: number): RecordSchema<TValue> {
+    return new RecordSchema(this._keySchema, this._valueSchema, limit);
   }
 
   public _parse(
@@ -61,9 +74,11 @@ export class RecordSchema<TValue> extends Schema<Record<string, TValue>> {
     obj: Record<string, unknown>,
   ): Record<string, TValue> {
     const result: Record<string, TValue> = {};
+    const keys = Object.keys(obj);
+    if (!checkKeyCount(ctx, keys.length, this._maxKeys)) failValidation();
 
     let failed = false;
-    for (const key of Object.keys(obj)) {
+    for (const key of keys) {
       if (SCHEMA_FORBIDDEN_KEYS.has(key)) {
         addIssue(ctx, {
           code: SchemaIssueCode.INVALID_KEY,
@@ -101,6 +116,29 @@ export class RecordSchema<TValue> extends Schema<Record<string, TValue>> {
 
     return result;
   }
+}
+
+/**
+ * Enforces a ceiling on an object's own key count before its keys are
+ * walked. Returns false (with an issue recorded) when the count exceeds it.
+ *
+ * `SCHEMA_DEFAULT_MAX_OBJECT_KEYS` used to be defined and never read, so a
+ * record or passthrough object validated any number of attacker keys.
+ */
+export function checkKeyCount(
+  ctx: SchemaParseContext,
+  count: number,
+  limit: number,
+): boolean {
+  if (count <= limit) return true;
+  addIssue(ctx, {
+    code: SchemaIssueCode.TOO_LARGE,
+    path: [...ctx.path],
+    message: `Object must have at most ${limit} keys`,
+    expected: `<= ${limit}`,
+    received: String(count),
+  });
+  return false;
 }
 
 /** Creates a record schema. */

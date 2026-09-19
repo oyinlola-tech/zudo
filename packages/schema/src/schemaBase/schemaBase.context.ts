@@ -11,6 +11,7 @@ import type {
   SchemaPathSegment,
 } from "./schemaBase.type.js";
 import { SCHEMA_DEFAULT_MAX_DEPTH, SchemaIssueCode } from "@zudojs/constants";
+import { noteDroppedIssue } from "./schemaBase.result.js";
 
 /** Creates a fresh parse context from options. */
 export function createParseContext(
@@ -39,12 +40,16 @@ export function childContext(
   };
 }
 
-/** Pushes an issue into the context. Returns true if the issue was added. */
+/**
+ * Pushes an issue into the context. Returns true if the issue was stored.
+ *
+ * The first issue is always stored, whatever `maxIssues` says, so a failure
+ * can explain itself; later issues past the cap are counted, not stored.
+ */
 export function addIssue(ctx: SchemaParseContext, issue: SchemaIssue): boolean {
-  if (
-    ctx.options.maxIssues !== undefined &&
-    ctx.issues.length >= ctx.options.maxIssues
-  ) {
+  const cap = ctx.options.maxIssues;
+  if (cap !== undefined && ctx.issues.length >= Math.max(1, cap)) {
+    noteDroppedIssue(ctx);
     return false;
   }
   ctx.issues.push(issue);

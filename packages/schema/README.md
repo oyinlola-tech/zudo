@@ -65,9 +65,23 @@ UserSchema.safeParse(fromTheWire, { maxDepth: 32, maxIssues: 20 });
 `maxDepth` (default 100) is enforced by every composite schema, and a circular
 structure is reported as a `circular_reference` issue rather than recursing
 forever. Strings default to a 255-character ceiling and arrays to 1000 items
-before any pattern or item schema runs — raise either with `.max()`.
+before any pattern or item schema runs — raise either with `.max()`. Records,
+and objects in `.strict()` or `.passthrough()` mode, default to 100 keys
+(`SCHEMA_DEFAULT_MAX_OBJECT_KEYS`, never fewer than the object's own shape) —
+raise it with `.maxKeys()`:
 
-A `.refine()` or `.transform()` callback that throws is reported as a
+```typescript
+schema.record(schema.string()).maxKeys(5000);
+UserSchema.passthrough().maxKeys(500);
+```
+
+`maxIssues` caps how many issues are *collected*, never whether parsing fails:
+the first issue is always kept (so `maxIssues: 0` behaves like `1`), and any
+issue past the cap still fails the parse.
+
+A `.refine()` or `.transform()` callback only ever sees data its inner schema
+accepted: when the inner schema recorded an issue, the callback is skipped. A
+callback that throws is reported as a
 `refine_failed` / `transform_failed` issue carrying the original message.
 Anything else thrown during parsing — a genuine defect — propagates out of
 `safeParse` instead of being flattened into "invalid input".
@@ -91,10 +105,11 @@ and `"1"`/`"0"`/`"yes"`/`"on"` are accepted as booleans.
 
 - Type-safe schema definitions
 - Runtime validation with detailed errors
-- Schema composition: object, union, discriminated union, intersection, lazy
+- Schema composition: object, union, discriminated union, intersection (nested
+  object results are deep-merged), lazy
 - Transformations, refinements and defaults
 - Explicit coercion for string-typed input
-- Depth, cycle, length and issue-count limits
+- Depth, cycle, length, key-count and issue-count limits
 - Prototype-pollution protection on object and record keys
 
 ## Use Cases

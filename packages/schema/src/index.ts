@@ -44,6 +44,7 @@ export {
   isSchemaSuccess,
   isSchemaFailure,
   unwrapSchemaResult,
+  countIssues,
   createParseContext,
   childContext,
   addIssue,

@@ -72,7 +72,7 @@ export class IntersectionSchema<TLeft, TRight> extends Schema<TLeft & TRight> {
       failValidation();
     }
 
-    return { ...leftResult, ...rightResult } as TLeft & TRight;
+    return deepMerge(leftResult, rightResult) as TLeft & TRight;
   }
 }
 
@@ -91,4 +91,36 @@ function isMergeable(value: unknown): value is Record<string, unknown> {
   }
   const proto = Object.getPrototypeOf(value) as object | null;
   return proto === null || proto === Object.prototype;
+}
+
+/**
+ * Merges two validated object results, recursing into nested plain objects.
+ *
+ * A shallow spread let the right side's `db: { port }` replace the left
+ * side's `db: { host, port }`, silently dropping fields the left schema had
+ * required and validated. Keys are defined, never assigned, so a `__proto__`
+ * key cannot reach the setter. For non-object leaves the right side wins.
+ */
+function deepMerge(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const source of [left, right]) {
+    for (const key of Object.keys(source)) {
+      const incoming = source[key];
+      const existing = Object.hasOwn(result, key) ? result[key] : undefined;
+      const value =
+        source === right && isMergeable(existing) && isMergeable(incoming)
+          ? deepMerge(existing, incoming)
+          : incoming;
+      Object.defineProperty(result, key, {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+  }
+  return result;
 }

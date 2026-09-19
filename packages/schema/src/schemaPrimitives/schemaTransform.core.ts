@@ -4,7 +4,7 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
-import { addIssue, failValidation } from "../schemaBase/index.js";
+import { addIssue, countIssues, failValidation } from "../schemaBase/index.js";
 import { describeThrown } from "../schemaBase/schemaBase.describe.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
@@ -19,7 +19,11 @@ export class TransformSchema<TInput, TOutput> extends Schema<TOutput> {
   }
 
   public _parse(ctx: SchemaParseContext, input: unknown): TOutput {
+    const before = countIssues(ctx);
     const value = this._base._parse(ctx, input);
+    // An inner object/array records its issues and returns the partial value
+    // instead of throwing. The callback must never see data that failed.
+    if (countIssues(ctx) > before) failValidation();
     try {
       return this._fn(value);
     } catch (error) {
