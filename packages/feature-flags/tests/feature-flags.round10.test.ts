@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { isPlainObject as sharedIsPlainObject } from "@zudojs/types";
 import {
   createCachedProvider,
   createFeatureFlags,
@@ -97,5 +98,13 @@ describe("authz/FF-05", () => {
     expect(isPlainObject(Object.create(null))).toBe(true);
     expect(isPlainObject(new Date())).toBe(false);
     expect(isPlainObject(new Map())).toBe(false);
+  });
+});
+
+describe("authz/FF-05 (phase 2)", () => {
+  it("isPlainObject is the @zudojs/types function", () => {
+    expect(isPlainObject).toBe(sharedIsPlainObject);
+    expect(isPlainObject(new Date())).toBe(false);
+    expect(isPlainObject(Object.create(null))).toBe(true);
   });
 });
