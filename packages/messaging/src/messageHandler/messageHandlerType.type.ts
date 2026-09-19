@@ -95,5 +95,5 @@ export function resolveMessageHandler<
   if (typeof handler === "function") {
     return handler;
   }
-  return handler.handle;
+  return handler.handle.bind(handler);
 }

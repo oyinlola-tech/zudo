@@ -4,6 +4,8 @@
  * @module messageMiddleware/messageMiddlewarePipeline
  */
 
+import { MiddlewareNextCalledMultipleTimesError } from "@zudojs/errors";
+
 import type {
   MessageMiddleware,
   MessageMiddlewareLike,
@@ -41,7 +43,9 @@ function compose<TResult>(
 
     async function dispatch(i: number): Promise<TResult> {
       if (i <= index) {
-        throw new Error("next() called multiple times");
+        throw new MiddlewareNextCalledMultipleTimesError(
+          `message-middleware#${i - 1}`,
+        );
       }
       index = i;
 
@@ -65,7 +69,7 @@ function resolveMiddlewareLike<TResult>(
   if (typeof mw === "function") {
     return mw;
   }
-  return mw.handle;
+  return mw.handle.bind(mw);
 }
 
 /**
