@@ -1,12 +1,22 @@
 import type { GatewayConfig } from "../interfaces/index.js";
 
+/** Reads JWT_SECRET and refuses to start without a strong one. */
+function requireJwtSecret(): string {
+  const secret = process.env["JWT_SECRET"];
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      "JWT_SECRET must be set to at least 32 characters (generate one with `openssl rand -hex 32`).",
+    );
+  }
+  return secret;
+}
+
 export function createGatewayConfig(): GatewayConfig {
   return {
     port: parseInt(process.env["GATEWAY_PORT"] ?? "3000", 10),
     host: process.env["GATEWAY_HOST"] ?? "localhost",
-    jwtSecret:
-      process.env["JWT_SECRET"] ?? "dev-secret-key-change-in-production",
-    corsOrigin: process.env["CORS_ORIGIN"] ?? "*",
+    jwtSecret: requireJwtSecret(),
+    corsOrigin: process.env["CORS_ORIGIN"] ?? "http://localhost:5173",
     services: {
       identity: {
         name: "identity",

@@ -39,6 +39,12 @@ A University Learning & Assessment Platform demonstrating Zudojs's distributed m
 
 ## Quick Start
 
+The gateway and identity services refuse to start without a `JWT_SECRET` of at least 32 characters, and there is no built-in default:
+
+```bash
+export JWT_SECRET="$(openssl rand -hex 32)"
+```
+
 ```bash
 # Install dependencies
 npm install

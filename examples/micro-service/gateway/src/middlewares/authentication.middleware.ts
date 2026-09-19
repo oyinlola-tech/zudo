@@ -38,7 +38,7 @@ export function authenticationMiddleware(
     }
 
     try {
-      const decoded = jwt.verify(token, jwtSecret);
+      const decoded = jwt.verify(token, jwtSecret, { algorithms: ["HS256"] });
 
       // Attach decoded user to request
       (req as IncomingMessage & { user: unknown }).user = decoded;

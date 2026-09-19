@@ -73,7 +73,7 @@ export class AuthenticateUserHandler extends CommandHandler<
         role: user.role,
       },
       this.jwtSecret,
-      { expiresIn: this.jwtExpiresIn } as jwt.SignOptions,
+      { algorithm: "HS256", expiresIn: this.jwtExpiresIn } as jwt.SignOptions,
     );
 
     this.eventBus.publish(
