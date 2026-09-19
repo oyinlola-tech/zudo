@@ -60,6 +60,10 @@ const rows: readonly Row[] = [
   { name: "TransactionRequiredError", make: () => new D.TransactionRequiredError(), code: ErrorCode.PRECONDITION_FAILED, status: 500, expose: false },
   { name: "TransactionUnexpectedError", make: () => new D.TransactionUnexpectedError(), code: ErrorCode.CONFLICT, status: 500, expose: false },
   { name: "TransactionCapabilityError", make: () => new D.TransactionCapabilityError("x"), code: ErrorCode.NOT_IMPLEMENTED, status: 500, expose: false },
+  { name: "CLIValidationError", make: () => new D.CLIValidationError("m"), code: ErrorCode.OPERATION_FAILED, status: 500, expose: false },
+  { name: "CLIGenerationError", make: () => new D.CLIGenerationError("m", cause), code: ErrorCode.OPERATION_FAILED, status: 500, expose: false, hasCause: true },
+  { name: "CLINotInProjectError", make: () => new D.CLINotInProjectError(), code: ErrorCode.OPERATION_FAILED, status: 500, expose: false },
+  { name: "CLITemplateError", make: () => new D.CLITemplateError("m"), code: ErrorCode.OPERATION_FAILED, status: 500, expose: false },
   // ---- state ----
   { name: "NotFoundError", make: () => new D.NotFoundError("m", { cause }), code: ErrorCode.RESOURCE_NOT_FOUND, status: 404, expose: true, hasCause: true },
   { name: "ConflictError", make: () => new D.ConflictError("m", { cause }), code: ErrorCode.CONFLICT, status: 409, expose: true, hasCause: true },

@@ -63,3 +63,23 @@ describe("CV-02 / XP-01 / VAL-05 / INF-16 / CONV-02", () => {
     expect(new ObservabilityError("m").statusCode).toBe(500);
   });
 });
+
+describe("tooling/CONV-01: CLI error classes", () => {
+  it("are ApplicationErrors with the CLI's constructors", async () => {
+    const mod = await import("../src/index.js");
+    const cause = new Error("disk");
+    const gen = new mod.CLIGenerationError("failed", cause);
+    expect(gen).toBeInstanceOf(mod.ApplicationError);
+    expect(gen.cause).toBe(cause);
+    expect(gen.name).toBe("CLIGenerationError");
+    expect(new mod.CLIValidationError("bad").isOperational).toBe(true);
+    expect(new mod.CLINotInProjectError().message).toMatch(/inside a Zudojs project/);
+    expect(new mod.CLITemplateError("t")).toBeInstanceOf(BaseError);
+  });
+
+  it("mapErrorType accepts constructors with required parameters", async () => {
+    const mod = await import("../src/index.js");
+    const rule = mod.mapErrorType("cli", mod.CLIGenerationError, () => new mod.ApplicationError("x"));
+    expect(rule).toBeDefined();
+  });
+});

@@ -58,8 +58,7 @@ export function mapError(
 }
 
 /** Any constructor whose instances are `T` (parameters are not constrained). */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type ErrorConstructor<T extends Error> = abstract new (...args: any[]) => T;
+export type ErrorConstructor<T extends Error> = abstract new (...args: never[]) => T;
 
 /**
  * Creates a mapping rule for a specific error constructor.
