@@ -9,6 +9,8 @@ import { RPCProcedureRegistry } from "../procedure/rpcProcedureRegistry.core.js"
 import { RPCMiddlewareStack } from "../middleware/rpcMiddleware.core.js";
 
 import { RPCDispatcher } from "../dispatcher/rpcDispatcher.core.js";
+
+import type { RPCContextOptions } from "../context/rpcContext.type.js";
 import type { RPCDispatcherOptions } from "../dispatcher/rpcDispatcher.core.js";
 
 import { createRPCErrorResponse } from "../types/rpcResponse.type.js";
@@ -131,8 +133,16 @@ export class RPCServer {
    * `onInternalError` and answered with a fixed message: internal
    * exception text can name hosts, paths, credentials or queries, and
    * the caller is an untrusted peer.
+   *
+   * Everything in `request` comes from that peer, including
+   * `request.metadata.userId`. Identity the transport has verified goes
+   * in `trusted.auth` and reaches middleware and handlers as
+   * `context.auth`; authorise on that, never on frame metadata.
    */
-  async handle(request: RPCRequest): Promise<RPCResponse> {
+  async handle(
+    request: RPCRequest,
+    trusted: RPCContextOptions = {},
+  ): Promise<RPCResponse> {
     const requestId =
       typeof (request as { id?: unknown } | undefined)?.id === "string"
         ? request.id
@@ -148,7 +158,7 @@ export class RPCServer {
       const frame: RPCRequest =
         request.metadata === undefined ? { ...request, metadata: {} } : request;
 
-      return await this.dispatcher.dispatch(frame);
+      return await this.dispatcher.dispatch(frame, trusted);
     } catch (error) {
       const mapped = this.mapError(error);
 

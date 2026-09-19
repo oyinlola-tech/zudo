@@ -106,25 +106,38 @@ A failed call rejects with a typed error rebuilt from the wire code
 (`RPCTimeoutError`, `RPCCancelledError`, `RPCUnavailableError`, or an
 `RPCError` carrying the server's `code` and `details`).
 
-### Middleware
+### Middleware and trusted identity
+
+Everything in a frame, `metadata` included, is written by the caller: any
+client can send `metadata: { userId: "admin" }`. Never authorise on it.
+Identity your transport has verified (a checked bearer token, an mTLS peer,
+a server-side session) goes in the second argument of `handle`, and reaches
+middleware and handlers as the frozen `context.auth`:
 
 ```typescript
 import { RPCMiddlewareStack, RPCAuthenticationError } from "@zudojs/rpc";
 
 const stack = new RPCMiddlewareStack([
   async (context, next) => {
-    if (context.metadata.userId === undefined) {
+    if (typeof context.auth?.userId !== "string") {
       throw new RPCAuthenticationError("Sign in first.");
     }
+    context.set("actor", context.auth.userId);
     return next();
   },
 ]);
 
 const server = new RPCServer(undefined, stack);
+
+// In the transport, after verifying the caller's credentials yourself:
+await server.handle(frame, { auth: { userId: verifiedUserId } });
 ```
 
 Each middleware may call `next()` once. Input validation runs before the
-stack, so middleware sees a payload the procedure's schema has accepted.
+stack. `context.input` holds the payload as the procedure's schema parsed
+it (unknown keys stripped, defaults applied, values coerced), so authorise
+on `context.input`, not on `context.request.payload`, which stays the raw
+frame value.
 
 ## Errors
 

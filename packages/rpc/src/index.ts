@@ -102,7 +102,11 @@ export {
 } from "./rpc/procedure/index.js";
 
 // Context
-export type { RPCContext } from "./rpc/context/index.js";
+export type {
+  RPCAuthContext,
+  RPCContext,
+  RPCContextOptions,
+} from "./rpc/context/index.js";
 
 export { createRPCContext } from "./rpc/context/index.js";
 

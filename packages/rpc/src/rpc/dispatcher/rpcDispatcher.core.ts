@@ -8,9 +8,15 @@ import type { RPCMiddlewareStack } from "../middleware/rpcMiddleware.core.js";
 
 import type { RPCInterceptor } from "../interceptor/rpcInterceptor.type.js";
 
-import type { RPCContext } from "../context/rpcContext.type.js";
+import type {
+  RPCContext,
+  RPCContextOptions,
+} from "../context/rpcContext.type.js";
 
-import { createRPCContext } from "../context/rpcContext.type.js";
+import {
+  bindRPCContextInput,
+  createRPCContext,
+} from "../context/rpcContext.type.js";
 
 import { createRPCResponse } from "../types/rpcResponse.type.js";
 
@@ -83,8 +89,15 @@ export class RPCDispatcher {
 
   /**
    * Dispatches an RPC request.
+   *
+   * `trusted` carries server-supplied context (`auth`) that the caller
+   * cannot forge; it is exposed to middleware and handlers as
+   * `context.auth`.
    */
-  async dispatch(input: RPCRequest): Promise<RPCResponse> {
+  async dispatch(
+    input: RPCRequest,
+    trusted: RPCContextOptions = {},
+  ): Promise<RPCResponse> {
     // Tolerate a frame without `metadata`: the field is optional when a
     // request is built by hand or decoded from JSON, and everything below
     // — deadline reading, the context's `metadata` — reads it as an object.
@@ -94,7 +107,7 @@ export class RPCDispatcher {
     const procedure = this.registry.require(request.procedure);
 
     const controller = new AbortController();
-    const context = createRPCContext(request, controller.signal);
+    const context = createRPCContext(request, controller.signal, trusted);
 
     const timeoutMs = this.resolveTimeout(request, procedure);
 
@@ -118,6 +131,8 @@ export class RPCDispatcher {
               request.procedure,
             )
           : request.payload;
+
+        bindRPCContextInput(context, input);
 
         const result = await this.middleware.execute(context, async () => {
           return procedure.handler(input, context);
