@@ -1,10 +1,10 @@
 ---
 title: "@zudojs/cli — Command-Line Interface Framework"
-description: "Complete reference for zudojs-cli v2.0.0. Create, scaffold, generate, and manage Zudo projects with interactive prompts, 11 frontend adapters, 4 package managers, and 13 schematics, plus the 2.0 upgrade notes."
+description: "Complete reference for zudojs-cli v2.0.1. Create, scaffold, generate, and manage Zudo projects with interactive prompts, 11 frontend adapters, 4 package managers, and 13 schematics, plus the 2.0 upgrade notes."
 source: https://zudojs.oyinlola.site/docs/packages-cli
 ---
 
-v2.0.0
+v2.0.1
 
 # @zudojs/cli
 
@@ -441,7 +441,7 @@ zudojs info
 
 // Output:
 // Zudojs CLI
-//   Version: 2.0.0
+//   Version: 2.0.1
 //   Node.js: v24.19.0
 //
 // Project
@@ -877,7 +877,7 @@ ReactNativeAdapter
 
 ## COMPLETE EXPORT INDEX
 
-Every name `zudojs-cli` exports from its package root at v2.0.0 — **183** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `zudojs-cli` exports from its package root at v2.0.1 — **183** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 183 exports**
 

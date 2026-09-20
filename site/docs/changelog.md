@@ -113,7 +113,7 @@ The package pages on this site were corrected wherever they contradicted the sou
 | `@zudojs/auth` | `1.2.1` | [Jump to notes](#pkg-auth) |
 | `@zudojs/auth-oauth` | `1.2.1` | [Jump to notes](#pkg-auth-oauth) |
 | `@zudojs/cache` | `1.1.1` | [Jump to notes](#pkg-cache) |
-| `zudojs-cli` | `2.0.0` | [Jump to notes](#pkg-cli) |
+| `zudojs-cli` | `2.0.1` | [Jump to notes](#pkg-cli) |
 | `@zudojs/config` | `1.2.0` | [Jump to notes](#pkg-config) |
 | `@zudojs/constants` | `1.1.1` | [Jump to notes](#pkg-constants) |
 | `@zudojs/container` | `1.1.2` | [Jump to notes](#pkg-container) |
@@ -201,11 +201,15 @@ Patch Changes
     - `toPrismaInclude` no longer treats a relation or `select` field whose name happens to be an `Object.prototype` member (`toString`, `valueOf`, `constructor`, `__proto__`, …) as a duplicate or silently drops it. Such names are now handled as ordinary keys.
     - `getOrSet` in the database cache no longer poisons a key permanently when the loader throws synchronously rather than returning a rejected promise. The failed load is evicted from the in-flight map and the next call invokes the loader again, as it already did for asynchronous failures.
 
-### `zudojs-cli` v2.0.0
+### `zudojs-cli` v2.0.1
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-cli.md)
 
-Major Changes
+Patch Changes — 2.0.1
+
+- Fixes the README generated for a microservice project with no services, which told the reader to run a command 2.0.0 refuses. `zudojs generate service` is refused in a microservice project — a service there is a whole workspace app, which the schematic does not produce — but the generated README still said “No services yet. Add one with: `npx zudojs generate service <name>`”, so the first thing a new project asked you to do failed. It now points at `zudojs create <project> --architecture microservice --services <name>` and `zudojs generate module <name> --service <existing-service>`.
+
+Major Changes — 2.0.0
 
 - A full audit of the CLI: 55 findings, all fixed, each with a regression test that fails against the unfixed code. Read this before upgrading — several commands now refuse where they previously proceeded. In every case the old behaviour was a bug, but a script or CI job written against it will notice.
     - **Breaking —** **a failed dependency install now exits non-zero.** `zudojs create` used to downgrade an install failure to a warning and then print “Project created successfully” and exit 0, so a CI job went green with no `node_modules`. The project is still kept and the retry hint is still printed; only the exit code and the closing message changed. `zudojs add` already behaved this way — the two commands no longer disagree.
