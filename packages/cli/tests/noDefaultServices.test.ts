@@ -108,10 +108,16 @@ describe("microservice — services are created only when named", () => {
     );
   });
 
-  it("tells the reader how to add one", () => {
+  it("tells the reader how to add one, with a command that works", () => {
     const files = generateMicroserviceFiles(options({ services: [] }));
+    const readme = files["README.md"] ?? "";
 
-    expect(files["README.md"]).toContain("zudojs generate service <name>");
+    // `generate service` is refused in a microservice project, so the README
+    // must not send the reader to it — it did, briefly, which is how a
+    // generated file came to teach a command the CLI rejects.
+    expect(readme).not.toContain("generate service");
+    expect(readme).toContain("--architecture microservice --services");
+    expect(readme).toContain("generate module <name> --service");
   });
 });
 

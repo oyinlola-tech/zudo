@@ -5943,7 +5943,7 @@ Enums (1)
 
 <!-- source: https://zudojs.oyinlola.site/docs/packages-cli -->
 
-v1.2.0
+v2.0.0
 
 # @zudojs/cli
 
@@ -5951,11 +5951,47 @@ Command-line interface infrastructure for Zudo — command registration, argumen
 
 CLI COMMANDS INTERACTIVE
 
+## UPGRADING TO 2.0
+
+> THIS IS A MAJOR
+>
+>
+>
+> Several commands now **refuse** where 1.2.1 proceeded, and one command that used to exit `0` on failure now exits non-zero. In each case the old behaviour was a bug, but a script or CI job written against it will notice. Two changes also affect what a correct command line produces: `create` no longer invents example services, and `generate service` now lands where the template expects it.
+
+| Area | 1.2.1 | 2.0.0 |
+| --- | --- | --- |
+| create — failed install | Warned, printed “Project created successfully” and exited `0` | Keeps the project and prints the retry command, then exits non-zero. The closing line is “Project created, but dependencies were NOT installed.” |
+| build — outside a project | Climbed to any ancestor holding a bare `package.json` and ran that project’s `scripts.build` | Requires a real Zudojs project (a `.zudojs/manifest.json`, a legacy `zudojs.config.ts`, or a `zudojs` block in `package.json`) and throws `CLINotInProjectError` otherwise |
+| generate — outside a project | Warned and wrote files into the current directory; from a subdirectory it created a second `src/` tree | Throws `CLINotInProjectError`, and inside a project walks up to the root so every path is relative to it |
+| Ctrl-C | A cancelled prompt exited `0`; Ctrl-C mid-scaffold was swallowed entirely and the run continued | Exits `130`. Ctrl-C during `create` removes the half-written project first, and names anything it could not remove |
+| CLI_ENVIRONMENT | Carried `NODE_ENV` and `DEBUG: "DEBUG"`, neither of which anything read | Names the four variables the CLI really reads — see [Constants](#constants) |
+| RollbackManager.rollback() | Promise<void> | Promise<RollbackResult> — { removed, failures } |
+| CapabilityResolutionResult | Had a `conflicts` field | Removed — it was structurally incapable of being non-empty. `{ capabilities, dependencies }` remain |
+| Project names | A leading `-` was accepted, so `zudojs create -- --weird` made a directory `cd` could not enter | Must start with a letter or digit, then letters, digits, `-` or `_` |
+| Schematic names | `generate module 2fa` wrote `import { 2faModule }` into `src/app.ts` and exited `0` | A name whose normalized form starts with a digit is refused, because it becomes a TypeScript class name |
+| Printed app name | Zudojs | zudojs — the command you actually type |
+| create — example services | With no `--services`, invented four domains for a microservice project and three modules for a modular monolith | An empty list means none — see [Create](#create) |
+
+### What to change in a CI job
+
+- A job that ran `zudojs create` and relied on exit `0` to mean “scaffolded” now also gets “and installed”. If you do not want the install, pass `--no-install` rather than ignoring the failure.
+- A job that ran `zudojs build` from a directory that is not inside a Zudojs project was building something else. Run it from the project, or from any directory inside it.
+- Pin the capability set explicitly with `--capabilities` instead of relying on the non-interactive default, which is now also reachable from the interactive prompt.
+
+> NOT VERIFIED ON WINDOWS
+>
+>
+>
+> The `cmd.exe` quoting hardening (an argument containing `"`, `%` or `!` is rejected rather than escaped, because a backslash is not a `cmd` escape) and `NoDefaultCurrentDirectoryInExePath` were tested as pure functions on Linux by passing `"win32"` explicitly. They have not been exercised on a real Windows host.
+
 ## OVERVIEW
 
 `zudojs-cli` is the command-line interface for the Zudo framework. It provides project scaffolding, code generation, dependency management, and project diagnostics — all with interactive prompts powered by `@clack/prompts`.
 
 The CLI supports **11 frontend frameworks** (React, Next, Vue, Nuxt, Angular, Svelte, SvelteKit, Astro, Vanilla, Flutter, React Native), **4 package managers** (pnpm, npm, yarn, bun), **3 database engines** (PostgreSQL, MySQL, SQLite), and **13 code schematics** for generating services, modules, commands, queries, and more.
+
+Upgrading from 1.2.x? Read [Upgrading to 2.0](#upgrading) first — several commands now refuse where they used to proceed.
 
 > KEY FEATURES
 >
@@ -5965,8 +6001,9 @@ The CLI supports **11 frontend frameworks** (React, Next, Vue, Nuxt, Angular, Sv
 > - **Multi-architecture** — Monolith, modular-monolith, microservice
 > - **Fullstack support** — Backend + frontend in a single workspace
 > - **Code schematics** — Generate services, modules, commands, queries, controllers, and more
-> - **Rollback safety** — Automatic cleanup on generation failures
-> - **Manifest tracking** — Project configuration stored in zudojs.json
+> - **Rollback safety** — A failed or interrupted `create` removes the half-written project
+> - **Manifest tracking** — Project configuration stored in `.zudojs/manifest.json` and in the `zudojs` block of `package.json`
+> - **Per-command help** — `zudojs <command> --help` prints usage, arguments, options, shorts and defaults
 
 ## INSTALLATION
 
@@ -5990,11 +6027,16 @@ pnpm dlx zudojs-cli create my-project
 zudojs create my-app
 
 # Create with explicit flags (non-interactive)
+# The project name is a positional argument, not --project-name
 zudojs create my-app \
   --type backend \
   --architecture monolith \
   --database postgresql \
-  --package-manager pnpm
+  --package-manager pnpm \
+  --capabilities cqrs,messaging,observability,database,security
+
+# See a command's arguments, options, shorts and defaults
+zudojs create --help
 
 # Generate a service
 zudojs generate service UserService
@@ -6014,21 +6056,52 @@ zudojs info
 
 ## BUILT-IN COMMANDS
 
-The CLI ships with 7 built-in commands. `create` prompts interactively in a terminal and takes flags otherwise; the rest read the project from `.zudojs/manifest.json`.
+The CLI ships with 7 built-in commands. `create` prompts interactively in a terminal and takes flags otherwise; the rest read the project from `.zudojs/manifest.json` (or the `zudojs` block in `package.json`) and refuse to run outside a Zudojs project.
+
+Every command documents itself: `zudojs <command> --help`, `-h` and `zudojs help <command>` all print the same block. Before 2.0 the first two were handed to the parser, which rejected `--help` as an undeclared option and exited `2`, so no command’s flags could be discovered from the CLI itself.
+
+```ts
+zudojs create --help
+
+Usage:
+  zudojs create [<project-name>] [options]
+
+Description:
+  Create a new Zudojs project
+
+Arguments:
+  [<project-name>]  The name of the project to create
+
+Options:
+  -t, --type <string>                   Project type (backend, frontend, fullstack) (default: backend)
+  ...
+  --capabilities <string>               Comma-separated capabilities (cqrs, events, messaging, queue, observability, openapi, database, security)
+  -h, --help                            Show help for this command.
+```
 
 | Command | Alias | Description |
 | --- | --- | --- |
 | CREATE | — | Scaffold a new Zudo project |
-| GENERATE | g | Generate code from schematics |
+| GENERATE | g | Generate code from 13 schematics; runs from any directory inside the project and throws `CLINotInProjectError` outside one |
 | ADD | — | Add a feature package to the project |
 | DOCTOR | — | Run project diagnostics |
 | INFO | — | Show project info and dependencies |
 | DEV | d | Start the development servers (backend, frontend, or both) through the project’s package manager (`pnpm run dev`, `npm run dev`, …); `--backend-only`, `--frontend-only`, `--port` |
-| BUILD | b | Run the `build` script with the detected package manager; exits non-zero on failure |
+| BUILD | b | Run the `build` script with the detected package manager; exits non-zero on failure, and refuses outside a Zudojs project |
 
 ## CREATE
 
 Scaffold a new Zudo project with interactive prompts or explicit flags. Supports backend, frontend, and fullstack project types.
+
+> THE PROJECT NAME IS A POSITIONAL ARGUMENT
+>
+>
+>
+> It is `zudojs create my-app`, not `zudojs create --project-name my-app`. There is no `--project-name` option, and passing one fails as an unknown option. The name is optional only in a terminal, where the prompt asks for it; a non-interactive run without it fails with “Project name is required.”
+>
+>
+>
+> A name must start with a letter or digit and then contain only letters, digits, `-` and `_`. It may not contain `/`, `\` or `..`.
 
 ### Interactive Mode
 
@@ -6044,9 +6117,13 @@ zudojs create my-project
 // 6. Frontend framework (if applicable)
 // 7. Frontend architecture
 // 8. Package manager (pnpm / npm / yarn / bun)
-// 9. Capabilities (cqrs, messaging, observability, openapi, database, queue)
+// 9. Capabilities (cqrs, events, messaging, queue, observability, openapi, database, security)
 // 10. Confirmation
 ```
+
+The services prompt appears only for a microservice architecture, and the database, API-style and frontend prompts only for the project types that have them. Flags you pass on the command line seed the matching prompt, so `zudojs create my-app --architecture microservice --capabilities cqrs,security` opens with those already selected.
+
+Cancelling any prompt with Ctrl-C ends the run with status `130`; answering “no” at the confirmation ends it with `0` and writes nothing. Ctrl-C after the scaffold has started removes the partially written directory before exiting.
 
 ### Non-Interactive Mode
 
@@ -6058,9 +6135,18 @@ zudojs create my-project \
   --api rest \
   --package-manager pnpm \
   --language typescript \
+  --capabilities cqrs,messaging,observability,openapi,database \
   --no-install \
   --no-git
 ```
+
+A run is non-interactive whenever stdin is not a TTY. Without `--capabilities` such a run enables the set it has always hard-coded — `cqrs`, `messaging`, `observability`, `openapi` and `database` — so adding the flag in 2.0 does not change what an existing command line produces.
+
+### Argument
+
+| Argument | Required | Description |
+| --- | --- | --- |
+| <project-name> | Optional in a terminal; required otherwise | The directory to create, under the current working directory. Positional — there is no `--project-name` flag |
 
 ### Options
 
@@ -6074,13 +6160,61 @@ zudojs create my-project \
 | --frontend | -f | none | Frontend framework |
 | --frontend-architecture | -F | zudojs-standard | Frontend architecture |
 | --language | -l | typescript | Language (frontend only; backend projects are TypeScript, and `javascript` is rejected for `--type backend`) |
-| --services | — | — | Comma-separated service names (microservice architecture only) |
+| --services | — | — | Comma-separated service names (microservice architecture only). Omitted means no services — the project gets its gateway and nothing else. `gateway` is reserved and duplicates are dropped |
+| --capabilities | — | — | **New in 2.0.** Comma-separated capability ids: `cqrs`, `events`, `messaging`, `queue`, `observability`, `openapi`, `database`, `security`. An unknown id fails the command |
 | --no-install | — | false | Skip dependency installation |
 | --no-git | — | false | Skip git initialization |
 
+### Capabilities
+
+`--capabilities` is honoured by both branches: it seeds the interactive multiselect and it replaces the hard-coded set in a non-interactive run, so the two ways of running `create` can produce the same project. Selected capabilities are recorded as `capabilities` in `.zudojs/manifest.json` and as `zudojs.features` in each backend `package.json`, and the packages that back them are added as dependencies.
+
+Before 2.0 the prompt offered eight options and the command read six: ticking **Events** or **Security** produced no dependency, no manifest entry and no message. Both are consumed now — ticking Security installs `@zudojs/security`.
+
+| Capability | Package it adds | In the default non-interactive set |
+| --- | --- | --- |
+| cqrs | `@zudojs/cqrs`, plus `@zudojs/events` | Yes |
+| events | `@zudojs/events` (already a base dependency of every generated app) | No |
+| messaging | @zudojs/messaging | Yes |
+| queue | @zudojs/queue | No |
+| observability | @zudojs/observability | Yes |
+| openapi | @zudojs/openapi | Yes |
+| database | @zudojs/database | Yes |
+| security | @zudojs/security | No |
+
+### No example services
+
+An empty service list now means no services. A microservice project gets its gateway at `apps/gateway` and nothing under `apps/services/`; a modular monolith gets an empty module barrel at `src/modules/index.ts`. Both READMEs say how to add one. Named services are generated exactly as named, at `apps/services/<name>`.
+
+Before 2.0 the templates substituted example domains nobody asked for — `identity`, `enrollment`, `assessment` and `notification` for a microservice project, and three modules for a modular monolith, which was never even asked what it wanted.
+
+### What a new project contains
+
+- **A running server.** `src/server.ts` starts the runtime and serves HTTP with `@zudojs/http` on `PORT` (default 3000; each microservice app on its own port), answering `GET /health`. SIGINT and SIGTERM stop the HTTP server, then the runtime.
+- **A test that passes.** The sample spec is `tests/app.test.ts`. It used to be `tests/index.ts`, which matches no vitest include pattern, so the first `pnpm run test` in a fresh project exited `1`.
+- **Real recorded capabilities.** Templates write the capability list into `zudojs.features` and install the packages backing it, so the `zudojs doctor` feature check has something to verify. It used to be hardcoded to `[]` and could never fail.
+- **Pinned frontend dependencies.** The frontend install path passes the resolved `name@range` to the package manager instead of the bare name, so two `create --frontend react` runs a month apart no longer produce different majors. A dependency the resolver cannot pin now prints a warning instead of being recorded as `latest` in silence.
+- **Framework packages as `^1.0.0` ranges**, plus, for pnpm, a `pnpm-workspace.yaml` that allows esbuild’s build script — which pnpm 10+ would otherwise refuse to run.
+
+> A FAILED INSTALL FAILS THE COMMAND
+>
+>
+>
+> If dependency installation fails, `create` keeps the generated project, prints the exact command to retry with, and exits non-zero. Through 1.2.1 it printed “Project created successfully” and exited `0`, so a CI job went green with no `node_modules`. `zudojs add` already behaved this way; the two commands no longer disagree.
+
 ## GENERATE
 
-Generate code from 13 schematics. Reads `.zudojs/manifest.json` (or the `zudojs` block in `package.json`) to determine the architecture and where the backend lives: schematics land in `src/` of a backend project and in `apps/api/src/` of a fullstack workspace.
+Generate code from 13 schematics. Reads `.zudojs/manifest.json` (or the `zudojs` block in `package.json`) to determine the architecture and where the backend lives: schematics land in `src/` of a backend project and in `apps/api/src/` of a monolithic fullstack workspace. A fullstack microservice project keeps `apps/gateway` and `apps/services/` at the workspace root, and schematics go there instead.
+
+> CHANGED IN 2.0
+>
+>
+>
+> `generate` finds the project root by walking up from the current directory, so it can be run from anywhere inside the project and every path is resolved against that root. It used to resolve the layout from the current directory only: from a subdirectory it found nothing, warned, fell back to `src` and wrote a second tree (`proj/src/src/foo/…`) while exiting `0`.
+>
+>
+>
+> Outside a Zudojs project it now throws `CLINotInProjectError` rather than scattering files into the current directory, matching `dev`, `build` and `add`.
 
 ```ts
 # Generate a service
@@ -6102,7 +6236,18 @@ zudojs generate service OrderService --dry-run
 zudojs generate service OrderService --force
 ```
 
-Without `--force`, `generate` refuses to overwrite existing files and lists the ones it would change.
+Without `--force`, `generate` refuses to overwrite existing files and lists the ones it would change. Barrels are only ever appended to.
+
+### Options
+
+| Flag | Short | Applies to | Description |
+| --- | --- | --- | --- |
+| --module <name> | -m | Every schematic but `module` | Generates into `<root>/modules/<name>` instead of the schematic’s default directory. Accepted and documented before 2.0, but never read by any schematic |
+| --service <name> | -s | Microservice projects; CQRS `command`/`query` | In a microservice project, selects the app the schematic belongs to (`apps/services/<name>/src`); otherwise names the CQRS group. Without it, a microservice schematic goes to `apps/gateway/src` |
+| --dry-run | — | All | Lists the files without writing anything |
+| --force | — | All | Overwrites the files that already exist and would change |
+
+Both `<schematic>` and `<name>` are required positional arguments. A name whose normalized form is empty (`"..."`) or starts with a digit (`2fa`) is refused, because it becomes a TypeScript class name: `2faModule` is not an identifier, and through 1.2.1 `generate module 2fa` wrote that import into your existing `src/app.ts` and exited `0`. `--service` and `--module` values must be a single safe path segment.
 
 ### Available Schematics
 
@@ -6136,13 +6281,43 @@ validator
 
 | Architecture | Services Go To | Modules Go To |
 | --- | --- | --- |
-| monolith | src/ | src/modules/ |
-| modular-monolith | src/ | src/modules/ |
-| microservice | apps/ | apps/default/ |
+| monolith | src/services/ | src/modules/ |
+| modular-monolith | src/modules/ (service maps to module) | src/modules/ |
+| microservice | refused — use --services at create | apps/gateway/src/modules/ or apps/services/<name>/src/modules/ |
+
+Every other schematic follows the same root: `src/` in a monolith or modular monolith, and `apps/gateway/src` — or `apps/services/<name>/src` with `--service <name>` — in a microservice project. Adding `--module <name>` nests the result in `<root>/modules/<name>`.
+
+### generate service, per architecture
+
+`generate service` was broken in all three architectures before 2.0. What it does now:
+
+- **monolith** — writes to `src/services/<name>/`, under the directory the template already owns. It used to write `src/<name>/`, leaving two conventions in one project and a service that the `src/services/index.ts` barrel never exported.
+- **modular monolith** — the schematic is rewritten to `module`, generated at `src/modules/<name>/` and registered in `app.ts`. It used to log `Mapping "service" → "module"` and then run the service schematic anyway, producing four inert files the runtime never loaded.
+- **microservice** — **refused.** A service there is a whole workspace app (`package.json`, `tsconfig.json`, `Dockerfile`, `src/app.ts`, `src/server.ts` and a port), which this schematic does not produce. It used to write a bare service class into `apps/services/<name>/`; that directory matches the workspace glob but has no manifest, so pnpm skipped it, `pnpm -r run build` never compiled it, and `zudojs add --service <name>` reported it as unknown — all while exiting `0`. The error names the two commands that do work:
+
+```ts
+# Add the service at creation time
+zudojs create my-system --architecture microservice --services billing
+
+# Or add a module to an app that already exists
+zudojs generate module billing --service identity
+```
+
+### generate module
+
+`zudojs generate module <name>` writes a runtime module (a `BaseModule` subclass), exports it from the modules barrel and registers it in `app.ts`. If it cannot edit `app.ts` automatically it says so and prints the lines to add by hand.
+
+> WRITES STAY INSIDE THE PROJECT
+>
+>
+>
+> Path containment used to be checked on the literal string only, so a symlinked directory inside the project carried generated files to the symlink’s target. Containment is now re-asserted against the resolved real path, and a write that would escape fails with the path that caused it.
 
 ## ADD
 
 Add a feature package to your Zudo project. Adds the package (as a `^1.0.0` range) to every backend app — the project root, `apps/api` in a fullstack workspace, or the gateway and each service in a microservice one — records the feature in that `package.json`, updates the manifest, and installs.
+
+Since 2.0 the manifest is read and validated before any `package.json` is touched, so a failure can no longer leave the project half-updated. It is written atomically and serialized by a lock, so two concurrent `zudojs add` runs cannot lose an update, and a corrupt manifest is reported distinctly from a missing one.
 
 ```ts
 # Add database support
@@ -6175,7 +6350,9 @@ zudojs add cache --service identity
 
 ## DOCTOR
 
-Run project diagnostics to check for common issues.
+Run project diagnostics to check for common issues. Each check is either an error or a warning; `doctor` exits non-zero when any error-severity check fails, so it can be used as a CI gate. Warnings are printed and do not change the exit code.
+
+The **Features** check could never report anything before 2.0: every template stamped `zudojs.features: []` into the `package.json` it wrote, although it had already used the capability flags to choose the project’s dependencies, so the check passed vacuously in every project the CLI created. Templates now record the real capability list and install the packages backing it, so the check has something to verify.
 
 ```ts
 zudojs doctor
@@ -6186,6 +6363,7 @@ zudojs doctor
 | Check | What It Verifies |
 | --- | --- |
 | Node.js version | Node.js >= v24 |
+| Git | git is installed and on PATH (warning) |
 | Zudojs project | .zudojs/manifest.json, a legacy zudojs.config.ts, or package.json#zudojs describes the project |
 | Package manager | Lock file of the recorded package manager exists (pnpm/npm/yarn/bun) |
 | Dependencies installed | node_modules exists |
@@ -6202,7 +6380,7 @@ zudojs info
 
 // Output:
 // Zudojs CLI
-//   Version: 1.2.0
+//   Version: 2.0.0
 //   Node.js: v24.19.0
 //
 // Project
@@ -6394,22 +6572,26 @@ interface ProjectConfiguration {
 
 ```ts
 interface ScaffoldOptions {
-  projectName: string;
-  projectType?: ProjectType;
-  architecture: ArchitectureType;
-  packageManager: PackageManager;
-  database?: DatabaseEngine;
-  api?: ApiStyle;
-  frontend?: FrontendFramework | "none";
-  services: readonly string[];
-  enableCQRS: boolean;
-  enableMessaging: boolean;
-  enableObservability: boolean;
-  enableOpenAPI: boolean;
-  enableDatabase: boolean;
-  enableQueue: boolean;
-  installDeps: boolean;
-  initGit: boolean;
+  readonly projectName: string;
+  readonly projectType?: ProjectType;
+  readonly architecture: ArchitectureType;
+  readonly language?: "typescript" | "javascript";
+  readonly packageManager: PackageManager;
+  readonly database?: DatabaseEngine;
+  readonly api?: ApiStyle;
+  readonly frontend?: FrontendFramework | "none";
+  readonly frontendArchitecture?: FrontendArchitecture;
+  readonly frontendPath?: string;
+  readonly services: readonly string[];
+  readonly enableCQRS: boolean;
+  readonly enableMessaging: boolean;
+  readonly enableObservability: boolean;
+  readonly enableOpenAPI: boolean;
+  readonly enableDatabase: boolean;
+  readonly enableQueue: boolean;
+  readonly enableDocker: boolean;
+  readonly installDeps: boolean;
+  readonly initGit: boolean;
 }
 ```
 
@@ -6417,11 +6599,12 @@ interface ScaffoldOptions {
 
 ```ts
 interface CLICommand {
-  name: string;
-  description?: string;
-  aliases?: readonly string[];
-  options?: readonly CLIOption[];
-  arguments?: readonly CLIArgument[];
+  readonly name: string;
+  readonly description?: string;
+  readonly aliases?: readonly string[];
+  readonly options?: readonly CLIOption[];
+  readonly arguments?: readonly CLIArgument[];
+  readonly commands?: readonly CLICommand[];
   execute(context: CLIContext): void | Promise<void>;
 }
 ```
@@ -6436,6 +6619,29 @@ interface CLIContext {
   readonly cwd: string;
   readonly env: CLIEnvironment;
   readonly logger: Logger;
+}
+```
+
+### RollbackResult
+
+**Changed in 2.0.** `RollbackManager.rollback()` returned `Promise<void>` and swallowed whatever it could not remove. It now reports both halves, so a caller can tell the user what was left behind.
+
+```ts
+interface RollbackResult {
+  readonly removed: readonly string[];
+  readonly failures: readonly RollbackFailure[];
+}
+```
+
+### CapabilityResolutionResult
+
+**Changed in 2.0.** The `conflicts` field is gone — it was structurally incapable of being non-empty.
+
+```ts
+interface CapabilityResolutionResult {
+  readonly capabilities: readonly string[];
+  /** Framework packages the selected capabilities build on. */
+  readonly dependencies: readonly string[];
 }
 ```
 
@@ -6458,9 +6664,22 @@ interface CLIContext {
 | CLI_LIMITS.MAX_COMMAND_NAME_LENGTH | 100 |
 | CLI_LIMITS.MAX_DESCRIPTION_LENGTH | 500 |
 
+### CLI_ENVIRONMENT
+
+The environment variables the CLI reads. Every entry has a single reader. Through 1.2.1 this object also carried `NODE_ENV` and `DEBUG: "DEBUG"`; nothing read either, and honouring a bare `DEBUG` would have changed behaviour for anyone who already sets it.
+
+| Key | Variable | Effect |
+| --- | --- | --- |
+| DEBUG | ZUDOJS_DEBUG | Turns on verbose logging |
+| CI | CI | Suppresses the update check |
+| NO_UPDATE_CHECK | ZUDOJS_NO_UPDATE_CHECK | Suppresses the update check |
+| NPM_OFFLINE | npm_config_offline | Suppresses the update check when set to `true` |
+
 ## ERRORS
 
 The CLI provides a comprehensive error hierarchy for different failure modes.
+
+The classes below are the ones `zudojs-cli` exports from its package root. The scaffolding errors the commands themselves throw — `CLIValidationError`, `CLIGenerationError`, `CLINotInProjectError` and `CLITemplateError` — are owned by [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) and are imported from there. `CLINotInProjectError` is what `build`, `dev`, `add` and, since 2.0, `generate` throw outside a Zudojs project.
 
 ### Error Classes
 
@@ -6566,7 +6785,7 @@ Prompt for feature selection when `zudojs add` is run without arguments.
 | PackageManagerRegistry | Class | Package manager registry |
 | GeneratorRegistry | Class | Generator registry |
 | DependencyRegistry | Class | Dependency registry |
-| RollbackManager | Class | Rollback on failure |
+| RollbackManager | Class | Rollback on failure or interrupt; `rollback()` resolves to a `RollbackResult` |
 | ManifestManager | Class | Project manifest I/O |
 | ProcessRunner | Class | Process execution |
 | TaskRunner | Class | Task orchestration |
@@ -6597,25 +6816,25 @@ ReactNativeAdapter
 
 ## COMPLETE EXPORT INDEX
 
-Every name `zudojs-cli` exports from its package root at v1.2.0 — **176** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `zudojs-cli` exports from its package root at v2.0.0 — **183** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 176 exports**
+**Show all 183 exports**
 
 Classes (56)
 
 `AngularAdapter` `AstroAdapter` `BackendGenerator` `BunAdapter` `CapabilityResolver` `CLICommandBuilder` `CLICommandRegistry` `CLIConfigurationError` `CLIError` `CLIExecutionError` `CLIInterruptedError` `CLIParser` `CLIPermissionError` `CommandNotFoundError` `CompatibilityValidator` `ConfigurationResolver` `DependencyRegistry` `DependencyResolver` `DuplicateCommandError` `DuplicateOptionError` `EnvironmentValidator` `FlutterAdapter` `FrontendAdapterRegistry` `FrontendGenerator` `FullstackComposer` `GeneratorRegistry` `InfrastructureGenerator` `IntegrationGenerator` `InvalidArgumentsError` `InvalidCommandNameError` `InvalidOptionError` `InvalidOptionNameError` `ManifestManager` `MissingArgumentError` `MissingOptionValueError` `MySqlAdapter` `NextAdapter` `NpmAdapter` `NuxtAdapter` `PackageManagerRegistry` `PackageManagerRunner` `PnpmAdapter` `PostgresAdapter` `ProcessRunner` `ProjectValidator` `ReactAdapter` `ReactNativeAdapter` `RollbackManager` `SqliteAdapter` `SvelteAdapter` `SvelteKitAdapter` `TaskRunner` `VanillaAdapter` `VueAdapter` `YarnAdapter` `ZudojsCLI`
 
-Functions (38)
+Functions (40)
 
-`checkForNewerVersion` `command` `compareVersions` `createCLI` `createCLILogger` `createCLIWriter` `createCommand` `detectArchitecture` `detectPackageManager` `executeCommand` `findProjectRoot` `formatCLILogLine` `formatCLIVersion` `generateProject` `getCLIErrorCode` `getCLIExitCode` `getCLIVersion` `getVersionString` `isCLICommand` `isCLIError` `isCompatibleVersion` `isLongOption` `isOption` `isShortOption` `isUpdateCheckDisabled` `isValidVersion` `normalizeCLIError` `normalizeCLIValue` `parseBoolean` `parseCLIArguments` `parseOptionValue` `parseVersion` `registerCLIInterruptHandler` `resolveCommand` `resolveProjectLayout` `resolveProjectPath` `sortCommands` `validateCommand`
+`assertPackageManager` `checkForNewerVersion` `command` `compareVersions` `createCLI` `createCLILogger` `createCLIWriter` `createCommand` `detectArchitecture` `detectPackageManager` `executeCommand` `findProjectRoot` `formatCLILogLine` `formatCLIVersion` `generateProject` `getCLIErrorCode` `getCLIExitCode` `getCLIVersion` `getVersionString` `isCLICommand` `isCLIError` `isCompatibleVersion` `isLongOption` `isOption` `isShortOption` `isUpdateCheckDisabled` `isValidVersion` `normalizeCLIError` `normalizeCLIValue` `parseBoolean` `parseCLIArguments` `parseManifest` `parseOptionValue` `parseVersion` `registerCLIInterruptHandler` `resolveCommand` `resolveProjectLayout` `resolveProjectPath` `sortCommands` `validateCommand`
 
-Interfaces (51)
+Interfaces (56)
 
-`CapabilityDependency` `CapabilityResolutionResult` `CLIApplication` `CLIApplicationOptions` `CLIArgument` `CLIChoice` `CLICommand` `CLICommandDefinition` `CLIContext` `CLIErrorOptions` `CLIHooks` `CLILoggerOptions` `CLIOption` `CLIOutput` `CLIParserOptions` `CLIPrompt` `CLIPromptOptions` `CLIVersionInfo` `CLIWriter` `CompatibilityCheck` `CompatibilityResult` `DependencyConflict` `DependencyRecord` `DependencyRequirement` `DependencyResolutionResult` `EnvironmentCheck` `EnvironmentValidationResult` `FrontendAdapter` `FrontendFeatures` `FrontendGenerationContext` `GenerateOptions` `GeneratorRegistryEntry` `InfrastructureOptions` `PackageManagerRunOptions` `ParsedCLIInput` `ProcessOptions` `ProjectCheck` `ProjectConfiguration` `ProjectLayout` `ProjectTemplate` `ProjectValidationResult` `ResolvedConfiguration` `ResolvedDependency` `RollbackEntry` `ScaffoldOptions` `TaskDefinition` `TaskResult` `UpdateCheckOptions` `UpdateCheckResult` `ValidationResult` `ZudojsManifest`
+`CapabilityDependency` `CapabilityResolutionResult` `CLIApplication` `CLIApplicationOptions` `CLIArgument` `CLIChoice` `CLICommand` `CLICommandDefinition` `CLIContext` `CLIErrorOptions` `CLIHooks` `CLILoggerOptions` `CLIOption` `CLIOutput` `CLIParserOptions` `CLIPrompt` `CLIPromptOptions` `CLIVersionInfo` `CLIWriter` `CompatibilityCheck` `CompatibilityResult` `DependencyConflict` `DependencyRecord` `DependencyRequirement` `DependencyResolutionResult` `EnvironmentCheck` `EnvironmentValidationResult` `FrontendAdapter` `FrontendFeatures` `FrontendGenerationContext` `GenerateOptions` `GeneratorRegistryEntry` `InfrastructureOptions` `ManifestReadResult` `PackageManager` `PackageManagerRunOptions` `ParsedCLIInput` `ProcessOptions` `ProjectCheck` `ProjectConfiguration` `ProjectLayout` `ProjectTemplate` `ProjectValidationResult` `ResolvedConfiguration` `ResolvedDependency` `RollbackEntry` `RollbackFailure` `RollbackResult` `ScaffoldOptions` `TaskDefinition` `TaskResult` `TaskRunOptions` `UpdateCheckOptions` `UpdateCheckResult` `ValidationResult` `ZudojsManifest`
 
 Type aliases (19)
 
-`ApiStyle` `ArchitectureType` `BackendArchitecture` `CLIArguments` `CLICommandName` `CLIEnvironment` `CLIErrorCode` `CLIOptionType` `CLIValue` `CLIValues` `DatabaseEngine` `DatabaseProvider` `FrontendArchitecture` `FrontendFramework` `PackageManager` `PackageManagerType` `ProjectLayoutSource` `ProjectLayoutType` `ProjectType`
+`ApiStyle` `ArchitectureType` `BackendArchitecture` `CLIArguments` `CLICommandName` `CLIEnvironment` `CLIErrorCode` `CLIOptionType` `CLIValue` `CLIValues` `DatabaseEngine` `DatabaseProvider` `FrontendArchitecture` `FrontendFramework` `ManifestReadStatus` `PackageManagerType` `ProjectLayoutSource` `ProjectLayoutType` `ProjectType`
 
 Constants (12)
 
@@ -28082,6 +28301,36 @@ September 2026
 
 What changed in each release, package by package. These notes are generated from the packages’ own `CHANGELOG.md` files, so they describe what shipped, not what was planned.
 
+## WHAT’S NEW — ZUDOJS-CLI 2.0.0 (SEPTEMBER 2026)
+
+A release for one package. `zudojs-cli` was audited on its own — 55 findings, all fixed, each with a regression test that fails against the unfixed code — and ships as **2.0.0**, the first major in the ecosystem. It is a major because several commands now refuse where they previously proceeded, and an interrupted run now exits 130 instead of 0. In every case the old behaviour was a bug that could make a broken run look successful: a project with no `node_modules` reported as created, another project’s build reported as yours, a cancelled scaffold that finished anyway. A script or CI job written against the old behaviour will notice. No other package changed in this release; the rest of the monorepo is as described in the round 11 notes below.
+
+A failed dependency install now exits non-zero
+
+`zudojs create` used to downgrade an install failure to a warning, then print “Project created successfully” and exit 0, so a CI job went green with no `node_modules`. That job will now correctly go red. The project is still kept and the retry hint is still printed; only the exit code and the closing message changed. `zudojs add` already behaved this way — the two commands no longer disagree.
+
+`zudojs build` refuses outside a Zudojs project
+
+`findProjectRoot` accepted any ancestor holding a bare `package.json`, so from an unrelated subdirectory the CLI climbed out and executed that project’s `scripts.build` — content from a file on disk — then reported success. It now requires a real Zudojs project and throws `CLINotInProjectError` otherwise. `zudojs generate` throws in the same situation instead of warning and writing files into the current directory, matching `dev`, `build` and `add`; it also walks up to the project root, so running it from a subdirectory no longer creates a second `src/` tree.
+
+Ctrl-C is honoured
+
+`@clack/prompts` registers a SIGINT listener per spinner that only prints “Canceled”, which suppressed Node’s default termination — so an interrupted `zudojs create` used to run to completion and exit 0. An interrupt now rolls the scaffold back and exits 130, and a cancelled prompt exits 130 rather than 0. `zudojs create my-api && cd my-api` no longer runs the `cd` after you pressed Ctrl-C.
+
+New projects contain what you asked for
+
+`zudojs create` invented example domains when no service list was given — four for a microservice project (`identity`, `enrollment`, `assessment`, `notification`) and three for a modular monolith, which was never even asked. An empty list now means no services: a microservice project gets its gateway, a modular monolith gets an empty module barrel, and both READMEs say how to add one. Ticking “Security” in the capabilities prompt now actually installs `@zudojs/security`; the prompt offered eight options and the command read six, so `events` and `security` were silently discarded — no dependency, no manifest entry, no message. A new `--capabilities <list>` flag makes the interactive and non-interactive branches produce the same project.
+
+The first commands you run in a new project work
+
+`pnpm run test` passes in a freshly created project: the sample spec was `tests/index.ts`, which matches no vitest include pattern, so the first thing you ran exited 1. It is now `tests/app.test.ts`. Per-command help works — `zudojs create --help` prints usage, arguments, options, shorts and defaults instead of rejecting `--help` as an invalid option. And generated projects install the resolved version range rather than `latest`: the frontend install path resolved every dependency to a pinned range and then passed only the names to the package manager, so two `zudojs create --frontend react` runs a month apart produced different majors.
+
+Not verified on Windows
+
+The `cmd.exe` quoting hardening — an argument containing `"`, `%` or `!` is now rejected rather than escaped, because a backslash is not a `cmd` escape — and `NoDefaultCurrentDirectoryInExePath` were tested as pure functions on Linux by passing `"win32"` explicitly. They have not been exercised on a real Windows host.
+
+> **Upgrading:** only `zudojs-cli` changed — every `@zudojs/*` package is still at its round 11 version, and an existing project needs no code change. What breaks is anything that reads the CLI’s exit code. `zudojs create` now exits `1` when dependency installation fails, where it exited `0` with a warning, and exits `130` when a prompt is cancelled or the run is interrupted, where it exited `0` after finishing anyway. `zudojs build` and `zudojs generate` exit `1` outside a Zudojs project instead of proceeding. A chain such as `zudojs create my-api && cd my-api`, and any CI step that trusted a `0`, will now stop where it used to continue; that is the point. Check scripted names too: a project name must start with a letter or digit, and a schematic name may not start with a digit, so `zudojs generate module 2fa` is rejected rather than writing a syntax error into `src/app.ts` and exiting `0`. Two API changes affect embedders only: `RollbackManager.rollback()` returns a `RollbackResult` instead of `void`, and `CapabilityResolutionResult.conflicts` is gone. Full notes: [zudojs-cli 2.0.0](#pkg-cli).
+
 ## WHAT’S NEW — SEPTEMBER 2026 RELEASE (ROUND 11)
 
 A third full audit of all 39 packages. Every package has a new version: 28 carry source changes, the rest are republished against new dependency versions. As in round 10, every finding was reproduced before it was fixed and ships with a regression test, and the entries that close an insecure default or change existing behaviour say so in the package notes below. Highlights:
@@ -28155,7 +28404,7 @@ The package pages on this site were corrected wherever they contradicted the sou
 | `@zudojs/auth` | `1.2.1` | [Jump to notes](#pkg-auth) |
 | `@zudojs/auth-oauth` | `1.2.1` | [Jump to notes](#pkg-auth-oauth) |
 | `@zudojs/cache` | `1.1.1` | [Jump to notes](#pkg-cache) |
-| `zudojs-cli` | `1.2.1` | [Jump to notes](#pkg-cli) |
+| `zudojs-cli` | `2.0.0` | [Jump to notes](#pkg-cli) |
 | `@zudojs/config` | `1.2.0` | [Jump to notes](#pkg-config) |
 | `@zudojs/constants` | `1.1.1` | [Jump to notes](#pkg-constants) |
 | `@zudojs/container` | `1.1.2` | [Jump to notes](#pkg-container) |
@@ -28243,11 +28492,36 @@ Patch Changes
     - `toPrismaInclude` no longer treats a relation or `select` field whose name happens to be an `Object.prototype` member (`toString`, `valueOf`, `constructor`, `__proto__`, …) as a duplicate or silently drops it. Such names are now handled as ordinary keys.
     - `getOrSet` in the database cache no longer poisons a key permanently when the loader throws synchronously rather than returning a rejected promise. The failed load is evicted from the in-flight map and the next call invokes the loader again, as it already did for asynchronous failures.
 
-### `zudojs-cli` v1.2.1
+### `zudojs-cli` v2.0.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-cli.md)
 
-Patch Changes
+Major Changes
+
+- A full audit of the CLI: 55 findings, all fixed, each with a regression test that fails against the unfixed code. Read this before upgrading — several commands now refuse where they previously proceeded. In every case the old behaviour was a bug, but a script or CI job written against it will notice.
+    - **Breaking —** **a failed dependency install now exits non-zero.** `zudojs create` used to downgrade an install failure to a warning and then print “Project created successfully” and exit 0, so a CI job went green with no `node_modules`. The project is still kept and the retry hint is still printed; only the exit code and the closing message changed. `zudojs add` already behaved this way — the two commands no longer disagree.
+    - **Breaking —** **`zudojs build` refuses outside a Zudojs project.** `findProjectRoot` accepted any ancestor holding a bare `package.json`, so from an unrelated subdirectory the CLI climbed out and executed that project’s `scripts.build` — content from a file on disk — then reported success. It now requires a real Zudojs project and throws `CLINotInProjectError` otherwise.
+    - **Breaking —** **`zudojs generate` outside a project throws** instead of warning and writing files into the current directory, matching `dev`, `build` and `add`. It also walks up to the project root, so running it from a subdirectory no longer creates a second `src/` tree.
+    - **Breaking —** **cancelling a prompt exits 130**, not 0. `zudojs create my-api && cd my-api` no longer runs the `cd` after you pressed Ctrl-C. Ctrl-C mid-scaffold is now honoured at all — `@clack/prompts` registers a SIGINT listener per spinner that only prints “Canceled”, which suppressed Node’s default termination, so the run used to continue to completion; it now rolls back and exits 130.
+    - **Breaking —** **`CLI_ENVIRONMENT` no longer carries `NODE_ENV` or `DEBUG: "DEBUG"`.** Nothing read either, and honouring a bare `DEBUG` would have changed behaviour. It now names the four variables the CLI really reads: `ZUDOJS_DEBUG`, `CI`, `NO_UPDATE_CHECK`, `NPM_OFFLINE`.
+    - **Breaking —** `RollbackManager.rollback()` returns a `RollbackResult` instead of `void`, and `CapabilityResolutionResult.conflicts` is gone — it was structurally incapable of being non-empty.
+    - **Breaking —** a project name must now start with a letter or digit. `zudojs create -- --weird` used to create a directory `cd` could not enter and `rm -rf` could not remove.
+    - **Breaking —** a schematic name may no longer start with a digit. `zudojs generate module 2fa` used to write `import { 2faModule } …` into your existing `src/app.ts` — a syntax error in the entry point — and exit 0.
+    - **Breaking —** the printed app name is now `zudojs` rather than `Zudojs`, so usage lines show the command you type.
+    - **New projects no longer arrive with services nobody asked for.** `zudojs create` invented example domains when no service list was given — four for a microservice project (`identity`, `enrollment`, `assessment`, `notification`) and three for a modular monolith. A modular monolith was never even asked. An empty list now means no services: a microservice project gets its gateway, a modular monolith gets an empty module barrel, and both READMEs say how to add one. Named services are generated exactly as named.
+    - **`generate service` now works in every architecture.** It was broken in all three. In a monolith it wrote to `src/<name>/` while the template’s services live in `src/services/`; it now nests under the template’s directory. In a modular monolith it logged `Mapping "service" → "module"` and then did not, producing four inert files the runtime never loaded; the mapping is now real and the module is registered in `app.ts`. In a microservice project it created an app directory with no `package.json`, so pnpm skipped it and `pnpm -r run build` never compiled it; it now refuses and names the two commands that do work.
+    - **Generated projects pinned `latest`.** The frontend install path resolved every dependency to a pinned range and then passed only the names to the package manager, so two `zudojs create --frontend react` runs a month apart produced different majors. The resolved range is now installed, and the resolver’s “no version range known” warnings are no longer discarded.
+    - **Ticking “Security” did nothing.** The capabilities prompt offered eight options and the command read six; `events` and `security` were silently dropped — no dependency, no manifest entry, no message. Both are now consumed. A new `--capabilities <list>` flag makes the interactive and non-interactive branches produce the same project.
+    - **Writes could escape the project through a symlink.** Path containment was checked on the literal string only, so a symlinked subdirectory sent generated files to the symlink’s target. Containment is now re-checked after resolving the real path.
+    - **`zudojs doctor`’s feature check could never fail** — the templates hardcoded `zudojs.features: []`. They now record the real capability list and install the packages backing it. The modular-monolith template ignored the `enable*` flags entirely, so `--database` installed nothing.
+    - **`pnpm run test` failed in a brand-new project.** The sample spec was `tests/index.ts`, which matches no vitest include pattern, so the first thing you ran exited 1. It is now `tests/app.test.ts`.
+    - **The manifest is now durable.** It is written atomically, serialized by a lock so concurrent `zudojs add` runs cannot lose an update, validated on read, and a corrupt manifest is reported distinctly from a missing one. `add` reads and validates it before touching any `package.json`, so a failure can no longer leave the project half-updated.
+    - **A framework scaffolder is no longer killed at 120 s** and silently replaced by the built-in fallback template; it gets 15 minutes, the failure says whether it timed out, and the child’s real stderr is shown.
+    - Per-command help works: `zudojs create --help` prints usage, arguments, options, shorts and defaults, instead of rejecting `--help` as an invalid option.
+    - A flag-shaped token is no longer swallowed as an option value, so `--type --frontend react` names the right problem. Surplus positionals are reported by every command. All four registries throw on a duplicate registration rather than silently replacing the earlier entry.
+    - **Not verified on Windows.** The `cmd.exe` quoting hardening (arguments containing `"`, `%` or `!` are now rejected rather than escaped, because a backslash is not a cmd escape) and `NoDefaultCurrentDirectoryInExePath` were tested as pure functions on Linux by passing `"win32"` explicitly. They have not been exercised on a real Windows host.
+
+Previously — v1.2.1 (round 11)
 
 - Tooling correctness fixes for the testing, docs, adapters, feature-flag and CLI packages.
     - `createStub()` now returns the same no-op function for a given property on every access, so `stub.handler === stub.handler`. A `bus.on("x", stub.handler)` / `bus.off("x", stub.handler)` pair written against a stub now actually removes the listener instead of leaking it between tests.

@@ -10,6 +10,36 @@ September 2026
 
 What changed in each release, package by package. These notes are generated from the packages’ own `CHANGELOG.md` files, so they describe what shipped, not what was planned.
 
+## WHAT’S NEW — ZUDOJS-CLI 2.0.0 (SEPTEMBER 2026)
+
+A release for one package. `zudojs-cli` was audited on its own — 55 findings, all fixed, each with a regression test that fails against the unfixed code — and ships as **2.0.0**, the first major in the ecosystem. It is a major because several commands now refuse where they previously proceeded, and an interrupted run now exits 130 instead of 0. In every case the old behaviour was a bug that could make a broken run look successful: a project with no `node_modules` reported as created, another project’s build reported as yours, a cancelled scaffold that finished anyway. A script or CI job written against the old behaviour will notice. No other package changed in this release; the rest of the monorepo is as described in the round 11 notes below.
+
+A failed dependency install now exits non-zero
+
+`zudojs create` used to downgrade an install failure to a warning, then print “Project created successfully” and exit 0, so a CI job went green with no `node_modules`. That job will now correctly go red. The project is still kept and the retry hint is still printed; only the exit code and the closing message changed. `zudojs add` already behaved this way — the two commands no longer disagree.
+
+`zudojs build` refuses outside a Zudojs project
+
+`findProjectRoot` accepted any ancestor holding a bare `package.json`, so from an unrelated subdirectory the CLI climbed out and executed that project’s `scripts.build` — content from a file on disk — then reported success. It now requires a real Zudojs project and throws `CLINotInProjectError` otherwise. `zudojs generate` throws in the same situation instead of warning and writing files into the current directory, matching `dev`, `build` and `add`; it also walks up to the project root, so running it from a subdirectory no longer creates a second `src/` tree.
+
+Ctrl-C is honoured
+
+`@clack/prompts` registers a SIGINT listener per spinner that only prints “Canceled”, which suppressed Node’s default termination — so an interrupted `zudojs create` used to run to completion and exit 0. An interrupt now rolls the scaffold back and exits 130, and a cancelled prompt exits 130 rather than 0. `zudojs create my-api && cd my-api` no longer runs the `cd` after you pressed Ctrl-C.
+
+New projects contain what you asked for
+
+`zudojs create` invented example domains when no service list was given — four for a microservice project (`identity`, `enrollment`, `assessment`, `notification`) and three for a modular monolith, which was never even asked. An empty list now means no services: a microservice project gets its gateway, a modular monolith gets an empty module barrel, and both READMEs say how to add one. Ticking “Security” in the capabilities prompt now actually installs `@zudojs/security`; the prompt offered eight options and the command read six, so `events` and `security` were silently discarded — no dependency, no manifest entry, no message. A new `--capabilities <list>` flag makes the interactive and non-interactive branches produce the same project.
+
+The first commands you run in a new project work
+
+`pnpm run test` passes in a freshly created project: the sample spec was `tests/index.ts`, which matches no vitest include pattern, so the first thing you ran exited 1. It is now `tests/app.test.ts`. Per-command help works — `zudojs create --help` prints usage, arguments, options, shorts and defaults instead of rejecting `--help` as an invalid option. And generated projects install the resolved version range rather than `latest`: the frontend install path resolved every dependency to a pinned range and then passed only the names to the package manager, so two `zudojs create --frontend react` runs a month apart produced different majors.
+
+Not verified on Windows
+
+The `cmd.exe` quoting hardening — an argument containing `"`, `%` or `!` is now rejected rather than escaped, because a backslash is not a `cmd` escape — and `NoDefaultCurrentDirectoryInExePath` were tested as pure functions on Linux by passing `"win32"` explicitly. They have not been exercised on a real Windows host.
+
+> **Upgrading:** only `zudojs-cli` changed — every `@zudojs/*` package is still at its round 11 version, and an existing project needs no code change. What breaks is anything that reads the CLI’s exit code. `zudojs create` now exits `1` when dependency installation fails, where it exited `0` with a warning, and exits `130` when a prompt is cancelled or the run is interrupted, where it exited `0` after finishing anyway. `zudojs build` and `zudojs generate` exit `1` outside a Zudojs project instead of proceeding. A chain such as `zudojs create my-api && cd my-api`, and any CI step that trusted a `0`, will now stop where it used to continue; that is the point. Check scripted names too: a project name must start with a letter or digit, and a schematic name may not start with a digit, so `zudojs generate module 2fa` is rejected rather than writing a syntax error into `src/app.ts` and exiting `0`. Two API changes affect embedders only: `RollbackManager.rollback()` returns a `RollbackResult` instead of `void`, and `CapabilityResolutionResult.conflicts` is gone. Full notes: [zudojs-cli 2.0.0](#pkg-cli).
+
 ## WHAT’S NEW — SEPTEMBER 2026 RELEASE (ROUND 11)
 
 A third full audit of all 39 packages. Every package has a new version: 28 carry source changes, the rest are republished against new dependency versions. As in round 10, every finding was reproduced before it was fixed and ships with a regression test, and the entries that close an insecure default or change existing behaviour say so in the package notes below. Highlights:
@@ -83,7 +113,7 @@ The package pages on this site were corrected wherever they contradicted the sou
 | `@zudojs/auth` | `1.2.1` | [Jump to notes](#pkg-auth) |
 | `@zudojs/auth-oauth` | `1.2.1` | [Jump to notes](#pkg-auth-oauth) |
 | `@zudojs/cache` | `1.1.1` | [Jump to notes](#pkg-cache) |
-| `zudojs-cli` | `1.2.1` | [Jump to notes](#pkg-cli) |
+| `zudojs-cli` | `2.0.0` | [Jump to notes](#pkg-cli) |
 | `@zudojs/config` | `1.2.0` | [Jump to notes](#pkg-config) |
 | `@zudojs/constants` | `1.1.1` | [Jump to notes](#pkg-constants) |
 | `@zudojs/container` | `1.1.2` | [Jump to notes](#pkg-container) |
@@ -171,11 +201,36 @@ Patch Changes
     - `toPrismaInclude` no longer treats a relation or `select` field whose name happens to be an `Object.prototype` member (`toString`, `valueOf`, `constructor`, `__proto__`, …) as a duplicate or silently drops it. Such names are now handled as ordinary keys.
     - `getOrSet` in the database cache no longer poisons a key permanently when the loader throws synchronously rather than returning a rejected promise. The failed load is evicted from the in-flight map and the next call invokes the loader again, as it already did for asynchronous failures.
 
-### `zudojs-cli` v1.2.1
+### `zudojs-cli` v2.0.0
 
 [Package documentation](https://zudojs.oyinlola.site/docs/packages-cli.md)
 
-Patch Changes
+Major Changes
+
+- A full audit of the CLI: 55 findings, all fixed, each with a regression test that fails against the unfixed code. Read this before upgrading — several commands now refuse where they previously proceeded. In every case the old behaviour was a bug, but a script or CI job written against it will notice.
+    - **Breaking —** **a failed dependency install now exits non-zero.** `zudojs create` used to downgrade an install failure to a warning and then print “Project created successfully” and exit 0, so a CI job went green with no `node_modules`. The project is still kept and the retry hint is still printed; only the exit code and the closing message changed. `zudojs add` already behaved this way — the two commands no longer disagree.
+    - **Breaking —** **`zudojs build` refuses outside a Zudojs project.** `findProjectRoot` accepted any ancestor holding a bare `package.json`, so from an unrelated subdirectory the CLI climbed out and executed that project’s `scripts.build` — content from a file on disk — then reported success. It now requires a real Zudojs project and throws `CLINotInProjectError` otherwise.
+    - **Breaking —** **`zudojs generate` outside a project throws** instead of warning and writing files into the current directory, matching `dev`, `build` and `add`. It also walks up to the project root, so running it from a subdirectory no longer creates a second `src/` tree.
+    - **Breaking —** **cancelling a prompt exits 130**, not 0. `zudojs create my-api && cd my-api` no longer runs the `cd` after you pressed Ctrl-C. Ctrl-C mid-scaffold is now honoured at all — `@clack/prompts` registers a SIGINT listener per spinner that only prints “Canceled”, which suppressed Node’s default termination, so the run used to continue to completion; it now rolls back and exits 130.
+    - **Breaking —** **`CLI_ENVIRONMENT` no longer carries `NODE_ENV` or `DEBUG: "DEBUG"`.** Nothing read either, and honouring a bare `DEBUG` would have changed behaviour. It now names the four variables the CLI really reads: `ZUDOJS_DEBUG`, `CI`, `NO_UPDATE_CHECK`, `NPM_OFFLINE`.
+    - **Breaking —** `RollbackManager.rollback()` returns a `RollbackResult` instead of `void`, and `CapabilityResolutionResult.conflicts` is gone — it was structurally incapable of being non-empty.
+    - **Breaking —** a project name must now start with a letter or digit. `zudojs create -- --weird` used to create a directory `cd` could not enter and `rm -rf` could not remove.
+    - **Breaking —** a schematic name may no longer start with a digit. `zudojs generate module 2fa` used to write `import { 2faModule } …` into your existing `src/app.ts` — a syntax error in the entry point — and exit 0.
+    - **Breaking —** the printed app name is now `zudojs` rather than `Zudojs`, so usage lines show the command you type.
+    - **New projects no longer arrive with services nobody asked for.** `zudojs create` invented example domains when no service list was given — four for a microservice project (`identity`, `enrollment`, `assessment`, `notification`) and three for a modular monolith. A modular monolith was never even asked. An empty list now means no services: a microservice project gets its gateway, a modular monolith gets an empty module barrel, and both READMEs say how to add one. Named services are generated exactly as named.
+    - **`generate service` now works in every architecture.** It was broken in all three. In a monolith it wrote to `src/<name>/` while the template’s services live in `src/services/`; it now nests under the template’s directory. In a modular monolith it logged `Mapping "service" → "module"` and then did not, producing four inert files the runtime never loaded; the mapping is now real and the module is registered in `app.ts`. In a microservice project it created an app directory with no `package.json`, so pnpm skipped it and `pnpm -r run build` never compiled it; it now refuses and names the two commands that do work.
+    - **Generated projects pinned `latest`.** The frontend install path resolved every dependency to a pinned range and then passed only the names to the package manager, so two `zudojs create --frontend react` runs a month apart produced different majors. The resolved range is now installed, and the resolver’s “no version range known” warnings are no longer discarded.
+    - **Ticking “Security” did nothing.** The capabilities prompt offered eight options and the command read six; `events` and `security` were silently dropped — no dependency, no manifest entry, no message. Both are now consumed. A new `--capabilities <list>` flag makes the interactive and non-interactive branches produce the same project.
+    - **Writes could escape the project through a symlink.** Path containment was checked on the literal string only, so a symlinked subdirectory sent generated files to the symlink’s target. Containment is now re-checked after resolving the real path.
+    - **`zudojs doctor`’s feature check could never fail** — the templates hardcoded `zudojs.features: []`. They now record the real capability list and install the packages backing it. The modular-monolith template ignored the `enable*` flags entirely, so `--database` installed nothing.
+    - **`pnpm run test` failed in a brand-new project.** The sample spec was `tests/index.ts`, which matches no vitest include pattern, so the first thing you ran exited 1. It is now `tests/app.test.ts`.
+    - **The manifest is now durable.** It is written atomically, serialized by a lock so concurrent `zudojs add` runs cannot lose an update, validated on read, and a corrupt manifest is reported distinctly from a missing one. `add` reads and validates it before touching any `package.json`, so a failure can no longer leave the project half-updated.
+    - **A framework scaffolder is no longer killed at 120 s** and silently replaced by the built-in fallback template; it gets 15 minutes, the failure says whether it timed out, and the child’s real stderr is shown.
+    - Per-command help works: `zudojs create --help` prints usage, arguments, options, shorts and defaults, instead of rejecting `--help` as an invalid option.
+    - A flag-shaped token is no longer swallowed as an option value, so `--type --frontend react` names the right problem. Surplus positionals are reported by every command. All four registries throw on a duplicate registration rather than silently replacing the earlier entry.
+    - **Not verified on Windows.** The `cmd.exe` quoting hardening (arguments containing `"`, `%` or `!` are now rejected rather than escaped, because a backslash is not a cmd escape) and `NoDefaultCurrentDirectoryInExePath` were tested as pure functions on Linux by passing `"win32"` explicitly. They have not been exercised on a real Windows host.
+
+Previously — v1.2.1 (round 11)
 
 - Tooling correctness fixes for the testing, docs, adapters, feature-flag and CLI packages.
     - `createStub()` now returns the same no-op function for a given property on every access, so `stub.handler === stub.handler`. A `bus.on("x", stub.handler)` / `bus.off("x", stub.handler)` pair written against a stub now actually removes the listener instead of leaking it between tests.

@@ -53,7 +53,10 @@ export const RESERVED_MICROSERVICE_APP_NAMES = ["gateway"] as const;
  * (`identity`, `enrollment`, `assessment`, `notification`), which put four
  * domains nobody asked for into every microservice project and left the
  * author deleting them before they could start. Services are created when
- * they are named — here, or later with `zudojs generate service <name>`.
+ * they are named — here, or in another `create` run. `generate service` is
+ * refused in a microservice project, because a service is a whole workspace
+ * app (package.json, tsconfig, Dockerfile, port) that the schematic does not
+ * produce; `generate module --service <name>` adds to an existing app.
  */
 export function resolveMicroserviceServices(
   requested: readonly string[],
@@ -201,10 +204,17 @@ ${
   services.length > 0
     ? services.map((s, i) => `- **${s}** - Port ${3001 + i}`).join("\n")
     : `
-No services yet. Add one with:
+No services yet. A service is a whole workspace app, so it is created with
+\`create\` rather than by a schematic:
 
 \`\`\`bash
-npx zudojs generate service <name>
+npx zudojs create <project> --architecture microservice --services <name>
+\`\`\`
+
+To add domain logic to an app that already exists, generate a module into it:
+
+\`\`\`bash
+npx zudojs generate module <name> --service <existing-service>
 \`\`\``
 }
 

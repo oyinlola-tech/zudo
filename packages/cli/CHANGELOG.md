@@ -1,5 +1,25 @@
 # zudojs-cli
 
+## 2.0.1
+
+### Patch Changes
+
+- Fixes the README generated for a microservice project with no services, which
+  told the reader to run a command 2.0.0 refuses.
+
+  `zudojs generate service` is refused in a microservice project — a service
+  there is a whole workspace app, which the schematic does not produce — but the
+  generated README still said "No services yet. Add one with:
+  `npx zudojs generate service <name>`". Anyone following it hit a validation
+  error on the first thing the project asked them to do.
+
+  The README now points at the two commands that work:
+  `zudojs create <project> --architecture microservice --services <name>` to
+  create one, and `zudojs generate module <name> --service <existing-service>` to
+  add domain logic to an app that already exists. `packages/cli/README.md` gains
+  the same note, and a regression test asserts the generated README never names
+  `generate service` again.
+
 ## 2.0.0
 
 ### Major Changes

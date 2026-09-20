@@ -133,8 +133,16 @@ current directory.
 Where a schematic lands depends on the architecture: a `monolith` puts
 services in `src/services` and modules in `src/modules`; a
 `modular-monolith` has modules only, so `generate service` there generates a
-module; in a `microservice` project a schematic goes to the gateway app, or
-to `apps/services/<name>` with `--service <name>`.
+module and registers it in `app.ts`; in a `microservice` project a schematic
+goes to the gateway app, or to `apps/services/<name>` with `--service <name>`.
+
+`generate service` is **refused** in a microservice project. A service there is
+a whole workspace app — its own `package.json`, `tsconfig.json`, `Dockerfile`
+and port — which the schematic does not produce; it used to write a bare class
+into a directory pnpm skipped and no build compiled. Create services with
+`zudojs create <project> --architecture microservice --services <names>`, and
+add domain logic to an existing app with
+`zudojs generate module <name> --service <existing-service>`.
 
 ## Commands
 
