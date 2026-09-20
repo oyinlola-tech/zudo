@@ -80,6 +80,20 @@ Every file is served from this site, so a README or a slide can link to it direc
 
 The artwork is part of the Zudo project, which is [MIT licensed](https://github.com/oyinlola-tech/zudo/blob/main/LICENSE). The marks identify the project; the rules above apply to them.
 
+## For scripts and AI agents
+
+The kit is also published as data, so a build script or an assistant can pick the right file without scraping this page.
+
+- [brand.json](https://zudojs.oyinlola.site/assets/brand/brand.json) — every asset with its URL, format, pixel size and intended background, plus the palette, the rules and the licence.
+- [brand.md](https://zudojs.oyinlola.site/brand.md) — this page as Markdown, like every docs page.
+- [llms.txt](https://zudojs.oyinlola.site/llms.txt) — the site index agents read first; it points here.
+
+```ts
+# the mark, whatever the current file is called
+curl -s https://zudojs.oyinlola.site/assets/brand/brand.json \
+  | jq -r '.assets[] | select(.id == "mark") | .preferred.url'
+```
+
 ## Need something else?
 
 If you need a format that isn't here — a vector for print, a one-colour version, a wider lockup — [open a discussion](https://github.com/oyinlola-tech/zudo/discussions) and it will be added.
