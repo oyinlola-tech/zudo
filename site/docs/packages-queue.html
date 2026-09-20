@@ -426,6 +426,33 @@ console.<span class="fn">log</span>((<span class="kw">await</span> queue.<span c
         <p class="mb-3">
           Each entry is a <code class="bg-black/5 px-1">DeadLetterJob</code>: a copy of the <code class="bg-black/5 px-1">job</code> as it was when it ran out of attempts (so its <code class="bg-black/5 px-1">state</code> still reads <code class="bg-black/5 px-1">"failed"</code>), the <code class="bg-black/5 px-1">error</code>, the number of <code class="bg-black/5 px-1">attempts</code>, and a <code class="bg-black/5 px-1">reason</code> string. To keep dead jobs somewhere else, pass your own <code class="bg-black/5 px-1">DeadLetterStore</code> as <code class="bg-black/5 px-1">QueueOptions.deadLetterStore</code>; <code class="bg-black/5 px-1">createInMemoryDeadLetterStore()</code> shows the shape to copy.
         </p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Retention is bounded</h3>
+        <p class="mb-3">
+          Since v1.3.0 the default in-memory store keeps the most recent <strong>1000</strong> dead-lettered jobs (<code class="bg-black/5 px-1">DEFAULT_DEAD_LETTER_JOBS</code>) and evicts the oldest past that. Before v1.3.0 it was unbounded, so a queue that dead-lettered steadily grew until the process ran out of memory. Build the store yourself to choose a different cap.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  <span class="fn">createInMemoryQueue</span>,
+  <span class="fn">createQueueName</span>,
+  <span class="fn">createInMemoryDeadLetterStore</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/queue"</span>;
+
+<span class="cmt">// Keep only the 50 most recent failures.</span>
+<span class="kw">const</span> store = <span class="fn">createInMemoryDeadLetterStore</span>({ <span class="prop">maxEntries</span>: <span class="num">50</span> });
+
+<span class="cmt">// Or opt back into the pre-1.3.0 unbounded behaviour.</span>
+<span class="kw">const</span> unbounded = <span class="fn">createInMemoryDeadLetterStore</span>({
+  <span class="prop">maxEntries</span>: <span class="tp">Number</span>.POSITIVE_INFINITY,
+});
+
+<span class="kw">const</span> queue = <span class="fn">createInMemoryQueue</span>(<span class="fn">createQueueName</span>(<span class="str">"broken"</span>), {
+  <span class="prop">deadLetterStore</span>: store,
+});
+
+<span class="kw">await</span> queue.<span class="fn">close</span>(); <span class="cmt">// `store` is yours: close() leaves it alone</span></div>
+        <div class="callout callout-tip">
+          <strong class="text-zudo-green">Who clears it:</strong> <code class="bg-black/5 px-1">close()</code> clears the dead-letter store the queue created for itself, so a closed queue holds onto nothing. A store you passed in as <code class="bg-black/5 px-1">deadLetterStore</code> is left alone, as before &mdash; you own its contents and its lifetime.
+        </div>
         <div class="callout callout-warning">
           <strong class="text-zudo-yellow">Watch out:</strong> <code class="bg-black/5 px-1">getStats().failed</code> counts jobs currently in <code class="bg-black/5 px-1">failed</code> <em>or</em> <code class="bg-black/5 px-1">dead_letter</code> state. A job that will be retried shows up there for a moment too. Use <code class="bg-black/5 px-1">deadLettered</code> for the lifetime total.
         </div>

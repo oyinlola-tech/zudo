@@ -455,7 +455,7 @@ They stack rather than compete. A typical service exposes one HTTP route with `@
 | RPCRequest RPCResponse RPCErrorPayload RPCMetadata | The messages on the wire. | Check `success` before reading `result`. Each has an Options variant for its factory. |
 | RPCContext | Per-call request, metadata, signal and state. | Second argument to every handler and middleware. |
 | RPCTransport RPCMiddleware RPCInterceptor | The pieces you implement yourself. | Middleware is a function; a transport and an interceptor are objects. |
-| RPCServerOptions RPCDispatcherOptions RPCClientOptions RPCCallOptions RPCRequestLimits | Everything you can configure. | Server: `limits`, `dispatch`, `onInternalError`. Dispatch: `defaultTimeout`, `honourDeadline`, `interceptors`. Client and call: `timeout`, `maxPending`, `signal`, `metadata`. |
+| RPCServerOptions RPCDispatcherOptions RPCClientOptions RPCCallOptions RPCRequestLimits | Everything you can configure. | Server: `limits`, `dispatch`, `onInternalError`. Limits: `maxPayloadBytes` (1 MB), `maxRequestIdLength` (128), `enforceProcedureNamePattern` (true). Dispatch: `defaultTimeout`, `honourDeadline`, `interceptors`. Client and call: `timeout`, `maxPending`, `signal`, `metadata`. |
 | RPCSchema RPCRetryOptions RPCBackoff RPCJitter CancellableSignal | Validation and reliability settings. | `RPCSchema` needs only `safeParse`. Backoff: fixed, linear, exponential. Jitter: none, full, equal. |
 
 ### Constants
@@ -463,7 +463,8 @@ They stack rather than compete. A typical service exposes one HTTP route with `@
 | Name | Value | Notes |
 | --- | --- | --- |
 | DEFAULT_RPC_TIMEOUT | 30000 | When neither procedure nor call sets one. |
-| MAX_RPC_PAYLOAD_SIZE | 1048576 | 1 MB encoded; see `limits.maxPayloadBytes`. |
+| MAX_RPC_PAYLOAD_SIZE | 1048576 | 1 MB encoded, covering `payload` and `metadata` together; see `limits.maxPayloadBytes`. |
+| MAX_RPC_REQUEST_ID_LENGTH | 128 | Characters in `request.id`, which every response echoes; see `limits.maxRequestIdLength`. |
 | MAX_PENDING_REQUESTS | 1024 | Default client concurrency cap. |
 | MAX_MIDDLEWARE | 32 | Per stack. |
 | MAX_PROCEDURES | 4096 | Per registry. |

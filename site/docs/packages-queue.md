@@ -271,6 +271,34 @@ await queue.close();
 
 Each entry is a `DeadLetterJob`: a copy of the `job` as it was when it ran out of attempts (so its `state` still reads `"failed"`), the `error`, the number of `attempts`, and a `reason` string. To keep dead jobs somewhere else, pass your own `DeadLetterStore` as `QueueOptions.deadLetterStore`; `createInMemoryDeadLetterStore()` shows the shape to copy.
 
+### Retention is bounded
+
+Since v1.3.0 the default in-memory store keeps the most recent **1000** dead-lettered jobs (`DEFAULT_DEAD_LETTER_JOBS`) and evicts the oldest past that. Before v1.3.0 it was unbounded, so a queue that dead-lettered steadily grew until the process ran out of memory. Build the store yourself to choose a different cap.
+
+```ts
+import {
+  createInMemoryQueue,
+  createQueueName,
+  createInMemoryDeadLetterStore,
+} from "@zudojs/queue";
+
+// Keep only the 50 most recent failures.
+const store = createInMemoryDeadLetterStore({ maxEntries: 50 });
+
+// Or opt back into the pre-1.3.0 unbounded behaviour.
+const unbounded = createInMemoryDeadLetterStore({
+  maxEntries: Number.POSITIVE_INFINITY,
+});
+
+const queue = createInMemoryQueue(createQueueName("broken"), {
+  deadLetterStore: store,
+});
+
+await queue.close(); // `store` is yours: close() leaves it alone
+```
+
+> **Who clears it:** `close()` clears the dead-letter store the queue created for itself, so a closed queue holds onto nothing. A store you passed in as `deadLetterStore` is left alone, as before — you own its contents and its lifetime.
+
 > **Watch out:** `getStats().failed` counts jobs currently in `failed` *or* `dead_letter` state. A job that will be retried shows up there for a moment too. Use `deadLettered` for the lifetime total.
 
 ## WORKERS
