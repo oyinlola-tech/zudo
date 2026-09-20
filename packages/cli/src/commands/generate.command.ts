@@ -118,6 +118,13 @@ function getArchitectureRoot(
       if (schematic === "module") {
         return "src/modules";
       }
+      if (schematic === "service") {
+        // The monolith template scaffolds `src/services/app.service.ts` and a
+        // `src/services/index.ts` barrel. Generating into `src/<name>/`
+        // instead left two conventions in one project, and the generated
+        // service was never exported from the barrel the template owns.
+        return "src/services";
+      }
       return "src";
   }
 }
@@ -194,13 +201,42 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
     );
   }
 
+  /**
+   * A microservice's service is a whole workspace app — `package.json`,
+   * `tsconfig.json`, `Dockerfile`, `src/app.ts`, `src/server.ts` and a port —
+   * which this schematic does not produce.
+   *
+   * It used to warn and continue, writing a bare service class into
+   * `apps/services/<name>/`. That directory matches the workspace glob but has
+   * no manifest, so pnpm skipped it, `pnpm -r run build` never compiled it,
+   * and `zudojs add --service <name>` reported it as an unknown service. The
+   * files were unreachable and the command still exited 0. Refusing with the
+   * two commands that do work is more useful than dead code.
+   */
   if (architecture === "microservice" && schematic === "service") {
-    context.logger.warn(
-      'In microservice architecture, prefer "zudojs generate module" — services are top-level apps.',
+    throw new CLIValidationError(
+      `A service in a microservice project is a workspace app, which "generate service" does not scaffold.\n` +
+        `  - Add it at creation time:  zudojs create <project> --architecture microservice --services ${name}\n` +
+        `  - Or add a module to an existing app:  zudojs generate module ${name} --service <existing-service>`,
     );
   }
 
-  if (architecture === "modular-monolith" && schematic === "service") {
+  /**
+   * A modular monolith has modules, not services, so `generate service` means
+   * `generate module` there.
+   *
+   * This used to log the mapping and then run the service schematic anyway,
+   * which wrote four inert files into a new top-level directory that the
+   * runtime never loads. Rewriting the schematic here — rather than at the
+   * dispatch switch — keeps the base-path resolution, the overwrite guard and
+   * the result message all describing the same thing.
+   */
+  const effectiveSchematic =
+    architecture === "modular-monolith" && schematic === "service"
+      ? "module"
+      : schematic;
+
+  if (effectiveSchematic !== schematic) {
     context.logger.info(
       'Mapping "service" → "module" for modular-monolith architecture.',
     );
@@ -215,7 +251,7 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
 
   if (!dryRun && !force) {
     const planned = await captureWrites(() =>
-      runSchematic(schematic, name, schematicOptions, cwd),
+      runSchematic(effectiveSchematic, name, schematicOptions, cwd),
     );
     const conflicts = findWriteConflicts(cwd, planned);
     if (conflicts.length > 0) {
@@ -228,7 +264,7 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
   }
 
   const result = await runSchematic(
-    schematic,
+    effectiveSchematic,
     name,
     {
       ...schematicOptions,

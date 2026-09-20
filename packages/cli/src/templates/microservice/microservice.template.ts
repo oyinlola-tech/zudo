@@ -35,14 +35,6 @@ import {
   renderPnpmWorkspaceFile,
 } from "../shared/index.js";
 
-/** Default service names used when none are provided. */
-export const DEFAULT_MICROSERVICE_SERVICES = [
-  "identity",
-  "enrollment",
-  "assessment",
-  "notification",
-] as const;
-
 /**
  * The gateway app is always generated at `apps/gateway`, so "gateway" is a
  * reserved name: a service called `gateway` would produce a second, competing
@@ -52,8 +44,14 @@ export const RESERVED_MICROSERVICE_APP_NAMES = ["gateway"] as const;
 
 /**
  * Normalizes a requested service list into the service apps generated under
- * `apps/services/`. Reserved names and duplicates are dropped; an empty list
- * falls back to DEFAULT_MICROSERVICE_SERVICES.
+ * `apps/services/`. Reserved names and duplicates are dropped.
+ *
+ * An empty request yields an empty list: a new project gets the gateway and
+ * nothing else. This used to substitute four example names
+ * (`identity`, `enrollment`, `assessment`, `notification`), which put four
+ * domains nobody asked for into every microservice project and left the
+ * author deleting them before they could start. Services are created when
+ * they are named — here, or later with `zudojs generate service <name>`.
  */
 export function resolveMicroserviceServices(
   requested: readonly string[],
@@ -68,9 +66,7 @@ export function resolveMicroserviceServices(
         ),
     );
 
-  const unique = [...new Set(normalized)];
-
-  return unique.length > 0 ? unique : [...DEFAULT_MICROSERVICE_SERVICES];
+  return [...new Set(normalized)];
 }
 
 export function generateMicroserviceFiles(
@@ -194,7 +190,16 @@ A microservice architecture built with the Zudojs framework.
 ## Services
 
 - **gateway** - Port 3000
-${services.map((s, i) => `- **${s}** - Port ${3001 + i}`).join("\n")}
+${
+  services.length > 0
+    ? services.map((s, i) => `- **${s}** - Port ${3001 + i}`).join("\n")
+    : `
+No services yet. Add one with:
+
+\`\`\`bash
+npx zudojs generate service <name>
+\`\`\``
+}
 
 ## Getting Started
 

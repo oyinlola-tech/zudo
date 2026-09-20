@@ -42,6 +42,7 @@ import { promptCapabilities } from "../prompts/capabilities/index.js";
 import { CLIValidationError, CLIGenerationError } from "../errors/index.js";
 import { execCommand, runStreaming } from "../utils/utils.exec.js";
 import { writeFileTree } from "../utils/utils.fileSystem.js";
+import { normalizeName } from "../utils/utils.name.js";
 import { resolveMicroserviceServices } from "../templates/microservice/index.js";
 import { ManifestManager } from "../manifest/manifestManager.core.js";
 import { CLI_VERSION } from "../constants/index.js";
@@ -554,12 +555,18 @@ async function writeProjectManifest(
   if (options.enableQueue) capabilities.push("queue");
 
   // Record the services actually generated, not the raw request: the
-  // template drops reserved names (gateway) and duplicates, and substitutes
-  // its own defaults for an empty list.
+  // microservice template drops reserved names (gateway) and duplicates, and
+  // the modular-monolith template normalizes each name into a directory
+  // segment. A modular monolith's modules were previously not recorded at
+  // all, so later commands had no way to know which modules existed.
   const services =
     options.architecture === "microservice"
       ? resolveMicroserviceServices(options.services)
-      : undefined;
+      : options.architecture === "modular-monolith"
+        ? options.services
+            .map((module) => normalizeName(module))
+            .filter((module) => module.length > 0)
+        : undefined;
 
   const hasFrontend =
     options.frontend !== undefined && options.frontend !== "none";

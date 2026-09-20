@@ -103,11 +103,30 @@ async function writeManifest(
   });
 }
 
+/**
+ * Services these fixtures scaffold a microservice project with.
+ *
+ * Named explicitly because `create` no longer invents any: an empty list now
+ * yields a gateway and nothing else, so a fixture that wants several services
+ * has to ask for them.
+ */
+const FIXTURE_SERVICES = [
+  "identity",
+  "enrollment",
+  "assessment",
+  "notification",
+] as const;
+
 async function scaffoldBackend(
   architecture: ScaffoldOptions["architecture"],
 ): Promise<string> {
   const root = tempDir();
-  const options = scaffoldOptions({ architecture });
+  const options = scaffoldOptions({
+    architecture,
+    ...(architecture === "microservice"
+      ? { services: [...FIXTURE_SERVICES] }
+      : {}),
+  });
   const generate =
     architecture === "monolith"
       ? generateMonolithFiles
@@ -119,7 +138,7 @@ async function scaffoldBackend(
     architecture,
     backend: { architecture, api: "rest" },
     ...(architecture === "microservice"
-      ? { services: ["identity", "enrollment", "assessment", "notification"] }
+      ? { services: [...FIXTURE_SERVICES] }
       : {}),
   });
   return root;

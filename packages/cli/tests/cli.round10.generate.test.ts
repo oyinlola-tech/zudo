@@ -62,7 +62,10 @@ describe("tooling/CLI-03", () => {
     const cwd = await monolithProject();
     const values = { schematic: "service", name: "billing" };
     await runGenerateCommand(context(cwd, values));
-    const file = join(cwd, "src/billing/billing.service.ts");
+    // A generated service nests under `src/services/`, the directory the
+    // monolith template scaffolds and exports a barrel for. It used to land in
+    // `src/<name>/`, which left two conventions in one project.
+    const file = join(cwd, "src/services/billing/billing.service.ts");
     appendFileSync(file, "// USER EDIT\n");
 
     await expect(runGenerateCommand(context(cwd, values))).rejects.toThrow(

@@ -23,13 +23,18 @@ export async function promptServices(
   }
 
   const value = await p.text({
-    message: "Service names (comma-separated)",
-    placeholder: "identity,billing,notification",
+    message: "Service names (comma-separated, leave blank for none)",
+    placeholder: "leave blank, or e.g. billing,search",
+    /**
+     * Blank is a valid answer and yields a gateway-only project.
+     *
+     * This used to demand at least one name, and an empty list elsewhere was
+     * substituted with four example services, so every project arrived with
+     * domains nobody had asked for. Services are created when they are named,
+     * here or later with `zudojs generate service <name>`.
+     */
     validate(input) {
       const services = parseServices(input ?? "");
-      if (services.length === 0) {
-        return "At least one service name is required.";
-      }
       for (const service of services) {
         if (!SERVICE_NAME_PATTERN.test(service)) {
           return `Invalid service name "${service}". Only alphanumeric characters, hyphens, and underscores are allowed.`;

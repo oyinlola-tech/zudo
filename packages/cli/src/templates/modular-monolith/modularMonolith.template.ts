@@ -52,11 +52,12 @@ export function generateModularMonolithFiles(
     .replace(/[^a-z0-9-]+/gi, "-")
     .toLowerCase();
   // Normalized: each name becomes a directory segment and a class name.
-  const modules = (
-    options.services.length > 0
-      ? options.services
-      : ["identity", "enrollment", "assessment"]
-  )
+  //
+  // An empty list generates no modules. This used to substitute three example
+  // names (`identity`, `enrollment`, `assessment`), so every modular monolith
+  // arrived with three domains nobody asked for. Modules are created when they
+  // are named — with `--services`, or later with `zudojs generate module <name>`.
+  const modules = options.services
     .map((m) => normalizeName(m))
     .filter((m) => m.length > 0);
 
@@ -150,9 +151,19 @@ A modular monolith built with the Zudojs framework.
 
 ## Architecture
 
-This project uses a **modular monolith** architecture with the following modules:
+This project uses a **modular monolith** architecture.
 
-${modules.map((m) => `- **${m}**`).join("\n")}
+${
+  modules.length > 0
+    ? `Modules:
+
+${modules.map((m) => `- **${m}**`).join("\n")}`
+    : `No modules yet. Add one with:
+
+\`\`\`bash
+npx zudojs generate module <name>
+\`\`\``
+}
 
 ## Getting Started
 
