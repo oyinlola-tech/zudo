@@ -222,6 +222,7 @@
               ['Roadmap', '/docs/roadmap'],
               ['Changelog', '/docs/changelog'],
               ['Sponsors', '/sponsors'],
+              ['Brand & logo', '/brand'],
               ['Report an issue', GITHUB_URL + '/issues', true],
               ['Discussions', GITHUB_URL + '/discussions', true],
             ]) +
