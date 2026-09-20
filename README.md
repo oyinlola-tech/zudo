@@ -510,8 +510,14 @@ brand colours and usage rules:
 [zudojs.oyinlola.site/brand](https://zudojs.oyinlola.site/brand) — or download
 [the kit](https://zudojs.oyinlola.site/assets/brand/zudo-brand-kit.zip) directly.
 
+Scripts and AI agents can read the same kit as data:
+[brand.json](https://zudojs.oyinlola.site/assets/brand/brand.json) lists every
+file with its URL, format and pixel size, plus the colours, the rules and the
+licence. The page also has a Markdown copy at
+[/brand.md](https://zudojs.oyinlola.site/brand.md).
+
 The source files live in [`site/assets/`](./site/assets); `pnpm site:brand`
-regenerates the PNG exports and the zip from them.
+regenerates the PNG exports, the manifest and the zip from them.
 
 ---
 
