@@ -43,7 +43,7 @@ site/
     ├── zudo-favicon.svg        # Favicon (red tile)
     ├── favicon-32.png, apple-touch-icon.png
     ├── fonts/                  # Self-hosted Inter + JetBrains Mono (woff2, latin + latin-ext; SIL OFL)
-    ├── brand/                  # Generated: PNG exports, USAGE.txt, zudo-brand-kit.zip (pnpm site:brand)
+    ├── brand/                  # Generated: PNG exports, USAGE.txt, brand.json, zudo-brand-kit.zip (pnpm site:brand)
     └── og-image.png            # Social share image (1200×630)
 ```
 
@@ -71,9 +71,15 @@ pnpm site:css
 ```
 
 The logo SVGs in `assets/` are the source of truth for the brand kit. After
-changing one, run `pnpm site:brand` to regenerate the PNG exports and
-`assets/brand/zudo-brand-kit.zip`, and commit the result — Vercel does not
-build it.
+changing one, run `pnpm site:brand`: it regenerates the PNG exports,
+`assets/brand/brand.json`, the zip, and the schema.org ImageObject list inside
+`brand.html`. Commit the result — Vercel does not build it. `pnpm site:seo`
+then picks the manifest up for the sitemap's image entries, and `pnpm
+site:llms` refreshes `brand.md`.
+
+Machines are served the same kit as `assets/brand/brand.json` (files, colours,
+rules, licence) and `brand.md`; both are linked from `llms.txt` and
+`robots.txt`.
 
 Fonts are served from `assets/fonts/` (declared at the top of `css/site.css`),
 and each page preloads `inter-latin.woff2`. No page loads Google Fonts or the
