@@ -75,6 +75,7 @@ export class EventEmitter {
       options.store ??
       new EventRegistry({
         maxHandlersPerPattern: options.maxListeners,
+        enforceHandlerLimit: options.enforceHandlerLimit,
         onWarning: options.onWarning,
       });
   }

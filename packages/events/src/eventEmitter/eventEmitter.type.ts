@@ -58,6 +58,12 @@ export interface EventEmitterOptions {
   readonly maxListeners?: number;
 
   /**
+   * Refuse a registration that would exceed `maxListeners` instead of warning
+   * about it. Only applies to the private store. Defaults to `false`.
+   */
+  readonly enforceHandlerLimit?: boolean;
+
+  /**
    * Receives leak warnings. Only applies to the private store.
    * Defaults to `process.emitWarning` (type `ZudojsEventsWarning`).
    */

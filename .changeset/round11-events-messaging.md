@@ -1,15 +1,25 @@
 ---
-"@zudojs/events": major
+"@zudojs/errors": minor
+"@zudojs/events": minor
 "@zudojs/messaging": minor
 ---
 
+**@zudojs/errors**
+
+- New `EventListenerLimitExceededError` (`ErrorCode.EVENT_LISTENER_LIMIT_EXCEEDED`),
+  carrying `pattern`, `count` and `limit`. It is reported as internal and is
+  never exposed to a caller, because registering past a handler limit is a
+  programming fault rather than bad input.
+
 **@zudojs/events**
 
-- **Breaking:** `EventListenerLimitExceededError` has been removed. Nothing in
-  the package ever threw it — exceeding `maxHandlersPerPattern` emits a
-  one-shot warning through `onWarning` (or Node's process warning channel),
-  it does not raise — so any `catch` branch testing for it was unreachable.
-  If you import the class, delete the import and handle the warning instead.
+- `EventListenerLimitExceededError` can now actually be raised. Nothing in the
+  package ever threw it before, so any `catch` branch testing for it was
+  unreachable. Exceeding `maxHandlersPerPattern` still emits a one-shot
+  warning by default; set the new `enforceHandlerLimit: true` on a registry
+  (or emitter/bus options) to refuse the registration instead, which throws
+  the error and leaves the registry exactly as it was. The class is now owned
+  by `@zudojs/errors` and re-exported here, so existing imports keep working.
 - A bus or registry observer (`bus.subscribe`, `registry.subscribe`) that
   throws is no longer discarded in silence. With no `onError` hook
   configured, the failure is now reported once per bus or registry on Node's

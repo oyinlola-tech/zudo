@@ -81,6 +81,17 @@ export interface EventRegistryOptions {
   readonly maxHandlersPerPattern?: number;
 
   /**
+   * Refuse a registration that would exceed `maxHandlersPerPattern` instead of
+   * warning about it. Defaults to `false`.
+   *
+   * The default is a one-shot warning, which reports a suspected leak without
+   * interrupting a working application. Set this where a breached limit is a
+   * fault you would rather fail on: `register` then throws
+   * `EventListenerLimitExceededError` and the handler is not registered.
+   */
+  readonly enforceHandlerLimit?: boolean;
+
+  /**
    * Receives limit warnings. Defaults to `process.emitWarning` (type `ZudojsEventsWarning`).
    */
   readonly onWarning?: (warning: EventRegistryWarning) => void;

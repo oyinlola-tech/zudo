@@ -29,6 +29,7 @@ export {
   EventEmitterDisposedError,
   EventRegistryDisposedError,
   EventSubscriptionClosedError,
+  EventListenerLimitExceededError,
   EventTimeoutError,
   EventMiddlewareError,
   EventSerializationError,

@@ -83,6 +83,7 @@ interface ResolvedRegistryOptions {
   readonly allowDuplicateDefinitions: boolean;
   readonly onDuplicateHandlerId: DuplicateHandlerIdPolicy;
   readonly maxHandlersPerPattern: number;
+  readonly enforceHandlerLimit: boolean;
   readonly onWarning: (warning: EventRegistryWarning) => void;
   readonly onError?: (
     error: unknown,
@@ -141,6 +142,8 @@ export class EventRegistry implements EventHandlerStore {
         (options.allowDuplicateHandlerIds ? "replace" : "throw"),
 
       maxHandlersPerPattern,
+
+      enforceHandlerLimit: options.enforceHandlerLimit ?? false,
 
       onWarning: options.onWarning ?? defaultWarning,
 

@@ -8,6 +8,8 @@ import { createEventBus, createEventRegistry } from "../src/index.js";
 
 import * as eventsApi from "../src/index.js";
 
+import * as errorsApi from "@zudojs/errors";
+
 describe("MSG-E-01", () => {
   it("hands handlers a frozen copy and leaves the publisher's payload mutable", async () => {
     const bus = createEventBus();
@@ -31,10 +33,54 @@ describe("MSG-E-01", () => {
 });
 
 describe("MSG-E-02", () => {
-  it("does not export a listener-limit error the package never throws", () => {
-    expect(Object.keys(eventsApi)).not.toContain(
-      "EventListenerLimitExceededError",
+  it("re-exports the listener-limit error from @zudojs/errors", () => {
+    expect(Object.keys(eventsApi)).toContain("EventListenerLimitExceededError");
+    expect(eventsApi.EventListenerLimitExceededError).toBe(
+      errorsApi.EventListenerLimitExceededError,
     );
+  });
+
+  it("throws the listener-limit error when the limit is enforced", () => {
+    const registry = createEventRegistry({
+      maxHandlersPerPattern: 1,
+      enforceHandlerLimit: true,
+    });
+
+    registry.registerHandler("limit.enforced", () => {});
+
+    let thrown: unknown;
+
+    try {
+      registry.registerHandler("limit.enforced", () => {});
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(errorsApi.EventListenerLimitExceededError);
+
+    const error = thrown as InstanceType<
+      typeof errorsApi.EventListenerLimitExceededError
+    >;
+
+    expect(error.pattern).toBe("limit.enforced");
+    expect(error.limit).toBe(1);
+    expect(error.count).toBe(2);
+    expect(error.expose).toBe(false);
+  });
+
+  it("leaves the registry unchanged when a registration is refused", () => {
+    const registry = createEventRegistry({
+      maxHandlersPerPattern: 1,
+      enforceHandlerLimit: true,
+    });
+
+    registry.registerHandler("limit.rollback", () => {});
+
+    expect(() =>
+      registry.registerHandler("limit.rollback", () => {}),
+    ).toThrow();
+
+    expect(registry.getHandlersForType("limit.rollback")).toHaveLength(1);
   });
 
   it("reports exceeding maxHandlersPerPattern as a warning, not an error", () => {

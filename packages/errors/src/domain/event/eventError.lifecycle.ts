@@ -153,6 +153,46 @@ export class EventBusDisposedError extends EventError {
   }
 }
 
+/**
+ * Error thrown when a pattern exceeds its configured handler limit.
+ *
+ * The limit exists to catch a subscribe-without-unsubscribe leak. Registering
+ * past it is a programming fault rather than bad input, so this is reported as
+ * internal and is never exposed to a caller.
+ *
+ * A registry only raises this when it is configured to enforce the limit;
+ * the default is a one-shot warning, which does not interrupt registration.
+ */
+export class EventListenerLimitExceededError extends EventError {
+  public readonly pattern: string;
+
+  public readonly count: number;
+
+  public readonly limit: number;
+
+  constructor(pattern: string, count: number, limit: number) {
+    assertFiniteNonNegative("count", count);
+    assertFiniteNonNegative("limit", limit);
+
+    super(
+      `Possible event handler leak: ${count} handlers registered for ` +
+        `"${pattern}" (limit ${limit}). Unsubscribe handlers you no longer ` +
+        "need or raise maxHandlersPerPattern / maxListeners.",
+      {
+        code: ErrorCode.EVENT_LISTENER_LIMIT_EXCEEDED,
+        metadata: { pattern, count, limit },
+        statusCode: 500,
+        expose: false,
+        isOperational: false,
+      },
+    );
+
+    this.pattern = pattern;
+    this.count = count;
+    this.limit = limit;
+  }
+}
+
 /** Error thrown when an event operation times out. */
 export class EventTimeoutError extends EventError {
   public readonly timeoutMs: number;

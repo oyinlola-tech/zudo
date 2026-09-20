@@ -27,6 +27,7 @@ import { createEventSubscription } from "../eventSubscription/eventSubscription.
 import {
   DuplicateEventDefinitionError,
   DuplicateEventHandlerError,
+  EventListenerLimitExceededError,
   InvalidEventError,
 } from "../eventErrors/eventError.base.js";
 
@@ -136,6 +137,7 @@ export function registryRegisterHandler<TEvent extends Event = Event>(
   options: {
     onDuplicateHandlerId: DuplicateHandlerIdPolicy;
     maxHandlersPerPattern: number;
+    enforceHandlerLimit?: boolean;
     onWarning: (warning: EventRegistryWarning) => void;
   },
   ensureActive: () => void,
@@ -203,6 +205,8 @@ export function registryRegisterHandler<TEvent extends Event = Event>(
     options.maxHandlersPerPattern,
     options.onWarning,
     warnedPatterns,
+    options.enforceHandlerLimit === true,
+    registration.id,
   );
 
   notify({
@@ -219,8 +223,13 @@ export function registryRegisterHandler<TEvent extends Event = Event>(
 }
 
 /**
- * Emits a leak warning (once per pattern) when the number of
- * handlers for a pattern exceeds the configured limit.
+ * Reports a pattern whose handler count has passed the configured limit.
+ *
+ * Warns once per pattern by default. Under `enforceHandlerLimit` it instead
+ * removes the handler just registered and throws
+ * {@link EventListenerLimitExceededError}, so a refused registration leaves
+ * the registry exactly as it was — and it throws on every breach, not only
+ * the first, because each one is a separate fault.
  */
 function checkHandlerLimit(
   pattern: EventTypePattern,
@@ -228,8 +237,14 @@ function checkHandlerLimit(
   limit: number,
   onWarning: (warning: EventRegistryWarning) => void,
   warnedPatterns: Set<string>,
+  enforce: boolean,
+  registrationId: string,
 ): void {
-  if (limit <= 0 || warnedPatterns.has(pattern)) {
+  if (limit <= 0) {
+    return;
+  }
+
+  if (!enforce && warnedPatterns.has(pattern)) {
     return;
   }
 
@@ -243,6 +258,12 @@ function checkHandlerLimit(
 
   if (count <= limit) {
     return;
+  }
+
+  if (enforce) {
+    handlers.delete(registrationId);
+
+    throw new EventListenerLimitExceededError(pattern, count, limit);
   }
 
   warnedPatterns.add(pattern);

@@ -103,7 +103,9 @@ export class EventBus {
     this.registry = new EventRegistry({
       ...options.registry,
 
-      maxHandlersPerPattern: options.emitter?.maxListeners,
+      maxHandlersPerPattern:
+        options.emitter?.maxListeners ??
+        options.registry?.maxHandlersPerPattern,
 
       onWarning: options.onWarning,
 
