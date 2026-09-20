@@ -54,6 +54,11 @@ export interface EventBusOptions {
      * emitted (0 disables). Defaults to 100.
      */
     readonly maxListeners?: number;
+    /**
+     * Refuse a registration that would exceed `maxListeners` instead of
+     * warning about it. Defaults to `false`.
+     */
+    readonly enforceHandlerLimit?: boolean;
   };
   readonly registry?: {
     readonly allowDuplicateDefinitions?: boolean;
