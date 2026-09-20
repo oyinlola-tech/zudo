@@ -9,6 +9,7 @@ import { NotFoundError, ConflictError } from "@zudojs/errors";
 import {
   CLI_ERROR_CODES,
   CLI_EXIT_CODES,
+  CLI_MESSAGES,
 } from "../cliConstant/cliConstant.value.js";
 
 /* -------------------------------------------------------------------------- */
@@ -23,7 +24,11 @@ export class CommandNotFoundError extends NotFoundError {
   public readonly exitCode: number;
 
   constructor(command: string) {
-    super(`Command "${command}" was not found.`, {
+    const message = command
+      ? `Command "${command}" was not found.`
+      : CLI_MESSAGES.COMMAND_NOT_FOUND;
+
+    super(message, {
       code: CLI_ERROR_CODES.COMMAND_NOT_FOUND,
       statusCode: 404,
       expose: true,

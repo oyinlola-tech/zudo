@@ -4,4 +4,9 @@
  * Rollback system barrel exports.
  */
 
-export { RollbackManager, type RollbackEntry } from "./rollbackManager.core.js";
+export {
+  RollbackManager,
+  type RollbackEntry,
+  type RollbackFailure,
+  type RollbackResult,
+} from "./rollbackManager.core.js";

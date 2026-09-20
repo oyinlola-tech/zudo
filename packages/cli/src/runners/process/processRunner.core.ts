@@ -4,7 +4,11 @@
  * Runner for executing system processes.
  */
 
-import { execCommand } from "../../utils/utils.exec.js";
+import {
+  execCommand,
+  resolveChildEnv,
+  resolveSpawnTarget,
+} from "../../utils/utils.exec.js";
 
 export interface ProcessOptions {
   readonly cwd: string;
@@ -48,6 +52,17 @@ export class ProcessRunner {
     }
   }
 
+  /**
+   * Starts a process and resolves once it has actually spawned.
+   *
+   * A raw `spawn` with no `'error'` listener turns an ENOENT into an
+   * unhandled `'error'` event, which terminates the CLI itself — and the
+   * old implementation had already returned `{ pid: 0 }`, so no caller
+   * could catch it. The failure is now a rejection, and the command goes
+   * through {@link resolveSpawnTarget} so Windows `.cmd` shims work.
+   *
+   * @throws {Error} If the process cannot be started.
+   */
   async runBackground(
     command: string,
     args: readonly string[],

@@ -11,19 +11,36 @@ export function normalizeName(name: string): string {
     .replace(/(?<!-)-+$/, "");
 }
 
+/**
+ * Prefixes an underscore when the first character cannot start a TypeScript
+ * identifier.
+ *
+ * `normalizeName` keeps digits, so `2fa` came out of the converters as `2fa`
+ * and was emitted verbatim as a class name — a syntax error in the generated
+ * file, and in every barrel and `app.ts` that imports it. Generators reject
+ * such a name up front (see {@link assertGeneratableName}); this is the
+ * last-resort guarantee for the callers that do not, such as the project
+ * templates rendering `--services 2fa`.
+ */
+function toIdentifier(value: string): string {
+  return /^[0-9]/.test(value) ? `_${value}` : value;
+}
+
 /** Converts an arbitrary name to PascalCase (safe as a TS identifier). */
 export function toPascalCase(name: string): string {
-  return normalizeName(name)
-    .split("-")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join("");
+  return toIdentifier(
+    normalizeName(name)
+      .split("-")
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(""),
+  );
 }
 
 /** Converts an arbitrary name to camelCase (safe as a TS identifier). */
 export function toCamelCase(name: string): string {
   const pascal = toPascalCase(name);
-  return pascal.charAt(0).toLowerCase() + pascal.slice(1);
+  return toIdentifier(pascal.charAt(0).toLowerCase() + pascal.slice(1));
 }
 
 /**
@@ -39,12 +56,26 @@ export const SAFE_PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
  * `normalizeName` strips everything outside `[a-z0-9-]`, so a name such as
  * `"..."` or `"!!!"` collapses to the empty string and the generator writes
  * `src//.event.ts` with an anonymous exported class. Reject it up front.
+ *
+ * A name whose normalized form starts with a digit (`2fa`, `401-handler`) is
+ * rejected for the same reason: it becomes a class name, and `2faModule` is
+ * not a TypeScript identifier. The generated file, the barrel it is appended
+ * to and the `app.ts` it is registered in would all stop compiling, and the
+ * appends mean the overwrite guard cannot undo it. The converters would
+ * rather rename it to `_2faModule`, but a class whose name no longer contains
+ * the name that was asked for — and disagrees with its own file name — is a
+ * worse surprise than a one-line failure the author can act on.
  */
 export function assertGeneratableName(name: string, kind = "name"): string {
   const normalized = normalizeName(name);
   if (normalized === "") {
     throw new CLIValidationError(
       `Invalid ${kind}: "${name}". It must contain at least one letter or digit.`,
+    );
+  }
+  if (/^[0-9]/.test(normalized)) {
+    throw new CLIValidationError(
+      `Invalid ${kind}: "${name}". It must start with a letter, because the name becomes a TypeScript class name ("${normalized}" would produce "${normalized}Module", which is not a valid identifier). Try "two-factor-auth" instead of "2fa".`,
     );
   }
   return normalized;

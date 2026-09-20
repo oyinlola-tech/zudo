@@ -219,8 +219,10 @@ docker-compose up
 MIT
 `;
 
-  // Shared types
-  files["src/types/index.ts"] = ``;
+  // No `src/` at the workspace root: there is no package.json, tsconfig or
+  // app there, so nothing would compile a file placed in it. Every app owns
+  // its own `src/types/`, and code genuinely shared between apps belongs in a
+  // workspace package the author creates deliberately.
 
   const appTsconfig = `{
   "compilerOptions": {

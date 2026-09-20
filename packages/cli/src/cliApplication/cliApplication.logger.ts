@@ -20,6 +20,7 @@ import {
   type Logger,
   type LoggerEntry,
 } from "@zudojs/logger";
+import { CLI_ENVIRONMENT, CLI_NAME } from "../cliConstant/cliConstant.value.js";
 
 export interface CLILoggerOptions {
   /** Emit debug and trace lines too. Defaults to `ZUDOJS_DEBUG` being set. */
@@ -47,11 +48,10 @@ export function formatCLILogLine(entry: LoggerEntry): string {
 
 /** Creates the logger handed to every command as `context.logger`. */
 export function createCLILogger(options: CLILoggerOptions = {}): Logger {
+  const debug = process.env[CLI_ENVIRONMENT.DEBUG];
   const verbose =
     options.verbose ??
-    (process.env["ZUDOJS_DEBUG"] !== undefined &&
-      process.env["ZUDOJS_DEBUG"] !== "" &&
-      process.env["ZUDOJS_DEBUG"] !== "0");
+    (debug !== undefined && debug !== "" && debug !== "0");
 
   const stdout =
     options.stdout ?? ((line: string) => process.stdout.write(`${line}\n`));
@@ -59,7 +59,7 @@ export function createCLILogger(options: CLILoggerOptions = {}): Logger {
     options.stderr ?? ((line: string) => process.stderr.write(`${line}\n`));
 
   return createLogger({
-    name: "zudojs",
+    name: CLI_NAME,
     level: verbose ? LoggerLevel.TRACE : LoggerLevel.INFO,
     // Writes must complete before a command returns; `process.exit` follows
     // an error immediately.

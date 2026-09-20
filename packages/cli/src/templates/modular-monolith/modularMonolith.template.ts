@@ -235,7 +235,9 @@ MIT
     files[`src/modules/${spec.name}/queries/index.ts`] = ``;
   }
 
-  files["tests/index.ts"] = `import { describe, it, expect } from "vitest";
+  // The name must match vitest's default `include`
+  // (`**/*.{test,spec}.?(c|m)[jt]s?(x)`); `tests/index.ts` did not.
+  files["tests/app.test.ts"] = `import { describe, it, expect } from "vitest";
 
 describe("Application", () => {
   it("should bootstrap correctly", () => {

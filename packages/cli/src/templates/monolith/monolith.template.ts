@@ -286,8 +286,10 @@ MIT
     `export { HealthController } from "./health.controller.js";
 `;
 
-  // Tests
-  files["tests/index.ts"] = `import { describe, it, expect } from "vitest";
+  // Tests. The file name must match vitest's default `include`
+  // (`**/*.{test,spec}.?(c|m)[jt]s?(x)`); `tests/index.ts` did not, so the
+  // generated `test` script exited 1 with "No test files found".
+  files["tests/app.test.ts"] = `import { describe, it, expect } from "vitest";
 
 describe("Application", () => {
   it("should be configured correctly", () => {

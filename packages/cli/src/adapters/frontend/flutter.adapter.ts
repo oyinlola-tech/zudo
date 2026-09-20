@@ -6,6 +6,7 @@
 
 import { execCommand } from "../../utils/utils.exec.js";
 import { writeFileTree } from "../../utils/utils.fileSystem.js";
+import { normalizeName } from "../../utils/utils.name.js";
 import type {
   FrontendAdapter,
   FrontendGenerationContext,
@@ -31,6 +32,20 @@ export class FlutterAdapter implements FrontendAdapter {
 
   async getLatestVersion(): Promise<string> {
     return "3";
+  }
+
+  /**
+   * Converts a project name to a Flutter package name.
+   *
+   * `flutter create --project-name` only accepts lower_snake_case (a valid
+   * Dart package identifier), while `zudojs create` accepts uppercase and
+   * hyphens. Passing the raw name made `flutter create` fail outright, and
+   * this adapter has no fallback template, so the whole run was rolled back.
+   */
+  static toFlutterProjectName(name: string): string {
+    const snake = normalizeName(name).replace(/-/g, "_");
+    if (snake === "") return "zudojs_app";
+    return /^[0-9]/.test(snake) ? `app_${snake}` : snake;
   }
 
   async scaffold(context: FrontendGenerationContext): Promise<void> {

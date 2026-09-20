@@ -7,7 +7,10 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ProjectConfiguration } from "../../types/projectConfiguration.type.js";
-import { writeFileTree } from "../../utils/utils.fileSystem.js";
+import {
+  mergeBarrelExport,
+  writeFileTree,
+} from "../../utils/utils.fileSystem.js";
 import { renderDatabaseEnv } from "../../adapters/databases/databaseAdapter.resolver.js";
 
 /**
@@ -40,11 +43,19 @@ export class IntegrationGenerator {
       files[apiPath] = apiClient;
     }
 
-    // CORS configuration, written next to the backend it configures. In a
-    // fullstack workspace the backend lives in apps/api; writing it at the
-    // workspace root left it where nothing could import it.
-    files[`${this.getBackendPath(context)}config/cors.ts`] =
-      this.generateCorsConfig(context);
+    // CORS configuration, written inside the backend's own program. The
+    // backend tsconfig sets `rootDir: "src"` and `include: ["src/**/*"]`, so
+    // a `config/` directory beside it is excluded from compilation and cannot
+    // be imported from `src/` without leaving rootDir. The templates' config
+    // directory is `src/configs/`, and its barrel is where the rest of the
+    // app looks for configuration.
+    const configDir = `${this.getBackendPath(context)}src/configs`;
+    files[`${configDir}/cors.ts`] = this.generateCorsConfig(context);
+    files[`${configDir}/index.ts`] = mergeBarrelExport(
+      context.projectPath,
+      `${configDir}/index.ts`,
+      `export { corsConfig } from "./cors.js";`,
+    );
 
     // Development proxy configuration (belongs to the frontend app). The
     // frontend adapter has already written a vite.config.ts carrying the

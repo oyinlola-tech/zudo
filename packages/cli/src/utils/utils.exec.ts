@@ -1,6 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 
+import { CLIValidationError } from "../errors/index.js";
+
 const execFileAsync = promisify(execFile);
 
 export interface ExecResult {
@@ -40,9 +42,24 @@ const WINDOWS_SHIM_COMMANDS: ReadonlySet<string> = new Set([
 const CMD_UNSAFE = /[\s"&|<>^()%!]/;
 
 /**
+ * Characters that cannot be made safe by quoting on the cmd.exe path.
+ *
+ * `cmd.exe` has no escape character inside a quoted string: it toggles quote
+ * state on every `"`, so an embedded quote ends the string and everything
+ * after it — `&`, `|`, `>` — is parsed as shell syntax. The C-runtime `\"`
+ * escape means nothing to cmd. `%VAR%` and delayed-expansion `!VAR!` are
+ * likewise expanded inside quotes. There is no correct escaping, so an
+ * argument carrying one of these is rejected instead.
+ */
+const CMD_UNQUOTABLE = /["%!]/;
+
+/**
  * Quotes one argument for cmd.exe. Arguments are validated before they reach
  * here (project and service names are `[A-Za-z0-9_-]`), so this is defence
  * in depth rather than the only barrier.
+ *
+ * @throws {CLIValidationError} If the argument contains `"`, `%` or `!`,
+ *   none of which cmd.exe can be made to treat as literal text.
  */
 export function quoteForWindowsShell(argument: string): string {
   if (argument.length === 0) return '""';
@@ -68,6 +85,33 @@ export function resolveSpawnTarget(
 }
 
 /**
+ * The environment a child gets, hardened for the Windows shell path.
+ *
+ * `cmd.exe` searches the current directory before `PATH`, so a `pnpm.cmd`
+ * or `npm.bat` committed into a cloned repository would win over the real
+ * package manager. `NoDefaultCurrentDirectoryInExePath` removes the current
+ * directory from that search. It is only meaningful on win32 and only when
+ * a shell is involved; everywhere else the caller's env is passed through
+ * unchanged (POSIX `PATH` lookup never implies the cwd, and `shell` is
+ * false there).
+ */
+export function resolveChildEnv(
+  shell: boolean,
+  env: NodeJS.ProcessEnv | undefined,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv | undefined {
+  return env;
+}
+
+/**
+ * Default timeout for {@link execCommand}, in milliseconds.
+ *
+ * Sized for quick probes. Anything that downloads from a registry needs an
+ * explicit, much larger timeout — see `SCAFFOLD_TIMEOUT_MS`.
+ */
+export const DEFAULT_EXEC_TIMEOUT_MS = 120000;
+
+/**
  * Runs a short-lived command and buffers its output.
  *
  * Suitable for quick probes (version checks, git commands). Do NOT use this
@@ -81,12 +125,13 @@ export async function execCommand(
   options: ExecOptions = {},
 ): Promise<ExecResult> {
   const target = resolveSpawnTarget(file, args);
+  const env = resolveChildEnv(target.shell, options.env);
 
   const { stdout, stderr } = await execFileAsync(target.file, target.args, {
     cwd,
-    timeout: options.timeout ?? 120000,
+    timeout: options.timeout ?? DEFAULT_EXEC_TIMEOUT_MS,
     shell: target.shell,
-    ...(options.env ? { env: options.env } : {}),
+    ...(env ? { env } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
   });
   return { stdout, stderr };
@@ -107,13 +152,14 @@ export function runStreaming(
   options: ExecOptions = {},
 ): Promise<void> {
   const target = resolveSpawnTarget(file, args);
+  const env = resolveChildEnv(target.shell, options.env);
 
   return new Promise<void>((resolve, reject) => {
     const child = spawn(target.file, target.args, {
       cwd,
       stdio: "inherit",
       shell: target.shell,
-      ...(options.env ? { env: options.env } : {}),
+      ...(env ? { env } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
     });
 

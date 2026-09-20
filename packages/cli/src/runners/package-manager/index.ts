@@ -6,5 +6,6 @@
 
 export {
   PackageManagerRunner,
+  assertPackageManager,
   type PackageManagerRunOptions,
 } from "./packageManagerRunner.core.js";

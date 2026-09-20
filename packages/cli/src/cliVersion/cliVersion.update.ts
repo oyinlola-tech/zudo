@@ -12,6 +12,7 @@
  * @module cliVersion/update
  */
 
+import { CLI_ENVIRONMENT } from "../cliConstant/cliConstant.value.js";
 import { compareVersions, isValidVersion } from "./cliVersion.core.js";
 
 export interface UpdateCheckOptions {
@@ -40,11 +41,11 @@ export interface UpdateCheckResult {
 export function isUpdateCheckDisabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  const flag = env["ZUDOJS_NO_UPDATE_CHECK"];
+  const flag = env[CLI_ENVIRONMENT.NO_UPDATE_CHECK];
   if (flag !== undefined && flag !== "" && flag !== "0") return true;
-  if (env["CI"] !== undefined && env["CI"] !== "" && env["CI"] !== "false")
-    return true;
-  if (env["npm_config_offline"] === "true") return true;
+  const ci = env[CLI_ENVIRONMENT.CI];
+  if (ci !== undefined && ci !== "" && ci !== "false") return true;
+  if (env[CLI_ENVIRONMENT.NPM_OFFLINE] === "true") return true;
   return false;
 }
 

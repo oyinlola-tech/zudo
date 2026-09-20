@@ -1,10 +1,16 @@
-import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { resolveProjectLayout } from "./layout/projectLayout.core.js";
 
 /**
- * Walks upward from `startDir` to the nearest directory that looks like a
- * project root: one holding a `.zudojs/manifest.json`, a legacy
- * `zudojs.config.ts`, or a `package.json`.
+ * Walks upward from `startDir` to the nearest directory that really is a
+ * Zudojs project — one `resolveProjectLayout` recognizes: a
+ * `.zudojs/manifest.json`, a legacy `zudojs.config.ts`/`.js`, or a `zudojs`
+ * block in `package.json`.
+ *
+ * A bare `package.json` used to be accepted too, which made this a
+ * "any JavaScript project" detector rather than a Zudojs one: run from a
+ * directory with no Zudojs project anywhere, `zudojs build` climbed to an
+ * unrelated ancestor `package.json` and ran its `scripts.build`.
  */
 export function findProjectRoot(
   startDir: string = process.cwd(),
@@ -12,11 +18,7 @@ export function findProjectRoot(
   let dir = startDir;
 
   while (true) {
-    if (
-      existsSync(join(dir, ".zudojs", "manifest.json")) ||
-      existsSync(join(dir, "zudojs.config.ts")) ||
-      existsSync(join(dir, "package.json"))
-    ) {
+    if (resolveProjectLayout(dir) !== null) {
       return dir;
     }
 

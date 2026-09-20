@@ -8,6 +8,7 @@ import { CLIError } from "./cliError.base.js";
 import {
   CLI_ERROR_CODES,
   CLI_EXIT_CODES,
+  CLI_MESSAGES,
 } from "../cliConstant/cliConstant.value.js";
 import type { CLIErrorOptions } from "./cliError.base.js";
 
@@ -20,7 +21,7 @@ import type { CLIErrorOptions } from "./cliError.base.js";
  */
 export class InvalidArgumentsError extends CLIError {
   constructor(
-    message = "Invalid command arguments.",
+    message = CLI_MESSAGES.INVALID_ARGUMENTS,
     options: CLIErrorOptions = {},
   ) {
     super(message, {

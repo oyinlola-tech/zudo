@@ -5,10 +5,12 @@
  */
 
 import type { CLICommand } from "../cliType/cliType.type.js";
+import { CLI_LIMITS } from "../cliConstant/cliConstant.value.js";
 import {
   InvalidCommandNameError,
   DuplicateCommandError,
 } from "../cliError/cliError.command.js";
+import { InvalidOptionNameError } from "../cliError/cliError.option.js";
 
 /* -------------------------------------------------------------------------- */
 /* Validation                                                                 */
@@ -28,6 +30,10 @@ export function validateCommand(command: CLICommand): void {
     throw new InvalidCommandNameError(command.name);
   }
 
+  if (command.name.trim().length > CLI_LIMITS.MAX_COMMAND_NAME_LENGTH) {
+    throw new InvalidCommandNameError(command.name);
+  }
+
   if (
     command.description !== undefined &&
     typeof command.description !== "string"
@@ -35,6 +41,27 @@ export function validateCommand(command: CLICommand): void {
     throw new TypeError(
       `Description for command "${command.name}" must be a string.`,
     );
+  }
+
+  if (
+    command.description !== undefined &&
+    command.description.length > CLI_LIMITS.MAX_DESCRIPTION_LENGTH
+  ) {
+    throw new TypeError(
+      `Description for command "${command.name}" exceeds ${CLI_LIMITS.MAX_DESCRIPTION_LENGTH} characters.`,
+    );
+  }
+
+  for (const option of command.options ?? []) {
+    if (option.name.length > CLI_LIMITS.MAX_OPTION_NAME_LENGTH) {
+      throw new InvalidOptionNameError(option.name);
+    }
+  }
+
+  for (const argument of command.arguments ?? []) {
+    if (argument.name.length > CLI_LIMITS.MAX_ARGUMENT_NAME_LENGTH) {
+      throw new InvalidCommandNameError(argument.name);
+    }
   }
 
   if (command.aliases) {
@@ -46,6 +73,10 @@ export function validateCommand(command: CLICommand): void {
       }
 
       const normalized = alias.trim();
+
+      if (normalized.length > CLI_LIMITS.MAX_ALIAS_LENGTH) {
+        throw new InvalidCommandNameError(normalized);
+      }
 
       if (normalized === command.name.trim()) {
         throw new DuplicateCommandError(normalized);

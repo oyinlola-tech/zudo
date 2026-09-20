@@ -8,4 +8,5 @@ export {
   TaskRunner,
   type TaskDefinition,
   type TaskResult,
+  type TaskRunOptions,
 } from "./taskRunner.core.js";

@@ -5,6 +5,7 @@
  */
 
 import { execCommand } from "../utils/utils.exec.js";
+import { SCAFFOLD_TIMEOUT_MS } from "./scaffolder.helper.js";
 
 export interface ScaffolderResult {
   readonly success: boolean;
@@ -22,6 +23,8 @@ export abstract class FrameworkScaffolder {
       await execCommand(this.command, this.args, targetPath, {
         // Suppress interactive prompts from create-* tools.
         env: { ...process.env, CI: "1" },
+        // Registry downloads outrun the default 2-minute probe timeout.
+        timeout: SCAFFOLD_TIMEOUT_MS,
       });
       return { success: true, path: targetPath };
     } catch (error) {

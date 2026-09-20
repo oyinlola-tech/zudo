@@ -15,12 +15,25 @@ export const CLI_NAME = "zudojs";
 
 /** Default application configuration. */
 export const CLI_DEFAULTS = {
-  NAME: "zudojs",
+  NAME: CLI_NAME,
   VERSION: CLI_VERSION,
   DESCRIPTION: "Command-line interface for the Zudojs framework.",
-  COMMAND_PREFIX: "zudojs",
+  COMMAND_PREFIX: CLI_NAME,
   DEFAULT_CWD: process.cwd(),
   EXIT_CODE: 0,
+} as const;
+
+/* -------------------------------------------------------------------------- */
+/* Symbolic Names                                                             */
+/* -------------------------------------------------------------------------- */
+
+/** Internal symbolic names for CLI elements. */
+export const CLI_SYMBOLS = {
+  COMMAND: "command",
+  OPTION: "option",
+  ARGUMENT: "argument",
+  HELP: "help",
+  VERSION: "version",
 } as const;
 
 /* -------------------------------------------------------------------------- */
@@ -29,8 +42,8 @@ export const CLI_DEFAULTS = {
 
 /** Built-in command names. */
 export const CLI_COMMANDS = {
-  HELP: "help",
-  VERSION: "version",
+  HELP: CLI_SYMBOLS.HELP,
+  VERSION: CLI_SYMBOLS.VERSION,
 } as const;
 
 /** Built-in command aliases. */
@@ -51,19 +64,6 @@ export const CLI_OPTION_PREFIXES = {
 } as const;
 
 /* -------------------------------------------------------------------------- */
-/* Symbolic Names                                                             */
-/* -------------------------------------------------------------------------- */
-
-/** Internal symbolic names for CLI elements. */
-export const CLI_SYMBOLS = {
-  COMMAND: "command",
-  OPTION: "option",
-  ARGUMENT: "argument",
-  HELP: "help",
-  VERSION: "version",
-} as const;
-
-/* -------------------------------------------------------------------------- */
 /* User-Facing Messages                                                       */
 /* -------------------------------------------------------------------------- */
 
@@ -74,7 +74,7 @@ export const CLI_MESSAGES = {
   PERMISSION_DENIED: "Permission denied.",
   INTERRUPTED: "Process interrupted.",
   UNKNOWN_ERROR: "An unexpected error occurred.",
-  MISSING_COMMAND: "A command is required.",
+  MISSING_COMMAND: "No command given.",
 } as const;
 
 /* -------------------------------------------------------------------------- */
@@ -96,11 +96,17 @@ export const CLI_HELP = {
 /* Environment                                                                */
 /* -------------------------------------------------------------------------- */
 
-/** Environment variable names. */
+/**
+ * Environment variable names the CLI reads.
+ *
+ * Every entry has a single reader: `DEBUG` turns on verbose logging,
+ * `CI` and `NO_UPDATE_CHECK`/`NPM_OFFLINE` suppress the update check.
+ */
 export const CLI_ENVIRONMENT = {
-  NODE_ENV: "NODE_ENV",
-  DEBUG: "DEBUG",
+  DEBUG: "ZUDOJS_DEBUG",
   CI: "CI",
+  NO_UPDATE_CHECK: "ZUDOJS_NO_UPDATE_CHECK",
+  NPM_OFFLINE: "npm_config_offline",
 } as const;
 
 /* -------------------------------------------------------------------------- */
