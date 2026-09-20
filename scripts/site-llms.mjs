@@ -146,10 +146,11 @@ function link(href) {
   if (!href || href.startsWith("#") || /^[a-z]+:/i.test(href)) return href;
   const [path, hash] = href.split("#");
   const slug = path.replace(/\.html$/, "").replace(/\/$/, "");
+  const mirrored =
+    slug.startsWith("/docs/") ||
+    TOP_PAGES.some((f) => f.replace(/\.html$/, "") === slug.slice(1));
   const md =
-    slug.startsWith("/docs/") && existsSync(join(ROOT, slug + ".html"))
-      ? slug + ".md"
-      : slug || "/";
+    mirrored && existsSync(join(ROOT, slug + ".html")) ? slug + ".md" : slug || "/";
   return BASE + md + (hash ? "#" + hash : "");
 }
 
@@ -285,8 +286,8 @@ function meta(html, re) {
   return decode(html.match(re)?.[1] ?? "").trim();
 }
 
-function pageInfo(file) {
-  const html = readFileSync(join(DOCS, file), "utf8");
+function pageInfo(file, dir = DOCS) {
+  const html = readFileSync(join(dir, file), "utf8");
   const slug = file.replace(/\.html$/, "");
   const title = meta(html, /<title>([^<]*)<\/title>/).replace(
     /\s+[—|]\s+ZudoJS$/,
@@ -300,11 +301,18 @@ function pageInfo(file) {
   return { html, slug, title, description, main };
 }
 
+/**
+ * Pages outside docs/ that also get a Markdown mirror, because an agent asked
+ * about the logo or about sponsoring should not have to parse HTML for it.
+ */
+const TOP_PAGES = ["brand.html", "sponsors.html"];
+
 const GROUPS = [
   ["Getting started", (s) => s.startsWith("getting-started")],
   ["Concepts", (s) => s.startsWith("concepts")],
   ["Architecture", (s) => s.startsWith("architecture")],
   ["Packages", (s) => s.startsWith("packages")],
+  ["Project", (s, p) => p.top],
   ["Optional", () => true],
 ];
 
@@ -319,7 +327,8 @@ const FACTS = `Facts an agent needs before writing ZudoJS code:
 - Install only the packages you use: \`npm install @zudojs/core @zudojs/http\`. Each package page ends with a complete export index generated from the package source.
 - Scaffold a new project: \`npx zudojs-cli create my-app\`.
 - Every docs page has a Markdown copy at the same URL with \`.md\` appended (for example [packages-http.md](${BASE}/docs/packages-http.md)). [llms-full.txt](${BASE}/llms-full.txt) is all of them in one file.
-- Source code: https://github.com/oyinlola-tech/zudo. npm org: https://www.npmjs.com/org/zudojs.`;
+- Source code: https://github.com/oyinlola-tech/zudo. npm org: https://www.npmjs.com/org/zudojs.
+- Logo and brand assets: [/brand](${BASE}/brand.md) is the page; [brand.json](${BASE}/assets/brand/brand.json) is the same kit as data (every file's URL, format, pixel size and intended background, plus the palette, the usage rules and the licence). The mark is [zudo-mark.svg](${BASE}/assets/zudo-mark.svg); use the \`-dark\` files on dark backgrounds.`;
 
 const LINK_TAG = /\n?[ \t]*<link rel="alternate" type="text\/markdown"[^>]*>/g;
 
@@ -353,6 +362,33 @@ for (const file of files) {
   if (html !== info.html) writeFileSync(join(DOCS, file), html);
 }
 
+for (const file of TOP_PAGES) {
+  const info = pageInfo(file, ROOT);
+  if (!info.main) continue;
+  const url = `${BASE}/${info.slug}`;
+  const body = toMarkdown(info.main);
+  writeFileSync(
+    join(ROOT, info.slug + ".md"),
+    [
+      "---",
+      `title: ${JSON.stringify(info.title)}`,
+      `description: ${JSON.stringify(info.description)}`,
+      `source: ${url}`,
+      "---",
+      "",
+      body,
+      "",
+    ].join("\n"),
+  );
+  pages.push({ ...info, url, body, top: true });
+
+  const tag = `  <link rel="alternate" type="text/markdown" href="/${info.slug}.md" title="Markdown version">`;
+  const html = info.html
+    .replace(LINK_TAG, "")
+    .replace(/(<\/title>)/, `$1\n${tag}`);
+  if (html !== info.html) writeFileSync(join(ROOT, file), html);
+}
+
 const byOrder = (a, b) => {
   const rank = (s) =>
     s === "getting-started" ? 0 : s === "packages" ? 0 : s.split("-").length;
@@ -361,7 +397,7 @@ const byOrder = (a, b) => {
 const claimed = new Set();
 const sections = GROUPS.map(([name, match]) => {
   const list = pages
-    .filter((p) => !claimed.has(p.slug) && match(p.slug))
+    .filter((p) => !claimed.has(p.slug) && match(p.slug, p))
     .sort(byOrder);
   list.forEach((p) => claimed.add(p.slug));
   return [name, list];

@@ -6,7 +6,12 @@
  *     slides, READMEs and app stores. Transparent background, except the app
  *     icon, which carries its own navy tile.
  *   - USAGE.txt, the same rules the /brand page states.
- *   - zudo-brand-kit.zip, every SVG and PNG plus USAGE.txt in one download.
+ *   - brand.json, the whole kit described for machines: every asset URL, its
+ *     format and size, the palette, the rules and the licence.
+ *   - zudo-brand-kit.zip, all of the above in one download.
+ *
+ * It also refreshes the schema.org ImageObject list inside site/brand.html,
+ * between the `brand-ld` markers.
  *
  * The SVGs in site/assets/ are the source of truth; nothing here edits them.
  * Rendering uses headless Chrome (no npm dependency) and zipping uses the
@@ -39,14 +44,24 @@ const EXPORTS = [
   ["zudo-logo-icon.svg", "zudo-app-icon-1024.png", 1024, 1024],
 ];
 
+/** [source SVG, id, display name, intended background, description] */
 const SVGS = [
-  "zudo-mark.svg",
-  "zudo-mark-dark.svg",
-  "zudo-logo.svg",
-  "zudo-logo-dark.svg",
-  "zudo-logo-icon.svg",
-  "zudo-favicon.svg",
+  ["zudo-mark.svg", "mark", "Mark", "light", "The Z mark, for light backgrounds."],
+  ["zudo-mark-dark.svg", "mark-reversed", "Mark, reversed", "dark", "The Z mark in off-white, for dark backgrounds."],
+  ["zudo-logo.svg", "logo", "Logo", "light", "Mark and ZUDO wordmark, for light backgrounds."],
+  ["zudo-logo-dark.svg", "logo-reversed", "Logo, reversed", "dark", "Mark and ZUDO wordmark in off-white, for dark backgrounds."],
+  ["zudo-logo-icon.svg", "app-icon", "App icon", "any", "The mark on a navy tile, for app icons."],
+  ["zudo-favicon.svg", "favicon", "Favicon", "any", "Favicon, drawn on a 32 px grid."],
 ];
+
+const COLORS = [
+  ["Ink", "#1A1A2E", "The mark and wordmark"],
+  ["Red", "#C0392B", "The diagonal through the Z"],
+  ["Navy", "#16213E", "Dark backgrounds and the app icon tile"],
+  ["Off-white", "#FAFAF9", "Light backgrounds and the reversed mark"],
+];
+
+const BASE = "https://zudojs.oyinlola.site";
 
 const USAGE = `Zudo brand kit
 ==============
@@ -133,28 +148,140 @@ function renderPng(chrome, svgFile, outFile, width, height) {
   );
 }
 
+/**
+ * brand.json — the same kit, described for machines.
+ *
+ * An agent asked "what is the Zudo logo and may I use it?" should be able to
+ * answer from this one file: every asset with its absolute URL, format, pixel
+ * size and intended background, plus the palette, the rules and the licence.
+ */
+function buildManifest() {
+  const assets = [];
+
+  for (const [file, id, name, background, description] of SVGS) {
+    const pngs = EXPORTS.filter(([src]) => src === file).map(([, png, w, h]) => ({
+      url: `${BASE}/assets/brand/${png}`,
+      format: "image/png",
+      width: w,
+      height: h,
+      bytes: readFileSync(join(OUT, png)).length,
+    }));
+    assets.push({
+      id,
+      name,
+      description,
+      background,
+      transparent: file !== "zudo-logo-icon.svg",
+      preferred: {
+        url: `${BASE}/assets/${file}`,
+        format: "image/svg+xml",
+        bytes: readFileSync(join(ASSETS, file)).length,
+      },
+      raster: pngs,
+    });
+  }
+  return {
+    name: "ZudoJS",
+    alternateName: ["Zudo", "Zudo Framework"],
+    description:
+      "Brand assets for ZudoJS, a modular TypeScript framework for Node.js.",
+    page: `${BASE}/brand`,
+    markdown: `${BASE}/brand.md`,
+    kit: `${BASE}/assets/brand/zudo-brand-kit.zip`,
+    updated: new Date().toISOString().slice(0, 10),
+    assets,
+    colors: COLORS.map(([name, hex, use]) => ({ name, hex, use })),
+    rules: {
+      clearSpace:
+        "At least one module (one square of the grid, 12/80 of the mark's width) on every side.",
+      minimumSize: { mark: "24px", lockup: "96px wide" },
+      prefer: "SVG wherever it is supported.",
+      allowed: [
+        "Use the logo to link to or refer to the Zudo project.",
+        "Use the reversed files on dark backgrounds.",
+      ],
+      notAllowed: [
+        "Recolouring the artwork or changing the red diagonal.",
+        "Stretching, rotating, outlining or adding effects.",
+        "Rebuilding the wordmark in another typeface.",
+        "Using it as your own product's logo, or to imply endorsement.",
+      ],
+    },
+    license: {
+      software: "MIT",
+      softwareUrl: "https://github.com/oyinlola-tech/zudo/blob/main/LICENSE",
+      marks:
+        "The marks identify the project. Use them under the rules above; they are not covered by the MIT grant.",
+    },
+  };
+}
+
 function buildZip() {
   const staging = join(OUT, ".kit");
   rmSync(staging, { recursive: true, force: true });
   mkdirSync(join(staging, "svg"), { recursive: true });
   mkdirSync(join(staging, "png"), { recursive: true });
 
-  for (const svg of SVGS) {
+  for (const [svg] of SVGS) {
     writeFileSync(join(staging, "svg", svg), readFileSync(join(ASSETS, svg)));
   }
   for (const [, png] of EXPORTS) {
     writeFileSync(join(staging, "png", png), readFileSync(join(OUT, png)));
   }
   writeFileSync(join(staging, "USAGE.txt"), USAGE);
+  writeFileSync(join(staging, "brand.json"), readFileSync(join(OUT, "brand.json")));
 
   const zipPath = join(OUT, "zudo-brand-kit.zip");
   rmSync(zipPath, { force: true });
   // -X drops extra file attributes, so the archive is byte-stable between runs.
-  execFileSync("zip", ["-r", "-q", "-X", zipPath, "svg", "png", "USAGE.txt"], {
+  execFileSync("zip", ["-r", "-q", "-X", zipPath, "svg", "png", "USAGE.txt", "brand.json"], {
     cwd: staging,
   });
   rmSync(staging, { recursive: true, force: true });
   return zipPath;
+}
+
+/**
+ * The /brand page states its assets twice: once for people, once as
+ * schema.org ImageObjects for crawlers and agents. The second copy is written
+ * from the manifest between the brand-ld markers, so it cannot drift.
+ */
+function writePageLd(manifest) {
+  const page = join(ROOT, "site", "brand.html");
+  const html = readFileSync(page, "utf8");
+  const ld = {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    name: "ZudoJS brand assets",
+    itemListElement: manifest.assets.map((a, i) => ({
+      "@type": "ListItem",
+      position: i + 1,
+      item: {
+        "@type": "ImageObject",
+        name: `ZudoJS — ${a.name}`,
+        description: a.description,
+        contentUrl: a.preferred.url,
+        encodingFormat: a.preferred.format,
+        thumbnailUrl: a.raster.length ? a.raster[0].url : a.preferred.url,
+        ...(a.raster.length
+          ? { width: a.raster.at(-1).width, height: a.raster.at(-1).height }
+          : {}),
+        acquireLicensePage: manifest.page,
+        license: manifest.license.softwareUrl,
+        creditText: "ZudoJS",
+      },
+    })),
+  };
+  const block =
+    `  <!-- brand-ld:start -->\n` +
+    `  <script type="application/ld+json">${JSON.stringify(ld)}</script>\n` +
+    `  <!-- brand-ld:end -->`;
+  const markers = /[ \t]*<!-- brand-ld:start -->[\s\S]*?<!-- brand-ld:end -->/;
+  if (!markers.test(html)) {
+    throw new Error("brand.html is missing the brand-ld markers");
+  }
+  const next = html.replace(markers, block);
+  if (next !== html) writeFileSync(page, next);
 }
 
 mkdirSync(OUT, { recursive: true });
@@ -165,7 +292,10 @@ for (const [svg, png, w, h] of EXPORTS) {
 }
 rmSync(TMP, { force: true });
 writeFileSync(join(OUT, "USAGE.txt"), USAGE);
+const manifest = buildManifest();
+writeFileSync(join(OUT, "brand.json"), JSON.stringify(manifest, null, 2) + "\n");
+writePageLd(manifest);
 const zip = buildZip();
 console.log(
-  `site-brand: ${EXPORTS.length} PNGs, USAGE.txt and ${zip.replace(ROOT + "/", "")}`,
+  `site-brand: ${EXPORTS.length} PNGs, USAGE.txt, brand.json and ${zip.replace(ROOT + "/", "")}`,
 );

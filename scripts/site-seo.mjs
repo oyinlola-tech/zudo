@@ -273,9 +273,31 @@ const pages = htmlFiles(ROOT)
   .map((abs) => ({ abs, ...processPage(abs) }));
 const indexable = pages.filter((p) => !p.noindex);
 
+/**
+ * Image entries for /brand, so the logo files are crawlable in their own right
+ * and not only as decoration on a page. Read from the brand manifest that
+ * scripts/site-brand.mjs writes, so the two cannot drift.
+ */
+function brandImages() {
+  const manifestPath = join(ROOT, "assets", "brand", "brand.json");
+  if (!existsSync(manifestPath)) return [];
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  return manifest.assets.map((a) => {
+    // The SVG is the canonical file; a PNG is offered where a crawler needs one.
+    const raster = a.raster[a.raster.length - 1];
+    return `    <image:image><image:loc>${escapeAttr(
+      raster ? raster.url : a.preferred.url,
+    )}</image:loc><image:title>ZudoJS — ${escapeAttr(
+      a.name,
+    )}</image:title><image:caption>${escapeAttr(a.description)}</image:caption></image:image>`;
+  });
+}
+
+const IMAGE_NS = ' xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"';
+
 const sitemap = [
   `<?xml version="1.0" encoding="UTF-8"?>`,
-  `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`,
+  `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"${IMAGE_NS}>`,
   ...indexable.map((p) => {
     const priority =
       p.rel === "index.html"
@@ -283,7 +305,11 @@ const sitemap = [
         : p.rel.startsWith("docs/getting-started")
           ? "0.9"
           : "0.7";
-    return `  <url><loc>${p.url}</loc><lastmod>${lastModified(p.abs, p.url)}</lastmod><priority>${priority}</priority></url>`;
+    const head = `  <url><loc>${p.url}</loc><lastmod>${lastModified(p.abs, p.url)}</lastmod><priority>${priority}</priority>`;
+    const images = p.rel === "brand.html" ? brandImages() : [];
+    return images.length
+      ? [head, ...images, `  </url>`].join("\n")
+      : `${head}</url>`;
   }),
   `</urlset>`,
   ``,
@@ -296,6 +322,7 @@ writeFileSync(
     "# AI agents and LLM crawlers are welcome. Plain-Markdown docs:",
     `#   ${BASE}/llms.txt       (index)`,
     `#   ${BASE}/llms-full.txt  (every page in one file)`,
+    `#   ${BASE}/assets/brand/brand.json  (logo files, colours, usage rules)`,
     "",
     "User-agent: *",
     "Allow: /",
