@@ -27,16 +27,41 @@ const ARGUMENT_CANDIDATES: readonly unknown[][] = [
   [[]],
   ["a", "b", 10],
   ["a", 10, "b"],
-  ["a", 10, 20],
   ["a", "b", 10, 20],
   ["a", ["b"]],
   ["a", {}, "b"],
   [],
 ];
 
+/**
+ * Classes whose constructor takes arguments the generic sweep should not
+ * guess at.
+ *
+ * Widening {@link ARGUMENT_CANDIDATES} to cover one class weakens the sweep
+ * for every other class, because a tuple that happens to satisfy a validating
+ * constructor can also construct an unrelated one with meaningless values.
+ * A named factory says what a valid instance of this class actually looks
+ * like, and fails loudly if that stops being true.
+ */
+const SPECIAL_CONSTRUCTORS: Record<string, () => BaseError> = {
+  EventListenerLimitExceededError: () =>
+    new errors.EventListenerLimitExceededError("order.placed", 2, 1),
+};
+
 function tryConstruct(
+  name: string,
   Ctor: ErrorClass,
 ): { instance: BaseError; args: unknown[] } | undefined {
+  const special = SPECIAL_CONSTRUCTORS[name];
+
+  if (special) {
+    try {
+      return { instance: special(), args: [] };
+    } catch {
+      return undefined;
+    }
+  }
+
   for (const args of ARGUMENT_CANDIDATES) {
     try {
       const instance = new (Ctor as new (...a: unknown[]) => BaseError)(
@@ -65,7 +90,7 @@ describe("withMetadata across every exported error class", () => {
   const constructed = exportedClasses.map(([name, Ctor]) => ({
     name,
     Ctor,
-    built: tryConstruct(Ctor),
+    built: tryConstruct(name, Ctor),
   }));
 
   it("can construct every exported class with dummy arguments", () => {
