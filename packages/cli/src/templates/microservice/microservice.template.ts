@@ -27,12 +27,14 @@ import { ZUDOJS_PACKAGES_VERSION } from "../../constants/index.js";
 import { normalizeName } from "../../utils/utils.name.js";
 import {
   RUNTIME_APP_DEPENDENCIES,
+  capabilityPackages,
   moduleSpec,
   renderAppPackageDockerfile,
   renderAppFile,
   renderModuleFile,
   renderServerFile,
   renderPnpmWorkspaceFile,
+  resolveProjectCapabilities,
 } from "../shared/index.js";
 
 /**
@@ -76,6 +78,11 @@ export function generateMicroserviceFiles(
     .replace(/[^a-z0-9-]+/gi, "-")
     .toLowerCase();
   const services = resolveMicroserviceServices(options.services);
+  // The workspace root records the capabilities for the project as a whole
+  // (`zudojs info` reads it when there is no manifest); the service apps
+  // record them next to the dependencies that back them, which is where
+  // `zudojs add` writes and `zudojs doctor` reads.
+  const capabilities = resolveProjectCapabilities(options);
 
   const files: Record<string, string> = {};
 
@@ -120,7 +127,7 @@ export function generateMicroserviceFiles(
         zudojs: {
           projectType: "backend",
           architecture: "microservice",
-          features: [],
+          features: capabilities,
         },
         ...(options.packageManager === "pnpm"
           ? {}
@@ -311,11 +318,8 @@ MIT
     "@zudojs/config",
     "@zudojs/errors",
     "@zudojs/http",
+    ...capabilityPackages(capabilities),
   ];
-
-  if (options.enableCQRS) {
-    serviceDeps.push("@zudojs/cqrs");
-  }
 
   for (const svc of services) {
     const svcName = svc!;
@@ -329,6 +333,7 @@ MIT
           version: "0.1.0",
           private: true,
           type: "module",
+          zudojs: { features: capabilities },
           scripts: {
             dev: "tsx watch src/server.ts",
             start: "node dist/server.js",

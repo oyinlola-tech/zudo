@@ -111,9 +111,12 @@ export class CLIParser {
       }
     }
 
+    // Surplus positionals are only an error once a command is known: with no
+    // command there is no declaration to measure them against.
     const parsedArguments = this.parseArguments(
       positional,
       argumentsDefinitions,
+      command !== undefined,
     );
 
     // `stopAtFirstArgument` is checked here too: without it the fallback undid
@@ -144,10 +147,9 @@ export class CLIParser {
   private parseArguments(
     values: readonly string[],
     definitions: readonly CLIArgument[],
+    strict: boolean,
   ): Record<string, unknown> {
     const result: Record<string, unknown> = {};
-    if (definitions.length === 0) return result;
-
     let valueIndex = 0;
 
     for (const definition of definitions) {
@@ -181,7 +183,9 @@ export class CLIParser {
       valueIndex++;
     }
 
-    if (valueIndex < values.length) {
+    // Commands that declare no arguments used to return before this check,
+    // so `zudojs doctor my-proj` discarded `my-proj` without a word.
+    if (strict && valueIndex < values.length) {
       throw new InvalidArgumentsError(
         `Unexpected argument "${values[valueIndex]}".`,
       );

@@ -146,6 +146,18 @@ export async function runAddCommand(context: CLIContext): Promise<void> {
   context.logger.info(`Adding feature: ${feature}`);
   context.logger.info(`Packages: ${packages.join(", ")}`);
 
+  // The manifest is read and validated before anything is written: an
+  // unusable manifest used to be discovered after every package.json had
+  // already been rewritten, leaving the project half-updated.
+  const manifest = new ManifestManager(layout.root);
+  const manifestState = await manifest.readResult();
+
+  if (manifestState.status === "invalid") {
+    throw new CLIGenerationError(
+      `The project manifest at ${manifest.path} is unusable: ${manifestState.reason ?? "unknown reason"}. Fix or delete it, then re-run; nothing has been changed.`,
+    );
+  }
+
   try {
     for (const pkgPath of targets) {
       if (!existsSync(pkgPath)) {

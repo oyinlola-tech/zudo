@@ -62,9 +62,15 @@ const CMD_UNQUOTABLE = /["%!]/;
  *   none of which cmd.exe can be made to treat as literal text.
  */
 export function quoteForWindowsShell(argument: string): string {
+  if (CMD_UNQUOTABLE.test(argument)) {
+    throw new CLIValidationError(
+      `Cannot pass the argument ${JSON.stringify(argument)} to a Windows shell command: ` +
+        `the characters ", % and ! cannot be escaped for cmd.exe. Remove them and try again.`,
+    );
+  }
   if (argument.length === 0) return '""';
   if (!CMD_UNSAFE.test(argument)) return argument;
-  return `"${argument.replace(/"/g, '\\"')}"`;
+  return `"${argument}"`;
 }
 
 /** The spawn arguments and shell flag a command needs on this platform. */
@@ -100,7 +106,11 @@ export function resolveChildEnv(
   env: NodeJS.ProcessEnv | undefined,
   platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv | undefined {
-  return env;
+  if (!shell || platform !== "win32") return env;
+  return {
+    ...(env ?? process.env),
+    NoDefaultCurrentDirectoryInExePath: "1",
+  };
 }
 
 /**

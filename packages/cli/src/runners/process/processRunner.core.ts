@@ -69,13 +69,41 @@ export class ProcessRunner {
     options: ProcessOptions,
   ): Promise<{ pid: number }> {
     const { spawn } = await import("node:child_process");
-
-    const child = spawn(command, Array.from(args), {
-      cwd: options.cwd,
-      env: { ...process.env, ...options.env },
-      stdio: options.stdio ?? "ignore",
+    const target = resolveSpawnTarget(command, Array.from(args));
+    const env = resolveChildEnv(target.shell, {
+      ...process.env,
+      ...options.env,
     });
 
-    return { pid: child.pid ?? 0 };
+    return await new Promise<{ pid: number }>((resolve, reject) => {
+      const child = spawn(target.file, target.args, {
+        cwd: options.cwd,
+        env,
+        stdio: options.stdio ?? "ignore",
+        shell: target.shell,
+      });
+
+      let settled = false;
+
+      child.on("error", (error: NodeJS.ErrnoException) => {
+        if (settled) return;
+        settled = true;
+        if (error.code === "ENOENT") {
+          reject(
+            new Error(
+              `Command "${command}" was not found. Install it and make sure it is on your PATH.`,
+            ),
+          );
+          return;
+        }
+        reject(error);
+      });
+
+      child.on("spawn", () => {
+        if (settled) return;
+        settled = true;
+        resolve({ pid: child.pid ?? 0 });
+      });
+    });
   }
 }

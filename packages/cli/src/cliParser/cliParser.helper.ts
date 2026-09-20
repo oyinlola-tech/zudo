@@ -87,6 +87,28 @@ export function isLongOption(token: string): boolean {
   );
 }
 
+/** Returns whether a token looks like a negative number (e.g. `-1`, `-2.5`). */
+export function isNegativeNumber(token: string): boolean {
+  return /^-(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(token);
+}
+
+/**
+ * Returns whether the token following an option can be taken as its value.
+ *
+ * A flag-looking token is refused so that `--type --frontend react` reports
+ * the missing value for `--type` instead of silently setting it to
+ * `"--frontend"`. Negative numbers stay usable for numeric options, so both
+ * `--port -1` and `--port=-1` keep working.
+ */
+export function isOptionValueToken(
+  definition: CLIOption,
+  token: string | undefined,
+): token is string {
+  if (token === undefined || token === "--") return false;
+  if (!isOption(token)) return true;
+  return definition.type === "number" && isNegativeNumber(token);
+}
+
 /** Returns whether a token is a short option (e.g. `-v`). */
 export function isShortOption(token: string): boolean {
   return (

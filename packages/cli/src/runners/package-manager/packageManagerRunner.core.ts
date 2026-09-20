@@ -40,10 +40,10 @@ export function assertPackageManager(value: string): PackageManager {
 }
 
 export class PackageManagerRunner {
-  private readonly manager: string;
+  private readonly manager: PackageManager;
 
-  constructor(manager: string) {
-    this.manager = manager;
+  constructor(manager: PackageManager) {
+    this.manager = assertPackageManager(manager);
   }
 
   async install(cwd: string): Promise<void> {

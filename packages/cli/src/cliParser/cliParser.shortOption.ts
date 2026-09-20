@@ -10,6 +10,7 @@ import {
   InvalidOptionError,
   MissingOptionValueError,
 } from "../cliError/cliError.option.js";
+import { isOptionValueToken } from "./cliParser.helper.js";
 import { assignOptionValue } from "./cliParser.longOption.js";
 
 /** Parses a short option token from the token stream. */
@@ -62,10 +63,11 @@ export function parseShortOption(
           assignOptionValue(definition, attachedValue, values);
           return index + 1;
         }
-        if (tokens[index + 1] === undefined) {
+        const next = tokens[index + 1];
+        if (!isOptionValueToken(definition, next)) {
           throw new MissingOptionValueError(`-${short}`);
         }
-        assignOptionValue(definition, tokens[index + 1]!, values);
+        assignOptionValue(definition, next, values);
         return index + 2;
       }
 
@@ -90,11 +92,13 @@ export function parseShortOption(
     return index + 1;
   }
 
-  if (tokens[index + 1] === undefined) {
+  const next = tokens[index + 1];
+
+  if (!isOptionValueToken(definition, next)) {
     throw new MissingOptionValueError(token);
   }
 
-  assignOptionValue(definition, tokens[index + 1]!, values);
+  assignOptionValue(definition, next, values);
   return index + 2;
 }
 

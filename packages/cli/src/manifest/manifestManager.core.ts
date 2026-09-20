@@ -4,8 +4,16 @@
  * Machine-managed project manifest for Zudojs projects.
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { CLIGenerationError } from "../errors/index.js";
+import {
+  parseManifest,
+  withManifestLock,
+  writeManifestFile,
+  type ManifestReadResult,
+} from "./manifestFile.helper.js";
 
 export interface ZudojsManifest {
   readonly version: string;
@@ -39,66 +47,97 @@ export class ManifestManager {
     this.manifestPath = join(cwd, ".zudojs", "manifest.json");
   }
 
+  /** Absolute path of the manifest this manager owns. */
+  get path(): string {
+    return this.manifestPath;
+  }
+
   async create(
     manifest: Omit<ZudojsManifest, "generatedAt" | "updatedAt">,
   ): Promise<void> {
     const now = new Date().toISOString();
-    const fullManifest: ZudojsManifest = {
-      ...manifest,
-      generatedAt: now,
-      updatedAt: now,
-    };
 
-    await this.write(fullManifest);
+    await withManifestLock(this.manifestPath, async () => {
+      await this.write({ ...manifest, generatedAt: now, updatedAt: now });
+    });
+  }
+
+  /**
+   * Reads the manifest, keeping "there is none" and "there is one but it is
+   * corrupt" apart. A blanket catch used to report both as missing.
+   */
+  async readResult(): Promise<ManifestReadResult> {
+    if (!existsSync(this.manifestPath)) {
+      return { status: "missing", manifest: null };
+    }
+
+    let content: string;
+    try {
+      content = readFileSync(this.manifestPath, "utf-8");
+    } catch (error) {
+      return {
+        status: "invalid",
+        manifest: null,
+        reason: `could not be read (${error instanceof Error ? error.message : String(error)})`,
+      };
+    }
+
+    return parseManifest(content);
   }
 
   async read(): Promise<ZudojsManifest | null> {
-    if (!existsSync(this.manifestPath)) {
-      return null;
-    }
-
-    try {
-      const content = readFileSync(this.manifestPath, "utf-8");
-      return JSON.parse(content) as ZudojsManifest;
-    } catch {
-      return null;
-    }
+    return (await this.readResult()).manifest;
   }
 
+  /**
+   * Applies `updates` to the manifest on disk.
+   *
+   * Throws when there is no usable manifest: returning silently made
+   * `zudojs add` report success while nothing had been recorded.
+   */
   async update(updates: Partial<ZudojsManifest>): Promise<void> {
-    const existing = await this.read();
+    await withManifestLock(this.manifestPath, async () => {
+      const existing = this.require(await this.readResult());
 
-    if (!existing) {
-      return;
-    }
-
-    const updated: ZudojsManifest = {
-      ...existing,
-      ...updates,
-      updatedAt: new Date().toISOString(),
-    };
-
-    await this.write(updated);
+      await this.write({
+        ...existing,
+        ...updates,
+        updatedAt: new Date().toISOString(),
+      });
+    });
   }
 
+  /** Adds `capability` to the manifest if it is not already recorded. */
   async addCapability(capability: string): Promise<void> {
-    const existing = await this.read();
+    await withManifestLock(this.manifestPath, async () => {
+      const existing = this.require(await this.readResult());
 
-    if (!existing) {
-      return;
+      if (existing.capabilities.includes(capability)) {
+        return;
+      }
+
+      await this.write({
+        ...existing,
+        capabilities: [...existing.capabilities, capability],
+        updatedAt: new Date().toISOString(),
+      });
+    });
+  }
+
+  private require(result: ManifestReadResult): ZudojsManifest {
+    if (result.status === "ok" && result.manifest) {
+      return result.manifest;
     }
 
-    const capabilities = existing.capabilities.includes(capability)
-      ? existing.capabilities
-      : [...existing.capabilities, capability];
-
-    await this.update({ capabilities });
+    throw new CLIGenerationError(
+      result.status === "missing"
+        ? `No project manifest at ${this.manifestPath}.`
+        : `The project manifest at ${this.manifestPath} is unusable: ${result.reason ?? "unknown reason"}.`,
+    );
   }
 
   private async write(manifest: ZudojsManifest): Promise<void> {
-    const dir = join(this.manifestPath, "..");
-    const { mkdir } = await import("node:fs/promises");
-    await mkdir(dir, { recursive: true });
-    writeFileSync(this.manifestPath, JSON.stringify(manifest, null, 2));
+    await mkdir(dirname(this.manifestPath), { recursive: true });
+    await writeManifestFile(this.manifestPath, manifest);
   }
 }

@@ -38,11 +38,13 @@ import { ZUDOJS_PACKAGES_VERSION } from "../../constants/index.js";
 import { normalizeName } from "../../utils/utils.name.js";
 import {
   RUNTIME_APP_DEPENDENCIES,
+  capabilityPackages,
   moduleSpec,
   renderAppFile,
   renderModuleFile,
   renderServerFile,
   renderPnpmWorkspaceFile,
+  resolveProjectCapabilities,
 } from "../shared/index.js";
 
 export function generateModularMonolithFiles(
@@ -61,6 +63,12 @@ export function generateModularMonolithFiles(
     .map((m) => normalizeName(m))
     .filter((m) => m.length > 0);
 
+  // Recorded in package.json and backed by the packages below, so the
+  // `zudojs doctor` feature check has something real to verify. The
+  // architecture's own CQRS structure means cqrs/messaging are always
+  // installed, whether or not they were requested as capabilities.
+  const capabilities = resolveProjectCapabilities(options);
+
   const deps = [
     ...RUNTIME_APP_DEPENDENCIES,
     "@zudojs/config",
@@ -70,6 +78,7 @@ export function generateModularMonolithFiles(
     "@zudojs/cqrs",
     "@zudojs/messaging",
     "@zudojs/http",
+    ...capabilityPackages(capabilities),
   ];
 
   const devDeps: Record<string, string> = {
@@ -93,7 +102,7 @@ export function generateModularMonolithFiles(
         zudojs: {
           projectType: "backend",
           architecture: "modular-monolith",
-          features: [],
+          features: capabilities,
         },
         scripts: {
           dev: "tsx watch src/server.ts",

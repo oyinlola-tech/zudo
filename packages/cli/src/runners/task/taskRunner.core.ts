@@ -50,13 +50,18 @@ export class TaskRunner {
     options: TaskRunOptions = {},
   ): Promise<TaskResult> {
     try {
-      await execCommand(task.command, Array.from(task.args), task.cwd);
+      const result = await execCommand(
+        task.command,
+        Array.from(task.args),
+        task.cwd,
+        { ...(options.signal ? { signal: options.signal } : {}) },
+      );
       return {
         task: task.name,
         success: true,
         exitCode: 0,
-        output: "",
-        stderr: "",
+        output: result.stdout,
+        stderr: result.stderr,
         cancelled: false,
       };
     } catch (error) {
@@ -71,10 +76,10 @@ export class TaskRunner {
       return {
         task: task.name,
         success: false,
-        exitCode: 1,
-        output: message,
-        stderr: message,
-        cancelled: false,
+        exitCode: typeof code === "number" ? code : NO_EXIT_CODE,
+        output: readString(error, "stdout"),
+        stderr: stderr !== "" ? stderr : message,
+        cancelled,
       };
     }
   }
@@ -89,7 +94,18 @@ export class TaskRunner {
   async runParallel(
     tasks: readonly TaskDefinition[],
   ): Promise<readonly TaskResult[]> {
-    const results = await Promise.all(tasks.map((task) => this.run(task)));
+    const controller = new AbortController();
+
+    const results = await Promise.all(
+      tasks.map(async (task) => {
+        const result = await this.run(task, { signal: controller.signal });
+        if (!result.success && task.required === true) {
+          controller.abort();
+        }
+        return result;
+      }),
+    );
+
     return results;
   }
 }

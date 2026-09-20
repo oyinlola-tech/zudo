@@ -53,12 +53,13 @@ export async function scaffoldWithFallback(
       {
         // Suppress interactive prompts from create-* tools.
         env: { ...process.env, CI: "1" },
+        timeout: SCAFFOLD_TIMEOUT_MS,
       },
     );
     return true;
   } catch (error) {
     console.warn(
-      `Warning: official scaffolder "${options.command} ${options.args.join(" ")}" failed (${(error instanceof Error ? error.message : String(error)).split("\n")[0]}). Using built-in fallback template.`,
+      `Warning: official scaffolder "${options.command} ${options.args.join(" ")}" ${describeFailure(error)}. Using built-in fallback template.`,
     );
     await writeFileTree(options.targetPath, options.fallbackFiles);
     return false;

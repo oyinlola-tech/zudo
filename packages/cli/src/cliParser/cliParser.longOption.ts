@@ -12,6 +12,7 @@ import {
 } from "../cliError/cliError.option.js";
 import {
   isOption,
+  isOptionValueToken,
   parseBoolean,
   parseOptionValue,
 } from "./cliParser.helper.js";
@@ -77,11 +78,11 @@ export function parseLongOption(
   }
 
   if (value === undefined) {
-    if (tokens[index + 1] === undefined || tokens[index + 1] === "--") {
+    const next = tokens[index + 1];
+    if (!isOptionValueToken(definition, next)) {
       throw new MissingOptionValueError(token);
     }
-    value = tokens[index + 1];
-    assignOptionValue(definition, value as string, values);
+    assignOptionValue(definition, next, values);
     return index + 2;
   }
 

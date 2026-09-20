@@ -60,7 +60,7 @@ export class FlutterAdapter implements FrontendAdapter {
         "--org",
         org,
         "--project-name",
-        context.project.name,
+        FlutterAdapter.toFlutterProjectName(context.project.name),
         "--platforms",
         "android,ios,web",
       ],

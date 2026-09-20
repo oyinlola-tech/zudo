@@ -44,12 +44,14 @@ import { ZUDOJS_PACKAGES_VERSION } from "../../constants/index.js";
 import { normalizeName, toPascalCase } from "../../utils/utils.name.js";
 import {
   RUNTIME_APP_DEPENDENCIES,
+  capabilityPackages,
   moduleSpec,
   renderAppFile,
   renderModuleFile,
   renderServerFile,
   renderServiceFile,
   renderPnpmWorkspaceFile,
+  resolveProjectCapabilities,
 } from "../shared/index.js";
 
 export function generateMonolithFiles(
@@ -57,6 +59,10 @@ export function generateMonolithFiles(
 ): Record<string, string> {
   const name = options.projectName;
   const nameSlug = name.replace(/[^a-z0-9-]+/gi, "-").toLowerCase();
+
+  // Recorded in package.json and backed by the packages below, so the
+  // `zudojs doctor` feature check has something real to verify.
+  const capabilities = resolveProjectCapabilities(options);
 
   const deps = [
     ...RUNTIME_APP_DEPENDENCIES,
@@ -66,26 +72,11 @@ export function generateMonolithFiles(
     "@zudojs/validation",
     "@zudojs/schema",
     "@zudojs/http",
+    ...capabilityPackages(capabilities),
   ];
 
   if (options.enableCQRS) {
-    deps.push("@zudojs/cqrs", "@zudojs/events", "@zudojs/messaging");
-  }
-
-  if (options.enableDatabase) {
-    deps.push("@zudojs/database");
-  }
-
-  if (options.enableQueue) {
-    deps.push("@zudojs/queue");
-  }
-
-  if (options.enableObservability) {
-    deps.push("@zudojs/observability");
-  }
-
-  if (options.enableOpenAPI) {
-    deps.push("@zudojs/openapi");
+    deps.push("@zudojs/events");
   }
 
   const devDeps: Record<string, string> = {
@@ -109,7 +100,7 @@ export function generateMonolithFiles(
         zudojs: {
           projectType: "backend",
           architecture: "monolith",
-          features: [],
+          features: capabilities,
         },
         scripts: {
           dev: "tsx watch src/server.ts",
