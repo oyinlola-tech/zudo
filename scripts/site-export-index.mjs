@@ -4,9 +4,9 @@
  *
  * The index is the site's claim that nothing shipped is undocumented, so it
  * has to come from the compiler rather than from a hand-kept list. Each
- * package's `dist/index.d.ts` is loaded with the TypeScript API, every export
- * is resolved through its aliases, and the names are grouped by what they
- * actually are.
+ * package's built `.d.ts` barrel is walked, every export
+ * is resolved through its aliases and re-exports, and the names are grouped by
+ * what they actually are.
  *
  * Run it after any change to a package's public surface, and after
  * `changeset version`, since the prose quotes the version being documented.
@@ -99,9 +99,7 @@ function resolveSpecifier(fromFile, specifier) {
   const workspace = /^@zudojs\/([a-z-]+)/.exec(specifier);
 
   if (workspace) {
-    const sibling = join(root, "packages", workspace[1], "dist", "index.d.ts");
-
-    return existsSync(sibling) ? sibling : undefined;
+    return findEntryPoint(join(root, "packages", workspace[1]));
   }
 
   if (!specifier.startsWith(".")) return undefined;
@@ -162,6 +160,26 @@ function collectPublicNames(entry, seen = new Set(), names = new Set(), aliasSou
   return { names, aliasSources, visited: seen };
 }
 
+/**
+ * Locates a package's built entry point.
+ *
+ * Most packages emit `dist/index.d.ts`, but a package whose tsconfig includes
+ * more than `src` (zudojs-cli compiles `src` and `tests`) emits
+ * `dist/src/index.d.ts` instead. Checking only the first spelling made this
+ * script skip that package silently on every run, so its export index sat
+ * stale while the summary reported success.
+ */
+function findEntryPoint(pkgDir) {
+  for (const candidate of [
+    join(pkgDir, "dist", "index.d.ts"),
+    join(pkgDir, "dist", "src", "index.d.ts"),
+  ]) {
+    if (existsSync(candidate)) return candidate;
+  }
+
+  return undefined;
+}
+
 let workspaceKindsCache;
 
 /** Declared name -> kind, across every built package in the workspace. */
@@ -183,9 +201,9 @@ function workspaceKinds() {
 
 /** Reads the public export surface of one package from its built types. */
 function readExports(pkgDir) {
-  const entry = join(pkgDir, "dist", "index.d.ts");
+  const entry = findEntryPoint(pkgDir);
 
-  if (!existsSync(entry)) return undefined;
+  if (entry === undefined) return undefined;
 
   const { names, aliasSources } = collectPublicNames(entry);
 
