@@ -72,8 +72,9 @@ describe("runFrontendPipeline", () => {
   it("installs through the package manager by default", async () => {
     const dir = mkdtempSync(join(tmpdir(), "zudojs-fe-"));
     dirs.push(dir);
-    const add = vi.fn(async () => {});
-    const addDev = vi.fn(async () => {});
+    // Typed so `mock.calls[0]` is a known tuple rather than `[]`.
+    const add = vi.fn(async (_path: string, _packages: string[]) => {});
+    const addDev = vi.fn(async (_path: string, _packages: string[]) => {});
 
     const result = await runFrontendPipeline(
       fakeAdapter(),
@@ -88,8 +89,8 @@ describe("runFrontendPipeline", () => {
     // let the package manager resolve `latest`, so the pinning the resolver
     // exists to provide survived only on the `--no-install` path and two runs
     // a month apart could produce different majors.
-    const [, addedDeps] = add.mock.calls[0] as [string, string[]];
-    const [, addedDevDeps] = addDev.mock.calls[0] as [string, string[]];
+    const [, addedDeps = []] = add.mock.calls[0] ?? [];
+    const [, addedDevDeps = []] = addDev.mock.calls[0] ?? [];
 
     expect(addedDeps).toHaveLength(1);
     expect(addedDeps[0]).toMatch(/^react@\S+$/);
