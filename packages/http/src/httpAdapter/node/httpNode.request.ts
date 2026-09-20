@@ -22,7 +22,7 @@ import type { NodeRequestOptions } from "./httpNode.type.js";
 
 import { removePort, extractPort } from "./httpNode.server.js";
 
-import { parseQueryString } from "../../httpQuery/http.query.js";
+import { parseQueryString } from "../../httpQuery/index.js";
 
 import { findRequestTargetViolation } from "../../httpRequest/target/httpRequest.target.js";
 

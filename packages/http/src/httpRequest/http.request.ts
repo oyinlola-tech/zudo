@@ -4,12 +4,13 @@ import { HTTP_HEADERS } from "../httpConstants/http.constants.js";
 
 import { InvalidJSONError } from "../httpErrors/httpError.helper.js";
 
+import { parseQueryString as parseHardenedQueryString } from "../httpQuery/queryParse/index.js";
+
 import type {
   HTTPHeaders,
   HTTPMethod,
   HTTPParams,
   HTTPQuery,
-  HTTPQueryValue,
   HTTPRequest,
 } from "../httpTypes/http.types.js";
 
@@ -403,42 +404,40 @@ export function getRequestIP(request: IncomingMessage): string | undefined {
 /* Query                                                                      */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Parses the query component of a request-target into a flat record.
+ *
+ * Delegates to the hardened `httpQuery` parser, the same one behind the Node
+ * adapter's `request.query` and the router's `ctx.query`. This function used
+ * to carry its own loop that accumulated into an object literal and read
+ * `result[key]` without an own-property check, which had two consequences on
+ * fully attacker-controlled input:
+ *
+ * - `?__proto__=a&__proto__=b` assigned an array through the `__proto__`
+ *   setter, so the returned query object's prototype became that array. The
+ *   parameter vanished from its own keys while the object silently gained
+ *   `length`, `map` and the rest of `Array.prototype`.
+ * - `?constructor=x` read the inherited `Object` constructor as the "existing"
+ *   value and stored it in the result, handing a handler
+ *   `query.constructor === [Function: Object], "x"]`.
+ *
+ * It also applied none of the four documented query limits, so a request with
+ * 50,000 parameters was parsed in full. Delegating fixes all three, and makes
+ * a limit breach throw {@link HTTPQueryLimitError} (414) as it already did on
+ * every other request path.
+ */
 export function parseQueryString(url: string): HTTPQuery {
   const queryIndex = url.indexOf("?");
 
   if (queryIndex < 0) {
-    return {};
+    return parseHardenedQueryString(undefined);
   }
 
-  const queryString = url.slice(queryIndex + 1);
+  const hashIndex = url.indexOf("#", queryIndex + 1);
 
-  if (!queryString) {
-    return {};
-  }
-
-  const searchParams = new URLSearchParams(queryString);
-
-  const result: HTTPQuery = {};
-
-  for (const [key, value] of searchParams.entries()) {
-    const existing = result[key];
-
-    if (existing === undefined) {
-      result[key] = value;
-
-      continue;
-    }
-
-    if (Array.isArray(existing)) {
-      result[key] = [...existing, value];
-
-      continue;
-    }
-
-    result[key] = [existing as HTTPQueryValue, value];
-  }
-
-  return result;
+  return parseHardenedQueryString(
+    url.slice(queryIndex + 1, hashIndex === -1 ? undefined : hashIndex),
+  );
 }
 
 /* -------------------------------------------------------------------------- */

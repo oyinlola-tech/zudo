@@ -10,7 +10,7 @@ import {
   normalizeQueryValue,
   getQuery,
   HTTPQueryLimitError,
-} from "../src/httpQuery/http.query.js";
+} from "../src/httpQuery/index.js";
 
 import {
   parseMultipartBuffer,

@@ -9,7 +9,7 @@ import type { HttpRequestContext as RequestContext } from "../../../httpRequest/
 
 import { parseRequestTarget } from "../../../httpRequest/target/httpRequest.target.js";
 
-import { parseQueryString } from "../../../httpQuery/http.query.js";
+import { parseQueryString } from "../../../httpQuery/index.js";
 
 import { InvalidRoutePatternError } from "../error/httpRouter.error.js";
 
