@@ -111,14 +111,17 @@ Tooling for building, testing, and documenting Zudojs applications.
 
 Real-world applications that validate the framework end-to-end.
 
-| Example                | Status     | Notes                            |
-| ---------------------- | ---------- | -------------------------------- |
-| `examples/hello-world` | ⏳ Planned | Minimal HTTP server              |
-| `examples/basic-api`   | ⏳ Planned | CRUD with CQRS, database, events |
-| `examples/cqrs`        | ⏳ Planned | Command/query separation         |
-| `examples/events`      | ⏳ Planned | Event-driven architecture        |
-| `examples/modules`     | ⏳ Planned | Modular monolith                 |
-| `examples/plugins`     | ⏳ Planned | Plugin system demo               |
+| Example                     | Status      | Notes                                          |
+| --------------------------- | ----------- | ---------------------------------------------- |
+| `examples/hello-world`      | ✅ Complete | Minimal HTTP server                            |
+| `examples/basic-api`        | ✅ Complete | CRUD with CQRS, database, events               |
+| `examples/modular-monolith` | ✅ Complete | Modular monolith; runs in `pnpm test:all`      |
+| `examples/monolith`         | ✅ Complete | Single-deployment application                  |
+| `examples/micro-service`    | ✅ Complete | Service split across independent packages      |
+| `examples/worker`           | ✅ Complete | Background job processing                      |
+| `examples/cqrs`             | ⏳ Planned  | Command/query separation in isolation          |
+| `examples/events`           | ⏳ Planned  | Event-driven architecture in isolation         |
+| `examples/plugins`          | ⏳ Planned  | Plugin system demo                             |
 
 **Phase 6 Goal:** Validate that packages work together correctly.
 
@@ -178,13 +181,43 @@ Features that build on the core architecture.
 
 ---
 
+### Milestone 7 — Audit & Hardening (Ongoing)
+
+A numbered audit series over every package. Each round reproduces every
+finding by executing the real source before it is written down, fixes it with
+a regression test that fails against the unfixed code, and publishes.
+
+- Rounds 4–8 — per-package sweeps; OAuth2 extracted into `@zudojs/auth-oauth`.
+- Round 9 — all 39 packages; `release:check` gate and the site export-index
+  tooling introduced.
+- Round 10 — all 39 packages, 209 findings.
+- Round 11 — all 39 packages, 98 findings, 3 critical. `pnpm release:check`
+  green at 7,891 tests.
+
+The dominant defect class across every round is worth stating plainly, because
+it is what the reviews now look for first: **a capability that is typed,
+implemented in its own module, exported from the barrel and documented on the
+site, whose one call site never invokes it.** Module-level unit tests pass for
+every instance of it; only an end-to-end assertion through the public facade
+catches it.
+
+---
+
 ## Next Steps
 
-1. **Build `examples/hello-world`** — Validate the framework with a minimal HTTP server.
-2. **Build `examples/basic-api`** — Validate end-to-end request flow.
-3. **Identify architectural gaps** — Find missing abstractions or incorrect boundaries.
-4. **Performance testing** — Benchmark request throughput and memory usage.
-5. **Documentation** — Write getting started guide and API reference.
+1. **Split the ~394 files over 150 lines** — The largest remaining deviation
+   from `AGENTS.md`; tracked but deliberately deferred through rounds 9–11.
+2. **Consolidate `core` / `runtime` / `lifecycle`** — Three overlapping
+   lifecycle implementations; see the five-step plan in `runtime.status.md`.
+3. **Performance testing** — Benchmark request throughput and memory usage.
+   No benchmark suite exists yet.
+4. **`httpQuery()` client helper** — A convenience method for GET requests
+   with query-string building. The server-side `httpQuery` parsing module is
+   complete and hardened; the client-side helper is not yet written.
+5. **Alias `@zudojs/observability` logger types to `@zudojs/logger`** — Needs a
+   major version.
+6. **Unify `database` and `storage` transaction types** — A design decision,
+   not a defect.
 
 ---
 
