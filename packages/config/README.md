@@ -58,6 +58,16 @@ await `manager.ready()` before reading values.
 A source provides values plus a priority. Higher priority wins; equal
 priorities are applied in registration order (last registered wins).
 
+A source that declares no priority gets `DEFAULT_CONFIG_SOURCE_PRIORITY`
+(`-1`), which is strictly below the priority `initialValues` is seeded
+at (`0`), so an undeclared source layers UNDER the values a manager was
+seeded with. Declare `priority: 0` (or higher) on the source when it
+should override them.
+
+Sources are deduplicated by name — the first occurrence of a name wins,
+both when they are passed to the constructor and through `addSource()`
+(which rejects a duplicate outright).
+
 - `createDefaultsConfigSource(values, name?)` — low-priority defaults.
 - `createMemoryConfigSource(values, { name, priority?, optional? })` —
   in-memory values.
@@ -147,12 +157,21 @@ entry is redacted). Individual values can be validated with
   including secrets.
 - `manager.toSafeObject()` / `store.toSafeObject()` replace sensitive
   values with `"[REDACTED]"` — use these for logging and diagnostics.
+- An entry is marked sensitive automatically by `ConfigStore.set()`, so
+  the same key is redacted however it was written: from a source, from
+  `initialValues`, from `set()` / `setMany()` / `replace()`, or from
+  `manager.set()`. Detection is `isSensitiveConfigEntry` — the key name
+  (`password`, `secret`, `token`, `*_key`, `auth`, `dsn`,
+  `database_url`, …) or a value that is a URL with embedded
+  `user:password@` credentials. Pass `sensitive: false` explicitly to
+  opt a key out.
 
 ## Reloading
 
 `manager.reload()` re-runs all sources. Values set at runtime via
 `manager.set()` and `initialValues` survive loads; sources only
-overwrite entries at equal or higher priority. A reload rebuilds every
+overwrite entries at equal or higher priority, and a source that
+declares no priority ranks below both. A reload rebuilds every
 source-provided value from scratch, so a value a source no longer
 provides disappears (letting a lower-priority default show through), and
 the store is only updated once every source has loaded — a failing

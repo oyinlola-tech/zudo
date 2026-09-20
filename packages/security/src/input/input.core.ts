@@ -4,6 +4,8 @@
  * Sanitizes user input against common attack patterns.
  */
 
+import { ConfigurationError } from "@zudojs/errors";
+
 import type { InputSanitizationConfig } from "../types/security.type.js";
 import {
   PROTOTYPE_POLLUTION_KEYS,
@@ -205,13 +207,38 @@ function isPlainObject(value: object): boolean {
  * @param obj - The object to sanitize.
  * @param config - Optional sanitization configuration.
  * @returns The sanitized object.
+ * @throws {ConfigurationError} when `config.maxDepth` is present but is not
+ *   an integer of 1 or more.
  */
 export function sanitizeObject<T extends Record<string, unknown>>(
   obj: T,
   config?: InputSanitizationConfig,
 ): T {
   const maxDepth = config?.maxDepth ?? DEFAULT_MAX_DEPTH;
+  assertUsableMaxDepth(config?.maxDepth);
   return sanitizeValue(obj, config, new WeakSet(), 0, maxDepth) as T;
+}
+
+/**
+ * Rejects a `maxDepth` that cannot describe a depth the caller wants kept.
+ *
+ * The guard runs before the object is entered, so `maxDepth: 0` discarded the
+ * argument itself and returned `undefined` under a non-optional `T` — every
+ * field read off the result then threw at a call site TypeScript had told was
+ * safe. `Number(process.env.MAX_DEPTH)` with the variable unset is the same
+ * shape of mistake as the body limit's `NaN`.
+ *
+ * @throws {ConfigurationError} when `maxDepth` is present but is not an
+ *   integer of 1 or more.
+ */
+function assertUsableMaxDepth(maxDepth: number | undefined): void {
+  if (maxDepth === undefined) return;
+  if (!Number.isInteger(maxDepth) || maxDepth < 1) {
+    throw new ConfigurationError(
+      "Input sanitization maxDepth must be an integer of 1 or more, got: " +
+        String(maxDepth),
+    );
+  }
 }
 
 /**

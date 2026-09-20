@@ -109,6 +109,17 @@ export function isConfigSource(value: unknown): value is ConfigSource {
 }
 
 /**
+ * Priority given to a source that declares none.
+ *
+ * Strictly below the priority `initialValues` and other baseline store
+ * writes use (0). A source used to default to 0 as well, and because
+ * `applySource` overwrites on EQUAL priority, any undeclared source
+ * silently wiped the values a manager was seeded with. Declaring a
+ * priority of 0 or above still overrides them.
+ */
+export const DEFAULT_CONFIG_SOURCE_PRIORITY = -1;
+
+/**
  * Creates a function-based configuration source.
  */
 export function createConfigSource(
@@ -117,7 +128,7 @@ export function createConfigSource(
 ): FunctionConfigSource {
   const type = options.type ?? ConfigSourceType.CUSTOM;
 
-  const priority = options.priority ?? 0;
+  const priority = options.priority ?? DEFAULT_CONFIG_SOURCE_PRIORITY;
 
   if (options.name.trim().length === 0) {
     throw new TypeError("Configuration source name cannot be empty.");

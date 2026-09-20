@@ -22,7 +22,10 @@ import {
   isUniqueLocalAddress,
   parseIpAddress,
 } from "../httpTrustProxy/httpTrustProxy.ip.js";
-import { assertSafeHeaderValue } from "../httpHeaders/security/index.js";
+import {
+  assertSafeHeaderValue,
+  escapeHeaderQuotedString,
+} from "../httpHeaders/security/index.js";
 
 import { assertProxyPathContained } from "./httpProxy.pathGuard.js";
 
@@ -189,6 +192,20 @@ function isBlockedLiteralAddress(hostname: string): boolean {
       (address.bytes[1] ?? 0) >= 64 &&
       (address.bytes[1] ?? 0) <= 127
     ) {
+      return true;
+    }
+
+    /* 192.0.0.0/24 IETF protocol assignments (192.0.0.8, 192.0.0.170, …). */
+    if (
+      first === 192 &&
+      (address.bytes[1] ?? 0) === 0 &&
+      (address.bytes[2] ?? 0) === 0
+    ) {
+      return true;
+    }
+
+    /* 198.18.0.0/15 benchmarking. */
+    if (first === 198 && ((address.bytes[1] ?? 0) & 0xfe) === 18) {
       return true;
     }
 
@@ -615,6 +632,15 @@ function appendForwardedValue(
 /* Standard Forwarded Header                                                  */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Builds an RFC 7239 `Forwarded` field value.
+ *
+ * Every parameter is escaped as a `quoted-string` when it is not a bare
+ * token, and the finished value is checked the same way `setForwardedHeaders`
+ * checks the values it writes.
+ *
+ * @throws {TypeError} If any parameter contains a control character.
+ */
 export function createForwardedHeader(address: ForwardedAddress): string {
   const parts: string[] = [];
 
@@ -634,7 +660,11 @@ export function createForwardedHeader(address: ForwardedAddress): string {
     parts.push(`proto=${formatForwardedValue(address.protocol)}`);
   }
 
-  return parts.join("; ");
+  const value = parts.join("; ");
+
+  assertSafeHeaderValue(value);
+
+  return value;
 }
 
 export function parseForwardedHeader(
@@ -864,12 +894,23 @@ function formatForwardedIdentifier(value: string): string {
   return formatForwardedValue(value);
 }
 
+/**
+ * Emits an RFC 7239 parameter value.
+ *
+ * Wrapping a value in quotes does not neutralise a CR or LF — the control
+ * character survives into the field value and an attacker-chosen header
+ * follows it on the wire. `escapeHeaderQuotedString` rejects those characters
+ * rather than escaping them, which is what every other quoted-parameter
+ * emitter in this package already uses.
+ *
+ * @throws {TypeError} If the value contains a forbidden control character.
+ */
 function formatForwardedValue(value: string): string {
   if (/^[A-Za-z0-9._:-]+$/.test(value)) {
     return value;
   }
 
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  return `"${escapeHeaderQuotedString(value)}"`;
 }
 
 function unquoteForwardedValue(value: string): string {

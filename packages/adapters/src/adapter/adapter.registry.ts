@@ -28,6 +28,13 @@ import type { AdapterOperationOptions } from "../lifecycle/lifecycle.type.js";
 /** A capability an adapter can declare. */
 export type AdapterCapabilityName = keyof AdapterCapabilities;
 
+/** Names that are unsafe as a plain-object key, so no adapter may claim them. */
+const RESERVED_NAMES: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "prototype",
+]);
+
 /**
  * Registry for Zudojs adapters.
  *
@@ -42,6 +49,10 @@ export class AdapterRegistry {
    * @throws {AdapterConfigurationError} If the adapter name is blank. A name
    * that normalizes to the empty string is unaddressable — `get("")` is the
    * only way back to it, and every other blank name collides with it.
+   * @throws {AdapterConfigurationError} If the adapter name is a prototype
+   * member (`__proto__`, `constructor`, `prototype`). Those names survive the
+   * registry's `Map`, but any consumer keying a plain object by adapter name
+   * loses or corrupts the entry, so they are refused at the door.
    * @throws {AdapterAlreadyRegisteredError} If an adapter with the same name is already registered.
    */
   register(adapter: Adapter): void {

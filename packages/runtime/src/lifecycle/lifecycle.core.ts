@@ -173,18 +173,61 @@ export class LifecycleManager {
       ? depGraph.parallelGroups
       : depGraph.order.map((moduleId) => [moduleId] as readonly string[]);
 
+    // Ids that must not have dependents initialized on top of them:
+    // modules whose own hook threw, plus modules already skipped for the
+    // same reason, so the skip cascades transitively. `continueOnFailure`
+    // used to consult only the failure COUNT, so a dependent of a broken
+    // module was initialized, readied, and reported as started — an API
+    // serving traffic against a database that never came up.
+    const blocked = new Set<string>();
+
     for (const group of groups) {
       if (this.cancellation.isCancelled) {
         break;
       }
 
+      const runnable: string[] = [];
+
+      for (const moduleId of group) {
+        const blocker = this.findBlockingDependency(moduleId, blocked);
+
+        if (blocker === undefined) {
+          runnable.push(moduleId);
+          continue;
+        }
+
+        const failure: LifecycleFailure = {
+          moduleId,
+          phase: "initialize",
+          error: new RuntimeStartError(
+            `Module "${moduleId}" was not initialized because its ` +
+              `dependency "${blocker}" failed.`,
+            { phase: "initialize", failedModuleId: blocker },
+          ),
+          durationMs: 0,
+        };
+
+        failed.push(failure);
+        blocked.add(moduleId);
+
+        this.logger.error(
+          `Module "${moduleId}" was skipped because its dependency "${blocker}" failed.`,
+        );
+
+        this.emitModuleEvent("runtime.module.failed", moduleId, "failed", {
+          durationMs: 0,
+          error: failure.error,
+        });
+      }
+
       const results = await Promise.all(
-        group.map((moduleId) => this.initializeModule(moduleId)),
+        runnable.map((moduleId) => this.initializeModule(moduleId)),
       );
 
       for (const result of results) {
         if (result.failure) {
           failed.push(result.failure);
+          blocked.add(result.moduleId);
         } else if (!result.abandoned) {
           succeeded.push(result.moduleId);
         }
@@ -201,6 +244,22 @@ export class LifecycleManager {
       failed: Object.freeze(failed),
       durationMs: Date.now() - startTime,
     });
+  }
+
+  /**
+   * Returns the first declared dependency of `moduleId` that is known to
+   * have failed or been skipped, or `undefined` when none has.
+   *
+   * Only direct dependencies are inspected: `blocked` already contains
+   * every module skipped by an earlier group, and groups are visited in
+   * dependency order, so the cascade is transitive.
+   */
+  private findBlockingDependency(
+    moduleId: string,
+    blocked: ReadonlySet<string>,
+  ): string | undefined {
+    const dependencies = this.modules.get(moduleId)?.dependencies ?? [];
+    return dependencies.find((dependency) => blocked.has(dependency));
   }
 
   /**

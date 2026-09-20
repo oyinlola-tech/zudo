@@ -8,6 +8,11 @@
  * layer. This module only handles HTTP-level semantics.
  */
 
+import {
+  assertSafeHeaderValue,
+  escapeHeaderQuotedString,
+} from "../httpHeaders/security/index.js";
+
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -213,7 +218,11 @@ export function formatKeepAliveHeader(
     }
   }
 
-  return parts.join(", ");
+  const header = parts.join(", ");
+
+  assertSafeHeaderValue(header);
+
+  return header;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -557,10 +566,19 @@ function unquote(value: string): string {
   return trimmed;
 }
 
+/**
+ * Emits a Keep-Alive parameter value.
+ *
+ * Quoting does not neutralise a CR or LF, so the control character used to
+ * survive into the field value. `escapeHeaderQuotedString` rejects it, the
+ * same helper every other quoted-parameter emitter in this package uses.
+ *
+ * @throws {TypeError} If the value contains a forbidden control character.
+ */
 function quoteIfNeeded(value: string): string {
   if (/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(value)) {
     return value;
   }
 
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  return `"${escapeHeaderQuotedString(value)}"`;
 }

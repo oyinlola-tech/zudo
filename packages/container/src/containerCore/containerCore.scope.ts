@@ -41,6 +41,8 @@ import type {
   ContainerLike,
 } from "./containerCore.type.js";
 
+import { ContainerLifecycleError } from "@zudojs/errors";
+
 export class ContainerScopeContext {
   private disposed = false;
   private disposing: Promise<void> | undefined;
@@ -232,17 +234,20 @@ export class ContainerScopeContext {
    */
   private ensureActive(): void {
     if (this.disposed) {
-      throw new Error(
+      throw new ContainerLifecycleError(
+        "dispose",
         `Container scope "${this.name}" has already been disposed.`,
       );
     }
     if (this.parentScope?.isDisposed()) {
-      throw new Error(
+      throw new ContainerLifecycleError(
+        "dispose",
         `Parent scope "${this.parentScope.name}" of scope "${this.name}" has been disposed.`,
       );
     }
     if (this.container.isDisposed()) {
-      throw new Error(
+      throw new ContainerLifecycleError(
+        "dispose",
         `Container "${this.container.name}" owning scope "${this.name}" has been disposed.`,
       );
     }

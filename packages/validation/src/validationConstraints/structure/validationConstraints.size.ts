@@ -5,6 +5,7 @@
  * from excessively large payloads.
  */
 
+import { SerializationLimits } from "@zudojs/constants";
 import { SerializationPayloadTooLargeError } from "@zudojs/errors";
 import { MAX_MEASURABLE_DEPTH } from "./validationConstraints.depth.js";
 import {
@@ -77,13 +78,21 @@ function resolveToJson(value: unknown): unknown {
  * from shared subtrees estimate at a few hundred bytes while serializing to
  * hundreds of megabytes.
  *
+ * Charging every occurrence means the subtree memo that keeps the walk linear
+ * has to be off, so the budget is the only thing that bounds the work: `n`
+ * shared `{a:node,b:node}` pairs expand to `2^n` visits. The default budget is
+ * therefore finite — {@link SerializationLimits.MAX_SIZE} — rather than
+ * `Infinity`, which left an untrusted 1 KB payload able to burn minutes of CPU.
+ * Pass an explicit `Infinity` only for input you trust.
+ *
  * @param value - The value to measure.
  * @param maxBytes - Stop counting past this budget; the budget is returned.
+ *   Defaults to {@link SerializationLimits.MAX_SIZE}.
  * @returns The estimated serialized size in bytes.
  */
 export function estimateSerializedSize(
   value: unknown,
-  maxBytes: number = Number.POSITIVE_INFINITY,
+  maxBytes: number = SerializationLimits.MAX_SIZE,
 ): number {
   try {
     return traverse(value, {

@@ -51,7 +51,11 @@ import type {
   Token,
 } from "../containerToken/containerToken.type.js";
 import { unwrapToken } from "../containerToken/containerToken.type.js";
-import { RegistrationNotFoundError } from "@zudojs/errors";
+import {
+  ContainerError,
+  ContainerLifecycleError,
+  RegistrationNotFoundError,
+} from "@zudojs/errors";
 import type {
   ContainerLike,
   ContainerScopeOptions,
@@ -237,7 +241,10 @@ export class Container implements ContainerLike {
     return this.#registry.remove(token);
   }
 
-  /** Removes every registration (evicting and disposing cached singletons). */
+  /**
+   * Removes every registration, evicting and disposing cached instances:
+   * container-owned singletons and every live scope's SCOPED copies alike.
+   */
   clearRegistrations(): void {
     this.ensureMutable();
     this.#registry.clear();
@@ -246,7 +253,9 @@ export class Container implements ContainerLike {
   createScope(options: ContainerScopeOptions = {}): ContainerScopeContext {
     this.ensureActive();
     if (!this.options.allowScopes)
-      throw new Error(`Container scopes are disabled for "${this.name}".`);
+      throw new ContainerError(
+        `Container scopes are disabled for "${this.name}".`,
+      );
     const scope = new ContainerScopeContext(this, options);
     this.#liveScopes.add(scope);
     return scope;
@@ -278,8 +287,10 @@ export class Container implements ContainerLike {
 
   /**
    * Wholesale-replaces the registration set with a previous snapshot.
-   * Entries are validated, cached singletons for the old set are evicted and
-   * disposed, and the operation is refused when registrations are frozen.
+   * Entries are validated, cached instances built from the old set are
+   * evicted and disposed — container-owned singletons and every live
+   * scope's SCOPED copies alike — and the operation is refused when
+   * registrations are frozen.
    */
   restoreSnapshot(registrations: readonly ContainerRegistration[]): void {
     this.ensureMutable();
@@ -443,13 +454,18 @@ export class Container implements ContainerLike {
   }
   private ensureNotDisposed(): void {
     if (this.#disposed)
-      throw new Error(`Container "${this.name}" has already been disposed.`);
+      throw new ContainerLifecycleError(
+        "dispose",
+        `Container "${this.name}" has already been disposed.`,
+      );
   }
   private ensureMutable(): void {
     this.ensureNotDisposed();
     if (!this.options.freezeRegistrations) return;
     if (this.#started)
-      throw new Error(`Registrations for container "${this.name}" are frozen.`);
+      throw new ContainerError(
+        `Registrations for container "${this.name}" are frozen.`,
+      );
   }
 }
 

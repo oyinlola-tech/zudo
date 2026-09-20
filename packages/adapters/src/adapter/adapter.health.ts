@@ -11,6 +11,7 @@
 import { AdapterConfigurationError } from "@zudojs/errors";
 
 import type { Adapter } from "./adapter.type.js";
+import { withRetry } from "./adapter.retry.js";
 import type {
   AdapterHealth,
   AdapterHealthStatus,
@@ -36,8 +37,19 @@ function unhealthy(message: string): AdapterHealth {
   return { status: "unhealthy", message, timestamp: Date.now() };
 }
 
-/** Runs one health check, bounded by `timeout` and `signal`. */
+/**
+ * Runs one health check, bounded by `timeout` and `signal`, retried according
+ * to `retry`.
+ */
 async function checkOne(
+  adapter: LifecycleAdapter,
+  options: AdapterOperationOptions,
+): Promise<AdapterHealth> {
+  return attemptCheck(adapter, options);
+}
+
+/** Runs a single health-check attempt, bounded by `timeout` and `signal`. */
+async function attemptCheck(
   adapter: LifecycleAdapter,
   options: AdapterOperationOptions,
 ): Promise<AdapterHealth> {
@@ -89,6 +101,9 @@ export async function collectAdapterHealth(
   entries: ReadonlyArray<readonly [string, Adapter]>,
   options: AdapterOperationOptions = {},
 ): Promise<AdapterHealthReport> {
+  // `Object.create(null)`, not `{}`: assigning `adapters["__proto__"]` on an
+  // ordinary object runs the inherited prototype setter, so the entry would
+  // vanish from the report and an unhealthy adapter would be invisible.
   const adapters: Record<string, AdapterHealth> = {};
   await Promise.all(
     entries

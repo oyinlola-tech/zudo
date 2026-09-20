@@ -19,6 +19,11 @@ export function serializeLoggerError(error: {
 
 /**
  * Converts arbitrary values into safer serializable values.
+ *
+ * `seen` tracks the ANCESTOR PATH only, so only a genuine back-edge
+ * becomes "[Circular]"; `Map` and `Set` keep their contents; and a
+ * property whose getter throws becomes "[Unreadable]" rather than
+ * taking the whole log line down.
  */
 export function serializeLoggerValue(
   value: unknown,
@@ -58,21 +63,51 @@ export function serializeLoggerValue(
 
   seen.add(value);
 
-  if (Array.isArray(value)) {
-    return value.map((item) => serializeLoggerValue(item, seen));
-  }
+  try {
+    if (Array.isArray(value)) {
+      return value.map((item) => serializeLoggerValue(item, seen));
+    }
 
-  const result: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
+    if (value instanceof Set) {
+      return Array.from(value, (item) => serializeLoggerValue(item, seen));
+    }
+
+    const result: Record<string, unknown> = {};
+
     // defineProperty, never assignment: a "__proto__" key from an
     // untrusted payload would otherwise reach the inherited setter and
     // replace the serialized object's prototype.
-    Object.defineProperty(result, key, {
-      value: serializeLoggerValue(item, seen),
-      enumerable: true,
-      writable: true,
-      configurable: true,
-    });
+    const define = (key: string, item: unknown): void => {
+      Object.defineProperty(result, key, {
+        value: item,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    };
+
+    if (value instanceof Map) {
+      for (const [key, item] of value.entries()) {
+        define(
+          typeof key === "string" ? key : String(key),
+          serializeLoggerValue(item, seen),
+        );
+      }
+      return result;
+    }
+
+    for (const key of Object.keys(value)) {
+      let item: unknown;
+      try {
+        item = (value as Record<string, unknown>)[key];
+      } catch {
+        define(key, LOGGER_UNREADABLE_TOKEN);
+        continue;
+      }
+      define(key, serializeLoggerValue(item, seen));
+    }
+    return result;
+  } finally {
+    seen.delete(value);
   }
-  return result;
 }

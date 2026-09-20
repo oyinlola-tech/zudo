@@ -248,7 +248,7 @@ export function defaultMethodNotAllowedHandler(
  * @param source - The response to fold into it.
  * @returns The target response.
  */
-export function mergeResponseContext(
+function mergeRouteResponse(
   target: ResponseContext,
   source: ResponseContext,
 ): ResponseContext {
@@ -304,7 +304,7 @@ export async function executeRoute(
     const layer = layers[index];
 
     if (layer === undefined) {
-      return mergeResponseContext(
+      return mergeRouteResponse(
         ambient,
         await normalizeResponse(await route.handler(context)),
       );
@@ -319,11 +319,11 @@ export async function executeRoute(
     });
 
     if (result instanceof HttpResponseContext) {
-      return mergeResponseContext(ambient, result);
+      return mergeRouteResponse(ambient, result);
     }
 
     if (typeof Response !== "undefined" && result instanceof Response) {
-      return mergeResponseContext(ambient, await normalizeResponse(result));
+      return mergeRouteResponse(ambient, await normalizeResponse(result));
     }
 
     return downstream ?? ambient;

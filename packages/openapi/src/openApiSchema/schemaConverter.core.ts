@@ -18,6 +18,8 @@ import { DEFAULT_OPENAPI_VERSION } from "../openApiConstants/openApiConstants.co
  *
  * Field names as of `@zudojs/schema@0.1.0`:
  *   object   `_config.shape`, `_config.requiredKeys` (a Set), `_config.unknownKeys`
+ *            (`"strip" | "strict" | "passthrough"`; absent means the parser's
+ *            own `?? "strip"` default, so it is read with that same default)
  *   array    `_config.itemSchema`, `_config.min`, `_config.max`, `_config.length`
  *            (no `max` means the parser's implicit ceiling, which is emitted)
  *   string   `_config.min|max|length|pattern|format`
@@ -464,14 +466,19 @@ function convertSchemaNode(
         if (forced || !acceptsMissingKey(value)) required.push(key);
       }
 
-      const unknownKeys = c["unknownKeys"];
+      // `ObjectSchema` applies `?? "strip"` internally, so an absent
+      // `unknownKeys` is the same contract as an explicit `.strip()` and
+      // must document the same. Only `strict` emits
+      // `additionalProperties: false`: that is OpenAPI for "reject the
+      // payload", while strip accepts it and discards the extra key, so
+      // emitting it for strip made a generated client refuse what the
+      // service accepts.
+      const unknownKeys = c["unknownKeys"] ?? "strip";
       return {
         type: "object",
         ...(Object.keys(properties).length > 0 ? { properties } : {}),
         ...(required.length > 0 ? { required } : {}),
-        ...(unknownKeys === "strip" || unknownKeys === "strict"
-          ? { additionalProperties: false }
-          : {}),
+        ...(unknownKeys === "strict" ? { additionalProperties: false } : {}),
       };
     }
 

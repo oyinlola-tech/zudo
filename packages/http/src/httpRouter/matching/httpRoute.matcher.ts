@@ -14,7 +14,12 @@ import type {
 
 import type { HttpRouter } from "../core/register/httpRouter.register.js";
 
-import { normalizeMethod } from "../core/factory/httpRoute.factory.base.js";
+import {
+  createOptionsResponse,
+  normalizeMethod,
+} from "../core/factory/httpRoute.factory.base.js";
+
+import { normalizeMatchPath } from "../core/util/httpRoute.util.js";
 
 import { formatAllowHeader } from "../../httpMethods/http.methods.js";
 
@@ -132,19 +137,32 @@ export class RouteMatcher {
     }
 
     if (method === "OPTIONS" && this.matcherOptions.allowOptionsFallback) {
-      const first = this.matchFirstAllowed(
-        this.allowedMethods(path).methods,
-        path,
-      );
+      const allowed = this.allowedMethods(path);
 
-      if (first) {
+      if (allowed.allowed) {
         this.matches += 1;
 
-        return {
-          ...first,
+        /*
+         * The fallback must never carry an executable route. It used to
+         * answer with the first route registered on the path under ANY
+         * method, so `OPTIONS /accounts/42` ran the `DELETE` handler — past
+         * any CSRF guard that treats `OPTIONS` as safe. The synthetic route
+         * below owns no middleware and answers `204` with `Allow`, matching
+         * what `HttpRouter.match()` already does.
+         */
+        return Object.freeze({
+          route: createOptionsRoute(path, allowed),
+
+          params: Object.freeze({}),
+
+          method,
+
+          path,
+
+          score: 0,
 
           matchedBy: "options-fallback",
-        };
+        });
       }
     }
 
@@ -161,6 +179,8 @@ export class RouteMatcher {
 
     const normalizedPath = normalizeRequestPath(path);
 
+    const matchPath = normalizeMatchPath(path);
+
     for (const route of this.router.compiled()) {
       if (!methodApplies(route.definition.method, normalizedMethod)) {
         continue;
@@ -168,7 +188,7 @@ export class RouteMatcher {
 
       const params = matchCompiledRoute(
         route,
-        normalizedPath,
+        matchPath,
         this.matcherOptions.caseSensitive,
       );
 
@@ -189,9 +209,7 @@ export class RouteMatcher {
   matchAll(request: RouteMatchRequest): readonly RouteMatcherResult[] {
     const method = normalizeMethod(request.method);
 
-    const path = normalizeRequestPath(request.path);
-
-    return this.collect(method, path);
+    return this.collect(method, request.path);
   }
 
   /* ------------------------------------------------------------------------ */
@@ -199,7 +217,7 @@ export class RouteMatcher {
   /* ------------------------------------------------------------------------ */
 
   matchPath(path: string): readonly RouteMatcherResult[] {
-    return this.collect("*", normalizeRequestPath(path));
+    return this.collect("*", path);
   }
 
   /* ------------------------------------------------------------------------ */
@@ -207,14 +225,14 @@ export class RouteMatcher {
   /* ------------------------------------------------------------------------ */
 
   allowedMethods(path: string): RouteMethodResult {
-    const normalizedPath = normalizeRequestPath(path);
+    const matchPath = normalizeMatchPath(path);
 
     const methods = new Set<HttpMethod | "*">();
 
     for (const route of this.router.compiled()) {
       const params = matchCompiledRoute(
         route,
-        normalizedPath,
+        matchPath,
         this.matcherOptions.caseSensitive,
       );
 
@@ -284,6 +302,10 @@ export class RouteMatcher {
   ): readonly RouteMatcherResult[] {
     const results: RouteMatcherResult[] = [];
 
+    const normalizedPath = normalizeRequestPath(path);
+
+    const matchPath = normalizeMatchPath(path);
+
     const seen = new Set<string>();
 
     for (const route of this.router.compiled()) {
@@ -293,7 +315,7 @@ export class RouteMatcher {
 
       const params = matchCompiledRoute(
         route,
-        path,
+        matchPath,
         this.matcherOptions.caseSensitive,
       );
 
@@ -303,25 +325,10 @@ export class RouteMatcher {
 
       seen.add(route.definition.id);
 
-      results.push(createResult(route, params, method, path));
+      results.push(createResult(route, params, method, normalizedPath));
     }
 
     return Object.freeze(results);
-  }
-
-  private matchFirstAllowed(
-    methods: readonly (HttpMethod | "*")[],
-    path: string,
-  ): RouteMatcherResult | undefined {
-    for (const method of methods) {
-      const result = this.matchMethod(method, path);
-
-      if (result) {
-        return result;
-      }
-    }
-
-    return undefined;
   }
 }
 
@@ -389,6 +396,44 @@ function createResult(
     score: route.score,
 
     matchedBy: route.definition.method === "*" ? "wildcard" : "exact",
+  });
+}
+
+/**
+ * Builds the synthetic route an `OPTIONS` fallback resolves to.
+ *
+ * It carries no middleware and a handler that only answers `204` with the
+ * path's `Allow` header, so an `OPTIONS` request can never reach a handler
+ * registered for another method.
+ *
+ * @param path - The normalized request path.
+ * @param allowed - The methods registered on that path.
+ * @returns The synthetic route definition.
+ */
+function createOptionsRoute(
+  path: string,
+  allowed: RouteMethodResult,
+): MatchedRoute {
+  const methods = allowed.methods.includes("OPTIONS")
+    ? allowed.methods
+    : [...allowed.methods, "OPTIONS" as const];
+
+  return Object.freeze({
+    id: "route:options-fallback",
+
+    method: "OPTIONS" as const,
+
+    path,
+
+    name: undefined,
+
+    params: Object.freeze({}),
+
+    metadata: Object.freeze({}),
+
+    handler: () => createOptionsResponse(methods),
+
+    middleware: Object.freeze([]),
   });
 }
 

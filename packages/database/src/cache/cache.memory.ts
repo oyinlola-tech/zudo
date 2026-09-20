@@ -406,18 +406,22 @@ export async function getOrSet<TValue>(
   const pending = inflight.get(key);
   if (pending) return pending as Promise<TValue>;
 
+  // The cleanup lives outside the promise: the body runs synchronously up to
+  // its first `await`, so a loader that throws synchronously would otherwise
+  // run the cleanup before the entry is registered and leave the rejected
+  // promise cached for the lifetime of the cache.
   const promise = (async () => {
-    try {
-      const value = await loader();
-      if (value !== undefined) cache.set(key, value, options);
-      return value;
-    } finally {
-      inflight.delete(key);
-    }
+    const value = await loader();
+    if (value !== undefined) cache.set(key, value, options);
+    return value;
   })();
 
   inflight.set(key, promise);
-  return promise;
+  try {
+    return await promise;
+  } finally {
+    if (inflight.get(key) === promise) inflight.delete(key);
+  }
 }
 
 /**

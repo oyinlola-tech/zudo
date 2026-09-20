@@ -43,7 +43,13 @@ export function matchCompiledRoute(
 
   let inputIndex = 0;
 
-  for (const segment of routeSegments) {
+  for (let segmentIndex = 0; segmentIndex < routeSegments.length; segmentIndex += 1) {
+    const segment = routeSegments[segmentIndex];
+
+    if (segment === undefined) {
+      continue;
+    }
+
     if (segment.type === "wildcard") {
       /*
        * Decode each segment separately and re-join. Decoding the joined tail
@@ -72,12 +78,21 @@ export function matchCompiledRoute(
 
     const input = inputSegments[inputIndex];
 
-    if (
-      input === undefined &&
-      segment.type === "parameter" &&
-      segment.optional
-    ) {
-      continue;
+    if (segment.type === "parameter" && segment.optional) {
+      /*
+       * An optional parameter only claims a segment when the segments that
+       * follow it still have enough input left. Without that check
+       * `/account/:id?/profile` swallowed `profile` as the id and then found
+       * nothing to match its literal tail.
+       */
+      const remainingInput = inputSegments.length - inputIndex;
+
+      if (
+        input === undefined ||
+        remainingInput <= requiredSegments(routeSegments, segmentIndex + 1)
+      ) {
+        continue;
+      }
     }
 
     if (input === undefined) {
@@ -122,4 +137,36 @@ export function matchCompiledRoute(
   }
 
   return Object.freeze(output);
+}
+
+/**
+ * Counts the segments from `start` onwards that must consume input.
+ *
+ * Optional parameters and wildcards can match nothing, so they do not count.
+ *
+ * @param segments - The route's compiled segments.
+ * @param start - The index to count from.
+ * @returns The number of segments that require an input segment.
+ */
+function requiredSegments(
+  segments: readonly CompiledRoute["segments"][number][],
+  start: number,
+): number {
+  let required = 0;
+
+  for (let index = start; index < segments.length; index += 1) {
+    const segment = segments[index];
+
+    if (segment === undefined || segment.type === "wildcard") {
+      continue;
+    }
+
+    if (segment.type === "parameter" && segment.optional) {
+      continue;
+    }
+
+    required += 1;
+  }
+
+  return required;
 }

@@ -126,6 +126,7 @@ function parseField(
   }
 
   const values = new Set<number>();
+  const isDayOfWeek = bounds.name === "dayOfWeek";
 
   for (const part of field.split(",")) {
     const [rangePart, stepPart] = part.split("/");
@@ -152,8 +153,18 @@ function parseField(
       end = bounds.max;
     } else if (rangePart.includes("-")) {
       const [from, to] = rangePart.split("-");
-      start = resolveValue(from ?? "", bounds, expression);
-      end = resolveValue(to ?? "", bounds, expression);
+      // Range endpoints keep their raw day-of-week spelling: normalising 7
+      // to 0 before the endpoints are compared turned "0-7" into Sunday
+      // alone and made "1-7" an inverted range.
+      start = resolveValue(from ?? "", bounds, expression, isDayOfWeek);
+      end = resolveValue(to ?? "", bounds, expression, isDayOfWeek);
+
+      // "mon-sun" names Monday through Sunday: the end is the week's last
+      // day, not its first. "sun-sat" is left alone — it already ascends.
+      if (isDayOfWeek && end === 0 && start > end) {
+        end = 7;
+      }
+
       if (start > end) {
         throw new CronParseError(
           `Cron field "${bounds.name}" has an inverted range: "${rangePart}"`,
@@ -167,7 +178,8 @@ function parseField(
     }
 
     for (let v = start; v <= end; v += step) {
-      values.add(v);
+      // Both 0 and 7 are Sunday; the set only ever holds 0.
+      values.add(isDayOfWeek && v === 7 ? 0 : v);
     }
   }
 
@@ -181,18 +193,27 @@ function parseField(
   return values;
 }
 
-/** Resolves a numeric or named field value, checking it against the bounds. */
+/**
+ * Resolves a numeric or named field value, checking it against the bounds.
+ *
+ * @param raw - The literal from the expression.
+ * @param bounds - The field being parsed.
+ * @param expression - The whole expression, for error reporting.
+ * @param rawDayOfWeek - Keeps day-of-week `7` as 7 and accepts it as a bound,
+ *   for a range endpoint that the caller expands and normalises itself.
+ */
 function resolveValue(
   raw: string,
   bounds: (typeof FIELD_BOUNDS)[number],
   expression: string,
+  rawDayOfWeek = false,
 ): number {
   let value: number;
 
   if (/^\d+$/.test(raw)) {
     value = Number(raw);
     // Both 0 and 7 are Sunday in common cron dialects.
-    if (bounds.name === "dayOfWeek" && value === 7) {
+    if (bounds.name === "dayOfWeek" && value === 7 && !rawDayOfWeek) {
       value = 0;
     }
   } else if (bounds.name === "month" && raw in MONTH_NAMES) {
@@ -206,7 +227,8 @@ function resolveValue(
     );
   }
 
-  if (value < bounds.min || value > bounds.max) {
+  const max = rawDayOfWeek && bounds.name === "dayOfWeek" ? 7 : bounds.max;
+  if (value < bounds.min || value > max) {
     throw new CronParseError(
       `Cron field "${bounds.name}" value ${value} is outside ${bounds.min}-${bounds.max}`,
       expression,

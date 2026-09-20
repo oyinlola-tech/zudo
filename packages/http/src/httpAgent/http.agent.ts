@@ -232,7 +232,7 @@ export function getOrCreateAgent(
    * passing `rejectUnauthorized: false` would have disabled certificate
    * verification for a caller that had pinned a CA, with no way to detect it.
    */
-  const cacheKey = `${registryKey}|${tlsFingerprint(options)}`;
+  const cacheKey = agentCacheKey(registryKey, options);
 
   const existing = agentRegistry.get(cacheKey);
 
@@ -250,6 +250,22 @@ export function getOrCreateAgent(
   agentRegistry.set(cacheKey, agent);
 
   return agent;
+}
+
+/**
+ * Builds the registry key an agent is stored under.
+ *
+ * Every read and write goes through this one helper. `getOrCreateAgent` used
+ * to append the TLS fingerprint while `getAgent`, `hasAgent` and
+ * `removeAgent` looked up the bare registry key, so every lookup missed and
+ * the documented per-host teardown silently leaked the agent and its
+ * keep-alive sockets.
+ */
+function agentCacheKey(
+  registryKey: string,
+  options: HTTPAgentConfig | HTTPSAgentConfig,
+): string {
+  return `${registryKey}|${tlsFingerprint(options)}`;
 }
 
 /**
@@ -289,35 +305,72 @@ function describeCredential(value: unknown): string {
   return "opaque";
 }
 
+/**
+ * Looks up a registered agent.
+ *
+ * `options` must be the same TLS-relevant options `getOrCreateAgent` was
+ * given, because they are part of the key; omitting them looks up the agent
+ * created with no options.
+ */
 export function getAgent(
   key: string | AgentRegistryKey,
+  options: HTTPAgentConfig | HTTPSAgentConfig = {},
 ): HTTPAgentInstance | undefined {
-  return agentRegistry.get(normalizeRegistryKey(key));
+  return agentRegistry.get(agentCacheKey(normalizeRegistryKey(key), options));
 }
 
-export function hasAgent(key: string | AgentRegistryKey): boolean {
-  return agentRegistry.has(normalizeRegistryKey(key));
+/**
+ * Whether an agent is registered for this key and TLS option set.
+ */
+export function hasAgent(
+  key: string | AgentRegistryKey,
+  options: HTTPAgentConfig | HTTPSAgentConfig = {},
+): boolean {
+  return agentRegistry.has(agentCacheKey(normalizeRegistryKey(key), options));
 }
 
+/**
+ * Removes registered agents for a key.
+ *
+ * With `options` the single matching agent is removed; without them every
+ * agent registered for that host is removed, whatever TLS options it was
+ * created with, so a per-host teardown releases all of its sockets.
+ *
+ * @returns Whether anything was removed.
+ */
 export function removeAgent(
   key: string | AgentRegistryKey,
   destroy = true,
+  options?: HTTPAgentConfig | HTTPSAgentConfig,
 ): boolean {
   const registryKey = normalizeRegistryKey(key);
 
-  const agent = agentRegistry.get(registryKey);
+  const cacheKeys =
+    options === undefined
+      ? Array.from(agentRegistry.keys()).filter((candidate) =>
+          candidate.startsWith(`${registryKey}|`),
+        )
+      : [agentCacheKey(registryKey, options)];
 
-  if (!agent) {
-    return false;
+  let removed = false;
+
+  for (const cacheKey of cacheKeys) {
+    const agent = agentRegistry.get(cacheKey);
+
+    if (!agent) {
+      continue;
+    }
+
+    agentRegistry.delete(cacheKey);
+
+    if (destroy) {
+      agent.destroy();
+    }
+
+    removed = true;
   }
 
-  agentRegistry.delete(registryKey);
-
-  if (destroy) {
-    agent.destroy();
-  }
-
-  return true;
+  return removed;
 }
 
 export function clearAgents(destroy = true): void {

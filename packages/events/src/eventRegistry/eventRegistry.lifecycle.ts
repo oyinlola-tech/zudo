@@ -91,7 +91,7 @@ export function registryNotify(
            */
         }
       } else {
-        warnObserverError(error, "An event registry observer");
+        warnObserverError(error, "An event registry observer", listeners);
       }
     }
   }

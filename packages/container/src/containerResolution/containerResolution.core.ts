@@ -22,7 +22,10 @@
  * The resolver subscribes to registry change events: REPLACE/REMOVE evict the
  * affected token's cached singleton, CLEAR/RESTORE evict all cached
  * singletons. Each eviction is reported through the `onSingletonEvicted`
- * callback so the owning container can dispose the instance.
+ * callback so the owning container can dispose the instance, and every
+ * invalidated token — for CLEAR/RESTORE that is every cached token, SCOPED
+ * ones included — through `onTokenInvalidated` so live scopes drop and
+ * dispose their own copies.
  */
 
 import {
@@ -61,6 +64,7 @@ import type {
 
 import {
   CircularDependencyError,
+  ContainerError,
   ProviderResolutionError,
   RegistrationNotFoundError,
 } from "@zudojs/errors";
@@ -132,13 +136,25 @@ export class ContainerResolver {
   private readonly onTokenInvalidated:
     ((token: Token<unknown>) => void) | undefined;
   private readonly dependents = new DependentIndex();
+  /**
+   * Tokens for which a SCOPED instance has ever been cached in a scope.
+   *
+   * The singleton cache only knows about SINGLETON tokens and the
+   * dependent index only records tokens consumed by another cached
+   * instance, so neither can name a SCOPED token that a scope resolved
+   * directly. A wholesale CLEAR/RESTORE must still tell live scopes to
+   * drop those instances.
+   */
+  private readonly scopedTokens = new Set<Token<unknown>>();
 
   /**
    * @param onSingletonEvicted Called for each evicted cached singleton so
    *   the owner can dispose it.
    * @param onTokenInvalidated Called for every token invalidated by a
-   *   `replace()`/`remove()` (the token itself and each cached consumer),
-   *   so owners of scope caches can drop and dispose their SCOPED copies.
+   *   registry change — for `replace()`/`remove()` the token itself and
+   *   each cached consumer, for `clear()`/`restore()` every token that
+   *   was cached at all — so owners of scope caches can drop and dispose
+   *   their SCOPED copies.
    */
   constructor(
     registry: ContainerRegistry,
@@ -277,8 +293,10 @@ export class ContainerResolver {
 
     if (registration.scope === Scope.SINGLETON)
       this.singletonCache.set(token, value);
-    else if (registration.scope === Scope.SCOPED)
+    else if (registration.scope === Scope.SCOPED) {
       state.scopeCache?.set(token, value);
+      if (state.scopeCache) this.scopedTokens.add(token);
+    }
 
     const result: ResolutionResult<T> = {
       value,
@@ -316,9 +334,10 @@ export class ContainerResolver {
           !this.registry.has(target) &&
           !(state.autoRegisterClasses && typeof target === "function")
         ) {
-          throw new Error(
+          throw new ContainerError(
             `useExisting target "${describeToken(target)}" for token ` +
               `"${describeToken(token)}" is not registered.`,
+            { token: describeToken(token) },
           );
         }
         const resolved = this.resolveInternal(
@@ -358,7 +377,9 @@ export class ContainerResolver {
         const ctor = provider.useClass as new (...ctorArgs: unknown[]) => T;
         return { value: new ctor(...args), owned: true };
       }
-      throw new Error("Unsupported container provider.");
+      throw new ContainerError("Unsupported container provider.", {
+        token: describeToken(token),
+      });
     } catch (error) {
       // Resolution errors created deeper in the chain already carry the full
       // chain in their message/details — propagate them unchanged.
@@ -435,8 +456,19 @@ export class ContainerResolver {
       }
       case RegistryOperation.CLEAR:
       case RegistryOperation.RESTORE: {
+        // Every cached token is discarded by a wholesale change, so every
+        // one of them must be reported as invalidated — not just the
+        // singletons. Only REPLACE/REMOVE used to notify, so a live scope
+        // went on serving (and never disposed) the SCOPED instance built
+        // from a registration that clear()/restore() had thrown away.
+        const invalidated = new Set<Token<unknown>>([
+          ...this.singletonCache.keys(),
+          ...this.scopedTokens,
+        ]);
         for (const t of [...this.singletonCache.keys()]) this.evictSingleton(t);
         this.dependents.clear();
+        this.scopedTokens.clear();
+        for (const t of invalidated) this.onTokenInvalidated?.(t);
         break;
       }
       default:

@@ -75,7 +75,7 @@ bus.dispose();
 
 What you should see, in order: `New user: { id: 'u-1', email: 'ada@example.com' }`, then `true`, then `welcome email queued`.
 
-> **Tip:** Always pass an `id` when you call `on()`. Without one the bus makes an id from the type and the current millisecond, so two handlers registered in the same millisecond collide and the second throws `DuplicateMessageHandlerError`.
+> **Tip:** Pass an `id` when you call `on()` if you want to `off()` the handler later. Without one the bus generates `handler:<type>:<n>` from a per-bus counter, so generated ids never collide — but they are not stable across runs, so you cannot hard-code one to remove it.
 
 ## MESSAGES
 
@@ -239,7 +239,7 @@ What you should see: `→ ping [msg:…]`, then `← ping in 0.2ms`, then `pong`
 
 The middleware context (`MessageMiddlewareContext`) exposes `message`, the dispatch `context`, the abort `signal`, an `executionId`, and a shared `state` Map you can use to pass values between middleware. A middleware can also be an object with a `handle` method.
 
-> **Watch out:** If middleware throws, the dispatch result is `success: false` and `result.error` is exactly what you threw (not wrapped). Calling `next()` twice throws `MiddlewareNextCalledMultipleTimesError` (from `@zudojs/errors`, a `MiddlewareError`); the pipeline is `compose` from `@zudojs/middleware`. The `priority` option on `use()` is accepted but not applied yet; order is registration order.
+> **Watch out:** If middleware throws, the dispatch result is `success: false` and `result.error` is exactly what you threw (not wrapped). Calling `next()` twice throws `MiddlewareNextCalledMultipleTimesError` (from `@zudojs/errors`, a `MiddlewareError`); the pipeline is `compose` from `@zudojs/middleware`. Middleware runs in ascending `priority` order (default 100), with registration order breaking ties.
 
 ## CONTEXT, CORRELATION AND CAUSATION
 
@@ -392,7 +392,7 @@ All error classes live in `@zudojs/errors` and are re-exported here. Only the fi
 
 ## COMMON MISTAKES
 
-- **Registering handlers without an `id`** → two registrations in the same millisecond get the same generated id and the second throws `DuplicateMessageHandlerError`. → Always pass an `id` in the options of `on()`.
+- **Registering handlers without an `id` and then trying to remove them** → generated ids come from a per-bus counter (`handler:<type>:<n>`), so they never collide, but they depend on registration order and are not something you can hard-code. → Pass an `id` in the options of `on()` for any handler you intend to `off()`.
 - **Checking for a thrown error instead of `result.success`** → a failing handler never throws from `send()`, so your `catch` block stays silent and the failure is missed. → Read `result.success` and `result.error` after every dispatch.
 - **Passing a plain string as `correlationId`** → TypeScript rejects it because the type is branded. → Wrap it: `toCorrelationId("req-abc")`.
 - **Expecting a timeout to stop a running handler** → the timer only aborts a signal; the handler keeps going; the dispatch result carries a `MessageTimeoutError`. → Check `context.signal.aborted` inside long handlers.

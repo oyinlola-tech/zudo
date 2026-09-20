@@ -37,18 +37,27 @@ export function validateHeaders(
     errors.push(`Too many headers: ${entries.length} > ${cfg.maxHeaders}`);
   }
 
+  /*
+   * `IncomingMessage.headers` returns an array for `set-cookie` and for any
+   * header a non-Node caller supplies as a list. Checking only `typeof value
+   * === "string"` let every one of those values past the size cap and the
+   * CRLF filter while the guard still reported `allowed: true`.
+   */
   for (const [key, value] of entries) {
-    if (typeof value === "string" && value.length > cfg.maxHeaderValueSize) {
-      errors.push(
-        `Header "${key}" value too large: ${value.length} > ${cfg.maxHeaderValueSize}`,
-      );
-    }
-    if (
-      cfg.enableCrlfProtection &&
-      typeof value === "string" &&
-      /[\r\n]/.test(value)
-    ) {
-      errors.push(`Header "${key}" contains CRLF characters`);
+    for (const element of Array.isArray(value) ? value : [value]) {
+      if (typeof element !== "string") {
+        continue;
+      }
+
+      if (element.length > cfg.maxHeaderValueSize) {
+        errors.push(
+          `Header "${key}" value too large: ${element.length} > ${cfg.maxHeaderValueSize}`,
+        );
+      }
+
+      if (cfg.enableCrlfProtection && /[\r\n]/.test(element)) {
+        errors.push(`Header "${key}" contains CRLF characters`);
+      }
     }
   }
 

@@ -5,7 +5,10 @@
  * or validation to prevent stack overflows and provide clear error messages.
  */
 
-import { CircularReferenceError } from "@zudojs/errors";
+import {
+  CircularReferenceError,
+  SerializationDepthError,
+} from "@zudojs/errors";
 import { MAX_MEASURABLE_DEPTH } from "./validationConstraints.depth.js";
 import {
   TraversalLimitError,
@@ -25,6 +28,9 @@ import {
  * @param maxDepth - Depth ceiling, so a deep graph cannot exhaust the stack
  *   before a cycle is reported.
  * @throws {CircularReferenceError} on the first cycle found.
+ * @throws {SerializationDepthError} when the graph is deeper than `maxDepth`.
+ *   Running out of depth is not evidence of a cycle, and reporting it as one
+ *   told callers a payload referenced itself when it merely nested too far.
  */
 export function assertNoCircularReference(
   value: unknown,
@@ -38,9 +44,7 @@ export function assertNoCircularReference(
       throw new CircularReferenceError(error.path);
     }
     if (error instanceof TraversalLimitError && error.halt === "depth") {
-      throw new CircularReferenceError(
-        `${error.path} (exceeded ${maxDepth} levels)`,
-      );
+      throw new SerializationDepthError(error.observed, maxDepth);
     }
     throw error;
   }
@@ -49,7 +53,10 @@ export function assertNoCircularReference(
 /**
  * Check whether a value contains circular references.
  *
- * Returns true if a cycle is found, false otherwise.
+ * Returns true if a cycle is found, false otherwise. A graph too deep to walk
+ * within the measurable ceiling reports false: no cycle was found, and the
+ * depth is the caller's own `assertDepthWithinLimit` to report.
+ *
  * Does not throw — use assertNoCircularReference for throwing behavior.
  */
 export function hasCircularReference(value: unknown): boolean {
@@ -58,6 +65,7 @@ export function hasCircularReference(value: unknown): boolean {
     return false;
   } catch (error) {
     if (error instanceof CircularReferenceError) return true;
+    if (error instanceof SerializationDepthError) return false;
     throw error;
   }
 }

@@ -522,10 +522,24 @@ describe("httpCacheControl", () => {
     const freshness = calculateFreshness(
       { expires: new Date(date.getTime() + 3_600_000).toUTCString() },
       date,
+      date,
     );
 
     expect(freshness.stale).toBe(false);
     expect(freshness.remaining).toBe(3600);
+  });
+
+  it("ages an Expires lifetime against the current time", () => {
+    const date = new Date("2024-01-01T00:00:00Z");
+
+    const freshness = calculateFreshness(
+      { expires: new Date(date.getTime() + 3_600_000).toUTCString() },
+      date,
+      new Date(date.getTime() + 5_400_000),
+    );
+
+    expect(freshness.stale).toBe(true);
+    expect(freshness.remaining).toBe(0);
   });
 
   it("does not store an authenticated response marked private", () => {

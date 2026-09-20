@@ -21,23 +21,48 @@ const ABSOLUTE_FORM = /^https?:\/\//i;
 
 const ENCODED_DOT = /%2e/gi;
 
+const REPEATED_SLASH = /\/{2,}/g;
+
+/**
+ * Collapses repeated slashes in a parsed target's path.
+ *
+ * The router normalises `/{2,}` away before matching, while the request
+ * context kept them, so `//admin/secret` dispatched to the route registered
+ * at `/admin/secret` while a guard reading `request.path` saw a path that did
+ * not start with `/admin/`. Both sides parse here, so collapsing once here
+ * keeps them in agreement. The query and fragment are untouched.
+ */
+function collapsePathSlashes(url: URL): URL {
+  if (!url.pathname.includes("//")) {
+    return url;
+  }
+
+  const collapsed = new URL(url.href);
+
+  collapsed.pathname = url.pathname.replace(REPEATED_SLASH, "/");
+
+  return collapsed;
+}
+
 /**
  * Parses a request-target (origin-form, absolute-form or `*`) into a URL.
  *
- * An origin-form target is never parsed as an authority. Unparseable input
- * yields the root URL.
+ * An origin-form target is never parsed as an authority, and repeated slashes
+ * in the path are collapsed. Unparseable input yields the root URL.
  */
 export function parseRequestTarget(target: string): URL {
   try {
     if (target.startsWith("/")) {
-      return new URL(`${TARGET_BASE}${target}`);
+      return collapsePathSlashes(new URL(`${TARGET_BASE}${target}`));
     }
 
     if (ABSOLUTE_FORM.test(target)) {
-      return new URL(target);
+      return collapsePathSlashes(new URL(target));
     }
 
-    return new URL(`${TARGET_BASE}/${target === "*" ? "" : target}`);
+    return collapsePathSlashes(
+      new URL(`${TARGET_BASE}/${target === "*" ? "" : target}`),
+    );
   } catch {
     return new URL(`${TARGET_BASE}/`);
   }

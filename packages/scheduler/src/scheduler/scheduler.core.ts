@@ -24,6 +24,7 @@ import {
   SchedulerAlreadyStartedError,
   SchedulerStoppedError,
   SchedulerJobCancelledError,
+  SchedulerJobNotFoundError,
   SchedulerJobTimeoutError,
   InvalidScheduleError,
   InvalidJobError,
@@ -80,6 +81,10 @@ interface ScheduleRecord {
 export interface SchedulerErrorEvent {
   readonly scheduleId: string;
   readonly jobId: string;
+  /**
+   * The execution that failed. Empty when the failure happened before any
+   * execution could start — a schedule whose job is no longer registered.
+   */
   readonly executionId: string;
   readonly error: unknown;
 }
@@ -136,6 +141,17 @@ export class Scheduler {
    * to abort.
    */
   private readonly runningControllers = new Set<AbortController>();
+
+  /**
+   * In-flight controllers per schedule id.
+   *
+   * Indexed by id for the same reason {@link runningControllers} exists: a
+   * one-shot is retired at dispatch time, so `cancel()` arrives after its
+   * record has already been deleted and the record's own `running` set is
+   * unreachable. Without this, `handle.cancel()` aborted a recurring
+   * schedule's run and silently did nothing for a one-shot's.
+   */
+  private readonly runningByScheduleId = new Map<string, Set<AbortController>>();
 
   /** Executions in flight per job id, for the per-job concurrency ceiling. */
   private readonly runningByJob = new Map<string, number>();
@@ -450,6 +466,7 @@ export class Scheduler {
     const record = this.schedules.get(scheduleId);
     if (!record) return;
 
+    const previous = record.schedule.state;
     record.schedule = { ...record.schedule, state };
 
     if (state === "cancelled" || state === "completed") {
@@ -458,6 +475,11 @@ export class Scheduler {
     } else if (state === "paused") {
       this.queue.remove(scheduleId);
     } else if (state === "active") {
+      // Only a paused schedule resumes. `resume()` on a running one used to
+      // recompute its next fire time from now, so a supervisor calling it
+      // idempotently postponed the schedule indefinitely.
+      if (previous !== "paused") return;
+
       // Resuming: recompute from now so a schedule paused across its fire time
       // does not immediately fire for every occurrence it missed.
       const now = this.clock.now();
@@ -518,11 +540,17 @@ export class Scheduler {
     }
   }
 
-  /** Aborts every in-flight execution of one schedule. */
+  /**
+   * Aborts every in-flight execution of one schedule.
+   *
+   * Resolved through {@link runningByScheduleId} rather than the schedule
+   * map: a one-shot is retired as soon as it is dispatched, so its record is
+   * already gone while its execution is still running.
+   */
   private abortSchedule(scheduleId: string): void {
-    const record = this.schedules.get(scheduleId);
-    if (!record) return;
-    for (const controller of record.running) {
+    const controllers = this.runningByScheduleId.get(scheduleId);
+    if (!controllers) return;
+    for (const controller of [...controllers]) {
       controller.abort(new Error("Schedule cancelled"));
     }
   }
@@ -559,7 +587,11 @@ export class Scheduler {
       }
 
       this.dispatch(record);
-      this.reschedule(record);
+
+      // `dispatch` retires the schedule when its job is no longer
+      // registered; rescheduling a retired record would put a dead entry
+      // back on the queue.
+      if (this.schedules.has(record.schedule.id)) this.reschedule(record);
     }
 
     this.rearm();
@@ -618,7 +650,20 @@ export class Scheduler {
   /** Starts one execution of a schedule and tracks it. */
   private dispatch(record: ScheduleRecord): void {
     const job = this.jobs.get(record.schedule.jobId);
-    if (!job) return;
+    if (!job) {
+      // The job was unregistered under a live schedule. Returning silently
+      // left the schedule re-arming its timer forever, dispatching nothing
+      // and reporting nothing, with `handle.state` still "active".
+      const error = new SchedulerJobNotFoundError(record.schedule.jobId);
+      this.retire(record, "cancelled", { dropPending: true });
+      this.reportError({
+        scheduleId: record.schedule.id,
+        jobId: record.schedule.jobId,
+        executionId: "",
+        error,
+      });
+      return;
+    }
 
     // A schedule cancelled or paused while a run was held back must not fire.
     if (
@@ -664,6 +709,13 @@ export class Scheduler {
     const controller = new AbortController();
     record.running.add(controller);
     this.runningControllers.add(controller);
+
+    let byScheduleId = this.runningByScheduleId.get(record.schedule.id);
+    if (!byScheduleId) {
+      byScheduleId = new Set();
+      this.runningByScheduleId.set(record.schedule.id, byScheduleId);
+    }
+    byScheduleId.add(controller);
     this.runningByJob.set(job.id, (this.runningByJob.get(job.id) ?? 0) + 1);
 
     const scheduleId = record.schedule.id;
@@ -707,6 +759,11 @@ export class Scheduler {
       .finally(() => {
         record.running.delete(controller);
         this.runningControllers.delete(controller);
+        const live = this.runningByScheduleId.get(scheduleId);
+        if (live) {
+          live.delete(controller);
+          if (live.size === 0) this.runningByScheduleId.delete(scheduleId);
+        }
         this.inFlight.delete(execution);
 
         const remaining = (this.runningByJob.get(job.id) ?? 1) - 1;

@@ -31,7 +31,14 @@ export interface AdapterOperationOptions {
   /** Timeout in milliseconds. */
   readonly timeout?: number;
 
-  /** Retry configuration. */
+  /**
+   * Retry configuration.
+   *
+   * `attempts` is the total number of tries, not the number of extra ones:
+   * `1` (or anything below it) runs the operation once. `delay` is the pause
+   * in milliseconds between tries, ended early by `signal`. A health check is
+   * retried only while it reports `"unhealthy"`; `timeout` bounds each try.
+   */
   readonly retry?: {
     readonly attempts: number;
     readonly delay?: number;

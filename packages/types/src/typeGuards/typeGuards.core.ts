@@ -194,13 +194,20 @@ export function isIsoDateTimeString(value: unknown): value is string {
 
 /**
  * Check if a value is an array of a specific element type.
+ *
+ * Every index in `0..length-1` is read, so a hole is tested as `undefined`
+ * rather than skipped. `Array.prototype.every` skips holes, which made
+ * `new Array(3)` satisfy every guard and narrow three holes to `T[]`.
  */
 export function isArrayOfType<T>(
   value: unknown,
   guard: (item: unknown) => item is T,
 ): value is T[] {
   if (!Array.isArray(value)) return false;
-  return value.every(guard);
+  for (let index = 0; index < value.length; index++) {
+    if (!guard(value[index])) return false;
+  }
+  return true;
 }
 
 /**

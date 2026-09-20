@@ -69,6 +69,17 @@ export interface RouteDispatchOptions {
 
   readonly onComplete?: RouteDispatchCompleteHandler;
 
+  /**
+   * Keeps the response the middleware chain produced.
+   *
+   * By default a response returned by a route handler is merged into the
+   * response passed to `dispatch()`, overwriting its status, headers, cookies
+   * and body. With this set, the handler's response is left alone and the
+   * dispatch response is returned exactly as the middleware chain built it.
+   *
+   * The option was previously declared and never read, so it silently did
+   * nothing.
+   */
   readonly preserveResponse?: boolean;
 }
 
@@ -258,7 +269,11 @@ export class RouteDispatcher {
       toRouteMiddleware(layer, context.route, state),
     );
 
-    const handler = toDispatchHandler(context.route.handler, context);
+    const handler = toDispatchHandler(
+      context.route.handler,
+      context,
+      this.options.preserveResponse === true,
+    );
 
     let index = -1;
 
@@ -463,6 +478,7 @@ function normalizeHandler(handler: RouteDispatchHandler): RouteDispatchHandler {
 function toDispatchHandler(
   handler: RouterHandler,
   context: RouteDispatchContext,
+  preserveResponse = false,
 ): RouteDispatchHandler {
   return async (request, response) => {
     const result = await handler(
@@ -474,7 +490,11 @@ function toDispatchHandler(
       }),
     );
 
-    if (result instanceof HttpResponseContext && result !== response) {
+    if (
+      !preserveResponse &&
+      result instanceof HttpResponseContext &&
+      result !== response
+    ) {
       /*
        * Everything the handler put on its response must survive the merge.
        * Copying only status, headers and body dropped every cookie the

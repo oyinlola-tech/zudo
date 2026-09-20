@@ -104,8 +104,12 @@ export function measurePayloadBytes(payload: unknown): number | undefined {
 /**
  * Validates the shape and size of an incoming request.
  *
- * @throws {RPCInvalidRequestError} when the frame is malformed or the
- * payload exceeds the configured limit.
+ * Every caller-controlled part of the frame is bounded: the id by
+ * length, the procedure name by length and pattern, and `payload` plus
+ * `metadata` by their combined encoded size.
+ *
+ * @throws {RPCInvalidRequestError} when the frame is malformed, the id is
+ * over-long, or payload and metadata together exceed the configured limit.
  */
 export function assertValidRequest(
   request: unknown,
@@ -119,6 +123,17 @@ export function assertValidRequest(
 
   if (typeof candidate.id !== "string" || candidate.id.length === 0) {
     throw new RPCInvalidRequestError("Request id must be a non-empty string.");
+  }
+
+  // Checked before anything else touches the frame: the id is reflected
+  // into every response the server builds, so an oversized one must be
+  // refused before a response exists to carry it.
+  const maxIdLength = limits.maxRequestIdLength ?? MAX_RPC_REQUEST_ID_LENGTH;
+
+  if (maxIdLength > 0 && candidate.id.length > maxIdLength) {
+    throw new RPCInvalidRequestError(
+      `Request id exceeds ${maxIdLength} characters.`,
+    );
   }
 
   if (limits.enforceProcedureNamePattern ?? true) {
@@ -146,14 +161,17 @@ export function assertValidRequest(
   const maxBytes = limits.maxPayloadBytes ?? MAX_RPC_PAYLOAD_SIZE;
 
   if (maxBytes > 0) {
-    const size = measurePayloadBytes(candidate.payload);
+    const payloadSize = measurePayloadBytes(candidate.payload);
+    const metadataSize = measurePayloadBytes(candidate.metadata);
 
-    if (size === undefined) {
+    if (payloadSize === undefined || metadataSize === undefined) {
       throw new RPCInvalidRequestError(
         "Request payload could not be encoded.",
         candidate.procedure,
       );
     }
+
+    const size = payloadSize + metadataSize;
 
     if (size > maxBytes) {
       throw new RPCInvalidRequestError(

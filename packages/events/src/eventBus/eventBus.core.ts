@@ -421,7 +421,7 @@ export class EventBus {
             // Ignore failures of the error hook itself.
           }
         } else {
-          warnObserverError(error, "An event bus observer");
+          warnObserverError(error, "An event bus observer", this.listeners);
         }
       }
     }

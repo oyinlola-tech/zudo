@@ -32,7 +32,10 @@ import {
   RPCValidationError,
 } from "../errors/rpc.errors.js";
 
-import { INTERNAL_ERROR_MESSAGE } from "../constants/rpcConstants.core.js";
+import {
+  INTERNAL_ERROR_MESSAGE,
+  MAX_RPC_REQUEST_ID_LENGTH,
+} from "../constants/rpcConstants.core.js";
 
 import { assertValidRequest } from "../validation/rpcValidation.core.js";
 import type { RPCRequestLimits } from "../validation/rpcValidation.core.js";
@@ -143,9 +146,16 @@ export class RPCServer {
     request: RPCRequest,
     trusted: RPCContextOptions = {},
   ): Promise<RPCResponse> {
+    // An id the validator would refuse is never reflected: the error
+    // response below echoes this value, so accepting an over-long id here
+    // would amplify it straight back to the peer that sent it.
+    const rawId = (request as { id?: unknown } | undefined)?.id;
+    const maxIdLength =
+      this.options.limits?.maxRequestIdLength ?? MAX_RPC_REQUEST_ID_LENGTH;
     const requestId =
-      typeof (request as { id?: unknown } | undefined)?.id === "string"
-        ? request.id
+      typeof rawId === "string" &&
+      (maxIdLength <= 0 || rawId.length <= maxIdLength)
+        ? rawId
         : "";
 
     try {

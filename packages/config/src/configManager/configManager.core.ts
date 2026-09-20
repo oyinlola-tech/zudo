@@ -98,15 +98,16 @@ export class ConfigManager {
 
     // initialValues used to be wired ONLY into a store the manager
     // created itself: passing `store` or `loader` silently discarded
-    // them. Both paths are seeded here instead, at the same priority
-    // runtime set() uses — seeded at priority 0 they were silently
-    // overwritten by any source that did not declare a priority,
-    // because applySource overwrites on EQUAL priority.
+    // them. Both paths are seeded here instead, at the baseline
+    // priority 0. A source that declares no priority now ranks below
+    // that (DEFAULT_CONFIG_SOURCE_PRIORITY), so it can no longer wipe
+    // the seeds; a source that declares a priority of 0 or above
+    // still overrides them.
     if (options.initialValues) {
       for (const [key, value] of Object.entries(options.initialValues)) {
         this.store.set(key, value, {
           source: "initialValues",
-          priority: Number.MAX_SAFE_INTEGER,
+          priority: 0,
         });
       }
     }

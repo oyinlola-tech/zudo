@@ -4,6 +4,8 @@
  * @module validationParser/validationParser.collection
  */
 
+import { SCHEMA_FORBIDDEN_KEYS } from "@zudojs/constants";
+
 import type {
   ParseOptions,
   ValidationSchema,
@@ -17,9 +19,6 @@ import type {
   ValidationResult,
 } from "../validationResult/validationResult.type.js";
 import { failure, success } from "../validationResult/validationResult.type.js";
-
-/** Property names that would mutate a prototype instead of adding a key. */
-const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 /** Parses multiple values using the same schema. Succeeds only when every value is valid. */
 export function parseMany<T>(
@@ -80,7 +79,7 @@ export function parseRecord<T>(
   const issues: ValidationIssue[] = [];
 
   for (const [key, value] of Object.entries(values)) {
-    if (FORBIDDEN_KEYS.has(key)) {
+    if (SCHEMA_FORBIDDEN_KEYS.has(key)) {
       issues.push({
         path: [key],
         code: "forbidden_key",

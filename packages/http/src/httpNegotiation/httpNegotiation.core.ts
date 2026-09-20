@@ -327,7 +327,50 @@ export function negotiateEncoding(
     return available[0];
   }
 
-  return negotiate(preferences, available, matchesEncoding);
+  const selected = negotiate(preferences, available, matchesEncoding);
+
+  if (selected !== undefined) {
+    return selected;
+  }
+
+  /*
+   * RFC 9110 section 12.5.3: a representation with no content coding is
+   * acceptable unless the field explicitly excludes it with `identity;q=0`
+   * or a `*;q=0` that no identity entry overrides. Returning `undefined`
+   * here made `Accept-Encoding: zstd` look like "nothing is acceptable", so
+   * a caller answered 406 for a request it could have served uncompressed.
+   */
+  const identity = available.find((value) => isIdentityEncoding(value));
+
+  if (identity === undefined || isIdentityRejected(preferences)) {
+    return undefined;
+  }
+
+  return identity;
+}
+
+/**
+ * Reports whether an `Accept-Encoding` field rejects the identity coding.
+ *
+ * @param preferences - The parsed preferences.
+ * @returns `true` when identity must not be served.
+ */
+function isIdentityRejected(
+  preferences: readonly NegotiationPreference[],
+): boolean {
+  const explicit = preferences.find((preference) =>
+    isIdentityEncoding(preference.value),
+  );
+
+  if (explicit) {
+    return !isAcceptableQuality(explicit.quality);
+  }
+
+  const wildcard = preferences.find((preference) =>
+    isWildcardEncoding(preference.value),
+  );
+
+  return wildcard !== undefined && !isAcceptableQuality(wildcard.quality);
 }
 
 export function getEncodingQuality(
@@ -492,6 +535,19 @@ function isExcluded<T>(
   );
 }
 
+/**
+ * Returns the weight a preference list assigns to one value.
+ *
+ * The **most specific** match wins, and only then the highest weight, per
+ * RFC 9110 section 12.4.2. Ranking by weight first let `*;q=1` override an
+ * explicit `gzip;q=0`, so a coding the client had refused came back with
+ * full quality.
+ *
+ * @param preferences - The parsed preferences.
+ * @param value - The alternative to weigh.
+ * @param matcher - Matches a preference value against an alternative.
+ * @returns The quality in `[0, 1]`, or `0` when nothing matches.
+ */
 export function getPreferenceQuality<T>(
   preferences: readonly NegotiationPreference[],
   value: T,
@@ -500,19 +556,34 @@ export function getPreferenceQuality<T>(
   let best: NegotiationPreference | undefined;
 
   for (const preference of preferences) {
-    if (matcher(preference.value, value)) {
-      if (
-        !best ||
-        preference.quality > best.quality ||
-        (preference.quality === best.quality &&
-          preference.specificity > best.specificity)
-      ) {
-        best = preference;
-      }
+    if (!matcher(preference.value, value)) {
+      continue;
+    }
+
+    if (!best || isMoreRelevant(preference, best)) {
+      best = preference;
     }
   }
 
   return best?.quality ?? 0;
+}
+
+/**
+ * Orders two matching preferences: specificity, then weight, then position.
+ */
+function isMoreRelevant(
+  candidate: NegotiationPreference,
+  best: NegotiationPreference,
+): boolean {
+  if (candidate.specificity !== best.specificity) {
+    return candidate.specificity > best.specificity;
+  }
+
+  if (candidate.quality !== best.quality) {
+    return candidate.quality > best.quality;
+  }
+
+  return false;
 }
 
 /* -------------------------------------------------------------------------- */

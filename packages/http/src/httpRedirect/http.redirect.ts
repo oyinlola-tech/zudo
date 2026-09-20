@@ -345,11 +345,17 @@ export function resolveRedirectChain(
 /* Redirect Loop Detection                                                    */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Whether the same location appears twice in a redirect chain.
+ *
+ * Relative locations are accepted: they are resolved against a fixed base, so
+ * `["/a", "/a"]` reports a loop instead of throwing `Invalid URL`.
+ */
 export function hasRedirectLoop(locations: readonly (string | URL)[]): boolean {
   const seen = new Set<string>();
 
   for (const location of locations) {
-    const normalized = normalizeURL(location).href;
+    const normalized = redirectIdentity(location);
 
     if (seen.has(normalized)) {
       return true;
@@ -649,12 +655,59 @@ export function getLocationHeader(
 /* URL Normalization                                                          */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The origin a relative `Location` is resolved against.
+ *
+ * A relative reference is legal under RFC 9110 and is what this module's own
+ * `createRedirect` / `formatLocation` emit by default, so the predicates
+ * below must answer for one rather than throw `Invalid URL`. `.invalid` is
+ * reserved by RFC 6761, so this can never collide with a real origin.
+ */
+const RELATIVE_BASE = "http://redirect.invalid";
+
 function normalizeURL(value: string | URL): URL {
   if (value instanceof URL) {
     return new URL(value.href);
   }
 
-  return new URL(value);
+  try {
+    return new URL(value);
+  } catch {
+    /* Not absolute — resolve it as the relative reference it is. */
+  }
+
+  try {
+    return new URL(value, RELATIVE_BASE);
+  } catch {
+    return new URL(RELATIVE_BASE);
+  }
+}
+
+/**
+ * The identity a location is compared under when detecting a loop.
+ *
+ * An unparseable value keeps its literal form rather than collapsing onto the
+ * base origin, so two different malformed locations are never reported as a
+ * loop.
+ */
+function redirectIdentity(location: string | URL): string {
+  if (location instanceof URL) {
+    return location.href;
+  }
+
+  const trimmed = location.trim();
+
+  try {
+    return new URL(trimmed).href;
+  } catch {
+    /* Fall through to the relative resolution. */
+  }
+
+  try {
+    return new URL(trimmed, RELATIVE_BASE).href;
+  } catch {
+    return trimmed;
+  }
 }
 
 function getEffectivePort(url: URL): string {

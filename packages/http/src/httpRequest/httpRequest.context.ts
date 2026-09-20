@@ -8,6 +8,8 @@
  * from Node.js, Bun, Deno, or another HTTP runtime.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import { parseRequestTarget } from "./target/httpRequest.target.js";
 
 /* -------------------------------------------------------------------------- */
@@ -646,40 +648,20 @@ function validateHeaderValue(value: string): void {
   }
 }
 
+/**
+ * Builds the request-context store.
+ *
+ * `AsyncLocalStorage` used to be reached through `globalThis.require`, which
+ * does not exist in ESM under Node. The `typeof` guard turned that into a
+ * silent `undefined`, so `runWithRequestContext` merely called its callback
+ * and `getCurrentRequestContext` always returned `undefined`. It is imported
+ * statically now, as the rest of the package imports its Node built-ins.
+ */
 function createAsyncContextStorage():
   | {
       getStore(): HttpRequestContext | undefined;
       run<T>(context: HttpRequestContext, callback: () => T): T;
     }
   | undefined {
-  /*
-   * AsyncLocalStorage is intentionally loaded lazily so the HTTP package
-   * remains usable in browser and non-Node runtimes.
-   */
-  try {
-    const runtimeRequire = (
-      globalThis as {
-        require?: (moduleName: string) => unknown;
-      }
-    ).require;
-
-    if (typeof runtimeRequire !== "function") {
-      return undefined;
-    }
-
-    const asyncHooks = runtimeRequire("node:async_hooks") as {
-      AsyncLocalStorage?: new () => {
-        getStore(): HttpRequestContext | undefined;
-        run<T>(context: HttpRequestContext, callback: () => T): T;
-      };
-    };
-
-    if (!asyncHooks.AsyncLocalStorage) {
-      return undefined;
-    }
-
-    return new asyncHooks.AsyncLocalStorage();
-  } catch {
-    return undefined;
-  }
+  return new AsyncLocalStorage<HttpRequestContext>();
 }

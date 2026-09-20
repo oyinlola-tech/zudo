@@ -119,6 +119,12 @@ function decodeOnce(value: string): { decoded: string; malformed: boolean } {
  * Operates on the fully decoded form, and treats a backslash as a separator
  * because Windows and some proxies do.
  *
+ * RFC 3986 lets a path segment carry parameters after a `;`, and Tomcat,
+ * Jetty and several reverse-proxy pairings strip them before resolving the
+ * path — so `/a/..;/b` names the same resource as `/a/../b`. Each segment is
+ * therefore also tested with its parameters removed. The raw segment is still
+ * tested first, so nothing that was a traversal stops being one.
+ *
  * @param path - The path to inspect.
  * @returns True when a `..` segment is present.
  */
@@ -126,10 +132,19 @@ export function containsTraversal(path: string): boolean {
   const { decoded, truncated } = fullyDecodeUri(path);
   if (truncated) return true;
 
+  return decoded.split(/[/\\]/).some((segment) => {
+    if (isTraversalSegment(segment)) return true;
+    const parameterStart = segment.indexOf(";");
+    return (
+      parameterStart !== -1 &&
+      isTraversalSegment(segment.slice(0, parameterStart))
+    );
+  });
+}
 
-  return decoded
-    .split(/[/\\]/)
-    .some((segment) => segment === ".." || segment === "...");
+/** True for the segments a path resolver walks upward on. */
+function isTraversalSegment(segment: string): boolean {
+  return segment === ".." || segment === "...";
 }
 
 /**

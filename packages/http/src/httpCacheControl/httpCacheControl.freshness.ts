@@ -16,18 +16,25 @@ import { parseCacheControl } from "./core/httpCacheControl.parse.js";
  * the origin marked must-revalidate-before-reuse must never be reported
  * fresh.
  *
+ * The response's current age follows RFC 9111 section 4.2.3: the `Age`
+ * header plus the time elapsed since the response's `Date`. Reading `Age`
+ * alone — as this used to — left every response without that header aged
+ * `0` forever, so `isFresh()` answered `true` for a response of any age.
+ *
  * @param responseHeaders - The cached response's headers.
  * @param responseDate - The response's `Date`, if already parsed.
+ * @param now - The current time, defaulting to `Date.now()`.
  * @returns The freshness calculation.
  */
 export function calculateFreshness(
   responseHeaders: Readonly<Record<string, string>>,
   responseDate?: Date,
+  now: Date = new Date(),
 ): CacheFreshness {
   const cacheControl = responseHeaders["cache-control"];
   const directives = parseCacheControl(cacheControl);
 
-  const date = responseDate ?? new Date(responseHeaders["date"] ?? Date.now());
+  const date = responseDate ?? parseDateHeader(responseHeaders["date"], now);
 
   /*
    * RFC 9111 section 5.1: Age is a non-negative delta-seconds. A negative or
@@ -36,7 +43,14 @@ export function calculateFreshness(
    */
   const rawAge = (responseHeaders["age"] ?? "").trim();
 
-  const age = /^\d+$/.test(rawAge) ? Number(rawAge) : 0;
+  const ageHeader = /^\d+$/.test(rawAge) ? Number(rawAge) : 0;
+
+  const residentSeconds = Math.max(
+    0,
+    Math.floor((now.getTime() - date.getTime()) / 1_000),
+  );
+
+  const age = ageHeader + residentSeconds;
 
   const expiresHeader = responseHeaders["expires"];
 
@@ -44,6 +58,11 @@ export function calculateFreshness(
 
   const effectiveMaxAge = resolveMaxAge(directives, expires, date);
 
+  /*
+   * With an `Expires`-derived lifetime this reduces to `expires - now`,
+   * because the lifetime is measured from `Date` and the age is measured to
+   * `now`.
+   */
   const remaining = Math.max(0, effectiveMaxAge - age);
 
   const stale =
@@ -59,6 +78,23 @@ export function calculateFreshness(
     stale,
     remaining,
   };
+}
+
+/**
+ * Parses a `Date` header, falling back to the current time.
+ *
+ * @param value - The raw `Date` value.
+ * @param now - The fallback instant.
+ * @returns The parsed date.
+ */
+function parseDateHeader(value: string | undefined, now: Date): Date {
+  if (value === undefined) {
+    return now;
+  }
+
+  const parsed = new Date(value);
+
+  return Number.isNaN(parsed.getTime()) ? now : parsed;
 }
 
 /**

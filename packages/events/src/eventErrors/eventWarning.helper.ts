@@ -38,19 +38,36 @@ export function emitEventsWarning(message: string, code: string): void {
   });
 }
 
+/** Scopes that have already reported a failing observer. */
+const warnedObserverScopes = new WeakSet<object>();
+
 /**
  * Default sink for an observer that threw: with no `onError` hook
  * configured the failure would otherwise be swallowed entirely.
  *
+ * Emitted at most once per scope, the way the handler-limit warning is
+ * emitted at most once per pattern, so a broken observer on a busy bus
+ * reports itself without flooding the warning channel.
+ *
  * @param error - The value the observer threw.
  * @param source - A short description of which observer channel failed.
+ * @param scope - The bus or registry the observer belongs to.
  */
-export function warnObserverError(error: unknown, source: string): void {
+export function warnObserverError(
+  error: unknown,
+  source: string,
+  scope: object,
+): void {
+  if (warnedObserverScopes.has(scope)) return;
+
+  warnedObserverScopes.add(scope);
+
   const detail = error instanceof Error ? error.message : String(error);
 
   emitEventsWarning(
     `${source} threw and was ignored: ${detail}. ` +
-      "Configure the `onError` option to handle observer failures.",
+      "Configure the `onError` option to handle observer failures. " +
+      "This warning is emitted once.",
     EVENT_OBSERVER_ERROR_WARNING_CODE,
   );
 }

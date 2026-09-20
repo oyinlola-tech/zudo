@@ -24,6 +24,15 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
 export const LOGGER_REDACTION_TOKEN = "[REDACTED]";
 
 /**
+ * Replacement token written in place of a property whose getter threw.
+ *
+ * A throwing accessor used to propagate out of `logger.info(...)` and
+ * abort the caller. The field is marked instead, the rest of the entry
+ * is logged, and the failure is reported as an infrastructure error.
+ */
+export const LOGGER_UNREADABLE_TOKEN = "[Unreadable]";
+
+/**
  * Legacy substring pattern for secret field names.
  *
  * @deprecated No longer the default: it redacted `passenger`/`compass`
@@ -130,19 +139,42 @@ export function createSecretMatcher(
     exact.has(key.toLowerCase()) || pattern.test(key);
 }
 
+/** Defines an own, enumerable property without touching a setter. */
+function defineLogProperty(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  // defineProperty, never assignment: a "__proto__" key coming from
+  // JSON.parse of untrusted input would otherwise reach the inherited
+  // setter and replace this object's prototype.
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
 /**
  * Recursively replaces secret-named fields with a redaction token.
  *
- * Nesting, arrays and getters are all covered: the walk descends into
- * every enumerable own property, and a getter is read here — once,
- * before the value can reach a transport. Cycles resolve to
- * "[Circular]" rather than recursing forever.
+ * Nesting, arrays, `Map`, `Set` and getters are all covered: the walk
+ * descends into every enumerable own property, and a getter is read
+ * here — once, before the value can reach a transport. A getter that
+ * throws yields {@link LOGGER_UNREADABLE_TOKEN} and is reported through
+ * `onReadError` instead of aborting the caller's log statement.
+ *
+ * `seen` tracks the ANCESTOR PATH only (each object is unmarked as the
+ * walk ascends), so a back-edge resolves to "[Circular]" while an
+ * object merely referenced twice in one payload is logged both times.
  */
 export function redactLogValue(
   value: unknown,
   isSecret: (key: string) => boolean,
   replacement: string = LOGGER_REDACTION_TOKEN,
   seen: WeakSet<object> = new WeakSet<object>(),
+  onReadError?: (key: string, error: unknown) => void,
 ): unknown {
   if (value === null || typeof value !== "object") {
     return value;
@@ -158,27 +190,55 @@ export function redactLogValue(
 
   seen.add(value);
 
-  if (Array.isArray(value)) {
-    return value.map((item) =>
-      redactLogValue(item, isSecret, replacement, seen),
-    );
+  try {
+    const descend = (item: unknown): unknown =>
+      redactLogValue(item, isSecret, replacement, seen, onReadError);
+
+    if (Array.isArray(value)) {
+      return value.map(descend);
+    }
+
+    if (value instanceof Set) {
+      return Array.from(value, descend);
+    }
+
+    const result: Record<string, unknown> = {};
+
+    if (value instanceof Map) {
+      for (const [key, item] of value.entries()) {
+        const name = typeof key === "string" ? key : String(key);
+        defineLogProperty(
+          result,
+          name,
+          isSecret(name) ? replacement : descend(item),
+        );
+      }
+
+      return result;
+    }
+
+    for (const key of Object.keys(value)) {
+      if (isSecret(key)) {
+        // Never even read a secret-named accessor.
+        defineLogProperty(result, key, replacement);
+        continue;
+      }
+
+      let item: unknown;
+
+      try {
+        item = (value as Record<string, unknown>)[key];
+      } catch (error) {
+        onReadError?.(key, error);
+        defineLogProperty(result, key, LOGGER_UNREADABLE_TOKEN);
+        continue;
+      }
+
+      defineLogProperty(result, key, descend(item));
+    }
+
+    return result;
+  } finally {
+    seen.delete(value);
   }
-
-  const result: Record<string, unknown> = {};
-
-  for (const [key, item] of Object.entries(value)) {
-    // defineProperty, never assignment: a "__proto__" key coming from
-    // JSON.parse of untrusted input would otherwise reach the inherited
-    // setter and replace this object's prototype.
-    Object.defineProperty(result, key, {
-      value: isSecret(key)
-        ? replacement
-        : redactLogValue(item, isSecret, replacement, seen),
-      enumerable: true,
-      writable: true,
-      configurable: true,
-    });
-  }
-
-  return result;
 }

@@ -9,20 +9,29 @@ import type { HttpMiddleware } from "../../httpMiddleware.type.js";
 
 import { isValidHeaderFieldValue } from "../../../httpHeaders/security/index.js";
 
+import { createSecurityHeaders } from "../../../httpSecurityHeaders/httpSecurityHeader.factory.js";
+
+import { createDefaultSecurityHeaderOptions } from "../../../httpSecurityHeaders/httpSecurityHeader.recommended.js";
+
 import { withResponseHeaders } from "../helpers/index.js";
 
 /**
- * Headers applied when the caller does not override them.
+ * The headers applied when the caller does not override them.
  *
- * `createSecurityMiddleware()` previously defaulted every option to
- * `undefined` and therefore set no headers at all — its presence in a
- * codebase read as evidence that the control existed while shipping nothing.
+ * This is the package's declared safe baseline — the very set
+ * `createDefaultSecurityHeaderOptions` was written for and, until now, was
+ * never called for. The middleware used to re-derive its own three-entry
+ * list, so `pipeline.use(createSecurityMiddleware())` emitted no
+ * `Content-Security-Policy`, no `Strict-Transport-Security`, no
+ * `Permissions-Policy` and none of the cross-origin isolation headers while
+ * reading as evidence that the control was in force.
  */
-const DEFAULT_SECURITY_HEADERS = Object.freeze({
-  "x-content-type-options": "nosniff",
-  "x-frame-options": "DENY",
-  "referrer-policy": "strict-origin-when-cross-origin",
-});
+function defaultSecurityHeaders(): Record<string, string> {
+  return createSecurityHeaders(createDefaultSecurityHeaderOptions()) as Record<
+    string,
+    string
+  >;
+}
 
 export interface SecurityMiddlewareOptions {
   readonly strictTransportSecurity?: string;
@@ -44,6 +53,17 @@ export interface SecurityMiddlewareOptions {
   readonly useDefaults?: boolean;
 }
 
+/**
+ * Creates the response-hardening middleware.
+ *
+ * Called with no options it emits the package's default security header set
+ * ({@link createDefaultSecurityHeaderOptions}); the options below layer over
+ * that set, and `useDefaults: false` drops it entirely.
+ *
+ * @param options - Explicit header values, layered over the baseline.
+ * @returns A middleware that adds the headers to the downstream response.
+ * @throws {TypeError} If a configured value contains a control character.
+ */
 export function createSecurityMiddleware(
   options: SecurityMiddlewareOptions = {},
 ): HttpMiddleware {
@@ -56,9 +76,8 @@ export function createSecurityMiddleware(
     "referrer-policy": options.referrerPolicy,
   };
 
-  const resolved: Record<string, string> = {
-    ...(options.useDefaults === false ? {} : DEFAULT_SECURITY_HEADERS),
-  };
+  const resolved: Record<string, string> =
+    options.useDefaults === false ? {} : defaultSecurityHeaders();
 
   for (const [name, value] of Object.entries(configured)) {
     if (value === undefined) {

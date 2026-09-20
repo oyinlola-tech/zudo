@@ -136,7 +136,7 @@ The first type argument is the event name, the second is the payload type. Pass 
 
 > **Watch out**
 >
-> Only the event object itself is frozen by `createEvent()`. The payload is frozen later, by the bus, just before handlers run. If you keep a reference to the payload object and mutate it elsewhere, do that before publishing or clone it first.
+> `createEvent()` freezes the event object itself. The payload is frozen later, by the bus, just before handlers run — but handlers receive a frozen *copy* (`createFrozenEventSnapshot`), so the objects you published are never frozen and you do not need to clone a payload before publishing it. Inside the copy, Map, Set and Date values (including `event.timestamp`) become read-only variants that throw on mutation; class instances are passed by reference.
 
 ## HANDLERS
 
@@ -546,7 +546,7 @@ Every name `@zudojs/events` exports from its package root at v1.1.0 — **207** 
 
 Classes (28)
 
-`DuplicateEventDefinitionError` `DuplicateEventHandlerError` `EventBus` `EventBusDisposedError` `EventBusStoppedError` `EventDefinitionNotFoundError` `EventDeserializationError` `EventDispatchAbortedError` `EventEmitter` `EventEmitterDisposedError` `EventError` `EventHandlerError` `EventHandlerNotFoundError` `EventListenerLimitExceededError` `EventMiddlewareError` `EventPublishError` `EventRegistry` `EventRegistryDisposedError` `EventSerializationError` `EventSubscriptionClosedError` `EventSubscriptionGroup` `EventSubscriptionHandle` `EventTimeoutError` `EventTypeNotFoundError` `FrozenEventDate` `FrozenEventMap` `FrozenEventSet` `InvalidEventError`
+`DuplicateEventDefinitionError` `DuplicateEventHandlerError` `EventBus` `EventBusDisposedError` `EventBusStoppedError` `EventDefinitionNotFoundError` `EventDeserializationError` `EventDispatchAbortedError` `EventEmitter` `EventEmitterDisposedError` `EventError` `EventHandlerError` `EventHandlerNotFoundError` `EventMiddlewareError` `EventPublishError` `EventRegistry` `EventRegistryDisposedError` `EventSerializationError` `EventSubscriptionClosedError` `EventSubscriptionGroup` `EventSubscriptionHandle` `EventTimeoutError` `EventTypeNotFoundError` `FrozenEventDate` `FrozenEventMap` `FrozenEventSet` `InvalidEventError`
 
 Functions (108)
 

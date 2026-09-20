@@ -1,7 +1,29 @@
 import type { OpenAPIRoute } from "../openApiRegistry/openApiRegistry.type.js";
 import type { RouteInfo } from "./routeMetadata.type.js";
-import { convertRouteToOpenAPI } from "./routeConverter.core.js";
+import { convertRouteToOpenAPI, toOpenAPIPath } from "./routeConverter.core.js";
 import { OpenAPIRouteError } from "../openApiErrors/openApiError.types.js";
+
+/**
+ * Identity of a route inside the generated document.
+ *
+ * Keyed on the OpenAPI path template rather than the source path, because
+ * that is what the document is keyed on: `/users/:id` and `/users/{id}` are
+ * one path item. Keying on the raw spelling let both register, and the
+ * second then replaced the first during generation — one operation vanished
+ * from the published spec with `validate()` reporting nothing.
+ *
+ * A path `toOpenAPIPath` cannot express keeps its raw spelling here so the
+ * conversion error still surfaces from `scan()`, where it always has.
+ */
+function routeKey(method: string, path: string): string {
+  let template: string;
+  try {
+    template = toOpenAPIPath(path);
+  } catch {
+    template = path;
+  }
+  return `${method.toLowerCase()}:${template}`;
+}
 
 /**
  * Collects routes and converts them into OpenAPI operations.
@@ -16,11 +38,21 @@ export class OpenAPIRouteScannerImpl {
 
   /** Registers a route. */
   public addRoute(route: RouteInfo): void {
-    const key = `${route.method.toLowerCase()}:${route.path}`;
-    if (this.routes.has(key)) {
+    const key = routeKey(route.method, route.path);
+    const existing = this.routes.get(key);
+    if (existing !== undefined) {
       throw new OpenAPIRouteError(
-        `Route ${route.method.toUpperCase()} ${route.path} is already registered.`,
-        { metadata: { method: route.method, path: route.path } },
+        `Route ${route.method.toUpperCase()} ${route.path} is already registered` +
+          (existing.path === route.path
+            ? "."
+            : ` as ${existing.method.toUpperCase()} ${existing.path}; both describe the same OpenAPI path.`),
+        {
+          metadata: {
+            method: route.method,
+            path: route.path,
+            existingPath: existing.path,
+          },
+        },
       );
     }
     this.routes.set(key, route);
@@ -28,17 +60,17 @@ export class OpenAPIRouteScannerImpl {
 
   /** Registers a route, replacing any existing one for the same method+path. */
   public setRoute(route: RouteInfo): void {
-    this.routes.set(`${route.method.toLowerCase()}:${route.path}`, route);
+    this.routes.set(routeKey(route.method, route.path), route);
   }
 
   /** True when a route is registered for this method and path. */
   public hasRoute(method: string, path: string): boolean {
-    return this.routes.has(`${method.toLowerCase()}:${path}`);
+    return this.routes.has(routeKey(method, path));
   }
 
   /** Removes a route. Returns whether one was removed. */
   public removeRoute(method: string, path: string): boolean {
-    return this.routes.delete(`${method.toLowerCase()}:${path}`);
+    return this.routes.delete(routeKey(method, path));
   }
 
   /** Number of registered routes. */

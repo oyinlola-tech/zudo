@@ -288,10 +288,11 @@ export function adaptNodeContext<State extends HTTPState = HTTPState>(
   options: {
     readonly state?: State;
     readonly signal?: AbortSignal;
+    readonly trustProxy?: TrustProxy;
   } = {},
 ): HTTPContext<State> {
   return createHTTPContext<State>({
-    request: adaptNodeRequest(request),
+    request: adaptNodeRequest(request, { trustProxy: options.trustProxy }),
     response: adaptNodeResponse(response),
     state: options.state ?? ({} as State),
     signal: options.signal,

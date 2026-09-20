@@ -71,11 +71,13 @@ describe("MSG-E-03", () => {
 
       await bus.publishEvent({ type: "obs.test", payload: {} });
 
+      await bus.publishEvent({ type: "obs.test", payload: {} });
+
       expect(other.length).toBeGreaterThan(0);
       const messages = emitWarning.mock.calls.map((call) => String(call[0]));
       expect(
-        messages.some((message) => message.includes("broken audit sink")),
-      ).toBe(true);
+        messages.filter((message) => message.includes("broken audit sink")),
+      ).toHaveLength(1);
       const options = emitWarning.mock.calls.at(-1)?.[1] as {
         readonly code?: string;
         readonly type?: string;

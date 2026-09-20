@@ -95,6 +95,14 @@ export interface LifecycleManagerOptions {
    * closing the same resources.
    */
   readonly shutdownTimeout?: number;
+  /**
+   * Keeps initializing and starting after a module fails.
+   *
+   * Only modules INDEPENDENT of the failure continue: a module that
+   * declares a failed (or already skipped) module in `dependencies` is
+   * never initialized or readied, and is reported in `failed` with the
+   * blocking dependency named. Defaults to false.
+   */
   readonly continueOnFailure?: boolean;
   /**
    * Receives one event per module per lifecycle phase.

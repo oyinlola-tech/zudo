@@ -108,6 +108,22 @@ describe("MSG-C-02", () => {
     expect(store.getEntry("app.name")?.source).toBe("initialValues");
   });
 
+  it("still lets a source that declares a priority override initialValues", async () => {
+    const manager = createConfigManager({
+      initialValues: { "app.name": "fromInitial" },
+      sources: [
+        createMemoryConfigSource(
+          { "app.name": "fromSource" },
+          { name: "mem", priority: 0 },
+        ),
+      ],
+    });
+
+    await manager.load();
+
+    expect(manager.get("app.name")).toBe("fromSource");
+  });
+
   it("still lets sources provide keys initialValues does not define", async () => {
     const manager = createConfigManager({
       initialValues: { "app.name": "fromInitial" },
