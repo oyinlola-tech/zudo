@@ -125,8 +125,8 @@ describe("API-05 — an object that strips documents the same however it was wri
   });
 
   it("passthrough leaves additional properties unconstrained", () => {
-    expect(convert(s.object({ x: s.string() }).passthrough())).not.toHaveProperty(
-      "additionalProperties",
-    );
+    expect(
+      convert(s.object({ x: s.string() }).passthrough()),
+    ).not.toHaveProperty("additionalProperties");
   });
 });

@@ -20,7 +20,10 @@ describe("TOOL-02 — an adapter named __proto__ cannot hide from healthAll()", 
     const health = vi.fn(() => createUnhealthyHealth("down"));
     const report = await collectAdapterHealth([
       ["__proto__", createMockAdapter({ name: "__proto__", health })],
-      ["db", createMockAdapter({ name: "db", health: () => createHealthyHealth() })],
+      [
+        "db",
+        createMockAdapter({ name: "db", health: () => createHealthyHealth() }),
+      ],
     ]);
 
     expect(health).toHaveBeenCalledTimes(1);
@@ -47,7 +50,12 @@ describe("TOOL-02 — an adapter named __proto__ cannot hide from healthAll()", 
   it("refuses to register a prototype-member name", () => {
     const registry = new AdapterRegistry();
 
-    for (const name of ["__proto__", "constructor", "PROTOTYPE", " __proto__ "]) {
+    for (const name of [
+      "__proto__",
+      "constructor",
+      "PROTOTYPE",
+      " __proto__ ",
+    ]) {
       expect(() => registry.register(createMockAdapter({ name }))).toThrow(
         AdapterConfigurationError,
       );

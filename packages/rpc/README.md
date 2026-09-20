@@ -74,7 +74,11 @@ const server = new RPCServer();
 server.register(sum);
 
 const response = await server.handle(
-  createRPCRequest({ id: "req-1", procedure: "math.sum", payload: { a: 1, b: 2 } }),
+  createRPCRequest({
+    id: "req-1",
+    procedure: "math.sum",
+    payload: { a: 1, b: 2 },
+  }),
 );
 // { id: "req-1", success: true, result: 3 }
 ```
@@ -98,7 +102,10 @@ import { RPCClient, type RPCTransport } from "@zudojs/rpc";
 const transport: RPCTransport = { send: (request) => server.handle(request) };
 const client = new RPCClient(transport, { timeout: 5_000 });
 
-const total = await client.call<{ a: number; b: number }, number>("math.sum", { a: 1, b: 2 });
+const total = await client.call<{ a: number; b: number }, number>("math.sum", {
+  a: 1,
+  b: 2,
+});
 // 3
 ```
 

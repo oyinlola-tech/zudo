@@ -12,10 +12,10 @@ handful of failure paths report the error a caller can actually act on.
 - `BaseError` no longer overflows the stack when a deeply nested object or
   array is attached as a `cause`. The redaction walk is now bounded at 32
   levels and truncates with `"[MaxDepth]"`, exactly as metadata cloning
-  already did, so `JSON.stringify(err)`, `serializeError(err, { includeCause:
-  true })` and `ErrorHandler.toLogObject(err)` stay safe on a parsed request
-  body. Attacker-controlled depth could previously raise a `RangeError` from
-  inside the logging path.
+  already did, so `JSON.stringify`, `serializeError` with `includeCause` and
+  `ErrorHandler.toLogObject` stay safe on a parsed request body.
+  Attacker-controlled depth could previously raise a `RangeError` from inside
+  the logging path.
 - `estimateSerializedSize(value)` now defaults to a finite budget
   (`SerializationLimits.MAX_SIZE`) instead of `Infinity`. Because every
   occurrence of a shared subtree is charged, an unbounded budget let a 1 KB
@@ -24,8 +24,8 @@ handful of failure paths report the error a caller can actually act on.
   trust; the returned value is otherwise capped at the budget.
 - `assertNoCircularReference` reports running out of depth as
   `SerializationDepthError` rather than dressing it up as
-  `CircularReferenceError`, and `JSONSerializer.serialize(…, { preserveTypes:
-  true })` passes the caller's `maxDepth` into it. A deep but perfectly
+  `CircularReferenceError`, and `JSONSerializer.serialize` with
+  `preserveTypes` passes the caller's `maxDepth` into it. A deep but perfectly
   acyclic payload used to be rejected as a cycle on that path while the fast
   path reported a depth error for the same input; the two now agree.
   `hasCircularReference` returns `false` for such a graph instead of `true`.

@@ -42,8 +42,9 @@ describe("TYPE-04 — isArrayOfType reads every index, including holes", () => {
 
   it("accepts an explicit undefined member when the guard allows it", () => {
     expect(
-      isArrayOfType([undefined, undefined], (item): item is undefined =>
-        item === undefined,
+      isArrayOfType(
+        [undefined, undefined],
+        (item): item is undefined => item === undefined,
       ),
     ).toBe(true);
   });

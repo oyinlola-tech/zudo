@@ -21,7 +21,9 @@ describe("API-01 — request frame size is bounded across id, metadata and paylo
 
   it("rejects an id longer than MAX_RPC_REQUEST_ID_LENGTH", () => {
     expect(() =>
-      assertValidRequest(frame({ id: "x".repeat(MAX_RPC_REQUEST_ID_LENGTH + 1) })),
+      assertValidRequest(
+        frame({ id: "x".repeat(MAX_RPC_REQUEST_ID_LENGTH + 1) }),
+      ),
     ).toThrow(RPCInvalidRequestError);
   });
 

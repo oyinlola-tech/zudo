@@ -10,6 +10,7 @@ import {
   InvalidPermissionError,
   PermissionNotFoundError,
 } from "../permissionErrors/index.js";
+import { createChangeNotifier } from "../utils/utils.notifier.js";
 import {
   formatPermission,
   isValidPermission,
@@ -57,6 +58,16 @@ export interface PermissionRegistry {
   expandImplied(permission: string): readonly string[];
   remove(permission: string): boolean;
   clear(): void;
+  /**
+   * Be told whenever the permission set changes (`define`, a `remove` that
+   * removed something, `clear`). Returns an unsubscribe function.
+   *
+   * An engine given this registry as its `expandImplied` source subscribes
+   * itself, which is what makes revoking an implication take effect
+   * immediately: the engine's cached decisions were written under the old
+   * implication and would otherwise keep granting for the whole TTL.
+   */
+  subscribe(listener: () => void): () => void;
 }
 
 /**
@@ -77,6 +88,7 @@ export function createPermissionRegistry(
 ): PermissionRegistry {
   const permissions = new Map<string, RegisteredPermission>();
   const allowOverride = options?.allowOverride ?? false;
+  const changes = createChangeNotifier();
 
   function keyOf(permission: string | Permission): string {
     if (typeof permission === "string") {
@@ -113,6 +125,7 @@ export function createPermissionRegistry(
           ? Object.freeze([...defineOptions.implies])
           : undefined,
       });
+      changes.notify();
     },
 
     get(permission: string): Permission | undefined {
@@ -165,11 +178,18 @@ export function createPermissionRegistry(
     },
 
     remove(permission: string): boolean {
-      return permissions.delete(permission);
+      const removed = permissions.delete(permission);
+      if (removed) changes.notify();
+      return removed;
     },
 
     clear(): void {
       permissions.clear();
+      changes.notify();
+    },
+
+    subscribe(listener: () => void): () => void {
+      return changes.subscribe(listener);
     },
   };
 }

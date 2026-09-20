@@ -47,18 +47,18 @@ describe("TYPE-03 — deep input is a depth error on both serialize paths", () =
       }
     };
 
-    expect(names(() => serializer.serialize(value, { preserveTypes: true }))).toBe(
-      names(() => serializer.serialize(value, { maxDepth: 128 })),
-    );
+    expect(
+      names(() => serializer.serialize(value, { preserveTypes: true })),
+    ).toBe(names(() => serializer.serialize(value, { maxDepth: 128 })));
   });
 
   it("still detects a genuine cycle under preserveTypes", () => {
     const cyclic: Record<string, unknown> = {};
     cyclic["self"] = cyclic;
 
-    expect(() =>
-      serializer.serialize(cyclic, { preserveTypes: true }),
-    ).toThrow(/[Cc]ircular/);
+    expect(() => serializer.serialize(cyclic, { preserveTypes: true })).toThrow(
+      /[Cc]ircular/,
+    );
   });
 });
 

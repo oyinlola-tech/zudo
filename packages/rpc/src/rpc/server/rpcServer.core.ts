@@ -214,7 +214,9 @@ export class RPCServer {
    * Returns `undefined` for anything unrecognised, which the caller
    * answers with a generic internal error.
    */
-  private mapError(error: unknown):
+  private mapError(
+    error: unknown,
+  ):
     | { code: string; message: string; details?: unknown; internal?: boolean }
     | undefined {
     // An RPCInternalError *is* the generic internal failure: it carries

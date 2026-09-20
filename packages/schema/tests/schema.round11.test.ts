@@ -37,10 +37,7 @@ describe("TYPE-07 — safeParse documents that a defect still escapes", () => {
       "utf8",
     );
 
-    const doc = source.slice(
-      0,
-      source.indexOf("public safeParse("),
-    );
+    const doc = source.slice(0, source.indexOf("public safeParse("));
     const jsdoc = doc.slice(doc.lastIndexOf("/**"));
 
     expect(jsdoc).not.toContain("Never throws");

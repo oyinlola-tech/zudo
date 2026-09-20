@@ -57,7 +57,9 @@ describe("TOOL-03 — valuesEqual compares structurally", () => {
   });
 
   it("compares nested arrays element-wise", () => {
-    expect(valuesEqual({ xs: [1, { y: 2 }] }, { xs: [1, { y: 2 }] })).toBe(true);
+    expect(valuesEqual({ xs: [1, { y: 2 }] }, { xs: [1, { y: 2 }] })).toBe(
+      true,
+    );
     expect(valuesEqual({ xs: [1, 2] }, { xs: [2, 1] })).toBe(false);
     expect(valuesEqual({ xs: [1] }, { xs: [1, 2] })).toBe(false);
   });

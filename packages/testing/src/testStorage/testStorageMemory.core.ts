@@ -54,8 +54,7 @@ export class InMemoryTestStorage {
    * read — a cache test writing `0` to mean "already stale" gets that.
    */
   set(key: string, value: unknown, ttlMs?: number): void {
-    const expiresAt =
-      ttlMs === undefined ? null : new Date(Date.now() + ttlMs);
+    const expiresAt = ttlMs === undefined ? null : new Date(Date.now() + ttlMs);
     this.store.set(key, { value, expiresAt });
   }
 

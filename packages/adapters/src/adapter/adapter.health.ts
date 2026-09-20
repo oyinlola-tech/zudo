@@ -45,7 +45,11 @@ async function checkOne(
   adapter: LifecycleAdapter,
   options: AdapterOperationOptions,
 ): Promise<AdapterHealth> {
-  return attemptCheck(adapter, options);
+  return withRetry(
+    () => attemptCheck(adapter, options),
+    (health) => health.status !== "unhealthy",
+    options,
+  );
 }
 
 /** Runs a single health-check attempt, bounded by `timeout` and `signal`. */
@@ -104,7 +108,7 @@ export async function collectAdapterHealth(
   // `Object.create(null)`, not `{}`: assigning `adapters["__proto__"]` on an
   // ordinary object runs the inherited prototype setter, so the entry would
   // vanish from the report and an unhealthy adapter would be invisible.
-  const adapters: Record<string, AdapterHealth> = {};
+  const adapters = Object.create(null) as Record<string, AdapterHealth>;
   await Promise.all(
     entries
       .filter(
