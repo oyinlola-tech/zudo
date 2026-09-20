@@ -4,6 +4,7 @@
  * @module registries/adapter
  */
 
+import { CLIValidationError } from "../../errors/index.js";
 import type { FrontendAdapter } from "../../adapters/frontend/frontendAdapter.type.js";
 import { ReactAdapter } from "../../adapters/frontend/react.adapter.js";
 import { NextAdapter } from "../../adapters/frontend/next.adapter.js";
@@ -39,8 +40,22 @@ export class FrontendAdapterRegistry {
 
   /**
    * Registers a new frontend adapter.
+   *
+   * A duplicate name used to overwrite the adapter already registered,
+   * silently, so the winner depended on registration order. Use
+   * {@link replace} to do that on purpose.
    */
   register(adapter: FrontendAdapter): void {
+    if (this.adapters.has(adapter.name)) {
+      throw new CLIValidationError(
+        `A frontend adapter named "${adapter.name}" is already registered. Use replace() to override it.`,
+      );
+    }
+    this.adapters.set(adapter.name, adapter);
+  }
+
+  /** Registers an adapter, replacing any adapter of the same name. */
+  replace(adapter: FrontendAdapter): void {
     this.adapters.set(adapter.name, adapter);
   }
 

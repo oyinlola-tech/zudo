@@ -4,6 +4,7 @@
  * Registry for project generators with capability-based lookup.
  */
 
+import { CLIValidationError } from "../../errors/index.js";
 import { BackendGenerator } from "../../generators/backend/backend.generator.js";
 import { FrontendGenerator } from "../../generators/frontend/frontendGenerator.core.js";
 import { FullstackComposer } from "../../generators/fullstack/fullstackComposer.core.js";
@@ -63,7 +64,23 @@ export class GeneratorRegistry {
     });
   }
 
+  /**
+   * Registers a generator.
+   *
+   * A duplicate name used to replace the previous entry silently, so which
+   * generator ran depended on registration order.
+   */
   register(entry: GeneratorRegistryEntry): void {
+    if (this.generators.has(entry.name)) {
+      throw new CLIValidationError(
+        `A generator named "${entry.name}" is already registered. Use replace() to override it.`,
+      );
+    }
+    this.generators.set(entry.name, entry);
+  }
+
+  /** Registers a generator, replacing any entry of the same name. */
+  replace(entry: GeneratorRegistryEntry): void {
     this.generators.set(entry.name, entry);
   }
 

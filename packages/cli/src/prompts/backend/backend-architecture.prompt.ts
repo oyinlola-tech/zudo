@@ -5,6 +5,11 @@
  */
 
 import * as p from "@clack/prompts";
+import { cancelled } from "../cancel.prompt.js";
+import {
+  ARCHITECTURE_CHOICES,
+  DEFAULT_ARCHITECTURE,
+} from "../../constants/index.js";
 import type { BackendArchitecture } from "../../types/projectConfiguration.type.js";
 
 export async function promptBackendArchitecture(
@@ -14,29 +19,9 @@ export async function promptBackendArchitecture(
     overrides ??
     (await p.select({
       message: "Select backend architecture",
-      options: [
-        {
-          value: "monolith",
-          label: "Monolith",
-          hint: "Single application",
-        },
-        {
-          value: "modular-monolith",
-          label: "Modular Monolith",
-          hint: "Modular single application",
-        },
-        {
-          value: "microservice",
-          label: "Microservices",
-          hint: "Independent services",
-        },
-      ],
+      options: ARCHITECTURE_CHOICES.map((choice) => ({ ...choice })),
+      initialValue: DEFAULT_ARCHITECTURE,
     }));
 
-  if (p.isCancel(value)) {
-    p.cancel("Operation cancelled.");
-    process.exit(0);
-  }
-
-  return value;
+  return cancelled(value);
 }

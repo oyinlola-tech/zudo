@@ -5,6 +5,7 @@
  */
 
 import * as p from "@clack/prompts";
+import { cancelled } from "../cancel.prompt.js";
 
 export async function promptProjectName(overrides?: string): Promise<string> {
   const value =
@@ -16,16 +17,13 @@ export async function promptProjectName(overrides?: string): Promise<string> {
         if (!value || value.trim().length === 0) {
           return "Project name is required.";
         }
-        if (!/^[a-zA-Z0-9_-]+$/.test(value)) {
-          return "Only alphanumeric, hyphens, and underscores allowed.";
+        // A leading "-" made a directory that `cd -dash` cannot enter and
+        // `rm -rf -dash` cannot remove, so the first character is alphanumeric.
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(value)) {
+          return "Must start with a letter or digit; only alphanumeric characters, hyphens, and underscores are allowed.";
         }
       },
     }));
 
-  if (p.isCancel(value)) {
-    p.cancel("Operation cancelled.");
-    process.exit(0);
-  }
-
-  return value;
+  return cancelled(value);
 }

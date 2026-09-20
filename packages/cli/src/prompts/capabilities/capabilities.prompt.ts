@@ -5,6 +5,7 @@
  */
 
 import * as p from "@clack/prompts";
+import { cancelled } from "../cancel.prompt.js";
 
 export interface CapabilityOption {
   readonly value: string;
@@ -49,10 +50,5 @@ export async function promptCapabilities(
     initialValues: Array.from(selected),
   });
 
-  if (p.isCancel(value)) {
-    p.cancel("Operation cancelled.");
-    process.exit(0);
-  }
-
-  return value as string[];
+  return cancelled(value) as string[];
 }

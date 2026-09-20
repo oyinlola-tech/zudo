@@ -18,9 +18,12 @@ import type {
 import {
   CLI_DEFAULTS,
   CLI_EXIT_CODES,
+  CLI_MESSAGES,
+  CLI_OPTION_PREFIXES,
 } from "../cliConstant/cliConstant.value.js";
 import { CLIExecutionError, normalizeCLIError } from "../cliError/index.js";
 import { CommandNotFoundError } from "../cliError/cliError.command.js";
+import { InvalidArgumentsError } from "../cliError/cliError.argument.js";
 import { CLICommandRegistry } from "../cliCommand/cliCommand.registry.js";
 import { executeCommand } from "../cliCommand/cliCommand.factory.js";
 import { CLIParser, resolveCommand } from "../cliParser/index.js";
@@ -28,11 +31,13 @@ import type { Logger } from "@zudojs/logger";
 import { createCLIWriter } from "./cliApplication.writer.js";
 import { createCLILogger } from "./cliApplication.logger.js";
 import {
+  isHelpFlag,
   isHelpRequest,
   isVersionRequest,
   printVersion,
   printHelp,
 } from "./cliApplication.builtins.js";
+import { printCommandHelp } from "./cliApplication.help.js";
 
 /* -------------------------------------------------------------------------- */
 /* Application                                                                */
@@ -101,13 +106,13 @@ export class ZudojsCLI implements CLIApplication {
 
     try {
       if (isHelpRequest(args)) {
-        printHelp(
-          this.writer,
-          this.name,
-          this.version,
-          this.description,
-          this.commands.list(),
-        );
+        // `zudojs help create` and `zudojs --help create` name a command.
+        const target = this.resolveHelpTarget(args);
+        if (target) {
+          printCommandHelp(this.writer, this.name, target);
+          return CLI_EXIT_CODES.SUCCESS;
+        }
+        this.printApplicationHelp();
         return CLI_EXIT_CODES.SUCCESS;
       }
 
@@ -120,19 +125,27 @@ export class ZudojsCLI implements CLIApplication {
 
       if (!command) {
         if (args.length === 0) {
-          printHelp(
-            this.writer,
-            this.name,
-            this.version,
-            this.description,
-            this.commands.list(),
-          );
+          this.printApplicationHelp();
           return CLI_EXIT_CODES.SUCCESS;
         }
-        throw new CommandNotFoundError(String(args[0]));
+        const first = String(args[0]);
+        // `findCommand` skips flag-shaped tokens, so a lone `-vh` would
+        // otherwise be reported as a command named "-vh".
+        if (first.startsWith(CLI_OPTION_PREFIXES.SHORT)) {
+          throw new InvalidArgumentsError(CLI_MESSAGES.MISSING_COMMAND);
+        }
+        throw new CommandNotFoundError(first);
       }
 
       const commandArgs = this.getCommandArguments(args, command);
+
+      // Checked before parsing: `--help` is not a declared option, so the
+      // parser would reject it as invalid and exit 2.
+      if (commandArgs.some(isHelpFlag)) {
+        printCommandHelp(this.writer, this.name, command);
+        return CLI_EXIT_CODES.SUCCESS;
+      }
+
       const commandContext = this.createContext(commandArgs, command);
 
       if (this.hooks.beforeRun) {
@@ -180,6 +193,34 @@ export class ZudojsCLI implements CLIApplication {
   }
 
   /* ---- Internal ---- */
+
+  private printApplicationHelp(): void {
+    printHelp(
+      this.writer,
+      this.name,
+      this.version,
+      this.description,
+      this.commands.list(),
+    );
+  }
+
+  /**
+   * Resolves the command named after a help request, if any.
+   *
+   * Throws when a name is given that is not registered, so `zudojs help
+   * bogus` says so instead of silently printing the global help.
+   */
+  private resolveHelpTarget(args: CLIArguments): CLICommand | undefined {
+    const target = args
+      .slice(1)
+      .find((arg) => !arg.startsWith(CLI_OPTION_PREFIXES.SHORT));
+
+    if (target === undefined) return undefined;
+
+    const command = resolveCommand(this.commands.list(), target);
+    if (!command) throw new CommandNotFoundError(target);
+    return command;
+  }
 
   private findCommand(args: CLIArguments): CLICommand | undefined {
     for (const arg of args) {

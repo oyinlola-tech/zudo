@@ -75,7 +75,7 @@ export function assertGeneratableName(name: string, kind = "name"): string {
   }
   if (/^[0-9]/.test(normalized)) {
     throw new CLIValidationError(
-      `Invalid ${kind}: "${name}". It must start with a letter, because the name becomes a TypeScript class name ("${normalized}" would produce "${normalized}Module", which is not a valid identifier). Try "two-factor-auth" instead of "2fa".`,
+      `Invalid ${kind}: "${name}". It must start with a letter: the name becomes a TypeScript class name, and "${normalized}" is not a valid identifier. Try "two-factor-auth" instead of "2fa".`,
     );
   }
   return normalized;

@@ -5,6 +5,7 @@
  */
 
 import * as p from "@clack/prompts";
+import { cancelled } from "../cancel.prompt.js";
 
 export async function promptConfirmation(
   message: string,
@@ -15,10 +16,5 @@ export async function promptConfirmation(
     initialValue,
   });
 
-  if (p.isCancel(value)) {
-    p.cancel("Operation cancelled.");
-    process.exit(0);
-  }
-
-  return value;
+  return cancelled(value);
 }

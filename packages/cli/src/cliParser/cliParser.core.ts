@@ -56,11 +56,15 @@ export class CLIParser {
     const argumentsDefinitions = command?.arguments ?? [];
 
     let index = 0;
+    // Where the `--` pass-through began, if it did: everything after it is
+    // deliberately opaque and is never measured against the declarations.
+    let escapedAt: number | undefined;
 
     while (index < tokens.length) {
       const token = tokens[index]!;
 
       if (token === "--") {
+        escapedAt = positional.length;
         positional.push(...tokens.slice(index + 1));
         break;
       }
@@ -116,7 +120,7 @@ export class CLIParser {
     const parsedArguments = this.parseArguments(
       positional,
       argumentsDefinitions,
-      command !== undefined,
+      command === undefined ? null : (escapedAt ?? positional.length),
     );
 
     // `stopAtFirstArgument` is checked here too: without it the fallback undid
@@ -147,7 +151,7 @@ export class CLIParser {
   private parseArguments(
     values: readonly string[],
     definitions: readonly CLIArgument[],
-    strict: boolean,
+    strictUpTo: number | null,
   ): Record<string, unknown> {
     const result: Record<string, unknown> = {};
     let valueIndex = 0;
@@ -185,7 +189,7 @@ export class CLIParser {
 
     // Commands that declare no arguments used to return before this check,
     // so `zudojs doctor my-proj` discarded `my-proj` without a word.
-    if (strict && valueIndex < values.length) {
+    if (strictUpTo !== null && valueIndex < strictUpTo) {
       throw new InvalidArgumentsError(
         `Unexpected argument "${values[valueIndex]}".`,
       );

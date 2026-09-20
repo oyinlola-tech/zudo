@@ -2,6 +2,8 @@
  * zudojs-cli — Prompts Index
  */
 
+export { cancelled } from "./cancel.prompt.js";
+
 export { promptProjectName } from "./project/project-name.prompt.js";
 export { promptProjectType } from "./project/project-type.prompt.js";
 export { promptConfirmation } from "./project/confirmation.prompt.js";

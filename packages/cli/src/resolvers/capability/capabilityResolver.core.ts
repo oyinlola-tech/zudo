@@ -11,8 +11,8 @@ export interface CapabilityDependency {
 
 export interface CapabilityResolutionResult {
   readonly capabilities: readonly string[];
+  /** Framework packages the selected capabilities build on. */
   readonly dependencies: readonly string[];
-  readonly conflicts: readonly string[];
 }
 
 export class CapabilityResolver {
@@ -50,7 +50,6 @@ export class CapabilityResolver {
   resolve(capabilities: readonly string[]): CapabilityResolutionResult {
     const resolved = new Set<string>();
     const dependencies = new Set<string>();
-    const conflicts: string[] = [];
 
     for (const capability of capabilities) {
       if (resolved.has(capability)) continue;
@@ -69,7 +68,6 @@ export class CapabilityResolver {
     return {
       capabilities: Array.from(resolved),
       dependencies: Array.from(dependencies),
-      conflicts,
     };
   }
 

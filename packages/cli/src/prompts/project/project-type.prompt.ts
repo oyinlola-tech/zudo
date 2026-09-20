@@ -5,6 +5,7 @@
  */
 
 import * as p from "@clack/prompts";
+import { cancelled } from "../cancel.prompt.js";
 import type { ProjectType } from "../../types/projectConfiguration.type.js";
 
 export async function promptProjectType(
@@ -33,10 +34,5 @@ export async function promptProjectType(
       ],
     }));
 
-  if (p.isCancel(value)) {
-    p.cancel("Operation cancelled.");
-    process.exit(0);
-  }
-
-  return value;
+  return cancelled(value);
 }

@@ -93,6 +93,16 @@ allows esbuild's build script, which pnpm 10+ would otherwise refuse to run.
 - **Fullstack + microservice:** the gateway and services are written at
   `apps/gateway` and `apps/services/<name>`, next to `apps/web`, and are part
   of the root workspace.
+- **Capabilities:** `--capabilities cqrs,events,messaging,queue,observability,openapi,database,security`
+  picks what the project is wired with. The interactive prompt starts from
+  the same list, so both ways of running `create` can produce the same
+  project. Without the flag, a non-interactive run enables `cqrs`,
+  `messaging`, `observability`, `openapi` and `database`.
+- **Failed installs fail the command.** If dependency installation fails,
+  `create` keeps the generated project, prints the command to retry with and
+  exits non-zero, so CI cannot go green with no `node_modules`.
+- **Ctrl-C** during `create` removes the half-written project and exits with
+  status 130.
 
 ### Generating code
 
@@ -102,12 +112,36 @@ subclass), exports it from the modules barrel and registers it in `app.ts`.
 change, and lists those files; pass `--force` to overwrite them. Barrels are
 only appended to. `--dry-run` lists the files without writing anything.
 
+It can be run from any directory inside the project: the project root is
+found by walking up, and everything is generated relative to that root.
+Outside a Zudojs project the command fails instead of writing files into the
+current directory.
+
+**Schematics:** `service`, `module`, `command`, `query`, `controller`,
+`repository`, `middleware`, `event`, `job`, `route`, `model`, `dto`,
+`validator`.
+
+**Options:**
+
+| Option            | Applies to                    | Description                                                        |
+| ----------------- | ----------------------------- | ------------------------------------------------------------------ |
+| `--module <name>` | every schematic but `module`  | Generates inside `<root>/modules/<name>` instead of the schematic's default directory |
+| `--service <name>`| microservice projects, CQRS   | Selects the app a schematic belongs to; also names the CQRS service for `command`/`query` |
+| `--dry-run`       | all                           | Lists the files without writing anything                           |
+| `--force`         | all                           | Overwrites files that already exist                                |
+
+Where a schematic lands depends on the architecture: a `monolith` puts
+services in `src/services` and modules in `src/modules`; a
+`modular-monolith` has modules only, so `generate service` there generates a
+module; in a `microservice` project a schematic goes to the gateway app, or
+to `apps/services/<name>` with `--service <name>`.
+
 ## Commands
 
 | Command    | Description                                                              |
 | ---------- | ------------------------------------------------------------------------ |
 | `create`   | Scaffold a new project (backend, frontend, or fullstack)                 |
-| `generate` | Generate files (service, module, command, query, controller, repository) |
+| `generate` | Generate files — see the schematics below                                |
 | `add`      | Add feature packages (database, queue, messaging, etc.); `--service` targets one microservice app |
 | `dev`      | Start development servers through the project's package manager (`pnpm run dev`, …) |
 | `build`    | Build the project with its detected package manager                      |

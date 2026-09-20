@@ -193,8 +193,16 @@ export async function runAddCommand(context: CLIContext): Promise<void> {
       );
     }
 
-    // The manifest records capabilities for the whole project.
-    await new ManifestManager(layout.root).addCapability(feature);
+    // The manifest records capabilities for the whole project. A project
+    // described by a legacy zudojs.config.ts or a package.json block has
+    // none; that is said out loud rather than passed over in silence.
+    if (manifestState.status === "ok") {
+      await manifest.addCapability(feature);
+    } else {
+      context.logger.warn(
+        `No .zudojs/manifest.json in ${layout.root}; "${feature}" was recorded in package.json only.`,
+      );
+    }
 
     if (context.values["skip-install"] !== true) {
       const [file, ...args] = getInstallCommand(layout.packageManager);

@@ -5,6 +5,11 @@
  */
 
 import * as p from "@clack/prompts";
+import { cancelled } from "../cancel.prompt.js";
+import {
+  DEFAULT_PACKAGE_MANAGER,
+  PACKAGE_MANAGER_CHOICES,
+} from "../../constants/index.js";
 import type { PackageManagerType } from "../../types/projectConfiguration.type.js";
 
 export async function promptPackageManager(
@@ -14,19 +19,9 @@ export async function promptPackageManager(
     overrides ??
     (await p.select({
       message: "Select package manager",
-      options: [
-        { value: "pnpm", label: "pnpm" },
-        { value: "npm", label: "npm" },
-        { value: "yarn", label: "Yarn" },
-        { value: "bun", label: "Bun" },
-      ],
-      initialValue: "pnpm",
+      options: PACKAGE_MANAGER_CHOICES.map((choice) => ({ ...choice })),
+      initialValue: DEFAULT_PACKAGE_MANAGER,
     }));
 
-  if (p.isCancel(value)) {
-    p.cancel("Operation cancelled.");
-    process.exit(0);
-  }
-
-  return value;
+  return cancelled(value);
 }

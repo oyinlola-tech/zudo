@@ -4,6 +4,7 @@
  * @module registries/adapter/packageManager
  */
 
+import { CLIValidationError } from "../../errors/index.js";
 import type { PackageManager } from "../../adapters/package-managers/packageManager.type.js";
 import { PnpmAdapter } from "../../adapters/package-managers/pnpm.adapter.js";
 import { NpmAdapter } from "../../adapters/package-managers/npm.adapter.js";
@@ -25,8 +26,21 @@ export class PackageManagerRegistry {
 
   /**
    * Registers a new package manager adapter.
+   *
+   * Registering the same name twice used to overwrite the first adapter
+   * without a word; {@link replace} is the explicit way to do that.
    */
   register(adapter: PackageManager): void {
+    if (this.adapters.has(adapter.name)) {
+      throw new CLIValidationError(
+        `A package manager adapter named "${adapter.name}" is already registered. Use replace() to override it.`,
+      );
+    }
+    this.adapters.set(adapter.name, adapter);
+  }
+
+  /** Registers an adapter, replacing any adapter of the same name. */
+  replace(adapter: PackageManager): void {
     this.adapters.set(adapter.name, adapter);
   }
 

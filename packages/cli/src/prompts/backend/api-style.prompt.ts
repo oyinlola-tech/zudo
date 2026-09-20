@@ -5,6 +5,7 @@
  */
 
 import * as p from "@clack/prompts";
+import { cancelled } from "../cancel.prompt.js";
 import type { ApiStyle } from "../../types/projectConfiguration.type.js";
 
 export async function promptApiStyle(overrides?: ApiStyle): Promise<ApiStyle> {
@@ -32,10 +33,5 @@ export async function promptApiStyle(overrides?: ApiStyle): Promise<ApiStyle> {
       initialValue: "rest",
     }));
 
-  if (p.isCancel(value)) {
-    p.cancel("Operation cancelled.");
-    process.exit(0);
-  }
-
-  return value;
+  return cancelled(value);
 }

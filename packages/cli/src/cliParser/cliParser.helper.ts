@@ -96,9 +96,9 @@ export function isNegativeNumber(token: string): boolean {
  * Returns whether the token following an option can be taken as its value.
  *
  * A flag-looking token is refused so that `--type --frontend react` reports
- * the missing value for `--type` instead of silently setting it to
- * `"--frontend"`. Negative numbers stay usable for numeric options, so both
- * `--port -1` and `--port=-1` keep working.
+ * the missing value for `--type` instead of setting it to `"--frontend"`.
+ * Negative numbers stay usable for numeric options: `--port -1` and
+ * `--port=-1` both keep working.
  */
 export function isOptionValueToken(
   definition: CLIOption,

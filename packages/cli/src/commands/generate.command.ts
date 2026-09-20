@@ -23,12 +23,18 @@ import { generateRoute } from "../generators/route/route.generator.js";
 import { generateModel } from "../generators/model/model.generator.js";
 import { generateDto } from "../generators/dto/dto.generator.js";
 import { generateValidator } from "../generators/validator/validator.generator.js";
-import { CLIGenerationError, CLIValidationError } from "../errors/index.js";
+import {
+  CLIGenerationError,
+  CLINotInProjectError,
+  CLIValidationError,
+} from "../errors/index.js";
 import {
   assertGeneratableName,
   assertSafePathSegment,
 } from "../utils/utils.name.js";
 import { resolveProjectLayout } from "../resolvers/layout/projectLayout.core.js";
+import { findProjectRoot } from "../resolvers/project.resolver.js";
+import { describeError } from "./commandError.helper.js";
 import { captureWrites, findWriteConflicts } from "../utils/utils.writeGuard.js";
 
 const VALID_SCHEMATICS = [
@@ -188,17 +194,27 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
     assertSafePathSegment(moduleName, "--module");
   }
 
-  const cwd = context.cwd;
-  const layout = resolveProjectLayout(cwd);
+  // `generate` used to resolve the layout from the current directory only:
+  // from any subdirectory of a project it found nothing, warned, fell back
+  // to "src" and wrote a second tree (proj/src/src/foo/…) while exiting 0.
+  // It now walks up like `build` does, and refuses outside a project like
+  // `dev`, `build` and `add` do instead of scattering files into the cwd.
+  const projectRoot = findProjectRoot(context.cwd);
+
+  if (projectRoot === null) {
+    throw new CLINotInProjectError();
+  }
+
+  const cwd = projectRoot;
+  const layout = resolveProjectLayout(projectRoot);
   const architecture = layout?.architecture ?? null;
 
   if (layout) {
     context.logger.info(`Detected architecture: ${layout.architecture}`);
-  } else {
-    context.logger.warn(
-      "No Zudojs project detected (no .zudojs/manifest.json, zudojs.config.ts " +
-        "or `zudojs` field in package.json). Run `zudojs create` first.",
-    );
+  }
+
+  if (projectRoot !== context.cwd) {
+    context.logger.info(`Project root: ${projectRoot}`);
   }
 
   /**
@@ -371,8 +387,11 @@ async function runSchematic(
         );
     }
   } catch (error) {
+    // The cause was attached but never rendered, so an ENOTDIR or EACCES
+    // surfaced as a bare "Failed to generate service: billing" with no way
+    // to find out more. `build` and `add` interpolate it; so does this.
     throw new CLIGenerationError(
-      `Failed to generate ${schematic}: ${name}`,
+      `Failed to generate ${schematic} "${name}": ${describeError(error)}`,
       error,
     );
   }

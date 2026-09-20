@@ -6,9 +6,23 @@
 
 import type { CLIArguments, CLIWriter } from "../cliType/cliType.type.js";
 import {
+  CLI_ALIASES,
   CLI_COMMANDS,
   CLI_DEFAULTS,
+  CLI_FORMAT,
+  CLI_HELP,
+  CLI_SYMBOLS,
 } from "../cliConstant/cliConstant.value.js";
+
+/** Returns whether a single token is a help flag (`-h` or `--help`). */
+export function isHelpFlag(token: string): boolean {
+  return (CLI_ALIASES.HELP as readonly string[]).includes(token);
+}
+
+/** Returns whether a single token is a version flag (`-v` or `--version`). */
+export function isVersionFlag(token: string): boolean {
+  return (CLI_ALIASES.VERSION as readonly string[]).includes(token);
+}
 
 /**
  * Returns whether the args are a help request.
@@ -18,7 +32,8 @@ import {
  */
 export function isHelpRequest(args: CLIArguments): boolean {
   const first = args[0];
-  return first === CLI_COMMANDS.HELP || first === "-h" || first === "--help";
+  if (first === undefined) return false;
+  return first === CLI_COMMANDS.HELP || isHelpFlag(first);
 }
 
 /**
@@ -28,9 +43,8 @@ export function isHelpRequest(args: CLIArguments): boolean {
  */
 export function isVersionRequest(args: CLIArguments): boolean {
   const first = args[0];
-  return (
-    first === CLI_COMMANDS.VERSION || first === "-v" || first === "--version"
-  );
+  if (first === undefined) return false;
+  return first === CLI_COMMANDS.VERSION || isVersionFlag(first);
 }
 
 /** Prints the version string. */
@@ -55,27 +69,49 @@ export function printHelp(
 
   if (description) lines.push(description);
 
-  lines.push("", "Usage:", `  ${name} <command> [options]`, "", "Commands:");
+  lines.push(
+    CLI_FORMAT.EMPTY,
+    CLI_HELP.USAGE,
+    `${CLI_FORMAT.INDENT}${name} <${CLI_SYMBOLS.COMMAND}> [${CLI_SYMBOLS.OPTION}s]`,
+    CLI_FORMAT.EMPTY,
+    CLI_HELP.COMMANDS,
+  );
 
   const sorted = commands.slice().sort((a, b) => a.name.localeCompare(b.name));
 
   if (sorted.length === 0) {
-    lines.push("  No commands registered.");
+    lines.push(`${CLI_FORMAT.INDENT}No commands registered.`);
   } else {
+    const width = sorted.reduce(
+      (max, cmd) => Math.max(max, formatCommandTerm(cmd).length),
+      0,
+    );
     for (const cmd of sorted) {
-      const aliases = cmd.aliases?.length ? ` (${cmd.aliases.join(", ")})` : "";
+      const term = formatCommandTerm(cmd).padEnd(width);
       lines.push(
-        `  ${cmd.name}${aliases}${cmd.description ? `  ${cmd.description}` : ""}`,
+        `${CLI_FORMAT.INDENT}${term}${cmd.description ? `${CLI_FORMAT.INDENT}${cmd.description}` : ""}`.trimEnd(),
       );
     }
   }
 
   lines.push(
-    "",
-    "Options:",
-    "  -h, --help     Show help.",
-    "  -v, --version  Show version.",
+    CLI_FORMAT.EMPTY,
+    CLI_HELP.OPTIONS,
+    `${CLI_FORMAT.INDENT}-h, --help     Show help.`,
+    `${CLI_FORMAT.INDENT}-v, --version  Show version.`,
+    CLI_FORMAT.EMPTY,
+    `Run "${name} ${CLI_COMMANDS.HELP} <${CLI_SYMBOLS.COMMAND}>" for help on one ${CLI_SYMBOLS.COMMAND}.`,
   );
 
-  writer.writeLine(lines.join("\n"));
+  writer.writeLine(lines.join(CLI_FORMAT.NEWLINE));
+}
+
+/** Renders a command's name and aliases for the command list. */
+function formatCommandTerm(cmd: {
+  name: string;
+  aliases?: readonly string[];
+}): string {
+  return cmd.aliases?.length
+    ? `${cmd.name} (${cmd.aliases.join(", ")})`
+    : cmd.name;
 }

@@ -5,7 +5,7 @@
  */
 
 import { join } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import * as p from "@clack/prompts";
 import type { CLIContext } from "../cliType/cliType.type.js";
@@ -45,7 +45,18 @@ import { writeFileTree } from "../utils/utils.fileSystem.js";
 import { normalizeName } from "../utils/utils.name.js";
 import { resolveMicroserviceServices } from "../templates/microservice/index.js";
 import { ManifestManager } from "../manifest/manifestManager.core.js";
-import { CLI_VERSION } from "../constants/index.js";
+import {
+  CLI_VERSION,
+  FEATURE_PACKAGES,
+  ZUDOJS_PACKAGES_VERSION,
+} from "../constants/index.js";
+import { registerCLIInterruptHandler } from "../cliApplication/cliApplication.writer.js";
+import { resolveProjectLayout } from "../resolvers/layout/projectLayout.core.js";
+import { CapabilityResolver } from "../resolvers/capability/capabilityResolver.core.js";
+import { CompatibilityValidator } from "../validators/compatibility/compatibilityValidator.core.js";
+import { ProjectValidator } from "../validators/project/projectValidator.core.js";
+import { selectAddTargets } from "./add.command.js";
+import { describeError } from "./commandError.helper.js";
 
 const VALID_PROJECT_TYPES = ["backend", "frontend", "fullstack"] as const;
 const VALID_ARCHITECTURES = [
@@ -81,6 +92,55 @@ const VALID_FRONTEND_ARCHITECTURES = [
 const VALID_LANGUAGES = ["typescript", "javascript"] as const;
 const VALID_APIS = ["rest", "graphql", "rpc"] as const;
 
+/**
+ * Capability ids `--capabilities` accepts.
+ *
+ * Mirrors the options offered by `promptCapabilities`, so the interactive
+ * and non-interactive branches can produce the same project.
+ */
+const VALID_CAPABILITIES = [
+  "cqrs",
+  "events",
+  "messaging",
+  "queue",
+  "observability",
+  "openapi",
+  "database",
+  "security",
+] as const;
+
+/**
+ * What the non-interactive branch enables when `--capabilities` is absent.
+ * This is what it has always hard-coded; the flag is what makes it
+ * reproducible.
+ */
+const DEFAULT_CAPABILITIES: readonly string[] = [
+  "cqrs",
+  "messaging",
+  "observability",
+  "openapi",
+  "database",
+];
+
+/** Maps a capability selection onto the ScaffoldOptions enable* flags. */
+function capabilityFlags(capabilities: readonly string[]): {
+  readonly enableCQRS: boolean;
+  readonly enableMessaging: boolean;
+  readonly enableObservability: boolean;
+  readonly enableOpenAPI: boolean;
+  readonly enableDatabase: boolean;
+  readonly enableQueue: boolean;
+} {
+  return {
+    enableCQRS: capabilities.includes("cqrs"),
+    enableMessaging: capabilities.includes("messaging"),
+    enableObservability: capabilities.includes("observability"),
+    enableOpenAPI: capabilities.includes("openapi"),
+    enableDatabase: capabilities.includes("database"),
+    enableQueue: capabilities.includes("queue"),
+  };
+}
+
 function validateProjectName(name: string): void {
   if (!name || name.trim().length === 0) {
     throw new CLIValidationError("Project name is required.");
@@ -92,9 +152,12 @@ function validateProjectName(name: string): void {
     );
   }
 
-  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+  // A leading "-" used to be accepted, so `zudojs create -- --weird` made a
+  // directory that `cd` cannot enter and `rm -rf` cannot remove without a
+  // `--` of its own. The first character must be alphanumeric.
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(name)) {
     throw new CLIValidationError(
-      "Project name must contain only alphanumeric characters, hyphens, and underscores.",
+      "Project name must start with a letter or digit and contain only alphanumeric characters, hyphens, and underscores.",
     );
   }
 }
@@ -193,6 +256,19 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
   const services =
     servicesExplicit || architecture === "microservice" ? parsedServices : [];
 
+  const capabilitiesRaw = context.values.capabilities as string | undefined;
+  const capabilitiesExplicit = hasExplicitFlag(context.args, "--capabilities");
+  const requestedCapabilities = capabilitiesRaw
+    ? capabilitiesRaw
+        .split(",")
+        .map((capability) => capability.trim())
+        .filter(Boolean)
+    : [];
+
+  for (const capability of requestedCapabilities) {
+    validateChoice(capability, VALID_CAPABILITIES, "capability");
+  }
+
   if (projectName) {
     validateProjectName(projectName);
   }
@@ -276,6 +352,7 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
   const isInteractive = process.stdin.isTTY;
 
   let answers: ScaffoldOptions;
+  let selectedCapabilities: readonly string[];
 
   if (isInteractive) {
     p.intro("Zudojs");
@@ -336,13 +413,13 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
       explicitOverrides.packageManager as ScaffoldOptions["packageManager"],
     );
 
-    const capabilities = await promptCapabilities([]);
-    const enableCQRS = capabilities.includes("cqrs");
-    const enableMessaging = capabilities.includes("messaging");
-    const enableObservability = capabilities.includes("observability");
-    const enableOpenAPI = capabilities.includes("openapi");
-    const enableDatabase = capabilities.includes("database");
-    const enableQueue = capabilities.includes("queue");
+    // `--capabilities` seeds the prompt so both branches start from the
+    // same selection.
+    const capabilities = await promptCapabilities(
+      capabilitiesExplicit ? requestedCapabilities : [],
+    );
+    selectedCapabilities = capabilities;
+    const flags = capabilityFlags(capabilities);
     const enableDocker = arch === "microservice";
 
     const confirmed = await promptConfirmation(
@@ -368,17 +445,18 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
       language: (explicitOverrides.language ??
         "typescript") as ScaffoldOptions["language"],
       services: interactiveServices,
-      enableCQRS,
-      enableMessaging,
-      enableObservability,
-      enableOpenAPI,
-      enableDatabase,
-      enableQueue,
+      ...flags,
       enableDocker,
       installDeps: !noInstall,
       initGit: !noGit,
     };
   } else {
+    // Without --capabilities this is the set the branch has always
+    // hard-coded; with it, the same project the prompts would produce.
+    selectedCapabilities = capabilitiesExplicit
+      ? requestedCapabilities
+      : DEFAULT_CAPABILITIES;
+
     answers = {
       projectName: projectName ?? "",
       projectType: projectTypeValue,
@@ -393,12 +471,7 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
       frontendPath: "apps/web",
       language: languageValue,
       services,
-      enableCQRS: true,
-      enableMessaging: true,
-      enableObservability: true,
-      enableOpenAPI: true,
-      enableDatabase: true,
-      enableQueue: false,
+      ...capabilityFlags(selectedCapabilities),
       // Match the interactive branch, which enables Docker for microservices.
       enableDocker: architectureValue === "microservice",
       installDeps: !noInstall,
@@ -426,12 +499,68 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
     }
   }
 
-  await createProject(answers, context);
+  // `--frontend react --type backend` used to pass validation and then be
+  // discarded without a word, handing the user a backend-only project and
+  // exit 0. Handled like the --language mismatch above.
+  if (
+    hasExplicitFlag(context.args, "--frontend", "-f") &&
+    frontendValue !== "none" &&
+    answers.projectType === "backend"
+  ) {
+    throw new CLIValidationError(
+      `--frontend ${frontendValue} applies to --type frontend or --type fullstack; a backend project has no frontend. Use --type fullstack to get one.`,
+    );
+  }
+
+  assertCompatibleOptions(answers, context);
+
+  await createProject(answers, context, selectedCapabilities);
+}
+
+/**
+ * Refuses option combinations the generators cannot honour, and reports the
+ * ones that merely need saying.
+ *
+ * The CompatibilityValidator existed, was exported and was tested, but no
+ * command ran it.
+ */
+function assertCompatibleOptions(
+  options: ScaffoldOptions,
+  context: CLIContext,
+): void {
+  const result = new CompatibilityValidator().validate({
+    projectType: options.projectType ?? "backend",
+    architecture: options.architecture,
+    frontend: options.frontend ?? "none",
+    frontendArchitecture: options.frontendArchitecture ?? "zudojs-standard",
+    packageManager: options.packageManager,
+    database: options.database ?? "postgresql",
+    language: options.language ?? "typescript",
+  });
+
+  for (const check of result.checks) {
+    if (check.severity === "warning") {
+      context.logger.warn(
+        `${check.option1} + ${check.option2}: ${check.reason}`,
+      );
+    }
+  }
+
+  const errors = result.checks.filter((check) => check.severity === "error");
+
+  if (errors.length > 0) {
+    throw new CLIValidationError(
+      `Incompatible options:\n${errors
+        .map((check) => `  - ${check.option1} + ${check.option2}: ${check.reason}`)
+        .join("\n")}`,
+    );
+  }
 }
 
 async function createProject(
   options: ScaffoldOptions,
   context: CLIContext,
+  capabilities: readonly string[],
 ): Promise<void> {
   const { projectName, packageManager } = options;
   const targetPath = join(context.cwd, projectName);
@@ -446,6 +575,26 @@ async function createProject(
   rollback.trackDirectory(targetPath);
 
   const spinner = p.spinner();
+  const installFile = installCommandFor(packageManager);
+  let installFailure: string | null = null;
+
+  // Ctrl-C used to be swallowed: @clack/prompts registers a SIGINT listener
+  // per spinner that only prints "Canceled", and registering any listener
+  // suppresses Node's default termination — so the scaffold ran to
+  // completion and exited 0. This removes the half-written project and
+  // exits with the interrupted status.
+  const unregisterInterrupt = registerCLIInterruptHandler(async () => {
+    spinner.stop("Interrupted");
+    const result = await rollback.rollback();
+    if (result.failures.length > 0) {
+      p.log.error(
+        `Could not remove ${result.failures
+          .map((failure) => failure.path)
+          .join(", ")}; delete it by hand before retrying.`,
+      );
+    }
+    p.cancel(`Cancelled. Removed ${targetPath}.`);
+  });
 
   try {
     spinner.start("Creating project structure");
@@ -476,19 +625,10 @@ async function createProject(
       );
     }
 
-    await writeProjectManifest(options, targetPath);
+    await writeProjectManifest(options, targetPath, capabilities);
+    await applyCapabilityPackages(targetPath, capabilities, context);
 
     if (options.installDeps) {
-      spinner.start("Installing dependencies");
-      const installFile =
-        packageManager === "pnpm"
-          ? "pnpm"
-          : packageManager === "yarn"
-            ? "yarn"
-            : packageManager === "bun"
-              ? "bun"
-              : "npm";
-
       try {
         // Streamed with no timeout: installs can be slow and their output
         // should reach the user.
@@ -497,13 +637,18 @@ async function createProject(
         p.log.success("Dependencies installed");
       } catch (error) {
         // The project is complete without its node_modules; say what
-        // failed and how to retry instead of a bare "skipped".
+        // failed and how to retry instead of a bare "skipped". The command
+        // still exits non-zero — `zudojs add` fails on the same error, and
+        // a CI job must not go green with no node_modules.
         const reason = error instanceof Error ? error.message : String(error);
+        installFailure = reason;
         p.log.warn(
           `Dependency installation failed: ${reason}\nRun "${installFile} install" inside ${projectName} to retry.`,
         );
       }
     }
+
+    await reportProjectProblems(targetPath, options, installFailure === null);
 
     if (options.initGit) {
       spinner.start("Initializing git repository");
@@ -526,15 +671,159 @@ async function createProject(
 
     p.note(`cd ${projectName}\n${devCmd}`, "Next steps");
 
-    p.outro("Project created successfully.");
+    p.outro(
+      installFailure === null
+        ? "Project created successfully."
+        : "Project created, but dependencies were NOT installed.",
+    );
   } catch (error) {
-    await rollback.rollback();
-    const message = error instanceof Error ? error.message : String(error);
-    p.cancel(`Failed to create project: ${message}`);
+    const result = await rollback.rollback();
+    // The cause chain is rendered here: generators throw
+    // CLIGenerationError("Failed to write project files:", cause) and the
+    // cause was the only thing that said what went wrong.
+    const message = describeError(error);
+    const leftBehind =
+      result.failures.length > 0
+        ? `\nCould not remove ${result.failures
+            .map((failure) => `${failure.path} (${failure.reason})`)
+            .join(", ")} — delete it by hand before retrying.`
+        : "";
+
+    p.cancel(`Failed to create project: ${message}${leftBehind}`);
     throw new CLIGenerationError(
-      `Failed to create project "${projectName}"`,
+      `Failed to create project "${projectName}": ${message}${leftBehind}`,
       error,
     );
+  } finally {
+    unregisterInterrupt();
+  }
+
+  if (installFailure !== null) {
+    // Thrown outside the try so the finished project is not rolled back.
+    throw new CLIGenerationError(
+      `Project "${projectName}" was created at ${targetPath}, but dependency installation failed: ${installFailure}. Run "${installFile} install" inside ${projectName} to retry.`,
+    );
+  }
+}
+
+/** The binary that installs dependencies for a package manager. */
+function installCommandFor(packageManager: ScaffoldOptions["packageManager"]): string {
+  switch (packageManager) {
+    case "pnpm":
+      return "pnpm";
+    case "yarn":
+      return "yarn";
+    case "bun":
+      return "bun";
+    default:
+      return "npm";
+  }
+}
+
+/**
+ * Adds the packages behind capabilities the templates do not wire
+ * themselves.
+ *
+ * The capability prompt offers `events` and `security`, but only six of its
+ * eight options reached ScaffoldOptions, so ticking **Security** produced
+ * no dependency, no manifest capability and no message.
+ */
+async function applyCapabilityPackages(
+  targetPath: string,
+  capabilities: readonly string[],
+  context: CLIContext,
+): Promise<void> {
+  if (capabilities.length === 0) return;
+
+  const layout = resolveProjectLayout(targetPath);
+  if (!layout || layout.backendDirs.length === 0) return;
+
+  const required = new Set<string>();
+  for (const capability of capabilities) {
+    for (const name of FEATURE_PACKAGES[capability] ?? []) {
+      required.add(name);
+    }
+  }
+
+  if (required.size === 0) return;
+
+  const added = new Set<string>();
+
+  for (const pkgPath of selectAddTargets(layout, undefined)) {
+    if (!existsSync(pkgPath)) continue;
+
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as {
+      dependencies?: Record<string, string>;
+      zudojs?: { features?: unknown };
+    };
+
+    pkg.dependencies ??= {};
+    let changed = false;
+
+    for (const name of required) {
+      if (!(name in pkg.dependencies)) {
+        pkg.dependencies[name] = ZUDOJS_PACKAGES_VERSION;
+        added.add(name);
+        changed = true;
+      }
+    }
+
+    const block = (pkg.zudojs ??= {});
+    const features = new Set(
+      Array.isArray(block.features)
+        ? block.features.filter((f): f is string => typeof f === "string")
+        : [],
+    );
+    for (const capability of capabilities) {
+      if (!features.has(capability)) {
+        features.add(capability);
+        changed = true;
+      }
+    }
+    block.features = [...features];
+
+    if (changed) {
+      writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+    }
+  }
+
+  if (added.size > 0) {
+    context.logger.info(`Capability packages added: ${[...added].join(", ")}`);
+  }
+
+  const resolution = new CapabilityResolver().resolve(capabilities);
+  if (resolution.dependencies.length > 0) {
+    context.logger.info(
+      `Capabilities build on: ${resolution.dependencies.join(", ")}`,
+    );
+  }
+}
+
+/**
+ * Checks the project that was just written and reports anything wrong with
+ * it. Never fatal: the files exist and the user can look at them.
+ */
+async function reportProjectProblems(
+  targetPath: string,
+  options: ScaffoldOptions,
+  installed: boolean,
+): Promise<void> {
+  const layout = resolveProjectLayout(targetPath);
+  const appDir = layout?.backendDirs[0];
+
+  // Backend apps only: a Flutter or React Native app has no tsconfig.json
+  // and no src/, and would fail every check for no reason.
+  if (appDir === undefined) return;
+
+  const dependenciesInstalled = installed && options.installDeps === true;
+
+  const result = await new ProjectValidator().validate(appDir, {
+    expectInstalled: dependenciesInstalled,
+    typecheck: dependenciesInstalled,
+  });
+
+  for (const error of result.errors) {
+    p.log.warn(`Project check: ${error}`);
   }
 }
 
@@ -545,6 +834,7 @@ async function createProject(
 async function writeProjectManifest(
   options: ScaffoldOptions,
   targetPath: string,
+  selected: readonly string[] = [],
 ): Promise<void> {
   const capabilities: string[] = [];
   if (options.enableCQRS) capabilities.push("cqrs");
@@ -553,6 +843,12 @@ async function writeProjectManifest(
   if (options.enableOpenAPI) capabilities.push("openapi");
   if (options.enableDatabase) capabilities.push("database");
   if (options.enableQueue) capabilities.push("queue");
+
+  // Capabilities with no ScaffoldOptions flag of their own (events,
+  // security) were selected and then dropped on the floor.
+  for (const capability of selected) {
+    if (!capabilities.includes(capability)) capabilities.push(capability);
+  }
 
   // Record the services actually generated, not the raw request: the
   // microservice template drops reserved names (gateway) and duplicates, and

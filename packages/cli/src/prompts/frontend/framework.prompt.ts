@@ -5,6 +5,7 @@
  */
 
 import * as p from "@clack/prompts";
+import { cancelled } from "../cancel.prompt.js";
 import type { FrontendFramework } from "../../types/projectConfiguration.type.js";
 
 const FRONTEND_OPTIONS: readonly {
@@ -48,10 +49,5 @@ export async function promptFramework(
       })),
     }));
 
-  if (p.isCancel(value)) {
-    p.cancel("Operation cancelled.");
-    process.exit(0);
-  }
-
-  return value as FrontendFramework | "none";
+  return cancelled(value) as FrontendFramework | "none";
 }

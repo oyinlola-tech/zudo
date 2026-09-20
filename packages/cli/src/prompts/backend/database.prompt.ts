@@ -5,6 +5,8 @@
  */
 
 import * as p from "@clack/prompts";
+import { cancelled } from "../cancel.prompt.js";
+import { DATABASE_CHOICES, DEFAULT_DATABASE } from "../../constants/index.js";
 import type { DatabaseProvider } from "../../types/projectConfiguration.type.js";
 
 export async function promptDatabase(
@@ -14,30 +16,9 @@ export async function promptDatabase(
     overrides ??
     (await p.select({
       message: "Select database",
-      options: [
-        {
-          value: "postgresql",
-          label: "PostgreSQL",
-          hint: "Recommended for production",
-        },
-        {
-          value: "mysql",
-          label: "MySQL",
-          hint: "Widely used relational database",
-        },
-        {
-          value: "sqlite",
-          label: "SQLite",
-          hint: "Lightweight, file-based",
-        },
-      ],
-      initialValue: "postgresql",
+      options: DATABASE_CHOICES.map((choice) => ({ ...choice })),
+      initialValue: DEFAULT_DATABASE,
     }));
 
-  if (p.isCancel(value)) {
-    p.cancel("Operation cancelled.");
-    process.exit(0);
-  }
-
-  return value;
+  return cancelled(value);
 }

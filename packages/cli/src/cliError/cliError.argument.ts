@@ -21,7 +21,7 @@ import type { CLIErrorOptions } from "./cliError.base.js";
  */
 export class InvalidArgumentsError extends CLIError {
   constructor(
-    message = CLI_MESSAGES.INVALID_ARGUMENTS,
+    message: string = CLI_MESSAGES.INVALID_ARGUMENTS,
     options: CLIErrorOptions = {},
   ) {
     super(message, {

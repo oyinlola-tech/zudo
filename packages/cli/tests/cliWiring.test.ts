@@ -150,14 +150,18 @@ describe("IntegrationGenerator", () => {
         "adapter-generated config",
       );
 
-      // CORS config lands next to the backend, not at the workspace root.
-      expect(existsSync(join(root, "apps", "api", "config", "cors.ts"))).toBe(
-        true,
-      );
+      // CORS config lands inside the backend's own program (apps/api/src),
+      // not at the workspace root and not in an apps/api/config directory
+      // the backend tsconfig excludes.
+      const corsPath = join(root, "apps", "api", "src", "configs", "cors.ts");
+      expect(existsSync(corsPath)).toBe(true);
       expect(existsSync(join(root, "config", "cors.ts"))).toBe(false);
-      expect(
-        readFileSync(join(root, "apps", "api", "config", "cors.ts"), "utf-8"),
-      ).toContain("http://localhost:4321");
+      expect(existsSync(join(root, "apps", "api", "config", "cors.ts"))).toBe(
+        false,
+      );
+      expect(readFileSync(corsPath, "utf-8")).toContain(
+        "http://localhost:4321",
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

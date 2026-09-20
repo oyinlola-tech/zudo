@@ -5,6 +5,7 @@
  */
 
 import * as p from "@clack/prompts";
+import { cancelled } from "../cancel.prompt.js";
 
 const SERVICE_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
@@ -43,10 +44,5 @@ export async function promptServices(
     },
   });
 
-  if (p.isCancel(value)) {
-    p.cancel("Operation cancelled.");
-    process.exit(0);
-  }
-
-  return parseServices(value);
+  return parseServices(cancelled(value));
 }

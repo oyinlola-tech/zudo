@@ -109,7 +109,7 @@ function readExitCode(error: unknown): number | undefined {
 /** Normalizes any error into a CLIError. */
 export function normalizeCLIError(
   error: unknown,
-  fallbackMessage = CLI_MESSAGES.UNKNOWN_ERROR,
+  fallbackMessage: string = CLI_MESSAGES.UNKNOWN_ERROR,
 ): CLIError {
   if (error instanceof CLIError) {
     return error;

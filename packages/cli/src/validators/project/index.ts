@@ -7,5 +7,6 @@
 export type {
   ProjectCheck,
   ProjectValidationResult,
+  ProjectValidationOptions,
 } from "./projectValidator.core.js";
 export { ProjectValidator } from "./projectValidator.core.js";

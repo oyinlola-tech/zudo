@@ -9,7 +9,12 @@
 import { createCLI } from "../cliApplication/index.js";
 import { createCommand } from "../cliCommand/index.js";
 import type { CLIContext } from "../cliType/cliType.type.js";
-import { CLI_VERSION, FEATURE_PACKAGES } from "../constants/index.js";
+import {
+  CLI_VERSION,
+  FEATURE_NAMES,
+  SCHEMATIC_NAMES,
+} from "../constants/index.js";
+import { CLI_NAME } from "../cliConstant/cliConstant.value.js";
 import { runCreateCommand } from "../commands/create.command.js";
 import { runDevCommand } from "../commands/dev.command.js";
 import { runGenerateCommand } from "../commands/generate.command.js";
@@ -19,7 +24,8 @@ import { runDoctorCommand } from "../commands/doctor.command.js";
 import { runInfoCommand } from "../commands/info.command.js";
 
 const app = createCLI({
-  name: "Zudojs",
+  // The name the help output tells people to type, so it must be the binary.
+  name: CLI_NAME,
   // Read from the CLI's own package.json, so `zudojs --version` cannot
   // drift from the published version.
   version: CLI_VERSION,
@@ -164,8 +170,7 @@ app.register(
     arguments: [
       {
         name: "schematic",
-        description:
-          "The schematic to generate (service, module, command, query, controller, repository)",
+        description: `The schematic to generate (${SCHEMATIC_NAMES.join(", ")})`,
         required: true,
       },
       {
@@ -184,7 +189,8 @@ app.register(
       {
         name: "module",
         short: "m",
-        description: "The module name",
+        description:
+          "The module a generated file belongs to (modular monolith), e.g. --module billing",
         type: "string",
       },
       {
@@ -213,7 +219,7 @@ app.register(
     arguments: [
       {
         name: "feature",
-        description: `The feature to add (${Object.keys(FEATURE_PACKAGES).join(", ")})`,
+        description: `The feature to add (${FEATURE_NAMES.join(", ")})`,
         required: true,
       },
     ],

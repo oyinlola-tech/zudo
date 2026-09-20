@@ -5,6 +5,7 @@
  */
 
 import * as p from "@clack/prompts";
+import { cancelled } from "../cancel.prompt.js";
 import type { FrontendArchitecture } from "../../types/projectConfiguration.type.js";
 
 export async function promptFrontendArchitecture(
@@ -39,10 +40,5 @@ export async function promptFrontendArchitecture(
       initialValue: "zudojs-standard",
     }));
 
-  if (p.isCancel(value)) {
-    p.cancel("Operation cancelled.");
-    process.exit(0);
-  }
-
-  return value;
+  return cancelled(value);
 }

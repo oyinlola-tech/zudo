@@ -47,7 +47,7 @@ export class CLIPermissionError extends AuthorizationError {
   public readonly exitCode: number;
 
   constructor(
-    message = CLI_MESSAGES.PERMISSION_DENIED,
+    message: string = CLI_MESSAGES.PERMISSION_DENIED,
     options: CLIErrorOptions = {},
   ) {
     super(message, {
@@ -78,7 +78,7 @@ export class CLIPermissionError extends AuthorizationError {
  */
 export class CLIInterruptedError extends CLIError {
   constructor(
-    message = CLI_MESSAGES.INTERRUPTED,
+    message: string = CLI_MESSAGES.INTERRUPTED,
     options: CLIErrorOptions = {},
   ) {
     super(message, {

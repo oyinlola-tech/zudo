@@ -1,6 +1,14 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, writeFile as writeFileAsync } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 
 import { activeWriteCapture } from "./utils.writeGuard.js";
 
@@ -56,7 +64,8 @@ function assertSafePath(basePath: string, filePath: string): void {
   // directory inside the project cannot carry the write outside it.
   if (!isContained(realizePath(basePath), realizePath(resolved))) {
     throw new Error(
-      `Path escapes the project through a symlink: ${filePath}. Replace the symlinked directory with a real one, or generate into a different path.`,
+      `Path escapes the project through a symlink: ${filePath}. ` +
+        `Replace the symlinked directory with a real one, or generate into a different path.`,
     );
   }
 }

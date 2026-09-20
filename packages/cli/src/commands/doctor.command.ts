@@ -13,6 +13,10 @@ import {
   resolveProjectLayout,
   type ProjectLayout,
 } from "../resolvers/layout/projectLayout.core.js";
+import {
+  EnvironmentValidator,
+  type EnvironmentCheck,
+} from "../validators/environment/environmentValidator.core.js";
 
 export interface DoctorCheck {
   readonly name: string;
@@ -34,7 +38,7 @@ export interface DoctorCheck {
  */
 export function runDoctorChecks(cwd: string): DoctorCheck[] {
   const layout = resolveProjectLayout(cwd);
-  const checks: DoctorCheck[] = [checkNodeVersion(), checkProject(layout)];
+  const checks: DoctorCheck[] = [checkProject(layout)];
 
   if (!layout) {
     return checks;
@@ -51,8 +55,41 @@ export function runDoctorChecks(cwd: string): DoctorCheck[] {
   return checks;
 }
 
+/**
+ * Environment checks: Node.js, Git and the project's own package manager.
+ *
+ * Delegated to the EnvironmentValidator, which existed and was exported
+ * but was called from nowhere while `doctor` reimplemented a subset of it
+ * inline.
+ */
+export async function runEnvironmentChecks(
+  cwd: string,
+): Promise<DoctorCheck[]> {
+  const layout = resolveProjectLayout(cwd);
+  const result = await new EnvironmentValidator().validate(
+    layout?.projectType ?? "backend",
+    layout?.packageManager,
+  );
+
+  return result.checks.map((check) =>
+    check.name === "Node.js"
+      ? checkNodeVersion(check)
+      : {
+          name: check.name === "Git" ? "Git" : `Package manager (${check.name})`,
+          severity: "warning" as const,
+          passed: check.installed,
+          message: check.installed
+            ? `${check.version ?? "installed"}`
+            : `${check.name} is not installed or not on PATH`,
+        },
+  );
+}
+
 export async function runDoctorCommand(context: CLIContext): Promise<void> {
-  const checks = runDoctorChecks(context.cwd);
+  const checks = [
+    ...(await runEnvironmentChecks(context.cwd)),
+    ...runDoctorChecks(context.cwd),
+  ];
   const warnings: string[] = [];
   const errors: string[] = [];
 
@@ -99,10 +136,19 @@ export async function runDoctorCommand(context: CLIContext): Promise<void> {
   context.logger.info("All checks passed!");
 }
 
-function checkNodeVersion(): DoctorCheck {
-  const version = process.version;
+function checkNodeVersion(check: EnvironmentCheck): DoctorCheck {
+  if (!check.installed) {
+    return {
+      name: "Node.js version",
+      severity: "error",
+      passed: false,
+      message: "Node.js is not installed or not on PATH",
+    };
+  }
+
+  const version = check.version ?? process.version;
   const major = Number.parseInt(version.replace("v", "").split(".")[0]!, 10);
-  const passed = major >= 24;
+  const passed = Number.isFinite(major) && major >= 24;
   return {
     name: "Node.js version",
     severity: "error",
