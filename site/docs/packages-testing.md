@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/testing — mock functions, spi
 source: https://zudojs.oyinlola.site/docs/packages-testing
 ---
 
-v1.1.1
+v1.1.2
 
 # @zudojs/testing
 
@@ -199,6 +199,19 @@ it("only implements what the test uses", () => {
 ```
 
 **What you should see:** both expectations pass. A stub is also safe to `await` or return from an async factory — `then`, `catch` and `finally` answer `undefined` rather than pretending to be a promise.
+
+**Stable identity (changed in v1.1.2):** a generated no-op is memoised per property, so the same property always answers with the same function object. Before v1.1.2 every access built a fresh closure, so `stub.handler !== stub.handler` and any code that registered and then unregistered the same stub property removed nothing.
+
+```ts
+const deps = createStub<{ handler(): void }>();
+
+expect(deps.handler).toBe(deps.handler); // v1.1.2: true. Before: false.
+
+bus.on("ping", deps.handler);
+bus.off("ping", deps.handler); // v1.1.2: removes it. Before: leaked to the next test.
+```
+
+Overrides you supply are returned untouched and were always stable. The memoisation applies only to the no-ops the stub generates, and only to string-keyed properties — a symbol property still answers `undefined`.
 
 When the code under test uses `new` or checks `instanceof`, stub the class instead. Instances keep the real prototype, and any method you did not override exists as a no-op.
 

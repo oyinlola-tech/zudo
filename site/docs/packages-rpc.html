@@ -122,7 +122,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/rpc</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Call a function that runs on another machine as if it were local — typed procedures, a transport you choose, middleware, validation, timeouts, retries and errors that survive the trip.
@@ -478,7 +478,24 @@ console.<span class="fn">log</span>(response.success, response.error?.code);
         </p>
 
         <p class="mt-4 leading-relaxed">
-          Before any of that, <code class="bg-black/5 px-1">server.handle()</code> checks the envelope — the request must be an object, <code class="bg-black/5 px-1">id</code> a non-empty string, <code class="bg-black/5 px-1">procedure</code> a valid name, <code class="bg-black/5 px-1">metadata</code> an object when present (it may be omitted), and the encoded payload no larger than 1 MB. Anything else is <code class="bg-black/5 px-1">RPC_INVALID_REQUEST</code>. Change the size cap with the server's <code class="bg-black/5 px-1">limits.maxPayloadBytes</code> option.
+          Before any of that, <code class="bg-black/5 px-1">server.handle()</code> checks the envelope — the request must be an object, <code class="bg-black/5 px-1">id</code> a non-empty string of at most 128 characters, <code class="bg-black/5 px-1">procedure</code> a valid name, <code class="bg-black/5 px-1">metadata</code> an object when present (it may be omitted), and <code class="bg-black/5 px-1">payload</code> and <code class="bg-black/5 px-1">metadata</code> together no larger than 1 MB encoded. Anything else is <code class="bg-black/5 px-1">RPC_INVALID_REQUEST</code>.
+        </p>
+
+        <p class="mt-4 leading-relaxed">
+          Two of those bounds are new in 1.3.0. The size cap used to measure <code class="bg-black/5 px-1">payload</code> alone, so an unbounded <code class="bg-black/5 px-1">metadata</code> object reached middleware and handlers as <code class="bg-black/5 px-1">context.metadata</code> however large it was; the two are now measured together against <code class="bg-black/5 px-1">limits.maxPayloadBytes</code>, and a frame whose payload and metadata together exceed it is rejected where it used to be accepted. Budget for both when you size a frame. The <code class="bg-black/5 px-1">id</code> was unbounded and echoed verbatim into both the success and the error response; it is now capped by <code class="bg-black/5 px-1">limits.maxRequestIdLength</code>, defaulting to <code class="bg-black/5 px-1">MAX_RPC_REQUEST_ID_LENGTH</code> (128, enough for a UUID, a ULID or a W3C trace id). The id is checked before a response exists to carry it, so an over-long one is never reflected back.
+        </p>
+
+        <div class="code-block mt-4"><span class="kw">const</span> server = <span class="kw">new</span> <span class="tp">RPCServer</span>(undefined, undefined, {
+  limits: {
+    <span class="cm">// payload + metadata combined, encoded bytes. Default 1 MB.</span>
+    maxPayloadBytes: <span class="num">256</span> * <span class="num">1024</span>,
+    <span class="cm">// request.id characters. Default 128.</span>
+    maxRequestIdLength: <span class="num">128</span>,
+  },
+});</div>
+
+        <p class="mt-4 leading-relaxed">
+          Set either limit to <code class="bg-black/5 px-1">0</code> to skip that check when the transport already enforces a frame limit.
         </p>
       </section>
 

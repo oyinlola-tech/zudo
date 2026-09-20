@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/queue — background job proces
 source: https://zudojs.oyinlola.site/docs/packages-queue
 ---
 
-v1.2.0
+v1.3.0
 
 # @zudojs/queue
 
@@ -155,7 +155,9 @@ The third argument to `queue.add()` is a `JobOptions` object. Every field is opt
 | `priority` | Higher numbers run first; ties run oldest-first | `50` |
 | `timeout` | Milliseconds before a running job is aborted and failed. A timeout aborts `context.signal`; the job's slot and its retry wait up to `timeoutGraceMs` (default 5000) for the processor to stop, so honour the signal. | `30000` |
 | `deduplicationKey` | Reject a second job with the same key while the first exists | none |
-| `metadata` | Any extra data you want stored on the job | none |
+| `metadata` | Any extra data you want stored on the job. The key `zudo:context` is reserved by the queue and stripped from whatever you pass (see below) | none |
+
+> **Reserved key:** `metadata["zudo:context"]` (exported as `CONTEXT_METADATA_KEY`) belongs to the queue's context carriers. Since v1.3.0 the queue drops whatever the caller put there before storing the job, whether or not a carrier captured anything. Before v1.3.0, an `add()` made with no ambient context kept the caller's record verbatim and the queue replayed it around the middleware and the processor — so an enqueuer could choose the tenant, correlation id or trace the job ran under. Context that a carrier genuinely captured is unaffected; put your own data under any other key.
 
 This example uses priority, delay and deduplication together. `JobPriorityLevels` is a set of named numbers you can use instead of guessing.
 

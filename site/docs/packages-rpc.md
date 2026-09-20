@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/rpc — transport-agnostic RPC 
 source: https://zudojs.oyinlola.site/docs/packages-rpc
 ---
 
-v1.2.0
+v1.3.0
 
 # @zudojs/rpc
 
@@ -278,7 +278,22 @@ console.log(response.success, response.error?.code);
 
 `response.error.details` holds one entry per problem, each with `path`, `code` and `message`. The value the caller sent is left out on purpose, so a validation reply never echoes their data back. An `output` schema failure is treated as your bug: the caller gets `RPC_INTERNAL_ERROR` with the fixed internal-error message, and the failing paths go to `onInternalError`. The client also passes its effective deadline to the transport as `options.timeout`.
 
-Before any of that, `server.handle()` checks the envelope — the request must be an object, `id` a non-empty string, `procedure` a valid name, `metadata` an object when present (it may be omitted), and the encoded payload no larger than 1 MB. Anything else is `RPC_INVALID_REQUEST`. Change the size cap with the server's `limits.maxPayloadBytes` option.
+Before any of that, `server.handle()` checks the envelope — the request must be an object, `id` a non-empty string of at most 128 characters, `procedure` a valid name, `metadata` an object when present (it may be omitted), and `payload` and `metadata` together no larger than 1 MB encoded. Anything else is `RPC_INVALID_REQUEST`.
+
+Two of those bounds are new in 1.3.0. The size cap used to measure `payload` alone, so an unbounded `metadata` object reached middleware and handlers as `context.metadata` however large it was; the two are now measured together against `limits.maxPayloadBytes`, and a frame whose payload and metadata together exceed it is rejected where it used to be accepted. Budget for both when you size a frame. The `id` was unbounded and echoed verbatim into both the success and the error response; it is now capped by `limits.maxRequestIdLength`, defaulting to `MAX_RPC_REQUEST_ID_LENGTH` (128, enough for a UUID, a ULID or a W3C trace id). The id is checked before a response exists to carry it, so an over-long one is never reflected back.
+
+```ts
+const server = new RPCServer(undefined, undefined, {
+  limits: {
+    // payload + metadata combined, encoded bytes. Default 1 MB.
+    maxPayloadBytes: 256 * 1024,
+    // request.id characters. Default 128.
+    maxRequestIdLength: 128,
+  },
+});
+```
+
+Set either limit to `0` to skip that check when the transport already enforces a frame limit.
 
 ## ERRORS ACROSS THE BOUNDARY
 
