@@ -1,4 +1,5 @@
 import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
+import { assertHmacCapability } from "../cryptoProvider/cryptoProvider.capability.js";
 
 import type {
   CryptoProvider,
@@ -40,6 +41,8 @@ export async function hmac(
       `HMAC key must be at least ${KEY_SIZE.MIN_HMAC_KEY_BYTES} bytes.`,
     );
   }
+
+  assertHmacCapability(provider);
 
   const digest = await provider.hmac(algorithm, key, input);
 

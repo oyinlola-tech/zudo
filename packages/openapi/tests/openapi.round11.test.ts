@@ -38,18 +38,21 @@ describe("API-02 — the scanner dedupes on the OpenAPI template, not the source
   });
 
   it("no operation silently disappears from the generated document", () => {
+    const idParameter = {
+      parameters: [{ name: "id", in: "path" as const, required: true }],
+    };
     const manager = new OpenAPIManager({ info: INFO });
     manager.addRoute({
       method: "get",
       path: "/users/:id",
-      metadata: { openapi: { operationId: "a" } },
+      metadata: { openapi: { operationId: "a", ...idParameter } },
     });
 
     expect(() =>
       manager.addRoute({
         method: "get",
         path: "/users/{id}",
-        metadata: { openapi: { operationId: "b" } },
+        metadata: { openapi: { operationId: "b", ...idParameter } },
       }),
     ).toThrow(OpenAPIRouteError);
 

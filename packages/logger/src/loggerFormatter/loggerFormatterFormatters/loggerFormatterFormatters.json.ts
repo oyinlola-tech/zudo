@@ -23,34 +23,45 @@ function removeUndefinedValues(
       return "[Circular]";
     }
     seen.add(value);
-    return value.map((item) => removeUndefinedValues(item, seen));
+    try {
+      return value.map((item) => removeUndefinedValues(item, seen));
+    } finally {
+      seen.delete(value);
+    }
   }
 
   if (value && typeof value === "object" && !(value instanceof Date)) {
     // Without a cycle guard this walk recursed until the stack blew,
     // and the resulting RangeError was swallowed by dispatch — losing
-    // the log line rather than reporting the offending value.
+    // the log line rather than reporting the offending value. `seen`
+    // tracks the ancestor path only (unmarked on ascent), so an object
+    // referenced twice in one payload is kept rather than collapsing
+    // to "[Circular]" from its second occurrence on.
     if (seen.has(value)) {
       return "[Circular]";
     }
     seen.add(value);
 
-    const result: Record<string, unknown> = {};
+    try {
+      const result: Record<string, unknown> = {};
 
-    for (const [key, item] of Object.entries(value)) {
-      if (item === undefined) {
-        continue;
+      for (const [key, item] of Object.entries(value)) {
+        if (item === undefined) {
+          continue;
+        }
+
+        Object.defineProperty(result, key, {
+          value: removeUndefinedValues(item, seen),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
       }
 
-      Object.defineProperty(result, key, {
-        value: removeUndefinedValues(item, seen),
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      });
+      return result;
+    } finally {
+      seen.delete(value);
     }
-
-    return result;
   }
 
   return value;

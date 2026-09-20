@@ -5,6 +5,8 @@
  * Higher numeric values represent more verbose messages.
  */
 
+import { InvalidLoggerLevelError } from "../loggerErrors/loggerError.base.js";
+
 export enum LoggerLevel {
   FATAL = 0,
   ERROR = 1,
@@ -34,7 +36,7 @@ export function loggerLevelToName(level: LoggerLevel): LoggerLevelName {
     case LoggerLevel.TRACE:
       return "trace";
     default:
-      throw new RangeError(`Unknown logger level: ${String(level)}`);
+      throw new InvalidLoggerLevelError(level);
   }
 }
 
@@ -58,7 +60,7 @@ export function loggerLevelFromName(
     case "trace":
       return LoggerLevel.TRACE;
     default:
-      throw new RangeError(`Unknown logger level name: "${name}"`);
+      throw new InvalidLoggerLevelError(name);
   }
 }
 

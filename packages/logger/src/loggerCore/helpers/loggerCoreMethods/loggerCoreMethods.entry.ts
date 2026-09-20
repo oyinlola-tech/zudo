@@ -30,6 +30,11 @@ import type {
 
 /**
  * Creates a normalized log entry.
+ *
+ * @param onMetadataError - Notified when a metadata property could not
+ *   be read (a throwing getter). The field is replaced with a marker
+ *   and the entry is still produced, so the caller's log statement
+ *   never aborts; reporting is the caller's job.
  */
 export function createEntry(
   configuration: LoggerConfiguration,
@@ -41,6 +46,7 @@ export function createEntry(
   level: LoggerLevel,
   message: string,
   options: LogOptions,
+  onMetadataError?: (key: string, error: unknown) => void,
 ): LoggerEntry {
   const activeContext = configuration.inheritContext
     ? contextStorage.get()
@@ -73,6 +79,8 @@ export function createEntry(
     rawMetadata,
     isSecret,
     replacement,
+    undefined,
+    onMetadataError,
   ) as LogMetadata;
 
   const context = options.context
@@ -96,6 +104,8 @@ export function createEntry(
             context.metadata,
             isSecret,
             replacement,
+            undefined,
+            onMetadataError,
           ) as import("../../../loggerEntry/loggerEntry.type.js").LogMetadata,
         }
       : undefined,

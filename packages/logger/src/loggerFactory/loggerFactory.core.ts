@@ -42,6 +42,17 @@ export class LoggerFactory {
     return logger;
   }
 
+  /**
+   * Registers an existing logger under its own name (or `name`).
+   *
+   * An adopted logger is then covered by `flushAll()`, `disposeAll()`,
+   * `getAll()` and `size` exactly like one the factory created itself.
+   */
+  register(logger: Logger, name?: string): Logger {
+    this.loggers.set(name ?? logger.name, logger);
+    return logger;
+  }
+
   /** Returns an existing logger. */
   get(name: string): Logger | undefined {
     return this.loggers.get(name);

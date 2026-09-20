@@ -1,4 +1,5 @@
 import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
+import { assertHashCapability } from "../cryptoProvider/cryptoProvider.capability.js";
 
 import type {
   CryptoProvider,
@@ -51,6 +52,8 @@ export async function hash(
   }
 
   const provider = options.provider ?? getDefaultCryptoProvider();
+
+  assertHashCapability(provider);
 
   const digest = await provider.hash(algorithm, input);
 

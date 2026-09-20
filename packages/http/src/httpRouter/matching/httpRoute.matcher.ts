@@ -112,9 +112,16 @@ export class RouteMatcher {
 
     const method = normalizeMethod(request.method);
 
-    const path = normalizeRequestPath(request.path);
+    /*
+     * The raw target is threaded through so a strict-trailing-slash route can
+     * still tell `/users` from `/users/`; only the reported path is
+     * normalized.
+     */
+    const target = request.path;
 
-    const direct = this.matchMethod(method, path);
+    const path = normalizeRequestPath(target);
+
+    const direct = this.matchMethod(method, target);
 
     if (direct) {
       this.matches += 1;
@@ -123,7 +130,7 @@ export class RouteMatcher {
     }
 
     if (method === "HEAD" && this.matcherOptions.allowHeadFallback) {
-      const fallback = this.matchMethod("GET", path);
+      const fallback = this.matchMethod("GET", target);
 
       if (fallback) {
         this.matches += 1;
@@ -137,7 +144,7 @@ export class RouteMatcher {
     }
 
     if (method === "OPTIONS" && this.matcherOptions.allowOptionsFallback) {
-      const allowed = this.allowedMethods(path);
+      const allowed = this.allowedMethods(target);
 
       if (allowed.allowed) {
         this.matches += 1;

@@ -12,6 +12,8 @@ import type {
   LoggerFormatterOptions,
 } from "./loggerFormatter.type.js";
 
+import { LoggerFormatterNotFoundError } from "../loggerErrors/loggerError.base.js";
+
 import {
   createLoggerFormatterId,
   isLoggerFormatterFunction,
@@ -47,9 +49,7 @@ export function createLoggerFormatter<
       }
 
       if (typeof formatter === "string") {
-        throw new Error(
-          `Cannot format with string identifier "${formatter}" directly. Resolve the formatter first.`,
-        );
+        throw new LoggerFormatterNotFoundError(formatter);
       }
 
       return formatter.format(entry, context);
@@ -72,9 +72,7 @@ export function formatLoggerEntry<
   }
 
   if (typeof formatter === "string") {
-    throw new Error(
-      `Cannot format with string identifier "${formatter}" directly. Resolve the formatter first.`,
-    );
+    throw new LoggerFormatterNotFoundError(formatter);
   }
 
   return formatter.format(entry, context);

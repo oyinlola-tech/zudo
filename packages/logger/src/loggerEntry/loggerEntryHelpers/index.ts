@@ -25,6 +25,7 @@ export {
 
 export {
   LOGGER_REDACTION_TOKEN,
+  LOGGER_UNREADABLE_TOKEN,
   DEFAULT_LOGGER_SECRET_PATTERN,
   escapeLogText,
   hasLogControlCharacters,

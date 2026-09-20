@@ -151,7 +151,10 @@ export class Scheduler {
    * unreachable. Without this, `handle.cancel()` aborted a recurring
    * schedule's run and silently did nothing for a one-shot's.
    */
-  private readonly runningByScheduleId = new Map<string, Set<AbortController>>();
+  private readonly runningByScheduleId = new Map<
+    string,
+    Set<AbortController>
+  >();
 
   /** Executions in flight per job id, for the per-job concurrency ceiling. */
   private readonly runningByJob = new Map<string, number>();

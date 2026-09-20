@@ -1,6 +1,7 @@
 import type { CryptoProvider } from "../cryptoProvider/index.js";
 
 import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
+import { assertRandomCapability } from "../cryptoProvider/cryptoProvider.capability.js";
 
 /**
  * Generates a cryptographically secure random boolean.
@@ -8,6 +9,8 @@ import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.defau
 export async function randomBoolean(
   provider: CryptoProvider = getDefaultCryptoProvider(),
 ): Promise<boolean> {
+  assertRandomCapability(provider);
+
   return (await provider.randomInt(0, 2)) === 1;
 }
 
@@ -20,6 +23,8 @@ export async function randomChoice<T>(
   values: readonly T[],
   provider: CryptoProvider = getDefaultCryptoProvider(),
 ): Promise<T> {
+  assertRandomCapability(provider);
+
   if (!Array.isArray(values) || values.length === 0) {
     throw new RangeError("Cannot choose from an empty collection.");
   }
@@ -35,6 +40,8 @@ export async function fillRandomBytes(
   target: Uint8Array,
   provider: CryptoProvider = getDefaultCryptoProvider(),
 ): Promise<Uint8Array> {
+  assertRandomCapability(provider);
+
   if (!(target instanceof Uint8Array)) {
     throw new TypeError("target must be a Uint8Array.");
   }

@@ -11,7 +11,7 @@ import {
   TransformerError,
   isSerializationError,
 } from "@zudojs/errors";
-import { SerializationTags } from "@zudojs/constants";
+import { SerializationLimits, SerializationTags } from "@zudojs/constants";
 import { isPlainObject } from "@zudojs/types";
 import type { DeserializeOptions } from "../serializerTypes/index.js";
 import type { TransformerRegistry } from "../serializerTransforms/index.js";
@@ -23,6 +23,16 @@ export interface RestoreWalk {
   readonly transformers: TransformerRegistry;
   readonly maxDepth: number;
   readonly options: DeserializeOptions;
+}
+
+/** Longest prefix of a rejected tag quoted back in an error message. */
+const TAG_EXCERPT_LENGTH = 64;
+
+/** Clips a wire-supplied tag so it cannot flood an error message or a log line. */
+function describeTag(tag: string): string {
+  return tag.length <= TAG_EXCERPT_LENGTH
+    ? tag
+    : `${tag.slice(0, TAG_EXCERPT_LENGTH)}…`;
 }
 
 /** Rebuilds runtime values from their tagged JSON representation. */
@@ -53,11 +63,22 @@ export function restoreValue(
 
   const tag = obj[SerializationTags.TYPE];
   if (body === undefined && typeof tag === "string") {
+    // The tag arrives from the wire, so bound it before it is looked up or
+    // quoted into a message: `SerializationLimits.MAX_TYPE_TAG_LENGTH` was
+    // exported and tested but never enforced, which let a 100 000-character
+    // tag be interpolated verbatim into an error and from there into a log.
+    if (tag.length > SerializationLimits.MAX_TYPE_TAG_LENGTH) {
+      throw new InvalidSerializedDataError(
+        `Serialization type tag exceeds ${SerializationLimits.MAX_TYPE_TAG_LENGTH} characters ` +
+          `(got ${tag.length}): "${describeTag(tag)}".`,
+        { format: "json" },
+      );
+    }
     if (walk.transformers.has(tag)) return revive(walk, tag, obj, depth);
     // An unknown tag is ordinary data unless the caller asked for strictness.
     if (strict) {
       throw new InvalidSerializedDataError(
-        `Unknown serialization type tag: "${tag}". ` +
+        `Unknown serialization type tag: "${describeTag(tag)}". ` +
           "Register a transformer for it, or deserialize without strict mode.",
         { format: "json" },
       );

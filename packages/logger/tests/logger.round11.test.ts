@@ -373,14 +373,12 @@ describe("MSG-L-05", () => {
       { name: "buffered" },
     );
 
-    await buffered.close();
+    await buffered.close?.();
+
+    const entry = createLoggerEntry({ level: LoggerLevel.INFO, message: "x" });
 
     await expect(
-      Promise.resolve(
-        buffered.write(
-          createLoggerEntry({ level: LoggerLevel.INFO, message: "x" }),
-        ),
-      ),
+      Promise.resolve(buffered.write?.(entry)),
     ).rejects.toBeInstanceOf(LoggerTransportClosedError);
   });
 });

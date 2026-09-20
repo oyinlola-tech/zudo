@@ -26,6 +26,10 @@ import {
   createMissCache,
   DEFAULT_MISSING_FLAG_TTL_MS,
 } from "./featureFlags.missCache.js";
+import {
+  createProviderCooloff,
+  DEFAULT_PROVIDER_COOLOFF_MS,
+} from "./featureFlags.cooloff.js";
 
 /** Options for creating a FeatureFlags instance. */
 export interface FeatureFlagsOptions {
@@ -58,6 +62,12 @@ export interface FeatureFlagsOptions {
    * reload (`refresh()`, a provider change notification).
    */
   readonly missingFlagTtlMs?: number;
+  /**
+   * How long a failing provider is left alone before it is probed again, in
+   * ms. Default: 5,000. `0` calls the provider on every evaluation, as
+   * before. A successful call clears the window at once.
+   */
+  readonly providerCooloffMs?: number;
 }
 
 /** The public FeatureFlags API. */
@@ -99,8 +109,10 @@ export function createFeatureFlags(options: FeatureFlagsOptions): FeatureFlags {
     onError,
     throwOnProviderError = false,
     missingFlagTtlMs = DEFAULT_MISSING_FLAG_TTL_MS,
+    providerCooloffMs = DEFAULT_PROVIDER_COOLOFF_MS,
   } = options;
   const misses = createMissCache(missingFlagTtlMs);
+  const cooloff = createProviderCooloff(providerCooloffMs);
 
   let registry: FeatureFlagRegistry = createFeatureFlagRegistry();
   let loaded = false;
@@ -111,6 +123,7 @@ export function createFeatureFlags(options: FeatureFlagsOptions): FeatureFlags {
    * @returns `false` when the failure was contained.
    */
   function handleProviderError(error: unknown, source: string): false {
+    cooloff.recordFailure();
     if (throwOnProviderError) throw error;
     onError?.(
       error instanceof Error
@@ -129,6 +142,7 @@ export function createFeatureFlags(options: FeatureFlagsOptions): FeatureFlags {
       registry = createFeatureFlagRegistry(flags);
       loaded = true;
       misses.clear();
+      cooloff.recordSuccess();
       return true;
     } catch (error) {
       return handleProviderError(error, "FeatureFlagProvider.getAll");
@@ -140,7 +154,28 @@ export function createFeatureFlags(options: FeatureFlagsOptions): FeatureFlags {
     // provider that legitimately holds no flags used to be re-queried on
     // every single evaluation.
     if (loaded) return true;
+    // A provider that just failed is left alone until its window closes,
+    // rather than being re-queried (and waited on) by every evaluation.
+    if (cooloff.active()) return false;
     return load();
+  }
+
+  /**
+   * Fails a bulk read that has no flags because the store could not be read.
+   *
+   * `evaluate()` can say `reason: "error"` per flag; a `Map` or an array has
+   * nowhere to put that, and an empty one is indistinguishable from "no flags
+   * are configured" — a total outage would otherwise ship to a browser as
+   * every flag being off. `onError` still sees the underlying failure first.
+   *
+   * @throws {FeatureFlagProviderError} When the flags were never loaded.
+   */
+  function requireAvailable(available: boolean, operation: string): void {
+    if (available) return;
+    throw new FeatureFlagProviderError(
+      `Feature flags are unavailable: ${operation}() cannot report flags because the provider could not be loaded.`,
+      { provider: "FeatureFlagProvider.getAll" },
+    );
   }
 
   /** A flag lookup, and whether the store answered. */
@@ -153,11 +188,13 @@ export function createFeatureFlags(options: FeatureFlagsOptions): FeatureFlags {
     const known = registry.get(key);
     if (known) return { flag: known, reachable: true };
     if (misses.has(key)) return { flag: undefined, reachable: true };
+    if (cooloff.active()) return { flag: undefined, reachable: false };
 
     try {
       const flag = await provider.get(key);
       if (flag) registry.set(flag);
       else if (loaded) misses.add(key);
+      cooloff.recordSuccess();
       return { flag, reachable: true };
     } catch (error) {
       handleProviderError(error, "FeatureFlagProvider.get");
@@ -176,6 +213,7 @@ export function createFeatureFlags(options: FeatureFlagsOptions): FeatureFlags {
     registry = createFeatureFlagRegistry(flags);
     loaded = true;
     misses.clear();
+    cooloff.recordSuccess();
   });
 
   const api: FeatureFlags = {
@@ -243,7 +281,7 @@ export function createFeatureFlags(options: FeatureFlagsOptions): FeatureFlags {
     async snapshot(
       context,
     ): Promise<ReadonlyMap<string, FeatureFlagEvaluation>> {
-      await ensureLoaded();
+      requireAvailable(await ensureLoaded(), "snapshot");
 
       const mergedCtx = mergeContext(defaultContext, context);
       const flags = registry.getAll();
@@ -283,7 +321,7 @@ export function createFeatureFlags(options: FeatureFlagsOptions): FeatureFlags {
     },
 
     async getAll(): Promise<readonly FeatureFlag[]> {
-      await ensureLoaded();
+      requireAvailable(await ensureLoaded(), "getAll");
       return registry.getAll();
     },
 

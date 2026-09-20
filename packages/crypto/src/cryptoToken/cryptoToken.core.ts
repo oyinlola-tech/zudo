@@ -1,4 +1,5 @@
 import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
+import { assertRandomCapability } from "../cryptoProvider/cryptoProvider.capability.js";
 
 import { randomInteger } from "../cryptoRandom/cryptoRandom.core.js";
 
@@ -53,6 +54,8 @@ export async function generateToken(
   }
 
   const provider = options.provider ?? getDefaultCryptoProvider();
+  assertRandomCapability(provider);
+
   const raw = await provider.randomBytes(bytes);
   const token = Buffer.from(raw).toString(encoding);
 

@@ -208,6 +208,42 @@ function buildResourceAttributes(
   };
 }
 
+/** Shortest interval between two repeat queue-overflow reports. */
+const DROP_REPORT_INTERVAL_MS = 60_000;
+
+/**
+ * Rate-limits a processor's `onDrop` callback.
+ *
+ * `onDrop` fires once per record the bounded queue refuses, on the
+ * synchronous `logger.info()` path, and the report below allocates an
+ * `Error` (so, a stack capture) and re-enters the caller's `onError` —
+ * which usually writes to the sink that is already stalled. The bounded
+ * queue is the control that makes a stalled exporter survivable; reporting
+ * every drop turned it into a second, louder failure.
+ *
+ * Handled the same way an over-cardinality metric is a few lines below: the
+ * first occurrence is reported immediately, then at most one per interval.
+ * The count handed to `report` is the processor's running total, so
+ * whoever does get notified still sees how many records were lost.
+ */
+function throttleDropReports(
+  report: (dropped: number) => void,
+): (dropped: number) => void {
+  let lastReportedAt: number | undefined;
+
+  return (dropped: number): void => {
+    const at = Date.now();
+    if (
+      lastReportedAt !== undefined &&
+      at - lastReportedAt < DROP_REPORT_INTERVAL_MS
+    ) {
+      return;
+    }
+    lastReportedAt = at;
+    report(dropped);
+  };
+}
+
 function buildPipeline(config: ObservabilityConfig): TelemetryPipeline {
   const useConsole = config.useConsoleExporters ?? true;
 
@@ -222,11 +258,12 @@ function buildPipeline(config: ObservabilityConfig): TelemetryPipeline {
     batchSize: config.logBatchSize,
     flushIntervalMs: config.logFlushIntervalMs,
     onError: config.onError,
-    onDrop: (dropped) =>
+    onDrop: throttleDropReports((dropped) =>
       config.onError?.(
         new Error(`Dropped ${dropped} log records: queue full`),
         "BatchLogProcessor",
       ),
+    ),
   });
 
   // Redaction is applied by the logger, so every transport and exporter
@@ -258,11 +295,12 @@ function buildPipeline(config: ObservabilityConfig): TelemetryPipeline {
     new BatchSpanProcessor({
       exporter: ownSpanExporter(),
       onError: config.onError,
-      onDrop: (dropped) =>
+      onDrop: throttleDropReports((dropped) =>
         config.onError?.(
           new Error(`Dropped ${dropped} spans: queue full`),
           "BatchSpanProcessor",
         ),
+      ),
     }),
   ];
 

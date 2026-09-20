@@ -2,6 +2,8 @@ import type { CryptoProvider } from "../../cryptoProvider/index.js";
 
 import { getDefaultCryptoProvider } from "../../cryptoProvider/cryptoProvider.default.js";
 
+import { assertHashCapability } from "../../cryptoProvider/cryptoProvider.capability.js";
+
 import { encode } from "../../cryptoEncoding/cryptoEncoding.core.js";
 
 import {
@@ -13,6 +15,8 @@ export async function serviceHash(
   value: string | Uint8Array,
   provider: CryptoProvider = getDefaultCryptoProvider(),
 ): Promise<Uint8Array> {
+  assertHashCapability(provider);
+
   try {
     return await provider.hash("sha256", value);
   } catch (error) {

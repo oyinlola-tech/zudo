@@ -2,6 +2,12 @@ import type { CryptoProvider } from "../cryptoProvider/index.js";
 
 import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
 
+
+import {
+  assertPasswordHashingCapability,
+  assertRandomCapability,
+} from "../cryptoProvider/cryptoProvider.capability.js";
+
 import { CryptoAlgorithm } from "../cryptoConstants/cryptoConstants.type.js";
 
 import { PASSWORD_HASH } from "../cryptoConstants/cryptoConstants.security.js";
@@ -43,6 +49,8 @@ export async function hashPassword(
   assertPassword(password);
 
   const provider = options.provider ?? getDefaultCryptoProvider();
+  assertPasswordHashingCapability(provider);
+  assertRandomCapability(provider);
 
   const saltBytes = options.saltBytes ?? PASSWORD_HASH.SALT_BYTES;
   const keyBytes = options.keyBytes ?? PASSWORD_HASH.KEY_BYTES;
@@ -101,6 +109,8 @@ export async function verifyPassword(
   encoded: string,
   provider: CryptoProvider = getDefaultCryptoProvider(),
 ): Promise<boolean> {
+  assertPasswordHashingCapability(provider);
+
   try {
     assertPassword(password);
 

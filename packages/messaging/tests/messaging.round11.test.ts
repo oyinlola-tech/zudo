@@ -68,9 +68,12 @@ describe("MSG-M-02", () => {
       { id: "slow-1" },
     );
 
-    const result = await bus.send({ type: "slow.one", payload: {} }, {
-      timeout: 20,
-    });
+    const result = await bus.send(
+      { type: "slow.one", payload: {} },
+      {
+        timeout: 20,
+      },
+    );
 
     expect(result.success).toBe(false);
     expect(result.error).toBeInstanceOf(MessageTimeoutError);
@@ -109,5 +112,62 @@ describe("MSG-M-03", () => {
     await expect(
       dispatcher.dispatch(createMessage({ type: "x.y", payload: {} })),
     ).rejects.toThrow();
+  });
+});
+
+describe("MSG-M-04", () => {
+  it("runs middleware in ascending priority order, registration breaking ties", async () => {
+    const order: string[] = [];
+    const bus = createMessageBus();
+    bus.use(
+      async (_ctx, next) => {
+        order.push("registered-1st-priority-20");
+        return next();
+      },
+      { priority: 20 },
+    );
+    bus.use(
+      async (_ctx, next) => {
+        order.push("registered-2nd-priority-10");
+        return next();
+      },
+      { priority: 10 },
+    );
+    bus.on("mw.order", () => "ok");
+
+    await bus.send({ type: "mw.order", payload: {} });
+
+    expect(order).toEqual([
+      "registered-2nd-priority-10",
+      "registered-1st-priority-20",
+    ]);
+    bus.dispose();
+  });
+});
+
+describe("MSG-M-05", () => {
+  it("generates collision-free handler ids from a per-bus counter", async () => {
+    const bus = createMessageBus();
+    const ran: string[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      expect(() =>
+        bus.on("same.ms", () => {
+          ran.push(`h${index}`);
+        }),
+      ).not.toThrow();
+    }
+
+    const result = await bus.send({ type: "same.ms", payload: {} });
+
+    expect(result.success).toBe(true);
+    expect(ran).toEqual(["h0", "h1", "h2", "h3", "h4"]);
+    expect(result.handlerResults.map((entry) => entry.handlerId)).toEqual([
+      "handler:same.ms:1",
+      "handler:same.ms:2",
+      "handler:same.ms:3",
+      "handler:same.ms:4",
+      "handler:same.ms:5",
+    ]);
+    bus.dispose();
   });
 });

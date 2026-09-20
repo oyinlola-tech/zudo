@@ -23,6 +23,8 @@ import {
 
 import { throwCollectedFailures } from "../../loggerErrors/loggerError.helpers.js";
 
+import { LoggerTransportClosedError } from "../../loggerErrors/loggerError.base.js";
+
 /**
  * Creates a transport that buffers entries before forwarding
  * them to another transport.
@@ -36,6 +38,7 @@ export function createBufferedLoggerTransport(
   const flushInterval = options.flushInterval ?? 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let deferredFailure: { readonly error: unknown } | undefined;
+  let closed = false;
 
   // Each entry is written on its own: one failing write used to abort the
   // loop after the whole batch had already been spliced out, losing every
@@ -105,6 +108,12 @@ export function createBufferedLoggerTransport(
     name: options.name ?? "buffered",
     enabled: options.enabled ?? true,
     async write(entry) {
+      // A write after close() used to be buffered and then silently
+      // dropped: nothing drains the buffer again. Refuse it instead so
+      // the caller learns the entry was not accepted.
+      if (closed) {
+        throw new LoggerTransportClosedError(options.name ?? "buffered");
+      }
       buffer.push(entry);
       if (buffer.length >= maxSize) {
         await drain();
@@ -114,6 +123,7 @@ export function createBufferedLoggerTransport(
     },
     flush,
     async close() {
+      closed = true;
       if (timer) {
         clearTimeout(timer);
         timer = undefined;

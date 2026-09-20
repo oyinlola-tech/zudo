@@ -32,15 +32,24 @@ function guardedRouterHandler(): http.HttpHandler {
     ),
   );
 
-  pipeline.use(async (context) => (await router.dispatch(context.request)).response);
+  pipeline.use(
+    async (context) => (await router.dispatch(context.request)).response,
+  );
 
-  return async (request) => pipeline.execute(request, http.createResponseContext());
+  return async (request) =>
+    pipeline.execute(request, http.createResponseContext());
 }
 
 describe("HTTP-01", () => {
   it("guards every spelling the router would dispatch to the route", async () => {
     await withAdapter({ handler: guardedRouterHandler() }, async (port) => {
-      for (const target of ["/admin", "/Admin", "/ADMIN", "/admin/", "/admin//"]) {
+      for (const target of [
+        "/admin",
+        "/Admin",
+        "/ADMIN",
+        "/admin/",
+        "/admin//",
+      ]) {
         expect((await sendRaw(port, target)).status, target).toBe(401);
       }
     });
@@ -82,7 +91,12 @@ describe("HTTP-04", () => {
   });
 
   it("never parses an origin-form target as an authority", async () => {
-    expect(http.getPathname("//evil.com/admin?x=1")).toBe("//evil.com/admin");
+    /* Round 11 (HTTPA-08): repeated slashes are collapsed, so the leading
+     * `//` no longer survives into the path. The invariant this case exists
+     * for is unchanged and is what is asserted here — `evil.com` stays a path
+     * segment and never becomes the authority, so the path is never the
+     * silently shortened `/admin`. */
+    expect(http.getPathname("//evil.com/admin?x=1")).toBe("/evil.com/admin");
 
     await withAdapter({ handler: guardedRouterHandler() }, async (port) => {
       expect((await sendRaw(port, "//evil/admin")).status).toBe(404);
@@ -92,7 +106,11 @@ describe("HTTP-04", () => {
   it("gives request.path and the router the same canonical path", () => {
     const request = http.createRequestContext({ method: "GET", url: "//h/a" });
 
-    expect(request.path).toBe("//h/a");
+    /* Round 11 (HTTPA-08): both sides collapse `//` now, which is what makes
+     * them agree — the router normalised it away while the context kept it,
+     * so `//admin/secret` dispatched to the route at `/admin/secret` while a
+     * guard reading `request.path` saw no match. */
+    expect(request.path).toBe("/h/a");
     expect(http.getCanonicalPath("//h/a")).toBe(request.path);
     expect(http.findRequestTargetViolation("/a/%2e%2e/b")).toBeDefined();
     expect(http.findRequestTargetViolation("/a/b.c/..d")).toBeUndefined();

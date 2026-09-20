@@ -63,14 +63,15 @@ export async function withRetry<T>(
 ): Promise<T> {
   const attempts = retryAttempts(options);
   const delay = retryDelay(options);
+  const aborted = (): boolean => options.signal?.aborted === true;
 
   let result = await attempt();
 
   for (let remaining = attempts - 1; remaining > 0; remaining--) {
     if (accept(result)) return result;
-    if (options.signal?.aborted === true) return result;
+    if (aborted()) return result;
     if (delay > 0) await wait(delay, options.signal);
-    if (options.signal?.aborted === true) return result;
+    if (aborted()) return result;
     result = await attempt();
   }
 

@@ -14,7 +14,7 @@ import { RuntimeRegistry } from "../src/registry/index.js";
 import { validateRuntimeOptions } from "../src/runtimeOptions/index.js";
 import type { ResolvedRuntimeOptions } from "../src/runtimeOptions/index.js";
 
-const silentLogger = createLogger({ level: "silent", transports: [] });
+const silentLogger = createLogger({ name: "round11", transports: [] });
 
 describe("CORE-03", () => {
   it("does not initialize or ready a module whose dependency failed", async () => {

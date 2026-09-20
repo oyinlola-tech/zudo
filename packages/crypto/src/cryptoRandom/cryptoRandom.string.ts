@@ -1,6 +1,7 @@
 import type { CryptoProvider } from "../cryptoProvider/index.js";
 
 import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
+import { assertRandomCapability } from "../cryptoProvider/cryptoProvider.capability.js";
 
 function assertLength(length: number, name = "length"): void {
   if (!Number.isInteger(length) || length <= 0) {
@@ -17,6 +18,8 @@ export async function randomHex(
 ): Promise<string> {
   assertLength(length);
 
+  assertRandomCapability(provider);
+
   const bytes = await provider.randomBytes(Math.ceil(length / 2));
 
   return Buffer.from(bytes).toString("hex").slice(0, length);
@@ -31,6 +34,8 @@ export async function randomBase64(
 ): Promise<string> {
   assertLength(byteLength, "byteLength");
 
+  assertRandomCapability(provider);
+
   const bytes = await provider.randomBytes(byteLength);
 
   return Buffer.from(bytes).toString("base64");
@@ -44,6 +49,8 @@ export async function randomBase64Url(
   provider: CryptoProvider = getDefaultCryptoProvider(),
 ): Promise<string> {
   assertLength(byteLength, "byteLength");
+
+  assertRandomCapability(provider);
 
   const bytes = await provider.randomBytes(byteLength);
 
@@ -102,6 +109,7 @@ export async function randomFromAlphabet(
   provider: CryptoProvider = getDefaultCryptoProvider(),
 ): Promise<string> {
   assertLength(length);
+  assertRandomCapability(provider);
 
   if (typeof alphabet !== "string" || alphabet.length === 0) {
     throw new RangeError("alphabet must not be empty.");

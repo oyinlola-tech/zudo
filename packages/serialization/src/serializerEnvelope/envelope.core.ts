@@ -18,6 +18,7 @@ import {
   SerializationContentType,
   SERIALIZATION_SCHEMA_VERSION,
 } from "@zudojs/constants";
+import { InvalidSerializedDataError } from "@zudojs/errors";
 import { decodeUtf8 } from "../serializerTransformsExt/index.js";
 
 /**
@@ -74,47 +75,62 @@ export function contentTypeForFormat(format: string): string {
  * Validates that a value received from the wire is a well-formed envelope.
  *
  * @param envelope - The candidate envelope.
- * @throws {Error} when the shape or schema version is unusable.
+ * @throws {InvalidSerializedDataError} when the shape or schema version is
+ *   unusable. Envelope payloads arrive from a queue or an RPC peer, so a
+ *   rejection has to be distinguishable from an internal bug: a bare `Error`
+ *   left callers unable to tell hostile input from a defect of their own.
  */
 export function assertValidEnvelope(
   envelope: unknown,
 ): asserts envelope is SerializedEnvelope {
   if (typeof envelope !== "object" || envelope === null) {
-    throw new Error(
+    throw new InvalidSerializedDataError(
       `Malformed envelope: expected an object, got ${envelope === null ? "null" : typeof envelope}`,
+      { format: "envelope" },
     );
   }
 
   const candidate = envelope as { metadata?: unknown; data?: unknown };
 
   if (typeof candidate.metadata !== "object" || candidate.metadata === null) {
-    throw new Error("Malformed envelope: missing metadata");
+    throw new InvalidSerializedDataError(
+      "Malformed envelope: missing metadata",
+      { format: "envelope" },
+    );
   }
 
   const metadata = candidate.metadata as Partial<SerializationMetadata>;
 
   if (typeof metadata.format !== "string" || metadata.format.length === 0) {
-    throw new Error("Malformed envelope: metadata.format is missing");
+    throw new InvalidSerializedDataError(
+      "Malformed envelope: metadata.format is missing",
+      { format: "envelope" },
+    );
   }
 
   if (
     typeof candidate.data !== "string" &&
     !(candidate.data instanceof Uint8Array)
   ) {
-    throw new Error("Malformed envelope: data must be a string or Uint8Array");
+    throw new InvalidSerializedDataError(
+      "Malformed envelope: data must be a string or Uint8Array",
+      { format: "envelope" },
+    );
   }
 
   // The version exists so a future producer can be detected rather than
   // silently misread. Older versions stay readable; newer ones do not.
   if (metadata.version !== undefined) {
     if (!Number.isInteger(metadata.version)) {
-      throw new Error(
+      throw new InvalidSerializedDataError(
         `Malformed envelope: metadata.version must be an integer, got ${String(metadata.version)}`,
+        { format: "envelope" },
       );
     }
     if (metadata.version > SERIALIZATION_SCHEMA_VERSION) {
-      throw new Error(
+      throw new InvalidSerializedDataError(
         `Unsupported envelope schema version ${metadata.version}: this build understands up to ${SERIALIZATION_SCHEMA_VERSION}`,
+        { format: "envelope" },
       );
     }
   }
@@ -126,7 +142,8 @@ export function assertValidEnvelope(
  * @param envelope - The envelope to unwrap.
  * @param expectedFormat - Optional format to validate against.
  * @returns The raw serialized data.
- * @throws {Error} when the envelope format doesn't match expectations.
+ * @throws {InvalidSerializedDataError} when the envelope is malformed or its
+ *   format doesn't match expectations.
  */
 export function unwrapEnvelope(
   envelope: SerializedEnvelope,
@@ -135,8 +152,9 @@ export function unwrapEnvelope(
   assertValidEnvelope(envelope);
 
   if (expectedFormat && envelope.metadata.format !== expectedFormat) {
-    throw new Error(
+    throw new InvalidSerializedDataError(
       `Envelope format mismatch: expected "${expectedFormat}", got "${envelope.metadata.format}"`,
+      { format: expectedFormat },
     );
   }
   return envelope.data;
@@ -197,8 +215,9 @@ export function deserializeFromEnvelope<T>(
 
   const encoding = (envelope.metadata.encoding ?? "utf-8").toLowerCase();
   if (encoding !== "utf-8" && encoding !== "utf8") {
-    throw new Error(
+    throw new InvalidSerializedDataError(
       `Unsupported envelope encoding "${envelope.metadata.encoding}": only UTF-8 is supported`,
+      { format: envelope.metadata.format },
     );
   }
 

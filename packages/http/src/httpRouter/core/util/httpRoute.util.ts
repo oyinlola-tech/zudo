@@ -107,11 +107,21 @@ export function normalizePath(path: string): string {
  * @returns The normalized path, keeping one trailing slash if present.
  */
 export function normalizeMatchPath(path: string): string {
-  if (!path || path === "") {
+  if (!path || path.trim() === "") {
     return "/";
   }
 
-  const withoutQuery = path.split("?", 1)[0] ?? path;
+  let target = path.trim();
+
+  if (target.startsWith("http://") || target.startsWith("https://")) {
+    try {
+      target = new URL(target).pathname;
+    } catch {
+      /* Keep the original value if it is not a valid absolute URL. */
+    }
+  }
+
+  const withoutQuery = target.split("?", 1)[0] ?? target;
 
   const withoutHash = withoutQuery.split("#", 1)[0] ?? withoutQuery;
 

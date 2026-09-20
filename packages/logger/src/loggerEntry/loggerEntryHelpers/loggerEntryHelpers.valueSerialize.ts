@@ -2,6 +2,8 @@
  * Logger entry value serialization.
  */
 
+import { LOGGER_UNREADABLE_TOKEN } from "./loggerEntryHelpers.sanitize.js";
+
 /**
  * Serializes an error-like object into a plain object.
  */

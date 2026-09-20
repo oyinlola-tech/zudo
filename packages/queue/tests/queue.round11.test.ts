@@ -331,8 +331,12 @@ describe("MSG-Q-05", () => {
     );
 
     const seen: string[] = [];
-    emitter.on("worker:started", (data) => seen.push(`started:${data.workerId}`));
-    emitter.on("worker:stopped", (data) => seen.push(`stopped:${data.workerId}`));
+    emitter.on("worker:started", (data) =>
+      seen.push(`started:${data.workerId}`),
+    );
+    emitter.on("worker:stopped", (data) =>
+      seen.push(`stopped:${data.workerId}`),
+    );
 
     queue.process("job", async () => undefined);
 

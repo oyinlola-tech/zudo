@@ -6,7 +6,7 @@
  */
 
 import type { TypeTransformer } from "../serializerTypes/index.js";
-import { TransformerNotFoundError } from "@zudojs/errors";
+import { TransformerError, TransformerNotFoundError } from "@zudojs/errors";
 import { SerializationLimits } from "@zudojs/constants";
 
 /**
@@ -18,10 +18,15 @@ import { SerializationLimits } from "@zudojs/constants";
 export class TransformerRegistry {
   private readonly transformers = new Map<string, TypeTransformer>();
 
-  /** Register a transformer. Throws if the registry is full. */
+  /**
+   * Register a transformer.
+   *
+   * @throws {TransformerError} when the registry is already full.
+   */
   register(transformer: TypeTransformer): void {
     if (this.transformers.size >= SerializationLimits.MAX_TRANSFORMERS) {
-      throw new Error(
+      throw new TransformerError(
+        transformer.type,
         `Maximum transformer limit (${SerializationLimits.MAX_TRANSFORMERS}) reached.`,
       );
     }

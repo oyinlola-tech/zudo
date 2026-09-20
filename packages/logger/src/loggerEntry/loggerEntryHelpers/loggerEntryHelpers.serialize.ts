@@ -4,6 +4,8 @@
 
 import type { LoggerEntry } from "./loggerEntryHelpers.interfaces.js";
 
+import { InvalidLoggerLevelError } from "../../loggerErrors/loggerError.base.js";
+
 import {
   serializeLoggerError,
   serializeLoggerValue,
@@ -84,6 +86,6 @@ export function loggerLevelNameFallback(
       return "trace";
 
     default:
-      throw new RangeError(`Unknown logger level: ${String(level)}`);
+      throw new InvalidLoggerLevelError(level);
   }
 }

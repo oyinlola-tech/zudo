@@ -4,6 +4,8 @@ import { DEFAULT_RUNTIME_OPTIONS } from "./runtimeOptions.type.js";
 
 import { createRuntimeId } from "../runtimeContext/runtimeContext.factory.js";
 
+import { RuntimeError } from "@zudojs/errors";
+
 /**
  * Resolves runtime options with defaults applied.
  *
@@ -34,30 +36,50 @@ export function resolveRuntimeOptions(
  */
 export function validateRuntimeOptions(options: ResolvedRuntimeOptions): void {
   if (!options.environment) {
-    throw new Error("Runtime environment is required.");
+    throw new RuntimeError("Runtime environment is required.", {
+      metadata: { option: "environment" },
+    });
   }
 
   if (!options.applicationName) {
-    throw new Error("Application name is required.");
+    throw new RuntimeError("Application name is required.", {
+      metadata: { option: "applicationName" },
+    });
   }
 
   if (options.shutdownTimeout <= 0) {
-    throw new Error("Shutdown timeout must be positive.");
+    throw new RuntimeError("Shutdown timeout must be positive.", {
+      metadata: { option: "shutdownTimeout", value: options.shutdownTimeout },
+    });
   }
 
   if (options.startupTimeout <= 0) {
-    throw new Error("Startup timeout must be positive.");
+    throw new RuntimeError("Startup timeout must be positive.", {
+      metadata: { option: "startupTimeout", value: options.startupTimeout },
+    });
   }
 
   if (!Number.isFinite(options.fatalExitTimeout) || options.fatalExitTimeout < 0) {
-    throw new Error(
+    throw new RuntimeError(
       `Fatal exit timeout must be a finite, non-negative number, got ${options.fatalExitTimeout}.`,
+      {
+        metadata: {
+          option: "fatalExitTimeout",
+          value: options.fatalExitTimeout,
+        },
+      },
     );
   }
 
   if (options.readinessCheckTimeout < 0) {
-    throw new Error(
+    throw new RuntimeError(
       `Readiness check timeout must be zero or positive, got ${options.readinessCheckTimeout}. Use 0 to run checks without a bound.`,
+      {
+        metadata: {
+          option: "readinessCheckTimeout",
+          value: options.readinessCheckTimeout,
+        },
+      },
     );
   }
 }

@@ -6,7 +6,10 @@
  * constraints, and trailing wildcards.
  */
 
-import type { CompiledRoute } from "../core/types/httpRouter.type.js";
+import type {
+  CompiledRoute,
+  CompiledSegment,
+} from "../core/types/httpRouter.type.js";
 
 import {
   decodeRouteSegment,
@@ -43,7 +46,11 @@ export function matchCompiledRoute(
 
   let inputIndex = 0;
 
-  for (let segmentIndex = 0; segmentIndex < routeSegments.length; segmentIndex += 1) {
+  for (
+    let segmentIndex = 0;
+    segmentIndex < routeSegments.length;
+    segmentIndex += 1
+  ) {
     const segment = routeSegments[segmentIndex];
 
     if (segment === undefined) {
@@ -149,7 +156,7 @@ export function matchCompiledRoute(
  * @returns The number of segments that require an input segment.
  */
 function requiredSegments(
-  segments: readonly CompiledRoute["segments"][number][],
+  segments: readonly CompiledSegment[],
   start: number,
 ): number {
   let required = 0;

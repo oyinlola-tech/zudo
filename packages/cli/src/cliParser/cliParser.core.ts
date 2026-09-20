@@ -116,7 +116,10 @@ export class CLIParser {
       argumentsDefinitions,
     );
 
+    // `stopAtFirstArgument` is checked here too: without it the fallback undid
+    // the flag, putting the first positional in both `commands` and `args`.
     if (
+      !this.stopAtFirstArgument &&
       !this.allowUnknownCommands &&
       !command &&
       commands.length === 0 &&

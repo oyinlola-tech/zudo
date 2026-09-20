@@ -1,5 +1,7 @@
 import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
 
+import { assertHashCapability } from "../cryptoProvider/cryptoProvider.capability.js";
+
 import { encode } from "../cryptoEncoding/cryptoEncoding.core.js";
 
 import { isHex } from "../cryptoEncoding/encoding/cryptoEncoding.hex.js";
@@ -19,6 +21,8 @@ export async function hashToken(
 ): Promise<string> {
   assertToken(token);
 
+  assertHashCapability(provider);
+
   const digest = await provider.hash("sha256", token);
 
   return encode(digest, "hex");
@@ -32,6 +36,8 @@ export async function hashTokenBase64Url(
   provider: CryptoProvider = getDefaultCryptoProvider(),
 ): Promise<string> {
   assertToken(token);
+
+  assertHashCapability(provider);
 
   const digest = await provider.hash("sha256", token);
 

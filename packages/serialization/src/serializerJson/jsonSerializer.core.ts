@@ -90,7 +90,11 @@ export class JSONSerializer implements Serializer<unknown, string> {
     const maxSize = opts.maxSize ?? SerializationLimits.MAX_SIZE;
 
     if (opts.preserveTypes === true) {
-      assertNoCircularReference(value);
+      // The cycle check runs first and must therefore honour the caller's
+      // depth limit: with its own 512-level ceiling it halted on a deep but
+      // perfectly acyclic payload and reported a cycle that did not exist,
+      // disagreeing with the fast path below for the same input.
+      assertNoCircularReference(value, "root", maxDepth);
       assertDepthWithinLimit(value, maxDepth);
       const transformed = transformValue(
         { transformers: this.transformers, maxDepth, options: opts },

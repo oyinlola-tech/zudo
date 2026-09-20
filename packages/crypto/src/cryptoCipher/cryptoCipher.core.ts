@@ -2,6 +2,8 @@ import type { CryptoProvider } from "../cryptoProvider/index.js";
 
 import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
 
+import { assertProviderCapability } from "../cryptoProvider/cryptoProvider.capability.js";
+
 import { AES_GCM } from "../cryptoConstants/cryptoConstants.type.js";
 
 import { CryptoOperation } from "@zudojs/errors";
@@ -49,6 +51,7 @@ export async function encrypt(
   }
 
   const provider = options.provider ?? getDefaultCryptoProvider();
+  assertProviderCapability(provider, "encryption", CryptoOperation.ENCRYPT);
 
   const encrypted = await provider.encrypt({
     key,
@@ -97,6 +100,8 @@ export async function decrypt(
       "aes-256-gcm",
     );
   }
+
+  assertProviderCapability(provider, "encryption", CryptoOperation.DECRYPT);
 
   return provider.decrypt({
     key,

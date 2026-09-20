@@ -76,7 +76,19 @@ export abstract class Schema<TOutput, TInput = TOutput> {
 
   /**
    * Parses input and returns a discriminated result.
-   * Never throws.
+   *
+   * Invalid input is always reported as `{ success: false, issues }` — this
+   * method never converts a validation failure into a throw.
+   *
+   * It is not, however, exception-free. A defect is deliberately allowed to
+   * escape: a `refine`/`transform` callback that throws, or a `RangeError`
+   * from stack exhaustion on input nested deeper than the recursive walker
+   * survives, propagates to the caller. Reporting those as a validation issue
+   * would disguise a bug as bad input and, in the recursive case, let a
+   * partially validated value be returned as a success.
+   *
+   * @throws Whatever a user callback throws, and `RangeError` on input too
+   *   deeply nested for the walker (see `maxDepth`).
    */
   public safeParse(
     input: unknown,

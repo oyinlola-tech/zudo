@@ -8,8 +8,7 @@
 export const EVENT_HANDLER_LIMIT_WARNING_CODE = "ZUDOJS_EVENTS_HANDLER_LIMIT";
 
 /** Warning code for a bus or registry observer that threw. */
-export const EVENT_OBSERVER_ERROR_WARNING_CODE =
-  "ZUDOJS_EVENTS_OBSERVER_ERROR";
+export const EVENT_OBSERVER_ERROR_WARNING_CODE = "ZUDOJS_EVENTS_OBSERVER_ERROR";
 
 /**
  * Emits a diagnostic on Node's process warning channel — the same one

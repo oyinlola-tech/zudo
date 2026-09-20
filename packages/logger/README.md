@@ -55,7 +55,11 @@ that entry, and a failure from a timer-triggered flush is rethrown by the
 next `flush()` or `close()`.
 
 `transportTimeout` (default 10s) bounds every transport write, so a
-transport that stops responding cannot hang `flush()` or `close()`.
+transport that stops responding cannot hang `flush()` or `close()`. A
+write that exceeds it fails with `LoggerTimeoutError`, carrying
+`transportName` and `timeout`; other write failures are reported as
+`LoggerTransportError` with `transportName` set, and formatter failures
+as `LoggerFormatterError` with `formatterName` set.
 
 `throwTransportErrors` (default `false`) rethrows transport and formatter
 failures instead of dropping them. A synchronous transport throws from the
@@ -88,8 +92,14 @@ against `DEFAULT_LOGGER_SECRET_FIELDS` — password, passphrase, secret,
 token, jwt, bearer, auth, authorization, cookie, session, sid,
 credential, api key, private key, client secret, card number, cvv, ssn,
 pin, otp and more — so `sessionId` and `cardNumber` are redacted while
-`passenger` and `authorId` are not. Nested objects, arrays and getters
-are all covered. Passing `redact.pattern` replaces the word matcher with
+`passenger` and `authorId` are not. Nested objects, arrays, `Map`,
+`Set` and getters are all covered — a `Map` is redacted per key and a
+`Set` becomes an array. A getter that THROWS yields `"[Unreadable]"`
+for that field: the rest of the entry is logged and the read failure is
+reported through the same path as transport and formatter failures
+(dropped by default, rethrown with `throwTransportErrors`), so a lazy
+ORM relation can never abort the caller's log statement. Passing
+`redact.pattern` replaces the word matcher with
 your own RegExp (the old substring default is still exported as
 `DEFAULT_LOGGER_SECRET_PATTERN`).
 
@@ -115,7 +125,10 @@ indented so none can start at column 0 and pass for a record. The JSON formatter
 
 Metadata is normalized before serialization, so circular references
 (`"[Circular]"`), BigInt values and functions never make a formatter
-throw and silently drop the record.
+throw and silently drop the record. Only a genuine back-edge becomes
+`"[Circular]"` — the walk tracks the ancestor path, so an object
+referenced from two places in one payload (`{ actor: user, target: user }`)
+is logged in full both times.
 
 ## Context
 
@@ -149,6 +162,12 @@ redaction settings: `logger.child({ name: "api.db" })`.
 Pass `{ colors: true }` in the formatter context to colourize the level
 tag of text output. Colour codes are emitted only around the fixed level
 name, never around user-supplied text.
+
+A formatter returns either a string or an object
+(`LoggerFormattedOutput`). A string becomes the payload's `message`; an
+object is merged OVER the entry, so `createStructuredLoggerFormatter()`
+hands the transport its structured record (with an ISO-string
+`timestamp` and serialized metadata) rather than the raw entry.
 
 ## Use Cases
 

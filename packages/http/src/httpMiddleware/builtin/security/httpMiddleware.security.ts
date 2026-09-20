@@ -6,7 +6,6 @@
 
 import type { HttpMiddleware } from "../../httpMiddleware.type.js";
 
-
 import { isValidHeaderFieldValue } from "../../../httpHeaders/security/index.js";
 
 import { createSecurityHeaders } from "../../../httpSecurityHeaders/httpSecurityHeader.factory.js";

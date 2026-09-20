@@ -1,5 +1,12 @@
 import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
 
+import { CryptoOperation } from "@zudojs/errors";
+
+import {
+  assertProviderCapability,
+  assertRandomCapability,
+} from "../cryptoProvider/cryptoProvider.capability.js";
+
 import type { DerivedKeyResult } from "../cryptoProvider/index.js";
 
 import { CryptoAlgorithm } from "../cryptoConstants/cryptoConstants.type.js";
@@ -43,6 +50,13 @@ export async function derivePbkdf2(
   options: Pbkdf2Options = {},
 ): Promise<DerivedKeyResult> {
   const provider = options.provider ?? getDefaultCryptoProvider();
+  assertProviderCapability(
+    provider,
+    "keyDerivation",
+    CryptoOperation.KEY_DERIVATION,
+  );
+  assertRandomCapability(provider);
+
   const iterations = options.iterations ?? PASSWORD_HASH.PBKDF2.ITERATIONS;
   const keyLength = options.keyLength ?? 32;
   const digest = options.digest ?? "sha256";
@@ -80,6 +94,13 @@ export async function deriveScrypt(
   options: ScryptOptions = {},
 ): Promise<DerivedKeyResult> {
   const provider = options.provider ?? getDefaultCryptoProvider();
+  assertProviderCapability(
+    provider,
+    "keyDerivation",
+    CryptoOperation.KEY_DERIVATION,
+  );
+  assertRandomCapability(provider);
+
   const keyLength = options.keyLength ?? 32;
   const cost = options.cost ?? PASSWORD_HASH.SCRYPT.COST;
   const blockSize = options.blockSize ?? PASSWORD_HASH.SCRYPT.BLOCK_SIZE;

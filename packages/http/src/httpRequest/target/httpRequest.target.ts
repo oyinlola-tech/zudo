@@ -102,9 +102,7 @@ function rawPathOf(target: string): string {
  * proxy matching `/admin*` on the raw target and the router dispatching on
  * the resolved path would otherwise disagree about the same request.
  */
-export function findRequestTargetViolation(
-  target: string,
-): string | undefined {
+export function findRequestTargetViolation(target: string): string | undefined {
   if (target === "*") {
     return undefined;
   }

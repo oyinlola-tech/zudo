@@ -7,6 +7,8 @@
 
 import type { Runtime } from "../runtime/runtime.core.js";
 
+import { RuntimeStateError } from "../runtimeError/index.js";
+
 /**
  * Runtime registry for managing multiple runtime instances.
  *
@@ -23,7 +25,7 @@ export class RuntimeRegistry {
    */
   register(id: string, runtime: Runtime): void {
     if (this.runtimes.has(id)) {
-      throw new Error(`Runtime "${id}" is already registered.`);
+      throw new RuntimeStateError(`Runtime "${id}" is already registered.`);
     }
     this.runtimes.set(id, runtime);
   }
@@ -65,7 +67,7 @@ export class RuntimeRegistry {
   require(id: string): Runtime {
     const runtime = this.runtimes.get(id);
     if (!runtime) {
-      throw new Error(`Runtime "${id}" not found.`);
+      throw new RuntimeStateError(`Runtime "${id}" not found.`);
     }
     return runtime;
   }

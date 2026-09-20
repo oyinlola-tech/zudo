@@ -65,6 +65,13 @@ export class AdapterRegistry {
       );
     }
 
+    if (RESERVED_NAMES.has(name)) {
+      throw new AdapterConfigurationError(
+        String(adapter.name),
+        new Error(`Adapter name "${name}" is reserved.`),
+      );
+    }
+
     if (this.adapters.has(name)) {
       throw new AdapterAlreadyRegisteredError(name);
     }

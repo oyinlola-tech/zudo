@@ -1,5 +1,6 @@
 import type { CryptoProvider } from "../cryptoProvider/index.js";
 import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
+import { assertRandomCapability } from "../cryptoProvider/cryptoProvider.capability.js";
 import {
   generateCryptoKey,
   defaultKeyLength,
@@ -113,6 +114,8 @@ export class CryptoService {
     if (!Number.isInteger(length) || length <= 0) {
       throw new TypeError("Random byte length must be a positive integer.");
     }
+
+    assertRandomCapability(this.provider);
 
     try {
       return await this.provider.randomBytes(length);

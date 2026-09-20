@@ -69,8 +69,8 @@ await queue.close();
 - Draining shutdown with a bounded `closeTimeout`, then cooperative abort
 - Stalled-job reclaim (`stalledAfter`, `maxStalledCount`) for consumers that die
   mid-job
-- Bounded retention of settled jobs, so a long-lived queue does not grow without
-  limit
+- Bounded retention of settled jobs and of dead-lettered jobs, so a long-lived
+  queue does not grow without limit
 
 ## Workers, timeouts and context
 
@@ -119,6 +119,10 @@ await jobs.close();
 Keep captured values small and serializable (ids, not live objects). With
 `@zudojs/tenancy`, capture the tenant id and restore it with the tenant context
 storage's `run`.
+
+The `zudo:context` metadata key is reserved: it is written only by the queue's
+own carriers and is stripped from any `metadata` passed to `add()`, so an
+enqueuer cannot choose the context its job runs under.
 
 Errors with no caller to receive them (a worker's failing poll, a throwing event
 listener) go to `logger.error` when a logger is configured, and otherwise to

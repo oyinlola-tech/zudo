@@ -276,10 +276,14 @@ export function createWorker<TData>(
     },
 
     async forceStop(): Promise<void> {
+      const wasLive =
+        state !== WorkerState.CREATED && state !== WorkerState.STOPPED;
       abortController?.abort();
       clearPollTimer();
       state = WorkerState.STOPPED;
-      emitLifecycle("worker:stopped");
+      // A worker that never started never stopped: reporting it would give a
+      // readiness listener a transition that did not happen.
+      if (wasLive) emitLifecycle("worker:stopped");
     },
 
     isRunning(): boolean {

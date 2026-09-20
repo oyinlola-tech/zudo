@@ -15,9 +15,13 @@ import { isLoggerTransport } from "../../../loggerTransport/loggerTransportGuard
 
 import {
   LoggerFormatterError,
+  LoggerTimeoutError,
   LoggerTransportError,
 } from "../../../loggerErrors/loggerError.base.js";
-import { toLoggerError } from "../../../loggerErrors/loggerError.helpers.js";
+import {
+  createLoggerFormatterError,
+  createLoggerTransportError,
+} from "../../../loggerErrors/loggerError.helpers.js";
 
 import type { LoggerConfiguration } from "../../../loggerOptions/loggerOptions.type.js";
 
@@ -59,11 +63,11 @@ async function withTransportTimeout(
 
   const expiry = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      reject(
-        new LoggerTransportError(
-          `Transport "${transportName}" did not complete within ${timeoutMs}ms.`,
-        ),
-      );
+      // LoggerTimeoutError carries `transportName` and `timeout`, which
+      // the bare LoggerTransportError raised here before did not — so
+      // `catch (e) { if (e instanceof LoggerTimeoutError) retry() }`
+      // could never match.
+      reject(new LoggerTimeoutError(transportName, timeoutMs));
     }, timeoutMs);
 
     // This timer bounds a write; it is not work in its own right. Left
@@ -86,6 +90,69 @@ async function withTransportTimeout(
 }
 
 /**
+ * Builds the payload handed to a transport.
+ *
+ * `LoggerFormattedOutput` is `string | Record<string, unknown>`. A
+ * string replaces the message; an OBJECT is the formatted record and is
+ * merged over the entry, so a transport sees the formatter's fields.
+ * The object branch used to be computed and then discarded, which made
+ * `createStructuredLoggerFormatter()` pure overhead on every log call
+ * and handed the transport the raw, unformatted entry instead.
+ */
+function toTransportPayload(
+  entry: LoggerEntry,
+  formatted: unknown,
+): LoggerEntry {
+  if (typeof formatted === "string") {
+    return { ...entry, message: formatted };
+  }
+
+  if (
+    formatted !== null &&
+    typeof formatted === "object" &&
+    !Array.isArray(formatted)
+  ) {
+    return {
+      ...entry,
+      ...(formatted as Record<string, unknown>),
+    } as unknown as LoggerEntry;
+  }
+
+  return entry;
+}
+
+/** Name of the configured formatter, for error reporting. */
+function resolveFormatterName(configuration: LoggerConfiguration): string {
+  const formatter = configuration.formatter;
+
+  if (typeof formatter === "string") {
+    return formatter;
+  }
+
+  return (formatter as { readonly name?: string }).name ?? "formatter";
+}
+
+/** Wraps a transport failure, keeping an already-typed logger error. */
+function toTransportError(
+  transportName: string,
+  error: unknown,
+): LoggerTransportError {
+  return error instanceof LoggerTransportError
+    ? error
+    : createLoggerTransportError(transportName, error);
+}
+
+/** Wraps a formatter failure, keeping an already-typed logger error. */
+function toFormatterError(
+  formatterName: string,
+  error: unknown,
+): LoggerFormatterError {
+  return error instanceof LoggerFormatterError
+    ? error
+    : createLoggerFormatterError(formatterName, error);
+}
+
+/**
  * Writes to a transport.
  */
 async function writeTransport(
@@ -99,17 +166,11 @@ async function writeTransport(
     environment: configuration.environment,
   };
 
-  if (typeof formatted === "string") {
-    const formattedEntry = { ...entry, message: formatted };
-    await writeLoggerTransport(
-      transport.transport,
-      formattedEntry,
-      transportContext,
-    );
-    return;
-  }
-
-  await writeLoggerTransport(transport.transport, entry, transportContext);
+  await writeLoggerTransport(
+    transport.transport,
+    toTransportPayload(entry, formatted),
+    transportContext,
+  );
 }
 
 /**
@@ -150,8 +211,7 @@ function writeTransportMaybeSync(
     environment: configuration.environment,
   };
 
-  const payload =
-    typeof formatted === "string" ? { ...entry, message: formatted } : entry;
+  const payload = toTransportPayload(entry, formatted);
 
   const target = transport.transport;
 
@@ -173,21 +233,20 @@ export async function dispatchEntry(
   try {
     formatted = formatEntry(configuration, entry);
   } catch (error) {
-    const formatterError = new LoggerFormatterError(
-      `Failed to format log entry: ${toLoggerError(error).message}`,
-      { cause: error },
-    );
-    handleError(formatterError);
+    handleError(toFormatterError(resolveFormatterName(configuration), error));
     return;
   }
 
   for (const transport of configuration.transports) {
+    let transportName = "transport";
+
     try {
       if (!isLoggerTransport(transport)) {
         continue;
       }
 
       const registered = createLoggerTransport(transport);
+      transportName = registered.name;
 
       if (!registered.enabled) {
         continue;
@@ -199,11 +258,7 @@ export async function dispatchEntry(
         writeTransport(configuration, registered, entry, formatted),
       );
     } catch (error) {
-      const transportError = new LoggerTransportError(
-        `Failed to write log entry: ${toLoggerError(error).message}`,
-        { cause: error },
-      );
-      handleError(transportError);
+      handleError(toTransportError(transportName, error));
     }
   }
 }
@@ -238,24 +293,22 @@ export function dispatchEntrySync(
   try {
     formatted = formatEntry(configuration, entry);
   } catch (error) {
-    handleError(
-      new LoggerFormatterError(
-        `Failed to format log entry: ${toLoggerError(error).message}`,
-        { cause: error },
-      ),
-    );
+    handleError(toFormatterError(resolveFormatterName(configuration), error));
     return;
   }
 
   const pending: Promise<void>[] = [];
 
   for (const transport of configuration.transports) {
+    let transportName = "transport";
+
     try {
       if (!isLoggerTransport(transport)) {
         continue;
       }
 
       const registered = createLoggerTransport(transport);
+      transportName = registered.name;
 
       if (!registered.enabled) {
         continue;
@@ -275,22 +328,12 @@ export function dispatchEntrySync(
             registered.name,
             result,
           ).catch((error: unknown) => {
-            handleError(
-              new LoggerTransportError(
-                `Failed to write log entry: ${toLoggerError(error).message}`,
-                { cause: error },
-              ),
-            );
+            handleError(toTransportError(registered.name, error));
           }),
         );
       }
     } catch (error) {
-      handleError(
-        new LoggerTransportError(
-          `Failed to write log entry: ${toLoggerError(error).message}`,
-          { cause: error },
-        ),
-      );
+      handleError(toTransportError(transportName, error));
     }
   }
 

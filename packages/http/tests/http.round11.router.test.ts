@@ -90,6 +90,27 @@ describe("HTTPA-01: an OPTIONS fallback never reaches a route handler", () => {
     expect(String(response.headers["allow"])).toContain("DELETE");
   });
 
+  it("does not run the handler through HttpRouter.dispatch either", async () => {
+    const effects: string[] = [];
+
+    const router = new http.HttpRouter();
+
+    router.delete("/accounts/:id", (ctx) => {
+      effects.push(`DELETED ${String(ctx.params["id"])}`);
+
+      return http.createResponseContext().setStatus(204);
+    });
+
+    const { response, route } = await router.dispatch(
+      http.createRequestContext({ method: "OPTIONS", url: "/accounts/42" }),
+    );
+
+    expect(effects).toEqual([]);
+    expect(route).toBeUndefined();
+    expect(response.status).toBe(204);
+    expect(String(response.headers["allow"])).toContain("DELETE");
+  });
+
   it("still dispatches an explicitly registered OPTIONS route", async () => {
     const effects: string[] = [];
 
@@ -152,15 +173,19 @@ describe("HTTPA-02: route middleware writes to ctx.response survive", () => {
 
     const router = new http.HttpRouter();
 
-    router.get("/secure", () => {
-      effects.push("handler");
+    router.get(
+      "/secure",
+      () => {
+        effects.push("handler");
 
-      return http.createResponseContext().text("body");
-    }, {
-      middleware: [
-        async () => http.createResponseContext().setStatus(401).text("no"),
-      ],
-    });
+        return http.createResponseContext().text("body");
+      },
+      {
+        middleware: [
+          async () => http.createResponseContext().setStatus(401).text("no"),
+        ],
+      },
+    );
 
     const { response } = await router.dispatch(
       http.createRequestContext({ method: "GET", url: "/secure" }),
@@ -228,9 +253,7 @@ describe("HTTPA-05: cache freshness ages a response", () => {
   it("reports a one-hour-old max-age=60 response stale", () => {
     const date = new Date(Date.now() - 3_600_000).toUTCString();
 
-    expect(
-      isFresh({ "cache-control": "max-age=60", date }),
-    ).toBe(false);
+    expect(isFresh({ "cache-control": "max-age=60", date })).toBe(false);
   });
 
   it("reports a response whose Expires is in the past stale", () => {
@@ -417,7 +440,8 @@ describe("HTTPA-11: preserveResponse is honoured", () => {
       preserveResponse: true,
     });
 
-    const response = http.createResponseContext()
+    const response = http
+      .createResponseContext()
       .setStatus(200)
       .header("x-ambient", "keep");
 

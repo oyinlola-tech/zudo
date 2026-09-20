@@ -4,6 +4,8 @@
  * Result constructors and type guards for schema outcomes.
  */
 
+import { SchemaError } from "@zudojs/errors";
+
 import type {
   SchemaResult,
   SchemaSuccess,
@@ -60,14 +62,21 @@ export function isSchemaFailure<T>(
   return result.success === false;
 }
 
-/** Unwraps a result, throwing on failure. */
+/**
+ * Unwraps a result, throwing on failure.
+ *
+ * @throws {SchemaError} carrying the recorded issues. A bare `Error` gave a
+ *   caller no way to tell invalid input from a defect, and dropped the issue
+ *   list everywhere but the message string.
+ */
 export function unwrapSchemaResult<T>(result: SchemaResult<T>): T {
   if (result.success) {
     return result.data;
   }
-  throw new Error(
+  throw new SchemaError(
     `Schema validation failed with ${result.issues.length} issue(s): ${result.issues
       .map((i) => i.message)
       .join("; ")}`,
+    { issues: [...result.issues] },
   );
 }

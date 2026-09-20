@@ -1,5 +1,10 @@
 import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
 
+import {
+  assertHmacCapability,
+  assertRandomCapability,
+} from "../cryptoProvider/cryptoProvider.capability.js";
+
 import { encode } from "../cryptoEncoding/cryptoEncoding.core.js";
 
 import type { CryptoProvider } from "../cryptoProvider/index.js";
@@ -121,6 +126,9 @@ export async function createCryptoKey(
   options: CryptoKeyOptions,
   provider: CryptoProvider = getDefaultCryptoProvider(),
 ): Promise<CryptoKey> {
+  assertHmacCapability(provider);
+  assertRandomCapability(provider);
+
   validateKeyBytes(bytes, options.algorithm);
 
   const keyBytes = new Uint8Array(bytes);
@@ -176,6 +184,8 @@ export async function generateCryptoKey(
       "Cryptographic key length must be a positive integer.",
     );
   }
+
+  assertRandomCapability(provider);
 
   const bytes = await provider.randomBytes(length);
 

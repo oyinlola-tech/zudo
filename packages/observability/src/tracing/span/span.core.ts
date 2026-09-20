@@ -19,6 +19,28 @@ import {
   createChildSpanContext,
 } from "./spanContext.type.js";
 
+/**
+ * Stores one attribute on a bag whose keys come from instrumentation.
+ *
+ * `bag[key] = value` invokes the inherited `__proto__` setter for that one
+ * key: the attribute never lands, and an object value replaces the bag's
+ * prototype. A poisoned prototype then defeats `maxAttributes`, because the
+ * cap is only applied to keys the bag does not already answer for. Matches
+ * the same guard in `redaction.core.ts`.
+ */
+function defineAttribute(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
 /** Defaults matching the OpenTelemetry specification. */
 const DEFAULT_LIMITS: Required<SpanLimits> = {
   maxAttributes: 128,
@@ -133,13 +155,13 @@ export class DefaultSpan implements Span {
   setAttribute(key: string, value: unknown): void {
     if (this.ended || !this.recording) return;
     if (
-      !(key in this.attributes) &&
+      !Object.prototype.hasOwnProperty.call(this.attributes, key) &&
       Object.keys(this.attributes).length >= this.limits.maxAttributes
     ) {
       this.droppedAttributes++;
       return;
     }
-    this.attributes[key] = this.sanitize(key, value);
+    defineAttribute(this.attributes, key, this.sanitize(key, value));
   }
 
   addEvent(name: string, attributes?: Record<string, unknown>): void {
@@ -158,7 +180,7 @@ export class DefaultSpan implements Span {
           this.droppedAttributes++;
           continue;
         }
-        eventAttributes[key] = this.sanitize(key, value);
+        defineAttribute(eventAttributes, key, this.sanitize(key, value));
         kept++;
       }
     }

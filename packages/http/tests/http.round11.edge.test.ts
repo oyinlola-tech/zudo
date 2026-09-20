@@ -242,7 +242,9 @@ describe("HTTPB-02 — the agent registry can find what it created", () => {
 
 describe("HTTPB-03 — quoted header parameters cannot carry CR/LF", () => {
   it("refuses to re-emit a Forwarded value containing CRLF", () => {
-    const [parsed] = parseForwardedHeader('for="1.2.3.4\r\nX-Evil: 1";proto=http');
+    const [parsed] = parseForwardedHeader(
+      'for="1.2.3.4\r\nX-Evil: 1";proto=http',
+    );
 
     expect(parsed).toBeDefined();
 
@@ -250,21 +252,23 @@ describe("HTTPB-03 — quoted header parameters cannot carry CR/LF", () => {
   });
 
   it("still emits an ordinary Forwarded value", () => {
-    expect(
-      createForwardedHeader({ for: "1.2.3.4", protocol: "https" }),
-    ).toBe("for=1.2.3.4; proto=https");
+    expect(createForwardedHeader({ for: "1.2.3.4", protocol: "https" })).toBe(
+      "for=1.2.3.4; proto=https",
+    );
   });
 
   it("refuses to emit a Keep-Alive extension containing CRLF", () => {
     expect(() =>
-      formatKeepAliveHeader(parseKeepAliveHeader('timeout=5, ext="a\r\nX-Evil: 1"')),
+      formatKeepAliveHeader(
+        parseKeepAliveHeader('timeout=5, ext="a\r\nX-Evil: 1"'),
+      ),
     ).toThrow(TypeError);
   });
 
   it("still emits ordinary Keep-Alive parameters", () => {
-    expect(formatKeepAliveHeader({ timeout: 5, max: 100, extensions: {} })).toBe(
-      "timeout=5, max=100",
-    );
+    expect(
+      formatKeepAliveHeader({ timeout: 5, max: 100, extensions: {} }),
+    ).toBe("timeout=5, max=100");
   });
 });
 
@@ -277,7 +281,11 @@ describe("HTTPB-04 — the zero-config security middleware emits the package bas
     const response = asResponseContext(
       await createSecurityMiddleware()(
         {
-          request: createRequestContext({ method: "GET", url: "/", headers: {} }),
+          request: createRequestContext({
+            method: "GET",
+            url: "/",
+            headers: {},
+          }),
           response: createResponseContext(),
         } as never,
         async () => createResponseContext(),
@@ -299,7 +307,11 @@ describe("HTTPB-04 — the zero-config security middleware emits the package bas
     const response = asResponseContext(
       await createSecurityMiddleware({ xFrameOptions: "SAMEORIGIN" })(
         {
-          request: createRequestContext({ method: "GET", url: "/", headers: {} }),
+          request: createRequestContext({
+            method: "GET",
+            url: "/",
+            headers: {},
+          }),
           response: createResponseContext(),
         } as never,
         async () => createResponseContext(),
@@ -316,7 +328,11 @@ describe("HTTPB-04 — the zero-config security middleware emits the package bas
         xFrameOptions: "DENY",
       })(
         {
-          request: createRequestContext({ method: "GET", url: "/", headers: {} }),
+          request: createRequestContext({
+            method: "GET",
+            url: "/",
+            headers: {},
+          }),
           response: createResponseContext(),
         } as never,
         async () => createResponseContext(),
@@ -497,7 +513,9 @@ describe("HTTPA-08 — request.path agrees with the router about repeated slashe
     );
   });
 
-  it("leaves the context path in agreement with the dispatch path", () => {
+  it("leaves the context path in agreement with the dispatch path", async () => {
+    const { normalizePath } = await import("../src/httpUrl/http.url.js");
+
     const context = createRequestContext({
       method: "GET",
       url: "//admin/secret",
@@ -505,6 +523,9 @@ describe("HTTPA-08 — request.path agrees with the router about repeated slashe
     });
 
     expect(context.path).toBe("/admin/secret");
+
+    /* The path a guard reads and the path the router dispatches on. */
+    expect(context.path).toBe(normalizePath("//admin/secret"));
   });
 
   it("does not touch the query string", () => {

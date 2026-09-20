@@ -1,4 +1,5 @@
 import type { Logger } from "../loggerCore/core/loggerCore.type.js";
+import { LoggerDisposedError } from "../loggerErrors/loggerError.base.js";
 import { createLogger } from "../loggerCore/core/loggerCore.core.js";
 import { createDefaultLogger } from "../loggerCore/helpers/loggerCore.helper.js";
 import type { LoggerFactory } from "../loggerFactory/loggerFactory.core.js";
@@ -24,7 +25,7 @@ export class LoggerManager {
 
   /** Initializes the logger manager. Initialization is idempotent. */
   initialize(options: LoggerOptions = {}): Logger {
-    if (this.closed) throw new Error("LoggerManager has been closed.");
+    if (this.closed) throw new LoggerDisposedError("LoggerManager");
     if (this.initialized && this.defaultLogger) return this.defaultLogger;
 
     const logger = this.factory.create(options.name ?? "zudojs", options);
@@ -33,22 +34,39 @@ export class LoggerManager {
     return logger;
   }
 
+  /**
+   * Adopts an existing logger as the manager's default logger.
+   *
+   * The logger is REGISTERED with the underlying factory, so it is
+   * covered by flush(), close(), getAll() and size. Assigning it to the
+   * private default field alone (as createLoggerManagerFromLogger used
+   * to) left the registry empty, making flush()/close() no-ops for the
+   * only logger the manager owned.
+   */
+  adopt(logger: Logger): Logger {
+    if (this.closed) throw new LoggerDisposedError("LoggerManager");
+    this.factory.register(logger);
+    this.defaultLogger = logger;
+    this.initialized = true;
+    return logger;
+  }
+
   /** Returns the default application logger. Lazily initializes when necessary. */
   getLogger(): Logger {
-    if (this.closed) throw new Error("LoggerManager has been closed.");
+    if (this.closed) throw new LoggerDisposedError("LoggerManager");
     if (!this.defaultLogger) return this.initialize();
     return this.defaultLogger;
   }
 
   /** Returns a named logger. Named loggers are managed by the underlying factory. */
   get(name: string, options: LoggerOptions = {}): Logger {
-    if (this.closed) throw new Error("LoggerManager has been closed.");
+    if (this.closed) throw new LoggerDisposedError("LoggerManager");
     return this.factory.getOrCreate(name, options);
   }
 
   /** Creates a new logger even when another logger with the same name already exists. */
   create(name: string, options: LoggerOptions = {}): Logger {
-    if (this.closed) throw new Error("LoggerManager has been closed.");
+    if (this.closed) throw new LoggerDisposedError("LoggerManager");
     return this.factory.create(name, options, true);
   }
 
@@ -104,7 +122,7 @@ export class LoggerManager {
 
   /** Provides direct access to the underlying factory. */
   getFactory(): LoggerFactory {
-    if (this.closed) throw new Error("LoggerManager has been closed.");
+    if (this.closed) throw new LoggerDisposedError("LoggerManager");
     return this.factory;
   }
 }
@@ -133,8 +151,7 @@ export function createManagedDefaultLogger(name = "zudojs"): Logger {
 /** Creates a logger manager from an existing logger. */
 export function createLoggerManagerFromLogger(logger: Logger): LoggerManager {
   const manager = new LoggerManager();
-  manager["defaultLogger"] = logger;
-  manager["initialized"] = true;
+  manager.adopt(logger);
   return manager;
 }
 

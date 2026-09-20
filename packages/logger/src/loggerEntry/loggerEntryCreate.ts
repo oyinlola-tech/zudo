@@ -6,6 +6,8 @@ import type { LoggerEntry, LoggerEntryInput } from "./loggerEntry.type.js";
 
 import { createLoggerEntryId } from "./loggerEntry.core.js";
 
+import { InvalidLoggerEntryError } from "../loggerErrors/loggerError.base.js";
+
 import { loggerLevelNameFallback } from "./loggerEntryHelpers/loggerEntryHelpers.serialize.js";
 
 /**
@@ -16,7 +18,9 @@ export function createLoggerEntry(input: LoggerEntryInput): LoggerEntry {
   const timestampMs = timestamp.getTime();
 
   if (!Number.isFinite(timestampMs)) {
-    throw new RangeError("Logger entry timestamp must be a valid date.");
+    throw new InvalidLoggerEntryError(
+      "Logger entry timestamp must be a valid date.",
+    );
   }
 
   const levelName = input.levelName ?? loggerLevelNameFallback(input.level);

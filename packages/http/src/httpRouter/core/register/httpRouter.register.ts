@@ -312,9 +312,7 @@ export class HttpRouter {
           matched: true,
           route: route.definition,
           params,
-          allowedMethods: Object.freeze([
-            ...allowedForPath(),
-          ]),
+          allowedMethods: Object.freeze([...allowedForPath()]),
           path: normalizedPath,
           method: normalizedMethod,
         };
@@ -342,10 +340,7 @@ export class HttpRouter {
             matched: true,
             route: route.definition,
             params,
-            allowedMethods: Object.freeze([
-              ...allowedForPath(),
-              "HEAD",
-            ]),
+            allowedMethods: Object.freeze([...allowedForPath(), "HEAD"]),
             path: normalizedPath,
             method: normalizedMethod,
           };
@@ -362,10 +357,7 @@ export class HttpRouter {
         matched: true,
         route: undefined,
         params: {},
-        allowedMethods: Object.freeze([
-          ...allowedForPath(),
-          "OPTIONS",
-        ]),
+        allowedMethods: Object.freeze([...allowedForPath(), "OPTIONS"]),
         path: normalizedPath,
         method: normalizedMethod,
       };

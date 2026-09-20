@@ -163,7 +163,8 @@ export class ConfigStore {
       // key was redacted when it arrived from a source and printed in
       // clear when it arrived through initialValues, set(), setMany()
       // or replace(). Pass `sensitive: false` explicitly to opt out.
-      sensitive: options.sensitive ?? isSensitiveConfigEntry(normalizedKey, value),
+      sensitive:
+        options.sensitive ?? isSensitiveConfigEntry(normalizedKey, value),
       resolved: options.resolved ?? true,
     });
 
