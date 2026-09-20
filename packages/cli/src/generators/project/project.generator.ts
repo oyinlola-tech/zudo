@@ -48,7 +48,15 @@ export async function generateProject(
   try {
     await writeFileTree(projectPath, templateFiles);
   } catch (error) {
-    throw new CLIGenerationError(`Failed to write project files:`, error);
+    // This message is what the user sees at the moment the CLI rolls back and
+    // deletes the directory it created, so it has to say why. It used to end
+    // in a colon with the cause never rendered.
+    const reason = error instanceof Error ? error.message : String(error);
+
+    throw new CLIGenerationError(
+      `Failed to write project files into ${projectPath}: ${reason}`,
+      error,
+    );
   }
 
   const filesCreated = Object.keys(templateFiles);

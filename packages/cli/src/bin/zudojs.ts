@@ -124,6 +124,16 @@ app.register(
           "Comma-separated service names (microservice architecture only)",
         type: "string",
       },
+      {
+        // No default. An absent flag keeps the non-interactive branch's
+        // historical set (cqrs, messaging, observability, openapi, database)
+        // and seeds the interactive prompt with nothing, so adding the flag
+        // does not change what an existing command line produces.
+        name: "capabilities",
+        description:
+          "Comma-separated capabilities (cqrs, events, messaging, queue, observability, openapi, database, security)",
+        type: "string",
+      },
     ],
     execute: async (context: CLIContext): Promise<void> => {
       await runCreateCommand(context);

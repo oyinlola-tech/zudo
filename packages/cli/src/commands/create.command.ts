@@ -584,15 +584,23 @@ async function createProject(
   // completion and exited 0. This removes the half-written project and
   // exits with the interrupted status.
   const unregisterInterrupt = registerCLIInterruptHandler(async () => {
-    spinner.stop("Interrupted");
-    const result = await rollback.rollback();
-    if (result.failures.length > 0) {
-      p.log.error(
-        `Could not remove ${result.failures
-          .map((failure) => failure.path)
-          .join(", ")}; delete it by hand before retrying.`,
-      );
+    try {
+      spinner.stop("Interrupted");
+    } catch {
+      // The spinner may not be running; the rollback is what matters.
     }
+
+    const result = await rollback.rollback();
+
+    if (result.failures.length > 0) {
+      p.cancel(
+        `Cancelled, but ${result.failures
+          .map((failure) => `${failure.path} (${failure.reason})`)
+          .join(", ")} could not be removed — delete it by hand.`,
+      );
+      return;
+    }
+
     p.cancel(`Cancelled. Removed ${targetPath}.`);
   });
 
@@ -648,7 +656,20 @@ async function createProject(
       }
     }
 
-    await reportProjectProblems(targetPath, options, installFailure === null);
+    spinner.start("Validating the generated project");
+    const problems = await collectProjectProblems(
+      targetPath,
+      options,
+      installFailure === null,
+    );
+    spinner.stop(
+      problems.length === 0
+        ? "Project validated"
+        : `Project validated with ${problems.length} warning(s)`,
+    );
+    for (const problem of problems) {
+      p.log.warn(`Project check: ${problem}`);
+    }
 
     if (options.initGit) {
       spinner.start("Initializing git repository");
@@ -800,20 +821,20 @@ async function applyCapabilityPackages(
 }
 
 /**
- * Checks the project that was just written and reports anything wrong with
+ * Checks the project that was just written and returns anything wrong with
  * it. Never fatal: the files exist and the user can look at them.
  */
-async function reportProjectProblems(
+async function collectProjectProblems(
   targetPath: string,
   options: ScaffoldOptions,
   installed: boolean,
-): Promise<void> {
+): Promise<readonly string[]> {
   const layout = resolveProjectLayout(targetPath);
   const appDir = layout?.backendDirs[0];
 
   // Backend apps only: a Flutter or React Native app has no tsconfig.json
   // and no src/, and would fail every check for no reason.
-  if (appDir === undefined) return;
+  if (appDir === undefined) return [];
 
   const dependenciesInstalled = installed && options.installDeps === true;
 
@@ -822,9 +843,7 @@ async function reportProjectProblems(
     typecheck: dependenciesInstalled,
   });
 
-  for (const error of result.errors) {
-    p.log.warn(`Project check: ${error}`);
-  }
+  return result.errors;
 }
 
 /**

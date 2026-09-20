@@ -32,26 +32,12 @@ import {
   assertGeneratableName,
   assertSafePathSegment,
 } from "../utils/utils.name.js";
+import { SCHEMATIC_NAMES } from "../constants/index.js";
 import { resolveProjectLayout } from "../resolvers/layout/projectLayout.core.js";
 import { findProjectRoot } from "../resolvers/project.resolver.js";
 import { describeError } from "./commandError.helper.js";
 import { captureWrites, findWriteConflicts } from "../utils/utils.writeGuard.js";
 
-const VALID_SCHEMATICS = [
-  "service",
-  "module",
-  "command",
-  "query",
-  "controller",
-  "repository",
-  "middleware",
-  "event",
-  "job",
-  "route",
-  "model",
-  "dto",
-  "validator",
-] as const;
 
 interface GenerateOptions {
   readonly service?: string;
@@ -169,10 +155,10 @@ export async function runGenerateCommand(context: CLIContext): Promise<void> {
 
   if (
     !schematic ||
-    !VALID_SCHEMATICS.includes(schematic as (typeof VALID_SCHEMATICS)[number])
+    !SCHEMATIC_NAMES.includes(schematic)
   ) {
     throw new CLIValidationError(
-      `Schematic name is required. Available: ${VALID_SCHEMATICS.join(", ")}`,
+      `Schematic name is required. Available: ${SCHEMATIC_NAMES.join(", ")}`,
     );
   }
 
@@ -327,10 +313,16 @@ async function runSchematic(
 
     // In the microservice layout `--service` selected the owning app and is
     // already part of basePath, so it must not nest the schematic again.
+    //
+    // Without `--service` there is no CQRS group at all. This used to fall
+    // back to the literal `"default"`, which became a path segment no template
+    // ever creates: `zudojs generate command pay` wrote `src/default/commands/`,
+    // and with `--module identity` it wrote `src/modules/identity/default/`
+    // right next to the real, empty `src/modules/identity/commands/`. Nothing
+    // imported either. The generators already handle an absent group by
+    // writing to `<basePath>/commands/<name>`.
     const cqrsService =
-      options.architecture === "microservice"
-        ? undefined
-        : (options.service ?? "default");
+      options.architecture === "microservice" ? undefined : options.service;
 
     switch (schematic) {
       case "service":
@@ -383,7 +375,7 @@ async function runSchematic(
 
       default:
         throw new CLIValidationError(
-          `Unknown schematic: "${schematic}". Available: ${VALID_SCHEMATICS.join(", ")}.`,
+          `Unknown schematic: "${schematic}". Available: ${SCHEMATIC_NAMES.join(", ")}.`,
         );
     }
   } catch (error) {

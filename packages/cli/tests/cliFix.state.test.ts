@@ -716,7 +716,7 @@ describe("CLI-STATE-12", () => {
 });
 
 /* -------------------------------------------------------------------------- */
-/* CLI-STATE-14 / CLI-STATE-15 / CLI-STATE-16                                 */
+/* CLI-STATE-14 / CLI-STATE-15 / ProjectValidator                             */
 /* -------------------------------------------------------------------------- */
 
 describe("CLI-STATE-14", () => {
@@ -729,7 +729,7 @@ describe("CLI-STATE-14", () => {
   });
 });
 
-describe("CLI-STATE-15", () => {
+describe("CLI-STATE-11/12 (ProjectValidator)", () => {
   it("never shells out to npx for the typescript check", async () => {
     const root = await monolithProject();
     const spawned: string[] = [];
@@ -768,7 +768,7 @@ describe("CLI-STATE-15", () => {
   });
 });
 
-describe("CLI-STATE-16", () => {
+describe("CLI-STATE-15", () => {
   it("refuses a duplicate registration and offers replace()", () => {
     const dependencies = new DependencyRegistry();
     const record = {
