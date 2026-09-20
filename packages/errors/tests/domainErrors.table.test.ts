@@ -128,6 +128,7 @@ const rows: readonly Row[] = [
   { name: "EventRegistryDisposedError", make: () => new D.EventRegistryDisposedError(), code: ErrorCode.EVENT_REGISTRY_DISPOSED, status: 500, expose: false, isOperational: false },
   { name: "EventBusDisposedError", make: () => new D.EventBusDisposedError(), code: ErrorCode.EVENT_BUS_DISPOSED, status: 500, expose: false, isOperational: false },
   { name: "EventSubscriptionClosedError", make: () => new D.EventSubscriptionClosedError("s"), code: ErrorCode.EVENT_SUBSCRIPTION_CLOSED, status: 410, expose: true, own: { subscriptionId: "s" } },
+  { name: "EventListenerLimitExceededError", make: () => new D.EventListenerLimitExceededError("p", 2, 1), code: ErrorCode.EVENT_LISTENER_LIMIT_EXCEEDED, status: 500, expose: false, isOperational: false, own: { pattern: "p", count: 2, limit: 1 } },
   { name: "EventTimeoutError", make: () => new D.EventTimeoutError(5, { eventType: "t" }), code: ErrorCode.EVENT_TIMEOUT, status: 504, expose: false, own: { timeoutMs: 5, eventType: "t" } },
   { name: "EventSerializationError", make: () => new D.EventSerializationError("m", { eventType: "t", cause }), code: ErrorCode.EVENT_SERIALIZATION_FAILED, status: 500, expose: false, own: { eventType: "t" }, hasCause: true },
   { name: "EventDeserializationError", make: () => new D.EventDeserializationError("m", cause, { eventType: "t" }), code: ErrorCode.EVENT_DESERIALIZATION_FAILED, status: 400, expose: true, own: { eventType: "t" }, hasCause: true },

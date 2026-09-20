@@ -27,6 +27,7 @@ const ARGUMENT_CANDIDATES: readonly unknown[][] = [
   [[]],
   ["a", "b", 10],
   ["a", 10, "b"],
+  ["a", 10, 20],
   ["a", "b", 10, 20],
   ["a", ["b"]],
   ["a", {}, "b"],
