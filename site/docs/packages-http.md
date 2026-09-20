@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/http — HTTP server, request/r
 source: https://zudojs.oyinlola.site/docs/packages-http
 ---
 
-v1.2.0
+v1.3.0
 
 # @zudojs/http
 
@@ -126,10 +126,11 @@ const adapter = createNodeHttpAdapter({
 | `method` | `"GET"`, `"POST"`, and so on | Always upper-case. |
 | `url / path` | Full URL and just the path part | `path` has no query string. |
 | `getHeader(name)` | One header value or `undefined` | Names are case-insensitive. Also `hasHeader`, `headers`. |
-| `getQuery(name)` | One query value, an array for repeats, or `undefined` | Also `query` for the whole object. `request.query` and the router's `ctx.query` use the same parser. |
+| `getQuery(name)` | One query value, an array for repeats, or `undefined` | Also `query` for the whole object. `request.query`, the router's `ctx.query` and the exported `parseQueryString` use the same hardened parser: the record has a `null` prototype, `__proto__`/`constructor`/`prototype` are dropped, and a query past the parser's limits (1000 keys, 16 KB per value, 1 MB total) throws `HTTPQueryLimitError` (`414`). |
 | `body` | Raw bytes as `Uint8Array` | Empty array when there is no body. |
 | `id` | A unique request id | Taken from `x-request-id` if the client sent one, otherwise generated. |
-| `remoteAddress` | The caller's IP address | Respects `trustProxy` on the adapter. |
+| `remoteAddress` | The caller's IP address | The socket peer. `X-Forwarded-For` is read only when the adapter's `trustProxy` matches that peer, and `trustProxy` defaults to `false`. |
+| `protocol / hostname / port` | The scheme, host and port the request arrived on | From the socket and the `Host` header. `X-Forwarded-Proto` and `X-Forwarded-Host` are read only under `trustProxy`, and a forwarded scheme that is not `http` or `https` is discarded. |
 | `getState(key) / setState(key, value)` | Per-request scratch space | Use it to pass data between middleware and handlers. |
 
 ### Response: what you can set
@@ -202,12 +203,30 @@ process.on("SIGINT", async () => {
 | --- | --- | --- |
 | `host / port` | Where to listen | Defaults `127.0.0.1` and `3000`. `port: 0` picks a free port. |
 | `maxBodySize` | Largest request body accepted, in bytes | Default 10 MB. Bigger bodies get a `413`. |
-| `trustProxy` | Whether to believe `X-Forwarded-*` headers | `false` (default), `true`, a hop count (trust that many proxies nearest the server), or a list of proxy IPs. |
+| `trustProxy` | Which socket peers may speak for a client through `X-Forwarded-*` | Default `false`: forwarded headers are ignored entirely. Also `true` or `"all"` (trust every hop), a hop count (trust that many proxies nearest the server; `0` trusts nothing), a preset (`"loopback"`, `"linklocal"`, `"uniquelocal"`/`"private"`), an IP or CIDR range, a comma-separated list or array of either, or a predicate `(address, hop) => boolean`. A string that is none of these throws `TypeError` when the adapter is constructed. |
 | `security` | Request guard run before each request | On by default; an `HTTPSecurityConfig` object to tune, `false` to disable. |
 | `headersTimeout / requestTimeout / keepAliveTimeout` | Timeouts in ms | Defaults `10000` / `30000` / `5000`, tighter than Node's own. |
 | `maxConnections` | Cap on open connections | Unlimited by default. |
 | `shutdownGraceMs` | Grace period for in-flight requests during `stop()` | Default `10000`. |
 | `events` | Adapter-level listeners | `onListening(address)`, `onClose()`, `onError(error)`. |
+
+> **Changed in v1.3.0: forwarded headers are not trusted by default**
+>
+> Before v1.3.0 the request objects built by `createHTTPRequest`, `createHTTPAdapter`, `NodeHTTPAdapter`, `adaptNodeRequest` and `adaptNodeContext` read `X-Forwarded-For` and `X-Forwarded-Proto` from any client, with no trust check: a caller connecting directly chose its own `request.ip` (defeating an allowlist, a per-IP rate limit or an audit trail) and could set `request.secure` to `true` with a header. Those headers are now honoured only when the socket peer matches `trustProxy`, which defaults to `false`, and a forwarded scheme other than `http` or `https` is discarded. `createNodeHttpAdapter` already gated them.
+>
+>
+>
+> If you run behind a proxy you must now opt in, on whichever entry point you use:
+
+```ts
+createNodeHttpAdapter({ port: 3000, trustProxy: "10.0.0.0/8", handler });
+createHTTPAdapter({ trustProxy: "10.0.0.0/8" });
+adaptNodeRequest(req, { trustProxy: "10.0.0.0/8" });
+adaptNodeContext(req, res, { trustProxy: "10.0.0.0/8" });
+createHTTPRequest(req, { trustProxy: "10.0.0.0/8" });
+```
+
+Without it, the client address is the socket peer and the protocol reflects the socket's own TLS state. The standalone `getRequestProtocol(request, trustProxy?)` and `getRequestIP(request, trustProxy?)` take the same value as an optional second argument, and default to `false` too.
 
 > **Watch out**
 >
@@ -295,19 +314,37 @@ router.group("/api", (api) => {
 // GET /api/health and GET /api/version now exist
 ```
 
+Anything route middleware writes to `context.response` before calling `next()` — headers, cookies, status, metadata — survives when the handler returns a response of its own. A guard that sets a security header and delegates therefore affects the response that is sent.
+
+### Route patterns
+
+A pattern is a path split into segments. A literal segment matches itself; the other kinds capture into `ctx.params`.
+
+| Pattern | What it matches | Notes |
+| --- | --- | --- |
+| `/users/:id` | One required segment | `ctx.params.id`. |
+| `/account/:id?/profile` | The segment, or nothing | Optional. `ctx.params.id` is `undefined` when it is absent, and the parameter only claims a segment while the segments after it still have input left. |
+| `/users/:id(\d+)` | A segment matching the expression | Write the backslash twice in a string literal: `"/users/:id(\\d+)"`. |
+| `/files/{name}`, `/files/{name?:\w+}` | Brace form of the same | Optional and constrained forms included. |
+| `/assets/*path` | The rest of the path | Trailing wildcard. Each segment is decoded separately, so `%2f` and `%2e%2e` cannot escape the prefix. |
+
+When more than one pattern matches, the router compares their segments left to right by kind — literal beats parameter, parameter beats wildcard — and the first difference decides; registration order breaks a tie. So `/admin/*rest` wins over `/:a/:b/:c/:d` for `GET /admin/a/b/c`. Before v1.3.0 the kinds were summed into a single score, which let the longer all-parameter pattern win and bypass the guards registered on the admin route.
+
 ### Router options
 
 | Option | What it does | Notes |
 | --- | --- | --- |
 | `caseSensitive` | Whether `/Users` and `/users` differ | Default `false`. |
-| `strictTrailingSlash` | Whether `/users/` and `/users` differ | Default `false`. |
+| `strictTrailingSlash` | Whether `/users/` and `/users` differ | Default `false`. Enforced since v1.3.0; a strict router used to store the option and still answer `/users/` with the `/users` route. |
 | `automaticHead` | Answer `HEAD` using the matching `GET` route | Default `true`. |
-| `automaticOptions` | Answer `OPTIONS` with an `Allow` header | Default `true`. |
+| `automaticOptions` | Answer `OPTIONS` with an `Allow` header | Default `true`. The answer is a `204` from a synthetic route with no middleware, so an `OPTIONS` request never runs another method's handler. `Allow` honours `caseSensitive`. |
 | `notFoundHandler / methodNotAllowedHandler` | Replace the default 404 / 405 responses | Receive `{ request, path, method, signal, state }`. |
+
+For the lower-level path, `createRouteDispatcher(matcher, options)` takes `RouteDispatchOptions`. Its `preserveResponse` (default `false`) keeps the response the middleware chain built instead of merging the handler's response into it; before v1.3.0 the option was declared and never read.
 
 > **Common mistake**
 >
-> Registering the same method and path twice throws `RouteConflictError` at startup. Each `router.get(...)` call returns a function that removes the route again, which is handy in tests.
+> Registering the same method and path twice throws `RouteConflictError` at startup. Each `router.get(...)` call returns a function that removes the route again, which is handy in tests. Registering both `/users/:id` and `/users/:id?` is not a conflict.
 
 ## MIDDLEWARE
 
@@ -390,11 +427,14 @@ const server = createHttpServer({
 
 ### Built-in guards
 
-- Requests whose path has `.` / `..` / `%2e%2e` segments or backslashes are answered `400`.
+- Requests whose path has `.` / `..` / `%2e%2e` segments or backslashes are answered `400`. Repeated slashes are collapsed once, where the request-target is parsed, so `request.path` and the router both see `//admin/secret` as `/admin/secret` and a guard can no longer disagree with the route it protects. An origin-form target is still never parsed as an authority.
 - `createPathMiddleware(path, middleware, { caseSensitive? })` ignores case and trailing slashes by default, matching the router.
 - `createRateLimitMiddleware({ max, windowMs })` answers `429` with `Retry-After`. Requests with no usable client address share one bucket (`UNKNOWN_CLIENT_RATE_LIMIT_IP`, `0.0.0.0`); they are never unlimited and never a `500`.
 - `parseSignedCookie(value, secret, name)` verifies a signed cookie; signatures are compared with `@zudojs/crypto` `timingSafeEqualString`.
 - The built-in `createCorsMiddleware`, `createSecurityMiddleware` and `createTimingMiddleware` return a cloned `HttpResponseContext`, so status and body survive.
+- `createSecurityMiddleware()` with no options emits the package's declared baseline (`createDefaultSecurityHeaderOptions`): `Content-Security-Policy`, `Strict-Transport-Security`, `Permissions-Policy`, the cross-origin isolation headers and `X-Permitted-Cross-Domain-Policies` on top of `nosniff`, `X-Frame-Options` and `Referrer-Policy`. Explicit options layer over it; `useDefaults: false` emits only what you configure. Before v1.3.0 it emitted three headers.
+- `createLoggingMiddleware({ includeHeaders: true })` redacts credential headers — `authorization`, `proxy-authorization`, `cookie`, `set-cookie` and the rest of the `@zudojs/logger` secret-field set — before the record reaches the logger. Add your own names with `redactHeaders`.
+- `guardRequest` applies `maxHeaderValueSize` and the CRLF filter to array-valued headers (`set-cookie`, and any header supplied as a list) as well as to single values.
 - Stock adapters give each context a redacting `@zudojs/logger` console logger named `http` when you supply none.
 
 ## ERRORS
@@ -615,7 +655,8 @@ The exports you will actually call. The package exports many more low-level help
 | `notFound(message?)` and friends | Create an `HttpError` with a status | See [Errors](#errors). |
 | `isHttpError(value)` | Type guard for `HttpError` |  |
 | `getStatusText(code)` | `404` to `"Not Found"` |  |
-| `getCurrentRequestContext()` | The request being handled, from anywhere in the call stack | Only inside `runWithRequestContext`. |
+| `getCurrentRequestContext()` | The request being handled, from anywhere in the call stack | Only inside `runWithRequestContext`. Working since v1.3.0: the `AsyncLocalStorage` behind it was loaded in a way that never resolved under ESM, so it always returned `undefined`. |
+| `getRequestIP(request, trustProxy?)` / `getRequestProtocol(request, trustProxy?)` | The client address and scheme of a raw Node request | `trustProxy` defaults to `false`, so forwarded headers are ignored unless you pass one. |
 
 ### Classes
 

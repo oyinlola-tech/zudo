@@ -481,7 +481,7 @@ All are re-exported from `@zudojs/errors` and extend `APIError`. Status codes ar
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/api` exports from its package root at v1.1.0 — **60** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/api` exports from its package root at v1.1.1 — **60** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 60 exports**
 
@@ -501,10 +501,6 @@ Type aliases (4)
 
 `AnyAPIOperation` `APIHandler` `APIResult` `APISchemaResult`
 
-Constants (12)
+Constants (13)
 
-`CorrelationIdContextKey` `DEFAULT_OPERATION_TIMEOUT` `MAX_INTERCEPTORS` `MAX_OPERATION_NAME_LENGTH` `MAX_OPERATION_TIMEOUT` `MAX_REQUEST_ID_LENGTH` `MAX_VALIDATION_ISSUE_LENGTH` `MAX_VALIDATION_ISSUES` `RequestIdContextKey` `StartTimeContextKey` `TenantIdContextKey` `UserIdContextKey`
-
-Enums (1)
-
-`ErrorCode`
+`CorrelationIdContextKey` `DEFAULT_OPERATION_TIMEOUT` `ErrorCode` `MAX_INTERCEPTORS` `MAX_OPERATION_NAME_LENGTH` `MAX_OPERATION_TIMEOUT` `MAX_REQUEST_ID_LENGTH` `MAX_VALIDATION_ISSUE_LENGTH` `MAX_VALIDATION_ISSUES` `RequestIdContextKey` `StartTimeContextKey` `TenantIdContextKey` `UserIdContextKey`

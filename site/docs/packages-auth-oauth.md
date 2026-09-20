@@ -409,7 +409,7 @@ Every error extends `OAuthError`, which extends the shared `OAuthError` from `@z
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/auth-oauth` exports from its package root at v1.2.0 — **50** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/auth-oauth` exports from its package root at v1.2.1 — **50** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 50 exports**
 
@@ -425,10 +425,10 @@ Interfaces (9)
 
 `AuthorizationUrlOptions` `AuthorizationUrlResult` `CodeExchangeOptions` `OAuthConfig` `OAuthErrorOptions` `OAuthProviderPreset` `OAuthTokenSet` `OAuthUserInfo` `ResolvedOAuthConfig`
 
-Type aliases (5)
+Type aliases (4)
 
-`ClientAuthMethod` `FetchLike` `OAuthErrorCode` `OAuthProvider` `UrlUse`
+`ClientAuthMethod` `FetchLike` `OAuthProvider` `UrlUse`
 
-Constants (6)
+Constants (7)
 
-`DEFAULT_MAX_RESPONSE_BYTES` `DEFAULT_TIMEOUT_MS` `MAX_MAX_RESPONSE_BYTES` `MAX_TIMEOUT_MS` `MIN_MAX_RESPONSE_BYTES` `PROVIDER_PRESETS`
+`DEFAULT_MAX_RESPONSE_BYTES` `DEFAULT_TIMEOUT_MS` `MAX_MAX_RESPONSE_BYTES` `MAX_TIMEOUT_MS` `MIN_MAX_RESPONSE_BYTES` `OAuthErrorCode` `PROVIDER_PRESETS`

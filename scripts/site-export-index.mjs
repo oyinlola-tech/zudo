@@ -255,22 +255,6 @@ function renderHtml(pkgName, version, { groups, total }) {
   );
 }
 
-function renderMarkdown(pkgName, version, { groups, total }) {
-  const sections = KINDS.filter(([key]) => groups.get(key).length > 0)
-    .map(([key, label]) => {
-      const names = groups.get(key);
-
-      return `${label} (${names.length})\n\n${names.map((n) => `\`${n}\``).join(" ")}`;
-    })
-    .join("\n\n");
-
-  return (
-    `Every name \`${pkgName}\` exports from its package root at v${version} — **${total}** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.\n\n` +
-    `**Show all ${total} exports**\n\n` +
-    `${sections}`
-  );
-}
-
 /** Replaces the block between the index heading and the page's next marker. */
 function spliceHtml(html, replacement) {
   const headingIndex = html.indexOf('id="export-index-heading"');
@@ -283,20 +267,6 @@ function spliceHtml(html, replacement) {
   if (afterHeading === -1 || endMarker === -1) return undefined;
 
   return `${html.slice(0, afterHeading + 1)}${replacement}\n        ${html.slice(endMarker)}`;
-}
-
-function spliceMarkdown(md, replacement) {
-  const heading = "## COMPLETE EXPORT INDEX";
-  const start = md.indexOf(heading);
-
-  if (start === -1) return undefined;
-
-  const bodyStart = start + heading.length;
-  let end = md.indexOf("\n## ", bodyStart);
-
-  if (end === -1) end = md.length;
-
-  return `${md.slice(0, bodyStart)}\n\n${replacement}\n${md.slice(end)}`;
 }
 
 const args = process.argv.slice(2);
@@ -322,7 +292,6 @@ for (const dir of packages) {
 
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   const htmlPath = join(root, "site", "docs", `packages-${dir}.html`);
-  const mdPath = join(root, "site", "docs", `packages-${dir}.md`);
 
   if (!existsSync(htmlPath)) {
     skipped += 1;
@@ -349,16 +318,11 @@ for (const dir of packages) {
     continue;
   }
 
-  let nextMd;
-  let md;
-
-  if (existsSync(mdPath)) {
-    md = readFileSync(mdPath, "utf8");
-    nextMd = spliceMarkdown(
-      md,
-      renderMarkdown(manifest.name, manifest.version, surface),
-    );
-  }
+  /* The `.md` mirrors are GENERATED from the `.html` by
+   * `scripts/site-llms.mjs`, so writing one here would be overwritten by the
+   * next `pnpm site:llms` — and, worse, could disagree with it in the
+   * meantime. Only the html is authored; run `pnpm site:llms` afterwards to
+   * refresh the mirrors. */
 
   /* Compare the published NAME SET, not the rendered bytes. A handful of
    * names are declared as both a class and an interface in the same package
@@ -378,19 +342,21 @@ for (const dir of packages) {
     published.size === generated.size &&
     [...generated].every((name) => published.has(name));
 
-  if (sameNames) continue;
+  /* The version is quoted in the block's prose, so it has to be refreshed
+   * even when the export set did not move — a page that names a version the
+   * package no longer has is exactly the drift this script exists to stop. */
+  const statedVersion = /package root at v([0-9][^\s<&]*)/.exec(html)?.[1];
+  const sameVersion = statedVersion === manifest.version;
 
-  const htmlDrift = nextHtml !== html;
-  const mdDrift = nextMd !== undefined && nextMd !== md;
+  if (sameNames && sameVersion) continue;
 
-  if (!htmlDrift && !mdDrift) continue;
+  if (nextHtml === html) continue;
 
   drifted.push(`${manifest.name} (${surface.total} exports)`);
 
   if (checkOnly) continue;
 
-  if (htmlDrift) writeFileSync(htmlPath, nextHtml);
-  if (mdDrift) writeFileSync(mdPath, nextMd);
+  writeFileSync(htmlPath, nextHtml);
 
   changed += 1;
   console.log(`  ✓ ${manifest.name} — ${surface.total} exports`);

@@ -386,7 +386,7 @@ What you should see: "Job processing started" with the job details, then "send-e
 
 ## EVENTS
 
-The queue can tell you when things happen: a job was created, started, completed, failed, or will retry. By default it tells nobody. To listen, create an **event emitter** (an object you can subscribe to) and hand it to the queue as `QueueOptions.eventEmitter`.
+The queue can tell you when things happen: a job was created, started, completed, failed, cancelled, or will retry, and a worker started, stopped or hit an error. By default it tells nobody. To listen, create an **event emitter** (an object you can subscribe to) and hand it to the queue as `QueueOptions.eventEmitter`.
 
 Subscribe with `on(event, handler)`. It returns a function that unsubscribes.
 
@@ -426,8 +426,51 @@ await queue.close();
 | `job:completed` | `{ job, result }` | The processor returned; `result` is a `JobResult`'s `data`, else `undefined` |
 | `job:failed` | `{ job, error }` | The processor threw (fires on every failed attempt) |
 | `job:retrying` | `{ job, attempt }` | A retry has been scheduled |
+| `job:cancelled` | `{ job }` | A running job was aborted from outside — a draining worker, `close()`, or a consumer's signal. *Not* fired for a job that merely timed out |
+| `worker:started` | `{ workerId }` | `worker.start()` brought the worker up |
+| `worker:stopped` | `{ workerId }` | The worker stopped, through `stop()` or `forceStop()`. A `forceStop()` on a worker that never started reports nothing, so a readiness listener never sees a transition that did not happen |
+| `worker:error` | `{ workerId, error }` | A worker poll failed or its drain timed out |
 
-> **Tip:** a handler that throws does not break the job. The error is logged to the console (or passed to the `onHandlerError` option) and processing continues.
+### Worker events and `Queue.events`
+
+Before v1.3.0 the last four rows above were declared in `QueueEventMap` but nothing emitted them, so subscribing to `worker:started` for readiness never fired. They fire now. A worker reports its own lifecycle on the emitter belonging to the queue it consumes, reached through the new `Queue.events` property — you do not pass the emitter to `createWorker`.
+
+```ts
+import {
+  createInMemoryQueue,
+  createQueueName,
+  createInMemoryQueueEventEmitter,
+  createWorker,
+} from "@zudojs/queue";
+
+const emitter = createInMemoryQueueEventEmitter();
+const queue = createInMemoryQueue(createQueueName("images"), {
+  eventEmitter: emitter,
+});
+
+// Same emitter, reachable from the queue itself.
+queue.events?.on("worker:started", ({ workerId }) => {
+  console.log(`${workerId} is up`);
+});
+emitter.on("worker:stopped", ({ workerId }) => {
+  console.log(`${workerId} is down`);
+});
+emitter.on("job:cancelled", ({ job }) => {
+  console.log(`${job.name} was aborted mid-run`);
+});
+
+queue.process("resize", async () => {});
+
+const worker = createWorker("worker-1", queue, { pollInterval: 5 });
+await worker.start(); // worker-1 is up
+await worker.stop();  // worker-1 is down
+
+await queue.close();
+```
+
+`Queue.events` is optional on the `Queue` interface, so reach it with `queue.events?.`. The in-memory queue always has one: a queue created without an `eventEmitter` exposes the no-op emitter, so a worker can report itself unconditionally.
+
+> **Tip:** a handler that throws does not break the job. The remaining handlers still run and processing continues. Since v1.3.0 the failure goes to `logger.error` when a logger is configured — either `createInMemoryQueueEventEmitter({ logger })` or `QueueOptions.logger`, which the queue hands to the emitter it was given — and to `process.emitWarning` otherwise. It is never written to `console`. Pass `onHandlerError` to take it over entirely.
 
 ## PAUSING, STATS AND SHUTDOWN
 
@@ -476,12 +519,12 @@ Everything below is exported from `@zudojs/queue` unless a note says otherwise.
 | `createBackoffOptions(type, delay, options?)` | Builds a `BackoffOptions` from a `BackoffType` | Used by the two helpers above |
 | `calculateRetryDelay(attempt, backoff?)` | Milliseconds to wait before the given attempt | Returns 0 without a backoff |
 | `shouldRetry(attempt, maxAttempts)` | `attempt < maxAttempts` |  |
-| `createInMemoryQueueEventEmitter(options?)` | Emitter you can subscribe to with `on()` | `options.onHandlerError`; class `InMemoryQueueEventEmitter` also exported |
+| `createInMemoryQueueEventEmitter(options?)` | Emitter you can subscribe to with `on()` | `options.onHandlerError`, `options.logger` (a throwing listener's error, default `process.emitWarning`); class `InMemoryQueueEventEmitter` also exported, with `setLogger()` and `removeAllListeners()` |
 | `createNoopQueueEventEmitter()` | Emitter that drops every event | The queue's default |
 | `createLoggingMiddleware(logger?)` | Logs start, completion and failure of each job | `logger.info(message, data)` |
 | `createTimeoutMiddleware(ms, onTimeout?)` | Fails a job that runs longer than `ms` | The queue already applies one per job |
 | `createMiddlewareChain(middleware[])` | Combines several middleware into one |  |
-| `createInMemoryDeadLetterStore()` | Dead-letter store backed by a `Map` | The queue's default |
+| `createInMemoryDeadLetterStore(options?)` | Dead-letter store backed by a `Map`, bounded to the most recent `options.maxEntries` | The queue's default. `maxEntries` defaults to `DEFAULT_DEAD_LETTER_JOBS` (`1000`); `Number.POSITIVE_INFINITY` is unbounded |
 | `moveToDeadLetter(store, job, error, options?)` | Adds a job to a dead-letter store | The queue calls this for you |
 | `createJobProgress(percent, options?)` | Builds a `JobProgress` for `ctx.updateProgress()` | Clamps to 0..100 |
 | `createJobResult(data, durationMs)` | Builds a successful `JobResult` | Also `createJobErrorResult(error, durationMs)` |
@@ -500,7 +543,8 @@ Everything below is exported from `@zudojs/queue` unless a note says otherwise.
 | `getStats()` | Counts per state plus lifetime totals | `processed`, `succeeded`, `errored`, `retried`, `deadLettered` |
 | `getDeadLetterJobs()` | All `DeadLetterJob` entries |  |
 | `pause()` / `resume()` / `isPaused()` | Stop and restart processing |  |
-| `close()` / `isDisposed()` | Drain and shut down | Idempotent |
+| `close()` / `isDisposed()` | Drain and shut down | Idempotent; clears a dead-letter store the queue created itself, not one you supplied |
+| `events` | The emitter this queue publishes on | Optional on the interface; a worker uses it to emit `worker:started` / `worker:stopped` / `worker:error` |
 
 ### Queue options
 
@@ -511,7 +555,8 @@ Everything below is exported from `@zudojs/queue` unless a note says otherwise.
 | `defaultJobOptions` | `JobOptions` applied to every `add()` | none |
 | `middleware` | Middleware run around every processor | `[]` |
 | `eventEmitter` | Where lifecycle events go | no-op |
-| `deadLetterStore` | Where exhausted jobs go | in-memory |
+| `deadLetterStore` | Where exhausted jobs go | in-memory, last `1000` |
+| `logger` | Destination for errors with no caller to receive them; also handed to an `InMemoryQueueEventEmitter` so a throwing listener reaches `logger.error` | none (`process.emitWarning`) |
 | `serializer` / `serializePayloads` | Payloads are copied through JSON on `add()`; set `false` to store by reference | `JsonSerializer` / `true` |
 | `pauseRejectsAdd` | Whether `add()` throws while paused | `true` |
 | `retainSettledJobs` | Finished jobs kept before the oldest are dropped | `1000` |
@@ -536,6 +581,9 @@ Everything below is exported from `@zudojs/queue` unless a note says otherwise.
 | `JobState`, `WorkerState`, `BackoffType` | Enums of lowercase string values | `BackoffType.FIXED`, `BackoffType.EXPONENTIAL` |
 | `JobPriorityLevels` | `LOW 10`, `NORMAL 50`, `HIGH 100`, `CRITICAL 200` | Frozen object |
 | `DEFAULT_JOB_OPTIONS` | `{ attempts: 1, timeout: 30000 }` | Also `mergeJobOptions(options?)` |
+| `DEFAULT_DEAD_LETTER_JOBS` | `1000` — how many dead-lettered jobs the default store retains | Override per store with `createInMemoryDeadLetterStore({ maxEntries })` |
+| `CONTEXT_METADATA_KEY` | `"zudo:context"` — the metadata key the queue's context carriers own | Stripped from any `metadata` passed to `add()` |
+| `QueueLogger` | What `QueueOptions.logger` / `WorkerOptions.logger` accept | Structurally compatible with `@zudojs/logger` and with `console` |
 
 ### Errors
 

@@ -552,7 +552,7 @@ queue.<span class="fn">process</span>(<span class="str">"send-email"</span>, <sp
       <section id="events" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">EVENTS</h2>
         <p class="mb-4 leading-relaxed">
-          The queue can tell you when things happen: a job was created, started, completed, failed, or will retry. By default it tells nobody. To listen, create an <strong>event emitter</strong> (an object you can subscribe to) and hand it to the queue as <code class="bg-black/5 px-1">QueueOptions.eventEmitter</code>.
+          The queue can tell you when things happen: a job was created, started, completed, failed, cancelled, or will retry, and a worker started, stopped or hit an error. By default it tells nobody. To listen, create an <strong>event emitter</strong> (an object you can subscribe to) and hand it to the queue as <code class="bg-black/5 px-1">QueueOptions.eventEmitter</code>.
         </p>
         <p class="mb-3">Subscribe with <code class="bg-black/5 px-1">on(event, handler)</code>. It returns a function that unsubscribes.</p>
         <div class="code-block mb-4"><span class="kw">import</span> {
@@ -589,10 +589,53 @@ queue.<span class="fn">process</span>(<span class="str">"send-email"</span>, <sp
             <tr><td><code>job:completed</code></td><td><code>{ job, result }</code></td><td>The processor returned; <code>result</code> is a <code>JobResult</code>'s <code>data</code>, else <code>undefined</code></td></tr>
             <tr><td><code>job:failed</code></td><td><code>{ job, error }</code></td><td>The processor threw (fires on every failed attempt)</td></tr>
             <tr><td><code>job:retrying</code></td><td><code>{ job, attempt }</code></td><td>A retry has been scheduled</td></tr>
+            <tr><td><code>job:cancelled</code></td><td><code>{ job }</code></td><td>A running job was aborted from outside &mdash; a draining worker, <code>close()</code>, or a consumer's signal. <em>Not</em> fired for a job that merely timed out</td></tr>
+            <tr><td><code>worker:started</code></td><td><code>{ workerId }</code></td><td><code>worker.start()</code> brought the worker up</td></tr>
+            <tr><td><code>worker:stopped</code></td><td><code>{ workerId }</code></td><td>The worker stopped, through <code>stop()</code> or <code>forceStop()</code>. A <code>forceStop()</code> on a worker that never started reports nothing, so a readiness listener never sees a transition that did not happen</td></tr>
+            <tr><td><code>worker:error</code></td><td><code>{ workerId, error }</code></td><td>A worker poll failed or its drain timed out</td></tr>
           </tbody>
         </table>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Worker events and <code>Queue.events</code></h3>
+        <p class="mb-3">
+          Before v1.3.0 the last four rows above were declared in <code class="bg-black/5 px-1">QueueEventMap</code> but nothing emitted them, so subscribing to <code class="bg-black/5 px-1">worker:started</code> for readiness never fired. They fire now. A worker reports its own lifecycle on the emitter belonging to the queue it consumes, reached through the new <code class="bg-black/5 px-1">Queue.events</code> property &mdash; you do not pass the emitter to <code class="bg-black/5 px-1">createWorker</code>.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> {
+  <span class="fn">createInMemoryQueue</span>,
+  <span class="fn">createQueueName</span>,
+  <span class="fn">createInMemoryQueueEventEmitter</span>,
+  <span class="fn">createWorker</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/queue"</span>;
+
+<span class="kw">const</span> emitter = <span class="fn">createInMemoryQueueEventEmitter</span>();
+<span class="kw">const</span> queue = <span class="fn">createInMemoryQueue</span>(<span class="fn">createQueueName</span>(<span class="str">"images"</span>), {
+  <span class="prop">eventEmitter</span>: emitter,
+});
+
+<span class="cmt">// Same emitter, reachable from the queue itself.</span>
+queue.events?.<span class="fn">on</span>(<span class="str">"worker:started"</span>, ({ workerId }) =&gt; {
+  console.<span class="fn">log</span>(<span class="str">`${workerId} is up`</span>);
+});
+emitter.<span class="fn">on</span>(<span class="str">"worker:stopped"</span>, ({ workerId }) =&gt; {
+  console.<span class="fn">log</span>(<span class="str">`${workerId} is down`</span>);
+});
+emitter.<span class="fn">on</span>(<span class="str">"job:cancelled"</span>, ({ job }) =&gt; {
+  console.<span class="fn">log</span>(<span class="str">`${job.name} was aborted mid-run`</span>);
+});
+
+queue.<span class="fn">process</span>(<span class="str">"resize"</span>, <span class="kw">async</span> () =&gt; {});
+
+<span class="kw">const</span> worker = <span class="fn">createWorker</span>(<span class="str">"worker-1"</span>, queue, { <span class="prop">pollInterval</span>: <span class="num">5</span> });
+<span class="kw">await</span> worker.<span class="fn">start</span>(); <span class="cmt">// worker-1 is up</span>
+<span class="kw">await</span> worker.<span class="fn">stop</span>();  <span class="cmt">// worker-1 is down</span>
+
+<span class="kw">await</span> queue.<span class="fn">close</span>();</div>
+        <p class="mb-3">
+          <code class="bg-black/5 px-1">Queue.events</code> is optional on the <code class="bg-black/5 px-1">Queue</code> interface, so reach it with <code class="bg-black/5 px-1">queue.events?.</code>. The in-memory queue always has one: a queue created without an <code class="bg-black/5 px-1">eventEmitter</code> exposes the no-op emitter, so a worker can report itself unconditionally.
+        </p>
+
         <div class="callout callout-tip">
-          <strong class="text-zudo-green">Tip:</strong> a handler that throws does not break the job. The error is logged to the console (or passed to the <code class="bg-black/5 px-1">onHandlerError</code> option) and processing continues.
+          <strong class="text-zudo-green">Tip:</strong> a handler that throws does not break the job. The remaining handlers still run and processing continues. Since v1.3.0 the failure goes to <code class="bg-black/5 px-1">logger.error</code> when a logger is configured &mdash; either <code class="bg-black/5 px-1">createInMemoryQueueEventEmitter({ logger })</code> or <code class="bg-black/5 px-1">QueueOptions.logger</code>, which the queue hands to the emitter it was given &mdash; and to <code class="bg-black/5 px-1">process.emitWarning</code> otherwise. It is never written to <code class="bg-black/5 px-1">console</code>. Pass <code class="bg-black/5 px-1">onHandlerError</code> to take it over entirely.
         </div>
       </section>
 
@@ -646,12 +689,12 @@ console.<span class="fn">log</span>(emails.<span class="fn">isDisposed</span>())
             <tr><td><code>createBackoffOptions(type, delay, options?)</code></td><td>Builds a <code>BackoffOptions</code> from a <code>BackoffType</code></td><td>Used by the two helpers above</td></tr>
             <tr><td><code>calculateRetryDelay(attempt, backoff?)</code></td><td>Milliseconds to wait before the given attempt</td><td>Returns 0 without a backoff</td></tr>
             <tr><td><code>shouldRetry(attempt, maxAttempts)</code></td><td><code>attempt &lt; maxAttempts</code></td><td></td></tr>
-            <tr><td><code>createInMemoryQueueEventEmitter(options?)</code></td><td>Emitter you can subscribe to with <code>on()</code></td><td><code>options.onHandlerError</code>; class <code>InMemoryQueueEventEmitter</code> also exported</td></tr>
+            <tr><td><code>createInMemoryQueueEventEmitter(options?)</code></td><td>Emitter you can subscribe to with <code>on()</code></td><td><code>options.onHandlerError</code>, <code>options.logger</code> (a throwing listener's error, default <code>process.emitWarning</code>); class <code>InMemoryQueueEventEmitter</code> also exported, with <code>setLogger()</code> and <code>removeAllListeners()</code></td></tr>
             <tr><td><code>createNoopQueueEventEmitter()</code></td><td>Emitter that drops every event</td><td>The queue's default</td></tr>
             <tr><td><code>createLoggingMiddleware(logger?)</code></td><td>Logs start, completion and failure of each job</td><td><code>logger.info(message, data)</code></td></tr>
             <tr><td><code>createTimeoutMiddleware(ms, onTimeout?)</code></td><td>Fails a job that runs longer than <code>ms</code></td><td>The queue already applies one per job</td></tr>
             <tr><td><code>createMiddlewareChain(middleware[])</code></td><td>Combines several middleware into one</td><td></td></tr>
-            <tr><td><code>createInMemoryDeadLetterStore()</code></td><td>Dead-letter store backed by a <code>Map</code></td><td>The queue's default</td></tr>
+            <tr><td><code>createInMemoryDeadLetterStore(options?)</code></td><td>Dead-letter store backed by a <code>Map</code>, bounded to the most recent <code>options.maxEntries</code></td><td>The queue's default. <code>maxEntries</code> defaults to <code>DEFAULT_DEAD_LETTER_JOBS</code> (<code>1000</code>); <code>Number.POSITIVE_INFINITY</code> is unbounded</td></tr>
             <tr><td><code>moveToDeadLetter(store, job, error, options?)</code></td><td>Adds a job to a dead-letter store</td><td>The queue calls this for you</td></tr>
             <tr><td><code>createJobProgress(percent, options?)</code></td><td>Builds a <code>JobProgress</code> for <code>ctx.updateProgress()</code></td><td>Clamps to 0..100</td></tr>
             <tr><td><code>createJobResult(data, durationMs)</code></td><td>Builds a successful <code>JobResult</code></td><td>Also <code>createJobErrorResult(error, durationMs)</code></td></tr>
@@ -672,7 +715,8 @@ console.<span class="fn">log</span>(emails.<span class="fn">isDisposed</span>())
             <tr><td><code>getStats()</code></td><td>Counts per state plus lifetime totals</td><td><code>processed</code>, <code>succeeded</code>, <code>errored</code>, <code>retried</code>, <code>deadLettered</code></td></tr>
             <tr><td><code>getDeadLetterJobs()</code></td><td>All <code>DeadLetterJob</code> entries</td><td></td></tr>
             <tr><td><code>pause()</code> / <code>resume()</code> / <code>isPaused()</code></td><td>Stop and restart processing</td><td></td></tr>
-            <tr><td><code>close()</code> / <code>isDisposed()</code></td><td>Drain and shut down</td><td>Idempotent</td></tr>
+            <tr><td><code>close()</code> / <code>isDisposed()</code></td><td>Drain and shut down</td><td>Idempotent; clears a dead-letter store the queue created itself, not one you supplied</td></tr>
+            <tr><td><code>events</code></td><td>The emitter this queue publishes on</td><td>Optional on the interface; a worker uses it to emit <code>worker:started</code> / <code>worker:stopped</code> / <code>worker:error</code></td></tr>
           </tbody>
         </table>
 
@@ -685,7 +729,8 @@ console.<span class="fn">log</span>(emails.<span class="fn">isDisposed</span>())
             <tr><td><code>defaultJobOptions</code></td><td><code>JobOptions</code> applied to every <code>add()</code></td><td>none</td></tr>
             <tr><td><code>middleware</code></td><td>Middleware run around every processor</td><td><code>[]</code></td></tr>
             <tr><td><code>eventEmitter</code></td><td>Where lifecycle events go</td><td>no-op</td></tr>
-            <tr><td><code>deadLetterStore</code></td><td>Where exhausted jobs go</td><td>in-memory</td></tr>
+            <tr><td><code>deadLetterStore</code></td><td>Where exhausted jobs go</td><td>in-memory, last <code>1000</code></td></tr>
+            <tr><td><code>logger</code></td><td>Destination for errors with no caller to receive them; also handed to an <code>InMemoryQueueEventEmitter</code> so a throwing listener reaches <code>logger.error</code></td><td>none (<code>process.emitWarning</code>)</td></tr>
             <tr><td><code>serializer</code> / <code>serializePayloads</code></td><td>Payloads are copied through JSON on <code>add()</code>; set <code>false</code> to store by reference</td><td><code>JsonSerializer</code> / <code>true</code></td></tr>
             <tr><td><code>pauseRejectsAdd</code></td><td>Whether <code>add()</code> throws while paused</td><td><code>true</code></td></tr>
             <tr><td><code>retainSettledJobs</code></td><td>Finished jobs kept before the oldest are dropped</td><td><code>1000</code></td></tr>
@@ -712,6 +757,9 @@ console.<span class="fn">log</span>(emails.<span class="fn">isDisposed</span>())
             <tr><td><code>JobState</code>, <code>WorkerState</code>, <code>BackoffType</code></td><td>Enums of lowercase string values</td><td><code>BackoffType.FIXED</code>, <code>BackoffType.EXPONENTIAL</code></td></tr>
             <tr><td><code>JobPriorityLevels</code></td><td><code>LOW 10</code>, <code>NORMAL 50</code>, <code>HIGH 100</code>, <code>CRITICAL 200</code></td><td>Frozen object</td></tr>
             <tr><td><code>DEFAULT_JOB_OPTIONS</code></td><td><code>{ attempts: 1, timeout: 30000 }</code></td><td>Also <code>mergeJobOptions(options?)</code></td></tr>
+            <tr><td><code>DEFAULT_DEAD_LETTER_JOBS</code></td><td><code>1000</code> &mdash; how many dead-lettered jobs the default store retains</td><td>Override per store with <code>createInMemoryDeadLetterStore({ maxEntries })</code></td></tr>
+            <tr><td><code>CONTEXT_METADATA_KEY</code></td><td><code>"zudo:context"</code> &mdash; the metadata key the queue's context carriers own</td><td>Stripped from any <code>metadata</code> passed to <code>add()</code></td></tr>
+            <tr><td><code>QueueLogger</code></td><td>What <code>QueueOptions.logger</code> / <code>WorkerOptions.logger</code> accept</td><td>Structurally compatible with <code>@zudojs/logger</code> and with <code>console</code></td></tr>
           </tbody>
         </table>
 

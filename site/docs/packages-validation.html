@@ -117,7 +117,7 @@
       </div>
 
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.0.2</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.0.3</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/validation</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Check untrusted input against Zod schemas and reusable constraints, and get back one result shape you can read field by field.
@@ -521,9 +521,35 @@ console.<span class="fn">log</span>(<span class="fn">getSerializationDepth</span
             <tr><td><code>assertNoCircularReference(value, path?, maxDepth?)</code></td><td>Rejects a value that contains itself</td><td><code>CircularReferenceError</code> (500)</td></tr>
             <tr><td><code>hasCircularReference(value)</code></td><td>Same check, returns <code>boolean</code></td><td>never</td></tr>
             <tr><td><code>getSerializationDepth(value, limit?)</code></td><td>Measures nesting depth (0 for a primitive), capped at <code>limit</code></td><td>never</td></tr>
-            <tr><td><code>estimateSerializedSize(value, maxBytes?)</code></td><td>Estimates JSON byte size without building the string</td><td>never</td></tr>
+            <tr><td><code>estimateSerializedSize(value, maxBytes?)</code></td><td>Estimates JSON byte size without building the string, stopping at <code>maxBytes</code>. Defaults to <code>SerializationLimits.MAX_SIZE</code> (10,485,760 bytes / 10&nbsp;MB)</td><td>never</td></tr>
           </tbody>
         </table>
+        <h3 class="text-lg font-bold mb-3 mt-6">The size budget</h3>
+        <p class="mb-3 leading-relaxed">
+          <code>estimateSerializedSize(value, maxBytes?)</code> charges every <em>occurrence</em> of a value, the way a serializer expands it. The cycle and depth guards can memoise a shared subtree and visit it once; the size estimate cannot, so a graph of <code>n</code> shared <code>{ a: node, b: node }</code> pairs expands to <code>2^n</code> visits. The budget is the only thing that bounds that work.
+        </p>
+        <p class="mb-3 leading-relaxed">
+          <code>maxBytes</code> therefore defaults to <code>SerializationLimits.MAX_SIZE</code> — 10,485,760 bytes (10&nbsp;MB) — from <a href="/docs/packages-constants" class="text-zudo-blue underline">@zudojs/constants</a>. The walk stops at the first node that carries the running total past the budget, and that total is what comes back: a figure at or just past <code>maxBytes</code>, not the true size. It never throws and never runs unbounded. Treat a result that has reached the budget as "at least this big" rather than as a measurement. If you need an exact figure for input you trust, pass <code>Number.POSITIVE_INFINITY</code> explicitly.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">estimateSerializedSize</span> } <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
+<span class="kw">import</span> { <span class="tp">SerializationLimits</span> } <span class="kw">from</span> <span class="str">"@zudojs/constants"</span>;
+
+<span class="fn">estimateSerializedSize</span>({ name: <span class="str">"ada"</span> });      <span class="cmt">// a small exact figure</span>
+
+<span class="cmt">// A hostile payload: 2^40 occurrences if nothing bounded the walk.</span>
+<span class="kw">let</span> node: <span class="tp">unknown</span> = <span class="num">1</span>;
+<span class="kw">for</span> (<span class="kw">let</span> i = <span class="num">0</span>; i &lt; <span class="num">40</span>; i++) node = { a: node, b: node };
+
+<span class="cmt">// Returns promptly with a figure at the budget; before v1.0.3 this did not return.</span>
+<span class="fn">estimateSerializedSize</span>(node) &gt;= <span class="tp">SerializationLimits</span>.MAX_SIZE; <span class="cmt">// true</span>
+
+<span class="cmt">// Trusted input, exact figure — opt in explicitly.</span>
+<span class="fn">estimateSerializedSize</span>(trusted, <span class="tp">Number</span>.POSITIVE_INFINITY);</div>
+
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Changed in v1.0.3:</strong> <code>maxBytes</code> used to default to <code>Infinity</code>, so an unbounded estimate was the default. A 1&nbsp;KB payload built from shared references could burn minutes of CPU inside a function documented as cheap. The default is now finite, so an untrusted value measured with no explicit budget always returns. Callers that relied on the old default getting an exact figure for a large trusted payload must now pass <code>Number.POSITIVE_INFINITY</code>.
+        </div>
+
         <p class="text-sm text-black/70">The three error classes come from <a href="/docs/packages-errors" class="text-zudo-blue underline">@zudojs/errors</a>. <code>MAX_MEASURABLE_DEPTH</code> (512) is the ceiling the measuring functions use when you give no limit. The same object appearing twice as siblings is a shared reference, not a cycle, and is allowed.</p>
       </section>
 

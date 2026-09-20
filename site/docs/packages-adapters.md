@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/adapters — the boundary layer
 source: https://zudojs.oyinlola.site/docs/packages-adapters
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/adapters
 
@@ -25,7 +25,7 @@ pnpm add @zudojs/adapters
 yarn add @zudojs/adapters
 ```
 
-> **Peer Dependencies:** @zudojs/adapters depends on @zudojs/errors, @zudojs/constants, @zudojs/types, and @zudojs/lifecycle. All at version 1.0.0.
+> **Runtime Dependencies:** @zudojs/adapters has exactly one runtime dependency, @zudojs/errors (v1.2.0), for its error hierarchy. The lifecycle, transport and capability contracts it publishes are plain TypeScript interfaces, so nothing else is installed for you.
 
 ## WHAT IT DOES
 
@@ -55,10 +55,7 @@ Adapters sit below the transport layer. Transport packages use adapters to inter
 
 | Package | Version | Purpose |
 | --- | --- | --- |
-| @zudojs/errors | 1.1.0 | Adapter error hierarchy (AdapterError, AdapterNotFoundError, etc.) |
-| @zudojs/constants | 1.1.0 | Branded types and constants |
-| @zudojs/types | 1.1.0 | Type guards and utility types |
-| @zudojs/lifecycle | 1.1.1 | Lifecycle contracts and state machine |
+| @zudojs/errors | 1.2.0 | Adapter error hierarchy (AdapterError, AdapterNotFoundError, AdapterConfigurationError, etc.) |
 
 > **Internal dependencies:** Packages depend on each other with `workspace:*`, always — including on `main`. They are never hand-pinned to an exact version. At publish time `pnpm` rewrites each `workspace:*` to the exact version of that package in the same release, so a published tarball carries real ranges. Releases go out through `publish-all.sh`, which runs `pnpm -r publish` — it rewrites the ranges and publishes in dependency order. Plain `npm publish` does not understand the `workspace:` protocol and would ship a literal `workspace:*` to the registry.
 
@@ -158,7 +155,7 @@ The `AdapterRegistry` manages adapter registration, lookup, and removal. Names a
 
 | Method | Signature | Returns |
 | --- | --- | --- |
-| register() | register(adapter: Adapter): void | void. Throws `AdapterAlreadyRegisteredError` on duplicate. |
+| register() | register(adapter: Adapter): void | void. Throws `AdapterAlreadyRegisteredError` on duplicate, `AdapterConfigurationError` on a blank or reserved name. |
 | get() | get<T>(name: string): T \| undefined | Adapter or undefined |
 | has() | has(name: string): boolean | true if registered |
 | remove() | remove(name: string): boolean | true if removed, false if not found |
@@ -166,6 +163,8 @@ The `AdapterRegistry` manages adapter registration, lookup, and removal. Names a
 | getNames() | getNames(): readonly string[] | Frozen array of adapter names |
 | size | get size(): number | Number of registered adapters |
 | clear() | clear(): void | Removes all adapters |
+
+> **Reserved names:** since v1.2.0 `register()` refuses the names `__proto__`, `constructor` and `prototype` with an `AdapterConfigurationError`. The check runs after normalization, so `"__PROTO__"` is refused too. They survive the registry's own `Map`, but any consumer that keys a plain object by adapter name — a health report, a metrics bag, a JSON dump — loses or corrupts the entry, so they are refused at the door. Rename the adapter; nothing else about registration changed.
 
 ### Example: Using the Registry
 
@@ -301,7 +300,7 @@ interface LifecycleAdapter extends Adapter {
 }
 ```
 
-`AdapterRegistry.healthAll({ timeout, signal })` runs every `health()` hook and returns an `AdapterHealthReport`, `{ status, adapters }` (the worst status; failing, timed-out or aborted checks are `unhealthy`). `AdapterRegistry.configure(name, options)` calls the adapter's `configure()` and throws `AdapterConfigurationError` if it has none.
+`AdapterRegistry.healthAll({ timeout, signal, retry })` runs every `health()` hook and returns an `AdapterHealthReport`, `{ status, adapters }` (the worst status; failing, timed-out or aborted checks are `unhealthy`). `AdapterRegistry.configure(name, options)` calls the adapter's `configure()` and throws `AdapterConfigurationError` if it has none.
 
 ### AdapterOperationOptions
 
@@ -315,6 +314,30 @@ interface AdapterOperationOptions {
   };
 }
 ```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| signal | none | Cancels the operation. An aborted signal also stops any remaining retries at once. |
+| timeout | none | Milliseconds allowed for *each* try, not for the whole retry sequence. |
+| retry.attempts | `1` | The **total** number of tries, including the first one. `3` means one call plus at most two retries. Anything below `1`, fractional, or non-finite is clamped to a single try. |
+| retry.delay | `0` | Milliseconds to pause between tries. Ended early by `signal`. |
+
+Until v1.2.0 `retry` was part of the contract with nothing reading it: a caller asking for three attempts got one, silently. It is now honoured by `healthAll()`. A check is re-run only while it reports `unhealthy` — a `healthy` or `degraded` result is accepted and returned immediately. Omit `retry` and the behaviour is exactly what it was: one try.
+
+```ts
+const report = await registry.healthAll({
+  timeout: 2000,
+  retry: { attempts: 3, delay: 250 },
+});
+
+// attempts: 3 means three tries in TOTAL — the first call plus at
+// most two retries. It is not "retry three more times".
+// Each try gets its own 2000 ms timeout, with a 250 ms pause between.
+// Worst case per adapter: 3 * 2000 + 2 * 250 = 6500 ms.
+console.log(report.status);
+```
+
+> **Off by one:** `attempts: 1` is a single try and no retry at all, not "one retry". If you previously wrote `attempts: 3` expecting four calls, you now get three — and before v1.2.0 you got one.
 
 ## TRANSPORT ADAPTERS
 
@@ -661,32 +684,32 @@ process.on("SIGTERM", async () => {
 
 | Package | Version | Relationship | How They Connect |
 | --- | --- | --- | --- |
-| @zudojs/http | 1.2.0 | Transport | HTTP adapter provides request/response shapes that @zudojs/http consumes |
-| @zudojs/messaging | 1.0.2 | Transport | Message adapter bridges external message providers to the internal message bus |
-| @zudojs/storage | 1.1.1 | Transport | Storage adapter provides the implementation for storage abstractions |
-| @zudojs/queue | 1.2.0 | Transport | Queue adapter provides the implementation for background job processing |
-| @zudojs/scheduler | 1.1.1 | Transport | Scheduler adapter provides the implementation for job scheduling |
-| @zudojs/lifecycle | 1.1.1 | Dependency | Lifecycle contracts integrate with the lifecycle state machine |
-| @zudojs/runtime | 1.2.0 | Consumer | Runtime manages adapter lifecycle (initialize, start, stop, dispose) |
-| @zudojs/errors | 1.1.0 | Dependency | All adapter error types defined in @zudojs/errors |
-| @zudojs/database | 1.2.0 | Consumer | Database clients use storage adapter interface for connection management |
+| @zudojs/http | 1.3.0 | Transport | HTTP adapter provides request/response shapes that @zudojs/http consumes |
+| @zudojs/messaging | 1.1.0 | Transport | Message adapter bridges external message providers to the internal message bus |
+| @zudojs/storage | 1.1.2 | Transport | Storage adapter provides the implementation for storage abstractions |
+| @zudojs/queue | 1.3.0 | Transport | Queue adapter provides the implementation for background job processing |
+| @zudojs/scheduler | 1.1.2 | Transport | Scheduler adapter provides the implementation for job scheduling |
+| @zudojs/lifecycle | 1.2.0 | Dependency | Lifecycle contracts integrate with the lifecycle state machine |
+| @zudojs/runtime | 1.2.1 | Consumer | Runtime manages adapter lifecycle (initialize, start, stop, dispose) |
+| @zudojs/errors | 1.2.0 | Dependency | All adapter error types defined in @zudojs/errors |
+| @zudojs/database | 1.2.1 | Consumer | Database clients use storage adapter interface for connection management |
 
 ## VERSION COMPATIBILITY
 
 > **Internal dependencies:** Packages depend on each other with `workspace:*`, always — including on `main`. They are never hand-pinned to an exact version. At publish time `pnpm` rewrites each `workspace:*` to the exact version of that package in the same release, so a published tarball carries real ranges. Releases go out through `publish-all.sh`, which runs `pnpm -r publish` — it rewrites the ranges and publishes in dependency order. Plain `npm publish` does not understand the `workspace:` protocol and would ship a literal `workspace:*` to the registry.
 
-| Package | adapters v1.1.0 works with | Stability |
+| Package | adapters v1.2.0 works with | Stability |
 | --- | --- | --- |
-| @zudojs/errors | v1.1.0 | STABLE |
-| @zudojs/constants | v1.1.0 | STABLE |
-| @zudojs/types | v1.1.0 | STABLE |
-| @zudojs/lifecycle | v1.1.1 | STABLE |
-| @zudojs/http | v1.2.0 (peer) | PEER |
-| @zudojs/messaging | v1.0.2 | STABLE |
-| @zudojs/storage | v1.1.1 | STABLE |
-| @zudojs/queue | v1.2.0 | STABLE |
-| @zudojs/scheduler | v1.1.1 | STABLE |
-| @zudojs/runtime | v1.2.0 | STABLE |
+| @zudojs/errors | v1.2.0 | STABLE |
+| @zudojs/constants | v1.1.1 | STABLE |
+| @zudojs/types | v1.1.1 | STABLE |
+| @zudojs/lifecycle | v1.2.0 | STABLE |
+| @zudojs/http | v1.3.0 (peer) | PEER |
+| @zudojs/messaging | v1.1.0 | STABLE |
+| @zudojs/storage | v1.1.2 | STABLE |
+| @zudojs/queue | v1.3.0 | STABLE |
+| @zudojs/scheduler | v1.1.2 | STABLE |
+| @zudojs/runtime | v1.2.1 | STABLE |
 
 ## IMPROVEMENTS & RECOMMENDATIONS
 
@@ -765,7 +788,7 @@ import {
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/adapters` exports from its package root at v1.1.0 — **56** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/adapters` exports from its package root at v1.2.0 — **56** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 56 exports**
 

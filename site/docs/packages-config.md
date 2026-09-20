@@ -1,10 +1,10 @@
 ---
 title: "@zudojs/config — Layered Configuration System"
-description: "Complete reference for @zudojs/config v1.1.0. Layered configuration with sources, stores, resolvers, schema validation, and lifecycle management for the Zudo TypeScript framework."
+description: "Complete reference for @zudojs/config v1.2.0. Layered configuration with sources, stores, resolvers, schema validation, and lifecycle management for the Zudo TypeScript framework."
 source: https://zudojs.oyinlola.site/docs/packages-config
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/config
 
@@ -212,7 +212,9 @@ configValuesEqual({ a: 1 }, { a: 2 }); // false
 
 Configuration entries wrap values with provenance metadata — tracking where each value came from, its priority, and whether it's sensitive.
 
-Every source's keys and values are screened (`isSensitiveConfigEntry`): password/secret/token/api-key/private-key/credential/auth/dsn/database-url/connection-string/`*_key` names in any segment, nested objects containing them, and URLs with `user:password@` are marked sensitive and redacted.
+Keys and values are screened (`isSensitiveConfigEntry`): password/secret/token/api-key/private-key/credential/auth/dsn/database-url/connection-string/`*_key` names in any segment, nested objects containing them, and URLs with `user:password@` are marked sensitive and redacted.
+
+> **Changed in v1.2.0 — screening now covers every write path.** Detection runs inside `ConfigStore.set()`, so a key such as `db.password`, `api_key` or a `postgres://user:pw@host` connection string is marked sensitive however it was written: from a source, from `initialValues`, from `set()` / `setMany()` / `replace()`, or from `manager.set()`. Before v1.2.0 only values arriving *through a source* were screened, so `toSafeObject()` printed the identical key in clear when it had been seeded or set at runtime. If you relied on that, pass `sensitive: false` explicitly to opt a key out.
 
 ### Interface
 
@@ -269,6 +271,19 @@ enum ConfigSourceType {
 }
 ```
 
+### Priority
+
+Higher priority wins. Equal priorities are applied in registration order, so the last registered overwrites the earlier one. Only `createDefaultsConfigSource` (`-1000`) and `createEnvironmentConfigSource` (`100`) pick a priority for you; every other factory falls back to `DEFAULT_CONFIG_SOURCE_PRIORITY`.
+
+| Layer | Priority |
+| --- | --- |
+| createDefaultsConfigSource | -1000 |
+| A source that declares no `priority` | `DEFAULT_CONFIG_SOURCE_PRIORITY` = -1 |
+| `initialValues` and other baseline store writes | 0 |
+| createEnvironmentConfigSource | 100 |
+
+> **Changed in v1.2.0 — an undeclared source now ranks at `-1`, not `0`.** `DEFAULT_CONFIG_SOURCE_PRIORITY` is newly exported and is strictly below the `0` that `initialValues` is seeded at. Both defaulted to `0` before, and because a source overwrites on *equal* priority, any source created without one silently wiped a manager's `initialValues` during `load()`. Sources that declare `priority: 0` or above still override them, as documented. If you relied on an undeclared source beating another source that declares `priority: 0`, declare a priority on it — that pair has swapped order.
+
 ### Creating Sources
 
 ```ts
@@ -282,7 +297,7 @@ import {
   ConfigSourceType
 } from '@zudojs/config';
 
-// In-memory source
+// In-memory source — declares no priority, so it lands at -1
 const memSource = createMemoryConfigSource({
   'app.name': 'My App',
   'app.port': 3000,
@@ -359,6 +374,26 @@ store.delete('app.debug');
 const entries = store.getEntries();
 const keys = store.keys();          // ['app.name', 'app.port']
 const obj = store.toObject();      // { 'app.name': 'My App', ... }
+```
+
+### Redaction on Write
+
+Since v1.2.0 `set()` classifies the entry as it writes it, so a secret is marked sensitive whichever door it came in by — not only when a source supplied it. `toObject()` always returns RAW values; use `toSafeObject()` for anything you log or print.
+
+```ts
+store.set('db.password', 's3cret');
+store.set('db.url', 'postgres://user:pw@host/db');
+store.set('app.port', 3000);
+
+store.toObject();
+// { 'db.password': 's3cret', 'db.url': 'postgres://user:pw@host/db', 'app.port': 3000 }
+
+store.toSafeObject();
+// { 'db.password': '[REDACTED]', 'db.url': '[REDACTED]', 'app.port': 3000 }
+// Before v1.2.0 both secrets printed in clear here: they were set(), not loaded.
+
+// Opt a key out explicitly.
+store.set('api_key_name', 'billing', { sensitive: false });
 ```
 
 ### Prefix Queries
@@ -626,6 +661,8 @@ loader.removeSource('remote');
 const src = loader.getSource('environment');
 ```
 
+Sources are deduplicated by name, first occurrence wins. Since v1.2.0 that also applies to the `sources` array passed to `createConfigLoader` — the same rule `addSource()` and `loadConfigSources()` already enforced. Before v1.2.0 a duplicate name in the constructor array was loaded twice, with the *last* one winning, the opposite of every other path.
+
 ### One-Shot Loading
 
 ```ts
@@ -701,8 +738,15 @@ manager.scoped('db');
 ```ts
 manager.set('app.debug', true);
 manager.delete('app.debug');
-manager.toObject();  // all values as plain object
+manager.toObject();      // all values as plain object — RAW, secrets included
+manager.toSafeObject();  // sensitive values replaced with '[REDACTED]'
+
+// Since v1.2.0 a runtime set() is screened like any other write,
+// so this is redacted by toSafeObject() — it was not before.
+manager.set('db.password', 's3cret');
 ```
+
+Log `toSafeObject()`, never `toObject()`. Values seeded through `initialValues` are seeded with `source: "initialValues"` on every path (a manager-created store recorded `"runtime"` before v1.2.0), and they survive `load()` and `reload()`.
 
 ### Source Management
 
@@ -796,7 +840,15 @@ All exported types, interfaces, and type aliases.
 
 ## CONSTANTS
 
-All exported enums and their values.
+All exported enums and constants, and their values.
+
+### DEFAULT_CONFIG_SOURCE_PRIORITY
+
+```ts
+DEFAULT_CONFIG_SOURCE_PRIORITY = -1  // priority given to a source that declares none
+```
+
+New in v1.2.0. Strictly below the `0` that `initialValues` and other baseline store writes use, so an undeclared source layers under them instead of overwriting them.
 
 ### ConfigSourceType
 
@@ -877,7 +929,7 @@ const manager = await initializeConfigManager({
 const manager = await initializeConfigManager({
   sources: [
     createDefaultsConfigSource(defaults),    // priority: -1000
-    fileSource,                                 // priority: 0
+    fileSource,                                 // priority: -1 (declares none)
     createCustomConfigSource('env', envLoader, { priority: 100 }),
   ],
 });
@@ -967,7 +1019,7 @@ Advanced schema validation and type inference](https://zudojs.oyinlola.site/docs
 
 - **Use scoped resolvers** — Isolate module configuration with `manager.scoped('module')` to prevent accidental cross-module access.
 - **Validate early** — Use `configFactory.validated()` at startup to catch configuration errors before the app runs.
-- **Mark sensitive values** — Set `sensitive: true` on entries containing secrets to enable automatic redaction in logs.
+- **Log `toSafeObject()`** — Secrets are detected and marked on every write since v1.2.0, whatever path they arrived by, but only `toSafeObject()` honours that mark. `toObject()` returns them raw. Pass `sensitive: true` to mark a key the detector would miss, or `sensitive: false` to opt one out.
 - **Use priority ordering** — Set environment sources at higher priority than file sources, and file sources higher than defaults.
 - **Freeze in production** — Enable `freeze: true` to prevent accidental mutation of configuration values.
 - **Subscribe to changes** — Use `store.subscribe()` to react to runtime configuration updates.
@@ -988,7 +1040,7 @@ ConfigEntry, ConfigEntryOptions, createConfigEntry, updateConfigEntry, isConfigE
 
 configSource
 
-ConfigSourceType, ConfigSourceEntry, ConfigSourceContext, ConfigSourceResult, ConfigSource, ConfigSourceLoader, FunctionConfigSource, ConfigSourceOptions, isConfigSource, createConfigSource, createMemoryConfigSource, createDefaultsConfigSource, createCustomConfigSource, createEnvironmentConfigSource, isSensitiveConfigKey, isSensitiveConfigValue, isSensitiveConfigEntry, normalizeConfigSourceResult, sortConfigSources, findConfigSource, deduplicateConfigSources, loadConfigSource, loadConfigSources
+ConfigSourceType, ConfigSourceEntry, ConfigSourceContext, ConfigSourceResult, ConfigSource, ConfigSourceLoader, FunctionConfigSource, ConfigSourceOptions, DEFAULT_CONFIG_SOURCE_PRIORITY, isConfigSource, createConfigSource, createMemoryConfigSource, createDefaultsConfigSource, createCustomConfigSource, createEnvironmentConfigSource, isSensitiveConfigKey, isSensitiveConfigValue, isSensitiveConfigEntry, normalizeConfigSourceResult, sortConfigSources, findConfigSource, deduplicateConfigSources, loadConfigSource, loadConfigSources
 
 configStore
 

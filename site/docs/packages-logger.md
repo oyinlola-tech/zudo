@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/logger — structured logging w
 source: https://zudojs.oyinlola.site/docs/packages-logger
 ---
 
-v1.2.0
+v1.3.0
 
 # @zudojs/logger
 
@@ -172,6 +172,7 @@ function createLogger(options?: LoggerOptions): Logger
 | transportTimeout | number | 10000 | Timeout in ms for async transport operations |
 | inheritContext | boolean | true | Whether child loggers inherit parent context |
 | mutable | boolean | true | Whether the logger configuration can be changed at runtime |
+| redact | LoggerRedactionOptions | {} | Secret redaction for metadata and context: `enabled` (true), `keys`, `pattern`, `replacement` ("[REDACTED]") |
 
 ### Constants & Helpers
 
@@ -354,9 +355,48 @@ interface LoggerEntryInput {
 | Type | Description |
 | --- | --- |
 | LogMetadata | Readonly record of string keys to LogValue |
-| LogValue | string, number, boolean, bigint, null, undefined, Date, Error, arrays, objects |
+| LogValue | string, number, boolean, bigint, null, undefined, Date, Error, arrays, objects. `Map` and `Set` are handled at runtime but are not named in the union, so TypeScript needs a cast to put one in metadata |
 | LoggerSource | Service, component, module, file, function, line |
 | LoggerEntryContext | correlationId, requestId, traceId, spanId, userId, tenantId, metadata |
+
+### Metadata Serialization
+
+Metadata and context go through two passes. **Redaction** runs when the entry is created, before it is frozen, so no formatter and no transport can ever see an unmasked secret. **Serialization** runs inside the JSON and structured formatters, turning the values that are left into JSON-safe ones. Both walks descend through nested objects, arrays, `Map`, `Set` and getters, and both share the same cycle guard.
+
+| Value | Becomes | Pass |
+| --- | --- | --- |
+| Map | A plain object, one property per entry; a secret-named key is redacted | redaction |
+| Set | An array of its members | redaction |
+| bigint | Its decimal string | serialization |
+| Date | An ISO-8601 string | serialization |
+| Error | { name, message, stack } | serialization |
+| function | "[Function name]", or "[Function anonymous]" | serialization |
+| symbol | "Symbol(description)" | serialization |
+| A secret-named field | "[REDACTED]" (`LOGGER_REDACTION_TOKEN`) | redaction |
+| A getter that throws | "[Unreadable]" (`LOGGER_UNREADABLE_TOKEN`) | both |
+| A back-edge to an enclosing object | "[Circular]" | both |
+
+**Changed in 1.3.0.**
+
+- `Map` and `Set` keep their contents. They used to collapse to `{}`, so a `headers` Map or a `tags` Set reached the transport empty.
+- The cycle guard tracks the *ancestor path* only, instead of every object it has ever seen. `{ actor: user, target: user }` now logs `user` in both fields; only a genuine back-edge — an object that contains itself — becomes `"[Circular]"`. This applies to redaction, to serialization and to the JSON formatter alike.
+- A metadata getter that throws no longer propagates out of `logger.info(...)` and aborts your call. The field becomes `"[Unreadable]"`, the entry is still logged, and the read failure is reported like any other infrastructure failure — dropped by default, rethrown when `throwTransportErrors` is on.
+
+```ts
+const user = { id: "u_1", name: "Alice" };
+
+logger.info("Transfer", { from: user, to: user });
+// metadata.from and metadata.to both carry the full user object.
+// Before 1.3.0 the second one was "[Circular]".
+
+logger.info("Request", {
+  headers: new Map([["accept", "json"], ["authorization", "Bearer abc"]]) as never,
+  tags: new Set(["api", "v2"]) as never,
+});
+// headers: { accept: "json", authorization: "[REDACTED]" }
+// tags: ["api", "v2"]
+// Before 1.3.0 both were {}.
+```
 
 ### Creating Entries
 
@@ -377,7 +417,7 @@ const entry = createLoggerEntry({
 
 ## FORMATTERS
 
-Formatters convert a `LoggerEntry` into output — either a string or a structured object. The transport receives formatted output, not raw entries.
+Formatters convert a `LoggerEntry` into output — either a string or a structured object. A transport always receives a `LoggerEntry`; the formatter's return value decides what is in it.
 
 ### Interface: LoggerFormatter
 
@@ -416,7 +456,36 @@ interface LoggerFormatterContext {
 | createCompactLoggerFormatter() | string | Minimal output: LEVEL logger: message |
 | createDevelopmentLoggerFormatter() | string | Full details: timestamp, logger, message, context, source, stack |
 | createProductionLoggerFormatter() | string | JSON output (alias for JSON formatter) |
-| createStructuredLoggerFormatter() | Record | Returns structured object (not stringified) |
+| createStructuredLoggerFormatter() | Record | Returns the serialized entry as an object, merged over the entry the transport receives |
+
+### Formatter Output
+
+| The formatter returns | What the transport receives |
+| --- | --- |
+| a string | The entry with `message` replaced by the formatted string |
+| a plain object | The entry with the returned fields merged over it; same-named fields win |
+| anything else (array, null, a primitive) | The entry, unchanged |
+
+> **Changed in 1.3.0:** an object return used to be computed and then discarded — the transport got the untouched entry, so `createStructuredLoggerFormatter()` and any hand-written object formatter had no visible effect at all. Object returns now reach the transport. String formatters are unchanged.
+
+```ts
+import { createLogger, createStructuredLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "api",
+  formatter: createStructuredLoggerFormatter(),
+  transports: [
+    (entry) => {
+      console.log(typeof entry.timestamp, entry.levelName, entry.metadata);
+    },
+  ],
+});
+
+logger.info("Request handled", { route: "/users", ms: 12 });
+// string info { route: '/users', ms: 12 }
+```
+
+`timestamp` prints as `string` because the structured formatter's ISO-8601 value is merged over the entry's `Date`. Before 1.3.0 the same transport saw the raw entry and printed `object`.
 
 ### Options Interfaces
 
@@ -502,6 +571,7 @@ class LoggerFactory {
   constructor(defaults?: LoggerOptions);
 
   create(name?: string, options?: LoggerOptions, forceNew?: boolean): Logger;
+  register(logger: Logger, name?: string): Logger;
   get(name: string): Logger | undefined;
   getOrCreate(name: string, options?: LoggerOptions): Logger;
   child(parent: Logger, options?: ChildLoggerOptions): Logger;
@@ -543,9 +613,14 @@ const same = factory.get("api");
 // Create without registering
 const transient = factory.createTransient({ name: "temp" });
 
+// Adopt a logger the factory did not create (new in 1.3.0)
+factory.register(transient, "temp");
+
 // Cleanup
 await factory.disposeAll();
 ```
+
+`register(logger, name?)` puts an existing logger into the factory's registry under its own `name`, or under the name you pass. From then on it is covered by `flushAll()`, `disposeAll()`, `getAll()`, `has()` and `size` exactly like one the factory built itself. Without it, a hand-made logger is invisible to the factory and its transports are never flushed or closed on shutdown.
 
 ## LOGGER MANAGER
 
@@ -558,6 +633,7 @@ class LoggerManager {
   constructor(options?: LoggerOptions);
 
   initialize(options?: LoggerOptions): Logger;
+  adopt(logger: Logger): Logger;
   getLogger(): Logger;
   get(name: string, options?: LoggerOptions): Logger;
   create(name: string, options?: LoggerOptions): Logger;
@@ -580,6 +656,7 @@ class LoggerManager {
 | createLoggerManager(options?) | Creates an uninitialized LoggerManager |
 | initializeLoggerManager(options?) | Creates and initializes a LoggerManager in one call |
 | createManagedDefaultLogger(name?) | Creates a standalone default logger (no manager) |
+| createLoggerManagerFromLogger(logger) | Creates a manager that adopts an existing logger as its default |
 
 ### Example: Manager Usage
 
@@ -603,6 +680,25 @@ const dbLogger = manager.get("database");
 await manager.close();
 ```
 
+### Adopting an existing logger
+
+`adopt(logger)` (new in 1.3.0) makes a logger you built yourself the manager's default *and* registers it with the manager's factory, so `flush()`, `close()`, `getAll()` and `size` all reach it. It throws `LoggerDisposedError` if the manager is already closed.
+
+```ts
+import { createLogger, createLoggerManagerFromLogger } from "@zudojs/logger";
+
+const logger = createLogger({ name: "app", transports: [fileTransport] });
+
+const manager = createLoggerManagerFromLogger(logger);
+
+console.log(manager.size);                     // 1
+console.log(manager.getLogger() === logger); // true
+
+await manager.close();                     // reaches fileTransport
+```
+
+`createLoggerManagerFromLogger()` is built on `adopt()`. Before 1.3.0 it only assigned the logger to a private field, leaving the factory registry empty: `manager.size` reported `0`, `getAll()` returned nothing, and `flush()` / `close()` were no-ops for the only logger the manager owned — so buffered and file transports were never drained on shutdown.
+
 ## ERROR HIERARCHY
 
 All error types extend `LoggingError` from `@zudojs/errors`. The base `LoggerError` adds a `loggerCode` string for fine-grained classification.
@@ -620,6 +716,8 @@ All error types extend `LoggingError` from `@zudojs/errors`. The base `LoggerErr
 | LoggerTransportClosedError | LOGGER_TRANSPORT_ERROR | Operation on a closed transport |
 | LoggerFormatterNotFoundError | LOGGER_FORMATTER_NOT_FOUND | Named formatter doesn't exist |
 | LoggerTransportNotFoundError | LOGGER_TRANSPORT_NOT_FOUND | Named transport doesn't exist |
+
+> **Changed in 1.3.0:** several paths that used to throw a bare `Error` or a `RangeError` now throw the typed error above — a write past `transportTimeout` raises `LoggerTimeoutError` (carrying `transportName` and `timeout`), any other write failure a `LoggerTransportError` with `transportName` set, a formatter failure a `LoggerFormatterError` with `formatterName` set, a call on a closed `LoggerManager` a `LoggerDisposedError`, an unknown level an `InvalidLoggerLevelError`, an invalid entry timestamp an `InvalidLoggerEntryError`, an unresolved string formatter id a `LoggerFormatterNotFoundError`, and a write to a closed buffered transport a `LoggerTransportClosedError`. If you match on `RangeError` or on message text from any of these paths, update the check.
 
 ## FULL INTEGRATION EXAMPLE
 

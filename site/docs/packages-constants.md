@@ -551,7 +551,7 @@ Everything below is exported from `"@zudojs/constants"`. Constant maps are liste
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/constants` exports from its package root at v1.1.0 — **124** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/constants` exports from its package root at v1.1.1 — **124** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 124 exports**
 
@@ -567,10 +567,10 @@ Interfaces (7)
 
 `CacheControlOptions` `Clock` `MockClock` `MockRandom` `Random` `RandomSource` `ResolveEnvironmentOptions`
 
-Type aliases (31)
+Type aliases (28)
 
-`AnyContentType` `AnyHttpHeaderName` `AnyHttpStatusCode` `Base64String` `Brand` `CacheStrategy` `ContentType` `CorrelationId` `EmailAddress` `EntityId` `Environment` `EventId` `HexString` `HttpHeaderName` `HttpMethod` `HttpStatusCode` `JsonString` `LifecyclePhase` `LifecycleState` `MessageCausationId` `MessageId` `Priority` `RequestId` `SchemaIssueCode` `SessionId` `TenantId` `Timestamp` `TimeUnit` `TokenId` `Url` `UserId`
+`AnyContentType` `AnyHttpHeaderName` `AnyHttpStatusCode` `Base64String` `Brand` `CacheStrategy` `ContentType` `CorrelationId` `EmailAddress` `EntityId` `Environment` `EventId` `HexString` `HttpHeaderName` `HttpMethod` `HttpStatusCode` `JsonString` `MessageCausationId` `MessageId` `Priority` `RequestId` `SessionId` `TenantId` `Timestamp` `TimeUnit` `TokenId` `Url` `UserId`
 
-Constants (52)
+Constants (55)
 
-`CacheDuration` `CacheStrategies` `Charset` `ContentTypes` `DefaultRetry` `Defaults` `DefaultTimeout` `EMPTY` `Environments` `ENVIRONMENTS` `HTTP_METHODS` `HttpHeader` `HttpMethods` `HttpStatus` `IDEMPOTENT_HTTP_METHODS` `LIFECYCLE_DEFAULT_CONCURRENCY` `LIFECYCLE_DEFAULT_RETRY_ATTEMPTS` `LIFECYCLE_DEFAULT_RETRY_DELAY` `LIFECYCLE_DEFAULT_RETRY_MAX_DELAY` `LIFECYCLE_DEFAULT_SHUTDOWN_TIMEOUT` `LIFECYCLE_DEFAULT_START_TIMEOUT` `LIFECYCLE_DEFAULT_STOP_TIMEOUT` `LIFECYCLE_DEFAULT_TIMEOUT` `LIFECYCLE_VALID_TRANSITIONS` `Limits` `MAX_TENANT_ID_LENGTH` `NODE_ENV_KEY` `NONE` `Priorities` `PriorityWeight` `SAFE_HTTP_METHODS` `SCHEMA_DEFAULT_MAX_ARRAY_LENGTH` `SCHEMA_DEFAULT_MAX_DEPTH` `SCHEMA_DEFAULT_MAX_OBJECT_KEYS` `SCHEMA_DEFAULT_MAX_STRING_LENGTH` `SCHEMA_FORBIDDEN_KEYS` `SCHEMA_STRING_FORMATS` `Sentinel` `SERIALIZATION_SCHEMA_VERSION` `SerializationContentType` `SerializationFormat` `SerializationLimits` `SerializationTags` `systemClock` `systemRandom` `TENANT_ID_PATTERN` `TimeMs` `TimeUnits` `UNINITIALIZED` `ValidationLength` `ValidationPattern` `ValidationRange`
+`CacheDuration` `CacheStrategies` `Charset` `ContentTypes` `DefaultRetry` `Defaults` `DefaultTimeout` `EMPTY` `Environments` `ENVIRONMENTS` `HTTP_METHODS` `HttpHeader` `HttpMethods` `HttpStatus` `IDEMPOTENT_HTTP_METHODS` `LIFECYCLE_DEFAULT_CONCURRENCY` `LIFECYCLE_DEFAULT_RETRY_ATTEMPTS` `LIFECYCLE_DEFAULT_RETRY_DELAY` `LIFECYCLE_DEFAULT_RETRY_MAX_DELAY` `LIFECYCLE_DEFAULT_SHUTDOWN_TIMEOUT` `LIFECYCLE_DEFAULT_START_TIMEOUT` `LIFECYCLE_DEFAULT_STOP_TIMEOUT` `LIFECYCLE_DEFAULT_TIMEOUT` `LIFECYCLE_VALID_TRANSITIONS` `LifecyclePhase` `LifecycleState` `Limits` `MAX_TENANT_ID_LENGTH` `NODE_ENV_KEY` `NONE` `Priorities` `PriorityWeight` `SAFE_HTTP_METHODS` `SCHEMA_DEFAULT_MAX_ARRAY_LENGTH` `SCHEMA_DEFAULT_MAX_DEPTH` `SCHEMA_DEFAULT_MAX_OBJECT_KEYS` `SCHEMA_DEFAULT_MAX_STRING_LENGTH` `SCHEMA_FORBIDDEN_KEYS` `SCHEMA_STRING_FORMATS` `SchemaIssueCode` `Sentinel` `SERIALIZATION_SCHEMA_VERSION` `SerializationContentType` `SerializationFormat` `SerializationLimits` `SerializationTags` `systemClock` `systemRandom` `TENANT_ID_PATTERN` `TimeMs` `TimeUnits` `UNINITIALIZED` `ValidationLength` `ValidationPattern` `ValidationRange`

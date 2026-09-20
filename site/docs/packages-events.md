@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/events — the event bus, emitt
 source: https://zudojs.oyinlola.site/docs/packages-events
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/events
 
@@ -306,7 +306,7 @@ bus.dispose();                      // final: every call now throws EventBusDisp
 console.log(bus.getState() === EventBusState.DISPOSED); // true
 ```
 
-`bus.subscribe(listener)` lets you watch the bus itself: the listener receives `{ type: "started" | "stopped" | "published", event?, timestamp }`.
+`bus.subscribe(listener)` lets you watch the bus itself: the listener receives `{ type: "started" | "stopped" | "published", event?, timestamp }`. A listener that throws used to be swallowed without trace; since 1.2.0 the failure goes to your `onError` hook if you set one, and otherwise surfaces once per bus through `process.emitWarning` as a `ZudojsEventsWarning` with code `ZUDOJS_EVENTS_OBSERVER_ERROR`. The same applies to `registry.subscribe`.
 
 > **Tip**
 >
@@ -337,6 +337,42 @@ try {
 ```
 
 Registering the same type twice throws `DuplicateEventDefinitionError` unless you pass `registry: { allowDuplicateDefinitions: true }`. `bus.unregister(type)` removes a definition; add `{ removeHandlers: true }` to drop the handlers subscribed to exactly that type as well.
+
+### Handler limits
+
+The registry counts how many handlers each pattern has collected, because a pattern that keeps growing is almost always a subscribe-without-unsubscribe leak. The ceiling is `maxHandlersPerPattern` on a registry, spelled `maxListeners` under `emitter` on a bus or an emitter. It defaults to **100**; `0` turns the check off.
+
+What happens when the ceiling is passed is now yours to choose.
+
+- **Warn (the default).** The registration succeeds and one warning is emitted per pattern — the first breach only. It goes to your `onWarning` hook if you set one, otherwise through `process.emitWarning` as a `ZudojsEventsWarning` with code `ZUDOJS_EVENTS_HANDLER_LIMIT`.
+- **Refuse.** Set `enforceHandlerLimit: true` (default `false`, added in 1.2.0) and the registration is rejected instead: the call throws `EventListenerLimitExceededError` and the handler is rolled back out of the registry, which is left exactly as it was. Unlike the warning it fires on *every* breach, not only the first, since each one is a separate fault.
+
+```ts
+import { createEventBus, EventListenerLimitExceededError } from "@zudojs/events";
+
+const bus = createEventBus({
+  emitter: { maxListeners: 2, enforceHandlerLimit: true },
+});
+
+bus.on("tick", () => {});
+bus.on("tick", () => {});
+
+try {
+  bus.on("tick", () => {});
+} catch (error) {
+  const limit = error as EventListenerLimitExceededError;
+  console.log(error instanceof EventListenerLimitExceededError); // true
+  console.log(limit.pattern, limit.count, limit.limit);          // tick 3 2
+}
+
+console.log(bus.handlerCount); // 2  — the refused handler was not kept
+```
+
+The option is accepted in all three places: `createEventRegistry({ enforceHandlerLimit })`, `createEventEmitter({ enforceHandlerLimit })`, and `createEventBus({ emitter: { enforceHandlerLimit } })`.
+
+> **Note**
+>
+> `EventListenerLimitExceededError` is defined in `@zudojs/errors` (code `EVENT_LISTENER_LIMIT_EXCEEDED`) and re-exported from `@zudojs/events`, so either import works. Before 1.2.0 nothing in the package ever raised it; a `catch` branch testing for it was unreachable.
 
 > **Common mistake**
 >
@@ -485,7 +521,7 @@ Everything below is importable from `"@zudojs/events"`. Only the exports you cal
 | EventHandlerContext | event, type, eventId, correlationId?, causationId?, signal, metadata. | Second argument of every handler. |
 | EventHandlerOptions | id, priority, once, timeoutMs, enabled, description. | Third argument of on(). |
 | EventSubscription | id, active, state, unsubscribe(). | Returned by on(). |
-| EventBusOptions | emitter: { mode, errorMode, freezeEvents, maxListeners }, registry: { allowDuplicateDefinitions, onDuplicateHandlerId }, requireRegistration, middleware, onWarning, onError. | maxListeners defaults to 100 per pattern; more emits a leak warning (process warning or `onWarning`). |
+| EventBusOptions | emitter: { mode, errorMode, freezeEvents, maxListeners, enforceHandlerLimit }, registry: { allowDuplicateDefinitions, onDuplicateHandlerId }, requireRegistration, middleware, onWarning, onError. | maxListeners defaults to 100 per pattern; more emits a one-shot leak warning (process warning or `onWarning`). enforceHandlerLimit defaults to false; set it to refuse the registration with EventListenerLimitExceededError instead. See [Handler limits](#event-registry). |
 | PublishOptions | mode, errorMode, signal, metadata, middleware. | Second argument of publish / publishEvent / emit. |
 | EventPublishResult | See [Reading the result](#event-bus). |  |
 | EventMiddleware | (context, next) => Promise<unknown>. | context.event, context.signal, context.metadata, context.state. |
@@ -511,6 +547,7 @@ All extend `EventError` from `@zudojs/errors` and carry `eventType` and `eventId
 | EventDispatchAbortedError | The signal you passed was aborted. | results and errors gathered so far. |
 | EventTypeNotFoundError | Publishing an unregistered type with requireRegistration: true. |  |
 | DuplicateEventHandlerError · DuplicateEventDefinitionError | Reusing a handler id or registering a type twice. |  |
+| EventListenerLimitExceededError | Registering past maxHandlersPerPattern / maxListeners with enforceHandlerLimit: true. | pattern, count, limit. Never raised under the default warn-only behaviour. |
 | EventBusStoppedError · EventBusDisposedError · EventEmitterDisposedError | Using a bus or emitter after stop() / dispose(). |  |
 
 ## COMMON MISTAKES
@@ -529,7 +566,7 @@ All extend `EventError` from `@zudojs/errors` and carry `eventType` and `eventId
   Two buses do not share handlers, so an event published on one never reaches handlers on the other. Create the bus once and pass it around, or register it in your [container](https://zudojs.oyinlola.site/docs/packages-container.md).
 - Adding handlers in a loop without removing them
 
-  Each `on()` call adds another handler. After 100 on the same pattern the bus emits a leak warning through `process.emitWarning` (type `ZudojsEventsWarning`), or passes it to `onWarning` if you set one. Keep the subscription and call `unsubscribe()` when the owner goes away.
+  Each `on()` call adds another handler. After 100 on the same pattern the bus emits one leak warning through `process.emitWarning` (type `ZudojsEventsWarning`), or passes it to `onWarning` if you set one; the handler is still registered. Keep the subscription and call `unsubscribe()` when the owner goes away. If you would rather find out loudly, pass `emitter: { enforceHandlerLimit: true }` and the 101st `on()` throws `EventListenerLimitExceededError` instead of registering.
 
 ## RELATED PACKAGES
 

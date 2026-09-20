@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/crypto — hashing, encryption,
 source: https://zudojs.oyinlola.site/docs/packages-crypto
 ---
 
-v1.2.0
+v1.3.0
 
 # @zudojs/crypto
 
@@ -192,7 +192,7 @@ console.log(await verifyPassword("wrong password", result.encoded));            
 console.log(await verifyPassword("anything", "not-a-hash"));                      // false
 ```
 
-`verifyPassword` never throws. A wrong password, a malformed stored string, or a hash with out-of-range parameters all return `false`. Passwords longer than 1024 characters are also rejected so an attacker cannot make your server grind on huge input.
+`verifyPassword` never throws over its inputs. A wrong password, a malformed stored string, or a hash with out-of-range parameters all return `false`. The one exception is configuration: since 1.3.0 it throws a `CryptoError` if the provider does not declare the `passwordHashing` capability, rather than reporting a provider that cannot hash as a wrong password. Passwords longer than 1024 characters are also rejected so an attacker cannot make your server grind on huge input.
 
 To make hashing slower, pass options. `cost` must be a power of two.
 
@@ -362,6 +362,31 @@ console.log(hashCalls);   // 2
 resetDefaultCryptoProvider();
 ```
 
+### Capabilities, and what a provider must implement
+
+Every provider declares a `capabilities` object with seven boolean flags: `hash`, `hmac`, `encryption`, `signing`, `random`, `keyDerivation` and `passwordHashing`. Before 1.3.0 nothing read them — a provider declaring `signing: false` still had its `sign` called. Each flag is now checked at the operation that needs it, and an operation the configured provider does not declare is refused with a `CryptoError` naming both the capability and the operation. A `capabilities` object that is missing or malformed fails the same way a `false` flag does. A provider that declares every capability it implements is unaffected.
+
+`verifyPassword` is part of this: it throws rather than reporting an undeclared `passwordHashing` capability as a wrong password, which would otherwise read as a failed login forever.
+
+`setDefaultCryptoProvider` now validates the provider before installing it. All twelve methods listed in `CRYPTO_PROVIDER_METHODS` — `randomBytes`, `randomInt`, `randomUUID`, `hash`, `hmac`, `encrypt`, `decrypt`, `sign`, `verify`, `deriveKey`, `hashPassword`, `verifyPassword` — must be functions, and each of the seven capability flags must be a boolean. Anything else throws a `CryptoError` from that call and the provider is *not* installed; a non-object argument throws a `TypeError`. Previously a partial object such as `{}` installed cleanly and failed much later, as a bare `TypeError` from inside whichever operation reached the missing method first.
+
+```ts
+import { setDefaultCryptoProvider, isCryptoError } from "@zudojs/crypto";
+import type { CryptoProvider } from "@zudojs/crypto";
+
+try {
+  setDefaultCryptoProvider({} as CryptoProvider);
+} catch (error) {
+  if (isCryptoError(error)) {
+    console.log(error.message);
+    // Crypto provider is missing the "randomBytes" method: a provider
+    // must implement all 12 operations.
+  }
+}
+```
+
+The checks are exported for anyone writing their own provider or wrapper: `assertCryptoProvider`, `assertProviderCapability`, and the fixed-operation shorthands `assertRandomCapability`, `assertHashCapability`, `assertHmacCapability` and `assertPasswordHashingCapability`.
+
 ## ERRORS
 
 Cryptographic failures throw `CryptoError` from `@zudojs/errors`, re-exported here. It carries a stable `code` such as `ERR_CRYPTO_CIPHER`, an `operation`, and the original Node error as `cause`. Bad arguments (wrong algorithm name, short HMAC key) throw plain `TypeError` or `RangeError` instead.
@@ -381,7 +406,7 @@ try {
 }
 ```
 
-The verify-style helpers are the exception: `verifyPassword`, `verifyTokenHash` and `verify` return `false` for bad input instead of throwing, so login code stays simple.
+The verify-style helpers are the exception: `verifyPassword`, `verifyTokenHash` and `verify` return `false` for bad input instead of throwing, so login code stays simple. That covers the input only — since 1.3.0 a provider that does not declare the capability an operation needs makes that operation throw a `CryptoError`, `verifyPassword` included, so a misconfigured provider is not mistaken for a wrong password.
 
 ## API REFERENCE
 
@@ -450,7 +475,7 @@ Everything below is exported from `@zudojs/crypto`. All functions that touch `no
 | encode(bytes, encoding), decode(string, encoding) | Convert between bytes and hex / base64 / base64url / utf8 | Also toHex, fromHex, toBase64Url, fromBase64Url, utf8Encode, utf8Decode. |
 | createCryptoService({ provider? }), cryptoService | Method-style facade; wraps failures in CryptoError | Methods: generateKey, randomBytes, encrypt, decrypt, hash, hashHex, hashPassword, verifyPassword, deriveKey, generateToken, generateOtp, hashToken, verifyToken, encode, decode. |
 | createCryptoFactory({ defaultKeyAlgorithm?, password?, encoding?, provider? }), cryptoFactory | Service with app-wide defaults | Methods: createKey, createToken, createApiKey, createSessionToken, createRefreshToken, createVerificationToken, createPasswordResetToken, createCsrfToken, createOtp, createPasswordHash, verifyPassword, encode, decode. |
-| createNodeCryptoProvider(), getDefaultCryptoProvider(), setDefaultCryptoProvider(p), resetDefaultCryptoProvider() | Create or swap the backing provider | Implement CryptoProvider for a custom one. |
+| createNodeCryptoProvider(), getDefaultCryptoProvider(), setDefaultCryptoProvider(p), resetDefaultCryptoProvider() | Create or swap the backing provider | Implement CryptoProvider for a custom one. setDefaultCryptoProvider rejects one missing any of the twelve methods or the seven capability flags. |
 | CryptoError, isCryptoError(value), CryptoOperation | Error class, guard and operation enum | Re-exported from @zudojs/errors. |
 | CryptoAlgorithm, CryptoKeyUsage | Enums for algorithm and key-usage names | Use these, not string literals, where an enum is expected. |
 | AES_GCM, PASSWORD_HASH, PASSWORD_POLICY, TOKEN, TOKEN_PREFIX, TOKEN_TTL | Frozen default parameters | e.g. PASSWORD_HASH.SCRYPT.COST is 16384. |

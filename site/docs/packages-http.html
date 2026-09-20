@@ -141,7 +141,7 @@
 
       <!-- HEADER -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/http</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Run an HTTP server on Node, route requests, build responses, chain middleware, and call other services with a typed HTTP client.
@@ -249,10 +249,11 @@ console.<span class="fn">log</span>(<span class="str">`Listening on http://127.0
           <tr><td><code>method</code></td><td><code>"GET"</code>, <code>"POST"</code>, and so on</td><td>Always upper-case.</td></tr>
           <tr><td><code>url / path</code></td><td>Full URL and just the path part</td><td><code>path</code> has no query string.</td></tr>
           <tr><td><code>getHeader(name)</code></td><td>One header value or <code>undefined</code></td><td>Names are case-insensitive. Also <code>hasHeader</code>, <code>headers</code>.</td></tr>
-          <tr><td><code>getQuery(name)</code></td><td>One query value, an array for repeats, or <code>undefined</code></td><td>Also <code>query</code> for the whole object. <code>request.query</code> and the router's <code>ctx.query</code> use the same parser.</td></tr>
+          <tr><td><code>getQuery(name)</code></td><td>One query value, an array for repeats, or <code>undefined</code></td><td>Also <code>query</code> for the whole object. <code>request.query</code>, the router's <code>ctx.query</code> and the exported <code>parseQueryString</code> use the same hardened parser: the record has a <code>null</code> prototype, <code>__proto__</code>/<code>constructor</code>/<code>prototype</code> are dropped, and a query past the parser's limits (1000 keys, 16 KB per value, 1 MB total) throws <code>HTTPQueryLimitError</code> (<code>414</code>).</td></tr>
           <tr><td><code>body</code></td><td>Raw bytes as <code>Uint8Array</code></td><td>Empty array when there is no body.</td></tr>
           <tr><td><code>id</code></td><td>A unique request id</td><td>Taken from <code>x-request-id</code> if the client sent one, otherwise generated.</td></tr>
-          <tr><td><code>remoteAddress</code></td><td>The caller's IP address</td><td>Respects <code>trustProxy</code> on the adapter.</td></tr>
+          <tr><td><code>remoteAddress</code></td><td>The caller's IP address</td><td>The socket peer. <code>X-Forwarded-For</code> is read only when the adapter's <code>trustProxy</code> matches that peer, and <code>trustProxy</code> defaults to <code>false</code>.</td></tr>
+          <tr><td><code>protocol / hostname / port</code></td><td>The scheme, host and port the request arrived on</td><td>From the socket and the <code>Host</code> header. <code>X-Forwarded-Proto</code> and <code>X-Forwarded-Host</code> are read only under <code>trustProxy</code>, and a forwarded scheme that is not <code>http</code> or <code>https</code> is discarded.</td></tr>
           <tr><td><code>getState(key) / setState(key, value)</code></td><td>Per-request scratch space</td><td>Use it to pass data between middleware and handlers.</td></tr>
           </tbody>
         </table>
@@ -324,7 +325,7 @@ console.<span class="fn">log</span>(server.state, server.address);
           <tbody>
           <tr><td><code>host / port</code></td><td>Where to listen</td><td>Defaults <code>127.0.0.1</code> and <code>3000</code>. <code>port: 0</code> picks a free port.</td></tr>
           <tr><td><code>maxBodySize</code></td><td>Largest request body accepted, in bytes</td><td>Default 10 MB. Bigger bodies get a <code>413</code>.</td></tr>
-          <tr><td><code>trustProxy</code></td><td>Whether to believe <code>X-Forwarded-*</code> headers</td><td><code>false</code> (default), <code>true</code>, a hop count (trust that many proxies nearest the server), or a list of proxy IPs.</td></tr>
+          <tr><td><code>trustProxy</code></td><td>Which socket peers may speak for a client through <code>X-Forwarded-*</code></td><td>Default <code>false</code>: forwarded headers are ignored entirely. Also <code>true</code> or <code>"all"</code> (trust every hop), a hop count (trust that many proxies nearest the server; <code>0</code> trusts nothing), a preset (<code>"loopback"</code>, <code>"linklocal"</code>, <code>"uniquelocal"</code>/<code>"private"</code>), an IP or CIDR range, a comma-separated list or array of either, or a predicate <code>(address, hop) =&gt; boolean</code>. A string that is none of these throws <code>TypeError</code> when the adapter is constructed.</td></tr>
           <tr><td><code>security</code></td><td>Request guard run before each request</td><td>On by default; an <code>HTTPSecurityConfig</code> object to tune, <code>false</code> to disable.</td></tr>
           <tr><td><code>headersTimeout / requestTimeout / keepAliveTimeout</code></td><td>Timeouts in ms</td><td>Defaults <code>10000</code> / <code>30000</code> / <code>5000</code>, tighter than Node's own.</td></tr>
           <tr><td><code>maxConnections</code></td><td>Cap on open connections</td><td>Unlimited by default.</td></tr>
@@ -332,6 +333,17 @@ console.<span class="fn">log</span>(server.state, server.address);
           <tr><td><code>events</code></td><td>Adapter-level listeners</td><td><code>onListening(address)</code>, <code>onClose()</code>, <code>onError(error)</code>.</td></tr>
           </tbody>
         </table>
+        <div class="callout callout-warning mb-6">
+          <strong class="text-zudo-yellow">Changed in v1.3.0: forwarded headers are not trusted by default</strong>
+          <p class="mt-1">Before v1.3.0 the request objects built by <code>createHTTPRequest</code>, <code>createHTTPAdapter</code>, <code>NodeHTTPAdapter</code>, <code>adaptNodeRequest</code> and <code>adaptNodeContext</code> read <code>X-Forwarded-For</code> and <code>X-Forwarded-Proto</code> from any client, with no trust check: a caller connecting directly chose its own <code>request.ip</code> (defeating an allowlist, a per-IP rate limit or an audit trail) and could set <code>request.secure</code> to <code>true</code> with a header. Those headers are now honoured only when the socket peer matches <code>trustProxy</code>, which defaults to <code>false</code>, and a forwarded scheme other than <code>http</code> or <code>https</code> is discarded. <code>createNodeHttpAdapter</code> already gated them.</p>
+          <p class="mt-1">If you run behind a proxy you must now opt in, on whichever entry point you use:</p>
+        </div>
+        <div class="code-block mb-4"><span class="fn">createNodeHttpAdapter</span>({ port: <span class="num">3000</span>, trustProxy: <span class="str">"10.0.0.0/8"</span>, handler });
+<span class="fn">createHTTPAdapter</span>({ trustProxy: <span class="str">"10.0.0.0/8"</span> });
+<span class="fn">adaptNodeRequest</span>(req, { trustProxy: <span class="str">"10.0.0.0/8"</span> });
+<span class="fn">adaptNodeContext</span>(req, res, { trustProxy: <span class="str">"10.0.0.0/8"</span> });
+<span class="fn">createHTTPRequest</span>(req, { trustProxy: <span class="str">"10.0.0.0/8"</span> });</div>
+        <p class="mb-4 leading-relaxed">Without it, the client address is the socket peer and the protocol reflects the socket's own TLS state. The standalone <code>getRequestProtocol(request, trustProxy?)</code> and <code>getRequestIP(request, trustProxy?)</code> take the same value as an optional second argument, and default to <code>false</code> too.</p>
         <div class="callout callout-warning mb-6">
           <strong class="text-zudo-yellow">Watch out</strong>
           <p class="mt-1"><code>host</code>, <code>port</code>, and <code>trustProxy</code> belong on the adapter, not on <code>createHttpServer</code>. The server options type does not accept them, so TypeScript will tell you.</p>
@@ -406,20 +418,35 @@ $ curl -X DELETE http://127.0.0.1:3000/users/1
   api.<span class="fn">get</span>(<span class="str">"/version"</span>, () =&gt; <span class="fn">createResponseContext</span>().<span class="fn">json</span>({ version: <span class="str">"1.0.0"</span> }));
 });
 <span class="cmt">// GET /api/health and GET /api/version now exist</span></div>
+        <p class="mb-4 leading-relaxed">Anything route middleware writes to <code>context.response</code> before calling <code>next()</code> — headers, cookies, status, metadata — survives when the handler returns a response of its own. A guard that sets a security header and delegates therefore affects the response that is sent.</p>
+        <h3 class="text-lg font-bold mb-3 mt-6">Route patterns</h3>
+        <p class="mb-4 leading-relaxed">A pattern is a path split into segments. A literal segment matches itself; the other kinds capture into <code>ctx.params</code>.</p>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Pattern</th><th>What it matches</th><th>Notes</th></tr></thead>
+          <tbody>
+          <tr><td><code>/users/:id</code></td><td>One required segment</td><td><code>ctx.params.id</code>.</td></tr>
+          <tr><td><code>/account/:id?/profile</code></td><td>The segment, or nothing</td><td>Optional. <code>ctx.params.id</code> is <code>undefined</code> when it is absent, and the parameter only claims a segment while the segments after it still have input left.</td></tr>
+          <tr><td><code>/users/:id(\d+)</code></td><td>A segment matching the expression</td><td>Write the backslash twice in a string literal: <code>"/users/:id(\\d+)"</code>.</td></tr>
+          <tr><td><code>/files/{name}</code>, <code>/files/{name?:\w+}</code></td><td>Brace form of the same</td><td>Optional and constrained forms included.</td></tr>
+          <tr><td><code>/assets/*path</code></td><td>The rest of the path</td><td>Trailing wildcard. Each segment is decoded separately, so <code>%2f</code> and <code>%2e%2e</code> cannot escape the prefix.</td></tr>
+          </tbody>
+        </table>
+        <p class="mb-4 leading-relaxed">When more than one pattern matches, the router compares their segments left to right by kind — literal beats parameter, parameter beats wildcard — and the first difference decides; registration order breaks a tie. So <code>/admin/*rest</code> wins over <code>/:a/:b/:c/:d</code> for <code>GET /admin/a/b/c</code>. Before v1.3.0 the kinds were summed into a single score, which let the longer all-parameter pattern win and bypass the guards registered on the admin route.</p>
         <h3 class="text-lg font-bold mb-3 mt-6">Router options</h3>
         <table class="doc-table mb-6">
           <thead><tr><th>Option</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
           <tr><td><code>caseSensitive</code></td><td>Whether <code>/Users</code> and <code>/users</code> differ</td><td>Default <code>false</code>.</td></tr>
-          <tr><td><code>strictTrailingSlash</code></td><td>Whether <code>/users/</code> and <code>/users</code> differ</td><td>Default <code>false</code>.</td></tr>
+          <tr><td><code>strictTrailingSlash</code></td><td>Whether <code>/users/</code> and <code>/users</code> differ</td><td>Default <code>false</code>. Enforced since v1.3.0; a strict router used to store the option and still answer <code>/users/</code> with the <code>/users</code> route.</td></tr>
           <tr><td><code>automaticHead</code></td><td>Answer <code>HEAD</code> using the matching <code>GET</code> route</td><td>Default <code>true</code>.</td></tr>
-          <tr><td><code>automaticOptions</code></td><td>Answer <code>OPTIONS</code> with an <code>Allow</code> header</td><td>Default <code>true</code>.</td></tr>
+          <tr><td><code>automaticOptions</code></td><td>Answer <code>OPTIONS</code> with an <code>Allow</code> header</td><td>Default <code>true</code>. The answer is a <code>204</code> from a synthetic route with no middleware, so an <code>OPTIONS</code> request never runs another method's handler. <code>Allow</code> honours <code>caseSensitive</code>.</td></tr>
           <tr><td><code>notFoundHandler / methodNotAllowedHandler</code></td><td>Replace the default 404 / 405 responses</td><td>Receive <code>{ request, path, method, signal, state }</code>.</td></tr>
           </tbody>
         </table>
+        <p class="mb-4 leading-relaxed">For the lower-level path, <code>createRouteDispatcher(matcher, options)</code> takes <code>RouteDispatchOptions</code>. Its <code>preserveResponse</code> (default <code>false</code>) keeps the response the middleware chain built instead of merging the handler's response into it; before v1.3.0 the option was declared and never read.</p>
         <div class="callout callout-tip mb-6">
           <strong class="text-zudo-green">Common mistake</strong>
-          <p class="mt-1">Registering the same method and path twice throws <code>RouteConflictError</code> at startup. Each <code>router.get(...)</code> call returns a function that removes the route again, which is handy in tests.</p>
+          <p class="mt-1">Registering the same method and path twice throws <code>RouteConflictError</code> at startup. Each <code>router.get(...)</code> call returns a function that removes the route again, which is handy in tests. Registering both <code>/users/:id</code> and <code>/users/:id?</code> is not a conflict.</p>
         </div>
       </section>
 
@@ -493,11 +520,14 @@ console.<span class="fn">log</span>(response.status, response.body, response.hea
         </ul>
         <h3 class="text-lg font-bold mb-3 mt-6">Built-in guards</h3>
         <ul class="space-y-2 mb-6">
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span>Requests whose path has <code>.</code> / <code>..</code> / <code>%2e%2e</code> segments or backslashes are answered <code>400</code>.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span>Requests whose path has <code>.</code> / <code>..</code> / <code>%2e%2e</code> segments or backslashes are answered <code>400</code>. Repeated slashes are collapsed once, where the request-target is parsed, so <code>request.path</code> and the router both see <code>//admin/secret</code> as <code>/admin/secret</code> and a guard can no longer disagree with the route it protects. An origin-form target is still never parsed as an authority.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><code>createPathMiddleware(path, middleware, { caseSensitive? })</code> ignores case and trailing slashes by default, matching the router.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><code>createRateLimitMiddleware({ max, windowMs })</code> answers <code>429</code> with <code>Retry-After</code>. Requests with no usable client address share one bucket (<code>UNKNOWN_CLIENT_RATE_LIMIT_IP</code>, <code>0.0.0.0</code>); they are never unlimited and never a <code>500</code>.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><code>parseSignedCookie(value, secret, name)</code> verifies a signed cookie; signatures are compared with <code>@zudojs/crypto</code> <code>timingSafeEqualString</code>.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span>The built-in <code>createCorsMiddleware</code>, <code>createSecurityMiddleware</code> and <code>createTimingMiddleware</code> return a cloned <code>HttpResponseContext</code>, so status and body survive.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><code>createSecurityMiddleware()</code> with no options emits the package's declared baseline (<code>createDefaultSecurityHeaderOptions</code>): <code>Content-Security-Policy</code>, <code>Strict-Transport-Security</code>, <code>Permissions-Policy</code>, the cross-origin isolation headers and <code>X-Permitted-Cross-Domain-Policies</code> on top of <code>nosniff</code>, <code>X-Frame-Options</code> and <code>Referrer-Policy</code>. Explicit options layer over it; <code>useDefaults: false</code> emits only what you configure. Before v1.3.0 it emitted three headers.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><code>createLoggingMiddleware({ includeHeaders: true })</code> redacts credential headers — <code>authorization</code>, <code>proxy-authorization</code>, <code>cookie</code>, <code>set-cookie</code> and the rest of the <code>@zudojs/logger</code> secret-field set — before the record reaches the logger. Add your own names with <code>redactHeaders</code>.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><code>guardRequest</code> applies <code>maxHeaderValueSize</code> and the CRLF filter to array-valued headers (<code>set-cookie</code>, and any header supplied as a list) as well as to single values.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span>Stock adapters give each context a redacting <code>@zudojs/logger</code> console logger named <code>http</code> when you supply none.</span></li>
         </ul>
       </section>
@@ -703,7 +733,8 @@ console.<span class="fn">log</span>(
           <tr><td><code>notFound(message?)</code> and friends</td><td>Create an <code>HttpError</code> with a status</td><td>See <a href="#errors" class="underline">Errors</a>.</td></tr>
           <tr><td><code>isHttpError(value)</code></td><td>Type guard for <code>HttpError</code></td><td></td></tr>
           <tr><td><code>getStatusText(code)</code></td><td><code>404</code> to <code>"Not Found"</code></td><td></td></tr>
-          <tr><td><code>getCurrentRequestContext()</code></td><td>The request being handled, from anywhere in the call stack</td><td>Only inside <code>runWithRequestContext</code>.</td></tr>
+          <tr><td><code>getCurrentRequestContext()</code></td><td>The request being handled, from anywhere in the call stack</td><td>Only inside <code>runWithRequestContext</code>. Working since v1.3.0: the <code>AsyncLocalStorage</code> behind it was loaded in a way that never resolved under ESM, so it always returned <code>undefined</code>.</td></tr>
+          <tr><td><code>getRequestIP(request, trustProxy?)</code> / <code>getRequestProtocol(request, trustProxy?)</code></td><td>The client address and scheme of a raw Node request</td><td><code>trustProxy</code> defaults to <code>false</code>, so forwarded headers are ignored unless you pass one.</td></tr>
           </tbody>
         </table>
         <h3 class="text-lg font-bold mb-3 mt-6">Classes</h3>

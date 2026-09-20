@@ -144,7 +144,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/logger</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Structured logging with transports, formatters, context propagation, child loggers, and lifecycle management. Every log entry is a typed, serialized object flowing through a configurable pipeline.
@@ -474,11 +474,17 @@ yarn add @zudojs/logger</div>
                 <td class="p-3">true</td>
                 <td class="p-3">Whether child loggers inherit parent context</td>
               </tr>
-              <tr>
+              <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">mutable</td>
                 <td class="p-3">boolean</td>
                 <td class="p-3">true</td>
                 <td class="p-3">Whether the logger configuration can be changed at runtime</td>
+              </tr>
+              <tr>
+                <td class="p-3 font-mono">redact</td>
+                <td class="p-3">LoggerRedactionOptions</td>
+                <td class="p-3">{}</td>
+                <td class="p-3">Secret redaction for metadata and context: <code>enabled</code> (true), <code>keys</code>, <code>pattern</code>, <code>replacement</code> ("[REDACTED]")</td>
               </tr>
             </tbody>
           </table>
@@ -705,7 +711,7 @@ scoped.<span class="fn">info</span>(<span class="str">"Fetching user"</span>);
               </tr>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">LogValue</td>
-                <td class="p-3">string, number, boolean, bigint, null, undefined, Date, Error, arrays, objects</td>
+                <td class="p-3">string, number, boolean, bigint, null, undefined, Date, Error, arrays, objects. <code>Map</code> and <code>Set</code> are handled at runtime but are not named in the union, so TypeScript needs a cast to put one in metadata</td>
               </tr>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">LoggerSource</td>
@@ -718,6 +724,95 @@ scoped.<span class="fn">info</span>(<span class="str">"Fetching user"</span>);
             </tbody>
           </table>
         </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Metadata Serialization</h3>
+        <p class="mb-4">
+          Metadata and context go through two passes. <strong>Redaction</strong> runs when the entry is created, before it is frozen, so no formatter and no transport can ever see an unmasked secret. <strong>Serialization</strong> runs inside the JSON and structured formatters, turning the values that are left into JSON-safe ones. Both walks descend through nested objects, arrays, <code>Map</code>, <code>Set</code> and getters, and both share the same cycle guard.
+        </p>
+        <div class="border-4 border-black">
+          <table class="w-full text-sm">
+            <thead class="bg-black text-white">
+              <tr>
+                <th class="p-3 text-left">Value</th>
+                <th class="p-3 text-left">Becomes</th>
+                <th class="p-3 text-left">Pass</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">Map</td>
+                <td class="p-3">A plain object, one property per entry; a secret-named key is redacted</td>
+                <td class="p-3">redaction</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">Set</td>
+                <td class="p-3">An array of its members</td>
+                <td class="p-3">redaction</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">bigint</td>
+                <td class="p-3">Its decimal string</td>
+                <td class="p-3">serialization</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">Date</td>
+                <td class="p-3">An ISO-8601 string</td>
+                <td class="p-3">serialization</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">Error</td>
+                <td class="p-3">{ name, message, stack }</td>
+                <td class="p-3">serialization</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">function</td>
+                <td class="p-3">"[Function name]", or "[Function anonymous]"</td>
+                <td class="p-3">serialization</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">symbol</td>
+                <td class="p-3">"Symbol(description)"</td>
+                <td class="p-3">serialization</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">A secret-named field</td>
+                <td class="p-3">"[REDACTED]" (<code>LOGGER_REDACTION_TOKEN</code>)</td>
+                <td class="p-3">redaction</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono">A getter that throws</td>
+                <td class="p-3">"[Unreadable]" (<code>LOGGER_UNREADABLE_TOKEN</code>)</td>
+                <td class="p-3">both</td>
+              </tr>
+              <tr>
+                <td class="p-3 font-mono">A back-edge to an enclosing object</td>
+                <td class="p-3">"[Circular]"</td>
+                <td class="p-3">both</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="mt-4 mb-2"><strong>Changed in 1.3.0.</strong></p>
+        <ul class="space-y-2 mb-4 text-sm">
+          <li class="flex gap-2"><span class="font-bold">→</span> <span><code>Map</code> and <code>Set</code> keep their contents. They used to collapse to <code>{}</code>, so a <code>headers</code> Map or a <code>tags</code> Set reached the transport empty.</span></li>
+          <li class="flex gap-2"><span class="font-bold">→</span> <span>The cycle guard tracks the <em>ancestor path</em> only, instead of every object it has ever seen. <code>{ actor: user, target: user }</code> now logs <code>user</code> in both fields; only a genuine back-edge — an object that contains itself — becomes <code>"[Circular]"</code>. This applies to redaction, to serialization and to the JSON formatter alike.</span></li>
+          <li class="flex gap-2"><span class="font-bold">→</span> <span>A metadata getter that throws no longer propagates out of <code>logger.info(...)</code> and aborts your call. The field becomes <code>"[Unreadable]"</code>, the entry is still logged, and the read failure is reported like any other infrastructure failure — dropped by default, rethrown when <code>throwTransportErrors</code> is on.</span></li>
+        </ul>
+
+        <div class="code-block"><span class="kw">const</span> user = { id: <span class="str">"u_1"</span>, name: <span class="str">"Alice"</span> };
+
+logger.<span class="fn">info</span>(<span class="str">"Transfer"</span>, { from: user, to: user });
+<span class="cm">// metadata.from and metadata.to both carry the full user object.</span>
+<span class="cm">// Before 1.3.0 the second one was "[Circular]".</span>
+
+logger.<span class="fn">info</span>(<span class="str">"Request"</span>, {
+  headers: <span class="kw">new</span> <span class="tp">Map</span>([[<span class="str">"accept"</span>, <span class="str">"json"</span>], [<span class="str">"authorization"</span>, <span class="str">"Bearer abc"</span>]]) <span class="kw">as</span> <span class="tp">never</span>,
+  tags: <span class="kw">new</span> <span class="tp">Set</span>([<span class="str">"api"</span>, <span class="str">"v2"</span>]) <span class="kw">as</span> <span class="tp">never</span>,
+});
+<span class="cm">// headers: { accept: "json", authorization: "[REDACTED]" }</span>
+<span class="cm">// tags: ["api", "v2"]</span>
+<span class="cm">// Before 1.3.0 both were {}.</span></div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Creating Entries</h3>
         <div class="code-block"><span class="kw">import</span> { <span class="fn">createLoggerEntry</span>, <span class="tp">LoggerLevel</span> } <span class="kw">from</span> <span class="str">"@zudojs/logger"</span>;
@@ -738,7 +833,7 @@ scoped.<span class="fn">info</span>(<span class="str">"Fetching user"</span>);
       <section id="formatters" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">FORMATTERS</h2>
         <p class="mb-4">
-          Formatters convert a <code>LoggerEntry</code> into output — either a string or a structured object. The transport receives formatted output, not raw entries.
+          Formatters convert a <code>LoggerEntry</code> into output — either a string or a structured object. A transport always receives a <code>LoggerEntry</code>; the formatter's return value decides what is in it.
         </p>
 
         <h3 class="text-lg font-bold mb-3">Interface: LoggerFormatter</h3>
@@ -802,11 +897,59 @@ scoped.<span class="fn">info</span>(<span class="str">"Fetching user"</span>);
               <tr>
                 <td class="p-3 font-mono">createStructuredLoggerFormatter()</td>
                 <td class="p-3">Record</td>
-                <td class="p-3">Returns structured object (not stringified)</td>
+                <td class="p-3">Returns the serialized entry as an object, merged over the entry the transport receives</td>
               </tr>
             </tbody>
           </table>
         </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Formatter Output</h3>
+        <div class="border-4 border-black">
+          <table class="w-full text-sm">
+            <thead class="bg-black text-white">
+              <tr>
+                <th class="p-3 text-left">The formatter returns</th>
+                <th class="p-3 text-left">What the transport receives</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3">a string</td>
+                <td class="p-3">The entry with <code>message</code> replaced by the formatted string</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3">a plain object</td>
+                <td class="p-3">The entry with the returned fields merged over it; same-named fields win</td>
+              </tr>
+              <tr>
+                <td class="p-3">anything else (array, null, a primitive)</td>
+                <td class="p-3">The entry, unchanged</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout callout-note mt-4">
+          <strong class="text-zudo-blue">Changed in 1.3.0:</strong> an object return used to be computed and then discarded — the transport got the untouched entry, so <code>createStructuredLoggerFormatter()</code> and any hand-written object formatter had no visible effect at all. Object returns now reach the transport. String formatters are unchanged.
+        </div>
+
+        <div class="code-block mt-4"><span class="kw">import</span> { <span class="fn">createLogger</span>, <span class="fn">createStructuredLoggerFormatter</span> } <span class="kw">from</span> <span class="str">"@zudojs/logger"</span>;
+
+<span class="kw">const</span> logger = <span class="fn">createLogger</span>({
+  name: <span class="str">"api"</span>,
+  formatter: <span class="fn">createStructuredLoggerFormatter</span>(),
+  transports: [
+    (entry) =&gt; {
+      console.<span class="fn">log</span>(<span class="kw">typeof</span> entry.timestamp, entry.levelName, entry.metadata);
+    },
+  ],
+});
+
+logger.<span class="fn">info</span>(<span class="str">"Request handled"</span>, { route: <span class="str">"/users"</span>, ms: <span class="num">12</span> });
+<span class="cm">// string info { route: '/users', ms: 12 }</span></div>
+        <p class="mt-3 text-sm text-black/70">
+          <code>timestamp</code> prints as <code>string</code> because the structured formatter's ISO-8601 value is merged over the entry's <code>Date</code>. Before 1.3.0 the same transport saw the raw entry and printed <code>object</code>.
+        </p>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Options Interfaces</h3>
         <div class="code-block"><span class="kw">interface</span> <span class="tp">JsonLoggerFormatterOptions</span> {
@@ -928,6 +1071,7 @@ scoped.<span class="fn">info</span>(<span class="str">"Fetching user"</span>);
   <span class="kw">constructor</span>(defaults?: <span class="tp">LoggerOptions</span>);
 
   <span class="fn">create</span>(name?: <span class="tp">string</span>, options?: <span class="tp">LoggerOptions</span>, forceNew?: <span class="tp">boolean</span>): <span class="tp">Logger</span>;
+  <span class="fn">register</span>(logger: <span class="tp">Logger</span>, name?: <span class="tp">string</span>): <span class="tp">Logger</span>;
   <span class="fn">get</span>(name: <span class="tp">string</span>): <span class="tp">Logger</span> | <span class="tp">undefined</span>;
   <span class="fn">getOrCreate</span>(name: <span class="tp">string</span>, options?: <span class="tp">LoggerOptions</span>): <span class="tp">Logger</span>;
   <span class="fn">child</span>(parent: <span class="tp">Logger</span>, options?: <span class="tp">ChildLoggerOptions</span>): <span class="tp">Logger</span>;
@@ -984,8 +1128,14 @@ scoped.<span class="fn">info</span>(<span class="str">"Fetching user"</span>);
 <span class="cm">// Create without registering</span>
 <span class="kw">const</span> transient = factory.<span class="fn">createTransient</span>({ name: <span class="str">"temp"</span> });
 
+<span class="cm">// Adopt a logger the factory did not create (new in 1.3.0)</span>
+factory.<span class="fn">register</span>(transient, <span class="str">"temp"</span>);
+
 <span class="cm">// Cleanup</span>
 <span class="kw">await</span> factory.<span class="fn">disposeAll</span>();</div>
+        <p class="mt-3 text-sm text-black/70">
+          <code>register(logger, name?)</code> puts an existing logger into the factory's registry under its own <code>name</code>, or under the name you pass. From then on it is covered by <code>flushAll()</code>, <code>disposeAll()</code>, <code>getAll()</code>, <code>has()</code> and <code>size</code> exactly like one the factory built itself. Without it, a hand-made logger is invisible to the factory and its transports are never flushed or closed on shutdown.
+        </p>
       </section>
 
       <!-- Logger Manager -->
@@ -1000,6 +1150,7 @@ scoped.<span class="fn">info</span>(<span class="str">"Fetching user"</span>);
   <span class="kw">constructor</span>(options?: <span class="tp">LoggerOptions</span>);
 
   <span class="fn">initialize</span>(options?: <span class="tp">LoggerOptions</span>): <span class="tp">Logger</span>;
+  <span class="fn">adopt</span>(logger: <span class="tp">Logger</span>): <span class="tp">Logger</span>;
   <span class="fn">getLogger</span>(): <span class="tp">Logger</span>;
   <span class="fn">get</span>(name: <span class="tp">string</span>, options?: <span class="tp">LoggerOptions</span>): <span class="tp">Logger</span>;
   <span class="fn">create</span>(name: <span class="tp">string</span>, options?: <span class="tp">LoggerOptions</span>): <span class="tp">Logger</span>;
@@ -1032,9 +1183,13 @@ scoped.<span class="fn">info</span>(<span class="str">"Fetching user"</span>);
                 <td class="p-3 font-mono">initializeLoggerManager(options?)</td>
                 <td class="p-3">Creates and initializes a LoggerManager in one call</td>
               </tr>
-              <tr>
+              <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">createManagedDefaultLogger(name?)</td>
                 <td class="p-3">Creates a standalone default logger (no manager)</td>
+              </tr>
+              <tr>
+                <td class="p-3 font-mono">createLoggerManagerFromLogger(logger)</td>
+                <td class="p-3">Creates a manager that adopts an existing logger as its default</td>
               </tr>
             </tbody>
           </table>
@@ -1058,6 +1213,24 @@ appLogger.<span class="fn">info</span>(<span class="str">"Application started"</
 
 <span class="cm">// Shutdown</span>
 <span class="kw">await</span> manager.<span class="fn">close</span>();</div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Adopting an existing logger</h3>
+        <p class="mb-4">
+          <code>adopt(logger)</code> (new in 1.3.0) makes a logger you built yourself the manager's default <em>and</em> registers it with the manager's factory, so <code>flush()</code>, <code>close()</code>, <code>getAll()</code> and <code>size</code> all reach it. It throws <code>LoggerDisposedError</code> if the manager is already closed.
+        </p>
+        <div class="code-block"><span class="kw">import</span> { <span class="fn">createLogger</span>, <span class="fn">createLoggerManagerFromLogger</span> } <span class="kw">from</span> <span class="str">"@zudojs/logger"</span>;
+
+<span class="kw">const</span> logger = <span class="fn">createLogger</span>({ name: <span class="str">"app"</span>, transports: [fileTransport] });
+
+<span class="kw">const</span> manager = <span class="fn">createLoggerManagerFromLogger</span>(logger);
+
+console.<span class="fn">log</span>(manager.size);                     <span class="cm">// 1</span>
+console.<span class="fn">log</span>(manager.<span class="fn">getLogger</span>() === logger); <span class="cm">// true</span>
+
+<span class="kw">await</span> manager.<span class="fn">close</span>();                     <span class="cm">// reaches fileTransport</span></div>
+        <p class="mt-3 text-sm text-black/70">
+          <code>createLoggerManagerFromLogger()</code> is built on <code>adopt()</code>. Before 1.3.0 it only assigned the logger to a private field, leaving the factory registry empty: <code>manager.size</code> reported <code>0</code>, <code>getAll()</code> returned nothing, and <code>flush()</code> / <code>close()</code> were no-ops for the only logger the manager owned — so buffered and file transports were never drained on shutdown.
+        </p>
       </section>
 
       <!-- Error Hierarchy -->
@@ -1088,6 +1261,10 @@ appLogger.<span class="fn">info</span>(<span class="str">"Application started"</
               <tr><td class="p-3 font-mono">LoggerTransportNotFoundError</td><td class="p-3">LOGGER_TRANSPORT_NOT_FOUND</td><td class="p-3">Named transport doesn't exist</td></tr>
             </tbody>
           </table>
+        </div>
+
+        <div class="callout callout-note mt-4">
+          <strong class="text-zudo-blue">Changed in 1.3.0:</strong> several paths that used to throw a bare <code>Error</code> or a <code>RangeError</code> now throw the typed error above — a write past <code>transportTimeout</code> raises <code>LoggerTimeoutError</code> (carrying <code>transportName</code> and <code>timeout</code>), any other write failure a <code>LoggerTransportError</code> with <code>transportName</code> set, a formatter failure a <code>LoggerFormatterError</code> with <code>formatterName</code> set, a call on a closed <code>LoggerManager</code> a <code>LoggerDisposedError</code>, an unknown level an <code>InvalidLoggerLevelError</code>, an invalid entry timestamp an <code>InvalidLoggerEntryError</code>, an unresolved string formatter id a <code>LoggerFormatterNotFoundError</code>, and a write to a closed buffered transport a <code>LoggerTransportClosedError</code>. If you match on <code>RangeError</code> or on message text from any of these paths, update the check.
         </div>
       </section>
 

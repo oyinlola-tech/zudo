@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/permissions — RBAC, ABAC, res
 source: https://zudojs.oyinlola.site/docs/packages-permissions
 ---
 
-v1.2.0
+v1.3.0
 
 # @zudojs/permissions
 
@@ -37,7 +37,7 @@ yarn add @zudojs/permissions
 - **Rule engine** with exact, wildcard, and conditional (ABAC) matching — deny-overrides by default, priority-based on request
 - **Policy evaluation** with wildcard matching, timeouts, priority ordering, and fail-closed error handling
 - **Ability context** for pre-resolved actors with can/cannot/check/explain
-- **Decision caching** keyed by actor, permission and resource, with configurable TTL, size cap and actor-level invalidation
+- **Decision caching** keyed by actor, permission and resource, with configurable TTL, size cap and actor-level invalidation — opt-in only for resolver-backed engines, via `resolverCacheKey`
 - **HTTP middleware** integration with actor extraction and permission guards
 - **Explain mode** for debugging authorization decisions with step-by-step traces
 - **13 error classes** covering all permission, role, and policy failure modes
@@ -250,7 +250,35 @@ registry.define("post:delete", { implies: ["post:read"] });
 registry.has("post:create");  // true
 registry.all();              // ["post:create", "post:read", "post:update", "post:delete"]
 registry.match("post:*");   // all post permissions
+
+// Added in 1.3.0 — the same change notifier createRoleRegistry() and
+// createPolicyRegistry() already carried. Fires on define, on a remove
+// that removed something, and on clear. Returns an unsubscribe function.
+const unsubscribe = registry.subscribe(() => rebuildAdminUi());
 ```
+
+### Implications and the engine
+
+A registry records implications, and `expandImplied` follows the chains. Since 1.3.0 `createPermissionEngine` accepts the registry itself in that slot, not only a closure over it.
+
+```ts
+const permissions = createPermissionRegistry();
+permissions.define("post:admin", { implies: ["post:write"] });
+permissions.define("post:write", { implies: ["post:read"] });
+
+const engine = createPermissionEngine({
+  roles,
+  // Pass the registry, not a closure over it: the engine subscribes.
+  expandImplied: permissions,
+});
+
+await engine.can(adminActor, "post:read"); // true — implied by post:admin
+
+permissions.remove("post:admin");
+await engine.can(adminActor, "post:read"); // false — cached decisions dropped
+```
+
+> **Changed in 1.3.0:** a bare `expandImplied: (permission) => permissions.expandImplied(permission)` still works, but a plain function cannot announce a change, so an engine given one now **caches no decisions at all**. Until 1.2.0 it cached normally, and `permissions.remove("post:admin")` left every `post:delete` it had implied answering `true` for the whole cache TTL — while `skipCache: true` correctly said `false`. Pass the registry to keep both caching and immediate revocation.
 
 ### parsePermission
 
@@ -510,6 +538,8 @@ interface PermissionEngine {
   authorize(actor, permission, resource?, options?): Promise<void>;
   explain(actor, permission, resource?, options?): Promise<ExplainResult>;
   createAbility(actor): Ability;
+  invalidateActor(actorId: string): Promise<void>;
+  invalidateRoles(): void;
 }
 ```
 
@@ -614,9 +644,63 @@ roleStore.set("user-1", ["editor"]);
 const roleResolver = createMemoryRoleResolver(roleStore);
 ```
 
+### Resolvers and the decision cache
+
+> **Changed in 1.3.0 — read this if you configured a cache.** An engine holding a `roleResolver` or a `permissionResolver` now caches **nothing** unless you also pass the new `resolverCacheKey`. Until 1.2.0 such an engine cached like any other, and none of the resolver's state was in the key — so a grant withdrawn upstream kept being served until the entry expired. If you pair a resolver with `cache` today and expect hits, there are none: supply `resolverCacheKey`, or accept that every check is evaluated afresh. Engines without a resolver are unaffected.
+
+`resolverCacheKey` takes the actor and returns something that changes whenever the resolver's answer for that actor could change — a grants-table version, an `updatedAt` stamp, a generation counter. It has no default. Returning `undefined` leaves that actor uncached, which is the right answer for an actor whose upstream state you cannot describe.
+
+```ts
+import {
+  createPermissionEngine,
+  createMemoryPermissionCache,
+} from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles,
+  cache: createMemoryPermissionCache({ defaultTtlMs: 30_000 }),
+  cacheTtlMs: 30_000,
+  permissionResolver: { resolvePermissions: (actor) => db.rulesFor(actor.id) },
+  // Without this the cache above is never written to.
+  resolverCacheKey: (actor) => db.grantsVersionFor(actor.id),
+});
+```
+
+A resolver that fails is reported through `onError` and the check continues fail-closed, rather than throwing out of the authorization path.
+
 ## CACHING
 
-Keys include a digest of the actor's roles, permissions, type and other fields; actors carrying non-plain values are not cached. Role/policy registry changes and `invalidateRoles()` clear the decision cache.
+Hand the cache to the engine and it manages the keys itself. A key carries the actor id, a digest of everything else the actor holds (`roles`, `permissions`, `type`, any other field a condition may read), the permission, the resource id and the engine's configuration generation. The same user id with different roles — an admin token in one tenant and a viewer token in another, or a demoted token — therefore never shares a decision. Role and policy registry changes, and `invalidateRoles()`, clear the decision cache.
+
+```ts
+import { createMemoryPermissionCache } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles,
+  cache: createMemoryPermissionCache({
+    defaultTtlMs: 30_000,  // default 60_000
+    maxEntries: 5_000,     // default 10_000
+  }),
+  cacheTtlMs: 30_000,
+});
+
+await engine.can(actor, "post:read", post);                        // evaluated
+await engine.can(actor, "post:read", post);                        // cached
+await engine.can(actor, "post:read", post, { skipCache: true }); // forced
+await engine.invalidateActor("user-1");
+```
+
+A check is cached only when the key can describe it completely. These are **not** cached:
+
+- a resource with no `id` and no `options.resourceId` — the key would collapse to actor + permission, and an allow for one object would answer for the next;
+- a check carrying `metadata`, because conditions such as `tenantIsolation()` read the tenant from there and it is not part of the key;
+- an actor carrying something the digest cannot describe — a function, a class instance, a `Map`;
+- a decision produced by a policy marked `cacheable: false`, or forced by a condition that threw;
+- **since 1.3.0**, anything from an engine with a `roleResolver` or `permissionResolver` and no `resolverCacheKey`;
+- **since 1.3.0**, anything from an engine whose `expandImplied` is a bare function rather than a `createPermissionRegistry()`;
+- a TTL of `0` or less, which means "do not cache", not "cache forever".
+
+`deniedPermissions` is evaluated before the cache is consulted, so a deny added to the actor takes effect immediately rather than waiting for a cached allow to expire.
 
 ### PermissionCache Interface
 
@@ -643,19 +727,22 @@ const cache = createMemoryPermissionCache();
 // Custom TTL: 5 minutes
 const cache5m = createMemoryPermissionCache(300000);
 
-// Generate cache key
+// Generate cache key — (actorId, permission, resourceId?, scope?)
 const key = permissionCacheKey("user-1", "post:update", "post-42");
 // "actor:user-1|post:update|post-42"
 
-// Use with engine
-const cached = await cache.get(key);
-if (cached) {
-  // Return cached decision
-} else {
-  const decision = await engine.check(actor, "post:update", post);
-  await cache.set(key, decision, { ttl: 60000 });
-}
+// `scope` is what the engine fills with the actor digest and its own
+// configuration generation, so two actors sharing an id never share a key.
+const scoped = permissionCacheKey("user-1", "post:update", "post-42", "g3");
+// "actor:user-1|~g3|post:update|post-42"
+
+// The store itself, if you are implementing PermissionCache over Redis
+await cache.set(key, { allowed: true }, { ttl: 60000 });
+await cache.get(key);              // { allowed: true }
+await cache.invalidateActor("user-1"); // drops every entry for that actor
 ```
+
+> **Do not wrap the engine in a cache of your own.** Pass the cache to `createPermissionEngine` instead. A key you build by hand carries only the actor id, the permission and the resource id, so it leaves out every rule the engine applies before it writes an entry: the actor digest (an admin token and a viewer token for the same user id would share one decision), the configuration generation, the metadata and resolver checks above. Caching `engine.check()` yourself under such a key reintroduces exactly the staleness 1.3.0 closed.
 
 ## HTTP MIDDLEWARE
 
@@ -820,7 +907,6 @@ import {
   createRoleRegistry,
   createAbility,
   createMemoryPermissionCache,
-  permissionCacheKey,
   createActorMiddleware,
   authorize,
   isOwner,
@@ -845,10 +931,13 @@ roleRegistry.define({
   permissions: ["post:read", "comment:read"],
 });
 
-// 2. Create the engine
+// 2. Create the engine — pass the registry itself, not roleRegistry.all(),
+//    so the engine subscribes and a revoked role invalidates the cache.
 const engine = createPermissionEngine({
-  roles: roleRegistry.all(),
+  roles: roleRegistry,
   policyTimeout: 5000,
+  cache: createMemoryPermissionCache({ defaultTtlMs: 300_000 }),
+  cacheTtlMs: 300_000,
 });
 
 // 3. Create an actor
@@ -874,14 +963,10 @@ const authMiddleware = authorize(engine, "post:update", {
   extractActor: (ctx) => ctx.state.get("permissions:actor"),
 });
 
-// 7. Caching
-const cache = createMemoryPermissionCache(300000);
-const key = permissionCacheKey(editor.id, "post:update");
-const cached = await cache.get(key);
-if (!cached) {
-  const decision = await engine.check(editor, "post:update");
-  await cache.set(key, decision, { ttl: 300000 });
-}
+// 7. Caching is the engine's job — the cache went in at step 2. Checks are
+//    served from it automatically; these are the two ways out of it.
+await engine.can(editor, "post:update", undefined, { skipCache: true });
+await engine.invalidateActor(editor.id);
 
 // 8. Explain mode
 const explanation = await engine.explain(editor, "post:update");
@@ -895,7 +980,7 @@ console.log(explanation.steps);
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/permissions` exports from its package root at v1.2.0 — **139** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/permissions` exports from its package root at v1.3.0 — **139** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 139 exports**
 

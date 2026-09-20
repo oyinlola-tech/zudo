@@ -46,7 +46,7 @@ A numbered audit series over every package. Each finding is reproduced by execut
 
 Safe Defaults At The Edge
 
-Forwarded headers are ignored unless `trustProxy` is set, so a client cannot choose its own `req.ip`. An `OPTIONS` request can no longer reach another method's handler.
+Forwarded headers are ignored unless `trustProxy` is set, so a client cannot choose its own `req.ip`. An `OPTIONS` request can no longer reach another method’s handler.
 
 Context Cannot Be Forged
 

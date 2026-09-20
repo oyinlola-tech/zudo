@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/openapi — the OpenAPI specifi
 source: https://zudojs.oyinlola.site/docs/packages-openapi
 ---
 
-v1.3.0
+v1.4.0
 
 # @zudojs/openapi
 
@@ -41,7 +41,7 @@ SKIP IT WHEN
 $ npm install @zudojs/openapi
 ```
 
-The only runtime dependency is `@zudojs/errors`. Install `@zudojs/schema` too if you want to register schemas rather than hand-written OpenAPI objects:
+The runtime dependencies are `@zudojs/errors` (v1.2.0) and `@zudojs/constants` (v1.1.1), which supplies the schema ceilings the converter emits. Install `@zudojs/schema` too if you want to register schemas rather than hand-written OpenAPI objects:
 
 ```bash
 $ npm install @zudojs/schema
@@ -146,7 +146,9 @@ console.log(Object.keys(document.paths["/orders"] ?? {}));
 // [ 'post' ]
 ```
 
-Use `addRoute` for a route you are adding once; it throws if the same method and path are already registered. Use `setRoute` when replacing is what you want, and `removeRoute(method, path)` to drop one.
+Use `addRoute` for a route you are adding once; it throws if the same route is already registered. Use `setRoute` when replacing is what you want, and `removeRoute(method, path)` to drop one.
+
+Since v1.4.0 “the same route” means the same method and the same *OpenAPI path template*, not the same source string. `GET /users/:id` and `GET /users/{id}` both become the path item `/users/{id}`, so the second one is now rejected with an `OpenAPIRouteError`. Before v1.4.0 both registered and generation silently kept only the last one: an operation disappeared from the published document and `validate()` reported nothing wrong. `hasRoute`, `setRoute` and `removeRoute` accept either spelling for the same route.
 
 > **Watch out:** OpenAPI has no optional or wildcard path segments. `/files/*` and `/users/:id?` both throw an `OpenAPIRouteError` instead of quietly producing a path template no tool understands.
 
@@ -188,6 +190,30 @@ import { createComponentReference } from "@zudojs/openapi";
 console.log(createComponentReference("schemas", "Order"));
 // { $ref: '#/components/schemas/Order' }
 ```
+
+### Unknown keys
+
+An object schema decides what happens to a key it does not declare: `.strip()` (the default) discards it and accepts the payload, `.passthrough()` keeps it, and `.strict()` rejects the payload. Only `.strict()` emits `additionalProperties: false`, because that keyword is OpenAPI for “reject the payload”.
+
+```ts
+import { convertSchema } from "@zudojs/openapi";
+import { objectSchema, stringSchema } from "@zudojs/schema";
+
+const shape = () => objectSchema({ id: stringSchema() });
+
+console.log(convertSchema(shape()).schema.additionalProperties);
+// undefined — a stripping object accepts the extra key
+
+console.log(convertSchema(shape().strip()).schema.additionalProperties);
+// undefined — same contract, so the same document
+
+console.log(convertSchema(shape().strict()).schema.additionalProperties);
+// false
+```
+
+Before v1.4.0 a stripping object emitted `additionalProperties: false` too. A client generated from that document refused requests the service would have accepted — it declared the extra key fatal while the parser was quietly dropping it. It also made `objectSchema({…})` and `objectSchema({…}).strip()` document differently despite validating identically. Both now produce the same schema.
+
+> **Watch out:** regenerate any checked-in spec after upgrading to v1.4.0. Every object that is not `.strict()` loses its `additionalProperties: false`, so the first regeneration produces a diff that is expected rather than a regression. A spec file that is never regenerated keeps publishing the old, stricter contract.
 
 ### When a constraint cannot be expressed
 
@@ -534,7 +560,7 @@ Serialize any document with `toOpenAPIJSON` or `toOpenAPIYAML`. The YAML is real
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| `addRoute(route)` | Registers a route. | Throws on a duplicate method + path. |
+| `addRoute(route)` | Registers a route. | Throws on a duplicate method + OpenAPI path template. |
 | `setRoute(route)` | Registers a route, replacing any existing one. | — |
 | `removeRoute(method, path)` | Removes a route. | Returns whether one was removed. |
 | `addSchema(name, schema)` | Converts a `@zudojs/schema` schema and registers it. | Conversion warnings land in `schemaWarnings()`. |
@@ -642,7 +668,7 @@ All extend `OpenAPIError`, the [@zudojs/errors](https://zudojs.oyinlola.site/doc
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/openapi` exports from its package root at v1.3.0 — **121** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/openapi` exports from its package root at v1.4.0 — **121** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 121 exports**
 

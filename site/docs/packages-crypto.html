@@ -136,7 +136,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/crypto</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Safe defaults for hashing, AES-256-GCM encryption, scrypt password storage, Ed25519 signatures, opaque tokens and secure random values, all backed by <code class="bg-black/10 px-1">node:crypto</code>.
@@ -329,7 +329,7 @@ console.<span class="fn">log</span>(result.cost, result.blockSize, result.parall
 console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">verifyPassword</span>(<span class="str">"correct horse battery staple"</span>, result.encoded)); <span class="cmt">// true</span>
 console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">verifyPassword</span>(<span class="str">"wrong password"</span>, result.encoded));               <span class="cmt">// false</span>
 console.<span class="fn">log</span>(<span class="kw">await</span> <span class="fn">verifyPassword</span>(<span class="str">"anything"</span>, <span class="str">"not-a-hash"</span>));                      <span class="cmt">// false</span></div>
-        <p class="text-black/70 mb-4"><code class="bg-black/10 px-1">verifyPassword</code> never throws. A wrong password, a malformed stored string, or a hash with out-of-range parameters all return <code class="bg-black/10 px-1">false</code>. Passwords longer than 1024 characters are also rejected so an attacker cannot make your server grind on huge input.</p>
+        <p class="text-black/70 mb-4"><code class="bg-black/10 px-1">verifyPassword</code> never throws over its inputs. A wrong password, a malformed stored string, or a hash with out-of-range parameters all return <code class="bg-black/10 px-1">false</code>. The one exception is configuration: since 1.3.0 it throws a <code class="bg-black/10 px-1">CryptoError</code> if the provider does not declare the <code class="bg-black/10 px-1">passwordHashing</code> capability, rather than reporting a provider that cannot hash as a wrong password. Passwords longer than 1024 characters are also rejected so an attacker cannot make your server grind on huge input.</p>
 
         <p class="text-black/70 mb-4">To make hashing slower, pass options. <code class="bg-black/10 px-1">cost</code> must be a power of two.</p>
         <div class="code-block mb-4"><span class="kw">const</span> stronger = <span class="kw">await</span> <span class="fn">hashPassword</span>(<span class="str">"correct horse battery staple"</span>, { cost: <span class="num">32768</span> });
@@ -488,6 +488,28 @@ console.<span class="fn">log</span>(<span class="kw">await</span> factory.<span 
 console.<span class="fn">log</span>(hashCalls);   <span class="cmt">// 2</span>
 
 <span class="fn">resetDefaultCryptoProvider</span>();</div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Capabilities, and what a provider must implement</h3>
+        <p class="text-black/70 mb-4">Every provider declares a <code class="bg-black/10 px-1">capabilities</code> object with seven boolean flags: <code class="bg-black/10 px-1">hash</code>, <code class="bg-black/10 px-1">hmac</code>, <code class="bg-black/10 px-1">encryption</code>, <code class="bg-black/10 px-1">signing</code>, <code class="bg-black/10 px-1">random</code>, <code class="bg-black/10 px-1">keyDerivation</code> and <code class="bg-black/10 px-1">passwordHashing</code>. Before 1.3.0 nothing read them — a provider declaring <code class="bg-black/10 px-1">signing: false</code> still had its <code class="bg-black/10 px-1">sign</code> called. Each flag is now checked at the operation that needs it, and an operation the configured provider does not declare is refused with a <code class="bg-black/10 px-1">CryptoError</code> naming both the capability and the operation. A <code class="bg-black/10 px-1">capabilities</code> object that is missing or malformed fails the same way a <code class="bg-black/10 px-1">false</code> flag does. A provider that declares every capability it implements is unaffected.</p>
+
+        <p class="text-black/70 mb-4"><code class="bg-black/10 px-1">verifyPassword</code> is part of this: it throws rather than reporting an undeclared <code class="bg-black/10 px-1">passwordHashing</code> capability as a wrong password, which would otherwise read as a failed login forever.</p>
+
+        <p class="text-black/70 mb-4"><code class="bg-black/10 px-1">setDefaultCryptoProvider</code> now validates the provider before installing it. All twelve methods listed in <code class="bg-black/10 px-1">CRYPTO_PROVIDER_METHODS</code> — <code class="bg-black/10 px-1">randomBytes</code>, <code class="bg-black/10 px-1">randomInt</code>, <code class="bg-black/10 px-1">randomUUID</code>, <code class="bg-black/10 px-1">hash</code>, <code class="bg-black/10 px-1">hmac</code>, <code class="bg-black/10 px-1">encrypt</code>, <code class="bg-black/10 px-1">decrypt</code>, <code class="bg-black/10 px-1">sign</code>, <code class="bg-black/10 px-1">verify</code>, <code class="bg-black/10 px-1">deriveKey</code>, <code class="bg-black/10 px-1">hashPassword</code>, <code class="bg-black/10 px-1">verifyPassword</code> — must be functions, and each of the seven capability flags must be a boolean. Anything else throws a <code class="bg-black/10 px-1">CryptoError</code> from that call and the provider is <em>not</em> installed; a non-object argument throws a <code class="bg-black/10 px-1">TypeError</code>. Previously a partial object such as <code class="bg-black/10 px-1">{}</code> installed cleanly and failed much later, as a bare <code class="bg-black/10 px-1">TypeError</code> from inside whichever operation reached the missing method first.</p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">setDefaultCryptoProvider</span>, <span class="fn">isCryptoError</span> } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+<span class="kw">import type</span> { <span class="tp">CryptoProvider</span> } <span class="kw">from</span> <span class="str">"@zudojs/crypto"</span>;
+
+<span class="kw">try</span> {
+  <span class="fn">setDefaultCryptoProvider</span>({} <span class="kw">as</span> <span class="tp">CryptoProvider</span>);
+} <span class="kw">catch</span> (error) {
+  <span class="kw">if</span> (<span class="fn">isCryptoError</span>(error)) {
+    console.<span class="fn">log</span>(error.message);
+    <span class="cmt">// Crypto provider is missing the "randomBytes" method: a provider</span>
+    <span class="cmt">// must implement all 12 operations.</span>
+  }
+}</div>
+
+        <p class="text-black/70 mb-4">The checks are exported for anyone writing their own provider or wrapper: <code class="bg-black/10 px-1">assertCryptoProvider</code>, <code class="bg-black/10 px-1">assertProviderCapability</code>, and the fixed-operation shorthands <code class="bg-black/10 px-1">assertRandomCapability</code>, <code class="bg-black/10 px-1">assertHashCapability</code>, <code class="bg-black/10 px-1">assertHmacCapability</code> and <code class="bg-black/10 px-1">assertPasswordHashingCapability</code>.</p>
       </section>
 
       <!-- Errors -->
@@ -506,7 +528,7 @@ console.<span class="fn">log</span>(hashCalls);   <span class="cmt">// 2</span>
     console.<span class="fn">log</span>(error.code, error.operation); <span class="cmt">// ERR_CRYPTO_CIPHER decrypt</span>
   }
 }</div>
-        <p class="text-black/70 mb-4">The verify-style helpers are the exception: <code class="bg-black/10 px-1">verifyPassword</code>, <code class="bg-black/10 px-1">verifyTokenHash</code> and <code class="bg-black/10 px-1">verify</code> return <code class="bg-black/10 px-1">false</code> for bad input instead of throwing, so login code stays simple.</p>
+        <p class="text-black/70 mb-4">The verify-style helpers are the exception: <code class="bg-black/10 px-1">verifyPassword</code>, <code class="bg-black/10 px-1">verifyTokenHash</code> and <code class="bg-black/10 px-1">verify</code> return <code class="bg-black/10 px-1">false</code> for bad input instead of throwing, so login code stays simple. That covers the input only — since 1.3.0 a provider that does not declare the capability an operation needs makes that operation throw a <code class="bg-black/10 px-1">CryptoError</code>, <code class="bg-black/10 px-1">verifyPassword</code> included, so a misconfigured provider is not mistaken for a wrong password.</p>
       </section>
 
       <!-- API Reference -->
@@ -587,7 +609,7 @@ console.<span class="fn">log</span>(hashCalls);   <span class="cmt">// 2</span>
             <tr><td><span class="code-inline">encode(bytes, encoding)</span>, <span class="code-inline">decode(string, encoding)</span></td><td>Convert between bytes and hex / base64 / base64url / utf8</td><td>Also <span class="code-inline">toHex, fromHex, toBase64Url, fromBase64Url, utf8Encode, utf8Decode</span>.</td></tr>
             <tr><td><span class="code-inline">createCryptoService({ provider? })</span>, <span class="code-inline">cryptoService</span></td><td>Method-style facade; wraps failures in <span class="code-inline">CryptoError</span></td><td>Methods: generateKey, randomBytes, encrypt, decrypt, hash, hashHex, hashPassword, verifyPassword, deriveKey, generateToken, generateOtp, hashToken, verifyToken, encode, decode.</td></tr>
             <tr><td><span class="code-inline">createCryptoFactory({ defaultKeyAlgorithm?, password?, encoding?, provider? })</span>, <span class="code-inline">cryptoFactory</span></td><td>Service with app-wide defaults</td><td>Methods: createKey, createToken, createApiKey, createSessionToken, createRefreshToken, createVerificationToken, createPasswordResetToken, createCsrfToken, createOtp, createPasswordHash, verifyPassword, encode, decode.</td></tr>
-            <tr><td><span class="code-inline">createNodeCryptoProvider()</span>, <span class="code-inline">getDefaultCryptoProvider()</span>, <span class="code-inline">setDefaultCryptoProvider(p)</span>, <span class="code-inline">resetDefaultCryptoProvider()</span></td><td>Create or swap the backing provider</td><td>Implement <span class="code-inline">CryptoProvider</span> for a custom one.</td></tr>
+            <tr><td><span class="code-inline">createNodeCryptoProvider()</span>, <span class="code-inline">getDefaultCryptoProvider()</span>, <span class="code-inline">setDefaultCryptoProvider(p)</span>, <span class="code-inline">resetDefaultCryptoProvider()</span></td><td>Create or swap the backing provider</td><td>Implement <span class="code-inline">CryptoProvider</span> for a custom one. <span class="code-inline">setDefaultCryptoProvider</span> rejects one missing any of the twelve methods or the seven capability flags.</td></tr>
             <tr><td><span class="code-inline">CryptoError</span>, <span class="code-inline">isCryptoError(value)</span>, <span class="code-inline">CryptoOperation</span></td><td>Error class, guard and operation enum</td><td>Re-exported from <span class="code-inline">@zudojs/errors</span>.</td></tr>
             <tr><td><span class="code-inline">CryptoAlgorithm</span>, <span class="code-inline">CryptoKeyUsage</span></td><td>Enums for algorithm and key-usage names</td><td>Use these, not string literals, where an enum is expected.</td></tr>
             <tr><td><span class="code-inline">AES_GCM</span>, <span class="code-inline">PASSWORD_HASH</span>, <span class="code-inline">PASSWORD_POLICY</span>, <span class="code-inline">TOKEN</span>, <span class="code-inline">TOKEN_PREFIX</span>, <span class="code-inline">TOKEN_TTL</span></td><td>Frozen default parameters</td><td>e.g. <span class="code-inline">PASSWORD_HASH.SCRYPT.COST</span> is 16384.</td></tr>

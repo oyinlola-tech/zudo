@@ -144,7 +144,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/errors</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           One error class, <code>BaseError</code>, that every Zudo error extends, plus ready-made errors for the usual cases and helpers that turn any thrown value into a safe API response.
@@ -386,10 +386,17 @@ console.<span class="fn">log</span>(slowDown.<span class="fn">getRetryAfterSecon
             <tr><td><code>TimeoutError</code></td><td>varies</td><td>request timeouts only</td><td><code>requestTimeoutError</code>, <code>databaseTimeoutError</code>, <code>serviceTimeoutError</code>, <code>lockTimeoutError</code></td></tr>
             <tr><td><code>ExternalServiceError</code></td><td>502 (429 passes through)</td><td>no</td><td><code>service</code>, <code>responseStatus</code> options</td></tr>
             <tr><td>Subsystem families</td><td>mostly 500/503</td><td>no</td><td><code>CacheError</code>, <code>StorageError</code>, <code>NetworkError</code>, <code>ContainerError</code>, <code>AdapterError</code>, <code>MiddlewareError</code>, <code>EventError</code>, <code>MessageError</code>, <code>QueueError</code>, <code>SchedulerError</code>, <code>PluginError</code>, <code>RPCError</code>, <code>APIError</code>, <code>SchemaError</code>, <code>SerializationError</code>, <code>LifecycleError</code>, <code>ModuleError</code>, <code>RuntimeError</code>, <code>SystemError</code>, <code>CryptoError</code>, <code>LoggingError</code></td></tr>
+            <tr><td><code>EventListenerLimitExceededError</code><br><code>ERR_EVENT_LISTENER_LIMIT_EXCEEDED</code></td><td>500</td><td>no — never</td><td><code>pattern</code>, <code>count</code>, <code>limit</code> fields, also copied into <code>metadata</code></td></tr>
           </tbody>
         </table>
         </div>
         <p class="mb-3 text-sm text-black/70">The subsystem families are thrown by the matching Zudo package (<code>@zudojs/cache</code> throws <code>CacheError</code>, and so on). You catch them; you rarely construct them yourself.</p>
+        <p class="mb-3 leading-relaxed">
+          <code>EventListenerLimitExceededError</code> (new in 1.2.0) is the one member of the <code>EventError</code> family worth catching by name. It is raised when a single event pattern passes its configured handler limit — the signature of a subscribe-without-unsubscribe leak — and carries the <code>pattern</code>, the handler <code>count</code> and the <code>limit</code>, both as own readonly fields and inside <code>metadata</code>. Registering past a handler limit is a programming fault rather than bad input, so the class fixes its classification as internal: <code>statusCode</code> 500, <code>expose</code> <code>false</code>, <code>isOperational</code> <code>false</code>. It is never exposed to a caller — <code>serializePublicError</code> replaces its message with <code>"An unexpected error occurred."</code> and drops its metadata.
+        </p>
+        <p class="mb-3 leading-relaxed">
+          Before 1.2.0 the class did not exist here and nothing in the framework ever threw it, so a <code>catch</code> branch testing for it was unreachable. <code>@zudojs/events</code> now raises it, but only when a registry, emitter or bus is configured to enforce its handler limit; the default is still a one-shot warning that lets the registration through. The class is owned by <code>@zudojs/errors</code> and re-exported from <code>@zudojs/events</code>, so an import from either package resolves to the same constructor and <code>instanceof</code> matches across both.
+        </p>
       </section>
 
       <!-- Custom errors -->
@@ -430,7 +437,7 @@ console.<span class="fn">log</span>(<span class="fn">serializePublicError</span>
         <p class="mb-3 leading-relaxed">
           <code>metadata</code> is where you attach facts about the failure: which user, which record, which query. It must be JSON-safe (strings, numbers, booleans, null, arrays, plain objects). The constructor deep-copies and freezes it, so later changes to your original object do not leak in, and nobody can mutate it afterwards.
         </p>
-        <p class="mb-3">Some values are converted rather than rejected: <code>Date</code> becomes an ISO string, <code>Map</code> becomes an object, <code>bigint</code> becomes a string, and cyclic references become <code>"[Circular]"</code>. Keys named <code>__proto__</code>, <code>constructor</code> or <code>prototype</code> are always dropped.</p>
+        <p class="mb-3">Some values are converted rather than rejected: <code>Date</code> becomes an ISO string, <code>Map</code> becomes an object, <code>bigint</code> becomes a string, and cyclic references become <code>"[Circular]"</code>. Keys named <code>__proto__</code>, <code>constructor</code> or <code>prototype</code> are always dropped. Nesting is bounded as well: a subtree deeper than <code>MAX_METADATA_DEPTH</code> (32) levels is replaced with <code>"[MaxDepth]"</code> instead of being walked.</p>
         <p class="mb-3">Secrets are the bigger concern. The serializers redact any key whose name looks sensitive (<code>password</code>, <code>token</code>, <code>authorization</code>, <code>cookie</code>, <code>apiKey</code>, <code>ssn</code>, and similar) at every depth. You can run the same redaction yourself.</p>
         <div class="code-block mb-4"><span class="kw">import</span> { redactErrorMetadata, isSensitiveMetadataKey } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
 
@@ -475,6 +482,9 @@ console.<span class="fn">log</span>(error.<span class="fn">toJSON</span>());
 <span class="cmt">//   stack: "NotFoundError: User 42 was not found.\n    at findUser (app.ts:4:9)"</span>
 <span class="cmt">// }</span></div>
         <p class="mb-3">Subclasses add their own fields on top: <code>ValidationError</code> adds <code>issues</code> (with submitted values replaced by a type description when the error is exposed), and <code>RateLimitError</code> adds <code>retryAfterSeconds</code>.</p>
+        <p class="mb-3 leading-relaxed">
+          Two different depth limits apply, and both are bounded. The <code>cause</code> <em>chain</em> stops after 8 links. The walk <em>into</em> a plain-object or array cause — the one that redacts sensitive keys inside it — stops after <code>MAX_METADATA_DEPTH</code> (32) levels and writes <code>"[MaxDepth]"</code> in place of the deeper subtree, exactly as metadata cloning already did. Before 1.2.0 that second walk was unbounded, so attaching a deeply nested value as a <code>cause</code> — a parsed request body, for instance — could raise a <code>RangeError</code> from inside <code>toJSON</code>, <code>serializeError</code> with <code>includeCause: true</code> or <code>ErrorHandler.toLogObject</code>, which turned a logged error into a crash on the logging path. Those paths now stay safe whatever depth the input arrives at.
+        </p>
 
         <h3 class="text-lg font-bold mb-3 mt-6">serializePublicError() — for clients</h3>
         <p class="mb-3 leading-relaxed">
@@ -619,6 +629,7 @@ console.<span class="fn">log</span>(mapped.statusCode, mapped.code); <span class
             <tr><td><code>ValidationIssue</code></td><td>One entry in <code>ValidationError.issues</code>.</td><td><code>message</code> plus optional <code>field</code>, <code>path</code>, <code>code</code>, <code>value</code>.</td></tr>
             <tr><td><code>SENSITIVE_METADATA_KEY_PATTERN</code></td><td>Default regex for secret-looking keys.</td><td>Override per call with <code>sensitiveKeyPattern</code>.</td></tr>
             <tr><td><code>REDACTED_METADATA_VALUE</code></td><td>The string <code>"[REDACTED]"</code>.</td><td></td></tr>
+            <tr><td><code>MAX_METADATA_DEPTH</code></td><td>The number <code>32</code>.</td><td>Deepest nesting walked when metadata is cloned and when an object or array <code>cause</code> is redacted; anything below it becomes <code>"[MaxDepth]"</code>.</td></tr>
             <tr><td><code>UNKNOWN_ERROR_MESSAGE</code></td><td>The string <code>"An unexpected error occurred."</code></td><td>Used when a thrown value has no message.</td></tr>
           </tbody>
         </table>

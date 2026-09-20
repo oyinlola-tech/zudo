@@ -496,7 +496,7 @@ The remaining factories wrap real Zudojs services in a recording shell. You get 
 | `createTestQueue(name, options?)` | An in-memory queue plus an `add` that records. | `queue.jobs` |
 | `createTestConfigManager(values?)` | A `ConfigManager` pre-loaded with values, auto-loading off. | — (use `get` / `set`) |
 | `createTestApplication(options?)` | A container, logger, clock and cleanup manager wired together. | — |
-| `new InMemoryTestStorage()` | A key-value store with optional TTL. | — (use `keys()` / `size`) |
+| `new InMemoryTestStorage()` | A key-value store with optional TTL. A TTL of `0` expires immediately; only an omitted TTL never expires. | — (use `keys()` / `size`) |
 
 ### Example: spy logger and in-memory storage
 
@@ -524,6 +524,24 @@ it("logs and stores the new user", () => {
 ```
 
 **What you should see:** a pass. Loggers made with `child()` or `withContext()` share the parent's recording, so you can assert on the parent no matter which derived logger the code used. `child({ metadata })` metadata appears on every call the child writes (call metadata wins) and `child({ level })` overrides the level. The logger honours its level: `createSpyLogger("app", 2)` records fatal, error and warn only.
+
+### Expiry in `InMemoryTestStorage`
+
+`set(key, value, ttlMs)` takes an optional time-to-live in milliseconds. The entry carries a deadline of `Date.now() + ttlMs`, and the next `get`, `has`, `keys()` or `size` drops it once that deadline has passed. Only an omitted (or `undefined`) TTL means "never expires".
+
+```ts
+const store = new InMemoryTestStorage();
+
+store.set("fresh", 1);              // no TTL — never expires
+store.set("stale", 1, 0);           // deadline of now — already expired
+
+expect(store.has("fresh")).toBe(true);
+expect(store.has("stale")).toBe(false);
+expect(store.get("stale")).toBeNull();
+expect(store.size).toBe(1);
+```
+
+> **Changed in v1.1.2:** a TTL of `0` is now a real deadline of "now", so the entry is already expired on the next read. Before v1.1.2 a zero TTL was treated as falsy and stored no deadline at all, so `set(key, value, 0)` produced an entry that *never* expired — the opposite of what a test writing `0` to mean "already stale" intended. If a test of yours relied on `0` meaning "no expiry", drop the argument instead.
 
 ### Example: recording event bus
 
@@ -563,7 +581,7 @@ Everything below is exported from the package root: `import { … } from "@zudoj
 | `createMockFn(default?)` | Fake function that records calls and returns configured values. | Pass a default return value, or nothing. |
 | `createSpyFn(fn)` | Wraps a function, recording calls, results and errors. | Clear with `reset()`. |
 | `createSpyMethod(obj, key)` | Replaces a method in place with a recording wrapper. | Undo with `restore()`; throws if the property is not a function. |
-| `createStub<T>(overrides?)` | Object whose methods return `undefined` unless overridden. | Safe to `await`. |
+| `createStub<T>(overrides?)` | Object whose methods return `undefined` unless overridden. | Safe to `await`. A generated no-op is memoised per property, so `stub.a === stub.a` (since v1.1.2). |
 | `createStubClass(C, overrides?)` | Constructor whose instances pass `instanceof C`. | Non-overridden methods become no-ops. |
 | `createTestClock(initialTime?)` | Clock you move by hand. | Accepts `Date` / string / number; throws on an unparseable value. |
 | `createCleanupManager(options?)` | Runs registered cleanups in reverse order. | Options: `label`, `onError`. |
@@ -609,7 +627,7 @@ Everything below is exported from the package root: `import { … } from "@zudoj
 
 | Name | What it does | Notes |
 | --- | --- | --- |
-| `InMemoryTestStorage` | Key-value store: `get`, `set`, `delete`, `has`, `clear`, `keys()`, `size`. | `set(key, value, ttlMs)` expires entries; `has` tells a stored `null` from a miss. |
+| `InMemoryTestStorage` | Key-value store: `get`, `set`, `delete`, `has`, `clear`, `keys()`, `size`. | `set(key, value, ttlMs)` expires entries at `now + ttlMs`; `ttlMs: 0` is already expired and only an omitted TTL never expires (changed in v1.1.2). `has` tells a stored `null` from a miss. |
 | `LEVELS` | Numeric log levels: fatal 0 → trace 5. | Use with `createSpyLogger`'s second argument. |
 | `createRecordingLogger`, `deepMatches`, `mergeContext`, `mergeLoggerContext` | Internals the spy logger is built from. | Exported, but rarely needed directly. |
 

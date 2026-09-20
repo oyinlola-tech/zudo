@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/security — input validation, 
 source: https://zudojs.oyinlola.site/docs/packages-security
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/security
 
@@ -64,6 +64,7 @@ import { createServer } from "node:http";
 import {
   createRateLimiter,
   extractClientIp,
+  retryAfterSeconds,
   generateSecurityHeaders,
 } from "@zudojs/security";
 
@@ -80,7 +81,9 @@ const server = createServer((req, res) => {
   const headers = generateSecurityHeaders();
 
   if (!limit.allowed) {
-    res.writeHead(429, { ...headers, "Retry-After": "60" });
+    // Derived from the decision — resetAt is a Date, not a header value.
+    const retryAfter = String(retryAfterSeconds(limit));
+    res.writeHead(429, { ...headers, "Retry-After": retryAfter });
     res.end("Too many requests");
     return;
   }
@@ -270,7 +273,32 @@ console.log(checkCsrf("GET", {}, "user-42", "s3cret"));  // true — nothing to 
 console.log(checkCsrf("POST", {}, "user-42", "s3cret")); // false — no token present
 ```
 
-`verifyDoubleSubmit` passes only when both tokens are present, byte-for-byte equal (compared in constant time), correctly signed, unexpired, and bound to the session id you pass. Comparing the two alone would not be enough. `validateCsrfToken` and `verifyDoubleSubmit` throw on a secret shorter than 32 characters, and the protected `methods` list is matched case-insensitively.
+`verifyDoubleSubmit` passes only when both tokens are present, byte-for-byte equal (compared in constant time), correctly signed, unexpired, and bound to the session id you pass. Comparing the two alone would not be enough. `validateCsrfToken` and `verifyDoubleSubmit` throw on a secret shorter than 32 characters (`MIN_CSRF_SECRET_LENGTH`), and the protected `methods` list is matched case-insensitively.
+
+`createCsrfProtection` binds all of that to one configuration, so the cookie name, header name, lifetime and secret are read from the same place at every call site:
+
+```ts
+import { createCsrfProtection } from "@zudojs/security";
+
+const csrf = createCsrfProtection({
+  secret: process.env.CSRF_SECRET, // at least 32 characters
+  cookieName: "app_csrf",            // default "_csrf"
+  headerName: "x-app-csrf",          // default "x-csrf-token"
+  expiration: 3600,                // seconds
+  // methods: omit for the defaults — POST, PUT, PATCH, DELETE.
+});
+
+const { token, setCookie } = csrf.issue({ sessionId });
+setHeader("Set-Cookie", setCookie);
+
+// Safe to call on every request: safe methods return true.
+const ok = csrf.verify(
+  { method: request.method, headers: request.headers, cookieHeader: request.headers.cookie },
+  { sessionId },
+);
+```
+
+> **Changed in 1.2.0:** `createCsrfProtection` and `requiresCsrfProtection` now throw a `ConfigurationError` when `methods` is present but empty, is not an array, or contains a blank entry. Until 1.1.0, `methods: []` turned CSRF off for every request in silence — and that is exactly what `process.env.CSRF_METHODS?.split(",").filter(Boolean) ?? []` produces when the variable is unset. Omit `methods` to get the defaults; pass a list only when you mean to change them.
 
 > **Watch out:** without `sessionId`, a token minted for one user validates for every other user — an attacker can get a token with their own account and replay it against a victim. Pass a session id whenever you have one, and pass the *same* one at generation and at validation.
 
@@ -333,7 +361,15 @@ console.log(extractClientIp(headers, { remoteAddress: "9.9.9.9" })); // "9.9.9.9
 // One proxy of your own: read one entry in from the right.
 console.log(extractClientIp(headers, { trustProxy: 1 }));         // "3.3.3.3"
 console.log(extractClientIp(headers, { trustProxy: 2 }));         // "2.2.2.2"
+
+// A chain shorter than trustProxy never passed through your proxies, so
+// the header is skipped entirely: x-real-ip first, then remoteAddress.
+const short = { "x-forwarded-for": "1.2.3.4" };
+console.log(extractClientIp(short, { trustProxy: 2, remoteAddress: "9.9.9.9" }));
+// "9.9.9.9" — this was "1.2.3.4" before 1.2.0
 ```
+
+> **Changed in 1.2.0:** a forwarded chain shorter than `trustProxy` is now ignored. Such a chain did not pass through the proxies whose entries make it trustworthy — a request entering at an inner hop, or one a client shortened deliberately — and the old index clamp landed on the entry the client wrote. With `trustProxy: 2`, a request arriving with `X-Forwarded-For: 1.2.3.4` was rate-limited as `1.2.3.4`, so rotating that value handed the caller a fresh bucket each time. Chains at or above the configured length behave exactly as before.
 
 > **In plain words:** each proxy appends the address it saw, so the entries on the right were written by *your* infrastructure and the ones on the left came from the caller. Set `trustProxy` to the number of proxies you actually run — not more. A value that is too high starts reading attacker-supplied text again.
 
@@ -368,6 +404,8 @@ console.log(clean.tags);          // [ "x", "y" ] — still an array
 ```
 
 `sanitizeObject` drops keys named `__proto__`, `constructor` and `prototype`, which are the keys used to poison JavaScript's prototype chain. Arrays stay arrays, a `Date` or class instance is passed through untouched, a value that refers back to itself becomes `undefined` instead of crashing, and recursion stops at `maxDepth` (32 by default).
+
+> **Changed in 1.2.0:** `sanitizeObject` throws a `ConfigurationError` when `maxDepth` is present but is not an integer of 1 or more. The guard runs before the object is entered, so `maxDepth: 0` used to discard the argument itself and return `undefined` under a non-optional `T` — every field read off the result then threw at a call site TypeScript had called safe. `Number(process.env.MAX_DEPTH)` with the variable unset is the same shape of mistake as a `NaN` body limit.
 
 ### Escaping for HTML
 
@@ -414,7 +452,7 @@ There are two very different URL problems, and this package handles both. One is
 A *request target* is the path and query of a request, such as `/users?page=1`. `validateRequestTarget` rejects carriage return and line feed (written literally or percent-encoded), null bytes, and directory traversal.
 
 ```ts
-import { validateRequestTarget, normalizePath } from "@zudojs/security";
+import { validateRequestTarget, normalizePath, containsTraversal } from "@zudojs/security";
 
 console.log(validateRequestTarget("/users?page=1").valid); // true
 
@@ -424,6 +462,11 @@ console.log(bad.errors); // [ "Request target contains path traversal attempts" 
 
 console.log(validateRequestTarget("/a%0d%0aX-Injected:%201").valid); // false
 
+// Since 1.2.0: an RFC 3986 path parameter no longer hides a traversal.
+console.log(validateRequestTarget("/files/..;/etc/passwd").valid); // false
+console.log(containsTraversal("/a/..;/b"));                        // true
+console.log(containsTraversal("/a/....//b"));                      // false — not a traversal
+
 // Ask for a tidied path back with normalizePaths.
 const tidied = validateRequestTarget("/a//b/./c?x=1", { normalizePaths: true });
 console.log(tidied.normalized); // "/a/b/c?x=1"
@@ -432,6 +475,8 @@ console.log(normalizePath("/a/b/../c")); // "/a/c"
 ```
 
 > **In plain words:** `..` means "go up one directory", so `/files/../../etc/passwd` reaches a file you never meant to serve. Attackers hide it by encoding: `%2e%2e`, `.%2e`, `%252e%252e`. Rather than listing every spelling, `containsTraversal` decodes the path over and over until it stops changing (that is `fullyDecodeUri`) and then looks for a plain `..` segment. Input still changing after eight rounds is treated as hostile.
+
+> **Changed in 1.2.0:** `containsTraversal` and `validateRequestTarget` now strip RFC 3986 path parameters before segmenting, so `/a/..;/b` is reported as traversal like every other spelling of it. Tomcat, Jetty and several reverse-proxy pairings resolve that to `/a/../b`, and until 1.1.0 it passed. `....//` is still not a traversal, and nothing that was already caught has changed.
 
 `validateUrl` does the same job for a complete absolute URL, and also checks the length (2048 characters by default), the protocol, and percent-encoding.
 
@@ -624,7 +669,8 @@ Everything below is exported from the package root, `@zudojs/security`.
 | `generateCsrfToken(secret, options?)` | Mints a signed token. | `options` is `{ expiration?, sessionId? }` or a plain number of seconds. Empty secret throws. |
 | `validateCsrfToken(token, secret, options?)` | Checks signature, expiry and session binding. | Returns `boolean`. `expiration` is the maximum lifetime you accept. |
 | `verifyDoubleSubmit(cookieToken, requestToken, secret, options?)` | Checks that both copies match and are valid. | Constant-time comparison. The usual entry point. |
-| `requiresCsrfProtection(method, config?)` | Does this method change state? | `false` for GET, HEAD, OPTIONS, TRACE. |
+| `createCsrfProtection(config)` | Binds a secret, lifetime, cookie/header names and methods to the primitives. | Returns `{ issue, verify, requiresProtection }`. Throws `ConfigurationError` on a short secret or an unusable `methods` list. |
+| `requiresCsrfProtection(method, config?)` | Does this method change state? | `false` for GET, HEAD, OPTIONS, TRACE. Throws `ConfigurationError` when `config.methods` is present but empty, not an array, or holds a blank entry. |
 | `extractCsrfTokenFromHeaders(headers, headerName?)` | Reads the token from headers. | Default `x-csrf-token`; lookup is case-insensitive. |
 | `extractCsrfTokenFromCookies(cookieHeader, cookieName?)` | Reads the token from a raw Cookie header. | Default cookie name `_csrf`. |
 | `generateCsrfCookie(token, config?)` | Builds the `Set-Cookie` value. | `HttpOnly`, `Secure`, `SameSite=Strict` by default. |
@@ -634,17 +680,18 @@ Everything below is exported from the package root, `@zudojs/security`.
 | Name | What it does | Notes |
 | --- | --- | --- |
 | `createRateLimiter(config)` | Builds an in-memory sliding-window limiter. | Returns `{ check, middleware, reset, clear, getCount, destroy, size }`. Create once, at startup. |
-| `extractClientIp(headers, options?)` | Works out the client address. | Ignores forwarding headers unless `trustProxy` is set. Falls back to `remoteAddress`, then `"unknown"`. Ports and IPv6 brackets are stripped from the result. |
+| `extractClientIp(headers, options?)` | Works out the client address. | Ignores forwarding headers unless `trustProxy` is set, and ignores a chain shorter than `trustProxy`. Falls back to `x-real-ip`, then `remoteAddress`, then `"unknown"`. Ports and IPv6 brackets are stripped from the result. |
 | `defaultKeyGenerator(request)` | Uses `request.ip` as the key (port stripped, IPv6 by /64); throws `ConfigurationError` when it is missing or not an IP. | Used when you pass no `keyGenerator`. |
-| `defaultHandler(request, response)` | Fills in a 429 response. | Sets status, `Retry-After: 60` and a JSON error body. |
-| `rateLimit` | Namespace holding the four functions above. | — |
+| `defaultHandler(request, response, result?, message?)` | Fills in a 429 response. | Sets status, the `X-RateLimit-*` headers and a JSON error body. `Retry-After` is derived from the decision, not a fixed `60`. |
+| `retryAfterSeconds(result?, now?)` | Whole seconds until the window frees up. | At least `1`, never fractional, so a client never reads `Retry-After: 0`. |
+| `rateLimit` | Namespace holding the rate-limit functions above. | — |
 
 ### Input sanitization
 
 | Name | What it does | Notes |
 | --- | --- | --- |
 | `sanitizeString(input, config?)` | Strips null bytes and control characters. | Optionally normalises Unicode, truncates, runs your `customSanitizer`. |
-| `sanitizeObject(obj, config?)` | Cleans every string in a payload. | Drops prototype-pollution keys; cycle-safe; stops at `maxDepth` (32). |
+| `sanitizeObject(obj, config?)` | Cleans every string in a payload. | Drops prototype-pollution keys; cycle-safe; stops at `maxDepth` (32). Throws `ConfigurationError` if `maxDepth` is not an integer of 1 or more. |
 | `escapeHtml(input)` | Escapes six HTML characters. | Safe for element text and quoted attributes only. |
 | `stripHtml(input)` | Removes tag syntax. | Not a sanitizer. Escape the result before rendering. |
 | `isSafeString(input, allowedPattern?)` | No null bytes, no control characters, matches your pattern. | The allowlist approach. Strips `g`/`y` from your pattern first. |
@@ -660,9 +707,9 @@ Everything below is exported from the package root, `@zudojs/security`.
 | Name | What it does | Notes |
 | --- | --- | --- |
 | `validateUrl(url, config?)` | Checks a full absolute URL. | Returns `{ valid, normalized?, errors }`. Protocols include the colon. |
-| `validateRequestTarget(target, config?)` | Checks an incoming path and query. | Rejects CR, LF, null bytes and traversal. |
+| `validateRequestTarget(target, config?)` | Checks an incoming path and query. | Rejects CR, LF, null bytes and traversal, including `..;`. |
 | `normalizePath(pathname)` | Resolves `.` and `..`. | `..` can never climb above the root. |
-| `containsTraversal(path)` | Is there a `..` segment? | Decodes first, so encoded forms are caught. |
+| `containsTraversal(path)` | Is there a `..` segment? | Decodes first, so encoded forms are caught; RFC 3986 path parameters are stripped, so `..;` counts too. |
 | `fullyDecodeUri(value)` | Percent-decodes to a fixed point. | Returns `{ decoded, truncated }`; `truncated` means it gave up after eight rounds. |
 | `isSafeUrl(url, allowedProtocols?)` | Is this URL safe to fetch? | Blocks private ranges, non-HTTP protocols and embedded credentials. Cannot stop DNS rebinding. |
 | `isPrivateHostname(hostname)` | Is this host internal? | Run it against an address you resolved yourself. |
@@ -695,7 +742,7 @@ These are TypeScript types only; they disappear at runtime. Each is the config o
 
 > **In plain words:** `RequestValidationConfig` is exported as a type but no function in this package reads it. It is a shape for your own request-validation code, not a switch you can turn on.
 
-> **Errors:** there is no `SecurityError` class here. Most functions report problems in their return value — a boolean, a message string, or an `errors` array. The few that throw use plain `Error` and `RangeError`: cookie serialization, `generateSecurityHeaders`, `generateCspNonce`, `generateCsrfToken`, `createRateLimiter`, and any CORS call pairing a wildcard origin with credentials.
+> **Errors:** there is no `SecurityError` class here. Most functions report problems in their return value — a boolean, a message string, or an `errors` array. The few that throw raise one of three things. `ConfigurationError` from `@zudojs/errors` is what a misconfiguration gets: a CSRF secret under 32 characters, an unusable CSRF `methods` list, a `sanitizeObject` `maxDepth` below 1, a non-finite body limit, a security-header config value carrying CRLF, a CORS call pairing a wildcard origin with credentials, and the default rate-limit key generator given no usable `ip`. `ValidationError`, also from `@zudojs/errors`, comes out of cookie serialization. `RangeError` covers the numeric bounds: `createRateLimiter` with a non-positive `max` or `windowMs`, `generateCspNonce` below 16 bytes, a non-positive CSRF `expiration`, and `createIpKeyGenerator` outside 1–128.
 
 ## COMMON MISTAKES
 
@@ -704,6 +751,7 @@ These are TypeScript types only; they disappear at runtime. Each is the config o
 - **Calling `createRateLimiter` inside the request handler.** Every request gets an empty limiter and its own timer, so nothing is limited and timers pile up. Fix: create it once at module level and call `destroy()` on shutdown.
 - **Setting `trustProxy` higher than the number of proxies you run.** The count reaches past your own hops into text the client wrote, so anyone can pick their own rate-limit bucket. Fix: count your real proxies, and pass `remoteAddress` so there is a trustworthy fallback.
 - **Issuing CSRF tokens without a `sessionId`.** An attacker signs up, gets a valid token, and replays it against your users; every token is valid for everyone. Fix: pass the same session id to `generateCsrfToken` and to `verifyDoubleSubmit`.
+- **Building the CSRF `methods` list out of an environment variable.** `process.env.CSRF_METHODS?.split(",").filter(Boolean) ?? []` is an empty list whenever the variable is unset, and an empty list used to mean "protect nothing". Since 1.2.0 it throws a `ConfigurationError` at startup instead. Fix: omit `methods` unless you are genuinely changing them from POST, PUT, PATCH, DELETE.
 - **Expecting CORS to keep attackers out.** It only limits what browser scripts on other origins can read; `curl` ignores it entirely. Fix: keep authentication and authorization on every endpoint, and treat CORS as a browser convenience.
 
 ## RELATED PACKAGES
@@ -716,7 +764,7 @@ These are TypeScript types only; they disappear at runtime. Each is the config o
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/security` exports from its package root at v1.1.0 — **102** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/security` exports from its package root at v1.2.0 — **102** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 102 exports**
 

@@ -646,7 +646,7 @@ await runtime.stop();
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/runtime` exports from its package root at v1.2.0 — **90** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/runtime` exports from its package root at v1.2.1 — **90** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 90 exports**
 

@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/feature-flags — deterministic
 source: https://zudojs.oyinlola.site/docs/packages-feature-flags
 ---
 
-v1.2.0
+v1.3.0
 
 # @zudojs/feature-flags
 
@@ -25,7 +25,7 @@ pnpm add @zudojs/feature-flags
 yarn add @zudojs/feature-flags
 ```
 
-> **Peer Dependency:** @zudojs/feature-flags depends on @zudojs/errors (v1.1.0) for its error hierarchy.
+> **Peer Dependencies:** @zudojs/feature-flags depends on @zudojs/errors (v1.2.0) for its error hierarchy and @zudojs/types (v1.1.1) for its shared type guards.
 
 ## WHAT IT DOES
 
@@ -57,7 +57,8 @@ Feature flags sit between transport and application layers. HTTP handlers check 
 
 | Package | Version | Purpose |
 | --- | --- | --- |
-| @zudojs/errors | 1.1.0 | Feature flag error hierarchy (FeatureFlagError, NotFoundError, ProviderError, etc.) |
+| @zudojs/errors | 1.2.0 | Feature flag error hierarchy (FeatureFlagError, NotFoundError, ProviderError, etc.) |
+| @zudojs/types | 1.1.1 | Shared type guards (`isPlainObject`, re-exported here and deprecated in favour of importing it from @zudojs/types) |
 
 ## CORE TYPES
 
@@ -283,7 +284,7 @@ interface FeatureFlagEvaluation<TValue extends FeatureFlagValue = FeatureFlagVal
 | variant_assignment | Variant assigned |
 | disabled | Flag is disabled |
 | not_found | Flag does not exist |
-| error | Provider unreachable (`getAll()` or `get()` threw); reported to `onError` |
+| error | Provider unreachable (`provider.getAll()` or `provider.get()` threw); reported to `onError`. This is how `evaluate()` reports an outage — `snapshot()` and `getAll()` reject instead. |
 | dependency_disabled | A required dependency is not on for this context (disabled, draft, archived, expired, or evaluates false) |
 | expired | Flag is `state: "archived"` or `metadata.expiresAt` is in the past (a schedule rule outside its window simply does not match) |
 
@@ -322,9 +323,22 @@ interface FeatureFlagsOptions {
   readonly provider: FeatureFlagProvider;
   readonly defaultContext?: FeatureFlagContext;
   readonly throwOnMissing?: boolean;  // default: false
+  readonly onError?: (error: unknown, source: string) => void;
+  readonly throwOnProviderError?: boolean;  // default: false
   readonly missingFlagTtlMs?: number;  // default: 30_000 — how long a missing flag is remembered
+  readonly providerCooloffMs?: number;  // default: 5_000 — how long a failing provider is left alone
 }
 ```
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| throwOnMissing | `false` | Throw `FeatureFlagNotFoundError` instead of reporting `reason: "not_found"`. |
+| onError | none | Receives every contained provider failure, with the call that produced it (`FeatureFlagProvider.getAll`, `.get`, `.refresh`). |
+| throwOnProviderError | `false` | Rethrow provider failures instead of containing them, so an unreachable store is a hard failure the caller handles. |
+| missingFlagTtlMs | `30_000` | How long a key the provider does not know is remembered as missing. At most 1,000 keys; dropped on every reload. `0` asks the provider on every evaluation. |
+| providerCooloffMs | `5_000` | How long a *failing* provider is left alone before it is probed again. `0` restores the pre-v1.3.0 behaviour of calling the provider on every evaluation. A successful call closes the window at once, and `refresh()` always probes regardless. |
+
+New in v1.3.0, `providerCooloffMs` exists because an outage used to cost two remote round trips per evaluation: every single `evaluate()` re-ran `getAll()` and `get(key)` against the store that had just failed, each waiting out its own timeout. With the default 5,000 ms window the provider is probed at most once per window while it is down.
 
 ### Returned API
 
@@ -348,15 +362,51 @@ function createFeatureFlags(options: FeatureFlagsOptions): {
     key: string, context?: FeatureFlagContext
   ): Promise<FeatureFlagEvaluation<T>>;
 
-  // Evaluate all flags at once
+  // Evaluate every client-visible flag at once.
+  // Rejects with FeatureFlagProviderError if the flags never loaded.
   snapshot(context?: FeatureFlagContext): Promise<ReadonlyMap<string, FeatureFlagEvaluation>>;
 
   // Refresh flags from provider
   refresh(): Promise<void>;
 
-  // Get all flag definitions
+  // Get all flag definitions.
+  // Rejects with FeatureFlagProviderError if the flags never loaded.
   getAll(): Promise<Readonly<FeatureFlag[]>>;
+
+  // Stop listening for provider changes
+  close(): void;
 };
+```
+
+### When the provider is unreachable
+
+The two halves of the API deliberately behave differently, and v1.3.0 widened the gap. Get this the wrong way round and a total outage ships to a browser as every flag being off.
+
+| Call | Provider down, nothing ever loaded |
+| --- | --- |
+| evaluate() | **Resolves** with `reason: "error"`, `defaulted: true`. It does not throw. Unchanged in v1.3.0. |
+| isEnabled() / get() / getBoolean() | **Resolve.** They delegate to `evaluate()`, so they fall back to `false`, `undefined` and the `defaultValue` you passed. |
+| snapshot() | **Rejects** with `FeatureFlagProviderError`. Before v1.3.0 it resolved to an empty `Map`. |
+| getAll() | **Rejects** with `FeatureFlagProviderError`. Before v1.3.0 it resolved to an empty array. |
+
+> **Why the asymmetry:** an evaluation has somewhere to put the bad news — the `reason` field on the result it returns. A `Map` or an array has nowhere, and an empty one is indistinguishable from “no flags are configured”. So the bulk reads now fail loudly instead of quietly reporting an outage as a configuration state. `onError` still sees the underlying failure first, either way.
+
+Two qualifications. Once a load has succeeded, `snapshot()` and `getAll()` keep serving that data even if a later reload fails — only a cold, never-loaded instance rejects. And a provider that genuinely holds no flags still resolves empty, because the load succeeded.
+
+```ts
+// Upgrading from v1.2.x: this used to be dead code on a cold outage.
+try {
+  const visible = await flags.snapshot(context);
+  res.json(Object.fromEntries(visible));
+} catch (error) {
+  if (error instanceof FeatureFlagProviderError) {
+    // Serve the last good payload, or fail the request —
+    // but do not ship "{}" and call it the flag state.
+    res.status(503).end();
+    return;
+  }
+  throw error;
+}
 ```
 
 ### Full Example
@@ -371,12 +421,14 @@ const provider = createMemoryProvider([
     enabled: true,
     description: "Enable dark mode UI",
     state: "active",
+    visibility: "client",
   },
   {
     key: "new-checkout",
     defaultValue: false,
     enabled: true,
     state: "active",
+    visibility: "client",
     rules: [
       {
         type: "percentage",
@@ -401,7 +453,10 @@ const result = await flags.evaluate("new-checkout", {
 });
 // result: { key, value, reason: "percentage_rollout", defaulted: false }
 
-// Snapshot all flags
+// Snapshot every client-visible flag. Both flags above declare
+// visibility: "client"; a flag that does not is withheld, because
+// a snapshot is what you ship to a browser.
+// Rejects with FeatureFlagProviderError if the store never loaded.
 const all = await flags.snapshot({ userId: "user-42" });
 ```
 
@@ -533,6 +588,10 @@ const featureFlags = createFeatureFlags({
   provider,
   defaultContext: { environment: "production" },
   throwOnMissing: false,
+  // Leave a failing store alone for 5 s instead of re-querying it
+  // on every evaluation. 5_000 is the default; 0 disables the window.
+  providerCooloffMs: 5_000,
+  onError: (error, source) => console.error(source, error),
 });
 ```
 
@@ -661,7 +720,7 @@ All errors extend `FeatureFlagError` which extends `ApplicationError` from @zudo
 | Error Class | When Thrown |
 | --- | --- |
 | FeatureFlagNotFoundError | Requested flag does not exist and `throwOnMissing: true` |
-| FeatureFlagProviderError | Provider fails to fetch or parse flag definitions |
+| FeatureFlagProviderError | Provider fails to fetch or parse flag definitions. Since v1.3.0 also raised by `snapshot()` and `getAll()` when the flags were never loaded, and by any call under `throwOnProviderError: true`. |
 | FeatureFlagEvaluationError | Evaluation encounters an error during rule processing |
 | FeatureFlagRuleError | A flag rule is malformed or has invalid configuration |
 | FeatureFlagDependencyError | Flag dependencies form a cycle |
@@ -678,10 +737,12 @@ import {
 } from "@zudojs/feature-flags";
 
 try {
-  const value = await flags.isEnabled("my-flag");
+  // A bulk read: this is the call that raises
+  // FeatureFlagProviderError on an unreachable store.
+  const all = await flags.getAll();
 } catch (error) {
   if (error instanceof FeatureFlagNotFoundError) {
-    // Flag doesn't exist
+    // Flag doesn't exist (throwOnMissing: true)
   } else if (error instanceof FeatureFlagProviderError) {
     // Provider failed
   } else if (error instanceof FeatureFlagError) {
@@ -689,6 +750,8 @@ try {
   }
 }
 ```
+
+Wrapping `isEnabled()`, `get()`, `getBoolean()` or `evaluate()` in a `try` for a provider failure catches nothing: they contain it and report `reason: "error"`. Read `evaluation.reason`, pass `onError`, or set `throwOnProviderError: true` if you want them to throw. Only `throwOnMissing: true` makes them raise `FeatureFlagNotFoundError`.
 
 ## DEPENDENCY RESOLUTION
 
@@ -857,7 +920,7 @@ Dependencies
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/feature-flags` exports from its package root at v1.2.0 — **55** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/feature-flags` exports from its package root at v1.3.0 — **55** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 55 exports**
 

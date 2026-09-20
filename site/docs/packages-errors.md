@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/errors — shared error base cl
 source: https://zudojs.oyinlola.site/docs/packages-errors
 ---
 
-v1.1.0
+v1.2.0
 
 # @zudojs/errors
 
@@ -225,8 +225,13 @@ Every family below is exported from the package root. The status and exposure li
 | `TimeoutError` | varies | request timeouts only | `requestTimeoutError`, `databaseTimeoutError`, `serviceTimeoutError`, `lockTimeoutError` |
 | `ExternalServiceError` | 502 (429 passes through) | no | `service`, `responseStatus` options |
 | Subsystem families | mostly 500/503 | no | `CacheError`, `StorageError`, `NetworkError`, `ContainerError`, `AdapterError`, `MiddlewareError`, `EventError`, `MessageError`, `QueueError`, `SchedulerError`, `PluginError`, `RPCError`, `APIError`, `SchemaError`, `SerializationError`, `LifecycleError`, `ModuleError`, `RuntimeError`, `SystemError`, `CryptoError`, `LoggingError` |
+| `EventListenerLimitExceededError` `ERR_EVENT_LISTENER_LIMIT_EXCEEDED` | 500 | no — never | `pattern`, `count`, `limit` fields, also copied into `metadata` |
 
 The subsystem families are thrown by the matching Zudo package (`@zudojs/cache` throws `CacheError`, and so on). You catch them; you rarely construct them yourself.
+
+`EventListenerLimitExceededError` (new in 1.2.0) is the one member of the `EventError` family worth catching by name. It is raised when a single event pattern passes its configured handler limit — the signature of a subscribe-without-unsubscribe leak — and carries the `pattern`, the handler `count` and the `limit`, both as own readonly fields and inside `metadata`. Registering past a handler limit is a programming fault rather than bad input, so the class fixes its classification as internal: `statusCode` 500, `expose` `false`, `isOperational` `false`. It is never exposed to a caller — `serializePublicError` replaces its message with `"An unexpected error occurred."` and drops its metadata.
+
+Before 1.2.0 the class did not exist here and nothing in the framework ever threw it, so a `catch` branch testing for it was unreachable. `@zudojs/events` now raises it, but only when a registry, emitter or bus is configured to enforce its handler limit; the default is still a one-shot warning that lets the registration through. The class is owned by `@zudojs/errors` and re-exported from `@zudojs/events`, so an import from either package resolves to the same constructor and `instanceof` matches across both.
 
 ## WRITING YOUR OWN ERROR
 
@@ -263,7 +268,7 @@ console.log(serializePublicError(error));
 
 `metadata` is where you attach facts about the failure: which user, which record, which query. It must be JSON-safe (strings, numbers, booleans, null, arrays, plain objects). The constructor deep-copies and freezes it, so later changes to your original object do not leak in, and nobody can mutate it afterwards.
 
-Some values are converted rather than rejected: `Date` becomes an ISO string, `Map` becomes an object, `bigint` becomes a string, and cyclic references become `"[Circular]"`. Keys named `__proto__`, `constructor` or `prototype` are always dropped.
+Some values are converted rather than rejected: `Date` becomes an ISO string, `Map` becomes an object, `bigint` becomes a string, and cyclic references become `"[Circular]"`. Keys named `__proto__`, `constructor` or `prototype` are always dropped. Nesting is bounded as well: a subtree deeper than `MAX_METADATA_DEPTH` (32) levels is replaced with `"[MaxDepth]"` instead of being walked.
 
 Secrets are the bigger concern. The serializers redact any key whose name looks sensitive (`password`, `token`, `authorization`, `cookie`, `apiKey`, `ssn`, and similar) at every depth. You can run the same redaction yourself.
 
@@ -311,6 +316,8 @@ console.log(error.toJSON());
 ```
 
 Subclasses add their own fields on top: `ValidationError` adds `issues` (with submitted values replaced by a type description when the error is exposed), and `RateLimitError` adds `retryAfterSeconds`.
+
+Two different depth limits apply, and both are bounded. The `cause` *chain* stops after 8 links. The walk *into* a plain-object or array cause — the one that redacts sensitive keys inside it — stops after `MAX_METADATA_DEPTH` (32) levels and writes `"[MaxDepth]"` in place of the deeper subtree, exactly as metadata cloning already did. Before 1.2.0 that second walk was unbounded, so attaching a deeply nested value as a `cause` — a parsed request body, for instance — could raise a `RangeError` from inside `toJSON`, `serializeError` with `includeCause: true` or `ErrorHandler.toLogObject`, which turned a logged error into a crash on the logging path. Those paths now stay safe whatever depth the input arrives at.
 
 ### serializePublicError() — for clients
 
@@ -454,6 +461,7 @@ Everything below is exported from `@zudojs/errors`. The error classes themselves
 | `ValidationIssue` | One entry in `ValidationError.issues`. | `message` plus optional `field`, `path`, `code`, `value`. |
 | `SENSITIVE_METADATA_KEY_PATTERN` | Default regex for secret-looking keys. | Override per call with `sensitiveKeyPattern`. |
 | `REDACTED_METADATA_VALUE` | The string `"[REDACTED]"`. |  |
+| `MAX_METADATA_DEPTH` | The number `32`. | Deepest nesting walked when metadata is cloned and when an object or array `cause` is redacted; anything below it becomes `"[MaxDepth]"`. |
 | `UNKNOWN_ERROR_MESSAGE` | The string `"An unexpected error occurred."` | Used when a thrown value has no message. |
 
 ## COMMON MISTAKES

@@ -122,7 +122,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.0.2</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/messaging</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           An in-process message bus: one part of your program sends a named message, other parts handle it and send an answer back, all without the two sides knowing about each other.
@@ -255,7 +255,7 @@ console.<span class="fn">log</span>(Object.<span class="fn">isFrozen</span>(mess
           A <em>handler</em> is a function that receives a message and a <code class="bg-black/5 px-1">MessageContext</code>, does some work, and returns a value (or a promise of one). Registering a handler is the "subscribe" half of publish/subscribe: you tell the bus "call me for this type".
         </p>
         <p class="mb-4 leading-relaxed">
-          Several handlers may register for the same type. The bus runs them one after another, lowest <code class="bg-black/5 px-1">priority</code> number first (default 100). With one handler, <code class="bg-black/5 px-1">result.value</code> is that handler's return value. With several, it is an array of their return values in run order.
+          Several handlers may register for the same type. The bus runs them one after another, lowest <code class="bg-black/5 px-1">priority</code> number first (default 100). With one handler, <code class="bg-black/5 px-1">result.value</code> is that handler's return value. With several, it is an array of their return values in run order. That fan-out is the default; create the bus with <code class="bg-black/5 px-1">allowMultipleHandlers: false</code> for a command or query bus, and a second handler claiming a type already taken is refused with a <code class="bg-black/5 px-1">MessageError</code> naming the type and the handler that holds it.
         </p>
         <p class="mb-3">This registers two handlers for one type, sends a message, then removes one handler. The payload type annotation on the parameter is what gives you <code class="bg-black/5 px-1">message.payload.orderId</code> without a cast.</p>
         <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createMessageBus</span>, <span class="kw">type</span> <span class="tp">Message</span> } <span class="kw">from</span> <span class="str">"@zudojs/messaging"</span>;
@@ -301,6 +301,31 @@ console.<span class="fn">log</span>(bus.handlerCount);                 <span cla
         <div class="callout callout-warning">
           <strong class="text-zudo-yellow">Watch out:</strong> Handler ids must be unique across the whole bus. Registering the same id twice throws <code>DuplicateMessageHandlerError</code> immediately, unless you created the bus with <code>allowDuplicateHandlers: true</code>.
         </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Object-form handlers</h3>
+        <p class="mb-3">The <code class="bg-black/5 px-1">handler</code> field of a <code class="bg-black/5 px-1">NamedMessageHandler</code> accepts either form described by <code class="bg-black/5 px-1">MessageHandlerLike</code>: a plain function, or an object with a <code class="bg-black/5 px-1">handle(message, context)</code> method. The object form lets a class hold the handler's dependencies. <code class="bg-black/5 px-1">this</code> is bound for you, so a class method may use its own fields.</p>
+        <div class="code-block mb-4"><span class="kw">class</span> <span class="tp">AuditHandler</span> {
+  <span class="kw">constructor</span>(<span class="kw">private readonly</span> sink: <span class="tp">AuditSink</span>) {}
+
+  <span class="kw">async</span> <span class="fn">handle</span>(message: <span class="tp">Message</span>, context: <span class="tp">MessageContext</span>) {
+    <span class="kw">await</span> <span class="kw">this</span>.sink.<span class="fn">write</span>(message.type, context.correlationId);
+    <span class="kw">return</span> <span class="str">"audited"</span>;
+  }
+}
+
+bus.<span class="fn">addHandler</span>({
+  id: <span class="str">"audit-log"</span>,
+  name: <span class="str">"Audit log"</span>,
+  messageTypes: [<span class="str">"order.placed"</span>],
+  handler: <span class="kw">new</span> <span class="tp">AuditHandler</span>(sink), <span class="cmt">// object form — resolved through resolveMessageHandler</span>
+});
+
+<span class="kw">const</span> result = <span class="kw">await</span> bus.<span class="fn">send</span>({ type: <span class="str">"order.placed"</span>, payload: { id: <span class="str">"o_1"</span> } });
+console.<span class="fn">log</span>(result.success, result.value); <span class="cmt">// true "audited"</span></div>
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Changed in v1.1.0:</strong> an object-form handler now actually runs. <code>MessageHandlerLike</code> had always advertised the <code>{ handle }</code> form, but the dispatcher invoked the registered handler as a function, so every dispatch to an object handler came back as a failed dispatch with <code>handler.handler is not a function</code> in <code>result.error</code>. If you worked around this by wrapping the object yourself — <code>handler: (m, c) =&gt; obj.handle(m, c)</code> — that still works and needs no change.
+        </div>
+        <p class="mt-4"><code class="bg-black/5 px-1">bus.on(type, fn)</code> takes a function only. Register an object-form handler with <code class="bg-black/5 px-1">addHandler()</code>, or normalise it yourself with <code class="bg-black/5 px-1">resolveMessageHandler(handlerLike)</code>, which returns a plain bound function.</p>
       </section>
 
       <!-- Dispatching -->
@@ -344,6 +369,10 @@ console.<span class="fn">log</span>(nobody.duration &gt;= <span class="num">0</s
         </p>
         <div class="callout callout-warning">
           <strong class="text-zudo-yellow">Watch out:</strong> A handler that is already running is not interrupted. Long handlers should check <code>context.signal.aborted</code> between steps and stop themselves. A timed-out dispatch comes back with <code>result.error instanceof MessageTimeoutError</code>.
+        </div>
+
+        <div class="callout callout-note">
+          <strong class="text-zudo-blue">Changed in v1.1.0:</strong> <code>result.handlerResults</code> is a snapshot taken when the dispatch settles, so it stops changing once you have awaited the dispatch. Previously it was the live array the dispatcher was still writing into: a handler that kept running past a timeout could push a <code>success: true</code> record into the result of a dispatch that had already failed with <code>MessageTimeoutError</code>. Audit records and metrics derived from <code>handlerResults</code> are now stable.
         </div>
       </section>
 
@@ -463,7 +492,7 @@ bus.<span class="fn">on</span>(<span class="str">"order.paid"</span>, <span clas
         </p>
         <ul class="space-y-2 mb-4 text-sm">
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span><span><code class="bg-black/5 px-1">HandlerRegistryStore</code> keeps the handlers. <code class="bg-black/5 px-1">register()</code>, <code class="bg-black/5 px-1">unregister()</code>, <code class="bg-black/5 px-1">resolve(type)</code> (sorted by priority, disabled handlers left out), <code class="bg-black/5 px-1">get()</code>, <code class="bg-black/5 px-1">has()</code>, <code class="bg-black/5 px-1">getHandlerIds()</code>, <code class="bg-black/5 px-1">getRegisteredTypes()</code>, <code class="bg-black/5 px-1">size</code>, <code class="bg-black/5 px-1">clear()</code>.</span></li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span><span><code class="bg-black/5 px-1">createDispatcher(registry?)</code> returns a <code class="bg-black/5 px-1">Dispatcher</code> (class <code class="bg-black/5 px-1">DefaultDispatcher</code>) that runs middleware and handlers for one message. The bus adds timeouts, <code class="bg-black/5 px-1">on()</code>/<code class="bg-black/5 px-1">off()</code> and the disposed flag on top.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span><span><code class="bg-black/5 px-1">createDispatcher(registry?)</code> returns a <code class="bg-black/5 px-1">Dispatcher</code> (class <code class="bg-black/5 px-1">DefaultDispatcher</code>) that runs middleware and handlers for one message. The bus adds timeouts, <code class="bg-black/5 px-1">on()</code>/<code class="bg-black/5 px-1">off()</code> and the disposed flag on top. The interface is <code class="bg-black/5 px-1">dispatch()</code>, <code class="bg-black/5 px-1">use()</code>, <code class="bg-black/5 px-1">removeMiddleware()</code>, <code class="bg-black/5 px-1">listMiddleware()</code>, <code class="bg-black/5 px-1">getRegistry()</code> and <code class="bg-black/5 px-1">dispose()</code>.</span></li>
           <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span><span><code class="bg-black/5 px-1">runMessagePipeline(middleware, handler, message, options?)</code> runs a middleware chain around any async function and returns <code class="bg-black/5 px-1">{ result, executions, duration }</code>.</span></li>
           <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span><span><code class="bg-black/5 px-1">createMessageContext(message, options?)</code> and <code class="bg-black/5 px-1">resolveMessageHandler(handlerLike)</code> are the small helpers the dispatcher uses internally.</span></li>
         </ul>
@@ -483,8 +512,28 @@ registry.<span class="fn">register</span>({
 
 console.<span class="fn">log</span>(result.value);                    <span class="cmt">// "hello Ada"</span>
 console.<span class="fn">log</span>(registry.<span class="fn">getRegisteredTypes</span>()); <span class="cmt">// ["greet"]</span></div>
-        <div class="callout callout-warning">
-          <strong class="text-zudo-yellow">Not implemented yet:</strong> <code>Dispatcher.removeMiddleware()</code> always returns <code>false</code>, and the registry options <code>allowMultipleHandlers</code> and <code>requireTypeRegistration</code> are stored but not enforced.
+        <h3 class="text-lg font-bold mb-3 mt-6">Inspecting and releasing a dispatcher</h3>
+        <p class="mb-3">Three of the dispatcher's methods are about what it holds rather than what it runs.</p>
+        <table class="doc-table mb-4">
+          <thead><tr><th>Method</th><th>What it returns</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>listMiddleware()</code></td><td>The ids of every registered global middleware, in the order they run.</td><td>Ascending <code>priority</code> (default 100), registration order breaking ties. These are the ids <code>use()</code> returned.</td></tr>
+            <tr><td><code>getRegistry()</code></td><td>The <code>HandlerRegistryStore</code> this dispatcher resolves handlers from.</td><td>The registry you passed to <code>createDispatcher</code>, or the one it made for you.</td></tr>
+            <tr><td><code>dispose()</code></td><td>Nothing.</td><td>Drops all middleware and makes every later <code>dispatch()</code> reject with <code>MessageBusDisposedError</code>. Handlers stay in the registry.</td></tr>
+          </tbody>
+        </table>
+        <div class="code-block mb-4"><span class="kw">const</span> dispatcher = <span class="fn">createDispatcher</span>(registry);
+
+<span class="kw">const</span> timingId = dispatcher.<span class="fn">use</span>(timing, { id: <span class="str">"timing"</span>, priority: <span class="num">10</span> });
+dispatcher.<span class="fn">use</span>(logging, { id: <span class="str">"logging"</span> });
+
+console.<span class="fn">log</span>(dispatcher.<span class="fn">listMiddleware</span>());        <span class="cmt">// ["timing", "logging"]</span>
+console.<span class="fn">log</span>(dispatcher.<span class="fn">removeMiddleware</span>(timingId)); <span class="cmt">// true</span>
+console.<span class="fn">log</span>(dispatcher.<span class="fn">getRegistry</span>() === registry);  <span class="cmt">// true</span>
+
+dispatcher.<span class="fn">dispose</span>(); <span class="cmt">// later dispatches reject with MessageBusDisposedError</span></div>
+        <div class="callout callout-note">
+          <strong class="text-zudo-blue">Changed in v1.1.0:</strong> <code>dispose()</code>, <code>getRegistry()</code> and <code>listMiddleware()</code> are now declared on the <code>Dispatcher</code> interface. <code>DefaultDispatcher</code> already implemented all three, but because the interface omitted them, <code>createDispatcher().dispose()</code> did not compile without a cast to <code>DefaultDispatcher</code>. Any such cast can now be dropped.
         </div>
       </section>
 
@@ -521,7 +570,7 @@ console.<span class="fn">log</span>(registry.<span class="fn">getRegisteredTypes
             <tbody>
               <tr><td><code>InMemoryMessageBus</code></td><td>The bus <code>createMessageBus</code> returns.</td><td>Methods: <code>send</code>, <code>dispatch</code>, <code>on</code>, <code>addHandler</code>, <code>off</code>, <code>use</code>, <code>hasHandlers</code>, <code>dispose</code>; getters <code>handlerCount</code>, <code>disposed</code>.</td></tr>
               <tr><td><code>HandlerRegistryStore</code></td><td>In-memory store of named handlers.</td><td>See <a href="#lower-level" class="text-zudo-blue underline">Lower-level pieces</a>.</td></tr>
-              <tr><td><code>DefaultDispatcher</code></td><td>Runs middleware and handlers for one message.</td><td>Also has <code>getRegistry()</code> and <code>dispose()</code>.</td></tr>
+              <tr><td><code>DefaultDispatcher</code></td><td>Runs middleware and handlers for one message.</td><td>Implements the whole <code>Dispatcher</code> interface: <code>dispatch()</code>, <code>use()</code>, <code>removeMiddleware()</code>, <code>listMiddleware()</code>, <code>getRegistry()</code>, <code>dispose()</code>.</td></tr>
             </tbody>
           </table>
         </div>
@@ -537,7 +586,7 @@ console.<span class="fn">log</span>(registry.<span class="fn">getRegisteredTypes
               <tr><td><code>MessageContext</code>, <code>MessageContextOptions</code></td><td>What handlers receive as their second argument.</td><td></td></tr>
               <tr><td><code>MessageMiddleware</code>, <code>MessageMiddlewareLike</code>, <code>MessageMiddlewareContext</code>, <code>MessageMiddlewareNext</code></td><td>Middleware function shape and its context.</td><td>Pipeline result types: <code>MessageMiddlewarePipelineResult</code>, <code>MessageMiddlewareExecution</code>.</td></tr>
               <tr><td><code>MessageBus</code>, <code>MessageBusOptions</code></td><td>The bus interface and its options.</td><td></td></tr>
-              <tr><td><code>Dispatcher</code>, <code>DispatchOptions</code>, <code>DispatchResult</code>, <code>HandlerExecutionResult</code></td><td>Dispatch interface, per-call options, and the result shape.</td><td><code>DispatchOptions</code>: <code>context</code>, <code>middleware</code>, <code>timeout</code>, <code>signal</code>.</td></tr>
+              <tr><td><code>Dispatcher</code>, <code>DispatchOptions</code>, <code>DispatchResult</code>, <code>HandlerExecutionResult</code></td><td>Dispatch interface, per-call options, and the result shape.</td><td><code>Dispatcher</code>: <code>dispatch</code>, <code>use</code>, <code>removeMiddleware</code>, <code>listMiddleware</code>, <code>getRegistry</code>, <code>dispose</code>. <code>DispatchOptions</code>: <code>context</code>, <code>middleware</code>, <code>timeout</code>, <code>signal</code>.</td></tr>
               <tr><td><code>HandlerRegistryOptions</code>, <code>RegisteredHandler</code>, <code>HandlerQueryOptions</code></td><td>Registry configuration and lookup types.</td><td></td></tr>
             </tbody>
           </table>
@@ -599,7 +648,7 @@ console.<span class="fn">log</span>(registry.<span class="fn">getRegisteredTypes
       <!-- EXPORT INDEX -->
       <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
-        <p class="mb-5 text-sm">Every name <code>@zudojs/messaging</code> exports from its package root at v1.0.2 &mdash; <strong>69</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/messaging</code> exports from its package root at v1.1.0 &mdash; <strong>69</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
         <details class="border-2 border-black p-5 bg-white">
           <summary class="font-bold cursor-pointer select-none">Show all 69 exports</summary>
           <div class="mt-5">

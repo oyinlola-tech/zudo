@@ -122,7 +122,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/events</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           An event bus for Zudojs: publish a message once, and every handler that asked for it gets called, with optional middleware in between.
@@ -436,7 +436,7 @@ bus.<span class="fn">start</span>();
 bus.<span class="fn">dispose</span>();                      <span class="cmt">// final: every call now throws EventBusDisposedError</span>
 console.<span class="fn">log</span>(bus.<span class="fn">getState</span>() === <span class="tp">EventBusState</span>.DISPOSED); <span class="cmt">// true</span></div>
         <p class="mt-3 text-sm text-black/70">
-          <code>bus.subscribe(listener)</code> lets you watch the bus itself: the listener receives <code>{ type: "started" | "stopped" | "published", event?, timestamp }</code>.
+          <code>bus.subscribe(listener)</code> lets you watch the bus itself: the listener receives <code>{ type: "started" | "stopped" | "published", event?, timestamp }</code>. A listener that throws used to be swallowed without trace; since 1.2.0 the failure goes to your <code>onError</code> hook if you set one, and otherwise surfaces once per bus through <code>process.emitWarning</code> as a <code>ZudojsEventsWarning</code> with code <code>ZUDOJS_EVENTS_OBSERVER_ERROR</code>. The same applies to <code>registry.subscribe</code>.
         </p>
 
         <div class="callout callout-tip">
@@ -471,7 +471,43 @@ console.<span class="fn">log</span>(ok.event.type);                             
         <p class="mt-3 mb-3 text-sm text-black/70">
           Registering the same type twice throws <code>DuplicateEventDefinitionError</code> unless you pass <code>registry: { allowDuplicateDefinitions: true }</code>. <code>bus.unregister(type)</code> removes a definition; add <code>{ removeHandlers: true }</code> to drop the handlers subscribed to exactly that type as well.
         </p>
-                <div class="callout callout-warning">
+
+        <h3 class="text-lg font-bold mb-2 mt-6">Handler limits</h3>
+        <p class="mb-3 leading-relaxed">
+          The registry counts how many handlers each pattern has collected, because a pattern that keeps growing is almost always a subscribe-without-unsubscribe leak. The ceiling is <code>maxHandlersPerPattern</code> on a registry, spelled <code>maxListeners</code> under <code>emitter</code> on a bus or an emitter. It defaults to <strong>100</strong>; <code>0</code> turns the check off.
+        </p>
+        <p class="mb-3 leading-relaxed">What happens when the ceiling is passed is now yours to choose.</p>
+        <ul class="space-y-2 mb-4 text-sm">
+          <li class="flex gap-2"><span class="font-bold">→</span> <span><strong>Warn (the default).</strong> The registration succeeds and one warning is emitted per pattern — the first breach only. It goes to your <code>onWarning</code> hook if you set one, otherwise through <code>process.emitWarning</code> as a <code>ZudojsEventsWarning</code> with code <code>ZUDOJS_EVENTS_HANDLER_LIMIT</code>.</span></li>
+          <li class="flex gap-2"><span class="font-bold">→</span> <span><strong>Refuse.</strong> Set <code>enforceHandlerLimit: true</code> (default <code>false</code>, added in 1.2.0) and the registration is rejected instead: the call throws <code>EventListenerLimitExceededError</code> and the handler is rolled back out of the registry, which is left exactly as it was. Unlike the warning it fires on <em>every</em> breach, not only the first, since each one is a separate fault.</span></li>
+        </ul>
+        <div class="code-block"><span class="kw">import</span> { <span class="fn">createEventBus</span>, <span class="tp">EventListenerLimitExceededError</span> } <span class="kw">from</span> <span class="str">"@zudojs/events"</span>;
+
+<span class="kw">const</span> bus = <span class="fn">createEventBus</span>({
+  emitter: { maxListeners: <span class="num">2</span>, enforceHandlerLimit: <span class="kw">true</span> },
+});
+
+bus.<span class="fn">on</span>(<span class="str">"tick"</span>, () =&gt; {});
+bus.<span class="fn">on</span>(<span class="str">"tick"</span>, () =&gt; {});
+
+<span class="kw">try</span> {
+  bus.<span class="fn">on</span>(<span class="str">"tick"</span>, () =&gt; {});
+} <span class="kw">catch</span> (error) {
+  <span class="kw">const</span> limit = error <span class="kw">as</span> <span class="tp">EventListenerLimitExceededError</span>;
+  console.<span class="fn">log</span>(error <span class="kw">instanceof</span> <span class="tp">EventListenerLimitExceededError</span>); <span class="cmt">// true</span>
+  console.<span class="fn">log</span>(limit.pattern, limit.count, limit.limit);          <span class="cmt">// tick 3 2</span>
+}
+
+console.<span class="fn">log</span>(bus.handlerCount); <span class="cmt">// 2  — the refused handler was not kept</span></div>
+        <p class="mt-3 mb-3 text-sm text-black/70">
+          The option is accepted in all three places: <code>createEventRegistry({ enforceHandlerLimit })</code>, <code>createEventEmitter({ enforceHandlerLimit })</code>, and <code>createEventBus({ emitter: { enforceHandlerLimit } })</code>.
+        </p>
+        <div class="callout callout-note">
+          <strong class="text-zudo-blue">Note</strong>
+          <p class="mt-1"><code>EventListenerLimitExceededError</code> is defined in <code>@zudojs/errors</code> (code <code>EVENT_LISTENER_LIMIT_EXCEEDED</code>) and re-exported from <code>@zudojs/events</code>, so either import works. Before 1.2.0 nothing in the package ever raised it; a <code>catch</code> branch testing for it was unreachable.</p>
+        </div>
+
+        <div class="callout callout-warning">
           <strong class="text-zudo-yellow">Common mistake</strong>
           <p class="mt-1">Turning on <code>requireRegistration</code> and forgetting to call <code>bus.register()</code>. Every publish then rejects with <code>EventTypeNotFoundError</code>, including the ones from other packages that publish through your bus.</p>
         </div>
@@ -624,7 +660,7 @@ timing: file.saved 0.2 ms</div>
             <tr><td><span class="code-inline">EventHandlerContext</span></td><td><span class="code-inline">event</span>, <span class="code-inline">type</span>, <span class="code-inline">eventId</span>, <span class="code-inline">correlationId?</span>, <span class="code-inline">causationId?</span>, <span class="code-inline">signal</span>, <span class="code-inline">metadata</span>.</td><td>Second argument of every handler.</td></tr>
             <tr><td><span class="code-inline">EventHandlerOptions</span></td><td><span class="code-inline">id</span>, <span class="code-inline">priority</span>, <span class="code-inline">once</span>, <span class="code-inline">timeoutMs</span>, <span class="code-inline">enabled</span>, <span class="code-inline">description</span>.</td><td>Third argument of <span class="code-inline">on()</span>.</td></tr>
             <tr><td><span class="code-inline">EventSubscription</span></td><td><span class="code-inline">id</span>, <span class="code-inline">active</span>, <span class="code-inline">state</span>, <span class="code-inline">unsubscribe()</span>.</td><td>Returned by <span class="code-inline">on()</span>.</td></tr>
-            <tr><td><span class="code-inline">EventBusOptions</span></td><td><span class="code-inline">emitter: { mode, errorMode, freezeEvents, maxListeners }</span>, <span class="code-inline">registry: { allowDuplicateDefinitions, onDuplicateHandlerId }</span>, <span class="code-inline">requireRegistration</span>, <span class="code-inline">middleware</span>, <span class="code-inline">onWarning</span>, <span class="code-inline">onError</span>.</td><td><span class="code-inline">maxListeners</span> defaults to 100 per pattern; more emits a leak warning (process warning or <code>onWarning</code>).</td></tr>
+            <tr><td><span class="code-inline">EventBusOptions</span></td><td><span class="code-inline">emitter: { mode, errorMode, freezeEvents, maxListeners, enforceHandlerLimit }</span>, <span class="code-inline">registry: { allowDuplicateDefinitions, onDuplicateHandlerId }</span>, <span class="code-inline">requireRegistration</span>, <span class="code-inline">middleware</span>, <span class="code-inline">onWarning</span>, <span class="code-inline">onError</span>.</td><td><span class="code-inline">maxListeners</span> defaults to 100 per pattern; more emits a one-shot leak warning (process warning or <code>onWarning</code>). <span class="code-inline">enforceHandlerLimit</span> defaults to <span class="code-inline">false</span>; set it to refuse the registration with <span class="code-inline">EventListenerLimitExceededError</span> instead. See <a href="#event-registry" class="text-zudo-blue underline">Handler limits</a>.</td></tr>
             <tr><td><span class="code-inline">PublishOptions</span></td><td><span class="code-inline">mode</span>, <span class="code-inline">errorMode</span>, <span class="code-inline">signal</span>, <span class="code-inline">metadata</span>, <span class="code-inline">middleware</span>.</td><td>Second argument of <span class="code-inline">publish</span> / <span class="code-inline">publishEvent</span> / <span class="code-inline">emit</span>.</td></tr>
             <tr><td><span class="code-inline">EventPublishResult</span></td><td>See <a href="#event-bus" class="text-zudo-blue underline">Reading the result</a>.</td><td></td></tr>
             <tr><td><span class="code-inline">EventMiddleware</span></td><td><span class="code-inline">(context, next) =&gt; Promise&lt;unknown&gt;</span>.</td><td><span class="code-inline">context.event</span>, <span class="code-inline">context.signal</span>, <span class="code-inline">context.metadata</span>, <span class="code-inline">context.state</span>.</td></tr>
@@ -653,6 +689,7 @@ timing: file.saved 0.2 ms</div>
             <tr><td><span class="code-inline">EventDispatchAbortedError</span></td><td>The <span class="code-inline">signal</span> you passed was aborted.</td><td><span class="code-inline">results</span> and <span class="code-inline">errors</span> gathered so far.</td></tr>
             <tr><td><span class="code-inline">EventTypeNotFoundError</span></td><td>Publishing an unregistered type with <span class="code-inline">requireRegistration: true</span>.</td><td></td></tr>
             <tr><td><span class="code-inline">DuplicateEventHandlerError</span> · <span class="code-inline">DuplicateEventDefinitionError</span></td><td>Reusing a handler <span class="code-inline">id</span> or registering a type twice.</td><td></td></tr>
+            <tr><td><span class="code-inline">EventListenerLimitExceededError</span></td><td>Registering past <span class="code-inline">maxHandlersPerPattern</span> / <span class="code-inline">maxListeners</span> with <span class="code-inline">enforceHandlerLimit: true</span>.</td><td><span class="code-inline">pattern</span>, <span class="code-inline">count</span>, <span class="code-inline">limit</span>. Never raised under the default warn-only behaviour.</td></tr>
             <tr><td><span class="code-inline">EventBusStoppedError</span> · <span class="code-inline">EventBusDisposedError</span> · <span class="code-inline">EventEmitterDisposedError</span></td><td>Using a bus or emitter after <span class="code-inline">stop()</span> / <span class="code-inline">dispose()</span>.</td><td></td></tr>
           </tbody>
         </table>
@@ -680,7 +717,7 @@ timing: file.saved 0.2 ms</div>
           </li>
           <li class="border-2 border-black p-4">
             <div class="font-bold">Adding handlers in a loop without removing them</div>
-            <p class="text-sm mt-1">Each <code>on()</code> call adds another handler. After 100 on the same pattern the bus emits a leak warning through <code>process.emitWarning</code> (type <code>ZudojsEventsWarning</code>), or passes it to <code>onWarning</code> if you set one. Keep the subscription and call <code>unsubscribe()</code> when the owner goes away.</p>
+            <p class="text-sm mt-1">Each <code>on()</code> call adds another handler. After 100 on the same pattern the bus emits one leak warning through <code>process.emitWarning</code> (type <code>ZudojsEventsWarning</code>), or passes it to <code>onWarning</code> if you set one; the handler is still registered. Keep the subscription and call <code>unsubscribe()</code> when the owner goes away. If you would rather find out loudly, pass <code>emitter: { enforceHandlerLimit: true }</code> and the 101st <code>on()</code> throws <code>EventListenerLimitExceededError</code> instead of registering.</p>
           </li>
         </ul>
       </section>

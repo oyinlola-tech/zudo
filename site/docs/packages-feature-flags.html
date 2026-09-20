@@ -122,7 +122,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/feature-flags</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Feature flag system with deterministic rollouts, a rule engine, multiple providers, variants, snapshots, and evaluation context. Toggle features without redeploying.
@@ -148,7 +148,7 @@ pnpm add @zudojs/feature-flags
 yarn add @zudojs/feature-flags</div>
 
         <div class="callout callout-note">
-          <strong class="text-zudo-blue">Peer Dependency:</strong> @zudojs/feature-flags depends on @zudojs/errors (v1.1.0) for its error hierarchy.
+          <strong class="text-zudo-blue">Peer Dependencies:</strong> @zudojs/feature-flags depends on @zudojs/errors (v1.2.0) for its error hierarchy and @zudojs/types (v1.1.1) for its shared type guards.
         </div>
       </section>
 
@@ -200,10 +200,15 @@ yarn add @zudojs/feature-flags</div>
               </tr>
             </thead>
             <tbody>
-              <tr>
+              <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono text-sm">@zudojs/errors</td>
-                <td class="p-3">1.1.0</td>
+                <td class="p-3">1.2.0</td>
                 <td class="p-3">Feature flag error hierarchy (FeatureFlagError, NotFoundError, ProviderError, etc.)</td>
+              </tr>
+              <tr>
+                <td class="p-3 font-mono text-sm">@zudojs/types</td>
+                <td class="p-3">1.1.1</td>
+                <td class="p-3">Shared type guards (<code>isPlainObject</code>, re-exported here and deprecated in favour of importing it from @zudojs/types)</td>
               </tr>
             </tbody>
           </table>
@@ -451,7 +456,7 @@ yarn add @zudojs/feature-flags</div>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">variant_assignment</td><td class="p-3">Variant assigned</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">disabled</td><td class="p-3">Flag is disabled</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">not_found</td><td class="p-3">Flag does not exist</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">error</td><td class="p-3">Provider unreachable (<code>getAll()</code> or <code>get()</code> threw); reported to <code>onError</code></td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">error</td><td class="p-3">Provider unreachable (<code>provider.getAll()</code> or <code>provider.get()</code> threw); reported to <code>onError</code>. This is how <code>evaluate()</code> reports an outage &mdash; <code>snapshot()</code> and <code>getAll()</code> reject instead.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">dependency_disabled</td><td class="p-3">A required dependency is not on for this context (disabled, draft, archived, expired, or evaluates false)</td></tr>
               <tr><td class="p-3 font-mono text-sm">expired</td><td class="p-3">Flag is <code>state: "archived"</code> or <code>metadata.expiresAt</code> is in the past (a schedule rule outside its window simply does not match)</td></tr>
             </tbody>
@@ -486,8 +491,52 @@ yarn add @zudojs/feature-flags</div>
   <span class="kw">readonly</span> provider: <span class="tp">FeatureFlagProvider</span>;
   <span class="kw">readonly</span> defaultContext?: <span class="tp">FeatureFlagContext</span>;
   <span class="kw">readonly</span> throwOnMissing?: <span class="tp">boolean</span>;  <span class="cm">// default: false</span>
+  <span class="kw">readonly</span> onError?: (error: <span class="tp">unknown</span>, source: <span class="tp">string</span>) =&gt; <span class="tp">void</span>;
+  <span class="kw">readonly</span> throwOnProviderError?: <span class="tp">boolean</span>;  <span class="cm">// default: false</span>
   <span class="kw">readonly</span> missingFlagTtlMs?: <span class="tp">number</span>;  <span class="cm">// default: 30_000 — how long a missing flag is remembered</span>
+  <span class="kw">readonly</span> providerCooloffMs?: <span class="tp">number</span>;  <span class="cm">// default: 5_000 — how long a failing provider is left alone</span>
 }</div>
+
+        <div class="border-4 border-black mt-4">
+          <table class="w-full text-sm">
+            <thead class="bg-black text-white">
+              <tr>
+                <th class="p-3 text-left">Option</th>
+                <th class="p-3 text-left">Default</th>
+                <th class="p-3 text-left">What it does</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono text-sm">throwOnMissing</td>
+                <td class="p-3"><code>false</code></td>
+                <td class="p-3">Throw <code>FeatureFlagNotFoundError</code> instead of reporting <code>reason: "not_found"</code>.</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono text-sm">onError</td>
+                <td class="p-3">none</td>
+                <td class="p-3">Receives every contained provider failure, with the call that produced it (<code>FeatureFlagProvider.getAll</code>, <code>.get</code>, <code>.refresh</code>).</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono text-sm">throwOnProviderError</td>
+                <td class="p-3"><code>false</code></td>
+                <td class="p-3">Rethrow provider failures instead of containing them, so an unreachable store is a hard failure the caller handles.</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono text-sm">missingFlagTtlMs</td>
+                <td class="p-3"><code>30_000</code></td>
+                <td class="p-3">How long a key the provider does not know is remembered as missing. At most 1,000 keys; dropped on every reload. <code>0</code> asks the provider on every evaluation.</td>
+              </tr>
+              <tr>
+                <td class="p-3 font-mono text-sm">providerCooloffMs</td>
+                <td class="p-3"><code>5_000</code></td>
+                <td class="p-3">How long a <em>failing</em> provider is left alone before it is probed again. <code>0</code> restores the pre-v1.3.0 behaviour of calling the provider on every evaluation. A successful call closes the window at once, and <code>refresh()</code> always probes regardless.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="mt-4 text-sm">New in v1.3.0, <code class="bg-black/5 px-1">providerCooloffMs</code> exists because an outage used to cost two remote round trips per evaluation: every single <code class="bg-black/5 px-1">evaluate()</code> re-ran <code class="bg-black/5 px-1">getAll()</code> and <code class="bg-black/5 px-1">get(key)</code> against the store that had just failed, each waiting out its own timeout. With the default 5,000 ms window the provider is probed at most once per window while it is down.</p>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Returned API</h3>
         <div class="code-block"><span class="kw">function</span> <span class="fn">createFeatureFlags</span>(options: <span class="tp">FeatureFlagsOptions</span>): {
@@ -509,15 +558,73 @@ yarn add @zudojs/feature-flags</div>
     key: <span class="tp">string</span>, context?: <span class="tp">FeatureFlagContext</span>
   ): <span class="tp">Promise</span>&lt;<span class="tp">FeatureFlagEvaluation</span>&lt;<span class="tp">T</span>&gt;&gt;;
 
-  <span class="cm">// Evaluate all flags at once</span>
+  <span class="cm">// Evaluate every client-visible flag at once.</span>
+  <span class="cm">// Rejects with FeatureFlagProviderError if the flags never loaded.</span>
   <span class="fn">snapshot</span>(context?: <span class="tp">FeatureFlagContext</span>): <span class="tp">Promise</span>&lt;<span class="tp">ReadonlyMap</span>&lt;<span class="tp">string</span>, <span class="tp">FeatureFlagEvaluation</span>&gt;&gt;;
 
   <span class="cm">// Refresh flags from provider</span>
   <span class="fn">refresh</span>(): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
 
-  <span class="cm">// Get all flag definitions</span>
+  <span class="cm">// Get all flag definitions.</span>
+  <span class="cm">// Rejects with FeatureFlagProviderError if the flags never loaded.</span>
   <span class="fn">getAll</span>(): <span class="tp">Promise</span>&lt;<span class="tp">Readonly</span>&lt;<span class="tp">FeatureFlag</span>[]&gt;&gt;;
+
+  <span class="cm">// Stop listening for provider changes</span>
+  <span class="fn">close</span>(): <span class="tp">void</span>;
 };</div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">When the provider is unreachable</h3>
+
+        <p class="mb-3 text-sm">The two halves of the API deliberately behave differently, and v1.3.0 widened the gap. Get this the wrong way round and a total outage ships to a browser as every flag being off.</p>
+
+        <div class="border-4 border-black">
+          <table class="w-full text-sm">
+            <thead class="bg-black text-white">
+              <tr>
+                <th class="p-3 text-left">Call</th>
+                <th class="p-3 text-left">Provider down, nothing ever loaded</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono text-sm">evaluate()</td>
+                <td class="p-3"><strong>Resolves</strong> with <code>reason: "error"</code>, <code>defaulted: true</code>. It does not throw. Unchanged in v1.3.0.</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono text-sm">isEnabled() / get() / getBoolean()</td>
+                <td class="p-3"><strong>Resolve.</strong> They delegate to <code>evaluate()</code>, so they fall back to <code>false</code>, <code>undefined</code> and the <code>defaultValue</code> you passed.</td>
+              </tr>
+              <tr class="border-b-2 border-black/10">
+                <td class="p-3 font-mono text-sm">snapshot()</td>
+                <td class="p-3"><strong>Rejects</strong> with <code>FeatureFlagProviderError</code>. Before v1.3.0 it resolved to an empty <code>Map</code>.</td>
+              </tr>
+              <tr>
+                <td class="p-3 font-mono text-sm">getAll()</td>
+                <td class="p-3"><strong>Rejects</strong> with <code>FeatureFlagProviderError</code>. Before v1.3.0 it resolved to an empty array.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout callout-note mt-4">
+          <strong class="text-zudo-blue">Why the asymmetry:</strong> an evaluation has somewhere to put the bad news &mdash; the <code>reason</code> field on the result it returns. A <code>Map</code> or an array has nowhere, and an empty one is indistinguishable from &ldquo;no flags are configured&rdquo;. So the bulk reads now fail loudly instead of quietly reporting an outage as a configuration state. <code>onError</code> still sees the underlying failure first, either way.
+        </div>
+
+        <p class="mt-4 text-sm">Two qualifications. Once a load has succeeded, <code class="bg-black/5 px-1">snapshot()</code> and <code class="bg-black/5 px-1">getAll()</code> keep serving that data even if a later reload fails &mdash; only a cold, never-loaded instance rejects. And a provider that genuinely holds no flags still resolves empty, because the load succeeded.</p>
+
+        <div class="code-block"><span class="cm">// Upgrading from v1.2.x: this used to be dead code on a cold outage.</span>
+<span class="kw">try</span> {
+  <span class="kw">const</span> visible = <span class="kw">await</span> flags.<span class="fn">snapshot</span>(context);
+  res.<span class="fn">json</span>(<span class="tp">Object</span>.<span class="fn">fromEntries</span>(visible));
+} <span class="kw">catch</span> (error) {
+  <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">FeatureFlagProviderError</span>) {
+    <span class="cm">// Serve the last good payload, or fail the request —</span>
+    <span class="cm">// but do not ship "{}" and call it the flag state.</span>
+    res.<span class="fn">status</span>(<span class="num">503</span>).<span class="fn">end</span>();
+    <span class="kw">return</span>;
+  }
+  <span class="kw">throw</span> error;
+}</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Full Example</h3>
         <div class="code-block"><span class="kw">import</span> { <span class="fn">createFeatureFlags</span>, <span class="fn">createMemoryProvider</span> } <span class="kw">from</span> <span class="str">"@zudojs/feature-flags"</span>;
@@ -529,12 +636,14 @@ yarn add @zudojs/feature-flags</div>
     enabled: <span class="kw">true</span>,
     description: <span class="str">"Enable dark mode UI"</span>,
     state: <span class="str">"active"</span>,
+    visibility: <span class="str">"client"</span>,
   },
   {
     key: <span class="str">"new-checkout"</span>,
     defaultValue: <span class="kw">false</span>,
     enabled: <span class="kw">true</span>,
     state: <span class="str">"active"</span>,
+    visibility: <span class="str">"client"</span>,
     rules: [
       {
         type: <span class="str">"percentage"</span>,
@@ -559,7 +668,10 @@ yarn add @zudojs/feature-flags</div>
 });
 <span class="cm">// result: { key, value, reason: "percentage_rollout", defaulted: false }</span>
 
-<span class="cm">// Snapshot all flags</span>
+<span class="cm">// Snapshot every client-visible flag. Both flags above declare</span>
+<span class="cm">// visibility: "client"; a flag that does not is withheld, because</span>
+<span class="cm">// a snapshot is what you ship to a browser.</span>
+<span class="cm">// Rejects with FeatureFlagProviderError if the store never loaded.</span>
 <span class="kw">const</span> all = <span class="kw">await</span> flags.<span class="fn">snapshot</span>({ userId: <span class="str">"user-42"</span> });</div>
       </section>
 
@@ -663,6 +775,10 @@ provider.<span class="fn">delete</span>(<span class="str">"new-ui"</span>);</div
   provider,
   defaultContext: { environment: <span class="str">"production"</span> },
   throwOnMissing: <span class="kw">false</span>,
+  <span class="cm">// Leave a failing store alone for 5 s instead of re-querying it</span>
+  <span class="cm">// on every evaluation. 5_000 is the default; 0 disables the window.</span>
+  providerCooloffMs: <span class="num">5_000</span>,
+  <span class="fn">onError</span>: (error, source) =&gt; console.<span class="fn">error</span>(source, error),
 });</div>
       </section>
 
@@ -782,7 +898,7 @@ registry.<span class="fn">size</span>;            <span class="cm">// 2</span></
               </tr>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono text-sm">FeatureFlagProviderError</td>
-                <td class="p-3">Provider fails to fetch or parse flag definitions</td>
+                <td class="p-3">Provider fails to fetch or parse flag definitions. Since v1.3.0 also raised by <code>snapshot()</code> and <code>getAll()</code> when the flags were never loaded, and by any call under <code>throwOnProviderError: true</code>.</td>
               </tr>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono text-sm">FeatureFlagEvaluationError</td>
@@ -816,16 +932,20 @@ registry.<span class="fn">size</span>;            <span class="cm">// 2</span></
 } <span class="kw">from</span> <span class="str">"@zudojs/feature-flags"</span>;
 
 <span class="kw">try</span> {
-  <span class="kw">const</span> value = <span class="kw">await</span> flags.<span class="fn">isEnabled</span>(<span class="str">"my-flag"</span>);
+  <span class="cm">// A bulk read: this is the call that raises</span>
+  <span class="cm">// FeatureFlagProviderError on an unreachable store.</span>
+  <span class="kw">const</span> all = <span class="kw">await</span> flags.<span class="fn">getAll</span>();
 } <span class="kw">catch</span> (error) {
   <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">FeatureFlagNotFoundError</span>) {
-    <span class="cm">// Flag doesn't exist</span>
+    <span class="cm">// Flag doesn't exist (throwOnMissing: true)</span>
   } <span class="kw">else if</span> (error <span class="kw">instanceof</span> <span class="tp">FeatureFlagProviderError</span>) {
     <span class="cm">// Provider failed</span>
   } <span class="kw">else if</span> (error <span class="kw">instanceof</span> <span class="tp">FeatureFlagError</span>) {
     <span class="cm">// Any other feature flag error</span>
   }
 }</div>
+
+        <p class="mt-3 text-sm">Wrapping <code class="bg-black/5 px-1">isEnabled()</code>, <code class="bg-black/5 px-1">get()</code>, <code class="bg-black/5 px-1">getBoolean()</code> or <code class="bg-black/5 px-1">evaluate()</code> in a <code class="bg-black/5 px-1">try</code> for a provider failure catches nothing: they contain it and report <code class="bg-black/5 px-1">reason: "error"</code>. Read <code class="bg-black/5 px-1">evaluation.reason</code>, pass <code class="bg-black/5 px-1">onError</code>, or set <code class="bg-black/5 px-1">throwOnProviderError: true</code> if you want them to throw. Only <code class="bg-black/5 px-1">throwOnMissing: true</code> makes them raise <code class="bg-black/5 px-1">FeatureFlagNotFoundError</code>.</p>
       </section>
 
       <!-- Dependency Resolution -->
@@ -999,7 +1119,7 @@ registry.<span class="fn">size</span>;            <span class="cm">// 2</span></
       <!-- EXPORT INDEX -->
       <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
-        <p class="mb-5 text-sm">Every name <code>@zudojs/feature-flags</code> exports from its package root at v1.2.0 &mdash; <strong>55</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/feature-flags</code> exports from its package root at v1.3.0 &mdash; <strong>55</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
         <details class="border-2 border-black p-5 bg-white">
           <summary class="font-bold cursor-pointer select-none">Show all 55 exports</summary>
           <div class="mt-5">

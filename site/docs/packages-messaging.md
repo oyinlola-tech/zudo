@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/messaging — the in-process me
 source: https://zudojs.oyinlola.site/docs/packages-messaging
 ---
 
-v1.0.2
+v1.1.0
 
 # @zudojs/messaging
 
@@ -113,7 +113,7 @@ console.log(Object.isFrozen(message));  // true — messages cannot be edited af
 
 A *handler* is a function that receives a message and a `MessageContext`, does some work, and returns a value (or a promise of one). Registering a handler is the "subscribe" half of publish/subscribe: you tell the bus "call me for this type".
 
-Several handlers may register for the same type. The bus runs them one after another, lowest `priority` number first (default 100). With one handler, `result.value` is that handler's return value. With several, it is an array of their return values in run order.
+Several handlers may register for the same type. The bus runs them one after another, lowest `priority` number first (default 100). With one handler, `result.value` is that handler's return value. With several, it is an array of their return values in run order. That fan-out is the default; create the bus with `allowMultipleHandlers: false` for a command or query bus, and a second handler claiming a type already taken is refused with a `MessageError` naming the type and the handler that holds it.
 
 This registers two handlers for one type, sends a message, then removes one handler. The payload type annotation on the parameter is what gives you `message.payload.orderId` without a cast.
 
@@ -166,6 +166,35 @@ bus.addHandler({
 
 > **Watch out:** Handler ids must be unique across the whole bus. Registering the same id twice throws `DuplicateMessageHandlerError` immediately, unless you created the bus with `allowDuplicateHandlers: true`.
 
+### Object-form handlers
+
+The `handler` field of a `NamedMessageHandler` accepts either form described by `MessageHandlerLike`: a plain function, or an object with a `handle(message, context)` method. The object form lets a class hold the handler's dependencies. `this` is bound for you, so a class method may use its own fields.
+
+```ts
+class AuditHandler {
+  constructor(private readonly sink: AuditSink) {}
+
+  async handle(message: Message, context: MessageContext) {
+    await this.sink.write(message.type, context.correlationId);
+    return "audited";
+  }
+}
+
+bus.addHandler({
+  id: "audit-log",
+  name: "Audit log",
+  messageTypes: ["order.placed"],
+  handler: new AuditHandler(sink), // object form — resolved through resolveMessageHandler
+});
+
+const result = await bus.send({ type: "order.placed", payload: { id: "o_1" } });
+console.log(result.success, result.value); // true "audited"
+```
+
+> **Changed in v1.1.0:** an object-form handler now actually runs. `MessageHandlerLike` had always advertised the `{ handle }` form, but the dispatcher invoked the registered handler as a function, so every dispatch to an object handler came back as a failed dispatch with `handler.handler is not a function` in `result.error`. If you worked around this by wrapping the object yourself — `handler: (m, c) => obj.handle(m, c)` — that still works and needs no change.
+
+`bus.on(type, fn)` takes a function only. Register an object-form handler with `addHandler()`, or normalise it yourself with `resolveMessageHandler(handlerLike)`, which returns a plain bound function.
+
 ## SENDING AND RESULTS
 
 *Dispatching* is the "publish" half: the bus takes a message, runs middleware, runs the matching handlers, and returns a `DispatchResult`. Two methods do it. `send(input)` builds the message from plain input first. `dispatch(message)` takes a message you already created, for example one from `createDerivedMessage`.
@@ -205,6 +234,8 @@ Only two things reject the promise instead of returning a result: using a bus af
 Pass `{ timeout: 5000 }` to one dispatch, or `defaultTimeout` to `createMessageBus`, and the bus starts a timer that aborts an `AbortSignal`. You can also pass your own `signal`. Handlers that have not started yet are skipped and the result fails with a bare `MessageDispatchAbortedError` as `result.error` (not wrapped in a `MessageHandlerError`).
 
 > **Watch out:** A handler that is already running is not interrupted. Long handlers should check `context.signal.aborted` between steps and stop themselves. A timed-out dispatch comes back with `result.error instanceof MessageTimeoutError`.
+
+> **Changed in v1.1.0:** `result.handlerResults` is a snapshot taken when the dispatch settles, so it stops changing once you have awaited the dispatch. Previously it was the live array the dispatcher was still writing into: a handler that kept running past a timeout could push a `success: true` record into the result of a dispatch that had already failed with `MessageTimeoutError`. Audit records and metrics derived from `handlerResults` are now stable.
 
 ## MIDDLEWARE
 
@@ -310,7 +341,7 @@ Rule of thumb: "please do X and tell me the outcome" is a message; "X happened" 
 `createMessageBus` is enough for almost everything. The parts it is built from are exported too, for people writing their own bus on top of this package:
 
 - `HandlerRegistryStore` keeps the handlers. `register()`, `unregister()`, `resolve(type)` (sorted by priority, disabled handlers left out), `get()`, `has()`, `getHandlerIds()`, `getRegisteredTypes()`, `size`, `clear()`.
-- `createDispatcher(registry?)` returns a `Dispatcher` (class `DefaultDispatcher`) that runs middleware and handlers for one message. The bus adds timeouts, `on()`/`off()` and the disposed flag on top.
+- `createDispatcher(registry?)` returns a `Dispatcher` (class `DefaultDispatcher`) that runs middleware and handlers for one message. The bus adds timeouts, `on()`/`off()` and the disposed flag on top. The interface is `dispatch()`, `use()`, `removeMiddleware()`, `listMiddleware()`, `getRegistry()` and `dispose()`.
 - `runMessagePipeline(middleware, handler, message, options?)` runs a middleware chain around any async function and returns `{ result, executions, duration }`.
 - `createMessageContext(message, options?)` and `resolveMessageHandler(handlerLike)` are the small helpers the dispatcher uses internally.
 
@@ -334,7 +365,30 @@ console.log(result.value);                    // "hello Ada"
 console.log(registry.getRegisteredTypes()); // ["greet"]
 ```
 
-> **Not implemented yet:** `Dispatcher.removeMiddleware()` always returns `false`, and the registry options `allowMultipleHandlers` and `requireTypeRegistration` are stored but not enforced.
+### Inspecting and releasing a dispatcher
+
+Three of the dispatcher's methods are about what it holds rather than what it runs.
+
+| Method | What it returns | Notes |
+| --- | --- | --- |
+| `listMiddleware()` | The ids of every registered global middleware, in the order they run. | Ascending `priority` (default 100), registration order breaking ties. These are the ids `use()` returned. |
+| `getRegistry()` | The `HandlerRegistryStore` this dispatcher resolves handlers from. | The registry you passed to `createDispatcher`, or the one it made for you. |
+| `dispose()` | Nothing. | Drops all middleware and makes every later `dispatch()` reject with `MessageBusDisposedError`. Handlers stay in the registry. |
+
+```ts
+const dispatcher = createDispatcher(registry);
+
+const timingId = dispatcher.use(timing, { id: "timing", priority: 10 });
+dispatcher.use(logging, { id: "logging" });
+
+console.log(dispatcher.listMiddleware());        // ["timing", "logging"]
+console.log(dispatcher.removeMiddleware(timingId)); // true
+console.log(dispatcher.getRegistry() === registry);  // true
+
+dispatcher.dispose(); // later dispatches reject with MessageBusDisposedError
+```
+
+> **Changed in v1.1.0:** `dispose()`, `getRegistry()` and `listMiddleware()` are now declared on the `Dispatcher` interface. `DefaultDispatcher` already implemented all three, but because the interface omitted them, `createDispatcher().dispose()` did not compile without a cast to `DefaultDispatcher`. Any such cast can now be dropped.
 
 ## API REFERENCE
 
@@ -363,7 +417,7 @@ Everything below is exported from `@zudojs/messaging`.
 | --- | --- | --- |
 | `InMemoryMessageBus` | The bus `createMessageBus` returns. | Methods: `send`, `dispatch`, `on`, `addHandler`, `off`, `use`, `hasHandlers`, `dispose`; getters `handlerCount`, `disposed`. |
 | `HandlerRegistryStore` | In-memory store of named handlers. | See [Lower-level pieces](#lower-level). |
-| `DefaultDispatcher` | Runs middleware and handlers for one message. | Also has `getRegistry()` and `dispose()`. |
+| `DefaultDispatcher` | Runs middleware and handlers for one message. | Implements the whole `Dispatcher` interface: `dispatch()`, `use()`, `removeMiddleware()`, `listMiddleware()`, `getRegistry()`, `dispose()`. |
 
 ### Types
 
@@ -375,7 +429,7 @@ Everything below is exported from `@zudojs/messaging`.
 | `MessageContext`, `MessageContextOptions` | What handlers receive as their second argument. |  |
 | `MessageMiddleware`, `MessageMiddlewareLike`, `MessageMiddlewareContext`, `MessageMiddlewareNext` | Middleware function shape and its context. | Pipeline result types: `MessageMiddlewarePipelineResult`, `MessageMiddlewareExecution`. |
 | `MessageBus`, `MessageBusOptions` | The bus interface and its options. |  |
-| `Dispatcher`, `DispatchOptions`, `DispatchResult`, `HandlerExecutionResult` | Dispatch interface, per-call options, and the result shape. | `DispatchOptions`: `context`, `middleware`, `timeout`, `signal`. |
+| `Dispatcher`, `DispatchOptions`, `DispatchResult`, `HandlerExecutionResult` | Dispatch interface, per-call options, and the result shape. | `Dispatcher`: `dispatch`, `use`, `removeMiddleware`, `listMiddleware`, `getRegistry`, `dispose`. `DispatchOptions`: `context`, `middleware`, `timeout`, `signal`. |
 | `HandlerRegistryOptions`, `RegisteredHandler`, `HandlerQueryOptions` | Registry configuration and lookup types. |  |
 
 ### Errors
@@ -409,7 +463,7 @@ All error classes live in `@zudojs/errors` and are re-exported here. Only the fi
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/messaging` exports from its package root at v1.0.2 — **69** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/messaging` exports from its package root at v1.1.0 — **69** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 69 exports**
 

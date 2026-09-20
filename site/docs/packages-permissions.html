@@ -122,7 +122,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/permissions</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Authorization engine for the Zudojs framework. Supports RBAC, ABAC, resource policies, wildcards, role hierarchy, condition combinators, ability compilation, and explain mode.
@@ -166,7 +166,7 @@ yarn add @zudojs/permissions</div>
           <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>Rule engine</strong> with exact, wildcard, and conditional (ABAC) matching — deny-overrides by default, priority-based on request</li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Policy evaluation</strong> with wildcard matching, timeouts, priority ordering, and fail-closed error handling</li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>Ability context</strong> for pre-resolved actors with can/cannot/check/explain</li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Decision caching</strong> keyed by actor, permission and resource, with configurable TTL, size cap and actor-level invalidation</li>
+          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> <strong>Decision caching</strong> keyed by actor, permission and resource, with configurable TTL, size cap and actor-level invalidation &mdash; opt-in only for resolver-backed engines, via <code class="bg-black/5 px-1">resolverCacheKey</code></li>
           <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <strong>HTTP middleware</strong> integration with actor extraction and permission guards</li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <strong>Explain mode</strong> for debugging authorization decisions with step-by-step traces</li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <strong>13 error classes</strong> covering all permission, role, and policy failure modes</li>
@@ -383,7 +383,33 @@ registry.<span class="fn">define</span>(<span class="str">"post:delete"</span>, 
 
 registry.<span class="fn">has</span>(<span class="str">"post:create"</span>);  <span class="cm">// true</span>
 registry.<span class="fn">all</span>();              <span class="cm">// ["post:create", "post:read", "post:update", "post:delete"]</span>
-registry.<span class="fn">match</span>(<span class="str">"post:*"</span>);   <span class="cm">// all post permissions</span></div>
+registry.<span class="fn">match</span>(<span class="str">"post:*"</span>);   <span class="cm">// all post permissions</span>
+
+<span class="cm">// Added in 1.3.0 — the same change notifier createRoleRegistry() and</span>
+<span class="cm">// createPolicyRegistry() already carried. Fires on define, on a remove</span>
+<span class="cm">// that removed something, and on clear. Returns an unsubscribe function.</span>
+<span class="kw">const</span> unsubscribe = registry.<span class="fn">subscribe</span>(() =&gt; rebuildAdminUi());</div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Implications and the engine</h3>
+        <p class="mb-3 text-sm">A registry records implications, and <code class="bg-black/5 px-1">expandImplied</code> follows the chains. Since 1.3.0 <code class="bg-black/5 px-1">createPermissionEngine</code> accepts the registry itself in that slot, not only a closure over it.</p>
+        <div class="code-block"><span class="kw">const</span> permissions = <span class="fn">createPermissionRegistry</span>();
+permissions.<span class="fn">define</span>(<span class="str">"post:admin"</span>, { implies: [<span class="str">"post:write"</span>] });
+permissions.<span class="fn">define</span>(<span class="str">"post:write"</span>, { implies: [<span class="str">"post:read"</span>] });
+
+<span class="kw">const</span> engine = <span class="fn">createPermissionEngine</span>({
+  roles,
+  <span class="cm">// Pass the registry, not a closure over it: the engine subscribes.</span>
+  expandImplied: permissions,
+});
+
+<span class="kw">await</span> engine.<span class="fn">can</span>(adminActor, <span class="str">"post:read"</span>); <span class="cm">// true — implied by post:admin</span>
+
+permissions.<span class="fn">remove</span>(<span class="str">"post:admin"</span>);
+<span class="kw">await</span> engine.<span class="fn">can</span>(adminActor, <span class="str">"post:read"</span>); <span class="cm">// false — cached decisions dropped</span></div>
+
+        <div class="callout callout-warning mt-4">
+          <strong class="text-zudo-yellow">Changed in 1.3.0:</strong> a bare <code>expandImplied: (permission) =&gt; permissions.expandImplied(permission)</code> still works, but a plain function cannot announce a change, so an engine given one now <strong>caches no decisions at all</strong>. Until 1.2.0 it cached normally, and <code>permissions.remove("post:admin")</code> left every <code>post:delete</code> it had implied answering <code>true</code> for the whole cache TTL &mdash; while <code>skipCache: true</code> correctly said <code>false</code>. Pass the registry to keep both caching and immediate revocation.
+        </div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">parsePermission</h3>
         <div class="code-block"><span class="kw">import</span> { <span class="fn">parsePermission</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
@@ -637,6 +663,8 @@ policies.<span class="fn">forPermission</span>(<span class="str">"post:publish"<
   <span class="fn">authorize</span>(actor, permission, resource?, options?): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
   <span class="fn">explain</span>(actor, permission, resource?, options?): <span class="tp">Promise</span>&lt;<span class="tp">ExplainResult</span>&gt;;
   <span class="fn">createAbility</span>(actor): <span class="tp">Ability</span>;
+  <span class="fn">invalidateActor</span>(actorId: <span class="tp">string</span>): <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;;
+  <span class="fn">invalidateRoles</span>(): <span class="tp">void</span>;
 }</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">createPermissionEngine</h3>
@@ -729,12 +757,69 @@ permStore.<span class="fn">set</span>(<span class="str">"user-1"</span>, [
 <span class="kw">const</span> roleStore = <span class="kw">new</span> <span class="tp">Map</span>&lt;<span class="tp">string</span>, <span class="tp">string</span>[]&gt;();
 roleStore.<span class="fn">set</span>(<span class="str">"user-1"</span>, [<span class="str">"editor"</span>]);
 <span class="kw">const</span> roleResolver = <span class="fn">createMemoryRoleResolver</span>(roleStore);</div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Resolvers and the decision cache</h3>
+
+        <div class="callout callout-warning mb-4">
+          <strong class="text-zudo-yellow">Changed in 1.3.0 &mdash; read this if you configured a cache.</strong> An engine holding a <code>roleResolver</code> or a <code>permissionResolver</code> now caches <strong>nothing</strong> unless you also pass the new <code>resolverCacheKey</code>. Until 1.2.0 such an engine cached like any other, and none of the resolver's state was in the key &mdash; so a grant withdrawn upstream kept being served until the entry expired. If you pair a resolver with <code>cache</code> today and expect hits, there are none: supply <code>resolverCacheKey</code>, or accept that every check is evaluated afresh. Engines without a resolver are unaffected.
+        </div>
+
+        <p class="mb-4">
+          <code class="bg-black/5 px-1">resolverCacheKey</code> takes the actor and returns something that changes whenever the resolver's answer for that actor could change &mdash; a grants-table version, an <code class="bg-black/5 px-1">updatedAt</code> stamp, a generation counter. It has no default. Returning <code class="bg-black/5 px-1">undefined</code> leaves that actor uncached, which is the right answer for an actor whose upstream state you cannot describe.
+        </p>
+
+        <div class="code-block"><span class="kw">import</span> {
+  <span class="fn">createPermissionEngine</span>,
+  <span class="fn">createMemoryPermissionCache</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
+
+<span class="kw">const</span> engine = <span class="fn">createPermissionEngine</span>({
+  roles,
+  cache: <span class="fn">createMemoryPermissionCache</span>({ defaultTtlMs: <span class="num">30_000</span> }),
+  cacheTtlMs: <span class="num">30_000</span>,
+  permissionResolver: { resolvePermissions: (actor) =&gt; db.<span class="fn">rulesFor</span>(actor.id) },
+  <span class="cm">// Without this the cache above is never written to.</span>
+  resolverCacheKey: (actor) =&gt; db.<span class="fn">grantsVersionFor</span>(actor.id),
+});</div>
+
+        <p class="mt-4">
+          A resolver that fails is reported through <code class="bg-black/5 px-1">onError</code> and the check continues fail-closed, rather than throwing out of the authorization path.
+        </p>
       </section>
 
       <!-- Caching -->
       <section id="caching" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">CACHING</h2>
-        <p class="mb-4">Keys include a digest of the actor's roles, permissions, type and other fields; actors carrying non-plain values are not cached. Role/policy registry changes and <code class="bg-black/5 px-1">invalidateRoles()</code> clear the decision cache.</p>
+        <p class="mb-4">Hand the cache to the engine and it manages the keys itself. A key carries the actor id, a digest of everything else the actor holds (<code class="bg-black/5 px-1">roles</code>, <code class="bg-black/5 px-1">permissions</code>, <code class="bg-black/5 px-1">type</code>, any other field a condition may read), the permission, the resource id and the engine's configuration generation. The same user id with different roles &mdash; an admin token in one tenant and a viewer token in another, or a demoted token &mdash; therefore never shares a decision. Role and policy registry changes, and <code class="bg-black/5 px-1">invalidateRoles()</code>, clear the decision cache.</p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createMemoryPermissionCache</span> } <span class="kw">from</span> <span class="str">"@zudojs/permissions"</span>;
+
+<span class="kw">const</span> engine = <span class="fn">createPermissionEngine</span>({
+  roles,
+  cache: <span class="fn">createMemoryPermissionCache</span>({
+    defaultTtlMs: <span class="num">30_000</span>,  <span class="cm">// default 60_000</span>
+    maxEntries: <span class="num">5_000</span>,     <span class="cm">// default 10_000</span>
+  }),
+  cacheTtlMs: <span class="num">30_000</span>,
+});
+
+<span class="kw">await</span> engine.<span class="fn">can</span>(actor, <span class="str">"post:read"</span>, post);                        <span class="cm">// evaluated</span>
+<span class="kw">await</span> engine.<span class="fn">can</span>(actor, <span class="str">"post:read"</span>, post);                        <span class="cm">// cached</span>
+<span class="kw">await</span> engine.<span class="fn">can</span>(actor, <span class="str">"post:read"</span>, post, { skipCache: <span class="num">true</span> }); <span class="cm">// forced</span>
+<span class="kw">await</span> engine.<span class="fn">invalidateActor</span>(<span class="str">"user-1"</span>);</div>
+
+        <p class="mb-3">A check is cached only when the key can describe it completely. These are <strong>not</strong> cached:</p>
+        <ul class="space-y-2 mb-6">
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> a resource with no <code class="bg-black/5 px-1">id</code> and no <code class="bg-black/5 px-1">options.resourceId</code> &mdash; the key would collapse to actor + permission, and an allow for one object would answer for the next;</li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> a check carrying <code class="bg-black/5 px-1">metadata</code>, because conditions such as <code class="bg-black/5 px-1">tenantIsolation()</code> read the tenant from there and it is not part of the key;</li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> an actor carrying something the digest cannot describe &mdash; a function, a class instance, a <code class="bg-black/5 px-1">Map</code>;</li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> a decision produced by a policy marked <code class="bg-black/5 px-1">cacheable: false</code>, or forced by a condition that threw;</li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> <strong>since 1.3.0</strong>, anything from an engine with a <code class="bg-black/5 px-1">roleResolver</code> or <code class="bg-black/5 px-1">permissionResolver</code> and no <code class="bg-black/5 px-1">resolverCacheKey</code>;</li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> <strong>since 1.3.0</strong>, anything from an engine whose <code class="bg-black/5 px-1">expandImplied</code> is a bare function rather than a <code class="bg-black/5 px-1">createPermissionRegistry()</code>;</li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> a TTL of <code class="bg-black/5 px-1">0</code> or less, which means "do not cache", not "cache forever".</li>
+        </ul>
+
+        <p class="mb-4"><code class="bg-black/5 px-1">deniedPermissions</code> is evaluated before the cache is consulted, so a deny added to the actor takes effect immediately rather than waiting for a cached allow to expire.</p>
 
         <h3 class="text-lg font-bold mb-3 mt-6">PermissionCache Interface</h3>
         <div class="code-block"><span class="kw">interface</span> <span class="tp">PermissionCache</span> {
@@ -756,18 +841,23 @@ roleStore.<span class="fn">set</span>(<span class="str">"user-1"</span>, [<span 
 <span class="cm">// Custom TTL: 5 minutes</span>
 <span class="kw">const</span> cache5m = <span class="fn">createMemoryPermissionCache</span>(<span class="num">300000</span>);
 
-<span class="cm">// Generate cache key</span>
+<span class="cm">// Generate cache key — (actorId, permission, resourceId?, scope?)</span>
 <span class="kw">const</span> key = <span class="fn">permissionCacheKey</span>(<span class="str">"user-1"</span>, <span class="str">"post:update"</span>, <span class="str">"post-42"</span>);
 <span class="cm">// "actor:user-1|post:update|post-42"</span>
 
-<span class="cm">// Use with engine</span>
-<span class="kw">const</span> cached = <span class="kw">await</span> cache.<span class="fn">get</span>(key);
-<span class="kw">if</span> (cached) {
-  <span class="cm">// Return cached decision</span>
-} <span class="kw">else</span> {
-  <span class="kw">const</span> decision = <span class="kw">await</span> engine.<span class="fn">check</span>(actor, <span class="str">"post:update"</span>, post);
-  <span class="kw">await</span> cache.<span class="fn">set</span>(key, decision, { ttl: <span class="num">60000</span> });
-}</div>
+<span class="cm">// `scope` is what the engine fills with the actor digest and its own</span>
+<span class="cm">// configuration generation, so two actors sharing an id never share a key.</span>
+<span class="kw">const</span> scoped = <span class="fn">permissionCacheKey</span>(<span class="str">"user-1"</span>, <span class="str">"post:update"</span>, <span class="str">"post-42"</span>, <span class="str">"g3"</span>);
+<span class="cm">// "actor:user-1|~g3|post:update|post-42"</span>
+
+<span class="cm">// The store itself, if you are implementing PermissionCache over Redis</span>
+<span class="kw">await</span> cache.<span class="fn">set</span>(key, { allowed: <span class="num">true</span> }, { ttl: <span class="num">60000</span> });
+<span class="kw">await</span> cache.<span class="fn">get</span>(key);              <span class="cm">// { allowed: true }</span>
+<span class="kw">await</span> cache.<span class="fn">invalidateActor</span>(<span class="str">"user-1"</span>); <span class="cm">// drops every entry for that actor</span></div>
+
+        <div class="callout callout-warning mt-4">
+          <strong class="text-zudo-yellow">Do not wrap the engine in a cache of your own.</strong> Pass the cache to <code>createPermissionEngine</code> instead. A key you build by hand carries only the actor id, the permission and the resource id, so it leaves out every rule the engine applies before it writes an entry: the actor digest (an admin token and a viewer token for the same user id would share one decision), the configuration generation, the metadata and resolver checks above. Caching <code>engine.check()</code> yourself under such a key reintroduces exactly the staleness 1.3.0 closed.
+        </div>
       </section>
 
       <!-- HTTP Middleware -->
@@ -936,7 +1026,6 @@ emitter.<span class="fn">on</span>((event) =&gt; {
   <span class="fn">createRoleRegistry</span>,
   <span class="fn">createAbility</span>,
   <span class="fn">createMemoryPermissionCache</span>,
-  <span class="fn">permissionCacheKey</span>,
   <span class="fn">createActorMiddleware</span>,
   <span class="fn">authorize</span>,
   <span class="fn">isOwner</span>,
@@ -961,10 +1050,13 @@ roleRegistry.<span class="fn">define</span>({
   permissions: [<span class="str">"post:read"</span>, <span class="str">"comment:read"</span>],
 });
 
-<span class="cm">// 2. Create the engine</span>
+<span class="cm">// 2. Create the engine — pass the registry itself, not roleRegistry.all(),</span>
+<span class="cm">//    so the engine subscribes and a revoked role invalidates the cache.</span>
 <span class="kw">const</span> engine = <span class="fn">createPermissionEngine</span>({
-  roles: roleRegistry.<span class="fn">all</span>(),
+  roles: roleRegistry,
   policyTimeout: <span class="num">5000</span>,
+  cache: <span class="fn">createMemoryPermissionCache</span>({ defaultTtlMs: <span class="num">300_000</span> }),
+  cacheTtlMs: <span class="num">300_000</span>,
 });
 
 <span class="cm">// 3. Create an actor</span>
@@ -990,14 +1082,10 @@ roleRegistry.<span class="fn">define</span>({
   extractActor: (ctx) =&gt; ctx.state.<span class="fn">get</span>(<span class="str">"permissions:actor"</span>),
 });
 
-<span class="cm">// 7. Caching</span>
-<span class="kw">const</span> cache = <span class="fn">createMemoryPermissionCache</span>(<span class="num">300000</span>);
-<span class="kw">const</span> key = <span class="fn">permissionCacheKey</span>(editor.id, <span class="str">"post:update"</span>);
-<span class="kw">const</span> cached = <span class="kw">await</span> cache.<span class="fn">get</span>(key);
-<span class="kw">if</span> (!cached) {
-  <span class="kw">const</span> decision = <span class="kw">await</span> engine.<span class="fn">check</span>(editor, <span class="str">"post:update"</span>);
-  <span class="kw">await</span> cache.<span class="fn">set</span>(key, decision, { ttl: <span class="num">300000</span> });
-}
+<span class="cm">// 7. Caching is the engine's job — the cache went in at step 2. Checks are</span>
+<span class="cm">//    served from it automatically; these are the two ways out of it.</span>
+<span class="kw">await</span> engine.<span class="fn">can</span>(editor, <span class="str">"post:update"</span>, <span class="num">undefined</span>, { skipCache: <span class="num">true</span> });
+<span class="kw">await</span> engine.<span class="fn">invalidateActor</span>(editor.id);
 
 <span class="cm">// 8. Explain mode</span>
 <span class="kw">const</span> explanation = <span class="kw">await</span> engine.<span class="fn">explain</span>(editor, <span class="str">"post:update"</span>);
@@ -1012,7 +1100,7 @@ console.<span class="fn">log</span>(explanation.steps);
       <!-- EXPORT INDEX -->
       <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
-        <p class="mb-5 text-sm">Every name <code>@zudojs/permissions</code> exports from its package root at v1.2.0 &mdash; <strong>139</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/permissions</code> exports from its package root at v1.3.0 &mdash; <strong>139</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
         <details class="border-2 border-black p-5 bg-white">
           <summary class="font-bold cursor-pointer select-none">Show all 139 exports</summary>
           <div class="mt-5">

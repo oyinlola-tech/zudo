@@ -122,7 +122,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/security</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Security primitives for input validation, header security, CORS, CSRF protection, rate limiting, and security headers with secure defaults.
@@ -207,6 +207,7 @@
 <span class="kw">import</span> {
   createRateLimiter,
   extractClientIp,
+  retryAfterSeconds,
   generateSecurityHeaders,
 } <span class="kw">from</span> <span class="str">"@zudojs/security"</span>;
 
@@ -223,7 +224,9 @@
   <span class="kw">const</span> headers = <span class="fn">generateSecurityHeaders</span>();
 
   <span class="kw">if</span> (!limit.allowed) {
-    res.<span class="fn">writeHead</span>(<span class="num">429</span>, { ...headers, <span class="str">"Retry-After"</span>: <span class="str">"60"</span> });
+    <span class="cmt">// Derived from the decision — resetAt is a Date, not a header value.</span>
+    <span class="kw">const</span> retryAfter = <span class="tp">String</span>(<span class="fn">retryAfterSeconds</span>(limit));
+    res.<span class="fn">writeHead</span>(<span class="num">429</span>, { ...headers, <span class="str">"Retry-After"</span>: retryAfter });
     res.<span class="fn">end</span>(<span class="str">"Too many requests"</span>);
     <span class="kw">return</span>;
   }
@@ -434,8 +437,35 @@ console.<span class="fn">log</span>(<span class="fn">checkCsrf</span>(<span clas
 console.<span class="fn">log</span>(<span class="fn">checkCsrf</span>(<span class="str">"POST"</span>, {}, <span class="str">"user-42"</span>, <span class="str">"s3cret"</span>)); <span class="cmt">// false — no token present</span></div>
 
         <p class="mb-4">
-          <code class="bg-black/5 px-1">verifyDoubleSubmit</code> passes only when both tokens are present, byte-for-byte equal (compared in constant time), correctly signed, unexpired, and bound to the session id you pass. Comparing the two alone would not be enough. <code class="bg-black/5 px-1">validateCsrfToken</code> and <code class="bg-black/5 px-1">verifyDoubleSubmit</code> throw on a secret shorter than 32 characters, and the protected <code class="bg-black/5 px-1">methods</code> list is matched case-insensitively.
+          <code class="bg-black/5 px-1">verifyDoubleSubmit</code> passes only when both tokens are present, byte-for-byte equal (compared in constant time), correctly signed, unexpired, and bound to the session id you pass. Comparing the two alone would not be enough. <code class="bg-black/5 px-1">validateCsrfToken</code> and <code class="bg-black/5 px-1">verifyDoubleSubmit</code> throw on a secret shorter than 32 characters (<code class="bg-black/5 px-1">MIN_CSRF_SECRET_LENGTH</code>), and the protected <code class="bg-black/5 px-1">methods</code> list is matched case-insensitively.
         </p>
+
+        <p class="mb-4">
+          <code class="bg-black/5 px-1">createCsrfProtection</code> binds all of that to one configuration, so the cookie name, header name, lifetime and secret are read from the same place at every call site:
+        </p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { createCsrfProtection } <span class="kw">from</span> <span class="str">"@zudojs/security"</span>;
+
+<span class="kw">const</span> csrf = <span class="fn">createCsrfProtection</span>({
+  secret: process.env.<span class="const">CSRF_SECRET</span>, <span class="cmt">// at least 32 characters</span>
+  cookieName: <span class="str">"app_csrf"</span>,            <span class="cmt">// default "_csrf"</span>
+  headerName: <span class="str">"x-app-csrf"</span>,          <span class="cmt">// default "x-csrf-token"</span>
+  expiration: <span class="num">3600</span>,                <span class="cmt">// seconds</span>
+  <span class="cmt">// methods: omit for the defaults — POST, PUT, PATCH, DELETE.</span>
+});
+
+<span class="kw">const</span> { token, setCookie } = csrf.<span class="fn">issue</span>({ sessionId });
+<span class="fn">setHeader</span>(<span class="str">"Set-Cookie"</span>, setCookie);
+
+<span class="cmt">// Safe to call on every request: safe methods return true.</span>
+<span class="kw">const</span> ok = csrf.<span class="fn">verify</span>(
+  { method: request.method, headers: request.headers, cookieHeader: request.headers.cookie },
+  { sessionId },
+);</div>
+
+        <div class="callout callout-danger">
+          <strong>Changed in 1.2.0:</strong> <code>createCsrfProtection</code> and <code>requiresCsrfProtection</code> now throw a <code>ConfigurationError</code> when <code>methods</code> is present but empty, is not an array, or contains a blank entry. Until 1.1.0, <code>methods: []</code> turned CSRF off for every request in silence &mdash; and that is exactly what <code>process.env.CSRF_METHODS?.split(",").filter(Boolean) ?? []</code> produces when the variable is unset. Omit <code>methods</code> to get the defaults; pass a list only when you mean to change them.
+        </div>
 
         <div class="callout callout-warning">
           <strong>Watch out:</strong> without <code>sessionId</code>, a token minted for one user validates for every other user &mdash; an attacker can get a token with their own account and replay it against a victim. Pass a session id whenever you have one, and pass the <em>same</em> one at generation and at validation.
@@ -512,7 +542,17 @@ console.<span class="fn">log</span>(<span class="fn">extractClientIp</span>(head
 
 <span class="cmt">// One proxy of your own: read one entry in from the right.</span>
 console.<span class="fn">log</span>(<span class="fn">extractClientIp</span>(headers, { trustProxy: <span class="num">1</span> }));         <span class="cmt">// "3.3.3.3"</span>
-console.<span class="fn">log</span>(<span class="fn">extractClientIp</span>(headers, { trustProxy: <span class="num">2</span> }));         <span class="cmt">// "2.2.2.2"</span></div>
+console.<span class="fn">log</span>(<span class="fn">extractClientIp</span>(headers, { trustProxy: <span class="num">2</span> }));         <span class="cmt">// "2.2.2.2"</span>
+
+<span class="cmt">// A chain shorter than trustProxy never passed through your proxies, so</span>
+<span class="cmt">// the header is skipped entirely: x-real-ip first, then remoteAddress.</span>
+<span class="kw">const</span> short = { <span class="str">"x-forwarded-for"</span>: <span class="str">"1.2.3.4"</span> };
+console.<span class="fn">log</span>(<span class="fn">extractClientIp</span>(short, { trustProxy: <span class="num">2</span>, remoteAddress: <span class="str">"9.9.9.9"</span> }));
+<span class="cmt">// "9.9.9.9" — this was "1.2.3.4" before 1.2.0</span></div>
+
+        <div class="callout callout-danger">
+          <strong>Changed in 1.2.0:</strong> a forwarded chain shorter than <code>trustProxy</code> is now ignored. Such a chain did not pass through the proxies whose entries make it trustworthy &mdash; a request entering at an inner hop, or one a client shortened deliberately &mdash; and the old index clamp landed on the entry the client wrote. With <code>trustProxy: 2</code>, a request arriving with <code>X-Forwarded-For: 1.2.3.4</code> was rate-limited as <code>1.2.3.4</code>, so rotating that value handed the caller a fresh bucket each time. Chains at or above the configured length behave exactly as before.
+        </div>
 
         <div class="callout callout-note">
           <strong>In plain words:</strong> each proxy appends the address it saw, so the entries on the right were written by <em>your</em> infrastructure and the ones on the left came from the caller. Set <code>trustProxy</code> to the number of proxies you actually run &mdash; not more. A value that is too high starts reading attacker-supplied text again.
@@ -560,6 +600,10 @@ console.<span class="fn">log</span>(clean.tags);          <span class="cmt">// [
         <p class="mb-4">
           <code class="bg-black/5 px-1">sanitizeObject</code> drops keys named <code class="bg-black/5 px-1">__proto__</code>, <code class="bg-black/5 px-1">constructor</code> and <code class="bg-black/5 px-1">prototype</code>, which are the keys used to poison JavaScript's prototype chain. Arrays stay arrays, a <code class="bg-black/5 px-1">Date</code> or class instance is passed through untouched, a value that refers back to itself becomes <code class="bg-black/5 px-1">undefined</code> instead of crashing, and recursion stops at <code class="bg-black/5 px-1">maxDepth</code> (32 by default).
         </p>
+
+        <div class="callout callout-warning">
+          <strong>Changed in 1.2.0:</strong> <code>sanitizeObject</code> throws a <code>ConfigurationError</code> when <code>maxDepth</code> is present but is not an integer of 1 or more. The guard runs before the object is entered, so <code>maxDepth: 0</code> used to discard the argument itself and return <code>undefined</code> under a non-optional <code>T</code> &mdash; every field read off the result then threw at a call site TypeScript had called safe. <code>Number(process.env.MAX_DEPTH)</code> with the variable unset is the same shape of mistake as a <code>NaN</code> body limit.
+        </div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Escaping for HTML</h3>
         <p class="mb-4">
@@ -614,7 +658,7 @@ console.<span class="fn">log</span>(<span class="fn">isSafeString</span>(<span c
           A <em>request target</em> is the path and query of a request, such as <code class="bg-black/5 px-1">/users?page=1</code>. <code class="bg-black/5 px-1">validateRequestTarget</code> rejects carriage return and line feed (written literally or percent-encoded), null bytes, and directory traversal.
         </p>
 
-        <div class="code-block mb-4"><span class="kw">import</span> { validateRequestTarget, normalizePath } <span class="kw">from</span> <span class="str">"@zudojs/security"</span>;
+        <div class="code-block mb-4"><span class="kw">import</span> { validateRequestTarget, normalizePath, containsTraversal } <span class="kw">from</span> <span class="str">"@zudojs/security"</span>;
 
 console.<span class="fn">log</span>(<span class="fn">validateRequestTarget</span>(<span class="str">"/users?page=1"</span>).valid); <span class="cmt">// true</span>
 
@@ -624,6 +668,11 @@ console.<span class="fn">log</span>(bad.errors); <span class="cmt">// [ "Request
 
 console.<span class="fn">log</span>(<span class="fn">validateRequestTarget</span>(<span class="str">"/a%0d%0aX-Injected:%201"</span>).valid); <span class="cmt">// false</span>
 
+<span class="cmt">// Since 1.2.0: an RFC 3986 path parameter no longer hides a traversal.</span>
+console.<span class="fn">log</span>(<span class="fn">validateRequestTarget</span>(<span class="str">"/files/..;/etc/passwd"</span>).valid); <span class="cmt">// false</span>
+console.<span class="fn">log</span>(<span class="fn">containsTraversal</span>(<span class="str">"/a/..;/b"</span>));                        <span class="cmt">// true</span>
+console.<span class="fn">log</span>(<span class="fn">containsTraversal</span>(<span class="str">"/a/....//b"</span>));                      <span class="cmt">// false — not a traversal</span>
+
 <span class="cmt">// Ask for a tidied path back with normalizePaths.</span>
 <span class="kw">const</span> tidied = <span class="fn">validateRequestTarget</span>(<span class="str">"/a//b/./c?x=1"</span>, { normalizePaths: <span class="kw">true</span> });
 console.<span class="fn">log</span>(tidied.normalized); <span class="cmt">// "/a/b/c?x=1"</span>
@@ -632,6 +681,10 @@ console.<span class="fn">log</span>(<span class="fn">normalizePath</span>(<span 
 
         <div class="callout callout-note">
           <strong>In plain words:</strong> <code>..</code> means "go up one directory", so <code>/files/../../etc/passwd</code> reaches a file you never meant to serve. Attackers hide it by encoding: <code>%2e%2e</code>, <code>.%2e</code>, <code>%252e%252e</code>. Rather than listing every spelling, <code>containsTraversal</code> decodes the path over and over until it stops changing (that is <code>fullyDecodeUri</code>) and then looks for a plain <code>..</code> segment. Input still changing after eight rounds is treated as hostile.
+        </div>
+
+        <div class="callout callout-warning">
+          <strong>Changed in 1.2.0:</strong> <code>containsTraversal</code> and <code>validateRequestTarget</code> now strip RFC 3986 path parameters before segmenting, so <code>/a/..;/b</code> is reported as traversal like every other spelling of it. Tomcat, Jetty and several reverse-proxy pairings resolve that to <code>/a/../b</code>, and until 1.1.0 it passed. <code>....//</code> is still not a traversal, and nothing that was already caught has changed.
         </div>
 
         <p class="mb-4">
@@ -858,7 +911,8 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
             <tr><td><code>generateCsrfToken(secret, options?)</code></td><td>Mints a signed token.</td><td><code>options</code> is <code>{ expiration?, sessionId? }</code> or a plain number of seconds. Empty secret throws.</td></tr>
             <tr><td><code>validateCsrfToken(token, secret, options?)</code></td><td>Checks signature, expiry and session binding.</td><td>Returns <code>boolean</code>. <code>expiration</code> is the maximum lifetime you accept.</td></tr>
             <tr><td><code>verifyDoubleSubmit(cookieToken, requestToken, secret, options?)</code></td><td>Checks that both copies match and are valid.</td><td>Constant-time comparison. The usual entry point.</td></tr>
-            <tr><td><code>requiresCsrfProtection(method, config?)</code></td><td>Does this method change state?</td><td><code>false</code> for GET, HEAD, OPTIONS, TRACE.</td></tr>
+            <tr><td><code>createCsrfProtection(config)</code></td><td>Binds a secret, lifetime, cookie/header names and methods to the primitives.</td><td>Returns <code>{ issue, verify, requiresProtection }</code>. Throws <code>ConfigurationError</code> on a short secret or an unusable <code>methods</code> list.</td></tr>
+            <tr><td><code>requiresCsrfProtection(method, config?)</code></td><td>Does this method change state?</td><td><code>false</code> for GET, HEAD, OPTIONS, TRACE. Throws <code>ConfigurationError</code> when <code>config.methods</code> is present but empty, not an array, or holds a blank entry.</td></tr>
             <tr><td><code>extractCsrfTokenFromHeaders(headers, headerName?)</code></td><td>Reads the token from headers.</td><td>Default <code>x-csrf-token</code>; lookup is case-insensitive.</td></tr>
             <tr><td><code>extractCsrfTokenFromCookies(cookieHeader, cookieName?)</code></td><td>Reads the token from a raw Cookie header.</td><td>Default cookie name <code>_csrf</code>.</td></tr>
             <tr><td><code>generateCsrfCookie(token, config?)</code></td><td>Builds the <code>Set-Cookie</code> value.</td><td><code>HttpOnly</code>, <code>Secure</code>, <code>SameSite=Strict</code> by default.</td></tr>
@@ -872,10 +926,11 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
           <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
             <tr><td><code>createRateLimiter(config)</code></td><td>Builds an in-memory sliding-window limiter.</td><td>Returns <code>{ check, middleware, reset, clear, getCount, destroy, size }</code>. Create once, at startup.</td></tr>
-            <tr><td><code>extractClientIp(headers, options?)</code></td><td>Works out the client address.</td><td>Ignores forwarding headers unless <code>trustProxy</code> is set. Falls back to <code>remoteAddress</code>, then <code>"unknown"</code>. Ports and IPv6 brackets are stripped from the result.</td></tr>
+            <tr><td><code>extractClientIp(headers, options?)</code></td><td>Works out the client address.</td><td>Ignores forwarding headers unless <code>trustProxy</code> is set, and ignores a chain shorter than <code>trustProxy</code>. Falls back to <code>x-real-ip</code>, then <code>remoteAddress</code>, then <code>"unknown"</code>. Ports and IPv6 brackets are stripped from the result.</td></tr>
             <tr><td><code>defaultKeyGenerator(request)</code></td><td>Uses <code>request.ip</code> as the key (port stripped, IPv6 by /64); throws <code>ConfigurationError</code> when it is missing or not an IP.</td><td>Used when you pass no <code>keyGenerator</code>.</td></tr>
-            <tr><td><code>defaultHandler(request, response)</code></td><td>Fills in a 429 response.</td><td>Sets status, <code>Retry-After: 60</code> and a JSON error body.</td></tr>
-            <tr><td><code>rateLimit</code></td><td>Namespace holding the four functions above.</td><td>&mdash;</td></tr>
+            <tr><td><code>defaultHandler(request, response, result?, message?)</code></td><td>Fills in a 429 response.</td><td>Sets status, the <code>X-RateLimit-*</code> headers and a JSON error body. <code>Retry-After</code> is derived from the decision, not a fixed <code>60</code>.</td></tr>
+            <tr><td><code>retryAfterSeconds(result?, now?)</code></td><td>Whole seconds until the window frees up.</td><td>At least <code>1</code>, never fractional, so a client never reads <code>Retry-After: 0</code>.</td></tr>
+            <tr><td><code>rateLimit</code></td><td>Namespace holding the rate-limit functions above.</td><td>&mdash;</td></tr>
           </tbody>
         </table>
         </div>
@@ -886,7 +941,7 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
           <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
             <tr><td><code>sanitizeString(input, config?)</code></td><td>Strips null bytes and control characters.</td><td>Optionally normalises Unicode, truncates, runs your <code>customSanitizer</code>.</td></tr>
-            <tr><td><code>sanitizeObject(obj, config?)</code></td><td>Cleans every string in a payload.</td><td>Drops prototype-pollution keys; cycle-safe; stops at <code>maxDepth</code> (32).</td></tr>
+            <tr><td><code>sanitizeObject(obj, config?)</code></td><td>Cleans every string in a payload.</td><td>Drops prototype-pollution keys; cycle-safe; stops at <code>maxDepth</code> (32). Throws <code>ConfigurationError</code> if <code>maxDepth</code> is not an integer of 1 or more.</td></tr>
             <tr><td><code>escapeHtml(input)</code></td><td>Escapes six HTML characters.</td><td>Safe for element text and quoted attributes only.</td></tr>
             <tr><td><code>stripHtml(input)</code></td><td>Removes tag syntax.</td><td>Not a sanitizer. Escape the result before rendering.</td></tr>
             <tr><td><code>isSafeString(input, allowedPattern?)</code></td><td>No null bytes, no control characters, matches your pattern.</td><td>The allowlist approach. Strips <code>g</code>/<code>y</code> from your pattern first.</td></tr>
@@ -906,9 +961,9 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
           <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
             <tr><td><code>validateUrl(url, config?)</code></td><td>Checks a full absolute URL.</td><td>Returns <code>{ valid, normalized?, errors }</code>. Protocols include the colon.</td></tr>
-            <tr><td><code>validateRequestTarget(target, config?)</code></td><td>Checks an incoming path and query.</td><td>Rejects CR, LF, null bytes and traversal.</td></tr>
+            <tr><td><code>validateRequestTarget(target, config?)</code></td><td>Checks an incoming path and query.</td><td>Rejects CR, LF, null bytes and traversal, including <code>..;</code>.</td></tr>
             <tr><td><code>normalizePath(pathname)</code></td><td>Resolves <code>.</code> and <code>..</code>.</td><td><code>..</code> can never climb above the root.</td></tr>
-            <tr><td><code>containsTraversal(path)</code></td><td>Is there a <code>..</code> segment?</td><td>Decodes first, so encoded forms are caught.</td></tr>
+            <tr><td><code>containsTraversal(path)</code></td><td>Is there a <code>..</code> segment?</td><td>Decodes first, so encoded forms are caught; RFC 3986 path parameters are stripped, so <code>..;</code> counts too.</td></tr>
             <tr><td><code>fullyDecodeUri(value)</code></td><td>Percent-decodes to a fixed point.</td><td>Returns <code>{ decoded, truncated }</code>; <code>truncated</code> means it gave up after eight rounds.</td></tr>
             <tr><td><code>isSafeUrl(url, allowedProtocols?)</code></td><td>Is this URL safe to fetch?</td><td>Blocks private ranges, non-HTTP protocols and embedded credentials. Cannot stop DNS rebinding.</td></tr>
             <tr><td><code>isPrivateHostname(hostname)</code></td><td>Is this host internal?</td><td>Run it against an address you resolved yourself.</td></tr>
@@ -952,7 +1007,7 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
         </div>
 
         <div class="callout callout-note">
-          <strong>Errors:</strong> there is no <code>SecurityError</code> class here. Most functions report problems in their return value &mdash; a boolean, a message string, or an <code>errors</code> array. The few that throw use plain <code>Error</code> and <code>RangeError</code>: cookie serialization, <code>generateSecurityHeaders</code>, <code>generateCspNonce</code>, <code>generateCsrfToken</code>, <code>createRateLimiter</code>, and any CORS call pairing a wildcard origin with credentials.
+          <strong>Errors:</strong> there is no <code>SecurityError</code> class here. Most functions report problems in their return value &mdash; a boolean, a message string, or an <code>errors</code> array. The few that throw raise one of three things. <code>ConfigurationError</code> from <code>@zudojs/errors</code> is what a misconfiguration gets: a CSRF secret under 32 characters, an unusable CSRF <code>methods</code> list, a <code>sanitizeObject</code> <code>maxDepth</code> below 1, a non-finite body limit, a security-header config value carrying CRLF, a CORS call pairing a wildcard origin with credentials, and the default rate-limit key generator given no usable <code>ip</code>. <code>ValidationError</code>, also from <code>@zudojs/errors</code>, comes out of cookie serialization. <code>RangeError</code> covers the numeric bounds: <code>createRateLimiter</code> with a non-positive <code>max</code> or <code>windowMs</code>, <code>generateCspNonce</code> below 16 bytes, a non-positive CSRF <code>expiration</code>, and <code>createIpKeyGenerator</code> outside 1&ndash;128.
         </div>
       </section>
 
@@ -965,6 +1020,7 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
           <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> <span><strong>Calling <code>createRateLimiter</code> inside the request handler.</strong> Every request gets an empty limiter and its own timer, so nothing is limited and timers pile up. Fix: create it once at module level and call <code>destroy()</code> on shutdown.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> <span><strong>Setting <code>trustProxy</code> higher than the number of proxies you run.</strong> The count reaches past your own hops into text the client wrote, so anyone can pick their own rate-limit bucket. Fix: count your real proxies, and pass <code>remoteAddress</code> so there is a trustworthy fallback.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> <span><strong>Issuing CSRF tokens without a <code>sessionId</code>.</strong> An attacker signs up, gets a valid token, and replays it against your users; every token is valid for everyone. Fix: pass the same session id to <code>generateCsrfToken</code> and to <code>verifyDoubleSubmit</code>.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> <span><strong>Building the CSRF <code>methods</code> list out of an environment variable.</strong> <code>process.env.CSRF_METHODS?.split(",").filter(Boolean) ?? []</code> is an empty list whenever the variable is unset, and an empty list used to mean "protect nothing". Since 1.2.0 it throws a <code>ConfigurationError</code> at startup instead. Fix: omit <code>methods</code> unless you are genuinely changing them from POST, PUT, PATCH, DELETE.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> <span><strong>Expecting CORS to keep attackers out.</strong> It only limits what browser scripts on other origins can read; <code>curl</code> ignores it entirely. Fix: keep authentication and authorization on every endpoint, and treat CORS as a browser convenience.</span></li>
         </ul>
       </section>
@@ -984,7 +1040,7 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
       <!-- EXPORT INDEX -->
       <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
-        <p class="mb-5 text-sm">Every name <code>@zudojs/security</code> exports from its package root at v1.1.0 &mdash; <strong>102</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/security</code> exports from its package root at v1.2.0 &mdash; <strong>102</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
         <details class="border-2 border-black p-5 bg-white">
           <summary class="font-bold cursor-pointer select-none">Show all 102 exports</summary>
           <div class="mt-5">

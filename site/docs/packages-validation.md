@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/validation — schema validatio
 source: https://zudojs.oyinlola.site/docs/packages-validation
 ---
 
-v1.0.2
+v1.0.3
 
 # @zudojs/validation
 
@@ -364,7 +364,32 @@ console.log(getSerializationDepth({ a: { b: [1] } })); // 3
 | `assertNoCircularReference(value, path?, maxDepth?)` | Rejects a value that contains itself | `CircularReferenceError` (500) |
 | `hasCircularReference(value)` | Same check, returns `boolean` | never |
 | `getSerializationDepth(value, limit?)` | Measures nesting depth (0 for a primitive), capped at `limit` | never |
-| `estimateSerializedSize(value, maxBytes?)` | Estimates JSON byte size without building the string | never |
+| `estimateSerializedSize(value, maxBytes?)` | Estimates JSON byte size without building the string, stopping at `maxBytes`. Defaults to `SerializationLimits.MAX_SIZE` (10,485,760 bytes / 10 MB) | never |
+
+### The size budget
+
+`estimateSerializedSize(value, maxBytes?)` charges every *occurrence* of a value, the way a serializer expands it. The cycle and depth guards can memoise a shared subtree and visit it once; the size estimate cannot, so a graph of `n` shared `{ a: node, b: node }` pairs expands to `2^n` visits. The budget is the only thing that bounds that work.
+
+`maxBytes` therefore defaults to `SerializationLimits.MAX_SIZE` — 10,485,760 bytes (10 MB) — from [@zudojs/constants](https://zudojs.oyinlola.site/docs/packages-constants.md). The walk stops at the first node that carries the running total past the budget, and that total is what comes back: a figure at or just past `maxBytes`, not the true size. It never throws and never runs unbounded. Treat a result that has reached the budget as "at least this big" rather than as a measurement. If you need an exact figure for input you trust, pass `Number.POSITIVE_INFINITY` explicitly.
+
+```ts
+import { estimateSerializedSize } from "@zudojs/validation";
+import { SerializationLimits } from "@zudojs/constants";
+
+estimateSerializedSize({ name: "ada" });      // a small exact figure
+
+// A hostile payload: 2^40 occurrences if nothing bounded the walk.
+let node: unknown = 1;
+for (let i = 0; i < 40; i++) node = { a: node, b: node };
+
+// Returns promptly with a figure at the budget; before v1.0.3 this did not return.
+estimateSerializedSize(node) >= SerializationLimits.MAX_SIZE; // true
+
+// Trusted input, exact figure — opt in explicitly.
+estimateSerializedSize(trusted, Number.POSITIVE_INFINITY);
+```
+
+> **Changed in v1.0.3:** `maxBytes` used to default to `Infinity`, so an unbounded estimate was the default. A 1 KB payload built from shared references could burn minutes of CPU inside a function documented as cheap. The default is now finite, so an untrusted value measured with no explicit budget always returns. Callers that relied on the old default getting an exact figure for a large trusted payload must now pass `Number.POSITIVE_INFINITY`.
 
 The three error classes come from [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md). `MAX_MEASURABLE_DEPTH` (512) is the ceiling the measuring functions use when you give no limit. The same object appearing twice as siblings is a shared reference, not a cycle, and is allowed.
 

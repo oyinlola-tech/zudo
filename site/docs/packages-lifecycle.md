@@ -4,7 +4,7 @@ description: "Complete documentation for @zudojs/lifecycle — state machine, co
 source: https://zudojs.oyinlola.site/docs/packages-lifecycle
 ---
 
-v1.1.1
+v1.2.0
 
 # @zudojs/lifecycle
 
@@ -25,7 +25,7 @@ pnpm add @zudojs/lifecycle
 yarn add @zudojs/lifecycle
 ```
 
-> **Peer Dependencies:** @zudojs/lifecycle depends on @zudojs/errors and @zudojs/constants. All at version 1.0.0.
+> **Peer Dependencies:** @zudojs/lifecycle depends on @zudojs/errors (1.2.0) and @zudojs/constants (1.1.1).
 
 ## WHAT IT DOES
 
@@ -38,7 +38,7 @@ yarn add @zudojs/lifecycle
 - **Signal handling** — automatic SIGINT/SIGTERM interception to trigger shutdown
 - A **LifecycleEventEmitter** that emits 16 typed events for observability integration
 - **Retry with backoff** — configurable exponential or fixed retry for component operations
-- **Concurrency control** — parallel execution of independent components with configurable limits
+- **Concurrency control** — parallel execution of independent components at the same priority, with configurable limits
 - **Rollback support** — components that fail during startup can be disposed in reverse order
 - **Execution plans** — build ordered startup/shutdown stages from the dependency graph
 
@@ -60,8 +60,8 @@ The lifecycle manager sits between the application layer and the runtime. Module
 
 | Package | Version | Purpose |
 | --- | --- | --- |
-| @zudojs/errors | 1.1.0 | Error hierarchy (LifecycleError, LifecycleStateError, LifecycleTimeoutError, etc.) |
-| @zudojs/constants | 1.1.0 | LifecycleState, LifecyclePhase enums, valid transitions, and default values |
+| @zudojs/errors | 1.2.0 | Error hierarchy (LifecycleError, LifecycleStateError, LifecycleTimeoutError, etc.) |
+| @zudojs/constants | 1.1.1 | LifecycleState, LifecyclePhase enums, valid transitions, and default values |
 
 > **Internal dependencies:** Packages depend on each other with `workspace:*`, always — including on `main`. They are never hand-pinned to an exact version. At publish time `pnpm` rewrites each `workspace:*` to the exact version of that package in the same release, so a published tarball carries real ranges. Releases go out through `publish-all.sh`, which runs `pnpm -r publish` — it rewrites the ranges and publishes in dependency order. Plain `npm publish` does not understand the `workspace:` protocol and would ship a literal `workspace:*` to the registry.
 
@@ -198,6 +198,10 @@ interface LifecycleRegistrationOptions {
 
 `timeout`: `Infinity` means no bound; `NaN` or a negative value throws `RangeError` at registration; a timed-out hook is not retried.
 
+`priority` (default `0`): orders components that share a dependency level, and since 1.2.0 it is a **barrier**, not a hint. Every component at one priority finishes the phase before the next priority begins, so `register(metrics, { priority: 100 })` genuinely starts before `register(server, { priority: 0 })`. Previously the whole level was launched concurrently up to `concurrency` (default 10) and the sorted order was observable only at `concurrency: 1` — whichever hook happened to finish first won. Components sharing a priority still run together, up to `concurrency`, so the default configuration (everything at priority 0) is unchanged. Shutdown mirrors startup within a level: the lowest priority stops first, the highest last.
+
+Priority only orders components that are already in the same stage. A component with a `dependsOn` that puts it alone in its own stage gains nothing from a high priority — dependencies decide the stage, priority decides the order inside it.
+
 ### Interface: LifecycleRetryOptions
 
 ```ts
@@ -310,6 +314,8 @@ interface LifecycleManagerOptions {
 ```
 
 `shutdownTimeout`: `Infinity` means no deadline. `handleSignals`: handlers are installed by `start()` (not the constructor) and removed after shutdown; a second signal during shutdown exits with code 1.
+
+Since 1.2.0, `shutdown()` no longer disposes a component whose `stop()` is still running. A `stop()` hook that blows its own component `timeout` is abandoned rather than cancelled; shutdown used to wait for such hooks only *before* the stop phase, so one abandoned during it had `dispose()` run on top of it while `shutdown()` resolved and reported the application DISPOSED. Each shutdown phase now waits for abandoned hooks to settle before the next begins, still bounded by `shutdownTimeout`, so `await shutdown(); process.exit(0)` can no longer cut a drain short.
 
 ### Class: LifecycleManager
 
@@ -438,9 +444,12 @@ function reverseTopologicalSort(
   priorities?: ReadonlyMap<string, number>,
 ): readonly TopologicalStage[]
 
-// A stage is a group of components that can run in parallel
+// A stage is a group of components with no dependency between them,
+// ordered by priority: descending for startup, ascending for shutdown
 type TopologicalStage = readonly string[];
 ```
+
+Within a stage, components are sorted by priority — highest first for `topologicalSort`, lowest first for `reverseTopologicalSort`. Since 1.2.0 `reverseTopologicalSort` reverses each stage’s contents as well as the stage list, so a shutdown is the exact mirror of the startup order; it used to reverse only the stage list, leaving every stage in descending-priority order. The executor treats each run of equal priority as a barrier, so a stage is fully parallel only where its components share a priority.
 
 ## EXECUTION PLANS
 
@@ -489,6 +498,8 @@ const plan = buildExecutionPlan(registrations, LifecyclePhase.START);
 // ]
 ```
 
+Components inside a stage are listed in execution order: priority descending for startup phases, ascending for shutdown phases. The executor runs each run of equal priority as one batch and waits for it before starting the next, so `["server", "cache"]` runs concurrently only if both were registered at the same priority.
+
 ## EXECUTOR
 
 The `LifecycleExecutor` runs component hooks with timeout, retry, and concurrency support.
@@ -498,7 +509,7 @@ The `LifecycleExecutor` runs component hooks with timeout, retry, and concurrenc
 | Method | Signature | Description |
 | --- | --- | --- |
 | execute() | execute(registration, phase, context): Promise<ExecutionResult> | Run a single component hook with retry and timeout. |
-| executeStage() | executeStage(registrations, phase, context, concurrency): Promise<ExecutionResult[]> | Run a stage of components with concurrency limit. |
+| executeStage() | executeStage(registrations, phase, context, concurrency): Promise<ExecutionResult[]> | Run a stage one priority group at a time, each group limited by `concurrency`. The next group starts only once the previous has settled. |
 
 ### Interface: ExecutionResult
 
@@ -678,7 +689,7 @@ All error types are defined in `@zudojs/errors` and re-exported by this package.
 
 | Error | When Thrown |
 | --- | --- |
-| LifecycleError | Base error for all lifecycle-related issues |
+| LifecycleError | Base error for all lifecycle-related issues. Since 1.2.0 it also covers registry and abort failures — registering after `freeze()`, a duplicate id, an unregistered `dependsOn` target and a cancelled `withAbort` — which used to throw a bare `Error`. The messages are unchanged, but they now carry an `ErrorCode` and answer `instanceof LifecycleError`. |
 | LifecycleStateError | Invalid state transition attempted |
 | LifecycleTimeoutError | Component operation exceeded timeout |
 | LifecycleDependencyError | Circular dependency or missing dependency detected |
@@ -793,7 +804,7 @@ manager.dispose();
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/lifecycle` exports from its package root at v1.1.1 — **36** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/lifecycle` exports from its package root at v1.2.0 — **36** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
 **Show all 36 exports**
 
