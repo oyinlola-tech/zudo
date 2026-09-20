@@ -68,7 +68,23 @@ export const ARCHITECTURE_CHOICES: readonly CLIChoiceOption<BackendArchitecture>
     },
   ]);
 
-/** Package managers the CLI can install with. */
+/**
+ * The package managers the CLI can install with.
+ *
+ * One canonical list. It previously existed three times — as
+ * `VALID_PACKAGE_MANAGERS` in the create command, `PACKAGE_MANAGERS` in the
+ * layout resolver and `SUPPORTED_MANAGERS` in the package-manager runner —
+ * which is how `bun` came to be missing from the published choice list while
+ * the CLI supported it everywhere else.
+ */
+export const PACKAGE_MANAGERS: readonly PackageManagerType[] = Object.freeze([
+  "pnpm",
+  "npm",
+  "yarn",
+  "bun",
+]);
+
+/** Package managers the CLI can install with, as prompt choices. */
 export const PACKAGE_MANAGER_CHOICES: readonly CLIChoiceOption<PackageManagerType>[] =
   Object.freeze([
     { value: "pnpm", label: "pnpm" },

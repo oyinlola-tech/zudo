@@ -4,6 +4,7 @@
  * Runner for package manager operations (install, add, remove, run).
  */
 
+import { PACKAGE_MANAGERS } from "../../constants/index.js";
 import { CLIValidationError } from "../../errors/index.js";
 import type { PackageManager } from "../../types/index.js";
 import { execCommand } from "../../utils/utils.exec.js";
@@ -14,12 +15,6 @@ export interface PackageManagerRunOptions {
 }
 
 /** The package managers this runner will put in the executable position. */
-const SUPPORTED_MANAGERS: readonly PackageManager[] = Object.freeze([
-  "pnpm",
-  "npm",
-  "yarn",
-  "bun",
-]);
 
 /**
  * Narrows an untrusted value to a supported package manager.
@@ -31,9 +26,9 @@ const SUPPORTED_MANAGERS: readonly PackageManager[] = Object.freeze([
  * @throws {CLIValidationError} If the value is not a known package manager.
  */
 export function assertPackageManager(value: string): PackageManager {
-  if (!SUPPORTED_MANAGERS.includes(value as PackageManager)) {
+  if (!PACKAGE_MANAGERS.includes(value as PackageManager)) {
     throw new CLIValidationError(
-      `Unsupported package manager: "${value}". Expected one of ${SUPPORTED_MANAGERS.join(", ")}.`,
+      `Unsupported package manager: "${value}". Expected one of ${PACKAGE_MANAGERS.join(", ")}.`,
     );
   }
   return value as PackageManager;

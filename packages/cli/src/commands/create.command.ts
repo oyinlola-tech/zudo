@@ -48,6 +48,7 @@ import { ManifestManager } from "../manifest/manifestManager.core.js";
 import {
   CLI_VERSION,
   FEATURE_PACKAGES,
+  PACKAGE_MANAGERS,
   ZUDOJS_PACKAGES_VERSION,
 } from "../constants/index.js";
 import { registerCLIInterruptHandler } from "../cliApplication/cliApplication.writer.js";
@@ -67,7 +68,6 @@ const VALID_ARCHITECTURES = [
 // No mongodb: there is no adapter for it, and it used to be accepted and
 // scaffolded as PostgreSQL (tooling/CLI-04).
 const VALID_DATABASES = ["postgresql", "mysql", "sqlite"] as const;
-const VALID_PACKAGE_MANAGERS = ["npm", "pnpm", "yarn", "bun"] as const;
 const SERVICE_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const VALID_FRONTENDS = [
   "none",
@@ -286,7 +286,7 @@ export async function runCreateCommand(context: CLIContext): Promise<void> {
   const databaseValue = validateChoice(database, VALID_DATABASES, "database");
   const packageManagerValue = validateChoice(
     packageManager,
-    VALID_PACKAGE_MANAGERS,
+    PACKAGE_MANAGERS,
     "package manager",
   );
   const frontendValue = validateChoice(frontend, VALID_FRONTENDS, "frontend");

@@ -97,6 +97,14 @@ export async function runFrontendPipeline(
     return { files, errors };
   }
 
+  // The resolver records a warning for every dependency it could not pin,
+  // which then goes into package.json as "latest". Nothing read that array,
+  // so an adapter adding a dependency with no registered range silently made
+  // the generated project unreproducible.
+  for (const warning of resolution.warnings) {
+    process.stderr.write(`warning: ${warning}\n`);
+  }
+
   // 5. Install BOTH runtime and dev dependencies. Only devDependencies used
   //    to be installed, so every runtime package an adapter declared was
   //    resolved and then dropped on the floor. With `--no-install` the
@@ -107,10 +115,18 @@ export async function runFrontendPipeline(
     await recordDependencies(context.projectPath, resolution.dependencies, resolution.devDependencies);
     files.push("dependencies");
   } else if (packageManager) {
-    const deps = resolution.dependencies.map((d) => d.name);
-    const devDeps = resolution.devDependencies.map((d) => d.name);
-    assertSafePackageNames(deps);
-    assertSafePackageNames(devDeps);
+    // Install the resolved RANGE, not just the name. Mapping to names alone
+    // let npm/pnpm resolve `latest`, so the pinning the resolver exists to
+    // provide survived only on the `--no-install` path and two runs a month
+    // apart produced different majors. The names are validated separately
+    // from the `name@range` specs actually passed to the package manager.
+    assertSafePackageNames(resolution.dependencies.map((d) => d.name));
+    assertSafePackageNames(resolution.devDependencies.map((d) => d.name));
+
+    const deps = resolution.dependencies.map((d) => `${d.name}@${d.version}`);
+    const devDeps = resolution.devDependencies.map(
+      (d) => `${d.name}@${d.version}`,
+    );
 
     if (deps.length > 0) {
       await packageManager.add(context.projectPath, deps);

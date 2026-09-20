@@ -20,6 +20,7 @@
  * @module resolvers/layout
  */
 
+import { PACKAGE_MANAGERS } from "../../constants/index.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { PackageManager } from "../../types/index.js";
@@ -71,12 +72,6 @@ const PROJECT_TYPES: readonly ProjectLayoutType[] = [
   "fullstack",
 ];
 
-const PACKAGE_MANAGERS: readonly PackageManager[] = [
-  "pnpm",
-  "npm",
-  "yarn",
-  "bun",
-];
 
 function readJson(path: string): Record<string, unknown> | null {
   try {

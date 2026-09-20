@@ -83,8 +83,20 @@ describe("runFrontendPipeline", () => {
     );
 
     expect(result.errors).toEqual([]);
-    expect(add).toHaveBeenCalledWith(dir, ["react"]);
-    expect(addDev).toHaveBeenCalledWith(dir, ["vitest"]);
+
+    // The resolved RANGE is installed, not the bare name. Passing names alone
+    // let the package manager resolve `latest`, so the pinning the resolver
+    // exists to provide survived only on the `--no-install` path and two runs
+    // a month apart could produce different majors.
+    const [, addedDeps] = add.mock.calls[0] as [string, string[]];
+    const [, addedDevDeps] = addDev.mock.calls[0] as [string, string[]];
+
+    expect(addedDeps).toHaveLength(1);
+    expect(addedDeps[0]).toMatch(/^react@\S+$/);
+    expect(addedDeps[0]).not.toBe("react");
+
+    expect(addedDevDeps).toHaveLength(1);
+    expect(addedDevDeps[0]).toMatch(/^vitest@\S+$/);
   });
 
   it("records dependencies in package.json with --no-install", async () => {

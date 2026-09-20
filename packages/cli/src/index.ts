@@ -248,19 +248,32 @@ export {
 export { ProcessRunner, type ProcessOptions } from "./runners/process/index.js";
 export {
   PackageManagerRunner,
+  assertPackageManager,
   type PackageManagerRunOptions,
 } from "./runners/package-manager/index.js";
 export {
   TaskRunner,
   type TaskDefinition,
   type TaskResult,
+  type TaskRunOptions,
 } from "./runners/task/index.js";
 
 // Rollback
-export { RollbackManager, type RollbackEntry } from "./rollback/index.js";
+export {
+  RollbackManager,
+  type RollbackEntry,
+  type RollbackFailure,
+  type RollbackResult,
+} from "./rollback/index.js";
 
 // Manifest
-export { ManifestManager, type ZudojsManifest } from "./manifest/index.js";
+export {
+  ManifestManager,
+  parseManifest,
+  type ManifestReadResult,
+  type ManifestReadStatus,
+  type ZudojsManifest,
+} from "./manifest/index.js";
 
 // Types
 export type {
