@@ -135,11 +135,15 @@ Conditions read request-scoped facts from `context.metadata`, supplied per
 check:
 
 ```typescript
-import { requireCurrentTenant } from "@zudojs/tenancy";
+import { createContextManager, getDefaultStorage } from "@zudojs/tenancy";
+
+const tenancy = createContextManager({ storage: getDefaultStorage() });
 
 await engine.can(actor, "invoice:read", invoice, {
   // The *verified* tenant — resolved and trust-checked by @zudojs/tenancy.
-  metadata: { tenantId: requireCurrentTenant().id },
+  // `requireCurrentTenant()` is a method on the context manager; it throws
+  // when no tenant context is active, rather than returning undefined.
+  metadata: { tenantId: tenancy.requireCurrentTenant().id },
 });
 ```
 
@@ -233,10 +237,16 @@ permissions.define("post:write", { implies: ["post:read"] });
 
 const engine = createPermissionEngine({
   roles,
-  expandImplied: (permission) => permissions.expandImplied(permission),
+  expandImplied: permissions,
 });
 // An actor granted post:admin now passes post:read.
 ```
+
+Pass the registry itself rather than a closure over it. The engine subscribes
+to it, so `permissions.remove("post:admin")` — or redefining it without the
+implication — drops the decisions that were cached while it stood. A bare
+`(permission) => permissions.expandImplied(permission)` still works, but it
+cannot announce a change, so an engine given one caches no decisions at all.
 
 ## Caching
 
@@ -278,6 +288,12 @@ A check is cached only when the key can describe it completely:
   instance, a `Map`) is **not cached**;
 - a decision produced by a policy marked `cacheable: false`, or forced by a
   condition that threw, is not stored;
+- an engine with a `roleResolver` or `permissionResolver` and no
+  `resolverCacheKey` caches **nothing**: the resolver reads state the key
+  cannot describe, so an entry would outlive a grant withdrawn upstream;
+- an engine whose `expandImplied` is a bare function rather than a
+  `createPermissionRegistry()` caches **nothing**, for the same reason: a
+  revoked implication cannot announce itself;
 - a TTL of `0` or less means "do not cache".
 
 `deniedPermissions` is evaluated before the cache is consulted, so a deny
@@ -297,6 +313,24 @@ const engine = createPermissionEngine({
 
 A resolver that fails is reported through `onError` and the check continues
 fail-closed, rather than throwing out of the authorization path.
+
+A resolver reads authorization state the engine does not own and cannot see
+change, and none of it is in the decision-cache key. **A resolver-backed
+engine therefore caches nothing** unless you describe that state with
+`resolverCacheKey`:
+
+```typescript
+const engine = createPermissionEngine({
+  roles,
+  cache: createMemoryPermissionCache(),
+  permissionResolver: { resolvePermissions: (actor) => db.rulesFor(actor.id) },
+  // Anything that changes when the resolver's answer could change.
+  resolverCacheKey: (actor) => db.grantsVersionFor(actor.id),
+});
+```
+
+Return `undefined` for an actor whose state you cannot describe, and that
+actor's decisions stay uncached.
 
 ## Failure behaviour
 

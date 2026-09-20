@@ -171,6 +171,11 @@ remembers a key the provider does not know for `missingFlagTtlMs` (default
 turn every evaluation into a remote round trip. The memory is dropped on
 every reload.
 
+A provider that fails is left alone for `providerCooloffMs` (default 5 s;
+`0` disables it) before it is probed again, so an outage costs one pair of
+calls per window instead of two per evaluation. The first successful call
+closes the window, and `refresh()` always probes.
+
 `createEnvironmentProvider` parses `true`/`false` and numbers; anything else,
 including an empty `FEATURE_X=`, stays a string.
 
@@ -199,6 +204,12 @@ not throw `FeatureFlagNotFoundError` under `throwOnMissing`.
 
 An unreachable store never enables a flag. Set `throwOnProviderError: true`
 to own the failure yourself instead.
+
+`snapshot()` and `getAll()` reject with `FeatureFlagProviderError` when the
+flags were never loaded: an empty `Map` cannot be told apart from "no flags
+are configured", and shipping one to a browser turns an outage into every
+flag being off. Once a load has succeeded they keep serving that data, even
+if a later reload fails.
 
 ```typescript
 const flags = createFeatureFlags({

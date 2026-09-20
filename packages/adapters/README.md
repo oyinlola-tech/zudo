@@ -120,6 +120,13 @@ report.adapters.db; // AdapterHealth; throwing, timed-out or aborted checks are 
 
 Adapters without `health()` are left out of `report.adapters`.
 
+`healthAll({ retry: { attempts, delay } })` re-runs a check that reports
+`unhealthy`, up to `attempts` tries in total, pausing `delay` ms between
+them; `timeout` bounds each try and an aborted `signal` stops the retries.
+Adapter names are checked on `register()`: `__proto__`, `constructor` and
+`prototype` are refused, because a report keyed by adapter name cannot hold
+them.
+
 ## Transport contracts
 
 Type-only interfaces that extend `Adapter` for each transport:

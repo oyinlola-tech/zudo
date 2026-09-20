@@ -79,7 +79,10 @@ export interface PermissionRegistry {
  *
  * const engine = createPermissionEngine({
  *   roles,
- *   expandImplied: (permission) => permissions.expandImplied(permission),
+ *   // Pass the registry itself, not a closure over it: the engine
+ *   // subscribes, so revoking an implication drops the cached decisions
+ *   // that were made under it.
+ *   expandImplied: permissions,
  * });
  * ```
  */

@@ -56,6 +56,20 @@ export interface PolicySource {
   subscribe?(listener: () => void): () => void;
 }
 
+/**
+ * Anything the engine will accept as its source of permission implications.
+ *
+ * A source with `subscribe` (every `createPermissionRegistry()`) is watched
+ * like the role and policy registries: revoking an implication drops every
+ * decision that was cached while it stood. A bare function cannot announce a
+ * change, so an engine given one caches nothing — see
+ * {@link PermissionEngineOptions.expandImplied}.
+ */
+export interface ImpliedPermissionSource {
+  expandImplied(permission: string): readonly string[];
+  subscribe?(listener: () => void): () => void;
+}
+
 /** Configuration for the permission engine. */
 export interface PermissionEngineOptions {
   /**
@@ -82,8 +96,33 @@ export interface PermissionEngineOptions {
   readonly permissionResolver?: PermissionResolver;
   /** Loads additional roles for an actor from an external source. */
   readonly roleResolver?: RoleResolver;
-  /** Expands a permission into the permissions it implies. */
-  readonly expandImplied?: (permission: string) => readonly string[];
+  /**
+   * Describes the state a resolver is answering from, so that decisions it
+   * influenced can be cached safely.
+   *
+   * A resolver reads authorization data the engine does not own and cannot
+   * see change — a grants table, another service. Nothing about it is in the
+   * decision-cache key, so an entry written while the resolver said "allow"
+   * kept answering after the grant was withdrawn upstream. Resolver-backed
+   * engines therefore **do not cache at all** unless this is supplied.
+   *
+   * Return a value that changes whenever the resolver's answer for this actor
+   * could change — a version column, an `updatedAt` stamp, a grants-table
+   * generation. Return `undefined` for an actor whose state cannot be
+   * described, and that actor's decisions stay uncached.
+   */
+  readonly resolverCacheKey?: (actor: PermissionActor) => string | undefined;
+  /**
+   * Expands a permission into the permissions it implies.
+   *
+   * Prefer passing a `createPermissionRegistry()` — the engine subscribes to
+   * it, so revoking an implication invalidates the decisions cached under it.
+   * A bare function cannot announce a change, so an engine given one caches
+   * no decisions rather than serving one from a revoked implication.
+   */
+  readonly expandImplied?:
+    | ((permission: string) => readonly string[])
+    | ImpliedPermissionSource;
   /** Emits an event for every completed check, including failures. */
   readonly emitter?: PermissionEventEmitter;
   /** Reports a failure authorization swallowed to stay fail-closed. */
@@ -175,6 +214,16 @@ function isPolicySource(
   );
 }
 
+function isImpliedPermissionSource(
+  source: PermissionEngineOptions["expandImplied"],
+): source is ImpliedPermissionSource {
+  return (
+    source !== undefined &&
+    typeof source !== "function" &&
+    typeof source.expandImplied === "function"
+  );
+}
+
 /**
  * Create a permission engine.
  */
@@ -260,6 +309,39 @@ export function createPermissionEngine(
   }
   policySource?.subscribe?.(invalidateConfiguration);
 
+  // The third registry the README wires in. Without this, revoking an
+  // implication left every decision it granted in the cache for the full TTL
+  // — `skipCache: true` said "deny" while `can()` kept saying "allow".
+  const impliedSource = isImpliedPermissionSource(options?.expandImplied)
+    ? options.expandImplied
+    : undefined;
+  const expandImplied = impliedSource
+    ? (permission: string): readonly string[] =>
+        impliedSource.expandImplied(permission)
+    : (options?.expandImplied as
+        | ((permission: string) => readonly string[])
+        | undefined);
+  const impliedWatched =
+    impliedSource?.subscribe?.(invalidateConfiguration) !== undefined;
+
+  // Two inputs the cache key cannot describe. An implication source that
+  // cannot announce a change, and a resolver reading state the engine does
+  // not own, both make a cached allow outlive the grant behind it — so the
+  // decision is not cached at all unless the caller closes the gap.
+  const impliedUnwatched = expandImplied !== undefined && !impliedWatched;
+  const resolverConfigured =
+    options?.permissionResolver !== undefined ||
+    options?.roleResolver !== undefined;
+  const resolverCacheKey = options?.resolverCacheKey;
+
+  const cacheScope = (actor: PermissionActor): string | undefined => {
+    if (impliedUnwatched) return undefined;
+    if (!resolverConfigured) return `g${generation}`;
+    if (!resolverCacheKey) return undefined;
+    const scope = resolverCacheKey(actor);
+    return scope === undefined ? undefined : `g${generation}|r${scope}`;
+  };
+
   // One live view over the configuration. `policies` is a getter so a
   // registry-backed engine re-reads the registry on every evaluation — an
   // Ability used to capture a snapshot of the policy list when it was
@@ -277,9 +359,9 @@ export function createPermissionEngine(
     cacheTtlMs: options?.cacheTtlMs,
     permissionResolver: options?.permissionResolver,
     roleResolver: options?.roleResolver,
-    expandImplied: options?.expandImplied,
+    expandImplied,
     onError: options?.onError,
-    cacheScope: () => `g${generation}`,
+    cacheScope,
   };
   const evaluatorOptions = (): EvaluatorOptions => liveOptions;
 

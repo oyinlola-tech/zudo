@@ -76,6 +76,11 @@ assertResponseBody(response, { id: "u_1", roles: new Set(["admin"]) });
   `assertSerializesCorrectly`.
 - `createStub()` answers `then` with `undefined`, so awaiting a stub — or
   returning one from an async factory — resolves rather than hanging.
+- `createStub()` hands back the same no-op for a given property every time,
+  so `stub.handler === stub.handler` and a register/unregister pair written
+  against a stub actually unregisters.
+- `InMemoryTestStorage.set(key, value, 0)` means "already expired", not "no
+  expiry"; only an omitted TTL never expires.
 - `cleanup.dispose()` rejects with an `AggregateError` when any cleanup fails,
   after running them all.
 - `mockResolvedValue` and `mockRejectedValue` return promises; `results` stays

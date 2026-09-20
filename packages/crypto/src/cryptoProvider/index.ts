@@ -41,16 +41,16 @@ export {
   getDefaultCryptoProvider,
   setDefaultCryptoProvider,
   resetDefaultCryptoProvider,
+  assertCryptoProvider,
+  CRYPTO_PROVIDER_METHODS,
 } from "./cryptoProvider.default.js";
 
 export {
-  assertCryptoProvider,
   assertProviderCapability,
   assertRandomCapability,
   assertHashCapability,
   assertHmacCapability,
   assertPasswordHashingCapability,
-  CRYPTO_PROVIDER_METHODS,
 } from "./cryptoProvider.capability.js";
 
 export * from "./types/index.js";

@@ -74,8 +74,13 @@ export interface EvaluatorOptions {
    * Extra decision-cache key scope, read on every evaluation. The engine
    * passes its configuration generation, so a role change invalidates every
    * entry written before it.
+   *
+   * Returning `undefined` means this decision must not be cached: the engine
+   * uses that for the inputs the key cannot describe — an implication source
+   * that cannot announce a change, and an external resolver with no
+   * `resolverCacheKey`.
    */
-  readonly cacheScope?: () => string;
+  readonly cacheScope?: (actor: PermissionActor) => string | undefined;
 }
 
 /** The permissions and rules an actor holds, once everything is resolved. */

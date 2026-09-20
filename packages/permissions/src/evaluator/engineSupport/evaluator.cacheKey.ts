@@ -42,6 +42,10 @@ function resourceIdOf(resource: unknown): string | undefined {
  *   in the key as a digest; an actor the digest cannot describe is not cached.
  * - The engine's configuration generation is in the key, so a role removed
  *   from a live registry cannot be served from an entry written before.
+ * - An external resolver reads state the key knows nothing about, so a
+ *   resolver-backed engine is uncacheable unless it supplies
+ *   `resolverCacheKey`. So is one whose implication source cannot announce a
+ *   change.
  */
 export function decisionCacheKey(
   actor: PermissionActor,
@@ -59,7 +63,17 @@ export function decisionCacheKey(
   const digest = actorCacheDigest(actor);
   if (digest === undefined) return undefined;
 
-  const generation = options.cacheScope?.() ?? "";
+  // An engine that cannot describe its own configuration for this actor
+  // returns `undefined` here — an external resolver with no
+  // `resolverCacheKey`, or an implication source that cannot announce a
+  // change. Both would otherwise keep answering from a revoked grant.
+  let generation = "";
+  if (options.cacheScope !== undefined) {
+    const scope = options.cacheScope(actor);
+    if (scope === undefined) return undefined;
+    generation = scope;
+  }
+
   return permissionCacheKey(
     actor.id,
     permissionStr,
