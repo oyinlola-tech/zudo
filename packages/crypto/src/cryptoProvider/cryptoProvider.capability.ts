@@ -41,9 +41,7 @@ export function assertProviderCapability(
   operation: CryptoOperation,
 ): void {
   const capabilities = provider.capabilities as
-    | CryptoCapabilities
-    | undefined
-    | null;
+    CryptoCapabilities | undefined | null;
 
   if (
     typeof capabilities !== "object" ||

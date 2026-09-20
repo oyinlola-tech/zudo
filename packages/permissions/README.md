@@ -206,7 +206,11 @@ roles.define({ name: "auditor", permissions: ["audit:read"] });
 roles.remove("reader");
 // both take effect on the next check: the engine subscribes to the registry
 
-policies.define({ name: "lockdown", permissions: ["*:*"], evaluate: () => ({ allowed: false }) });
+policies.define({
+  name: "lockdown",
+  permissions: ["*:*"],
+  evaluate: () => ({ allowed: false }),
+});
 // enforced by the next check — through the engine or an existing Ability
 
 roles.require("auditor"); // throws RoleNotFoundError when unregistered
@@ -336,18 +340,18 @@ actor's decisions stay uncached.
 
 Every failure denies:
 
-| Situation                   | Result                                                 |
-| --------------------------- | ------------------------------------------------------ |
-| Unknown role on the actor   | denied; reported to `onError`; other roles still apply |
-| Malformed permission string | denied, `reason: "invalid_permission"`                 |
-| Allow condition throws      | the allow does not apply                               |
-| Deny condition throws       | denied, `reason: "rule_deny"`; reported to `onError`   |
-| Malformed rule/policy pattern | rejected at construction or `define`                 |
-| A deny rule applies         | denied, `reason: "rule_deny"`, even if a policy allows |
-| Policy throws or times out  | denied, `reason: "policy_error:<name>"`                |
-| Role inheritance cycle      | denied; reported to `onError`                          |
-| Role source throws          | denied; reported to `onError`                          |
-| `signal` aborted            | throws `AuthorizationAbortedError`                     |
+| Situation                     | Result                                                 |
+| ----------------------------- | ------------------------------------------------------ |
+| Unknown role on the actor     | denied; reported to `onError`; other roles still apply |
+| Malformed permission string   | denied, `reason: "invalid_permission"`                 |
+| Allow condition throws        | the allow does not apply                               |
+| Deny condition throws         | denied, `reason: "rule_deny"`; reported to `onError`   |
+| Malformed rule/policy pattern | rejected at construction or `define`                   |
+| A deny rule applies           | denied, `reason: "rule_deny"`, even if a policy allows |
+| Policy throws or times out    | denied, `reason: "policy_error:<name>"`                |
+| Role inheritance cycle        | denied; reported to `onError`                          |
+| Role source throws            | denied; reported to `onError`                          |
+| `signal` aborted              | throws `AuthorizationAbortedError`                     |
 
 A value that is not an `Error` — a policy or resolver that throws a string —
 reaches `onError` wrapped in `PolicyError` or `PermissionResolverError`, with
@@ -414,7 +418,8 @@ const guard = authorize(engine, "post:update", {
   extractResource: (context) => loadPost(context.request.getParam?.("id")),
   // The tenant @zudojs/tenancy resolved and trust-checked — never a header.
   extractMetadata: (context) => ({
-    tenantId: context.state.get<{ tenantId: string }>("tenancy:context")?.tenantId,
+    tenantId: context.state.get<{ tenantId: string }>("tenancy:context")
+      ?.tenantId,
   }),
   onError: (error, source) => logger.warn({ error, source }, "guard denied"),
 });

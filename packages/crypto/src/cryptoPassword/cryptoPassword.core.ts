@@ -2,7 +2,6 @@ import type { CryptoProvider } from "../cryptoProvider/index.js";
 
 import { getDefaultCryptoProvider } from "../cryptoProvider/cryptoProvider.default.js";
 
-
 import {
   assertPasswordHashingCapability,
   assertRandomCapability,

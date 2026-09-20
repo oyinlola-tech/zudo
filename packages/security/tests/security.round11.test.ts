@@ -69,9 +69,9 @@ describe("SEC-01 — a short X-Forwarded-For chain is not trusted", () => {
 
 describe("SEC-04 — an empty CSRF methods list is a configuration error", () => {
   it("rejects methods: [] at construction", () => {
-    expect(() =>
-      createCsrfProtection({ secret: SECRET, methods: [] }),
-    ).toThrow(ConfigurationError);
+    expect(() => createCsrfProtection({ secret: SECRET, methods: [] })).toThrow(
+      ConfigurationError,
+    );
   });
 
   it("rejects an empty list in requiresCsrfProtection", () => {

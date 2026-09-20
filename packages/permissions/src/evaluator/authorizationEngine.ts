@@ -121,8 +121,7 @@ export interface PermissionEngineOptions {
    * no decisions rather than serving one from a revoked implication.
    */
   readonly expandImplied?:
-    | ((permission: string) => readonly string[])
-    | ImpliedPermissionSource;
+    ((permission: string) => readonly string[]) | ImpliedPermissionSource;
   /** Emits an event for every completed check, including failures. */
   readonly emitter?: PermissionEventEmitter;
   /** Reports a failure authorization swallowed to stay fail-closed. */
@@ -319,8 +318,7 @@ export function createPermissionEngine(
     ? (permission: string): readonly string[] =>
         impliedSource.expandImplied(permission)
     : (options?.expandImplied as
-        | ((permission: string) => readonly string[])
-        | undefined);
+        ((permission: string) => readonly string[]) | undefined);
   const impliedWatched =
     impliedSource?.subscribe?.(invalidateConfiguration) !== undefined;
 

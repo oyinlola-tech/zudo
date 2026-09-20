@@ -27,9 +27,9 @@ anything new.
   decisions by default. A resolver reads authorization state the engine does
   not own and cannot see change, and none of it was in the cache key, so a
   grant withdrawn upstream kept being served until the entry expired. To get
-  caching back, supply the new `resolverCacheKey: (actor) => string |
-  undefined` — return something that changes whenever the resolver's answer
-  for that actor could change (a grants-table version, an `updatedAt` stamp).
+  caching back, supply the new `resolverCacheKey` — a function of the actor
+  returning something that changes whenever the resolver's answer for that
+  actor could change (a grants-table version, an `updatedAt` stamp).
   Returning `undefined` leaves that actor uncached. Engines without a resolver
   are unaffected.
 - The README's request-metadata example imported `requireCurrentTenant` from

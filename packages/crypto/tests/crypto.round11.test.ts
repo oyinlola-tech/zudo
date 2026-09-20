@@ -17,13 +17,14 @@ import { hmac } from "../src/cryptoHash/index.js";
 import { encrypt, decrypt } from "../src/cryptoCipher/index.js";
 import { sign, verify } from "../src/cryptoSignature/index.js";
 import { hashPassword, verifyPassword } from "../src/cryptoPassword/index.js";
-import { derivePbkdf2, deriveScrypt } from "../src/cryptoKeyDerivation/index.js";
+import {
+  derivePbkdf2,
+  deriveScrypt,
+} from "../src/cryptoKeyDerivation/index.js";
 import { randomBytesSecure, randomHex } from "../src/cryptoRandom/index.js";
 
 /** The Node provider with one capability flag turned off. */
-function providerWithout(
-  disabled: keyof CryptoCapabilities,
-): CryptoProvider {
+function providerWithout(disabled: keyof CryptoCapabilities): CryptoProvider {
   const base = createNodeCryptoProvider();
   const capabilities: CryptoCapabilities = {
     ...base.capabilities,
@@ -43,9 +44,9 @@ afterEach(() => {
 describe("SEC-05 — declared capabilities are consulted", () => {
   it("refuses to hash a password on a provider that declares passwordHashing: false", async () => {
     const provider = providerWithout("passwordHashing");
-    await expect(hashPassword("correct horse battery", { provider })).rejects.toThrow(
-      CryptoError,
-    );
+    await expect(
+      hashPassword("correct horse battery", { provider }),
+    ).rejects.toThrow(CryptoError);
     await expect(
       hashPassword("correct horse battery", { provider }),
     ).rejects.toThrow(/passwordHashing/);
@@ -62,7 +63,8 @@ describe("SEC-05 — declared capabilities are consulted", () => {
   it("refuses to sign or verify on a provider that declares signing: false", async () => {
     const provider = providerWithout("signing");
     const data = new TextEncoder().encode("payload");
-    const key = "-----BEGIN PRIVATE KEY-----\nnot-a-key\n-----END PRIVATE KEY-----";
+    const key =
+      "-----BEGIN PRIVATE KEY-----\nnot-a-key\n-----END PRIVATE KEY-----";
 
     await expect(sign(data, key, { provider })).rejects.toThrow(/signing/);
     await expect(
@@ -120,9 +122,9 @@ describe("SEC-05 — declared capabilities are consulted", () => {
     const digest = await hash("x", { provider });
     expect(digest.encoded).toMatch(/^[0-9a-f]{64}$/);
     const stored = await hashPassword("pw-abcdefghij", { provider });
-    expect(await verifyPassword("pw-abcdefghij", stored.encoded, provider)).toBe(
-      true,
-    );
+    expect(
+      await verifyPassword("pw-abcdefghij", stored.encoded, provider),
+    ).toBe(true);
   });
 });
 
