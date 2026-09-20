@@ -158,11 +158,18 @@ caller's.
 
 ```typescript
 const server = new RPCServer(undefined, undefined, {
-  limits: { maxPayloadBytes: 256 * 1024 },
+  limits: { maxPayloadBytes: 256 * 1024, maxRequestIdLength: 128 },
   dispatch: { defaultTimeout: 10_000 },
   onInternalError: (error, requestId) => logger.error({ requestId, error }),
 });
 ```
+
+`maxPayloadBytes` bounds `payload` and `metadata` together, because both are
+caller-controlled and both reach the handler. `maxRequestIdLength` bounds
+`request.id`, which every response echoes back; an id over the limit is
+refused before a response is built, so it is never reflected. Both default to
+`MAX_RPC_PAYLOAD_SIZE` (1 MiB) and `MAX_RPC_REQUEST_ID_LENGTH` (128), and
+either can be set to `0` when the transport already enforces the limit.
 
 ## License
 
