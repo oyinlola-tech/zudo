@@ -541,9 +541,9 @@ These are thrown by the queue but live in `@zudojs/errors`. Import them from the
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/queue` exports from its package root at v1.2.0 — **85** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/queue` exports from its package root at v1.3.0 — **87** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 85 exports**
+**Show all 87 exports**
 
 Classes (2)
 
@@ -553,17 +553,17 @@ Functions (41)
 
 `assertProcessor` `calculateRetryDelay` `captureContext` `createBackoffOptions` `createExponentialBackoff` `createFixedBackoff` `createInMemoryDeadLetterStore` `createInMemoryQueue` `createInMemoryQueueEventEmitter` `createJob` `createJobContext` `createJobErrorResult` `createJobId` `createJobName` `createJobProgress` `createJobResult` `createJsonSerializer` `createLoggingMiddleware` `createMiddlewareChain` `createNoopQueueEventEmitter` `createProcessorRegistry` `createQueue` `createQueueManager` `createQueueName` `createQueueRegistry` `createTimeoutMiddleware` `createWorker` `incrementJobAttempt` `isJob` `isJobContext` `isJobId` `isJobName` `isProcessor` `isQueue` `isQueueName` `isWorker` `mergeJobOptions` `moveToDeadLetter` `runWithContext` `shouldRetry` `updateJobState`
 
-Interfaces (25)
+Interfaces (26)
 
-`BackoffOptions` `DeadLetterJob` `DeadLetterStore` `Job` `JobContext` `JobInput` `JobOptions` `JobProgress` `JobResult` `ProcessorInfo` `ProcessorRegistry` `Queue` `QueueContextCarrier` `QueueEventEmitter` `QueueInfo` `QueueLogger` `QueueManager` `QueueMiddlewareContext` `QueueOptions` `QueueRegistry` `QueueStats` `Serializer` `Worker` `WorkerOptions` `WorkerStats`
+`BackoffOptions` `DeadLetterJob` `DeadLetterStore` `InMemoryDeadLetterStoreOptions` `Job` `JobContext` `JobInput` `JobOptions` `JobProgress` `JobResult` `ProcessorInfo` `ProcessorRegistry` `Queue` `QueueContextCarrier` `QueueEventEmitter` `QueueInfo` `QueueLogger` `QueueManager` `QueueMiddlewareContext` `QueueOptions` `QueueRegistry` `QueueStats` `Serializer` `Worker` `WorkerOptions` `WorkerStats`
 
 Type aliases (9)
 
 `BackoffStrategy` `JobId` `JobName` `JobPriority` `Processor` `QueueEventMap` `QueueMiddleware` `QueueName` `WorkerLifecycleState`
 
-Constants (5)
+Constants (6)
 
-`CONTEXT_METADATA_KEY` `DEFAULT_JOB_OPTIONS` `JobPriorityLevels` `JsonSerializer` `PassthroughSerializer`
+`CONTEXT_METADATA_KEY` `DEFAULT_DEAD_LETTER_JOBS` `DEFAULT_JOB_OPTIONS` `JobPriorityLevels` `JsonSerializer` `PassthroughSerializer`
 
 Enums (3)
 

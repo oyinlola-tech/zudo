@@ -708,9 +708,9 @@ process.on("SIGTERM", async () => {
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/logger` exports from its package root at v1.2.0 — **146** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/logger` exports from its package root at v1.3.0 — **147** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 146 exports**
+**Show all 147 exports**
 
 Classes (15)
 
@@ -728,9 +728,9 @@ Type aliases (8)
 
 `LoggerFormattedOutput` `LoggerFormatterFunction` `LoggerFormatterLike` `LoggerLevelName` `LoggerTransportFunction` `LoggerTransportLike` `LogMetadata` `LogValue`
 
-Constants (4)
+Constants (5)
 
-`DEFAULT_LOGGER_OPTIONS` `DEFAULT_LOGGER_SECRET_FIELDS` `DEFAULT_LOGGER_SECRET_PATTERN` `LOGGER_REDACTION_TOKEN`
+`DEFAULT_LOGGER_OPTIONS` `DEFAULT_LOGGER_SECRET_FIELDS` `DEFAULT_LOGGER_SECRET_PATTERN` `LOGGER_REDACTION_TOKEN` `LOGGER_UNREADABLE_TOKEN`
 
 Enums (1)
 

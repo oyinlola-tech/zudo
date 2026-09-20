@@ -440,9 +440,9 @@ Everything below is exported from `@zudojs/validation`. Constraints, normalizers
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/validation` exports from its package root at v1.0.2 — **179** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/validation` exports from its package root at v1.0.3 — **178** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 179 exports**
+**Show all 178 exports**
 
 Classes (12)
 
@@ -460,9 +460,9 @@ Type aliases (8)
 
 `AsyncNormalizer` `AsyncValidationTransform` `Normalizer` `TraversalHalt` `ValidationResult` `ValidationSchema` `ValidationStep` `ValidationTransform`
 
-Constants (20)
+Constants (19)
 
-`ascii` `digits` `email` `even` `finiteNumber` `futureDate` `httpUrl` `integer` `isoDate` `letters` `MAX_MEASURABLE_DEPTH` `nonEmptyString` `nonNegative` `odd` `pastDate` `positive` `required` `slug` `uuid` `z`
+`ascii` `digits` `email` `even` `finiteNumber` `futureDate` `httpUrl` `integer` `isoDate` `letters` `MAX_MEASURABLE_DEPTH` `nonEmptyString` `nonNegative` `odd` `pastDate` `positive` `required` `slug` `uuid`
 
 Enums (1)
 

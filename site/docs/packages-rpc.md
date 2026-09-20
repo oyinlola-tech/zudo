@@ -482,9 +482,9 @@ Sixteen classes are defined in [@zudojs/errors](https://zudojs.oyinlola.site/doc
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/rpc` exports from its package root at v1.2.0 — **91** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/rpc` exports from its package root at v1.3.0 — **92** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 91 exports**
+**Show all 92 exports**
 
 Classes (22)
 
@@ -502,6 +502,6 @@ Type aliases (8)
 
 `RPCAuthContext` `RPCBackoff` `RPCHandler` `RPCJitter` `RPCMiddleware` `RPCProcedureName` `RPCSchema` `RPCStreamingHandler`
 
-Constants (10)
+Constants (11)
 
-`DEFAULT_RETRY_OPTIONS` `DEFAULT_RPC_TIMEOUT` `INTERNAL_ERROR_MESSAGE` `MAX_MIDDLEWARE` `MAX_PENDING_REQUESTS` `MAX_PROCEDURE_NAME_LENGTH` `MAX_PROCEDURES` `MAX_RPC_PAYLOAD_SIZE` `MAX_TIMER_DELAY` `PROCEDURE_NAME_PATTERN`
+`DEFAULT_RETRY_OPTIONS` `DEFAULT_RPC_TIMEOUT` `INTERNAL_ERROR_MESSAGE` `MAX_MIDDLEWARE` `MAX_PENDING_REQUESTS` `MAX_PROCEDURE_NAME_LENGTH` `MAX_PROCEDURES` `MAX_RPC_PAYLOAD_SIZE` `MAX_RPC_REQUEST_ID_LENGTH` `MAX_TIMER_DELAY` `PROCEDURE_NAME_PATTERN`

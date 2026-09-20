@@ -624,9 +624,9 @@ All of these are exported as types only. Mocking: `MockFn`, `SpyFn`, `SpyMethod`
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/testing` exports from its package root at v1.1.1 — **107** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/testing` exports from its package root at v1.1.2 — **105** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 107 exports**
+**Show all 105 exports**
 
 Classes (1)
 
@@ -636,9 +636,9 @@ Functions (67)
 
 `assertBadRequest` `assertCreated` `assertDeserializesTo` `assertErrorCode` `assertErrorMetadata` `assertErrorType` `assertEventNotPublished` `assertEventPayload` `assertEventPublished` `assertEventType` `assertMessageDispatched` `assertMessageNotDispatched` `assertNoContent` `assertNotFound` `assertOK` `assertRecordedEventType` `assertRejects` `assertResponseBody` `assertResponseBodyContains` `assertResponseHeader` `assertResponseStatus` `assertSerializesCorrectly` `assertSerializesTo` `assertServerError` `assertThrows` `assertTypePreservesRoundTrip` `badRequestResponse` `createCleanupManager` `createdResponse` `createEvent` `createEventInput` `createEventRecorder` `createEvents` `createHTTPRequest` `createHTTPResponse` `createLogRecorder` `createMessage` `createMessageInput` `createMessageRecorder` `createMessages` `createMockFn` `createRecordingLogger` `createSpyFn` `createSpyLogger` `createSpyMethod` `createStub` `createStubClass` `createTestApplication` `createTestClock` `createTestConfigManager` `createTestContainer` `createTestContext` `createTestEventBus` `createTestHTTPRequest` `createTestHTTPResponse` `createTestMessageBus` `createTestQueue` `deepEqual` `deepMatches` `describeValue` `findDifference` `jsonResponse` `mergeContext` `mergeLoggerContext` `noContentResponse` `notFoundResponse` `serverErrorResponse`
 
-Interfaces (38)
+Interfaces (36)
 
-`CapturedEvent` `CapturedLogEntry` `CapturedMessage` `CleanupEntry` `CleanupManager` `CleanupManagerOptions` `CreateEventOptions` `CreateMessageOptions` `DependencyOverride` `DerivedOptions` `Difference` `EventRecorder` `HTTPRequestBuilder` `HTTPResponseBuilder` `LogCall` `LogRecorder` `MessageRecorder` `MockFn` `RecordedEvent` `RecordedJob` `RecordedMessage` `Recorder` `SpyFn` `SpyLogger` `SpyMethod` `TestApplication` `TestApplicationOptions` `TestClock` `TestConfigManager` `TestContainer` `TestContainerOptions` `TestContext` `TestContextOptions` `TestEventBus` `TestHTTPRequest` `TestHTTPResponse` `TestMessageBus` `TestQueue`
+`CapturedEvent` `CapturedLogEntry` `CapturedMessage` `CleanupEntry` `CleanupManager` `CleanupManagerOptions` `CreateEventOptions` `CreateMessageOptions` `DependencyOverride` `DerivedOptions` `Difference` `EventRecorder` `HTTPRequestBuilder` `HTTPResponseBuilder` `LogRecorder` `MessageRecorder` `MockFn` `RecordedEvent` `RecordedJob` `RecordedMessage` `Recorder` `SpyFn` `SpyMethod` `TestApplication` `TestApplicationOptions` `TestClock` `TestConfigManager` `TestContainer` `TestContainerOptions` `TestContext` `TestContextOptions` `TestEventBus` `TestHTTPRequest` `TestHTTPResponse` `TestMessageBus` `TestQueue`
 
 Constants (1)
 

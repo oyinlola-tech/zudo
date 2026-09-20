@@ -659,9 +659,9 @@ All extend `TenantError`, which extends `AuthorizationError` from [@zudojs/error
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/tenancy` exports from its package root at v1.2.0 — **101** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/tenancy` exports from its package root at v1.2.1 — **95** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 101 exports**
+**Show all 95 exports**
 
 Classes (11)
 
@@ -671,13 +671,13 @@ Functions (39)
 
 `assertSameTenant` `assertTenantOwnership` `assertTenantUsable` `assertTrustLevel` `createBadRequest` `createContextManager` `createDomainRegistry` `createDomainResolver` `createForbidden` `createHeaderResolver` `createHttpResolverContext` `createJsonErrorResponse` `createJwtResolver` `createMemoryTenantRepository` `createNotFound` `createPathResolver` `createRequireTenantMiddleware` `createResolverChain` `createResolveTenantMiddleware` `createSubdomainResolver` `createTenantCacheKey` `createTenantContextStorage` `createTenantGuardMiddleware` `createTenantId` `createTenantManager` `createTenantPropagationMiddleware` `createUnauthorized` `getDefaultStorage` `getDefaultTrust` `isTenantActive` `isValidTenantId` `meetsTrustLevel` `readRequestHeader` `resetDefaultStorage` `sameTenant` `summarizeContext` `summarizeTenant` `tenantKey` `tryCreateTenantId`
 
-Interfaces (37)
+Interfaces (33)
 
-`ContextManagerOptions` `DomainContext` `DomainResolverOptions` `HeaderContext` `HeaderResolverOptions` `HttpMiddlewareContext` `HttpMiddlewareState` `HttpRequestContext` `HttpResolverContext` `HttpResponseContext` `JwtContext` `JwtResolverOptions` `MemoryTenantRepository` `PathContext` `PathResolverOptions` `RequireTenantMiddlewareOptions` `ResolverChainOptions` `ResolveTenantMiddlewareOptions` `SubdomainContext` `SubdomainResolverOptions` `SystemContext` `Tenant` `TenantCache` `TenantClaims` `TenantContext` `TenantContextStorage` `TenantDomain` `TenantExecutionContext` `TenantGuardMiddlewareOptions` `TenantManagerOptions` `TenantRepository` `TenantResolution` `TenantResolutionResult` `TenantResolver` `TenantResolverChain` `TenantResource` `TenantWithDomains`
+`ContextManagerOptions` `DomainContext` `DomainResolverOptions` `HeaderContext` `HeaderResolverOptions` `HttpResolverContext` `JwtContext` `JwtResolverOptions` `MemoryTenantRepository` `PathContext` `PathResolverOptions` `RequireTenantMiddlewareOptions` `ResolverChainOptions` `ResolveTenantMiddlewareOptions` `SubdomainContext` `SubdomainResolverOptions` `SystemContext` `Tenant` `TenantCache` `TenantClaims` `TenantContext` `TenantContextStorage` `TenantDomain` `TenantExecutionContext` `TenantGuardMiddlewareOptions` `TenantManagerOptions` `TenantRepository` `TenantResolution` `TenantResolutionResult` `TenantResolver` `TenantResolverChain` `TenantResource` `TenantWithDomains`
 
-Type aliases (8)
+Type aliases (6)
 
-`ExecutionTenantContext` `HttpMiddleware` `HttpRequestBag` `TenantId` `TenantRequirement` `TenantResolutionSource` `TenantStatus` `TenantTrustLevel`
+`ExecutionTenantContext` `TenantId` `TenantRequirement` `TenantResolutionSource` `TenantStatus` `TenantTrustLevel`
 
 Constants (6)
 
