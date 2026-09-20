@@ -14,18 +14,41 @@ import type { QueueContextCarrier } from "./contextCarrier.type.js";
 export const CONTEXT_METADATA_KEY = "zudo:context";
 
 /**
+ * Strips the reserved context key from caller-supplied metadata.
+ *
+ * The key is owned by the queue on every path: whatever the enqueuer put
+ * there is dropped, so `add()` metadata can never supply a context record of
+ * its own. Returns the input untouched when there is nothing to strip, so the
+ * common case still allocates nothing.
+ */
+function withoutStoredContext(
+  metadata: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!metadata || !Object.hasOwn(metadata, CONTEXT_METADATA_KEY)) {
+    return metadata;
+  }
+  const { [CONTEXT_METADATA_KEY]: _discarded, ...rest } = metadata;
+  return rest;
+}
+
+/**
  * Captures every carrier's value into a metadata record.
+ *
+ * {@link CONTEXT_METADATA_KEY} is owned by the queue: a value the caller put
+ * under that key is always discarded, whether or not a carrier captured
+ * anything, so an enqueuer cannot forge the tenant, correlation id or trace
+ * the processor runs under.
  *
  * @param carriers - The queue's context carriers.
  * @param metadata - The job's own metadata, if any.
  * @returns The metadata with a {@link CONTEXT_METADATA_KEY} entry added, or
- *   the input unchanged when no carrier captured anything.
+ *   without one when no carrier captured anything.
  */
 export function captureContext(
   carriers: readonly QueueContextCarrier[] | undefined,
   metadata: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
-  if (!carriers || carriers.length === 0) return metadata;
+  if (!carriers || carriers.length === 0) return withoutStoredContext(metadata);
 
   const captured: Record<string, unknown> = {};
   let any = false;
@@ -36,7 +59,7 @@ export function captureContext(
     any = true;
   }
 
-  if (!any) return metadata;
+  if (!any) return withoutStoredContext(metadata);
   return { ...metadata, [CONTEXT_METADATA_KEY]: Object.freeze(captured) };
 }
 

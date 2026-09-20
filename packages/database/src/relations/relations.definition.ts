@@ -193,6 +193,26 @@ export function validateInclude(include: RelationInclude): void {
 }
 
 /**
+ * Validates a single include level: its shape, relation name and select
+ * fields, leaving nested includes to the caller.
+ *
+ * `buildInclude` uses this so the depth bound applies per level — a
+ * recursive validation would walk the whole caller-supplied subtree before
+ * the depth guard could refuse it.
+ */
+function validateIncludeLevel(include: RelationInclude): void {
+  if (!include || typeof include !== "object") {
+    throw new TypeError("A relation include is required.");
+  }
+
+  validateRelationName(include.relation);
+
+  for (const field of include.select ?? []) {
+    validateFieldName(field);
+  }
+}
+
+/**
  * Translates relation includes into a Prisma `include` object.
  *
  * When a registry is supplied every relation is validated against the
@@ -232,12 +252,15 @@ function buildInclude(
     );
   }
 
-  const result: Record<string, unknown> = {};
+  // A null-prototype accumulator: relation names such as `toString` or
+  // `__proto__` must behave as ordinary keys. It is spread into a plain
+  // object before it is returned.
+  const result = Object.create(null) as Record<string, unknown>;
 
   for (const include of includes) {
-    validateInclude(include);
+    validateIncludeLevel(include);
 
-    if (include.relation in result) {
+    if (Object.hasOwn(result, include.relation)) {
       throw new TypeError(
         `Relation "${include.relation}" is included more than once.`,
       );
@@ -264,13 +287,13 @@ function buildInclude(
     const entry: Record<string, unknown> = {};
 
     if (include.select && include.select.length > 0) {
-      const select: Record<string, boolean> = {};
+      const select = Object.create(null) as Record<string, boolean>;
 
       for (const field of include.select) {
         select[field] = true;
       }
 
-      entry["select"] = select;
+      entry["select"] = { ...select };
     }
 
     if (include.include && include.include.length > 0) {
@@ -305,7 +328,7 @@ function buildInclude(
     result[include.relation] = Object.keys(entry).length === 0 ? true : entry;
   }
 
-  return result;
+  return { ...result };
 }
 
 /**

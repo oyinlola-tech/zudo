@@ -65,14 +65,26 @@ export function isHttpMethod(value: string): value is HttpMethod {
   );
 }
 
+/**
+ * Collects the methods registered for a path.
+ *
+ * @param routes - The compiled routes to consider.
+ * @param path - The request path.
+ * @param caseSensitive - The router's case sensitivity. This used to be
+ *   hardcoded to `false`, so a case-sensitive router advertised `Allow`
+ *   methods belonging to a route that only differed by case — a method the
+ *   client would then get a 404 from, and a disclosure of the other route.
+ * @returns The allowed methods, with `HEAD` implied by `GET`.
+ */
 export function collectAllowedMethods(
   routes: readonly CompiledRoute[],
   path: string,
+  caseSensitive = false,
 ): HttpMethod[] {
   const methods = new Set<HttpMethod>();
 
   for (const route of routes) {
-    if (!matchCompiledRoute(route, path, false)) {
+    if (!matchCompiledRoute(route, path, caseSensitive)) {
       continue;
     }
 
@@ -227,13 +239,56 @@ export function defaultMethodNotAllowedHandler(
 /* -------------------------------------------------------------------------- */
 
 /**
+ * Merges one response context into another.
+ *
+ * Status, status text, headers, cookies, metadata and body are all carried
+ * over, so nothing a handler produced is lost.
+ *
+ * @param target - The response that stays authoritative.
+ * @param source - The response to fold into it.
+ * @returns The target response.
+ */
+export function mergeResponseContext(
+  target: ResponseContext,
+  source: ResponseContext,
+): ResponseContext {
+  if (source === target) {
+    return target;
+  }
+
+  target.setStatus(source.status, source.statusText);
+
+  target.headers_obj(source.headers);
+
+  for (const cookie of source.cookies) {
+    target.setCookie(cookie);
+  }
+
+  for (const [key, value] of Object.entries(source.metadata)) {
+    target.setMetadata(key, value);
+  }
+
+  target.setBody(source.body);
+
+  return target;
+}
+
+/**
  * Runs a matched route's middleware chain followed by its handler.
+ *
+ * Every result is folded into the ambient response context
+ * (`context.middleware.response`), which is the object route middleware
+ * writes to. Returning the handler's brand new response instead — as this
+ * used to — silently discarded every header, cookie and status a route
+ * middleware had set before calling `next()`.
  */
 export async function executeRoute(
   route: MatchedRoute,
   context: HttpRouterContext,
 ): Promise<ResponseContext> {
   const layers = route.middleware;
+
+  const ambient = context.middleware.response;
 
   let invoked = -1;
 
@@ -249,7 +304,10 @@ export async function executeRoute(
     const layer = layers[index];
 
     if (layer === undefined) {
-      return normalizeResponse(await route.handler(context));
+      return mergeResponseContext(
+        ambient,
+        await normalizeResponse(await route.handler(context)),
+      );
     }
 
     let downstream: ResponseContext | undefined;
@@ -261,14 +319,14 @@ export async function executeRoute(
     });
 
     if (result instanceof HttpResponseContext) {
-      return result;
+      return mergeResponseContext(ambient, result);
     }
 
     if (typeof Response !== "undefined" && result instanceof Response) {
-      return normalizeResponse(result);
+      return mergeResponseContext(ambient, await normalizeResponse(result));
     }
 
-    return downstream ?? context.middleware.response;
+    return downstream ?? ambient;
   };
 
   return run(0);

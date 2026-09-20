@@ -153,6 +153,14 @@ export interface QueueStats {
 export interface Queue<TData = unknown> {
   /** Queue name. */
   readonly name: QueueName;
+  /**
+   * The emitter this queue publishes lifecycle events on, when it has one.
+   *
+   * Exposed so a `Worker` can report its own lifecycle
+   * (`worker:started`, `worker:stopped`, `worker:error`) on the same
+   * emitter as the jobs it runs.
+   */
+  readonly events?: QueueEventEmitter;
   /** Add a job to the queue. */
   add(name: string, data: TData, options?: JobOptions): Promise<Job<TData>>;
   /** Process jobs with a processor. */
@@ -231,6 +239,7 @@ export type QueueEventMap = {
   "job:completed": { job: Job; result: unknown };
   "job:failed": { job: Job; error: Error };
   "job:retrying": { job: Job; attempt: number };
+  /** A running job was aborted from outside — a drain, a close, a cancel. */
   "job:cancelled": { job: Job };
   "worker:started": { workerId: string };
   "worker:stopped": { workerId: string };

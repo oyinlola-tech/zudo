@@ -14,6 +14,8 @@ import type {
 
 import { registryUnregister } from "./eventRegistry.registration.js";
 
+import { warnObserverError } from "../eventErrors/eventWarning.helper.js";
+
 /**
  * Clears all handlers and definitions from the registry.
  *
@@ -67,7 +69,9 @@ export function registryDispose(
  * Notifies registry listeners.
  *
  * Observer failures never break registry mutations; they are
- * forwarded to the `onError` hook when one is configured.
+ * forwarded to the `onError` hook when one is configured, and to
+ * Node's process warning channel when one is not, so a broken
+ * observer is never silently discarded.
  */
 export function registryNotify(
   change: EventRegistryChange,
@@ -86,6 +90,8 @@ export function registryNotify(
            * A failing error hook must not break the mutation either.
            */
         }
+      } else {
+        warnObserverError(error, "An event registry observer");
       }
     }
   }

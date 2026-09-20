@@ -93,16 +93,21 @@ export class ConfigManager {
     this.store =
       suppliedStore ??
       createConfigStore({
-        initialValues: options.initialValues,
         freeze: options.freeze ?? true,
       });
 
     // initialValues used to be wired ONLY into a store the manager
     // created itself: passing `store` or `loader` silently discarded
-    // them. Seed a supplied store explicitly instead.
-    if (suppliedStore && options.initialValues) {
+    // them. Both paths are seeded here instead, at the same priority
+    // runtime set() uses — seeded at priority 0 they were silently
+    // overwritten by any source that did not declare a priority,
+    // because applySource overwrites on EQUAL priority.
+    if (options.initialValues) {
       for (const [key, value] of Object.entries(options.initialValues)) {
-        suppliedStore.set(key, value, { source: "initialValues" });
+        this.store.set(key, value, {
+          source: "initialValues",
+          priority: Number.MAX_SAFE_INTEGER,
+        });
       }
     }
 
@@ -440,7 +445,10 @@ export class ConfigManager {
     return this.store.set(key, value, {
       source: options.source ?? "runtime",
       priority: options.priority ?? Number.MAX_SAFE_INTEGER,
-      sensitive: options.sensitive ?? false,
+      // Left undefined so the store's own secret detection runs; an
+      // explicit `false` here would have disabled it for every runtime
+      // write.
+      sensitive: options.sensitive,
     });
   }
 

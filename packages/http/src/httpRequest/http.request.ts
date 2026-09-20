@@ -6,6 +6,16 @@ import { InvalidJSONError } from "../httpErrors/httpError.helper.js";
 
 import { parseQueryString as parseHardenedQueryString } from "../httpQuery/queryParse/index.js";
 
+import {
+  getClientIp,
+  isTrustedPeer,
+} from "../httpTrustProxy/httpTrustProxy.helper.js";
+
+import type {
+  ProxyRequest,
+  TrustProxy,
+} from "../httpTrustProxy/httpTrustProxy.type.js";
+
 import type {
   HTTPHeaders,
   HTTPMethod,
@@ -88,6 +98,15 @@ export interface HTTPRequestOptions {
   readonly ip?: string;
   readonly ips?: readonly string[];
   readonly signal?: AbortSignal;
+  /**
+   * Which socket peers may speak for a client through `X-Forwarded-*`.
+   *
+   * Defaults to `false`: every forwarded header is ignored and the socket
+   * peer decides `ip`, `protocol` and `secure`. Set it to the address, CIDR
+   * range, preset or predicate matching the proxy in front of this process
+   * before `req.ip` may report a forwarded address.
+   */
+  readonly trustProxy?: TrustProxy;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -132,7 +151,9 @@ export class NodeHTTPRequest implements HTTPRequest {
   private jsonParsed = false;
 
   constructor(request: IncomingMessage, options: HTTPRequestOptions = {}) {
-    const protocol = getRequestProtocol(request);
+    const trustProxy = options.trustProxy ?? false;
+
+    const protocol = getRequestProtocol(request, trustProxy);
 
     const host = getRequestHost(request);
 
@@ -156,11 +177,11 @@ export class NodeHTTPRequest implements HTTPRequest {
 
     this.hostname = getHostname(host);
 
-    this.ip = options.ip ?? getRequestIP(request);
+    this.ip = options.ip ?? getRequestIP(request, trustProxy);
 
     this.ips = options.ips;
 
-    this.secure = protocol === "https" || protocol === "wss";
+    this.secure = protocol === "https";
 
     this.rawBody = options.rawBody;
 
@@ -365,11 +386,49 @@ export function getHostname(host: string): string {
 /* Protocol                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export function getRequestProtocol(request: IncomingMessage): string {
-  const forwarded = request.headers[HTTP_HEADERS.X_FORWARDED_PROTO];
+/** The only schemes a forwarded proto may name. */
+const FORWARDED_PROTOCOLS = Object.freeze(["http", "https"]);
 
-  if (typeof forwarded === "string") {
-    return (forwarded.split(",", 1)[0] ?? "").trim().toLowerCase();
+/**
+ * Presents an `IncomingMessage` in the shape `httpTrustProxy` works on, so
+ * this path and the Node adapter share one implementation of the hop logic.
+ */
+function toProxyRequest(request: IncomingMessage): ProxyRequest {
+  return {
+    headers: request.headers,
+    socket: { remoteAddress: request.socket?.remoteAddress },
+  };
+}
+
+/**
+ * Resolves the scheme the client used.
+ *
+ * `X-Forwarded-Proto` is written by whoever opened the socket, so it is read
+ * only when that peer is a configured trusted proxy, and only when it names
+ * `http` or `https` — a value such as `wss` is discarded rather than
+ * propagated. With the default `trustProxy` of `false` the socket's own TLS
+ * state is the only input.
+ *
+ * @param request - The incoming Node request.
+ * @param trustProxy - Which peers may speak through `X-Forwarded-Proto`.
+ * @returns `"https"` or `"http"`.
+ */
+export function getRequestProtocol(
+  request: IncomingMessage,
+  trustProxy: TrustProxy = false,
+): string {
+  if (isTrustedPeer(toProxyRequest(request), trustProxy)) {
+    const forwarded = request.headers[HTTP_HEADERS.X_FORWARDED_PROTO];
+
+    const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+
+    if (typeof value === "string") {
+      const proto = (value.split(",", 1)[0] ?? "").trim().toLowerCase();
+
+      if (FORWARDED_PROTOCOLS.includes(proto)) {
+        return proto;
+      }
+    }
   }
 
   if (
@@ -386,18 +445,33 @@ export function getRequestProtocol(request: IncomingMessage): string {
 /* IP                                                                         */
 /* -------------------------------------------------------------------------- */
 
-export function getRequestIP(request: IncomingMessage): string | undefined {
-  const forwarded = request.headers[HTTP_HEADERS.X_FORWARDED_FOR];
+/**
+ * Resolves the client address.
+ *
+ * The socket peer is authoritative. `X-Forwarded-For` is consulted only when
+ * that peer is a configured trusted proxy, and the chain walk is delegated to
+ * `getClientIp` so there is a single implementation of the hop logic. With
+ * the default `trustProxy` of `false` the peer address is returned unchanged,
+ * which is what an allowlist, per-IP rate limit or audit trail keyed on
+ * `req.ip` needs.
+ *
+ * @param request - The incoming Node request.
+ * @param trustProxy - Which peers may speak through `X-Forwarded-For`.
+ * @returns The client address, or `undefined` when the socket has none.
+ */
+export function getRequestIP(
+  request: IncomingMessage,
+  trustProxy: TrustProxy = false,
+): string | undefined {
+  const proxyRequest = toProxyRequest(request);
 
-  if (typeof forwarded === "string") {
-    const first = forwarded.split(",", 1)[0]?.trim();
+  const peer = proxyRequest.socket?.remoteAddress;
 
-    if (first) {
-      return first;
-    }
+  if (!isTrustedPeer(proxyRequest, trustProxy)) {
+    return peer ?? undefined;
   }
 
-  return request.socket.remoteAddress ?? undefined;
+  return getClientIp(proxyRequest, trustProxy) ?? peer ?? undefined;
 }
 
 /* -------------------------------------------------------------------------- */

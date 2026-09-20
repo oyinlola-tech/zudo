@@ -20,6 +20,7 @@ import {
 import {
   MAX_PROCEDURE_NAME_LENGTH,
   MAX_RPC_PAYLOAD_SIZE,
+  MAX_RPC_REQUEST_ID_LENGTH,
   PROCEDURE_NAME_PATTERN,
 } from "../constants/rpcConstants.core.js";
 
@@ -28,11 +29,21 @@ import {
  */
 export interface RPCRequestLimits {
   /**
-   * Maximum encoded payload size in bytes. Defaults to
+   * Maximum combined encoded size, in bytes, of the caller-controlled
+   * parts of the frame — `payload` and `metadata`. Defaults to
    * {@link MAX_RPC_PAYLOAD_SIZE}. Set to `0` to skip the check when the
    * transport already enforces a frame limit.
+   *
+   * `metadata` counts because it is caller-controlled and is handed to
+   * middleware and handlers as `context.metadata`; measuring `payload`
+   * alone left an unbounded second channel into the same handler.
    */
   readonly maxPayloadBytes?: number;
+  /**
+   * Maximum length of `request.id`. Defaults to
+   * {@link MAX_RPC_REQUEST_ID_LENGTH}. Set to `0` to skip the check.
+   */
+  readonly maxRequestIdLength?: number;
   /**
    * Whether procedure names must match {@link PROCEDURE_NAME_PATTERN}.
    * Defaults to `true`.

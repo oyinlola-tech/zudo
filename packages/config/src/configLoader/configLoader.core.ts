@@ -11,6 +11,7 @@ import type {
 } from "../configSource/configSource.core.js";
 
 import {
+  deduplicateConfigSources,
   loadConfigSourceStrict,
   sortConfigSources,
 } from "../configSource/configSource.core.js";
@@ -115,7 +116,11 @@ export class ConfigLoader {
   private lastResult?: ConfigLoadResult;
 
   constructor(options: ConfigLoaderOptions = {}) {
-    this.sources = [...(options.sources ?? [])];
+    // addSource() rejects a name that is already registered, but the
+    // constructor used to accept duplicates silently — and because a
+    // later duplicate overwrote the earlier one, the LAST occurrence
+    // won, the opposite of the documented "first occurrence wins".
+    this.sources = [...deduplicateConfigSources(options.sources ?? [])];
 
     this.context = options.context ?? {};
 

@@ -23,6 +23,7 @@ import type {
 } from "./dispatcherType.type.js";
 
 import { createMessageContext } from "../messageContext/messageContextType.type.js";
+import { resolveMessageHandler } from "../messageHandler/messageHandlerType.type.js";
 import { HandlerRegistryStore } from "../handlerRegistry/handlerRegistryStore.js";
 import { runMessagePipeline } from "../messageMiddleware/messageMiddlewarePipeline.js";
 import {
@@ -125,7 +126,11 @@ export class DefaultDispatcher implements Dispatcher {
         value: pipelineResult.result as TResult,
         message,
         context,
-        handlerResults,
+        // A copy, not the live array: on a timeout the dispatch settles
+        // while a handler is still running, and that handler later pushed
+        // a `success: true` record into the result the caller was already
+        // holding for a dispatch that had failed.
+        handlerResults: [...handlerResults],
         middlewareResult: pipelineResult,
         duration: performance.now() - dispatchStart,
       };
@@ -135,7 +140,7 @@ export class DefaultDispatcher implements Dispatcher {
         error: error instanceof Error ? error : new Error(String(error)),
         message,
         context,
-        handlerResults,
+        handlerResults: [...handlerResults],
         duration: performance.now() - dispatchStart,
       };
     } finally {
@@ -251,7 +256,11 @@ export class DefaultDispatcher implements Dispatcher {
     context: MessageContext,
   ): Promise<unknown> {
     try {
-      return await handler.handler(message, context);
+      // Handlers may be a plain function or an object with a `handle`
+      // method. Calling `handler.handler(...)` directly made the object
+      // form crash on every dispatch, so it goes through the same
+      // normaliser the public type advertises.
+      return await resolveMessageHandler(handler.handler)(message, context);
     } catch (error) {
       throw new MessageHandlerError(
         `Handler "${handler.id}" failed: ${error instanceof Error ? error.message : String(error)}`,

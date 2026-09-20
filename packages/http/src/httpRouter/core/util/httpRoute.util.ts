@@ -75,6 +75,17 @@ export function parseQuery(
 /* Path Helpers                                                               */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Normalizes a **request** path.
+ *
+ * Strips the query string, forces a leading slash, collapses repeated
+ * slashes, and trims a trailing slash.
+ *
+ * This must not be used on a route *pattern*: a pattern may legitimately
+ * contain `?` (the optional-parameter marker), which this function treats as
+ * the start of a query string. Use {@link normalizeRoutePattern} for
+ * patterns.
+ */
 export function normalizePath(path: string): string {
   if (!path || path === "") {
     return "/";
@@ -82,9 +93,67 @@ export function normalizePath(path: string): string {
 
   const withoutQuery = path.split("?", 1)[0] ?? path;
 
-  let normalized = withoutQuery.startsWith("/")
-    ? withoutQuery
-    : `/${withoutQuery}`;
+  return collapsePath(withoutQuery);
+}
+
+/**
+ * Normalizes a request path while preserving a single trailing slash.
+ *
+ * The trailing slash is the only information a strict-trailing-slash route
+ * needs and {@link normalizePath} destroys it, so matching runs on this
+ * spelling instead.
+ *
+ * @param path - The raw request path, possibly with a query or fragment.
+ * @returns The normalized path, keeping one trailing slash if present.
+ */
+export function normalizeMatchPath(path: string): string {
+  if (!path || path === "") {
+    return "/";
+  }
+
+  const withoutQuery = path.split("?", 1)[0] ?? path;
+
+  const withoutHash = withoutQuery.split("#", 1)[0] ?? withoutQuery;
+
+  const collapsed = collapsePath(withoutHash);
+
+  return hasTrailingSlash(withoutHash) && collapsed !== "/"
+    ? `${collapsed}/`
+    : collapsed;
+}
+
+/**
+ * Normalizes a route **pattern**.
+ *
+ * Identical to {@link normalizePath} except that `?` is left alone, so the
+ * documented optional-parameter syntax (`/users/:id?`, `/files/{name?}`)
+ * survives registration.
+ *
+ * @param pattern - The raw route pattern.
+ * @returns The normalized pattern.
+ */
+export function normalizeRoutePattern(pattern: string): string {
+  if (!pattern || pattern === "") {
+    return "/";
+  }
+
+  return collapsePath(pattern);
+}
+
+/**
+ * Reports whether a path carries a meaningful trailing slash.
+ *
+ * @param path - The path to inspect.
+ * @returns `true` when the path ends with `/` and is not the root path.
+ */
+export function hasTrailingSlash(path: string): boolean {
+  const trimmed = path.replace(/\/{2,}/g, "/");
+
+  return trimmed.length > 1 && trimmed.endsWith("/");
+}
+
+function collapsePath(value: string): string {
+  let normalized = value.startsWith("/") ? value : `/${value}`;
 
   normalized = normalized.replace(/\/{2,}/g, "/");
 
@@ -97,6 +166,22 @@ export function normalizePath(path: string): string {
 
 export function splitPath(path: string): string[] {
   const normalized = normalizePath(path);
+
+  if (normalized === "/") {
+    return [];
+  }
+
+  return normalized.split("/").filter(Boolean);
+}
+
+/**
+ * Splits a route pattern into its segments, keeping `?` markers intact.
+ *
+ * @param pattern - The raw route pattern.
+ * @returns The pattern's non-empty segments.
+ */
+export function splitRoutePattern(pattern: string): string[] {
+  const normalized = normalizeRoutePattern(pattern);
 
   if (normalized === "/") {
     return [];

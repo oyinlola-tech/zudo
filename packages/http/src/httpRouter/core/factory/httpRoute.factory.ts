@@ -16,7 +16,7 @@ import {
   InvalidRoutePatternError,
 } from "../error/httpRouter.error.js";
 
-import { normalizePath } from "../util/httpRoute.util.js";
+import { normalizeRoutePattern } from "../util/httpRoute.util.js";
 
 /**
  * Creates a new HTTP router instance.
@@ -31,7 +31,7 @@ export function createRouter(options: RouterOptions = {}): HttpRouter {
 export function createRoute(definition: RouteDefinition): RouteDefinition {
   return {
     ...definition,
-    path: normalizePath(definition.path),
+    path: normalizeRoutePattern(definition.path),
     middleware: Object.freeze([...(definition.middleware ?? [])]),
     metadata: Object.freeze({ ...(definition.metadata ?? {}) }),
   };
@@ -44,7 +44,7 @@ export function buildRoutePath(
   pattern: string,
   params: Readonly<Record<string, string | number>> = {},
 ): string {
-  const normalized = normalizePath(pattern);
+  const normalized = normalizeRoutePattern(pattern);
 
   return normalized
     .replace(

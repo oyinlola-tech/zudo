@@ -21,7 +21,8 @@ import type {
 import { InvalidRoutePatternError } from "../core/error/httpRouter.error.js";
 
 import {
-  splitPath,
+  hasTrailingSlash,
+  splitRoutePattern,
   validateParameterName,
 } from "../core/util/httpRoute.util.js";
 
@@ -32,6 +33,7 @@ export interface CompiledRoutePath {
   readonly segments: readonly CompiledSegment[];
   readonly score: number;
   readonly strictTrailingSlash: boolean;
+  readonly expectsTrailingSlash: boolean;
 }
 
 const SEGMENT_SCORE_LITERAL = 3;
@@ -44,7 +46,7 @@ const SEGMENT_SCORE_WILDCARD = 1;
 export function compileRouteSegments(path: string): readonly CompiledSegment[] {
   const segments: CompiledSegment[] = [];
 
-  const parts = splitPath(path);
+  const parts = splitRoutePattern(path);
 
   for (const part of parts) {
     if (part.startsWith(":")) {
@@ -82,6 +84,7 @@ export function compileRoute(
     segments,
     score: scoreSegments(segments),
     strictTrailingSlash,
+    expectsTrailingSlash: hasTrailingSlash(path),
   });
 }
 
@@ -92,16 +95,57 @@ export function scoreSegments(segments: readonly CompiledSegment[]): number {
   let score = 0;
 
   for (const segment of segments) {
-    if (segment.type === "literal") {
-      score += SEGMENT_SCORE_LITERAL;
-    } else if (segment.type === "parameter") {
-      score += SEGMENT_SCORE_PARAMETER;
-    } else {
-      score += SEGMENT_SCORE_WILDCARD;
-    }
+    score += segmentScore(segment);
   }
 
   return score;
+}
+
+function segmentScore(segment: CompiledSegment | undefined): number {
+  if (segment === undefined) {
+    return 0;
+  }
+
+  if (segment.type === "literal") {
+    return SEGMENT_SCORE_LITERAL;
+  }
+
+  if (segment.type === "parameter") {
+    return SEGMENT_SCORE_PARAMETER;
+  }
+
+  return SEGMENT_SCORE_WILDCARD;
+}
+
+/**
+ * Compares two compiled patterns by specificity, most specific first.
+ *
+ * Segments are compared left to right by kind (literal, then parameter, then
+ * wildcard), which is how a router is expected to rank patterns. Summing the
+ * kinds into one scalar — as this used to — let a longer but entirely
+ * parameterised pattern such as `/:p/:q/:r/:s` outrank a literal-anchored
+ * `/admin/*rest`, so a request to `/admin/a/b/c` bypassed the admin route and
+ * every guard registered on it.
+ *
+ * @param left - The first pattern's segments.
+ * @param right - The second pattern's segments.
+ * @returns A negative number when `left` is more specific.
+ */
+export function compareSegmentSpecificity(
+  left: readonly CompiledSegment[],
+  right: readonly CompiledSegment[],
+): number {
+  const length = Math.max(left.length, right.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const difference = segmentScore(right[index]) - segmentScore(left[index]);
+
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+
+  return 0;
 }
 
 function parseParameter(

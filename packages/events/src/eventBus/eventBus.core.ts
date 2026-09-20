@@ -36,6 +36,8 @@ import {
   toEventError,
 } from "../eventErrors/eventError.base.js";
 
+import { warnObserverError } from "../eventErrors/eventWarning.helper.js";
+
 import type {
   EventMiddlewareLike,
   EventMiddlewareOptions,
@@ -405,15 +407,21 @@ export class EventBus {
       } catch (error) {
         /**
          * Observers must never be able to break event bus
-         * operations; failures go to the onError hook.
+         * operations; failures go to the onError hook, or to Node's
+         * process warning channel when no hook is configured, so a
+         * broken observer is never silently discarded.
          */
-        try {
-          this.options.onError?.(error, {
-            source: "observer",
-            event: event.event,
-          });
-        } catch {
-          // Ignore failures of the error hook itself.
+        if (this.options.onError) {
+          try {
+            this.options.onError(error, {
+              source: "observer",
+              event: event.event,
+            });
+          } catch {
+            // Ignore failures of the error hook itself.
+          }
+        } else {
+          warnObserverError(error, "An event bus observer");
         }
       }
     }

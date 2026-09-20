@@ -1,6 +1,6 @@
 import type { QueueEventEmitter } from "./queueEmitter.type.js";
 
-import type { QueueEventMap } from "../queue/queue.type.js";
+import type { QueueEventMap, QueueLogger } from "../queue/queue.type.js";
 import { reportQueueError } from "../queue/queue.report.js";
 
 type EventName = keyof QueueEventMap;
@@ -17,6 +17,12 @@ export interface QueueEventEmitterOptions {
    * the emitting code path.
    */
   readonly onHandlerError?: (error: unknown, event: EventName) => void;
+  /**
+   * Receives a throwing listener's error when no `onHandlerError` is given.
+   * Without one the failure goes to `process.emitWarning`, bypassing
+   * structured logging and redaction.
+   */
+  readonly logger?: QueueLogger;
 }
 
 /**
@@ -33,7 +39,14 @@ export class InMemoryQueueEventEmitter implements QueueEventEmitter {
 
   private readonly onHandlerError: (error: unknown, event: EventName) => void;
 
+  /** Whether `onHandlerError` was supplied, so `setLogger` leaves it alone. */
+  private readonly hasCustomHandlerError: boolean;
+
+  private logger: QueueLogger | undefined;
+
   public constructor(options: QueueEventEmitterOptions = {}) {
+    this.hasCustomHandlerError = options.onHandlerError !== undefined;
+    this.logger = options.logger;
     this.onHandlerError =
       options.onHandlerError ??
       ((error, event) => {
@@ -41,9 +54,24 @@ export class InMemoryQueueEventEmitter implements QueueEventEmitter {
           reportQueueError(
             `[@zudojs/queue] Listener for "${event}" threw.`,
             error,
+            this.logger,
           );
         });
       });
+  }
+
+  /**
+   * Adopts a logger for the default handler-error report.
+   *
+   * Called by a queue that was configured with a logger, since the emitter is
+   * built before the queue exists and cannot have been given it. A logger or
+   * an `onHandlerError` supplied at construction always wins.
+   *
+   * @param logger - Destination for a throwing listener's error.
+   */
+  setLogger(logger: QueueLogger): void {
+    if (this.hasCustomHandlerError || this.logger) return;
+    this.logger = logger;
   }
 
   emit<K extends EventName>(event: K, data: QueueEventMap[K]): void {

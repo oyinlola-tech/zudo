@@ -31,6 +31,11 @@ import {
   EventRegistryDisposedError,
 } from "../eventErrors/eventError.base.js";
 
+import {
+  EVENT_HANDLER_LIMIT_WARNING_CODE,
+  emitEventsWarning,
+} from "../eventErrors/eventWarning.helper.js";
+
 import type {
   DuplicateHandlerIdPolicy,
   EventHandlerEntry,
@@ -92,20 +97,7 @@ interface ResolvedRegistryOptions {
  * console directly. A no-op where `process.emitWarning` is unavailable.
  */
 function defaultWarning(warning: EventRegistryWarning): void {
-  const emit = (
-    globalThis as {
-      readonly process?: {
-        readonly emitWarning?: (
-          message: string,
-          options: { readonly type: string; readonly code: string },
-        ) => void;
-      };
-    }
-  ).process?.emitWarning;
-  emit?.(`[@zudojs/events] ${warning.message}`, {
-    type: "ZudojsEventsWarning",
-    code: "ZUDOJS_EVENTS_HANDLER_LIMIT",
-  });
+  emitEventsWarning(warning.message, EVENT_HANDLER_LIMIT_WARNING_CODE);
 }
 
 /**

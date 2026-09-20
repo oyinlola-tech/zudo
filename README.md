@@ -502,6 +502,19 @@ If ZudoJS helps your project, consider supporting its development.
 
 ---
 
+## Brand and logo
+
+The Zudo mark, wordmark and app icon are available as SVG and PNG, with the
+brand colours and usage rules:
+
+[zudojs.oyinlola.site/brand](https://zudojs.oyinlola.site/brand) — or download
+[the kit](https://zudojs.oyinlola.site/assets/brand/zudo-brand-kit.zip) directly.
+
+The source files live in [`site/assets/`](./site/assets); `pnpm site:brand`
+regenerates the PNG exports and the zip from them.
+
+---
+
 ## License
 
 Zudojs is licensed under the MIT License.

@@ -14,6 +14,7 @@ import {
   DependencyGraph,
   assertTimeoutBudget,
 } from "../lifecycleInternal/index.js";
+import { ErrorCode, LifecycleError } from "@zudojs/errors";
 
 /**
  * Registry for lifecycle components.
@@ -30,7 +31,10 @@ export class LifecycleRegistry {
     options: LifecycleRegistrationOptions = {},
   ): void {
     if (this._frozen) {
-      throw new Error("Cannot register components after registry is frozen");
+      throw new LifecycleError(
+        "Cannot register components after registry is frozen",
+        { code: ErrorCode.LIFECYCLE_COMPONENT },
+      );
     }
 
     const id = options.id ?? component.name;
@@ -40,7 +44,10 @@ export class LifecycleRegistry {
     }
 
     if (this._registrations.has(id)) {
-      throw new Error(`Component "${id}" is already registered`);
+      throw new LifecycleError(`Component "${id}" is already registered`, {
+        code: ErrorCode.LIFECYCLE_COMPONENT,
+        componentId: id,
+      });
     }
 
     const registration: LifecycleRegistration = {
@@ -72,8 +79,13 @@ export class LifecycleRegistry {
     for (const [id, reg] of this._registrations) {
       for (const dep of reg.dependsOn) {
         if (!this._registrations.has(dep)) {
-          throw new Error(
+          throw new LifecycleError(
             `Component "${id}" depends on "${dep}" which is not registered`,
+            {
+              code: ErrorCode.LIFECYCLE_DEPENDENCY,
+              componentId: id,
+              metadata: { dependency: dep },
+            },
           );
         }
       }

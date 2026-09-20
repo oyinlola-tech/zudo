@@ -8,6 +8,7 @@ import type {
   DocumentationSanitizer,
 } from "../docsTypes/index.js";
 import { formatScalar } from "../frontmatter/frontmatter.serializer.js";
+import { escapeHtmlText } from "../utils/utils.href.js";
 import type { MarkdownGeneratorOptions } from "./generator.types.js";
 import { nodesToMarkdown } from "./generatorMarkdownNodes.js";
 
@@ -73,7 +74,7 @@ export function generateMarkdown(
     if (document.deprecatedMessage) {
       lines.push(">");
       for (const line of document.deprecatedMessage.split(/\r?\n/)) {
-        lines.push(`> ${line}`);
+        lines.push(`> ${escapeHtmlText(line)}`);
       }
     }
     lines.push("");
@@ -116,7 +117,11 @@ function contentToMarkdown(
   }
 }
 
-/** Collapses newlines so a value cannot break out of its line. */
+/**
+ * Collapses newlines so a value cannot break out of its line, then HTML-escapes
+ * it for the same reason the structured `quote` and `callout` nodes do: the
+ * value can come from untrusted document JSON.
+ */
 function escapeInline(value: string): string {
-  return value.replace(/\r?\n/g, " ");
+  return escapeHtmlText(value.replace(/\r?\n/g, " "));
 }

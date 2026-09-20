@@ -124,6 +124,13 @@ createLifecycleManager({
 Per-component: `id`, `dependsOn`, `priority`, `critical`, `timeout`,
 `retry: { attempts, delay, maxDelay, backoff }`.
 
+`priority` orders components that share a dependency level, and it is a
+barrier rather than a hint: every component at one priority completes the
+phase before the next priority starts, so `priority: 10` really does start
+before `priority: 0`. Components sharing a priority still run together, up
+to `concurrency`. Shutdown mirrors it — within a level the lowest priority
+stops first and the highest stops last.
+
 `timeout` and `shutdownTimeout` accept `Infinity` for "no bound"; NaN and
 negative values throw a `RangeError` when registered or constructed, and
 finite values above 2^31-1 ms are clamped to the largest timer delay.

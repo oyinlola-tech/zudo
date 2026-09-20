@@ -105,21 +105,3 @@ export class EventBusStoppedError extends EventError {
     });
   }
 }
-
-/**
- * Error thrown when the listener limit of an emitter or registry
- * is exceeded and the limit is configured to be enforced.
- */
-export class EventListenerLimitExceededError extends EventError {
-  constructor(pattern: string, limit: number) {
-    super(
-      `Listener limit of ${limit} exceeded for event pattern "${pattern}".`,
-      {
-        code: ErrorCode.LIFECYCLE_STATE,
-        statusCode: 500,
-        expose: false,
-        metadata: { pattern, limit },
-      },
-    );
-  }
-}

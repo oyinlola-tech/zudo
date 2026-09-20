@@ -22,8 +22,14 @@ import {
   createJobName,
 } from "../jobTypes/jobTypes.type.js";
 import { JsonSerializer } from "../serializer/serializer.core.js";
-import { createInMemoryDeadLetterStore } from "../deadLetter/deadLetter.core.js";
-import { createNoopQueueEventEmitter } from "../queueEmitter/queueEmitter.core.js";
+import {
+  DEFAULT_DEAD_LETTER_JOBS,
+  createInMemoryDeadLetterStore,
+} from "../deadLetter/deadLetter.core.js";
+import {
+  InMemoryQueueEventEmitter,
+  createNoopQueueEventEmitter,
+} from "../queueEmitter/queueEmitter.core.js";
 import type { QueueEventEmitter } from "../queueEmitter/queueEmitter.type.js";
 import type {
   DeadLetterJob,
@@ -81,6 +87,11 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
   private readonly stalledCounts: Map<JobId, number> = new Map();
   private readonly deduplicationIndex: Map<string, JobId> = new Map();
   private readonly deadLetterStore: DeadLetterStore<TData>;
+  /**
+   * Whether this queue created its own dead letter store. A store handed in
+   * by the caller outlives the queue and is theirs to clear.
+   */
+  private readonly ownsDeadLetterStore: boolean;
   private readonly emitter: QueueEventEmitter;
 
   private readonly counters: QueueCounters = {
@@ -101,8 +112,23 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
     this.serializer = this.options.serializer ?? JsonSerializer;
     this.middleware = this.options.middleware ?? [];
     this.emitter = options?.eventEmitter ?? createNoopQueueEventEmitter();
+
+    // A supplied emitter is built before the queue exists, so it cannot have
+    // been given the queue's logger. Hand it over, so a throwing listener is
+    // reported through structured logging rather than `process.emitWarning`.
+    if (
+      this.options.logger &&
+      this.emitter instanceof InMemoryQueueEventEmitter
+    ) {
+      this.emitter.setLogger(this.options.logger);
+    }
+
+    this.ownsDeadLetterStore = this.options.deadLetterStore === undefined;
     this.deadLetterStore =
-      this.options.deadLetterStore ?? createInMemoryDeadLetterStore<TData>();
+      this.options.deadLetterStore ??
+      createInMemoryDeadLetterStore<TData>({
+        maxEntries: DEFAULT_DEAD_LETTER_JOBS,
+      });
     this.autoProcess = this.options.autoProcess ?? true;
   }
 
@@ -116,6 +142,16 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
    */
   setAutoProcess(enabled: boolean): void {
     this.autoProcess = enabled;
+  }
+
+  /**
+   * The emitter this queue publishes lifecycle events on.
+   *
+   * A no-op emitter when the queue was created without one, so a worker can
+   * report its lifecycle unconditionally.
+   */
+  get events(): QueueEventEmitter {
+    return this.emitter;
   }
 
   async add(
@@ -355,6 +391,13 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
     this.settledOrder.length = 0;
     this.stalledCounts.clear();
     this.inFlight.clear();
+
+    // A dead letter store the queue created dies with it; one handed in by
+    // the caller is theirs and is left alone.
+    if (this.ownsDeadLetterStore) {
+      await this.deadLetterStore.clear();
+    }
+
     this.activeCount = 0;
     this.paused = false;
     this.emptySince = 0;
@@ -511,20 +554,23 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
     const abortController = new AbortController();
 
     // A consumer's own signal (a worker draining, say) must reach the
-    // job it dispatched.
-    if (options?.signal) {
-      if (options.signal.aborted) {
-        abortController.abort(options.signal.reason);
+    // job it dispatched. The forwarder is held so it can be removed once
+    // the job settles: a worker uses one long-lived signal for every job
+    // it dispatches, so a listener left behind accumulates for the life
+    // of the worker and pins that job's controller with it.
+    const consumerSignal = options?.signal;
+    let forwardAbort: (() => void) | undefined;
+
+    if (consumerSignal) {
+      if (consumerSignal.aborted) {
+        abortController.abort(consumerSignal.reason);
       } else {
-        options.signal.addEventListener(
-          "abort",
-          () => {
-            if (!abortController.signal.aborted) {
-              abortController.abort(options.signal?.reason);
-            }
-          },
-          { once: true },
-        );
+        forwardAbort = (): void => {
+          if (!abortController.signal.aborted) {
+            abortController.abort(consumerSignal.reason);
+          }
+        };
+        consumerSignal.addEventListener("abort", forwardAbort, { once: true });
       }
     }
 
@@ -572,6 +618,9 @@ export class InMemoryQueue<TData = unknown> implements Queue<TData> {
     } finally {
       this.activeCount--;
       this.inFlight.delete(job.id);
+      if (forwardAbort && consumerSignal) {
+        consumerSignal.removeEventListener("abort", forwardAbort);
+      }
     }
   }
 

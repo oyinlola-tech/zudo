@@ -49,8 +49,13 @@ export interface NamedMessageHandler<
   /** Human-readable name for debugging. */
   readonly name: string;
 
-  /** The handler function. */
-  readonly handler: MessageHandler<TMessage, TResult>;
+  /**
+   * The handler itself: a function, or an object with a `handle` method.
+   *
+   * The dispatcher normalises both forms through
+   * {@link resolveMessageHandler} before invoking them.
+   */
+  readonly handler: MessageHandlerLike<TMessage, TResult>;
 
   /** Message types this handler processes. */
   readonly messageTypes: readonly string[];

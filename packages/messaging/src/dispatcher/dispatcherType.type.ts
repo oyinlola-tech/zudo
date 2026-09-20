@@ -20,6 +20,8 @@ import type {
   MessageMiddlewarePipelineResult,
 } from "../messageMiddleware/messageMiddlewareType.type.js";
 
+import type { HandlerRegistryStore } from "../handlerRegistry/handlerRegistryStore.js";
+
 /**
  * Result of dispatching a message.
  */
@@ -126,4 +128,20 @@ export interface Dispatcher {
    * @returns Whether a registration was removed.
    */
   removeMiddleware(middlewareId: string): boolean;
+
+  /**
+   * The ids of every registered global middleware, in the order they run.
+   */
+  listMiddleware(): readonly string[];
+
+  /**
+   * The handler registry this dispatcher resolves handlers from.
+   */
+  getRegistry(): HandlerRegistryStore;
+
+  /**
+   * Releases the dispatcher: drops all middleware and rejects any further
+   * dispatch with `MessageBusDisposedError`.
+   */
+  dispose(): void;
 }

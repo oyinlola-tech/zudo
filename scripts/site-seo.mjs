@@ -124,7 +124,22 @@ function homeLd() {
       "https://www.npmjs.com/org/zudojs",
     ],
   };
-  return [site, software]
+  // Organization carries `logo`, which is what search engines and link
+  // unfurlers read the project's logo from. The file it points at is built by
+  // scripts/site-brand.mjs and offered for download on /brand.
+  const organization = {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: "ZudoJS",
+    alternateName: ["Zudo", "Zudo Framework"],
+    url: `${BASE}/`,
+    logo: `${BASE}/assets/brand/zudo-mark-1024.png`,
+    sameAs: [
+      "https://github.com/oyinlola-tech/zudo",
+      "https://www.npmjs.com/org/zudojs",
+    ],
+  };
+  return [site, software, organization]
     .map(
       (ld) =>
         `  <script type="application/ld+json">${JSON.stringify(ld)}</script>`,

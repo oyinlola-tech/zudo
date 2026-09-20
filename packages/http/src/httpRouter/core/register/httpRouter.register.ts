@@ -44,14 +44,19 @@ import {
   getRequestMethod,
   getRequestSignal,
   getRequestUrl,
+  normalizeMatchPath,
   normalizePath,
+  normalizeRoutePattern,
   parseQuery,
   parseUrl,
 } from "../util/httpRoute.util.js";
 
 import { matchCompiledRoute } from "../../matching/httpRoute.matcher.core.js";
 
-import { compileRoute } from "../../pattern/httpRoute.pattern.parse.js";
+import {
+  compareSegmentSpecificity,
+  compileRoute,
+} from "../../pattern/httpRoute.pattern.parse.js";
 
 import { createRouterMiddlewareContext } from "../../httpRouter.context.js";
 
@@ -227,7 +232,7 @@ export class HttpRouter {
     const index = this.routes.findIndex(
       (route) =>
         route.definition.method === normalizedMethod &&
-        route.definition.path === normalizePath(path),
+        route.definition.path === normalizeRoutePattern(path),
     );
 
     if (index === -1) {
@@ -272,7 +277,16 @@ export class HttpRouter {
 
     const normalizedPath = normalizePath(path);
 
+    const matchPath = normalizeMatchPath(path);
+
     const candidates = this.sortedRoutes();
+
+    const allowedForPath = (): HttpMethod[] =>
+      collectAllowedMethods(
+        candidates,
+        matchPath,
+        this.routerOptions.caseSensitive,
+      );
 
     const allowed = new Set<HttpMethod>();
 
@@ -281,7 +295,7 @@ export class HttpRouter {
     for (const route of candidates) {
       const params = matchCompiledRoute(
         route,
-        normalizedPath,
+        matchPath,
         this.routerOptions.caseSensitive,
       );
 
@@ -299,7 +313,7 @@ export class HttpRouter {
           route: route.definition,
           params,
           allowedMethods: Object.freeze([
-            ...collectAllowedMethods(candidates, normalizedPath),
+            ...allowedForPath(),
           ]),
           path: normalizedPath,
           method: normalizedMethod,
@@ -319,7 +333,7 @@ export class HttpRouter {
 
         const params = matchCompiledRoute(
           route,
-          normalizedPath,
+          matchPath,
           this.routerOptions.caseSensitive,
         );
 
@@ -329,7 +343,7 @@ export class HttpRouter {
             route: route.definition,
             params,
             allowedMethods: Object.freeze([
-              ...collectAllowedMethods(candidates, normalizedPath),
+              ...allowedForPath(),
               "HEAD",
             ]),
             path: normalizedPath,
@@ -349,7 +363,7 @@ export class HttpRouter {
         route: undefined,
         params: {},
         allowedMethods: Object.freeze([
-          ...collectAllowedMethods(candidates, normalizedPath),
+          ...allowedForPath(),
           "OPTIONS",
         ]),
         path: normalizedPath,
@@ -477,14 +491,14 @@ export class HttpRouter {
   ): () => void {
     const normalizedMethod = normalizeMethod(method);
 
-    const normalizedPath = normalizePath(path);
+    const normalizedPath = normalizeRoutePattern(path);
 
     if (typeof handler !== "function") {
       throw new HttpRouterError("Route handler must be a function.");
     }
 
     const compiled = compileRoute(
-      normalizedPath,
+      path,
       this.routerOptions.strictTrailingSlash ||
         options.strictTrailingSlash === true,
     );
@@ -526,6 +540,7 @@ export class HttpRouter {
       segments: compiled.segments,
       score: compiled.score,
       strictTrailingSlash: compiled.strictTrailingSlash,
+      expectsTrailingSlash: compiled.expectsTrailingSlash,
     });
 
     return () => {
@@ -535,10 +550,13 @@ export class HttpRouter {
 
   private sortedRoutes(): CompiledRoute[] {
     return [...this.routes].sort((left, right) => {
-      const score = right.score - left.score;
+      const specificity = compareSegmentSpecificity(
+        left.segments,
+        right.segments,
+      );
 
-      if (score !== 0) {
-        return score;
+      if (specificity !== 0) {
+        return specificity;
       }
 
       return (

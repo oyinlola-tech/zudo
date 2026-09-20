@@ -38,7 +38,14 @@ export interface LifecycleRegistrationOptions {
   /** IDs of components that must start before this one. */
   readonly dependsOn?: readonly string[];
 
-  /** Priority for ordering within the same dependency level. Higher = earlier. */
+  /**
+   * Priority for ordering within the same dependency level. Higher = earlier.
+   *
+   * Priority is a barrier, not a hint: every component at one priority
+   * finishes the phase before the next priority begins, and shutdown
+   * runs the mirror image (lowest priority stops first). Components
+   * sharing a priority still run concurrently.
+   */
   readonly priority?: number;
 
   /** If true, application startup fails when this component fails. Defaults to true. */

@@ -14,6 +14,8 @@ import { createHTTPContext } from "../httpContext/http.context.js";
 
 import { createHTTPRequest } from "../httpRequest/http.request.js";
 
+import type { TrustProxy } from "../httpTrustProxy/httpTrustProxy.type.js";
+
 import { createHTTPResponse } from "../httpResponse/http.response.js";
 
 import { createDefaultContextLogger } from "./httpAdapter.logger.js";
@@ -43,13 +45,35 @@ export interface HTTPAdapter<State extends HTTPState = HTTPState> {
 /* Node Adapter                                                               */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Options every Node request built by this module accepts.
+ *
+ * `trustProxy` defaults to `false`, so `X-Forwarded-For` and
+ * `X-Forwarded-Proto` are ignored and the socket peer decides `request.ip`,
+ * `request.protocol` and `request.secure`.
+ */
+export interface NodeRequestTrustOptions {
+  readonly trustProxy?: TrustProxy;
+}
+
 export class NodeHTTPAdapter<
   State extends HTTPState = HTTPState,
 > implements HTTPAdapter<State> {
   public readonly name = "node";
 
-  public createRequest(request: IncomingMessage): HTTPRequest {
-    return createHTTPRequest(request);
+  private readonly trustProxy: TrustProxy;
+
+  public constructor(options: NodeRequestTrustOptions = {}) {
+    this.trustProxy = options.trustProxy ?? false;
+  }
+
+  public createRequest(
+    request: IncomingMessage,
+    options: NodeRequestTrustOptions = {},
+  ): HTTPRequest {
+    return createHTTPRequest(request, {
+      trustProxy: options.trustProxy ?? this.trustProxy,
+    });
   }
 
   public createResponse(response: ServerResponse): HTTPResponse {
@@ -80,16 +104,21 @@ export class NodeHTTPAdapter<
 
 export interface HTTPAdapterOptions<State extends HTTPState = HTTPState> {
   readonly adapter?: HTTPAdapter<State>;
+  /**
+   * Which socket peers may speak for a client through `X-Forwarded-*`.
+   * Defaults to `false` — forwarded headers are ignored.
+   */
+  readonly trustProxy?: TrustProxy;
 }
 
 /* -------------------------------------------------------------------------- */
 /* Adapter Factory                                                             */
 /* -------------------------------------------------------------------------- */
 
-export function createHTTPAdapter<
-  State extends HTTPState = HTTPState,
->(): NodeHTTPAdapter<State> {
-  return new NodeHTTPAdapter<State>();
+export function createHTTPAdapter<State extends HTTPState = HTTPState>(
+  options: NodeRequestTrustOptions = {},
+): NodeHTTPAdapter<State> {
+  return new NodeHTTPAdapter<State>(options);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -101,8 +130,14 @@ export interface RequestAdapter {
 }
 
 export class NodeRequestAdapter implements RequestAdapter {
+  private readonly trustProxy: TrustProxy;
+
+  public constructor(options: NodeRequestTrustOptions = {}) {
+    this.trustProxy = options.trustProxy ?? false;
+  }
+
   public toHTTPRequest(request: IncomingMessage): HTTPRequest {
-    return createHTTPRequest(request);
+    return createHTTPRequest(request, { trustProxy: this.trustProxy });
   }
 }
 
@@ -234,8 +269,13 @@ export interface HTTPRouteAdapter<State extends HTTPState = HTTPState> {
 /* Request Conversion Helpers                                                  */
 /* -------------------------------------------------------------------------- */
 
-export function adaptNodeRequest(request: IncomingMessage): HTTPRequest {
-  return createHTTPRequest(request);
+export function adaptNodeRequest(
+  request: IncomingMessage,
+  options: NodeRequestTrustOptions = {},
+): HTTPRequest {
+  return createHTTPRequest(request, {
+    trustProxy: options.trustProxy ?? false,
+  });
 }
 
 export function adaptNodeResponse(response: ServerResponse): HTTPResponse {

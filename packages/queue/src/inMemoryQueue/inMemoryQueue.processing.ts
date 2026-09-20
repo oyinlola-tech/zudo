@@ -132,10 +132,17 @@ export async function processJob<TData>(
   });
 
   const timeoutMs = options.timeoutMs ?? DEFAULT_JOB_OPTIONS.timeout ?? 30_000;
+
+  // Whether this job's own timeout is what aborted it. An abort from
+  // anywhere else — a draining worker, `close()`, a consumer's signal — is a
+  // cancellation, and is reported as one.
+  let timedOut = false;
+
   const timeoutMiddleware = createTimeoutMiddleware(timeoutMs, () => {
     // Let a cooperative processor observe the timeout and stop working
     // instead of running on with its result discarded.
     if (!abortController.signal.aborted) {
+      timedOut = true;
       abortController.abort(
         new Error(`Job "${updatedJob.id}" timed out after ${timeoutMs}ms.`),
       );
@@ -187,6 +194,9 @@ export async function processJob<TData>(
       running,
       options.timeoutGraceMs ?? DEFAULT_TIMEOUT_GRACE_MS,
     );
+    if (abortController.signal.aborted && !timedOut) {
+      emitter.emit("job:cancelled", { job: updatedJob });
+    }
     await handleJobFailure(updatedJob, errorMessage, deps);
   } finally {
     counters.processedCount++;

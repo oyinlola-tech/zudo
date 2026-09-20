@@ -60,6 +60,13 @@ export function topologicalSort(
 
 /**
  * Performs reverse topological sort for shutdown ordering.
+ *
+ * Both the stage list AND each stage's contents are reversed, so a
+ * shutdown is the exact mirror of the startup order: within a stage the
+ * lowest-priority component is torn down first and the highest-priority
+ * one last. Only the stage list used to be reversed, which left every
+ * stage in descending-priority order — harmless while stages ran fully
+ * concurrently, but wrong now that priority is a real sub-stage barrier.
  */
 export function reverseTopologicalSort(
   graph: DependencyGraph,
@@ -67,6 +74,6 @@ export function reverseTopologicalSort(
 ): readonly TopologicalStage[] {
   const stages = topologicalSort(graph, priorities);
   return Object.freeze(
-    [...stages].reverse().map((stage) => Object.freeze([...stage])),
+    [...stages].reverse().map((stage) => Object.freeze([...stage].reverse())),
   );
 }

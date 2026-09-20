@@ -8,6 +8,7 @@ Public-facing website for the Zudo framework: landing page, documentation, spons
 site/
 ├── index.html              # Landing page
 ├── sponsors.html           # Sponsorship page
+├── brand.html              # Brand & logo downloads (/brand)
 ├── design.md               # Design system notes
 ├── vercel.json             # Clean-URL rewrites + headers
 ├── tailwind.config.cjs     # Build-time Tailwind config (reads js/tailwind-config.js)
@@ -15,6 +16,7 @@ site/
 │   ├── tailwind.css        # Compiled Tailwind utilities (generated: pnpm site:css)
 │   ├── tailwind.src.css    # Tailwind entry file
 │   ├── site.css            # Shared: self-hosted @font-face, tokens, header, footer, search, docs shell
+│   ├── brand.css           # Brand page (logo stages, download rows, swatches)
 │   ├── home.css            # Landing page (hero terminal, ticker, cards)
 │   ├── docs.css            # Documentation pages (typography, code, callouts, tables)
 │   ├── errors.css          # Error pages
@@ -41,6 +43,7 @@ site/
     ├── zudo-favicon.svg        # Favicon (red tile)
     ├── favicon-32.png, apple-touch-icon.png
     ├── fonts/                  # Self-hosted Inter + JetBrains Mono (woff2, latin + latin-ext; SIL OFL)
+    ├── brand/                  # Generated: PNG exports, USAGE.txt, zudo-brand-kit.zip (pnpm site:brand)
     └── og-image.png            # Social share image (1200×630)
 ```
 
@@ -66,6 +69,11 @@ changing Tailwind classes in any page or script, or editing
 ```bash
 pnpm site:css
 ```
+
+The logo SVGs in `assets/` are the source of truth for the brand kit. After
+changing one, run `pnpm site:brand` to regenerate the PNG exports and
+`assets/brand/zudo-brand-kit.zip`, and commit the result — Vercel does not
+build it.
 
 Fonts are served from `assets/fonts/` (declared at the top of `css/site.css`),
 and each page preloads `inter-latin.woff2`. No page loads Google Fonts or the

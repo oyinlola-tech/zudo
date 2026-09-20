@@ -61,9 +61,17 @@ export function extractClientIp(
     // Walk in from the right: index 0 from the end is the address our own
     // outermost proxy observed, and each additional trusted hop steps left.
     const index = chain.length - trustProxy;
-    const candidate = chain[Math.max(0, index)];
-    const ip = candidate === undefined ? undefined : parseClientIp(candidate);
-    if (ip !== undefined) return ip;
+    // A chain shorter than the configured hop count did not pass through all
+    // of the proxies whose entries make it trustworthy — a request entering
+    // at an inner hop, or one a client shortened on purpose. Clamping the
+    // index to 0 landed on the entry the client wrote, handing them their own
+    // rate-limit bucket; there is nothing trustworthy to read here, so the
+    // header is skipped entirely.
+    if (index >= 0) {
+      const candidate = chain[index];
+      const ip = candidate === undefined ? undefined : parseClientIp(candidate);
+      if (ip !== undefined) return ip;
+    }
   }
 
   const realIp = lookupHeader(headers, "x-real-ip");

@@ -46,6 +46,7 @@ export {
   compileRoute,
   compileRouteSegments,
   scoreSegments,
+  compareSegmentSpecificity,
 } from "./httpRoute.pattern.parse.js";
 
 export type { CompiledRoutePath } from "./httpRoute.pattern.parse.js";

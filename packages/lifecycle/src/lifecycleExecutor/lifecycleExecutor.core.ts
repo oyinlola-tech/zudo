@@ -151,7 +151,15 @@ export class LifecycleExecutor {
   }
 
   /**
-   * Executes a stage of components in parallel with concurrency limit.
+   * Executes a stage of components, honouring priority as a barrier.
+   *
+   * The stage arrives already ordered by priority (descending for
+   * startup, ascending for shutdown). Components sharing a priority run
+   * together, limited by `concurrency`; the next priority group only
+   * begins once the previous one has settled. Launching the whole stage
+   * concurrently made `priority` observable only at `concurrency: 1`,
+   * so a `priority: 100` component documented as starting first lost
+   * the race to any sibling with a faster hook.
    */
   public async executeStage(
     registrations: readonly LifecycleRegistration[],
@@ -161,13 +169,42 @@ export class LifecycleExecutor {
   ): Promise<readonly ExecutionResult[]> {
     const results: ExecutionResult[] = [];
 
-    await withConcurrency(registrations, concurrency, async (reg) => {
-      const result = await this.execute(reg, phase, context);
-      results.push(result);
-    });
+    for (const batch of groupByPriority(registrations)) {
+      await withConcurrency(batch, concurrency, async (reg) => {
+        const result = await this.execute(reg, phase, context);
+        results.push(result);
+      });
+    }
 
     return results;
   }
+}
+
+/**
+ * Splits an already-ordered stage into runs of equal priority.
+ *
+ * Consecutive grouping preserves whatever order the execution plan
+ * produced, so a caller that does not care about priority (every
+ * component at the default 0) still gets a single fully concurrent
+ * batch.
+ */
+function groupByPriority(
+  registrations: readonly LifecycleRegistration[],
+): readonly (readonly LifecycleRegistration[])[] {
+  const batches: LifecycleRegistration[][] = [];
+  let current: LifecycleRegistration[] | undefined;
+  let currentPriority: number | undefined;
+
+  for (const reg of registrations) {
+    if (current === undefined || reg.priority !== currentPriority) {
+      current = [];
+      currentPriority = reg.priority;
+      batches.push(current);
+    }
+    current.push(reg);
+  }
+
+  return batches;
 }
 
 /** Calculates retry delay with backoff. */

@@ -48,6 +48,11 @@ const NON_CALLABLE_KEYS: ReadonlySet<PropertyKey> = new Set([
 export function createStub<T extends object>(
   overrides: Partial<T> = {} as Partial<T>,
 ): T {
+  // One no-op per property key, kept for the life of the stub. Handing out a
+  // fresh closure per access would make `stub.handler !== stub.handler`, so a
+  // register/unregister pair written against a stub could never match.
+  const noops = new Map<PropertyKey, (...args: unknown[]) => undefined>();
+
   return new Proxy({} as T, {
     get(_target, prop, _receiver) {
       // `hasOwn`, not `in`: `in` walks the prototype chain, so `toString`,
@@ -59,7 +64,12 @@ export function createStub<T extends object>(
       if (NON_CALLABLE_KEYS.has(prop)) return undefined;
       if (typeof prop === "symbol") return undefined;
 
-      return (..._args: unknown[]) => undefined;
+      const existing = noops.get(prop);
+      if (existing) return existing;
+
+      const noop = (..._args: unknown[]): undefined => undefined;
+      noops.set(prop, noop);
+      return noop;
     },
 
     has(_target, prop) {

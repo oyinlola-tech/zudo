@@ -46,9 +46,16 @@ export class InMemoryTestStorage {
     return (entry.value ?? null) as T | null;
   }
 
-  /** Set a value with optional TTL in milliseconds. */
+  /**
+   * Set a value with optional TTL in milliseconds.
+   *
+   * Only an omitted (or `undefined`) TTL means "never expires". A TTL of `0`
+   * is a real deadline of now, so the entry is already expired on the next
+   * read — a cache test writing `0` to mean "already stale" gets that.
+   */
   set(key: string, value: unknown, ttlMs?: number): void {
-    const expiresAt = ttlMs ? new Date(Date.now() + ttlMs) : null;
+    const expiresAt =
+      ttlMs === undefined ? null : new Date(Date.now() + ttlMs);
     this.store.set(key, { value, expiresAt });
   }
 

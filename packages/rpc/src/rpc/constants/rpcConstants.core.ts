@@ -15,6 +15,16 @@ export const DEFAULT_RPC_TIMEOUT = 30_000;
 export const MAX_RPC_PAYLOAD_SIZE = 1024 * 1024;
 
 /**
+ * Maximum length of a request id accepted from a peer.
+ *
+ * The id is echoed verbatim into every success and error response, so an
+ * unbounded id is a reflection amplifier: the server writes back whatever
+ * the caller sent, on both paths. 128 characters holds a UUID, a ULID or a
+ * W3C trace id with room to spare.
+ */
+export const MAX_RPC_REQUEST_ID_LENGTH = 128;
+
+/**
  * Maximum number of pending requests allowed in the client.
  */
 export const MAX_PENDING_REQUESTS = 1024;

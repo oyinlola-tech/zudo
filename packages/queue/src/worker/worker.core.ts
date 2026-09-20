@@ -49,7 +49,20 @@ export function createWorker<TData>(
 
   queue.setAutoProcess?.(false);
 
-  const onError =
+  /**
+   * Reports the worker's own lifecycle on the queue's emitter.
+   *
+   * `worker:started`, `worker:stopped` and `worker:error` were part of
+   * `QueueEventMap` with nothing emitting them, so a consumer subscribing for
+   * readiness never heard from the worker.
+   */
+  const emitLifecycle = <K extends "worker:started" | "worker:stopped">(
+    event: K,
+  ): void => {
+    queue.events?.emit(event, { workerId: id });
+  };
+
+  const reportWorkerError =
     options?.onError ??
     ((error: unknown) => {
       queueMicrotask(() => {
@@ -60,6 +73,14 @@ export function createWorker<TData>(
         );
       });
     });
+
+  const onError = (error: unknown): void => {
+    queue.events?.emit("worker:error", {
+      workerId: id,
+      error: error instanceof Error ? error : new Error(String(error)),
+    });
+    reportWorkerError(error);
+  };
 
   /**
    * Arms the next poll. At most one timer is ever armed: a delayed poll
@@ -204,6 +225,7 @@ export function createWorker<TData>(
 
       try {
         state = WorkerState.RUNNING;
+        emitLifecycle("worker:started");
         scheduleNextPoll(0);
       } catch (error) {
         state = WorkerState.FAILED;
@@ -250,12 +272,14 @@ export function createWorker<TData>(
 
       clearPollTimer();
       state = WorkerState.STOPPED;
+      emitLifecycle("worker:stopped");
     },
 
     async forceStop(): Promise<void> {
       abortController?.abort();
       clearPollTimer();
       state = WorkerState.STOPPED;
+      emitLifecycle("worker:stopped");
     },
 
     isRunning(): boolean {

@@ -98,6 +98,19 @@ async function runShutdown(ctx: LifecycleManagerContext): Promise<void> {
     } catch {
       // Shutdown must continue even if individual components fail.
     }
+
+    // A stop()/dispose() hook that blew its own component timeout joins
+    // the abandoned set DURING this phase, so the pre-phase settle above
+    // cannot have covered it. Without this wait, DISPOSE ran on top of a
+    // stop() that was still draining and shutdown() resolved (reporting
+    // DISPOSED) while the hook kept running — the exact overlap the
+    // pre-phase settle was added to prevent. Still bounded by the global
+    // shutdown deadline.
+    await raceDeadline(
+      ctx,
+      ctx.executor.settleAbandoned(),
+      Math.max(deadline - Date.now(), 1),
+    );
   }
 
   ctx.state.forceState(LifecycleState.DISPOSED);

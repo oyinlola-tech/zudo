@@ -10,6 +10,7 @@ import type { CompiledRoute } from "../core/types/httpRouter.type.js";
 
 import {
   decodeRouteSegment,
+  hasTrailingSlash,
   normalizePath,
   splitPath,
 } from "../core/util/httpRoute.util.js";
@@ -19,6 +20,19 @@ export function matchCompiledRoute(
   path: string,
   caseSensitive: boolean,
 ): Readonly<Record<string, string>> | undefined {
+  /*
+   * `strictTrailingSlash` used to be compiled and stored but never read, so a
+   * strict router still answered `/users/` with the `/users` route. The
+   * request path reaches this function with its trailing slash intact
+   * (`normalizeMatchPath`), so the two spellings can finally be told apart.
+   */
+  if (
+    route.strictTrailingSlash &&
+    hasTrailingSlash(path) !== (route.expectsTrailingSlash ?? false)
+  ) {
+    return undefined;
+  }
+
   const routePath = normalizePath(path);
 
   const inputSegments = splitPath(routePath);

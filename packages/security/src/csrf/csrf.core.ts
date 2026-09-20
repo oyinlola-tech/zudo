@@ -47,6 +47,39 @@ const DEFAULT_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
  */
 export const MIN_CSRF_SECRET_LENGTH = 32;
 
+/**
+ * Rejects a `methods` list that cannot protect anything.
+ *
+ * `methods.some(…)` over an empty list is always `false`, and `verify()`
+ * answers `true` for a method that needs no protection — so `methods: []`
+ * turned CSRF off for every request without an error or a warning. A list
+ * built from configuration (`process.env.CSRF_METHODS?.split(",") ?? []`) is
+ * empty exactly when the configuration is missing. An empty list is a
+ * configuration error, not a blanket grant; omit `methods` for the defaults.
+ */
+function assertUsableMethods(methods: readonly string[] | undefined): void {
+  if (methods === undefined) return;
+  if (!Array.isArray(methods)) {
+    throw new ConfigurationError(
+      "CSRF methods must be an array of HTTP method names, " +
+        "or omitted for the defaults (POST, PUT, PATCH, DELETE).",
+    );
+  }
+  if (methods.length === 0) {
+    throw new ConfigurationError(
+      "CSRF methods cannot be empty: an empty list protects no request at " +
+        "all. Omit `methods` for the defaults (POST, PUT, PATCH, DELETE).",
+    );
+  }
+  for (const method of methods) {
+    if (typeof method !== "string" || method.trim().length === 0) {
+      throw new ConfigurationError(
+        "CSRF methods must be non-empty HTTP method names.",
+      );
+    }
+  }
+}
+
 /** Rejects a secret too short to be worth signing with. */
 function assertUsableSecret(secret: string): void {
   if (typeof secret !== "string" || secret.length === 0) {
@@ -253,6 +286,8 @@ export function requiresCsrfProtection(
   method: string,
   config?: CsrfConfig,
 ): boolean {
+  assertUsableMethods(config?.methods);
+
   if (SAFE_METHODS.includes(method.toUpperCase())) {
     return false;
   }
@@ -447,12 +482,14 @@ export interface CsrfProtection {
  * @param config - Secret, lifetime, cookie/header names, protected methods.
  * @returns Protection bound to that configuration.
  * @throws {ConfigurationError} when the secret is missing or shorter than
- *   {@link MIN_CSRF_SECRET_LENGTH}.
+ *   {@link MIN_CSRF_SECRET_LENGTH}, or when `methods` is present but empty,
+ *   not an array, or contains a non-method entry.
  */
 export function createCsrfProtection(
   config: CsrfProtectionOptions,
 ): CsrfProtection {
   assertUsableSecret(config.secret);
+  assertUsableMethods(config.methods);
 
   const expiration = config.expiration ?? DEFAULT_EXPIRATION;
   const cookieName = config.cookieName ?? DEFAULT_COOKIE_NAME;

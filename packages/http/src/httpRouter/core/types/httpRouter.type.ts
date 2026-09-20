@@ -153,6 +153,13 @@ export interface CompiledRoute {
   readonly segments: readonly CompiledSegment[];
   readonly score: number;
   readonly strictTrailingSlash: boolean;
+
+  /**
+   * Whether the registered pattern ended with a slash.
+   *
+   * Only consulted when {@link CompiledRoute.strictTrailingSlash} is set.
+   */
+  readonly expectsTrailingSlash?: boolean;
 }
 
 /* -------------------------------------------------------------------------- */

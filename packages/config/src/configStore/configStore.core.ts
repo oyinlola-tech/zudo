@@ -16,6 +16,8 @@ import {
 
 import type { ConfigSourceType } from "../configSource/configSource.core.js";
 
+import { isSensitiveConfigEntry } from "../configSource/configSource.sensitive.js";
+
 import type {
   ConfigChangeEvent,
   ConfigChangeListener,
@@ -156,7 +158,12 @@ export class ConfigStore {
       source: options.source ?? "runtime",
       sourceType: options.sourceType,
       priority: options.priority ?? 0,
-      sensitive: options.sensitive ?? false,
+      // Secret detection belongs HERE, not at a single caller. It used
+      // to run only inside ConfigLoader.applySource, so the very same
+      // key was redacted when it arrived from a source and printed in
+      // clear when it arrived through initialValues, set(), setMany()
+      // or replace(). Pass `sensitive: false` explicitly to opt out.
+      sensitive: options.sensitive ?? isSensitiveConfigEntry(normalizedKey, value),
       resolved: options.resolved ?? true,
     });
 

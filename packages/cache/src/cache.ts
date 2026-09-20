@@ -366,7 +366,7 @@ export class CacheService implements CacheHealthChecker {
     const qualified = this.qualifyPattern(pattern, options?.namespace);
     try {
       const result = await this.invalidation.invalidateByPattern(qualified);
-      this.purgeTagsMatching(qualified);
+      await this.purgeTagsMatching(qualified);
       return result;
     } catch (error) {
       if (this.failSilently) return { cleared: 0 };

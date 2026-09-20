@@ -4,7 +4,11 @@
  * Async utilities for timeout, abort, and concurrency control.
  */
 
-import { LifecycleTimeoutError } from "@zudojs/errors";
+import {
+  ErrorCode,
+  LifecycleError,
+  LifecycleTimeoutError,
+} from "@zudojs/errors";
 import {
   assertTimeoutBudget,
   isBounded,
@@ -71,12 +75,12 @@ export async function withAbort<T>(
   signal: AbortSignal,
 ): Promise<T> {
   if (signal.aborted) {
-    throw new Error("Operation aborted");
+    throw abortError();
   }
 
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => {
-      reject(new Error("Operation aborted"));
+      reject(abortError());
     };
 
     signal.addEventListener("abort", onAbort, { once: true });
@@ -103,6 +107,13 @@ export async function withAbort<T>(
         signal.removeEventListener("abort", onAbort);
         reject(error);
       });
+  });
+}
+
+/** The typed error surfaced when a `withAbort` operation is cancelled. */
+function abortError(): LifecycleError {
+  return new LifecycleError("Operation aborted", {
+    code: ErrorCode.LIFECYCLE_COMPONENT,
   });
 }
 
