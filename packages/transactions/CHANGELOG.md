@@ -1,5 +1,12 @@
 # @zudojs/transactions
 
+## 1.1.2
+
+### Patch Changes
+
+- Updated dependencies [`c904687`, `c904687`]:
+  - @zudojs/errors@1.2.0
+
 ## 1.1.1
 
 ### Patch Changes

@@ -1,5 +1,12 @@
 # @zudojs/plugins
 
+## 1.2.1
+
+### Patch Changes
+
+- Updated dependencies [`c904687`, `c904687`]:
+  - @zudojs/errors@1.2.0
+
 ## 1.2.0
 
 ### Minor Changes

@@ -1,5 +1,195 @@
 # @zudojs/http
 
+## 1.3.0
+
+### Minor Changes
+
+- **Breaking-in-effect default: `X-Forwarded-*` is no longer trusted automatically.**
+
+  `NodeHTTPRequest` — reached through `createHTTPRequest`, `NodeHTTPAdapter`,
+  `createHTTPAdapter()`, `adaptNodeRequest()` and `adaptNodeContext()` — used to
+  read `X-Forwarded-For` and `X-Forwarded-Proto` from any client, with no trust
+  check at all. A client connecting directly could set its own `request.ip`
+  (defeating an IP allowlist, per-IP rate limit, ban list or audit trail) and
+  flip `request.secure` to `true` (an `X-Forwarded-Proto: wss` was enough), so an
+  app gating `Secure` cookies, HSTS or an https-only redirect on `req.secure`
+  believed the request had arrived over TLS. The hardened Node adapter path
+  (`httpAdapter/node/`) already gated these headers; this closes the parallel
+  path that was left behind.
+
+  These headers are now honoured only when the socket peer is a configured
+  trusted proxy, and a forwarded protocol that is not `http` or `https` is
+  discarded. **If you run behind a proxy you must now opt in**, with a new
+  `trustProxy` option (address, CIDR range, `"loopback"`/`"linklocal"`/`"all"`,
+  hop count or predicate) that defaults to `false`:
+
+  ```ts
+  createHTTPAdapter({ trustProxy: "10.0.0.0/8" });
+  adaptNodeRequest(req, { trustProxy: "10.0.0.0/8" });
+  adaptNodeContext(req, res, { trustProxy: "10.0.0.0/8" });
+  createHTTPRequest(req, { trustProxy: "10.0.0.0/8" });
+  ```
+
+  Without it, `request.ip` is the socket peer and `request.protocol` reflects the
+  socket's own TLS state. The exported `getRequestProtocol(request)` and
+  `getRequestIP(request)` take the same value as an optional second argument.
+
+  Also in this release:
+
+  - The shared agent registry can find what it created. `getAgent`, `hasAgent`
+    and `removeAgent` looked up a key `getOrCreateAgent` never wrote, so every
+    lookup missed and the documented per-host teardown was a no-op that leaked
+    the agent and its keep-alive sockets for the process lifetime. All four now
+    build the same key; `getAgent`/`hasAgent` take the same optional agent
+    options, and `removeAgent` without options destroys every agent registered
+    for that host.
+  - `createForwardedHeader` and `formatKeepAliveHeader` no longer emit a raw CR
+    or LF inside a quoted parameter. Both now escape through the package's
+    `escapeHeaderQuotedString` and validate the finished field value, so a
+    `Forwarded` or `Keep-Alive` value carrying a control character throws a
+    `TypeError` instead of putting an attacker-chosen header on the wire.
+  - `createSecurityMiddleware()` with no options now emits the package's
+    declared safe baseline (`createDefaultSecurityHeaderOptions`) —
+    `Content-Security-Policy`, `Strict-Transport-Security`, `Permissions-Policy`,
+    the cross-origin isolation headers and `X-Permitted-Cross-Domain-Policies`,
+    on top of the three it emitted before. Explicit options still override it,
+    and `useDefaults: false` still emits only what you configure.
+  - `guardRequest` applies `maxHeaderValueSize` and the CRLF filter to
+    array-valued headers (`set-cookie`, and any header supplied as a list),
+    which previously skipped both checks and still reported `allowed: true`.
+  - `createLoggingMiddleware({ includeHeaders: true })` redacts credential
+    headers — `authorization`, `proxy-authorization`, `cookie`, `set-cookie` and
+    the rest of the `@zudojs/logger` secret-field set — before the record
+    reaches the logger. Extra names can be added with `redactHeaders`.
+  - The redirect predicates accept a relative `Location`. `hasRedirectLoop`,
+    `assertNoRedirectLoop`, `isSameOrigin` and `isHTTPS` threw
+    `TypeError: Invalid URL` on `/a`, which is both legal under RFC 9110 and
+    what this module's own `createRedirect` emits by default.
+  - The proxy SSRF blocklist covers `192.0.0.0/24` (IETF protocol assignments)
+    and `198.18.0.0/15` (benchmarking), which its JSDoc already claimed.
+  - `runWithRequestContext` / `getCurrentRequestContext` work. The
+    `AsyncLocalStorage` behind them was loaded through `globalThis.require`,
+    which does not exist in ESM, so the store silently stayed `undefined`:
+    `runWithRequestContext` merely called its callback and
+    `getCurrentRequestContext()` always returned `undefined`.
+  - `request.path` and the router now agree about repeated slashes. A request for
+    `//admin/secret` dispatched to the route registered at `/admin/secret` while
+    a guard reading `request.path` saw `//admin/secret` and did not match.
+    Repeated slashes are collapsed once, where both sides parse the
+    request-target, so `getPathname("//admin/secret")` is `/admin/secret`. An
+    origin-form target is still never parsed as an authority.
+
+- [`d63af51`](https://github.com/oyinlola-tech/zudo/commit/d63af511465e8d2c9e040f5282965e05766200df) Thanks [@oyinlola-tech](https://github.com/oyinlola-tech)! - Harden and consolidate the HTTP query layer.
+
+  `NodeHTTPRequest.query`, `createHTTPRequest()` and the `parseQueryString` the
+  package barrel exports all ran a second, unhardened query parser that
+  accumulated into an object literal and read `result[key]` without an
+  own-property check. On fully attacker-controlled input that meant:
+
+  - `?__proto__=a&__proto__=b` assigned an array through the `__proto__` setter,
+    replacing the returned query object's prototype. The parameter vanished from
+    its own keys while the object silently gained `length`, `map` and the rest of
+    `Array.prototype`.
+  - `?constructor=x` read the inherited `Object` constructor as the "existing"
+    value and stored it in the result, handing a handler
+    `query.constructor === [Object, "x"]`.
+  - None of the four documented query limits applied, so a request carrying
+    50,000 parameters was parsed in full.
+
+  All of these paths now delegate to the hardened `httpQuery` parser that the
+  Node adapter and the router already used, so every entry point produces a
+  null-prototype record, drops `__proto__` / `constructor` / `prototype`, and
+  throws `HTTPQueryLimitError` (414) on a limit breach.
+
+  Also fixed in `httpQuery`:
+
+  - `getQueryStrings()` threw `TypeError: Cannot convert object to primitive
+value` for `?a[b]=1&a=2`, because the parsed array holds a null-prototype
+    object that `String()` cannot coerce. It is now total over every parseable
+    shape.
+  - `getQueryString()` returned `null` while declaring `string | undefined`; a
+    literal `?a=null` now yields `"null"`.
+  - `hasQuery()` and `querySize()` answered from the raw search params rather
+    than the parsed query, so `hasQuery(req, "a")` was `false` for `?a[b]=1` and
+    `hasQuery(req, "__proto__")` was `true` for a key the parser drops. They now
+    answer about the object `getQuery()` returns.
+  - `maxKeys` was checked before comma expansion, so one parameter could expand
+    past the cap under `commaSeparated`. It now counts emitted pairs.
+  - `maxTotalLength` and `commaSeparated` were ignored when the input was a
+    `URLSearchParams`; both entry points now share one tokenizer.
+  - `cloneQuery()` used a `JSON.parse(JSON.stringify(…))` round-trip, which
+    rebuilt every level with `Object.prototype` and so discarded the null
+    prototype the parser exists to guarantee. It is now a structural deep copy.
+  - `mergeQuery()` assigned nested source objects by reference, so the merged
+    result aliased its inputs. Values are deep-copied.
+  - `stringifyQuery()` / `buildQueryString()` had no depth or cycle guard and
+    overflowed the stack with a bare `RangeError` on a cyclic or deeply nested
+    object. Both now throw `HTTPQueryLimitError`, and both accept a `maxDepth`
+    option.
+
+  `QueryValue` is now recursive (`QueryPrimitive | QueryValue[] | QueryObject`).
+  The previous `QueryPrimitive[]` described a shape the parser could not
+  produce, since `?a[b]=1&a=2` puts an object inside the array.
+
+  `httpQuery` is split into `queryTypes/`, `queryParse/`, `queryRequest/` and
+  `querySerialize/`. The public API is unchanged and still re-exported from
+  `@zudojs/http`.
+
+- Router, content negotiation and cache-control fixes.
+
+  - An `OPTIONS` request that only matches routes registered under other methods
+    no longer runs one of those handlers. The fallback now resolves to a
+    synthetic route with no middleware that answers `204` with an `Allow`
+    header, which is what `HttpRouter.dispatch()` already did. Previously
+    `OPTIONS /accounts/42` executed a `DELETE /accounts/:id` handler — behind
+    any CSRF or auth middleware that treats `OPTIONS` as a safe method.
+  - Headers, cookies, status and metadata that route middleware writes to
+    `context.response` are kept when the handler runs. They used to be discarded
+    whenever the handler returned its own response, so a guard that set a
+    security header and called `next()` had no effect on the response sent.
+  - Route patterns are no longer truncated at the first `?`, so the documented
+    optional-parameter syntax (`/account/:id?/profile`, `/files/{name?}`) works.
+    `{name?}` no longer throws `InvalidRoutePatternError`, registering both
+    `/users/:id` and `/users/:id?` no longer throws a spurious
+    `RouteConflictError`, and an optional parameter only claims a path segment
+    when the segments after it still have input left. Request paths are
+    unaffected: their query string is still stripped.
+  - `strictTrailingSlash` is honoured. A strict router now distinguishes
+    `/users` from `/users/` instead of storing the option and ignoring it.
+  - Route precedence compares segments left to right by kind (literal, then
+    parameter, then wildcard) instead of summing them into one score, so
+    `/admin/*rest` now wins over `/:p/:q/:r/:s` for `GET /admin/a/b/c`. Fully
+    literal and mixed patterns rank as before.
+  - `Allow` honours the router's `caseSensitive` option, so a case-sensitive
+    router no longer advertises a method belonging to a route that differs only
+    by case.
+  - `RouteDispatchOptions.preserveResponse` is implemented: with it set, a
+    handler's response is no longer merged into the response passed to
+    `dispatch()`.
+  - `calculateFreshness()` / `isFresh()` age a cached response. The current age
+    is now the `Age` header plus the time elapsed since the response's `Date`,
+    and `Expires` is compared against the current time, so a stale response is
+    finally reported stale. `calculateFreshness()` takes an optional third
+    argument for the current time.
+  - `getEncodingQuality()` / `getLanguageQuality()` let the most specific
+    preference win, so an explicit `gzip;q=0` is no longer overridden by
+    `*;q=1`.
+  - `negotiateEncoding()` falls back to `identity` when the client names only
+    codings the server does not have, unless `identity;q=0` or a `*;q=0`
+    excludes it.
+  - New helpers are exported alongside the existing ones:
+    `normalizeRoutePattern`, `normalizeMatchPath`, `splitRoutePattern`,
+    `hasTrailingSlash` and `compareSegmentSpecificity`. `normalizePath` keeps
+    its current request-path behaviour.
+
+### Patch Changes
+
+- Updated dependencies [`c904687`, `c904687`, `95c1d56`, `c904687`]:
+  - @zudojs/errors@1.2.0
+  - @zudojs/logger@1.3.0
+  - @zudojs/security@1.2.0
+  - @zudojs/crypto@1.3.0
+
 ## 1.2.0
 
 ### Minor Changes

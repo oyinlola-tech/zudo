@@ -1,5 +1,14 @@
 # @zudojs/cqrs
 
+## 1.1.1
+
+### Patch Changes
+
+- Updated dependencies [`c904687`, `c904687`]:
+  - @zudojs/errors@1.2.0
+  - @zudojs/events@1.2.0
+  - @zudojs/middleware@1.0.3
+
 ## 1.1.0
 
 ### Minor Changes

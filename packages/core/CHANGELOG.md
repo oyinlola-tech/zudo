@@ -1,5 +1,13 @@
 # @zudojs/core
 
+## 1.2.1
+
+### Patch Changes
+
+- Updated dependencies [`c904687`, `c904687`]:
+  - @zudojs/errors@1.2.0
+  - @zudojs/constants@1.1.1
+
 ## 1.2.0
 
 ### Minor Changes

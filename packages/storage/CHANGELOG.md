@@ -1,5 +1,15 @@
 # @zudojs/storage
 
+## 1.1.2
+
+### Patch Changes
+
+- Updated dependencies [`c904687`, `c904687`]:
+  - @zudojs/errors@1.2.0
+  - @zudojs/types@1.1.1
+  - @zudojs/serialization@1.1.1
+  - @zudojs/constants@1.1.1
+
 ## 1.1.1
 
 ### Patch Changes
