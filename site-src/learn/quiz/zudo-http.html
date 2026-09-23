@@ -1,0 +1,862 @@
+<question id="adapter-vs-handler" type="choice">
+<q><code>createHttpServer</code> needs an <strong>adapter</strong> and a <strong>handler</strong>. What is the job of each?</q>
+<option>The adapter parses JSON bodies; the handler opens the port</option>
+<option correct>The adapter talks to the real network (host and port); the handler is your function that turns each request into a response</option>
+<option>The adapter stores tasks; the handler logs requests</option>
+<option>Both do the same thing; the adapter is only needed in tests</option>
+<explain><p><code>createNodeHttpAdapter</code> uses <code>node:http</code> and decides the <code>host</code> and <code>port</code>. The handler is your code: it receives each request and returns the answer.</p></explain>
+</question>
+
+<question id="port-zero" type="choice">
+<q>Why do the lesson's examples use <code>createNodeHttpAdapter({ host: "127.0.0.1", port: 0 })</code>?</q>
+<option>Port 0 is the default port for HTTP</option>
+<option>Port 0 makes the server reject every request</option>
+<option correct>Port 0 asks the operating system for any free port, so the example never clashes with another program</option>
+<option>Port 0 turns on HTTPS</option>
+<explain><p>The OS picks a free port, and <code>server.address?.port</code> tells you which one. That is handy in examples and tests. A real server uses a fixed port such as 3000.</p></explain>
+</question>
+
+<question id="status-without-throw" type="choice">
+<q>Inside a route, how do you answer <strong>400</strong> with a JSON message, without throwing?</q>
+<option><code>createResponseContext().json({ error: "…" }, 400)</code></option>
+<option correct><code>createResponseContext({ status: 400 }).json({ error: "done must be true or false" })</code></option>
+<option><code>return 400;</code></option>
+<option><code>ctx.status = 400;</code> and then return the message string</option>
+<explain><p><code>createResponseContext</code> takes <code>{ status, headers, body }</code>, or you chain <code>setStatus</code>, <code>setHeader</code> and <code>json</code>. The filter example in the lesson answers a bad <code>done</code> value exactly like this.</p></explain>
+</question>
+
+<question id="why-router" type="choice">
+<q>What does a <strong>router</strong> give you compared to one handler for every path?</q>
+<option>It makes requests faster by caching every response</option>
+<option correct>A table of method + path pattern → function, plus automatic 404 for unknown paths and 405 for wrong methods</option>
+<option>It parses every request body as JSON</option>
+<option>It checks that the user is logged in</option>
+<explain><p>Without a router, one handler turns into a long chain of <code>if</code> statements. <code>createRouter()</code> keeps the table, and <code>router.dispatch</code> answers unknown paths with 404 and known paths with the wrong method with 405.</p></explain>
+</question>
+
+<question id="params-are-strings" type="choice">
+<q>A route is <code>router.get("/tasks/:id", …)</code> and the request is <code>GET /tasks/2</code>. What is <code>ctx.params.id</code>?</q>
+<option>The number <code>2</code></option>
+<option correct>The string <code>"2"</code></option>
+<option>The task with id 2</option>
+<option><code>undefined</code>, until you parse the path yourself</option>
+<explain><p>Route parameters are always strings, because a URL is text. Convert and check them yourself, as <code>parseId</code> does, or compare with <code>String(t.id)</code>.</p></explain>
+</question>
+
+<question id="route-ctx" type="choice">
+<q>A route handler receives one object, usually called <code>ctx</code>. Where are the request and the route parameters?</q>
+<option>The request is <code>ctx</code> itself; parameters are in <code>ctx.query</code></option>
+<option correct>The request is <code>ctx.request</code>; the route parameters are <code>ctx.params</code></option>
+<option>The request is <code>ctx.body</code>; the parameters are in <code>ctx.headers</code></option>
+<option>Parameters are not available; you split <code>ctx.path</code> yourself</option>
+<explain><p><code>ctx.request</code> is the request (headers, body, path), <code>ctx.params</code> holds values such as <code>:id</code>, and <code>ctx.query</code> holds the query string.</p></explain>
+</question>
+
+<question id="404-vs-405" type="choice">
+<q>The router has only <code>GET /tasks/:id</code>. A client sends <code>DELETE /tasks/1</code>. What does it get?</q>
+<option>404 Not Found, because there is no DELETE route</option>
+<option correct>405 Method Not Allowed, with the list of allowed methods</option>
+<option>500 Internal Server Error</option>
+<option>200, because the GET route answers every method</option>
+<explain><p>The path is known but the method is not, so the router answers 405 and lists <code>["GET"]</code>. A path that matches no route at all gets 404.</p></explain>
+</question>
+
+<question id="query-type" type="choice">
+<q>What type can a value in <code>ctx.query</code> have?</q>
+<option>Always a string</option>
+<option>A number or a boolean, converted for you</option>
+<option correct>A string, an array of strings when the key is repeated, or missing</option>
+<option>Whatever JSON type the client sent</option>
+<explain><p><code>?limit=10</code> gives <code>"10"</code>, a string. <code>?tag=a&amp;tag=b</code> gives <code>["a", "b"]</code>. And the key may be missing, so the type is <code>string | string[]</code> or undefined.</p></explain>
+</question>
+
+<question id="query-false-trap" type="choice">
+<q>A client calls <code>GET /tasks?done=false</code>. Which check correctly reads the filter?</q>
+<option><code>if (ctx.query.done) { … only done tasks … }</code></option>
+<option><code>const done = Boolean(ctx.query.done);</code></option>
+<option correct><code>if (done !== "true" &amp;&amp; done !== "false") → 400</code>, then <code>done === "true"</code></option>
+<option><code>const done = Number(ctx.query.done) === 1;</code></option>
+<explain><p><code>"false"</code> is a non-empty string, so it is truthy: <code>if (ctx.query.done)</code> and <code>Boolean(...)</code> both treat it as true. Compare with the exact strings, and answer 400 for anything else.</p></explain>
+</question>
+
+<question id="body-raw-bytes" type="choice">
+<q>In a POST route, what is <code>ctx.request.body</code>?</q>
+<option>The parsed JSON object</option>
+<option>A string with the body text</option>
+<option correct>Raw bytes: a <code>Uint8Array</code>, not parsed</option>
+<option>A stream you must read yourself</option>
+<explain><p>The server reads the bytes for you but cannot know if they are JSON, a form or an image. Decoding with <code>TextDecoder</code> and parsing is your job.</p></explain>
+</question>
+
+<question id="body-limit" type="choice">
+<q>A client sends a 50 MB body to a route. What happens by default?</q>
+<option>The route receives all 50 MB</option>
+<option correct>The server answers 413 Payload Too Large; the limit is 10 MB by default</option>
+<option>The server crashes with an out-of-memory error</option>
+<option>The body is cut to 10 MB and the route gets the first part</option>
+<explain><p>The body is limited to 10 MB by default, and bigger bodies get <strong>413 Payload Too Large</strong>. A limit like this stops one client from filling the server's memory.</p></explain>
+</question>
+
+<question id="broken-json-400" type="choice">
+<q>Why does <code>readJson</code> wrap <code>JSON.parse</code> in <code>try</code> and throw <code>badRequest(...)</code>?</q>
+<option>Because <code>JSON.parse</code> is slow without <code>try</code></option>
+<option correct>Broken JSON is the client's mistake and deserves 400; an uncaught error would become a 500, which means a server bug</option>
+<option>So the server can guess what the client meant</option>
+<option>Because <code>badRequest</code> fixes the JSON automatically</option>
+<explain><p><code>JSON.parse</code> throws on bad input. Left uncaught, that becomes a 500, telling the client the server is broken. Catching it and throwing <code>badRequest</code> gives the honest answer: 400, your request is wrong.</p></explain>
+</question>
+
+<question id="content-type-415" type="choice">
+<q>A client POSTs to <code>/tasks</code> with <code>Content-Type: text/plain</code>. What does the lesson's <code>readJson</code> do?</q>
+<option>Tries to parse it as JSON anyway</option>
+<option>Returns an empty object</option>
+<option correct>Throws an <code>HttpError</code> with status 415 Unsupported Media Type</option>
+<option>Answers 404 Not Found</option>
+<explain><p>It checks the <code>Content-Type</code> header first. Anything that does not start with <code>application/json</code> gets 415, before any parsing.</p></explain>
+</question>
+
+<question id="read-json-unknown" type="choice">
+<q>Why does <code>readJson</code> return <code>unknown</code> instead of <code>any</code>?</q>
+<option><code>unknown</code> is faster at runtime</option>
+<option><code>any</code> is not allowed in a function's return type</option>
+<option correct>The data comes from the client and is not trusted until a schema has checked it; <code>unknown</code> forces that check</option>
+<option>So the route can use the result without any checks</option>
+<explain><p>With <code>unknown</code>, TypeScript will not let you use the data until you check it, for example with <code>NewTaskSchema.parse(...)</code>. <code>any</code> would switch checking off for untrusted input.</p></explain>
+</question>
+
+<question id="http-error-code" type="choice">
+<q>You throw <code>new HttpError(415, "Send JSON")</code> from a route. What does the lesson advise?</q>
+<option>Use status 500 instead, since it is an error</option>
+<option correct>Also give it a <code>code</code> of your own, such as <code>{ code: "UNSUPPORTED_MEDIA_TYPE" }</code>; without one it reports the vague default code</option>
+<option>Catch it in the same route and return a plain object</option>
+<option>Never throw from a route; return <code>null</code> instead</option>
+<explain><p>Without a code, <code>HttpError</code> reports <code>ERR_OPERATION_FAILED</code>, which tells a client nothing. A clear code lets clients react to the exact problem.</p></explain>
+</question>
+
+<question id="create-201" type="choice">
+<q>A <code>POST /tasks</code> creates task 7. What is the best answer?</q>
+<option>200 with the task</option>
+<option correct>201 Created with a <code>Location: /tasks/7</code> header and the task</option>
+<option>204 No Content</option>
+<option>302 redirect to <code>/tasks/7</code></option>
+<explain><p>201 says "a new resource exists now", and <code>Location</code> says where it lives: <code>createResponseContext({ status: 201 }).setHeader("location", `/tasks/${task.id}`).json(task)</code>.</p></explain>
+</question>
+
+<question id="500-hidden" type="choice">
+<q>A route throws <code>new Error("Cannot read /var/data/tasks.db")</code>. Why is it good that the client only sees <code>{"error":"Internal Server Error"}</code>?</q>
+<option>Because clients cannot display long messages</option>
+<option correct>The real message shows details of the server, such as file paths, that could help an attacker</option>
+<option>Because the error is logged to the client's console instead</option>
+<option>Because 500 errors are not errors</option>
+<explain><p>Any error that is not a known HTTP error is treated as a bug. Its message is not sent; the client gets a generic 500. You log the details for yourself instead.</p></explain>
+</question>
+
+<question id="cookie-httponly" type="choice">
+<q>A cookie set with <code>response.cookie(...)</code> has <code>HttpOnly</code> by default. What does that protect against?</q>
+<option>The cookie being sent over plain HTTP</option>
+<option correct>JavaScript in the page reading the cookie, so an injected script cannot steal it</option>
+<option>Other websites sending the cookie with their requests</option>
+<option>The cookie expiring too early</option>
+<explain><p><code>HttpOnly</code> hides the cookie from page scripts. <code>Secure</code> is the one about HTTPS, and <code>SameSite=Lax</code> is the one about other websites.</p></explain>
+</question>
+
+<question id="cookie-samesite" type="choice">
+<q>Which default cookie setting stops other websites from making the browser send your cookie with their requests (except when the user follows a normal link)?</q>
+<option><code>HttpOnly</code></option>
+<option><code>Secure</code></option>
+<option correct><code>SameSite=Lax</code></option>
+<option><code>Max-Age</code></option>
+<explain><p><code>SameSite=Lax</code> limits cross-site sending. <code>HttpOnly</code> hides the cookie from scripts, <code>Secure</code> keeps it to HTTPS, and <code>Max-Age</code> only sets how long it lives.</p></explain>
+</question>
+
+<question id="cookie-turn-off" type="choice">
+<q>A teammate wants to turn off <code>HttpOnly</code> and <code>Secure</code> on the session cookie "to make testing easier". What is the right answer?</q>
+<option>Fine: the defaults are only suggestions</option>
+<option>Fine, as long as the cookie has a short <code>Max-Age</code></option>
+<option correct>Keep the safe defaults; only turn one off for a specific, understood reason</option>
+<option>Turn them off in production only</option>
+<explain><p>The defaults protect users: scripts cannot read the cookie, it travels only over HTTPS, and other sites cannot send it. Convenience in testing is not a reason to weaken a real session cookie.</p></explain>
+</question>
+
+<question id="route-file-role" type="choice">
+<q>In the Task API, what belongs in <code>src/routes/tasks.routes.ts</code>?</q>
+<option>The business rules, such as "titles must be unique"</option>
+<option correct>Only the translation between HTTP and the service: read the request, call the service, choose the status</option>
+<option>The database code that stores tasks</option>
+<option>The server's port and host</option>
+<explain><p>A route file is thin. The rules (validation, the unique title check) stay in <code>TaskService</code>, so they work the same no matter how the service is called.</p></explain>
+</question>
+
+<question id="parse-id-why" type="choice">
+<q>Why does the Task API run <code>parseId(ctx.params.id)</code> before calling <code>tasks.get(...)</code>?</q>
+<option>To turn the id into a string</option>
+<option correct>To refuse ids such as <code>abc</code>, <code>1.5</code> or <code>-3</code> with a 400 before the service sees them</option>
+<option>To make the route return 404 for every bad id</option>
+<option>Because the service only accepts negative numbers</option>
+<explain><p><code>Number("abc")</code> is <code>NaN</code>, and a <code>NaN</code> id would just look like "not found". <code>parseId</code> checks for a positive safe whole number and answers 400: the request itself is wrong.</p></explain>
+</question>
+
+<question id="out-first-server" type="output">
+<q>The handler returns a plain object. What does this print?</q>
+<code file="first-server.js" browser="no">
+import { createHttpServer, createNodeHttpAdapter } from "@zudojs/http";
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: (request) => ({ path: request.path }),
+});
+
+await server.start();
+const response = await fetch(`http://127.0.0.1:${server.address?.port}/hello`);
+console.log(response.status, response.headers.get("content-type"));
+console.log(await response.text());
+await server.stop();
+</code>
+<option correct>200 application/json
+{"path":"/hello"}</option>
+<option>200 text/plain
+[object Object]</option>
+<option>204 null
+</option>
+<option>200 text/html
+{"path":"/hello"}</option>
+<explain><p>The server's handler may return a plain object: it is sent as JSON with status 200 and the right <code>content-type</code>.</p></explain>
+</question>
+
+<question id="out-server-state" type="output">
+<q>What does this print?</q>
+<code file="server-state.js" browser="no">
+import { createHttpServer, createNodeHttpAdapter } from "@zudojs/http";
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: () => ({ ok: true }),
+});
+
+console.log(server.state);
+await server.start();
+console.log(server.state);
+await server.stop();
+console.log(server.state);
+</code>
+<option correct>created
+running
+stopped</option>
+<option>stopped
+running
+stopped</option>
+<option>created
+started
+stopped</option>
+<option>idle
+running
+closed</option>
+<explain><p>A new server is <code>created</code>, <code>start()</code> makes it <code>running</code>, and <code>stop()</code> makes it <code>stopped</code>. The examples always stop the server, so the program can end.</p></explain>
+</question>
+
+<question id="out-param-type" type="output">
+<q>What does this print?</q>
+<code file="param-type.js" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/tasks/:id", (ctx) => createResponseContext().json({ id: ctx.params.id, type: typeof ctx.params.id }));
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+const response = await fetch(`http://127.0.0.1:${server.address?.port}/tasks/2`);
+console.log(await response.text());
+await server.stop();
+</code>
+<option correct>{"id":"2","type":"string"}</option>
+<option>{"id":2,"type":"number"}</option>
+<option>{"id":"2","type":"number"}</option>
+<option>{"type":"undefined"}</option>
+<explain><p>Route parameters are always strings. That is why the lesson compares <code>String(t.id) === ctx.params.id</code>, or converts with <code>parseId</code>.</p></explain>
+</question>
+
+<question id="out-not-found-route" type="output">
+<q>What does this print?</q>
+<code file="find-task.js" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+import { NotFoundError } from "@zudojs/errors";
+
+const tasks = [{ id: 1, title: "Buy milk" }];
+const router = createRouter();
+router.get("/tasks/:id", (ctx) => {
+  const task = tasks.find((t) => String(t.id) === ctx.params.id);
+  if (!task) {
+    throw new NotFoundError(`Task ${ctx.params.id} not found`);
+  }
+  return createResponseContext().json(task);
+});
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+const response = await fetch(`http://127.0.0.1:${server.address?.port}/tasks/9`);
+console.log(response.status, await response.text());
+await server.stop();
+</code>
+<option correct>404 {"error":"Task 9 not found","code":"ERR_RESOURCE_NOT_FOUND"}</option>
+<option>500 {"error":"Internal Server Error"}</option>
+<option>404 {"error":"Not Found","method":"GET","path":"/tasks/9"}</option>
+<option>200 null</option>
+<explain><p>Throwing <code>NotFoundError</code> from <code>@zudojs/errors</code> becomes a 404 with your message and its <code>code</code>. You do not build the error response by hand.</p></explain>
+</question>
+
+<question id="out-unknown-path" type="output">
+<q>The router only knows <code>GET /tasks</code>. What does this print?</q>
+<code file="unknown-path.js" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/tasks", () => createResponseContext().json([]));
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+const base = `http://127.0.0.1:${server.address?.port}`;
+const a = await fetch(`${base}/users`);
+const b = await fetch(`${base}/tasks`, { method: "DELETE" });
+console.log(a.status, b.status);
+await server.stop();
+</code>
+<option correct>404 405</option>
+<option>404 404</option>
+<option>405 405</option>
+<option>404 200</option>
+<explain><p><code>/users</code> matches no route, so 404. <code>/tasks</code> exists but not for DELETE, so 405 Method Not Allowed.</p></explain>
+</question>
+
+<question id="out-allowed" type="output">
+<q>What does this print?</q>
+<code file="allowed.js" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/tasks/:id", () => createResponseContext().json({}));
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+const response = await fetch(`http://127.0.0.1:${server.address?.port}/tasks/1`, { method: "DELETE" });
+console.log(response.status, (await response.json()).allowed);
+await server.stop();
+</code>
+<option correct>405 [ 'GET' ]</option>
+<option>404 undefined</option>
+<option>405 [ 'DELETE' ]</option>
+<option>405 GET</option>
+<explain><p>For a wrong method the router answers 405 and lists the methods that path does allow, as an array.</p></explain>
+</question>
+
+<question id="out-query-repeated" type="output">
+<q>What does this print?</q>
+<code file="query.js" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/search", (ctx) => createResponseContext().json(ctx.query));
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+const response = await fetch(`http://127.0.0.1:${server.address?.port}/search?limit=10&tag=home&tag=urgent`);
+console.log(await response.text());
+await server.stop();
+</code>
+<option correct>{"limit":"10","tag":["home","urgent"]}</option>
+<option>{"limit":10,"tag":["home","urgent"]}</option>
+<option>{"limit":"10","tag":"urgent"}</option>
+<option>{"limit":"10","tag":"home,urgent"}</option>
+<explain><p>Every query value is a string, so <code>limit</code> is <code>"10"</code>. A key given twice becomes an array of strings.</p></explain>
+</question>
+
+<question id="out-query-false-bug" type="output">
+<q>This filter has a bug. What does <code>?done=false</code> print?</q>
+<code file="done-bug.js" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/tasks", (ctx) => {
+  if (ctx.query.done) {
+    return createResponseContext().json("only done tasks");
+  }
+  return createResponseContext().json("all tasks");
+});
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+const response = await fetch(`http://127.0.0.1:${server.address?.port}/tasks?done=false`);
+console.log(await response.text());
+await server.stop();
+</code>
+<option correct>"only done tasks"</option>
+<option>"all tasks"</option>
+<option>only done tasks</option>
+<option>false</option>
+<explain><p><code>ctx.query.done</code> is the string <code>"false"</code>, and any non-empty string is truthy. Compare with <code>=== "true"</code> and <code>=== "false"</code> instead. (<code>.json</code> of a string sends it with its JSON quotes.)</p></explain>
+</question>
+
+<question id="out-body-bytes" type="output">
+<q>What does this print?</q>
+<code file="body.js" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.post("/echo", (ctx) => {
+  const body = ctx.request.body;
+  const text = new TextDecoder().decode(body);
+  return createResponseContext().json({ bytes: body instanceof Uint8Array, text });
+});
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+const response = await fetch(`http://127.0.0.1:${server.address?.port}/echo`, { method: "POST", body: "Buy milk" });
+console.log(await response.text());
+await server.stop();
+</code>
+<option correct>{"bytes":true,"text":"Buy milk"}</option>
+<option>{"bytes":false,"text":"Buy milk"}</option>
+<option>{"bytes":true,"text":"66,117,121,32,109,105,108,107"}</option>
+<option>{"bytes":false,"text":""}</option>
+<explain><p>The body arrives as a <code>Uint8Array</code> of raw bytes. <code>new TextDecoder().decode(body)</code> turns the bytes back into text (UTF-8).</p></explain>
+</question>
+
+<question id="out-read-json" type="output">
+<q>This uses the lesson's <code>readJson</code> helper. What does this print?</q>
+<code file="read-json.js" browser="no">
+import { badRequest, createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter, HttpError } from "@zudojs/http";
+
+function readJson(request) {
+  const type = request.getHeader("content-type") ?? "";
+  if (!type.startsWith("application/json")) {
+    throw new HttpError(415, "Send JSON", { code: "UNSUPPORTED_MEDIA_TYPE" });
+  }
+  try {
+    return JSON.parse(new TextDecoder().decode(request.body));
+  } catch {
+    throw badRequest("The request body is not valid JSON");
+  }
+}
+
+const router = createRouter();
+router.post("/tasks", (ctx) => createResponseContext({ status: 201 }).json(readJson(ctx.request)));
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+const url = `http://127.0.0.1:${server.address?.port}/tasks`;
+const json = { "content-type": "application/json" };
+const a = await fetch(url, { method: "POST", headers: json, body: '{"title":"Buy milk"}' });
+const b = await fetch(url, { method: "POST", headers: json, body: '{"title": ' });
+const c = await fetch(url, { method: "POST", headers: { "content-type": "text/plain" }, body: "Buy milk" });
+console.log(a.status, b.status, c.status);
+await server.stop();
+</code>
+<option correct>201 400 415</option>
+<option>201 500 415</option>
+<option>201 400 400</option>
+<option>201 500 500</option>
+<explain><p>Good JSON is created (201). Broken JSON is caught and becomes <code>badRequest</code> (400), not a 500. A body that is not JSON is refused with 415 before any parsing.</p></explain>
+</question>
+
+<question id="out-http-error-code" type="output">
+<q>What does this print?</q>
+<code file="http-error.js" browser="no">
+import { badRequest, createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/tasks", () => {
+  throw badRequest("limit must be a whole number from 1 to 50");
+});
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+const response = await fetch(`http://127.0.0.1:${server.address?.port}/tasks?limit=0`);
+console.log(response.status, await response.text());
+await server.stop();
+</code>
+<option correct>400 {"error":"limit must be a whole number from 1 to 50","code":"BAD_REQUEST"}</option>
+<option>500 {"error":"Internal Server Error"}</option>
+<option>400 {"error":"Bad Request"}</option>
+<option>200 {"error":"limit must be a whole number from 1 to 50"}</option>
+<explain><p><code>badRequest(...)</code> from <code>@zudojs/http</code> is an <code>HttpError</code> with status 400. Thrown from a route, it becomes a response with that status, your message and the code <code>BAD_REQUEST</code>.</p></explain>
+</question>
+
+<question id="out-created" type="output">
+<q>What does this print?</q>
+<code file="created.js" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+
+const tasks = [];
+const router = createRouter();
+router.post("/tasks", () => {
+  const task = { id: tasks.length + 1, title: "Buy milk" };
+  tasks.push(task);
+  return createResponseContext({ status: 201 }).setHeader("location", `/tasks/${task.id}`).json(task);
+});
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+const response = await fetch(`http://127.0.0.1:${server.address?.port}/tasks`, { method: "POST" });
+console.log(response.status, response.headers.get("location"));
+await server.stop();
+</code>
+<option correct>201 /tasks/1</option>
+<option>200 /tasks/1</option>
+<option>201 null</option>
+<option>201 /tasks</option>
+<explain><p>A create answers 201 Created, and the <code>location</code> header tells the client where the new task lives.</p></explain>
+</question>
+
+<question id="out-delete-twice" type="output">
+<q>What does this print?</q>
+<code file="delete.js" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+import { NotFoundError } from "@zudojs/errors";
+
+const tasks = new Map([[1, { id: 1, title: "Buy milk" }]]);
+const router = createRouter();
+router.delete("/tasks/:id", (ctx) => {
+  if (!tasks.delete(Number(ctx.params.id))) {
+    throw new NotFoundError(`Task ${ctx.params.id} not found`);
+  }
+  return createResponseContext({ status: 204 });
+});
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+const url = `http://127.0.0.1:${server.address?.port}/tasks/1`;
+const first = await fetch(url, { method: "DELETE" });
+const second = await fetch(url, { method: "DELETE" });
+console.log(first.status, JSON.stringify(await first.text()), second.status);
+await server.stop();
+</code>
+<option correct>204 "" 404</option>
+<option>200 "{}" 404</option>
+<option>204 "" 204</option>
+<option>204 "" 500</option>
+<explain><p>The first DELETE removes the task and sends nothing back (204, empty body). The second finds nothing, so <code>NotFoundError</code> becomes a 404.</p></explain>
+</question>
+
+<question id="out-crash-500" type="output">
+<q>What does this print?</q>
+<code file="crash.js" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/crash", () => {
+  throw new Error("Cannot read the database file /var/data/tasks.db");
+});
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+const response = await fetch(`http://127.0.0.1:${server.address?.port}/crash`);
+console.log(response.status, await response.text());
+await server.stop();
+</code>
+<option correct>500 {"error":"Internal Server Error"}</option>
+<option>500 {"error":"Cannot read the database file /var/data/tasks.db"}</option>
+<option>400 {"error":"Cannot read the database file /var/data/tasks.db"}</option>
+<option>404 {"error":"Not Found"}</option>
+<explain><p>A plain <code>Error</code> is treated as a bug. The client gets a generic 500, and the message with the file path is <strong>not</strong> sent, so an attacker learns nothing about your server.</p></explain>
+</question>
+
+<question id="out-conflict" type="output">
+<q>What does this print?</q>
+<code file="conflict.js" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
+import { ConflictError } from "@zudojs/errors";
+
+const router = createRouter();
+router.post("/tasks", () => {
+  throw new ConflictError('A task called "Buy milk" already exists');
+});
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+const response = await fetch(`http://127.0.0.1:${server.address?.port}/tasks`, { method: "POST" });
+console.log(response.status, (await response.json()).code);
+await server.stop();
+</code>
+<option correct>409 ERR_CONFLICT</option>
+<option>400 ERR_CONFLICT</option>
+<option>500 undefined</option>
+<option>409 CONFLICT</option>
+<explain><p><code>ConflictError</code> carries status 409 and the code <code>ERR_CONFLICT</code>, so the router turns it into a 409 response by itself.</p></explain>
+</question>
+
+<question id="out-cookie" type="output">
+<q>The route only asks for a <code>maxAge</code>. What does this print?</q>
+<code file="cookie.js" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+
+const router = createRouter();
+router.put("/theme/:theme", (ctx) =>
+  createResponseContext({ status: 204 }).cookie("theme", ctx.params.theme ?? "light", { maxAge: 3600 }),
+);
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+const response = await fetch(`http://127.0.0.1:${server.address?.port}/theme/dark`, { method: "PUT" });
+console.log(response.headers.get("set-cookie"));
+await server.stop();
+</code>
+<option correct>theme=dark; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax</option>
+<option>theme=dark; Max-Age=3600</option>
+<option>theme=dark; Path=/; Max-Age=3600</option>
+<option>theme=dark; Path=/; Max-Age=3600; SameSite=None</option>
+<explain><p><code>response.cookie()</code> adds the safe settings by itself: <code>HttpOnly</code>, <code>Secure</code> and <code>SameSite=Lax</code>. Only turn one off when you have a specific reason.</p></explain>
+</question>
+
+<question id="out-headers-cookies" type="output">
+<q>What does this print?</q>
+<code file="headers.js" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter, parseCookies } from "@zudojs/http";
+
+const router = createRouter();
+router.get("/me", (ctx) => {
+  const cookies = parseCookies(ctx.request.getHeader("cookie"));
+  return createResponseContext().json({
+    theme: cookies.get("theme") ?? "light",
+    agent: ctx.request.getHeader("User-Agent"),
+    key: ctx.request.getHeader("x-api-key") ?? "none",
+  });
+});
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+});
+await server.start();
+const response = await fetch(`http://127.0.0.1:${server.address?.port}/me`, {
+  headers: { cookie: "theme=dark", "user-agent": "task-cli/1.0" },
+});
+console.log(await response.text());
+await server.stop();
+</code>
+<option correct>{"theme":"dark","agent":"task-cli/1.0","key":"none"}</option>
+<option>{"theme":"light","agent":"task-cli/1.0","key":"none"}</option>
+<option>{"theme":"dark","key":"none"}</option>
+<option>{"theme":"dark","agent":"task-cli/1.0","key":null}</option>
+<explain><p><code>parseCookies</code> reads the <code>Cookie</code> header. <code>getHeader</code> is not case-sensitive, so <code>"User-Agent"</code> finds <code>user-agent</code>, and a missing header gives <code>undefined</code>, so <code>?? "none"</code> applies.</p></explain>
+</question>
+
+<question id="code-parse-id" type="code" file="parse-id.js">
+<q><p>Route parameters are strings. Finish <code>parseId</code>: return the number when <code>raw</code> is a positive safe whole number, otherwise return <code>null</code> (a route would answer 400). The program should print <code>7 null null null null</code>.</p></q>
+<starter>
+function parseId(raw) {
+  // your code here
+}
+
+console.log(parseId("7"), parseId("abc"), parseId("1.5"), parseId("-3"), parseId(undefined));
+</starter>
+<solution>
+function parseId(raw) {
+  const id = Number(raw);
+  if (!Number.isSafeInteger(id) || id < 1) {
+    return null;
+  }
+  return id;
+}
+
+console.log(parseId("7"), parseId("abc"), parseId("1.5"), parseId("-3"), parseId(undefined));
+</solution>
+<expected>7 null null null null</expected>
+<explain><p><code>Number.isSafeInteger</code> is false for <code>NaN</code> (from <code>"abc"</code> or <code>undefined</code>) and for <code>1.5</code>. Then <code>id &lt; 1</code> refuses zero and negatives.</p></explain>
+</question>
+
+<question id="code-done-filter" type="code" file="done-filter.js">
+<q><p>Finish <code>readDone</code> for <code>GET /tasks?done=…</code>. A missing value returns <code>"all"</code>, <code>"true"</code> returns <code>true</code>, <code>"false"</code> returns <code>false</code>, and anything else (including a repeated key, which is an array) returns <code>"400"</code>. The program should print <code>all true false 400 400</code>.</p></q>
+<starter>
+function readDone(value) {
+  // your code here
+}
+
+console.log(readDone(undefined), readDone("true"), readDone("false"), readDone("yes"), readDone(["true", "false"]));
+</starter>
+<solution>
+function readDone(value) {
+  if (value === undefined) return "all";
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return "400";
+}
+
+console.log(readDone(undefined), readDone("true"), readDone("false"), readDone("yes"), readDone(["true", "false"]));
+</solution>
+<expected>all true false 400 400</expected>
+<explain><p>Compare with the exact strings. A plain <code>if (value)</code> would treat <code>"false"</code> as true, because it is a non-empty string. An array never equals a string, so it falls through to 400.</p></explain>
+</question>
+
+<question id="code-limit" type="code" file="limit.js">
+<q><p>Finish <code>readLimit</code> for <code>?limit=N</code>. When the value is missing, use 50. It must be a string of digits only, and the number must be from 1 to 50; otherwise return <code>null</code>. The program should print <code>50 2 null null null null</code>.</p></q>
+<starter>
+function readLimit(raw) {
+  // your code here
+}
+
+console.log(readLimit(undefined), readLimit("2"), readLimit("0"), readLimit("1.5"), readLimit("99"), readLimit(["1", "2"]));
+</starter>
+<solution>
+function readLimit(raw) {
+  const value = raw ?? "50";
+  if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
+  const limit = Number(value);
+  return limit >= 1 && limit <= 50 ? limit : null;
+}
+
+console.log(readLimit(undefined), readLimit("2"), readLimit("0"), readLimit("1.5"), readLimit("99"), readLimit(["1", "2"]));
+</solution>
+<expected>50 2 null null null null</expected>
+<explain><p>Check that the value is a string first (a repeated key is an array), then that it has digits only (<code>^\d+$</code> refuses <code>1.5</code> and <code>-1</code>), then the range.</p></explain>
+</question>
+
+<question id="code-decode-json" type="code" file="decode-json.js">
+<q><p>A request body arrives as bytes. Finish <code>readJsonBody(contentType, bytes)</code>. Return <code>{ status: 415 }</code> when the content type does not start with <code>application/json</code>, <code>{ status: 400 }</code> when the text is not valid JSON, and otherwise <code>{ status: 200, data }</code>. The program should print <code>200 Buy milk</code>, <code>400</code> and <code>415</code> on three lines.</p></q>
+<starter>
+function readJsonBody(contentType, bytes) {
+  // your code here
+}
+
+const bytes = (text) => new TextEncoder().encode(text);
+const good = readJsonBody("application/json", bytes('{"title":"Buy milk"}'));
+console.log(good.status, good.data?.title);
+console.log(readJsonBody("application/json", bytes('{"title": ')).status);
+console.log(readJsonBody("text/plain", bytes("Buy milk")).status);
+</starter>
+<solution>
+function readJsonBody(contentType, bytes) {
+  if (!(contentType ?? "").startsWith("application/json")) {
+    return { status: 415 };
+  }
+  const text = new TextDecoder().decode(bytes);
+  try {
+    return { status: 200, data: JSON.parse(text) };
+  } catch {
+    return { status: 400 };
+  }
+}
+
+const bytes = (text) => new TextEncoder().encode(text);
+const good = readJsonBody("application/json", bytes('{"title":"Buy milk"}'));
+console.log(good.status, good.data?.title);
+console.log(readJsonBody("application/json", bytes('{"title": ')).status);
+console.log(readJsonBody("text/plain", bytes("Buy milk")).status);
+</solution>
+<expected>
+200 Buy milk
+400
+415
+</expected>
+<explain><p>Check the content type first, decode the bytes with <code>TextDecoder</code>, and keep <code>JSON.parse</code> inside <code>try</code>: broken JSON is the client's mistake (400), never a crash (500).</p></explain>
+</question>
+
+<question id="code-not-found" type="code" file="not-found.js">
+<q><p>Finish <code>getTask</code>: return the task with that id, or throw a <code>NotFoundError</code> from <code>@zudojs/errors</code> with the message <code>Task 9 not found</code>. The error carries the HTTP status a route would send. The program should print <code>Buy milk</code> and then <code>404 Task 9 not found</code>.</p></q>
+<starter>
+import { NotFoundError } from "@zudojs/errors";
+
+const tasks = new Map([[1, { id: 1, title: "Buy milk" }]]);
+
+function getTask(id) {
+  // your code here
+}
+
+console.log(getTask(1)?.title);
+try {
+  getTask(9);
+  console.log("no error");
+} catch (error) {
+  console.log(error.statusCode, error.message);
+}
+</starter>
+<solution>
+import { NotFoundError } from "@zudojs/errors";
+
+const tasks = new Map([[1, { id: 1, title: "Buy milk" }]]);
+
+function getTask(id) {
+  const task = tasks.get(id);
+  if (!task) {
+    throw new NotFoundError(`Task ${id} not found`);
+  }
+  return task;
+}
+
+console.log(getTask(1)?.title);
+try {
+  getTask(9);
+  console.log("no error");
+} catch (error) {
+  console.log(error.statusCode, error.message);
+}
+</solution>
+<expected>
+Buy milk
+404 Task 9 not found
+</expected>
+<explain><p>Throw, don't return a response. <code>NotFoundError</code> carries <code>statusCode</code> 404, which is why the router can turn it into a 404 response for you.</p></explain>
+</question>
+
+<question id="code-status-for" type="code" file="status-for.js">
+<q><p>Finish <code>statusFor(action)</code> with the status a JSON API should send: <code>"read"</code> → 200, <code>"create"</code> → 201, <code>"delete"</code> → 204, <code>"bad-input"</code> → 400, <code>"missing"</code> → 404, <code>"duplicate"</code> → 409, anything else → 500. The program should print <code>200 201 204 400 404 409 500</code>.</p></q>
+<starter>
+function statusFor(action) {
+  // your code here
+}
+
+const actions = ["read", "create", "delete", "bad-input", "missing", "duplicate", "bug"];
+console.log(actions.map(statusFor).join(" "));
+</starter>
+<solution>
+function statusFor(action) {
+  const statuses = { read: 200, create: 201, delete: 204, "bad-input": 400, missing: 404, duplicate: 409 };
+  return statuses[action] ?? 500;
+}
+
+const actions = ["read", "create", "delete", "bad-input", "missing", "duplicate", "bug"];
+console.log(actions.map(statusFor).join(" "));
+</solution>
+<expected>200 201 204 400 404 409 500</expected>
+<explain><p>200 for "here it is", 201 for a create, 204 for "done, nothing to send", 400 for wrong input, 404 for no such resource, 409 for a clash, and 500 only for bugs.</p></explain>
+</question>

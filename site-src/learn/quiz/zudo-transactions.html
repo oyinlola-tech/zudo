@@ -1,0 +1,994 @@
+<question id="tx-why" type="choice">
+<q><code>createTask</code> calls <code>insertTask</code>, which calls <code>recordActivity</code>. What problem does <code>@zudojs/transactions</code> solve here?</q>
+<option>It makes each function run in its own separate transaction</option>
+<option correct>It keeps track of the transaction in progress, so every function joins it without passing <code>tx</code> down by hand, and still works when called on its own</option>
+<option>It replaces SQL with JavaScript objects</option>
+<option>It makes the functions run in parallel</option>
+<explain><p>Passing <code>tx</code> through every function gets awkward as the app grows. The manager remembers the current transaction for you and decides what a transaction inside another one should do.</p></explain>
+</question>
+
+<question id="tx-no-database" type="choice">
+<q>Does <code>@zudojs/transactions</code> talk to PostgreSQL itself?</q>
+<option>Yes, it has a built-in PostgreSQL driver</option>
+<option correct>No: you give it an adapter that knows how to say <code>BEGIN</code>, <code>COMMIT</code> and <code>ROLLBACK</code> to your database</option>
+<option>Yes, but only through Prisma</option>
+<option>No, it only works with the in-memory adapter</option>
+<explain><p>The package coordinates transactions but never sends SQL itself. The adapter turns <code>begin</code>, <code>commit</code>, <code>rollback</code> and the savepoint methods into commands for your database.</p></explain>
+</question>
+
+<question id="tx-isolation-table" type="choice">
+<q>The adapter builds <code>BEGIN ISOLATION LEVEL …</code> from a fixed table like <code>{ serializable: "SERIALIZABLE", … }</code>. Why not write the caller's string straight into the SQL?</q>
+<option>Because the table is faster</option>
+<option correct>Only values from the fixed table can reach the SQL text, so a caller cannot inject SQL through the option</option>
+<option>Because PostgreSQL only accepts lower-case names</option>
+<option>Because isolation levels are secret</option>
+<explain><p>An isolation level is part of the SQL text, not a parameter. Looking it up in a fixed table means only the four known phrases can ever be sent.</p></explain>
+</question>
+
+<question id="code-tx-savepoint-name" type="code" file="savepoint-name.js">
+<q><p>Savepoint names go straight into SQL. Finish <code>savepointName(name)</code>: return the name if it starts with a letter or <code>_</code> and has only letters, digits and <code>_</code>; otherwise throw <code>new TypeError(`Invalid savepoint name "${name}"`)</code>.</p></q>
+<starter>
+function savepointName(name) {
+  // your code here
+}
+
+for (const name of ["sp_import_1", "1abc", "sp; DROP TABLE tasks", "_ok"]) {
+  try {
+    console.log("SAVEPOINT " + savepointName(name));
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</starter>
+<solution>
+function savepointName(name) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    throw new TypeError(`Invalid savepoint name "${name}"`);
+  }
+  return name;
+}
+
+for (const name of ["sp_import_1", "1abc", "sp; DROP TABLE tasks", "_ok"]) {
+  try {
+    console.log("SAVEPOINT " + savepointName(name));
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</solution>
+<expected>
+SAVEPOINT sp_import_1
+Invalid savepoint name "1abc"
+Invalid savepoint name "sp; DROP TABLE tasks"
+SAVEPOINT _ok
+</expected>
+<explain><p>The regular expression <code>/^[A-Za-z_][A-Za-z0-9_]*$/</code> accepts a plain identifier only. <code>^</code> and <code>$</code> make it check the whole name, so nothing can be added after it.</p></explain>
+</question>
+
+<question id="code-tx-begin-sql" type="code" file="begin-sql.js">
+<q><p>Finish <code>beginSql(options)</code> like the lesson's adapter. Start with <code>BEGIN</code>. If <code>options.isolation</code> is set, add <code> ISOLATION LEVEL</code> and the phrase from <code>LEVELS</code> (throw <code>TypeError("Unknown isolation level")</code> if it is not in the table). If <code>options.readOnly</code> is true, add <code> READ ONLY</code>.</p></q>
+<starter>
+const LEVELS = {
+  read_committed: "READ COMMITTED",
+  repeatable_read: "REPEATABLE READ",
+  serializable: "SERIALIZABLE",
+};
+
+function beginSql(options = {}) {
+  // your code here
+}
+
+console.log(beginSql());
+console.log(beginSql({ isolation: "serializable" }));
+console.log(beginSql({ isolation: "repeatable_read", readOnly: true }));
+try {
+  beginSql({ isolation: "SERIALIZABLE; DROP TABLE tasks" });
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+const LEVELS = {
+  read_committed: "READ COMMITTED",
+  repeatable_read: "REPEATABLE READ",
+  serializable: "SERIALIZABLE",
+};
+
+function beginSql(options = {}) {
+  let text = "BEGIN";
+  if (options.isolation) {
+    if (!Object.hasOwn(LEVELS, options.isolation)) throw new TypeError("Unknown isolation level");
+    text += ` ISOLATION LEVEL ${LEVELS[options.isolation]}`;
+  }
+  if (options.readOnly) text += " READ ONLY";
+  return text;
+}
+
+console.log(beginSql());
+console.log(beginSql({ isolation: "serializable" }));
+console.log(beginSql({ isolation: "repeatable_read", readOnly: true }));
+try {
+  beginSql({ isolation: "SERIALIZABLE; DROP TABLE tasks" });
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>
+BEGIN
+BEGIN ISOLATION LEVEL SERIALIZABLE
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY
+Unknown isolation level
+</expected>
+<explain><p>The SQL text only ever contains phrases from your own table. <code>Object.hasOwn</code> checks the key is really in the table (not something inherited like <code>toString</code>).</p></explain>
+</question>
+
+<question id="tx-run-commit" type="output">
+<q>The in-memory adapter has no database, but the manager still sends its events. What does this print?</q>
+<code file="run-commit.js" browser="no">
+import { createInMemoryAdapter, createTransactionManager } from "@zudojs/transactions";
+
+const events = [];
+const manager = createTransactionManager({
+  adapter: createInMemoryAdapter(),
+  onEvent: (event) => events.push(event.type),
+});
+const id = await manager.run(async () => 7);
+console.log(id);
+console.log(events);
+</code>
+<option correct>7
+[
+  'transaction.started',
+  'transaction.committing',
+  'transaction.committed'
+]</option>
+<option>undefined
+[
+  'transaction.started',
+  'transaction.committing',
+  'transaction.committed'
+]</option>
+<option>7
+[ 'transaction.started', 'transaction.committed' ]</option>
+<option>7
+[
+  'transaction.started',
+  'transaction.rolling_back',
+  'transaction.rolled_back'
+]</option>
+<explain><p><code>manager.run</code> returns what your callback returns. The callback returned normally, so the manager committed: started, committing, committed.</p></explain>
+</question>
+
+<question id="tx-run-error" type="output">
+<q>The callback throws. What does this print?</q>
+<code file="run-error.js" browser="no">
+import { createInMemoryAdapter, createTransactionManager } from "@zudojs/transactions";
+
+const events = [];
+const manager = createTransactionManager({
+  adapter: createInMemoryAdapter(),
+  onEvent: (event) => events.push(event.type),
+});
+class TitleTakenError extends Error {}
+try {
+  await manager.run(async () => {
+    throw new TitleTakenError("title already used");
+  });
+} catch (error) {
+  console.log(error instanceof TitleTakenError, error.message);
+}
+console.log(events.at(-1));
+</code>
+<option correct>true title already used
+transaction.rolled_back</option>
+<option>false title already used
+transaction.rolled_back</option>
+<option>true title already used
+transaction.committed</option>
+<option>false Transaction failed
+transaction.rolled_back</option>
+<explain><p>The manager rolls back and passes your error on <strong>unchanged</strong>, so you can still check its class. You never write a try/catch just to roll back.</p></explain>
+</question>
+
+<question id="tx-pglite-rollback" type="output">
+<q>The second <code>createTask</code> breaks the <code>UNIQUE</code> rule on the title. What does this print?</q>
+<code file="pglite-rollback.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+import { createTransactionManager } from "@zudojs/transactions";
+
+const pg = new PGlite();
+await pg.exec(`CREATE TABLE tasks (id serial PRIMARY KEY, title text NOT NULL UNIQUE);
+  CREATE TABLE activity (id serial PRIMARY KEY, message text NOT NULL);`);
+const sql = (text) => pg.exec(text);
+const manager = createTransactionManager({
+  adapter: {
+    capabilities: { savepoints: true, nestedTransactions: true, isolationLevels: ["read_committed"], readOnlyTransactions: true, timeouts: true },
+    begin: async () => { await sql("BEGIN"); return pg; },
+    commit: () => sql("COMMIT"),
+    rollback: () => sql("ROLLBACK"),
+    createSavepoint: (_h, name) => sql(`SAVEPOINT ${name}`),
+    rollbackToSavepoint: (_h, name) => sql(`ROLLBACK TO SAVEPOINT ${name}`),
+    releaseSavepoint: (_h, name) => sql(`RELEASE SAVEPOINT ${name}`),
+  },
+});
+const count = async (table) => (await pg.query(`SELECT count(*)::int AS n FROM ${table}`)).rows[0].n;
+
+async function createTask(title) {
+  await manager.run(async () => {
+    await pg.query("INSERT INTO activity (message) VALUES ($1)", [`created ${title}`]);
+    await pg.query("INSERT INTO tasks (title) VALUES ($1)", [title]);
+  });
+}
+await createTask("Buy milk");
+await createTask("Buy milk").catch(() => console.log("second call failed"));
+console.log("tasks:", await count("tasks"), "activity:", await count("activity"));
+await pg.close();
+</code>
+<option correct>second call failed
+tasks: 1 activity: 1</option>
+<option>second call failed
+tasks: 1 activity: 2</option>
+<option>second call failed
+tasks: 2 activity: 2</option>
+<option>tasks: 1 activity: 1</option>
+<explain><p>The second call wrote its activity row first, then the task insert failed. The manager rolled back the whole transaction, so there is no lonely second activity row.</p></explain>
+</question>
+
+<question id="tx-als" type="choice">
+<q>How does a nested function know a transaction is already open, when nobody passed it one?</q>
+<option>It reads a global variable that holds the last transaction</option>
+<option correct>The manager stores it in Node's <code>AsyncLocalStorage</code>, which follows your code through every <code>await</code>, timer and callback started inside <code>run</code></option>
+<option>It asks PostgreSQL whether a transaction is open</option>
+<option>It looks at the call stack</option>
+<explain><p><code>AsyncLocalStorage</code> is a value that follows the async work that started inside <code>run</code>, and is invisible everywhere else. A plain global would be shared by all requests at once.</p></explain>
+</question>
+
+<question id="tx-participant" type="output">
+<q>What does this print?</q>
+<code file="participant.js" browser="no">
+import { createInMemoryAdapter, createTransactionManager } from "@zudojs/transactions";
+
+const manager = createTransactionManager({ adapter: createInMemoryAdapter() });
+
+async function recordActivity() {
+  return manager.run(async (tx) => tx.kind);
+}
+await manager.run(async (tx) => {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  console.log(tx.kind, await recordActivity(), manager.getCurrent()?.id === tx.id);
+});
+console.log(await recordActivity(), manager.getCurrent());
+</code>
+<option correct>root participant true
+root undefined</option>
+<option>root root true
+root undefined</option>
+<option>root participant false
+participant undefined</option>
+<option>root participant true
+participant null</option>
+<explain><p>Inside the outer <code>run</code>, the default propagation <code>"required"</code> makes <code>recordActivity</code> join as a <strong>participant</strong>, even after a timer. Called on its own, the same function opens its own transaction as a <strong>root</strong>. Outside any <code>run</code>, <code>getCurrent()</code> is <code>undefined</code>.</p></explain>
+</question>
+
+<question id="tx-who-commits" type="choice">
+<q>Three nested functions each call <code>manager.run</code> with the default propagation. How many <code>COMMIT</code>s are sent?</q>
+<option>Three, one per function</option>
+<option correct>One: only the scope that opened the transaction (the root) commits</option>
+<option>None, you must call <code>COMMIT</code> yourself</option>
+<option>Two: the first and the last</option>
+<explain><p>The inner calls are participants: no second <code>BEGIN</code>, no own <code>COMMIT</code>. The root commits everything once, at the end.</p></explain>
+</question>
+
+<question id="tx-rollback-only" type="output">
+<q>A participant fails, and the root catches the error and carries on. What does this print?</q>
+<code file="rollback-only.js" browser="no">
+import { createInMemoryAdapter, createTransactionManager, TransactionRollbackError } from "@zudojs/transactions";
+
+const manager = createTransactionManager({ adapter: createInMemoryAdapter() });
+
+async function recordActivity(message) {
+  await manager.run(async () => {
+    if (message.length > 20) throw new Error("activity message too long");
+  });
+}
+try {
+  await manager.run(async (tx) => {
+    try {
+      await recordActivity("created a task called Buy milk");
+    } catch {
+      console.log("caught it; rollback-only?", tx.isRollbackOnly());
+    }
+    return "saved";
+  });
+} catch (error) {
+  console.log(error instanceof TransactionRollbackError, error.metadata.originalError);
+}
+</code>
+<option correct>caught it; rollback-only? true
+true activity message too long</option>
+<option>caught it; rollback-only? false</option>
+<option>caught it; rollback-only? true
+false activity message too long</option>
+<option>caught it; rollback-only? false
+true activity message too long</option>
+<explain><p>The participant's failure spoiled the unit of work, so the transaction became <strong>rollback-only</strong>. Catching the error does not save it: the root's commit is refused with a <code>TransactionRollbackError</code>, and <code>metadata.originalError</code> holds the reason.</p></explain>
+</question>
+
+<question id="tx-rollback-only-why" type="choice">
+<q>Why does the manager refuse to commit after a participant failed, even when the root caught the error?</q>
+<option>Because PostgreSQL requires it</option>
+<option correct>The failed part may have left half its work done; committing the rest would save an incomplete unit of work, so rolling back is the safe choice</option>
+<option>Because the root is not allowed to use <code>try/catch</code></option>
+<option>To make the error message shorter</option>
+<explain><p>A participant has no way to undo only its own work in the shared transaction. If part of the work should be allowed to fail on its own, use a savepoint (<code>propagation: "nested"</code>).</p></explain>
+</question>
+
+<question id="tx-dry-run" type="output">
+<q>What does this print?</q>
+<code file="dry-run.js" browser="no">
+import { createInMemoryAdapter, createTransactionManager, TransactionRollbackError } from "@zudojs/transactions";
+
+const manager = createTransactionManager({ adapter: createInMemoryAdapter() });
+
+async function importTasks(titles, dryRun) {
+  return manager.run(async (tx) => {
+    if (dryRun) tx.markRollbackOnly("dry run");
+    return titles.length;
+  });
+}
+try {
+  console.log("imported", await importTasks(["Buy milk", "Walk the dog"], true));
+} catch (error) {
+  if (error instanceof TransactionRollbackError) console.log("thrown away:", error.metadata.originalError);
+}
+console.log("imported", await importTasks(["Buy milk", "Walk the dog"], false));
+</code>
+<option correct>thrown away: dry run
+imported 2</option>
+<option>imported 2
+imported 2</option>
+<option>imported 0
+imported 2</option>
+<option>thrown away: dry run
+thrown away: dry run</option>
+<explain><p><code>tx.markRollbackOnly(reason)</code> lets you do all the work and then throw it away: the commit is refused and the reason travels in <code>metadata.originalError</code>. The real import commits normally.</p></explain>
+</question>
+
+<question id="tx-savepoint-what" type="choice">
+<q>What is a <strong>savepoint</strong>?</q>
+<option>A backup copy of the database</option>
+<option correct>A bookmark inside a transaction: you can roll back to it, undoing only what happened after it, and keep the rest</option>
+<option>A second transaction on another connection</option>
+<option>A saved query you can run again later</option>
+<explain><p>Rolling back to a savepoint undoes only the work after it. The outer transaction stays healthy and can still commit.</p></explain>
+</question>
+
+<question id="tx-nested-kind" type="output">
+<q>What does this print?</q>
+<code file="nested-kind.js" browser="no">
+import { createInMemoryAdapter, createTransactionManager } from "@zudojs/transactions";
+
+const manager = createTransactionManager({ adapter: createInMemoryAdapter() });
+const kinds = await manager.run(async () => {
+  const joined = await manager.run(async (tx) => tx.kind);
+  const nested = await manager.run(async (tx) => tx.kind, { propagation: "nested" });
+  return [joined, nested];
+});
+console.log(kinds);
+</code>
+<option correct>[ 'participant', 'savepoint' ]</option>
+<option>[ 'participant', 'participant' ]</option>
+<option>[ 'root', 'savepoint' ]</option>
+<option>[ 'savepoint', 'savepoint' ]</option>
+<explain><p>The default <code>"required"</code> joins as a participant. <code>propagation: "nested"</code> opens a savepoint inside the open transaction, so its callback gets a transaction of kind <code>"savepoint"</code>.</p></explain>
+</question>
+
+<question id="tx-savepoint-import" type="output">
+<q>The table already has <code>Buy milk</code>, and titles are <code>UNIQUE</code>. What does this print?</q>
+<code file="savepoint-import.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+import { createTransactionManager } from "@zudojs/transactions";
+
+const pg = new PGlite();
+await pg.exec("CREATE TABLE tasks (id serial PRIMARY KEY, title text NOT NULL UNIQUE)");
+await pg.query("INSERT INTO tasks (title) VALUES ('Buy milk')");
+const sql = (text) => pg.exec(text);
+const manager = createTransactionManager({
+  adapter: {
+    capabilities: { savepoints: true, nestedTransactions: true, isolationLevels: ["read_committed"], readOnlyTransactions: true, timeouts: true },
+    begin: async () => { await sql("BEGIN"); return pg; },
+    commit: () => sql("COMMIT"),
+    rollback: () => sql("ROLLBACK"),
+    createSavepoint: (_h, name) => sql(`SAVEPOINT ${name}`),
+    rollbackToSavepoint: (_h, name) => sql(`ROLLBACK TO SAVEPOINT ${name}`),
+    releaseSavepoint: (_h, name) => sql(`RELEASE SAVEPOINT ${name}`),
+  },
+});
+
+const imported = await manager.run(async () => {
+  const done = [];
+  for (const title of ["Pay rent", "Buy milk", "Call mom"]) {
+    try {
+      await manager.run(async () => {
+        await pg.query("INSERT INTO tasks (title) VALUES ($1)", [title]);
+      }, { propagation: "nested" });
+      done.push(title);
+    } catch {
+      // skip this title
+    }
+  }
+  return done;
+});
+const rows = (await pg.query("SELECT count(*)::int AS n FROM tasks")).rows;
+console.log(imported, rows[0].n);
+await pg.close();
+</code>
+<option correct>[ 'Pay rent', 'Call mom' ] 3</option>
+<option>[ 'Pay rent' ] 2</option>
+<option>[] 1</option>
+<option>[ 'Pay rent', 'Call mom' ] 1</option>
+<explain><p>Each title got its own savepoint. <code>Buy milk</code> failed, so only its savepoint was rolled back and the outer transaction went on. The two good titles were committed, giving 3 rows. Without savepoints, PostgreSQL would refuse every statement after the error.</p></explain>
+</question>
+
+<question id="tx-mandatory" type="output">
+<q>What does this print?</q>
+<code file="mandatory.js" browser="no">
+import { createInMemoryAdapter, createTransactionManager } from "@zudojs/transactions";
+
+const manager = createTransactionManager({ adapter: createInMemoryAdapter() });
+
+async function moveTaskActivity() {
+  return manager.run(async (tx) => tx.kind, { propagation: "mandatory" });
+}
+try {
+  await moveTaskActivity();
+} catch (error) {
+  console.log(error.name);
+}
+console.log(await manager.run(() => moveTaskActivity()));
+</code>
+<option correct>TransactionPropagationError
+participant</option>
+<option>root
+participant</option>
+<option>TransactionPropagationError
+root</option>
+<option>TransactionPropagationError
+TransactionPropagationError</option>
+<explain><p><code>"mandatory"</code> joins an open transaction and throws when there is none. It guards a function that must never write outside a transaction.</p></explain>
+</question>
+
+<question id="tx-propagation-table" type="choice">
+<q>A transaction is open. Which propagation rule <strong>pauses</strong> it and opens a separate one?</q>
+<option><code>nested</code></option>
+<option><code>required</code></option>
+<option correct><code>requires_new</code></option>
+<option><code>supports</code></option>
+<explain><p><code>requires_new</code> pauses the open transaction and opens a second one. That needs a second connection, so it only works with a pool, not with PGlite. <code>nested</code> uses a savepoint in the same transaction.</p></explain>
+</question>
+
+<question id="tx-never" type="choice">
+<q>What does <code>propagation: "never"</code> do?</q>
+<option>It never commits</option>
+<option>It joins the open transaction but never writes</option>
+<option correct>It throws if a transaction is open, and otherwise runs without one</option>
+<option>It never retries</option>
+<explain><p><code>"never"</code> is the opposite of <code>"mandatory"</code>: the code must not run inside a transaction. With none open, it simply runs without one.</p></explain>
+</question>
+
+<question id="tx-email-bug" type="choice">
+<q>The code sends a "task created" email inside the transaction, and then the transaction rolls back. What went wrong, and what is the fix?</q>
+<option>Nothing: the email is rolled back too</option>
+<option correct>The user got an email about a task that does not exist; send it in <code>tx.afterCommit(...)</code> instead</option>
+<option>The email was sent twice; add a retry</option>
+<option>The email was lost; send it in <code>tx.afterRollback(...)</code></option>
+<explain><p>A database rollback cannot unsend an email. Anything that leaves your database (emails, messages, cache updates) must wait until the commit really happened.</p></explain>
+</question>
+
+<question id="tx-after-commit-order" type="output">
+<q>What does this print?</q>
+<code file="after-commit.js" browser="no">
+import { createInMemoryAdapter, createTransactionManager } from "@zudojs/transactions";
+
+const manager = createTransactionManager({ adapter: createInMemoryAdapter() });
+
+async function createTask(title, fail) {
+  await manager.run(async (tx) => {
+    tx.afterCommit(async () => console.log(`email: ${title}`));
+    tx.afterRollback(async () => console.log(`rolled back: ${title}`));
+    console.log(`inserted ${title}`);
+    if (fail) throw new Error("duplicate title");
+  });
+}
+await createTask("Buy milk", false);
+await createTask("Buy milk", true).catch(() => console.log("failed"));
+</code>
+<option correct>inserted Buy milk
+email: Buy milk
+inserted Buy milk
+rolled back: Buy milk
+failed</option>
+<option>email: Buy milk
+inserted Buy milk
+inserted Buy milk
+failed</option>
+<option>inserted Buy milk
+email: Buy milk
+inserted Buy milk
+email: Buy milk
+failed</option>
+<option>inserted Buy milk
+email: Buy milk
+rolled back: Buy milk
+inserted Buy milk
+failed</option>
+<explain><p><code>afterCommit</code> callbacks run only after a successful commit and are thrown away on a rollback; <code>afterRollback</code> callbacks run only after a rollback. Both run before <code>run</code> returns (or throws) to your code.</p></explain>
+</question>
+
+<question id="tx-register-early" type="choice">
+<q>Where in the callback should you register <code>tx.afterRollback(...)</code>?</q>
+<option>At the end, after all the work</option>
+<option correct>Before the work that can fail; a line after the failing line never runs, so the callback would never be registered</option>
+<option>In a separate transaction</option>
+<option>It does not matter</option>
+<explain><p>When a line throws, the rest of the callback is skipped. Register hooks first, then do the work.</p></explain>
+</question>
+
+<question id="tx-hook-fails" type="output">
+<q>An after-commit callback fails. What does this print?</q>
+<code file="hook-fails.js" browser="no">
+import { createInMemoryAdapter, createTransactionManager } from "@zudojs/transactions";
+
+const manager = createTransactionManager({
+  adapter: createInMemoryAdapter(),
+  hooks: {
+    async onError({ error }) {
+      const failures = error instanceof AggregateError ? error.errors : [error];
+      for (const failure of failures) console.log("onError:", failure.message);
+    },
+  },
+});
+const result = await manager.run(async (tx) => {
+  tx.afterCommit(async () => { throw new Error("email service is down"); });
+  tx.afterCommit(async () => console.log("published task.created"));
+  return "task 1 saved";
+});
+console.log(result);
+</code>
+<option correct>published task.created
+onError: email service is down
+task 1 saved</option>
+<option>onError: email service is down
+task 1 saved</option>
+<option>published task.created
+task 1 saved</option>
+<option>Error: email service is down</option>
+<explain><p>The data is already committed and nothing can undo that, so the manager does not throw at your caller. The failing callback did not stop the second one; the failures go to <code>hooks.onError</code>, where you log them or queue a retry.</p></explain>
+</question>
+
+<question id="code-tx-hooks" type="code" file="hooks.js">
+<q><p>Build a tiny version of after-commit hooks. Finish <code>createTx()</code>: it returns an object with <code>afterCommit(fn)</code>, <code>afterRollback(fn)</code> and <code>finish(committed)</code>. <code>finish(true)</code> runs only the after-commit callbacks, in order; <code>finish(false)</code> runs only the after-rollback ones.</p></q>
+<starter>
+function createTx() {
+  // your code here
+}
+
+const ok = createTx();
+ok.afterCommit(() => console.log("email sent"));
+ok.afterRollback(() => console.log("log: rolled back"));
+ok.afterCommit(() => console.log("cache updated"));
+ok.finish(true);
+
+const failed = createTx();
+failed.afterCommit(() => console.log("email sent"));
+failed.afterRollback(() => console.log("log: rolled back"));
+failed.finish(false);
+</starter>
+<solution>
+function createTx() {
+  const onCommit = [];
+  const onRollback = [];
+  return {
+    afterCommit: (fn) => onCommit.push(fn),
+    afterRollback: (fn) => onRollback.push(fn),
+    finish(committed) {
+      for (const fn of committed ? onCommit : onRollback) fn();
+    },
+  };
+}
+
+const ok = createTx();
+ok.afterCommit(() => console.log("email sent"));
+ok.afterRollback(() => console.log("log: rolled back"));
+ok.afterCommit(() => console.log("cache updated"));
+ok.finish(true);
+
+const failed = createTx();
+failed.afterCommit(() => console.log("email sent"));
+failed.afterRollback(() => console.log("log: rolled back"));
+failed.finish(false);
+</solution>
+<expected>
+email sent
+cache updated
+log: rolled back
+</expected>
+<explain><p>Keep two lists and run only one of them when the transaction ends. The email is sent only when the commit happened, which is the whole point of after-commit hooks.</p></explain>
+</question>
+
+<question id="tx-retry-errors" type="choice">
+<q>Which errors are worth retrying the whole transaction for?</q>
+<option>Every error, up to three times</option>
+<option correct>A serialization failure (<code>40001</code>) or a deadlock (<code>40P01</code>), which mean "try again"</option>
+<option>A validation error such as "title is required"</option>
+<option>A unique violation (<code>23505</code>)</option>
+<explain><p>Serialization failures and deadlocks come from timing between transactions, so a new attempt usually works. Bad input fails the same way every time, and a duplicate stays a duplicate.</p></explain>
+</question>
+
+<question id="tx-retry-output" type="output">
+<q>What does this print?</q>
+<code file="retry.js" browser="no">
+import { createInMemoryAdapter, createTransactionManager } from "@zudojs/transactions";
+
+const manager = createTransactionManager({ adapter: createInMemoryAdapter() });
+const RETRYABLE = new Set(["40001", "40P01"]);
+const retry = {
+  attempts: 3,
+  delay: 5,
+  backoff: "exponential",
+  shouldRetry: (error) => RETRYABLE.has(error.code ?? ""),
+};
+
+let calls = 0;
+const result = await manager.run(async () => {
+  calls += 1;
+  if (calls < 3) throw Object.assign(new Error("could not serialize access"), { code: "40001" });
+  return "saved";
+}, { retry });
+console.log(result, calls);
+
+calls = 0;
+try {
+  await manager.run(async () => {
+    calls += 1;
+    throw new Error("title is required");
+  }, { retry });
+} catch (error) {
+  console.log(error.message, calls);
+}
+</code>
+<option correct>saved 3
+title is required 1</option>
+<option>saved 1
+title is required 3</option>
+<option>could not serialize access 2
+title is required 1</option>
+<option>saved 3
+title is required 4</option>
+<explain><p>The simulated conflict (<code>40001</code>) was retried twice, and the third call committed. The validation error has no retryable code, so <code>shouldRetry</code> said no and it failed after one call.</p></explain>
+</question>
+
+<question id="code-tx-should-retry" type="code" file="should-retry.js">
+<q><p>Finish <code>shouldRetry(error)</code>: return <code>true</code> only when <code>error.code</code> is <code>"40001"</code> (serialization failure) or <code>"40P01"</code> (deadlock). It must also work for values without a <code>code</code>, including <code>null</code>.</p></q>
+<starter>
+const RETRYABLE = new Set(["40001", "40P01"]);
+
+function shouldRetry(error) {
+  // your code here
+}
+
+console.log(shouldRetry({ code: "40001" }), shouldRetry({ code: "40P01" }));
+console.log(shouldRetry({ code: "23505" }), shouldRetry(new Error("title is required")), shouldRetry(null));
+</starter>
+<solution>
+const RETRYABLE = new Set(["40001", "40P01"]);
+
+function shouldRetry(error) {
+  return RETRYABLE.has(error?.code ?? "");
+}
+
+console.log(shouldRetry({ code: "40001" }), shouldRetry({ code: "40P01" }));
+console.log(shouldRetry({ code: "23505" }), shouldRetry(new Error("title is required")), shouldRetry(null));
+</solution>
+<expected>
+true true
+false false false
+</expected>
+<explain><p><code>error?.code</code> is safe for <code>null</code>, and <code>?? ""</code> gives a string that is never in the set. A unique violation (<code>23505</code>) is not retried: it would fail again.</p></explain>
+</question>
+
+<question id="code-tx-backoff" type="code" file="backoff.js">
+<q><p>Finish <code>delays(attempts, base)</code>: the list of pauses before each retry with <strong>exponential</strong> backoff. The first pause is <code>base</code>, and each next one is twice the one before.</p></q>
+<starter>
+function delays(attempts, base) {
+  // your code here
+}
+
+console.log(delays(3, 10));
+console.log(delays(4, 50));
+console.log(delays(0, 10));
+</starter>
+<solution>
+function delays(attempts, base) {
+  const out = [];
+  for (let i = 0; i < attempts; i++) out.push(base * 2 ** i);
+  return out;
+}
+
+console.log(delays(3, 10));
+console.log(delays(4, 50));
+console.log(delays(0, 10));
+</solution>
+<expected>
+[ 10, 20, 40 ]
+[ 50, 100, 200, 400 ]
+[]
+</expected>
+<explain><p>Pause number <code>i</code> is <code>base * 2 ** i</code>. Waiting longer after each failure gives a busy database some breathing room.</p></explain>
+</question>
+
+<question id="tx-retry-side-effects" type="choice">
+<q>A transaction with <code>retry</code> sends an email inside its callback, and it commits on the third attempt. How many emails go out?</q>
+<option>One, because only the committed attempt counts</option>
+<option correct>Three: the database work is rolled back each time, but the email is not</option>
+<option>None, emails are blocked inside transactions</option>
+<option>Two</option>
+<explain><p>Retries replay the whole callback. Put side effects in <code>afterCommit</code>, which runs once, after the attempt that committed.</p></explain>
+</question>
+
+<question id="tx-timeout-guarantee" type="choice">
+<q>What does the <code>timeout</code> option of <code>manager.run</code> guarantee?</q>
+<option>That PostgreSQL stops the slow query at once</option>
+<option correct>That slow work is never committed: after the limit the transaction is rolled back and a <code>TransactionTimeoutError</code> is thrown</option>
+<option>That the transaction is retried when it is slow</option>
+<option>That the callback is given more time when the server is busy</option>
+<explain><p>A timed-out transaction is never committed. To stop a slow query inside PostgreSQL itself, also set PostgreSQL's <code>statement_timeout</code>.</p></explain>
+</question>
+
+<question id="tx-timeout-why" type="choice">
+<q>Why put a time limit on a transaction at all?</q>
+<option>Transactions cost money per second</option>
+<option correct>An open transaction holds locks that other requests wait for, so a long one slows everyone down</option>
+<option>PostgreSQL closes transactions after one second anyway</option>
+<option>To make tests faster</option>
+<explain><p>While a transaction is open, the rows it changed stay locked. Other transactions that need them wait, so one slow transaction can hold up many requests.</p></explain>
+</question>
+
+<question id="tx-read-only" type="output">
+<q>What does this print?</q>
+<code file="read-only.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+import { createTransactionManager } from "@zudojs/transactions";
+
+const pg = new PGlite();
+await pg.exec("CREATE TABLE tasks (id serial PRIMARY KEY, title text)");
+await pg.query("INSERT INTO tasks (title) VALUES ('Buy milk')");
+const manager = createTransactionManager({
+  adapter: {
+    capabilities: { savepoints: false, nestedTransactions: false, isolationLevels: ["read_committed"], readOnlyTransactions: true, timeouts: true },
+    begin: async (options) => { await pg.exec(options?.readOnly ? "BEGIN READ ONLY" : "BEGIN"); return pg; },
+    commit: () => pg.exec("COMMIT"),
+    rollback: () => pg.exec("ROLLBACK"),
+  },
+});
+try {
+  await manager.run(async () => {
+    await pg.query("DELETE FROM tasks");
+  }, { readOnly: true });
+} catch (error) {
+  console.log(error.message);
+}
+console.log((await pg.query("SELECT count(*)::int AS n FROM tasks")).rows[0].n);
+await pg.close();
+</code>
+<option correct>cannot execute DELETE in a read-only transaction
+1</option>
+<option>0</option>
+<option>cannot execute DELETE in a read-only transaction
+0</option>
+<option>TransactionCapabilityError
+1</option>
+<explain><p>With <code>readOnly: true</code> the adapter sends <code>BEGIN READ ONLY</code>, and PostgreSQL itself refuses every write. That protects reports and exports from a bug that would change data.</p></explain>
+</question>
+
+<question id="tx-capability" type="output">
+<q>This adapter only declares <code>read_committed</code> and no read-only support. What does this print?</q>
+<code file="capability.js" browser="no">
+import { createInMemoryAdapter, createTransactionManager } from "@zudojs/transactions";
+
+const adapter = {
+  ...createInMemoryAdapter(),
+  capabilities: { savepoints: false, nestedTransactions: false, isolationLevels: ["read_committed"], readOnlyTransactions: false, timeouts: true },
+};
+const manager = createTransactionManager({ adapter });
+for (const options of [{ isolation: "serializable" }, { readOnly: true }, { isolation: "read_committed" }]) {
+  try {
+    await manager.run(async () => "ok", options);
+    console.log("ran");
+  } catch (error) {
+    console.log(error.name);
+  }
+}
+</code>
+<option correct>TransactionIsolationError
+TransactionCapabilityError
+ran</option>
+<option>ran
+ran
+ran</option>
+<option>TransactionCapabilityError
+TransactionCapabilityError
+ran</option>
+<option>TransactionIsolationError
+ran
+ran</option>
+<explain><p>The manager checks the adapter's <code>capabilities</code> before it sends anything: <code>TransactionIsolationError</code> for an isolation level it did not declare, <code>TransactionCapabilityError</code> for anything else, such as read-only.</p></explain>
+</question>
+
+<question id="tx-in-memory-adapter" type="choice">
+<q>What is <code>createInMemoryAdapter()</code> for?</q>
+<option>Running production transactions faster</option>
+<option correct>Tests and examples: an adapter with no database, so you can watch the manager's behaviour</option>
+<option>Caching query results</option>
+<option>Replacing PGlite</option>
+<explain><p>It is built into the package for tests and examples. It stores nothing, so it cannot roll back real data.</p></explain>
+</question>
+
+<question id="tx-pool-handle" type="choice">
+<q>In a real server with a connection pool, why can't every query just use <code>pg.query</code> like the PGlite examples?</q>
+<option>Because pools do not support transactions</option>
+<option correct>Each transaction's queries must go to the connection its <code>begin()</code> opened; another connection from the pool is outside the transaction</option>
+<option>Because <code>pg.query</code> is only for reads</option>
+<option>Because pools run each query in its own transaction</option>
+<explain><p>PGlite is one connection, so every query lands in the open transaction. With a pool, a query on a different connection would run outside it. The lesson uses <code>withTransaction</code> from <code>@zudojs/database</code> for that case.</p></explain>
+</question>
+
+<question id="tx-events-metrics" type="choice">
+<q>What is the manager's <code>onEvent</code> option good for in a real app?</q>
+<option>Changing the SQL the adapter sends</option>
+<option correct>Receiving a lifecycle event for every step (started, committed, rolled back…) to send to your metrics or logs</option>
+<option>Deciding whether to commit</option>
+<option>Retrying failed transactions</option>
+<explain><p><code>onEvent</code> only observes: it tells you what happened, such as how many transactions roll back, without changing the outcome.</p></explain>
+</question>
+
+<question id="code-tx-count-events" type="code" file="count-events.js">
+<q><p>Finish <code>countByType(events)</code>: count the events by their <code>type</code> and return a plain object, with the types in the order they first appear.</p></q>
+<starter>
+function countByType(events) {
+  // your code here
+}
+
+const events = [
+  { type: "transaction.started" },
+  { type: "transaction.committing" },
+  { type: "transaction.committed" },
+  { type: "transaction.started" },
+  { type: "transaction.rolling_back" },
+  { type: "transaction.rolled_back" },
+];
+console.log(countByType(events));
+</starter>
+<solution>
+function countByType(events) {
+  const counts = new Map();
+  for (const event of events) counts.set(event.type, (counts.get(event.type) ?? 0) + 1);
+  return Object.fromEntries(counts);
+}
+
+const events = [
+  { type: "transaction.started" },
+  { type: "transaction.committing" },
+  { type: "transaction.committed" },
+  { type: "transaction.started" },
+  { type: "transaction.rolling_back" },
+  { type: "transaction.rolled_back" },
+];
+console.log(countByType(events));
+</solution>
+<expected>
+{
+  'transaction.started': 2,
+  'transaction.committing': 1,
+  'transaction.committed': 1,
+  'transaction.rolling_back': 1,
+  'transaction.rolled_back': 1
+}
+</expected>
+<explain><p>A <code>Map</code> keeps the order keys were first added; <code>(counts.get(type) ?? 0) + 1</code> starts each type at 1. <code>Object.fromEntries</code> turns it into a plain object.</p></explain>
+</question>
+
+<question id="tx-practice-not-found" type="output">
+<q>Like the practice, <code>completeTask</code> throws a <code>NotFoundError</code> when no row was updated. What does this print?</q>
+<code file="complete-task.js" browser="no">
+import { NotFoundError } from "@zudojs/errors";
+import { createInMemoryAdapter, createTransactionManager } from "@zudojs/transactions";
+
+const manager = createTransactionManager({ adapter: createInMemoryAdapter() });
+const tasks = new Map([[1, { done: false }]]);
+
+async function completeTask(id) {
+  await manager.run(async (tx) => {
+    const task = tasks.get(id);
+    if (!task) throw new NotFoundError(`Task ${id} not found`);
+    tx.afterCommit(async () => console.log(`notify: task ${id} is done`));
+  });
+}
+await completeTask(1);
+try {
+  await completeTask(42);
+} catch (error) {
+  console.log(error.name, error.statusCode, error.message);
+}
+</code>
+<option correct>notify: task 1 is done
+NotFoundError 404 Task 42 not found</option>
+<option>notify: task 1 is done
+TransactionRollbackError 500 Task 42 not found</option>
+<option>notify: task 1 is done
+notify: task 42 is done
+NotFoundError 404 Task 42 not found</option>
+<option>NotFoundError 404 Task 42 not found</option>
+<explain><p>The first call commits and its after-commit hook runs. For task 42, the manager rolls back and passes your <code>NotFoundError</code> through unchanged, so your API can still answer 404. The hook was never registered.</p></explain>
+</question>
+
+<question id="tx-root-only" type="choice">
+<q>A participant function wants to "commit early" to make its row visible. What happens?</q>
+<option>It commits its own part of the transaction</option>
+<option correct>It cannot: only the root commits or rolls back the shared transaction</option>
+<option>It opens a savepoint and commits it</option>
+<option>It becomes the new root</option>
+<explain><p>Commit and rollback are the root's job. If a piece of work really must commit on its own, it needs a separate transaction (<code>requires_new</code>, with a pool), or it should happen after commit.</p></explain>
+</question>
+
+<question id="tx-never-output" type="output">
+<q>What does this print?</q>
+<code file="never.js" browser="no">
+import { createInMemoryAdapter, createTransactionManager } from "@zudojs/transactions";
+
+const manager = createTransactionManager({ adapter: createInMemoryAdapter() });
+
+async function sendReport() {
+  return manager.run(async () => "report sent", { propagation: "never" });
+}
+console.log(await sendReport());
+try {
+  await manager.run(() => sendReport());
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option correct>report sent
+TransactionPropagationError</option>
+<option>report sent
+report sent</option>
+<option>TransactionPropagationError
+report sent</option>
+<option>TransactionPropagationError
+TransactionPropagationError</option>
+<explain><p><code>"never"</code> runs without a transaction when none is open, and throws when one is. It is the opposite of <code>"mandatory"</code>.</p></explain>
+</question>
+
+<question id="tx-als-concurrent" type="output">
+<q>Two requests run at the same time. Does each one see its own transaction?</q>
+<code file="concurrent.js" browser="no">
+import { createInMemoryAdapter, createTransactionManager } from "@zudojs/transactions";
+
+const manager = createTransactionManager({ adapter: createInMemoryAdapter() });
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function handleRequest(wait) {
+  return manager.run(async (tx) => {
+    await pause(wait);
+    return manager.getCurrent()?.id === tx.id;
+  });
+}
+const results = await Promise.all([handleRequest(20), handleRequest(5)]);
+console.log(results, manager.getCurrent());
+</code>
+<option correct>[ true, true ] undefined</option>
+<option>[ false, true ] undefined</option>
+<option>[ true, false ] undefined</option>
+<option>[ true, true ] null</option>
+<explain><p><code>AsyncLocalStorage</code> keeps a separate value for each chain of async work. Both requests see their own transaction, even while they overlap. A shared global variable would mix them up.</p></explain>
+</question>

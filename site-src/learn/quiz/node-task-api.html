@@ -1,0 +1,1122 @@
+<question id="crud-meaning" type="choice">
+<q>The Task API supports <strong>CRUD</strong>. Which routes are those?</q>
+<option correct>Create, read, update and delete: <code>POST</code>, <code>GET</code>, <code>PATCH</code> and <code>DELETE</code> on tasks</option>
+<option>Compose, route, use and deploy</option>
+<option>Only <code>GET /tasks</code> and <code>GET /health</code></option>
+<option>Connect, request, upload and download</option>
+<explain><p>CRUD is the four basic things you do with records. The API maps them to <code>POST /tasks</code>, <code>GET /tasks</code> and <code>GET /tasks/:id</code>, <code>PATCH /tasks/:id</code> and <code>DELETE /tasks/:id</code>.</p></explain>
+</question>
+
+<question id="middleware-what" type="choice">
+<q>What is a <strong>middleware</strong> in this lesson?</q>
+<option correct>A function <code>(ctx, next)</code> that can act before and after the rest of the chain, or stop it by not calling <code>next</code></option>
+<option>A server that sits between the client and your API</option>
+<option>A package you must install to handle requests</option>
+<option>A route handler that only answers <code>GET</code> requests</option>
+<explain><p>Middleware is how work that applies to every request (logging, headers, auth) is written once. <code>next()</code> runs the rest of the chain.</p></explain>
+</question>
+
+<question id="compose-order" type="output">
+<q>What does this print?</q>
+<code file="compose.js">
+function compose(middlewares, handler) {
+  return function run(ctx, index = 0) {
+    if (index === middlewares.length) return handler(ctx);
+    return middlewares[index](ctx, () => run(ctx, index + 1));
+  };
+}
+
+const a = async (ctx, next) => {
+  console.log("a before");
+  await next();
+  console.log("a after");
+};
+const b = async (ctx, next) => {
+  console.log("b before");
+  await next();
+  console.log("b after");
+};
+
+await compose([a, b], async () => console.log("handler"))({});
+</code>
+<option correct>a before
+b before
+handler
+b after
+a after</option>
+<option>a before
+a after
+b before
+b after
+handler</option>
+<option>a before
+b before
+handler
+a after
+b after</option>
+<option>handler
+a before
+b before
+b after
+a after</option>
+<explain><p>Each middleware runs its "before" part, then <code>next()</code> runs the rest of the chain. When the handler finishes, control comes back up in reverse order, so <code>b after</code> comes before <code>a after</code>.</p></explain>
+</question>
+
+<question id="compose-stop" type="output">
+<q>What does this print?</q>
+<code file="stop.js">
+function compose(middlewares, handler) {
+  return function run(ctx, index = 0) {
+    if (index === middlewares.length) return handler(ctx);
+    return middlewares[index](ctx, () => run(ctx, index + 1));
+  };
+}
+
+const log = async (ctx, next) => {
+  await next();
+  console.log("log: status", ctx.status);
+};
+const auth = async (ctx, next) => {
+  if (ctx.user !== "ada") {
+    ctx.status = 401;
+    return;
+  }
+  await next();
+};
+
+const app = compose([log, auth], async (ctx) => {
+  console.log("handler ran");
+  ctx.status = 200;
+});
+
+await app({ user: "mallory" });
+await app({ user: "ada" });
+</code>
+<option correct>log: status 401
+handler ran
+log: status 200</option>
+<option>handler ran
+log: status 401
+handler ran
+log: status 200</option>
+<option>log: status 401
+log: status 200</option>
+<option>log: status undefined
+handler ran
+log: status 200</option>
+<explain><p>For <code>mallory</code>, <code>auth</code> never calls <code>next</code>, so the handler never runs, but <code>log</code> still sees the 401 because it comes first. That is how one auth check protects every route behind it.</p></explain>
+</question>
+
+<question id="middleware-order-why" type="choice">
+<q>Why does the logger go <strong>first</strong> in the middleware list?</q>
+<option correct>So it sees every request, including those that a later middleware such as <code>requireApiKey</code> rejects</option>
+<option>Because <code>compose</code> only allows one middleware before the handler</option>
+<option>So that it runs after the response has been sent</option>
+<option>The order does not matter; middleware all run at the same time</option>
+<explain><p>Middleware runs in the order you list it. A logger placed after the auth check would never see the rejected requests, which are often the ones you want to see.</p></explain>
+</question>
+
+<question id="missing-await-next" type="output">
+<q>This middleware forgot <code>await</code> before <code>next()</code>. What does it print?</q>
+<code file="no-await.js">
+function compose(middlewares, handler) {
+  return function run(ctx, index = 0) {
+    if (index === middlewares.length) return handler(ctx);
+    return middlewares[index](ctx, () => run(ctx, index + 1));
+  };
+}
+
+const log = async (ctx, next) => {
+  next();
+  console.log("log: status", ctx.status);
+};
+
+const app = compose([log], async (ctx) => {
+  await null;
+  ctx.status = 200;
+});
+
+const ctx = {};
+await app(ctx);
+await new Promise((resolve) => setTimeout(resolve, 0));
+console.log("final status", ctx.status);
+</code>
+<option correct>log: status undefined
+final status 200</option>
+<option>log: status 200
+final status 200</option>
+<option>log: status undefined
+final status undefined</option>
+<option>final status 200
+log: status 200</option>
+<explain><p>Without <code>await</code>, the middleware carries on before the handler has finished, so it logs a status that is not set yet. Always write <code>await next()</code>.</p></explain>
+</question>
+
+<question id="central-errors-why" type="choice">
+<q>Why should routes <strong>throw</strong> errors and let one middleware turn them into responses?</q>
+<option correct>With many routes, one will get its error answer wrong; one place keeps every answer consistent and stops leaks in 500 responses</option>
+<option>Because <code>res.end</code> cannot be called inside a route</option>
+<option>Because throwing is faster than returning</option>
+<option>So the server restarts after every error</option>
+<explain><p>If each route writes its own error responses, one of 50 routes will eventually send a stack trace or a file path to the client. One error handler means one place to get it right.</p></explain>
+</question>
+
+<question id="to-response" type="output">
+<q>What does this print?</q>
+<code file="to-response.js">
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+  }
+}
+
+function toResponse(error) {
+  if (error instanceof HttpError) {
+    return { status: error.status, body: { error: error.message } };
+  }
+  return { status: 500, body: { error: "Internal Server Error" } };
+}
+
+console.log(JSON.stringify(toResponse(new HttpError(404, "Task 9 not found"))));
+console.log(JSON.stringify(toResponse(new Error("connect ECONNREFUSED 10.0.3.7:5432"))));
+console.log(JSON.stringify(toResponse(new TypeError("task.title is undefined"))));
+</code>
+<option correct>{"status":404,"body":{"error":"Task 9 not found"}}
+{"status":500,"body":{"error":"Internal Server Error"}}
+{"status":500,"body":{"error":"Internal Server Error"}}</option>
+<option>{"status":404,"body":{"error":"Task 9 not found"}}
+{"status":500,"body":{"error":"connect ECONNREFUSED 10.0.3.7:5432"}}
+{"status":500,"body":{"error":"task.title is undefined"}}</option>
+<option>{"status":404,"body":{"error":"Task 9 not found"}}
+{"status":500,"body":{"error":"Internal Server Error"}}
+{"status":400,"body":{"error":"task.title is undefined"}}</option>
+<option>{"status":500,"body":{"error":"Task 9 not found"}}
+{"status":500,"body":{"error":"Internal Server Error"}}
+{"status":500,"body":{"error":"Internal Server Error"}}</option>
+<explain><p>Only an <code>HttpError</code>, thrown on purpose with a message written for the client, is shown as it is. Anything else is a bug or an outage: the client gets a plain 500 and the details go to the server log.</p></explain>
+</question>
+
+<question id="500-leak" type="choice">
+<q>A database call fails with <code>connect ECONNREFUSED 10.0.3.7:5432 (db password rejected)</code>. What should the client see?</q>
+<option correct>A 500 with <code>{"error":"Internal Server Error"}</code>; the full message goes to the server log</option>
+<option>A 500 with the full error message, so the client can report it</option>
+<option>A 500 with the stack trace, so developers can debug faster</option>
+<option>A 200 with an empty list, so the client does not notice</option>
+<explain><p>That message contains an internal address and a hint about a password. Log the details where you can read them; tell the client only that something went wrong.</p></explain>
+</question>
+
+<question id="http-error-shortcuts" type="output">
+<q>What does this print?</q>
+<code file="shortcuts.js">
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+  }
+}
+const badRequest = (message) => new HttpError(400, message);
+const notFound = (message = "Not Found") => new HttpError(404, message);
+
+const a = badRequest("title must not be empty");
+const b = notFound();
+console.log(a instanceof HttpError, a instanceof Error, a.status, a.name);
+console.log(b.status, b.message);
+</code>
+<option correct>true true 400 HttpError
+404 Not Found</option>
+<option>true false 400 HttpError
+404 Not Found</option>
+<option>true true 400 Error
+404 Not Found</option>
+<option>true true 400 HttpError
+404 undefined</option>
+<explain><p><code>HttpError</code> extends <code>Error</code>, so it is both. The shortcuts just fill in the status, and <code>notFound()</code> uses its default message.</p></explain>
+</question>
+
+<question id="config-param" type="choice">
+<q>Why does <code>loadConfig(env)</code> take the environment as a parameter instead of reading <code>process.env</code> itself?</q>
+<option correct>So a test can pass a plain object, while <code>server.js</code> passes <code>process.env</code></option>
+<option>Because <code>process.env</code> cannot be read inside a module</option>
+<option>So the API key is copied into the code</option>
+<option>Because <code>process.env</code> is only available in the browser</option>
+<explain><p>A function that receives its inputs is easy to test. <code>server.js</code> is the only file that touches <code>process.env</code> and the port.</p></explain>
+</question>
+
+<question id="config-problems" type="output">
+<q>What does this print?</q>
+<code file="config.js">
+function loadConfig(env) {
+  const problems = [];
+  const portText = env.PORT ?? "3000";
+  const port = Number(portText);
+  if (!/^[0-9]{1,5}$/.test(portText) || port > 65535) {
+    problems.push(`PORT must be a whole number from 0 to 65535, got "${portText}"`);
+  }
+  const apiKey = env.TASKS_API_KEY ?? "";
+  if (apiKey.length < 32) {
+    problems.push("TASKS_API_KEY must be set, at least 32 characters long");
+  }
+  if (problems.length > 0) {
+    throw new Error(`Invalid configuration:\n  ${problems.join("\n  ")}`);
+  }
+  return Object.freeze({ port, apiKey });
+}
+
+try {
+  loadConfig({ PORT: "70000", TASKS_API_KEY: "short-key" });
+} catch (error) {
+  console.log(error.message);
+}
+console.log(loadConfig({ TASKS_API_KEY: "k".repeat(40) }).port);
+</code>
+<option correct>Invalid configuration:
+  PORT must be a whole number from 0 to 65535, got "70000"
+  TASKS_API_KEY must be set, at least 32 characters long
+3000</option>
+<option>Invalid configuration:
+  PORT must be a whole number from 0 to 65535, got "70000"
+3000</option>
+<option>Invalid configuration:
+  PORT must be a whole number from 0 to 65535, got "70000"
+  TASKS_API_KEY must be set, at least 32 characters long
+undefined</option>
+<option>Invalid configuration:
+  TASKS_API_KEY must be set, at least 32 characters long
+3000</option>
+<explain><p><code>loadConfig</code> collects <em>every</em> problem before throwing, so you fix them all at once. With no <code>PORT</code>, the default <code>"3000"</code> is used. The message names the key but never prints its value.</p></explain>
+</question>
+
+<question id="config-all-problems" type="choice">
+<q>Why does <code>loadConfig</code> push each problem into a list and throw once at the end?</q>
+<option correct>So you see every problem at once, instead of fixing one per restart</option>
+<option>Because <code>throw</code> can only be used once per file</option>
+<option>So the server can start even when some settings are wrong</option>
+<option>So the problems are saved to <code>.env</code></option>
+<explain><p>Throwing at the first problem makes you restart, fix, restart, fix. Collecting them gives you the whole list in one go.</p></explain>
+</question>
+
+<question id="config-frozen" type="output">
+<q>What does this print?</q>
+<code file="frozen.js" browser="no">
+const config = Object.freeze({ port: 3000, apiKey: "k".repeat(40) });
+
+try {
+  config.port = 80;
+} catch (error) {
+  console.log(error.name);
+}
+console.log(config.port);
+</code>
+<option correct>TypeError
+3000</option>
+<option>80</option>
+<option>TypeError
+80</option>
+<option>3000</option>
+<explain><p><code>Object.freeze</code> stops code from changing the settings by accident. In a module (strict mode), assigning to a frozen property throws a <code>TypeError</code>, and the value stays 3000.</p></explain>
+</question>
+
+<question id="refuse-start" type="choice">
+<q>What does the Task API do when <code>TASKS_API_KEY</code> is missing?</q>
+<option correct>It prints the configuration problem and refuses to start (<code>process.exit(1)</code>)</option>
+<option>It starts with a default key written in the code</option>
+<option>It starts with no key, so every route is public</option>
+<option>It generates a new key and prints it in the log</option>
+<explain><p>A server without its secret is not safe to run, so it stops at once with a clear message. A key is never written into the code, and never printed in a log.</p></explain>
+</question>
+
+<question id="env-file" type="choice">
+<q>How does the lesson give the server its API key on your computer?</q>
+<option correct>A random key in a <code>.env</code> file, loaded with <code>--env-file-if-exists=.env</code>, and <code>.env</code> listed in <code>.gitignore</code></option>
+<option>A key written into <code>src/config.js</code> and committed</option>
+<option>A key typed into <code>package.json</code> under <code>"scripts"</code></option>
+<option>The key <code>"secret"</code>, which is fine for development</option>
+<explain><p>The key is made with <code>crypto.randomBytes(32)</code>, kept in <code>.env</code>, and kept out of Git. Secrets never go into code or into files you commit.</p></explain>
+</question>
+
+<question id="store-copies" type="output">
+<q>What does this print?</q>
+<code file="store.js">
+class TaskStore {
+  #tasks = new Map();
+  #nextId = 1;
+
+  create(title) {
+    const task = { id: this.#nextId++, title, done: false };
+    this.#tasks.set(task.id, task);
+    return { ...task };
+  }
+
+  get(id) {
+    const task = this.#tasks.get(id);
+    return task ? { ...task } : undefined;
+  }
+}
+
+const store = new TaskStore();
+const task = store.create("Buy milk");
+task.done = true;
+task.id = 99;
+
+console.log(store.get(1).done, store.get(99));
+</code>
+<option correct>false undefined</option>
+<option>true undefined</option>
+<option>true { id: 99, title: 'Buy milk', done: true }</option>
+<option>false { id: 99, title: 'Buy milk', done: false }</option>
+<explain><p>The store returns <strong>copies</strong> (<code>{ ...task }</code>). Changing the copy does not change the stored task, so code outside cannot bypass the store's checks.</p></explain>
+</question>
+
+<question id="store-swap" type="choice">
+<q>The lesson says you will later replace <code>store.js</code> with a database "and nothing else will need to change". What makes that possible?</q>
+<option correct>The rest of the app only calls the store's methods (<code>list</code>, <code>get</code>, <code>create</code>, …), never the <code>Map</code> inside it</option>
+<option>Databases and <code>Map</code> objects are the same thing</option>
+<option>The store is written in a database language</option>
+<option>The app reads <code>tasks.json</code> directly as well</option>
+<explain><p>The <code>Map</code> is private (<code>#tasks</code>). As long as a new store offers the same methods, the routes do not care where the tasks live.</p></explain>
+</question>
+
+<question id="store-list-done" type="output">
+<q>What does this print?</q>
+<code file="list.js">
+const tasks = new Map([
+  [1, { id: 1, title: "Buy milk", done: true }],
+  [2, { id: 2, title: "Write report", done: false }],
+  [3, { id: 3, title: "Call Ada", done: false }],
+]);
+
+function list({ done } = {}) {
+  const all = [...tasks.values()];
+  const found = done === undefined ? all : all.filter((t) => t.done === done);
+  return found.map((t) => t.id);
+}
+
+const query = "false";
+console.log(list(), list({ done: false }), list({ done: query === "true" }));
+</code>
+<option correct>[ 1, 2, 3 ] [ 2, 3 ] [ 2, 3 ]</option>
+<option>[ 1, 2, 3 ] [ 2, 3 ] [ 1 ]</option>
+<option>[] [ 2, 3 ] [ 2, 3 ]</option>
+<option>[ 1, 2, 3 ] [ 1 ] [ 1 ]</option>
+<explain><p>With no filter, <code>done</code> is <code>undefined</code> and every task is returned. The route turns the query text into a real boolean with <code>done === "true"</code>, so <code>"false"</code> becomes <code>false</code>.</p></explain>
+</question>
+
+<question id="router-404-405" type="output">
+<q>What does this print?</q>
+<code file="router.js">
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+const routes = [
+  { method: "GET", path: "/tasks" },
+  { method: "POST", path: "/tasks" },
+  { method: "GET", path: "/health" },
+];
+
+function find(method, path) {
+  let pathExists = false;
+  for (const route of routes) {
+    if (route.path !== path) continue;
+    if (route.method === method) return "found";
+    pathExists = true;
+  }
+  throw pathExists ? new HttpError(405, "Method Not Allowed") : new HttpError(404, "Not Found");
+}
+
+for (const [method, path] of [["POST", "/tasks"], ["DELETE", "/tasks"], ["POST", "/health"], ["GET", "/users"]]) {
+  try {
+    console.log(method, path, find(method, path));
+  } catch (error) {
+    console.log(method, path, error.status);
+  }
+}
+</code>
+<option correct>POST /tasks found
+DELETE /tasks 405
+POST /health 405
+GET /users 404</option>
+<option>POST /tasks found
+DELETE /tasks 404
+POST /health 404
+GET /users 404</option>
+<option>POST /tasks found
+DELETE /tasks 405
+POST /health 404
+GET /users 404</option>
+<option>POST /tasks found
+DELETE /tasks 405
+POST /health 405
+GET /users 405</option>
+<explain><p>The router remembers whether any route had this path. If one did, but not with this method, it is 405; if no route had the path at all, it is 404.</p></explain>
+</question>
+
+<question id="decode-throws" type="output">
+<q>A stranger requests <code>/tasks/%zz</code>. What does this print?</q>
+<code file="decode.js">
+function decodeParam(text) {
+  try {
+    return decodeURIComponent(text);
+  } catch (error) {
+    return `no match (${error.name})`;
+  }
+}
+
+console.log(decodeParam("buy%20milk"));
+console.log(decodeParam("%zz"));
+</code>
+<option correct>buy milk
+no match (URIError)</option>
+<option>buy milk
+%zz</option>
+<option>buy%20milk
+no match (URIError)</option>
+<option>buy milk
+no match (SyntaxError)</option>
+<explain><p><code>decodeURIComponent</code> throws a <code>URIError</code> on a broken encoding like <code>%zz</code>. The router catches it, so a bad path simply does not match instead of crashing the request.</p></explain>
+</question>
+
+<question id="timing-safe-why" type="choice">
+<q>Why does <code>requireApiKey</code> use <code>timingSafeEqual</code> instead of <code>given === apiKey</code>?</q>
+<option correct><code>===</code> stops at the first different character, so an attacker can measure response times and discover the key one character at a time</option>
+<option><code>===</code> cannot compare strings longer than 32 characters</option>
+<option><code>timingSafeEqual</code> also checks that the key has not expired</option>
+<option><code>===</code> is case-insensitive, so <code>"ABC"</code> would equal <code>"abc"</code></option>
+<explain><p>A normal comparison answers a tiny bit faster when the first characters are wrong. <code>timingSafeEqual</code> always takes the same time, so there is nothing to measure.</p></explain>
+</question>
+
+<question id="hash-before-compare" type="output">
+<q><code>timingSafeEqual</code> needs two inputs of the same length. What does this print?</q>
+<code file="same-length.js" browser="no">
+import { createHash, timingSafeEqual } from "node:crypto";
+
+const sha256 = (text) => createHash("sha256").update(text).digest();
+
+try {
+  timingSafeEqual(Buffer.from("abc"), Buffer.from("a much longer key"));
+} catch (error) {
+  console.log(error.name);
+}
+console.log(sha256("abc").length, sha256("a much longer key").length);
+console.log(timingSafeEqual(sha256("abc"), sha256("a much longer key")));
+</code>
+<option correct>RangeError
+32 32
+false</option>
+<option>false
+32 32
+false</option>
+<option>RangeError
+3 17
+false</option>
+<option>RangeError
+32 32
+true</option>
+<explain><p>Inputs of different lengths make <code>timingSafeEqual</code> throw. Hashing both sides first gives two 32-byte values, which can always be compared, and also hides how long the real key is.</p></explain>
+</question>
+
+<question id="bearer-parse" type="output">
+<q>This copies how <code>requireApiKey</code> reads the header. What does this print?</q>
+<code file="bearer.js">
+function givenKey(header) {
+  header = header ?? "";
+  return header.startsWith("Bearer ") ? header.slice(7) : "";
+}
+
+console.log(JSON.stringify([givenKey("Bearer abc123"), givenKey("Basic abc123"), givenKey(undefined), givenKey("bearer abc123")]));
+</code>
+<option correct>["abc123","","",""]</option>
+<option>["abc123","abc123","",""]</option>
+<option>["abc123","","","abc123"]</option>
+<option>["Bearer abc123","","",""]</option>
+<explain><p>Only a header that starts exactly with <code>"Bearer "</code> gives a key; <code>slice(7)</code> removes those 7 characters. Anything else, including a missing header, gives an empty string, which never matches the real key.</p></explain>
+</question>
+
+<question id="public-paths" type="choice">
+<q><code>requireApiKey(apiKey, ["/health"])</code> skips the key check for <code>/health</code>. Which mistake would be a security problem?</q>
+<option correct>Adding <code>"/tasks"</code> to the public list by accident, which exposes every task without a key</option>
+<option>Leaving <code>"/health"</code> out of the list, so the health check needs the key</option>
+<option>Putting the middleware after <code>securityHeaders</code></option>
+<option>Sending <code>WWW-Authenticate: Bearer</code> with the 401</option>
+<explain><p>Forgetting a public path only makes one route stricter. Adding a path by mistake opens it to everyone. Keep the public list as short as possible.</p></explain>
+</question>
+
+<question id="shared-key-limits" type="choice">
+<q>When is one shared API key <strong>not</strong> enough?</q>
+<option correct>When many people use the API: each needs their own account and permissions, so they can only do what they are allowed</option>
+<option>When the API is called by your own programs only</option>
+<option>When the key is longer than 32 characters</option>
+<option>When the server runs on port 3000</option>
+<explain><p>A shared key says "this caller is one of ours", not who they are. An API used by many people needs real user accounts, passwords and permissions.</p></explain>
+</question>
+
+<question id="security-headers" type="choice">
+<q>What do the headers <code>X-Content-Type-Options: nosniff</code> and <code>Cache-Control: no-store</code> tell a browser?</q>
+<option correct>Don't guess the content type of the response, and don't keep a cached copy of the task data</option>
+<option>Encrypt the response, and delete it after reading</option>
+<option>Only accept JSON requests, and block other origins</option>
+<option>Retry the request if it fails, and store the result on disk</option>
+<explain><p>These are cheap safety headers. <code>nosniff</code> stops the browser treating data as a different type (such as a script), and <code>no-store</code> keeps private data out of caches.</p></explain>
+</question>
+
+<question id="patch-allow-list" type="choice">
+<q>Why does <code>PATCH /tasks/:id</code> refuse any field except <code>title</code> and <code>done</code>?</q>
+<option correct>If the store copied every field, a client could send <code>{"id": 1}</code> and overwrite another task's id</option>
+<option>Because JSON bodies may only have two fields</option>
+<option>To make the request body smaller than the limit</option>
+<option>Because <code>Object.assign</code> only works with two fields</option>
+<explain><p>Accept only the fields you expect. Copying whatever arrives lets a client change things it must not touch, such as ids or owners.</p></explain>
+</question>
+
+<question id="patch-unknown-field" type="output">
+<q>This is the check <code>PATCH</code> runs on the body. What does it print?</q>
+<code file="patch.js">
+function checkFields(body) {
+  for (const key of Object.keys(body ?? {})) {
+    if (key !== "title" && key !== "done") return `400 unknown field "${key}"`;
+  }
+  return "ok";
+}
+
+console.log(checkFields({ done: true }));
+console.log(checkFields({ title: "Buy milk", id: 7 }));
+console.log(checkFields(null));
+</code>
+<option correct>ok
+400 unknown field "id"
+ok</option>
+<option>ok
+ok
+ok</option>
+<option>ok
+400 unknown field "id"
+400 unknown field "null"</option>
+<option>ok
+400 unknown field "title"
+ok</option>
+<explain><p>Every key must be on the allow-list, so <code>id</code> is refused even next to a valid <code>title</code>. <code>body ?? {}</code> makes a <code>null</code> body count as "no fields".</p></explain>
+</question>
+
+<question id="parse-id-404" type="choice">
+<q>In the Task API, <code>parseId</code> throws <code>notFound</code> (404) for <code>/tasks/abc</code>, not 400. Why is that reasonable?</q>
+<option correct>No task can ever have the id <code>abc</code>, so "not found" is a true answer about that URL</option>
+<option>Because 400 is only for server errors</option>
+<option>Because the router cannot throw 400</option>
+<option>Because <code>abc</code> might become a valid id later</option>
+<explain><p><code>/tasks/abc</code> names a task that cannot exist, so 404 describes it well. The important part is that the text is checked before it is used.</p></explain>
+</question>
+
+<question id="signals" type="choice">
+<q>What are <code>SIGINT</code> and <code>SIGTERM</code>?</q>
+<option correct>Signals from the operating system: <kbd>Ctrl</kbd> + <kbd>C</kbd> sends <code>SIGINT</code>, and Docker or a host sends <code>SIGTERM</code> to stop your app</option>
+<option>Two kinds of HTTP request</option>
+<option>Error codes, like <code>ENOENT</code></option>
+<option>Events that <code>createServer</code> emits for every request</option>
+<explain><p>Signals are messages the operating system sends a process. The server listens for both and shuts down gracefully.</p></explain>
+</question>
+
+<question id="graceful-shutdown" type="choice">
+<q>What does a <strong>graceful shutdown</strong> do?</q>
+<option correct>Stops accepting new connections, lets requests in progress finish, then exits</option>
+<option>Exits at once, dropping every open request</option>
+<option>Restarts the server with the same port</option>
+<option>Sends a 500 to every client that is connected</option>
+<explain><p><code>server.close</code> stops new connections and calls its function when the last one ends. Nobody gets cut off halfway through a request.</p></explain>
+</question>
+
+<question id="unref-timer" type="choice">
+<q>The shutdown code has <code>setTimeout(() =&gt; process.exit(1), 10_000).unref()</code>. What is it for?</q>
+<option correct>A safety net: if a request hangs, give up after 10 seconds; <code>unref</code> stops the timer from keeping the program alive on its own</option>
+<option>It restarts the server every 10 seconds</option>
+<option>It makes every request wait 10 seconds before being answered</option>
+<option>It deletes the API key after 10 seconds</option>
+<explain><p>Normally the program ends by itself once the last connection closes. If one never closes, the timer forces an exit. Without <code>unref</code>, the timer alone would keep the program running for 10 seconds.</p></explain>
+</question>
+
+<question id="log-finally" type="output">
+<q><code>logRequests</code> writes its line in a <code>finally</code> block. What does this print?</q>
+<code file="finally.js">
+function compose(middlewares, handler) {
+  return function run(ctx, index = 0) {
+    if (index === middlewares.length) return handler(ctx);
+    return middlewares[index](ctx, () => run(ctx, index + 1));
+  };
+}
+
+const logRequests = async (ctx, next) => {
+  try {
+    await next();
+  } finally {
+    console.log("log:", ctx.path, ctx.status);
+  }
+};
+
+const handleErrors = async (ctx, next) => {
+  try {
+    await next();
+  } catch (error) {
+    ctx.status = error.status ?? 500;
+  }
+};
+
+const app = compose([logRequests, handleErrors], async (ctx) => {
+  if (ctx.path === "/boom") throw new Error("disk failure");
+  ctx.status = 200;
+});
+
+await app({ path: "/tasks" });
+await app({ path: "/boom" });
+</code>
+<option correct>log: /tasks 200
+log: /boom 500</option>
+<option>log: /tasks 200</option>
+<option>log: /tasks 200
+log: /boom undefined</option>
+<option>log: /tasks 200
+Error: disk failure</option>
+<explain><p><code>handleErrors</code> catches the error and sets 500, and the logger's <code>finally</code> runs after it either way. Every request gets exactly one log line, including the failures.</p></explain>
+</question>
+
+<question id="count-requests" type="output">
+<q>What does this print?</q>
+<code file="count.js">
+function compose(middlewares, handler) {
+  return function run(ctx, index = 0) {
+    if (index === middlewares.length) return handler(ctx);
+    return middlewares[index](ctx, () => run(ctx, index + 1));
+  };
+}
+
+const countRequests = (counter) => async (ctx, next) => {
+  counter.total += 1;
+  await next();
+  if (ctx.status >= 400) counter.failed += 1;
+};
+
+const counter = { total: 0, failed: 0 };
+const app = compose([countRequests(counter)], async (ctx) => {
+  ctx.status = ctx.path === "/tasks" ? 200 : ctx.path === "/health" ? 204 : 404;
+});
+
+for (const path of ["/tasks", "/health", "/nope", "/tasks", "/admin"]) {
+  await app({ path });
+}
+console.log(JSON.stringify(counter));
+</code>
+<option correct>{"total":5,"failed":2}</option>
+<option>{"total":5,"failed":0}</option>
+<option>{"total":3,"failed":2}</option>
+<option>{"total":5,"failed":3}</option>
+<explain><p>Every request adds to <code>total</code> before <code>next()</code>. Only after <code>await next()</code> is the status known, so failures (400 or higher) are counted there: <code>/nope</code> and <code>/admin</code>.</p></explain>
+</question>
+
+<question id="twenty-thousand-wiring" type="choice">
+<q>At 20,000 lines, <code>createApp({ store, apiKey, logger })</code> has grown to 30 arguments: a database pool, a mailer, a cache, a payment client… Which pain point is this?</q>
+<option correct>Wiring dependencies: who creates what, in which order, and how to swap a real one for a fake in a test</option>
+<option>Routing by hand</option>
+<option>Validation</option>
+<option>No types</option>
+<explain><p>Creating and passing dependencies by hand grows with every service you add. Dependency injection, which ZudoJS provides, is the standard answer.</p></explain>
+</question>
+
+<question id="twenty-thousand-validation" type="choice">
+<q>Why does hand-written validation, like <code>checkTitle</code> and the <code>PATCH</code> allow-list, become a problem in a big API?</q>
+<option correct>It must be written again for every field of every resource, each developer does it slightly differently, and one forgotten check is a bug or a security hole</option>
+<option>Validation is only needed in small APIs</option>
+<option>JavaScript cannot validate more than a few fields per request</option>
+<option>Validation makes every request take more than one second</option>
+<explain><p>None of the checks is hard, but there are many, and consistency matters. That is why frameworks offer schema validation.</p></explain>
+</question>
+
+<question id="code-compose" type="code" file="compose.js">
+<q><p>Finish <code>compose(middlewares, handler)</code>. It returns a function <code>run(ctx)</code>. Each middleware is called as <code>middleware(ctx, next)</code>, where <code>next()</code> runs the next middleware, and after the last one, <code>handler(ctx)</code>.</p></q>
+<starter>
+function compose(middlewares, handler) {
+  // your code here
+}
+
+const tag = (name) => async (ctx, next) => {
+  ctx.trail.push(name + ">");
+  await next();
+  ctx.trail.push("<" + name);
+};
+
+const app = compose([tag("log"), tag("auth")], async (ctx) => ctx.trail.push("handler"));
+const ctx = { trail: [] };
+await app(ctx);
+console.log(ctx.trail.join(" "));
+</starter>
+<solution>
+function compose(middlewares, handler) {
+  return function run(ctx, index = 0) {
+    if (index === middlewares.length) return handler(ctx);
+    return middlewares[index](ctx, () => run(ctx, index + 1));
+  };
+}
+
+const tag = (name) => async (ctx, next) => {
+  ctx.trail.push(name + ">");
+  await next();
+  ctx.trail.push("<" + name);
+};
+
+const app = compose([tag("log"), tag("auth")], async (ctx) => ctx.trail.push("handler"));
+const ctx = { trail: [] };
+await app(ctx);
+console.log(ctx.trail.join(" "));
+</solution>
+<expected>log> auth> handler <auth <log</expected>
+<explain><p>Keep an index. If it has reached the end of the list, call the handler; otherwise call the middleware at that index with a <code>next</code> that runs the chain from <code>index + 1</code>.</p></explain>
+</question>
+
+<question id="code-only-admins" type="code" file="only-admins.js">
+<q><p>Finish the middleware <code>onlyAdmins</code>. When <code>ctx.user</code> is missing, set <code>ctx.status = 401</code> and stop the chain. When the user's <code>role</code> is not <code>"admin"</code>, set <code>ctx.status = 403</code> and stop. Otherwise, call <code>next</code>.</p></q>
+<starter>
+function compose(middlewares, handler) {
+  return function run(ctx, index = 0) {
+    if (index === middlewares.length) return handler(ctx);
+    return middlewares[index](ctx, () => run(ctx, index + 1));
+  };
+}
+
+const onlyAdmins = async (ctx, next) => {
+  // your code here
+};
+
+const app = compose([onlyAdmins], async (ctx) => {
+  ctx.status = 204;
+});
+
+const results = [];
+for (const user of [undefined, { name: "Bo", role: "member" }, { name: "Ada", role: "admin" }]) {
+  const ctx = { user };
+  await app(ctx);
+  results.push(ctx.status);
+}
+console.log(results.join(" "));
+</starter>
+<solution>
+function compose(middlewares, handler) {
+  return function run(ctx, index = 0) {
+    if (index === middlewares.length) return handler(ctx);
+    return middlewares[index](ctx, () => run(ctx, index + 1));
+  };
+}
+
+const onlyAdmins = async (ctx, next) => {
+  if (!ctx.user) {
+    ctx.status = 401;
+    return;
+  }
+  if (ctx.user.role !== "admin") {
+    ctx.status = 403;
+    return;
+  }
+  await next();
+};
+
+const app = compose([onlyAdmins], async (ctx) => {
+  ctx.status = 204;
+});
+
+const results = [];
+for (const user of [undefined, { name: "Bo", role: "member" }, { name: "Ada", role: "admin" }]) {
+  const ctx = { user };
+  await app(ctx);
+  results.push(ctx.status);
+}
+console.log(results.join(" "));
+</solution>
+<expected>401 403 204</expected>
+<explain><p>No user means "who are you?" (401); a known user without the right role means "not allowed" (403). Returning without calling <code>next</code> stops the chain, so the handler never runs.</p></explain>
+</question>
+
+<question id="code-to-response" type="code" file="to-response.js">
+<q><p>Finish <code>toResponse(error)</code>. For an <code>HttpError</code>, return <code>{ status: error.status, body: { error: error.message } }</code>. For any other error, push its message into <code>serverLog</code> and return status 500 with the body <code>{ error: "Internal Server Error" }</code>.</p></q>
+<starter>
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+  }
+}
+
+const serverLog = [];
+
+function toResponse(error) {
+  // your code here
+}
+
+console.log(JSON.stringify(toResponse(new HttpError(400, "title must not be empty"))));
+console.log(JSON.stringify(toResponse(new Error("EIO: disk failure writing /var/lib/tasks/db.json"))));
+console.log(serverLog.length, serverLog[0]);
+</starter>
+<solution>
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.name = "HttpError";
+    this.status = status;
+  }
+}
+
+const serverLog = [];
+
+function toResponse(error) {
+  if (error instanceof HttpError) {
+    return { status: error.status, body: { error: error.message } };
+  }
+  serverLog.push(error.message);
+  return { status: 500, body: { error: "Internal Server Error" } };
+}
+
+console.log(JSON.stringify(toResponse(new HttpError(400, "title must not be empty"))));
+console.log(JSON.stringify(toResponse(new Error("EIO: disk failure writing /var/lib/tasks/db.json"))));
+console.log(serverLog.length, serverLog[0]);
+</solution>
+<expected>
+{"status":400,"body":{"error":"title must not be empty"}}
+{"status":500,"body":{"error":"Internal Server Error"}}
+1 EIO: disk failure writing /var/lib/tasks/db.json
+</expected>
+<explain><p>Use <code>instanceof HttpError</code> to tell errors you threw on purpose from bugs and outages. Only the log gets the real message with the file path; the client gets a plain 500.</p></explain>
+</question>
+
+<question id="code-load-config" type="code" file="load-config.js">
+<q><p>Finish <code>loadConfig(env)</code>. <code>PORT</code> defaults to <code>"3000"</code> and must be 1 to 5 digits and at most 65535. <code>TASKS_API_KEY</code> must be at least 32 characters. Collect every problem; if there are any, throw one <code>Error</code> whose message is the problems joined with <code>"; "</code>. Otherwise return <code>{ port, apiKey }</code>, with <code>port</code> as a number.</p></q>
+<starter>
+function loadConfig(env) {
+  // your code here
+}
+
+try {
+  loadConfig({ PORT: "eighty" });
+} catch (error) {
+  console.log(error.message);
+}
+console.log(loadConfig({ PORT: "8080", TASKS_API_KEY: "k".repeat(40) }).port);
+</starter>
+<solution>
+function loadConfig(env) {
+  const problems = [];
+  const portText = env.PORT ?? "3000";
+  const port = Number(portText);
+  if (!/^[0-9]{1,5}$/.test(portText) || port > 65535) {
+    problems.push("PORT must be a whole number from 0 to 65535");
+  }
+  const apiKey = env.TASKS_API_KEY ?? "";
+  if (apiKey.length < 32) {
+    problems.push("TASKS_API_KEY must be at least 32 characters");
+  }
+  if (problems.length > 0) throw new Error(problems.join("; "));
+  return { port, apiKey };
+}
+
+try {
+  loadConfig({ PORT: "eighty" });
+} catch (error) {
+  console.log(error.message);
+}
+console.log(loadConfig({ PORT: "8080", TASKS_API_KEY: "k".repeat(40) }).port);
+</solution>
+<expected>
+PORT must be a whole number from 0 to 65535; TASKS_API_KEY must be at least 32 characters
+8080
+</expected>
+<explain><p>Push each problem into an array and throw once at the end, so all of them are reported together. Use exactly these two messages. Note that the message names the key but never prints its value.</p></explain>
+</question>
+
+<question id="code-router-find" type="code" file="router-find.js">
+<q><p>Finish <code>find(routes, method, path)</code>. Return the route's <code>name</code> when a route has both this method and this path. Otherwise throw an <code>HttpError</code>: 405 if some route has this path with another method, else 404.</p></q>
+<starter>
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function find(routes, method, path) {
+  // your code here
+}
+
+const routes = [
+  { method: "GET", path: "/tasks", name: "listTasks" },
+  { method: "POST", path: "/tasks", name: "createTask" },
+  { method: "GET", path: "/health", name: "health" },
+];
+for (const [method, path] of [["POST", "/tasks"], ["PUT", "/tasks"], ["GET", "/nope"]]) {
+  try {
+    console.log(find(routes, method, path));
+  } catch (error) {
+    console.log(error.status, error.message);
+  }
+}
+</starter>
+<solution>
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+function find(routes, method, path) {
+  let pathExists = false;
+  for (const route of routes) {
+    if (route.path !== path) continue;
+    if (route.method === method) return route.name;
+    pathExists = true;
+  }
+  throw pathExists ? new HttpError(405, "Method Not Allowed") : new HttpError(404, "Not Found");
+}
+
+const routes = [
+  { method: "GET", path: "/tasks", name: "listTasks" },
+  { method: "POST", path: "/tasks", name: "createTask" },
+  { method: "GET", path: "/health", name: "health" },
+];
+for (const [method, path] of [["POST", "/tasks"], ["PUT", "/tasks"], ["GET", "/nope"]]) {
+  try {
+    console.log(find(routes, method, path));
+  } catch (error) {
+    console.log(error.status, error.message);
+  }
+}
+</solution>
+<expected>
+createTask
+405 Method Not Allowed
+404 Not Found
+</expected>
+<explain><p>Loop over the routes, remember whether the path matched at all, and return as soon as method and path both match. After the loop, the flag decides between 405 and 404.</p></explain>
+</question>
+
+<question id="code-pick-changes" type="code" file="pick-changes.js">
+<q><p>Finish <code>pickChanges(body)</code> for <code>PATCH</code>. Throw <code>unknown field "x"</code> (with the real name) for any key other than <code>title</code> and <code>done</code>. <code>done</code>, if present, must be a boolean (else throw <code>done must be true or false</code>). <code>title</code>, if present, is trimmed. Return an object with only the fields that were sent.</p></q>
+<starter>
+function pickChanges(body) {
+  // your code here
+}
+
+for (const body of [{ done: true }, { title: "  Call Ada " }, { id: 7 }, { done: "yes" }, {}]) {
+  try {
+    console.log(JSON.stringify(pickChanges(body)));
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</starter>
+<solution>
+function pickChanges(body) {
+  for (const key of Object.keys(body ?? {})) {
+    if (key !== "title" && key !== "done") throw new Error(`unknown field "${key}"`);
+  }
+  const changes = {};
+  if (body?.title !== undefined) changes.title = String(body.title).trim();
+  if (body?.done !== undefined) {
+    if (typeof body.done !== "boolean") throw new Error("done must be true or false");
+    changes.done = body.done;
+  }
+  return changes;
+}
+
+for (const body of [{ done: true }, { title: "  Call Ada " }, { id: 7 }, { done: "yes" }, {}]) {
+  try {
+    console.log(JSON.stringify(pickChanges(body)));
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</solution>
+<expected>
+{"done":true}
+{"title":"Call Ada"}
+unknown field "id"
+done must be true or false
+{}
+</expected>
+<explain><p>Check every key against the allow-list first, then copy only the known fields, checking their types. Never copy the whole body into a stored record.</p></explain>
+</question>
+
+<question id="code-read-limit" type="code" file="read-limit.js">
+<q><p>Finish <code>readLimit(query)</code>. Read <code>limit</code> from the query string with <code>URLSearchParams</code>; the default is 20. It must be 1 to 3 digits and from 1 to 100; otherwise return the text <code>"400"</code>.</p></q>
+<starter>
+function readLimit(query) {
+  // your code here
+}
+
+console.log(["", "limit=5", "limit=0", "limit=1000", "limit=ten", "limit=100"].map(readLimit).join(" "));
+</starter>
+<solution>
+function readLimit(query) {
+  const text = new URLSearchParams(query).get("limit") ?? "20";
+  const limit = Number(text);
+  if (!/^[0-9]{1,3}$/.test(text) || limit < 1 || limit > 100) return "400";
+  return limit;
+}
+
+console.log(["", "limit=5", "limit=0", "limit=1000", "limit=ten", "limit=100"].map(readLimit).join(" "));
+</solution>
+<expected>20 5 400 400 400 100</expected>
+<explain><p>A missing value is <code>null</code>, so <code>?? "20"</code> gives the default. Check the text with a pattern, then the range. The maximum stops one request from asking for everything.</p></explain>
+</question>
+
+<question id="code-count-middleware" type="code" file="count-middleware.js">
+<q><p>Finish <code>countRequests(counter)</code>. It returns a middleware that adds 1 to <code>counter.total</code> for every request, and 1 to <code>counter.failed</code> when the final <code>ctx.status</code> is 400 or higher.</p></q>
+<starter>
+function compose(middlewares, handler) {
+  return function run(ctx, index = 0) {
+    if (index === middlewares.length) return handler(ctx);
+    return middlewares[index](ctx, () => run(ctx, index + 1));
+  };
+}
+
+const countRequests = (counter) => {
+  // your code here
+};
+
+const counter = { total: 0, failed: 0 };
+const app = compose([countRequests(counter)], async (ctx) => {
+  ctx.status = ctx.path === "/tasks" ? 200 : 404;
+});
+for (const path of ["/tasks", "/nope", "/tasks", "/missing", "/gone"]) {
+  await app({ path });
+}
+console.log(counter.total, counter.failed);
+</starter>
+<solution>
+function compose(middlewares, handler) {
+  return function run(ctx, index = 0) {
+    if (index === middlewares.length) return handler(ctx);
+    return middlewares[index](ctx, () => run(ctx, index + 1));
+  };
+}
+
+const countRequests = (counter) => {
+  return async (ctx, next) => {
+    counter.total += 1;
+    await next();
+    if (ctx.status >= 400) counter.failed += 1;
+  };
+};
+
+const counter = { total: 0, failed: 0 };
+const app = compose([countRequests(counter)], async (ctx) => {
+  ctx.status = ctx.path === "/tasks" ? 200 : 404;
+});
+for (const path of ["/tasks", "/nope", "/tasks", "/missing", "/gone"]) {
+  await app({ path });
+}
+console.log(counter.total, counter.failed);
+</solution>
+<expected>5 3</expected>
+<explain><p>Return an <code>async (ctx, next) =&gt; { … }</code> function. Count the total before <code>await next()</code>, and the failures after it, because only then is the status known.</p></explain>
+</question>

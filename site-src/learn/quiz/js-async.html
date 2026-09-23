@@ -1,0 +1,931 @@
+<question id="why-async" type="choice">
+<q>Why does a backend use asynchronous code when it waits for a database?</q>
+<option>Because the database only understands asynchronous requests</option>
+<option correct>So it can serve other requests while it waits, instead of standing still</option>
+<option>Because asynchronous code uses less memory than synchronous code</option>
+<option>So the database answers faster</option>
+<explain><p>A backend mostly waits. If it stopped everything while waiting, it could only serve one person at a time. Asynchronous code says "call me back when it is ready" and moves on.</p></explain>
+</question>
+
+<question id="settimeout-order" type="output">
+<q>What does this print?</q>
+<code file="timeout.js">
+console.log("1. Ask the database");
+setTimeout(() => {
+  console.log("3. The database answered");
+}, 20);
+console.log("2. Carry on");
+</code>
+<option correct>1. Ask the database
+2. Carry on
+3. The database answered</option>
+<option>1. Ask the database
+3. The database answered
+2. Carry on</option>
+<option>2. Carry on
+1. Ask the database
+3. The database answered</option>
+<option>1. Ask the database
+2. Carry on</option>
+<explain><p><code>setTimeout</code> registers the function and returns at once. JavaScript keeps going, and runs the function when the time is up, after line 2.</p></explain>
+</question>
+
+<question id="settimeout-zero" type="output">
+<q>The timer asks for 0 ms. What does this print?</q>
+<code file="zero.js">
+setTimeout(() => console.log("timer"), 0);
+for (let i = 0; i < 3; i++) {
+  console.log("loop", i);
+}
+</code>
+<option correct>loop 0
+loop 1
+loop 2
+timer</option>
+<option>timer
+loop 0
+loop 1
+loop 2</option>
+<option>loop 0
+timer
+loop 1
+loop 2</option>
+<explain><p>JavaScript runs on one thread. The timer is due right away, but it has to wait until the synchronous code has finished and let go of the thread.</p></explain>
+</question>
+
+<question id="single-thread" type="choice">
+<q>JavaScript runs your code on a single thread. What does that mean for a long <code>while</code> loop that keeps the thread busy for 2 seconds on a server?</q>
+<option>Only the request that started the loop waits</option>
+<option correct>Nothing else can run: every request and every due timer waits until the loop ends</option>
+<option>Node.js moves the loop to another thread automatically</option>
+<option>The loop is paused whenever a request arrives</option>
+<explain><p>That is <strong>blocking</strong> code. While synchronous code runs, nothing else can, so a busy loop freezes the whole server, not just one request.</p></explain>
+</question>
+
+<question id="sync-vs-async-file" type="choice">
+<q>A server reads a file for each request. Which should it use?</q>
+<option><code>readFileSync</code>, because it is simpler</option>
+<option correct><code>readFile</code> (non-blocking), so the thread is free for other requests while the file is read</option>
+<option>A <code>while</code> loop that checks whether the file is ready</option>
+<option>It makes no difference on a server</option>
+<explain><p><code>readFileSync</code> blocks the thread until the file is read. The non-blocking version starts the work, gives the thread back and calls you later.</p></explain>
+</question>
+
+<question id="error-first" type="choice">
+<q>Node.js callbacks are <strong>error-first</strong>. What does that mean?</q>
+<option>The callback is only called when there is an error</option>
+<option correct>The first argument is an error (or <code>null</code> if all went well), and the result comes second</option>
+<option>Errors are thrown before the callback runs</option>
+<option>The callback must be the first argument of the function</option>
+<explain><p>The shape is <code>(error, result) =&gt; { … }</code>. You must check <code>error</code> every time, then use the result.</p></explain>
+</question>
+
+<question id="error-first-output" type="output">
+<q>What does this print?</q>
+<code file="error-first.js">
+function getUser(id, callback) {
+  setTimeout(() => {
+    if (id !== 1) return callback(new Error(`user ${id} not found`));
+    callback(null, { id, name: "Ada" });
+  }, 10);
+}
+
+getUser(2, (error, user) => {
+  if (error) {
+    console.log("failed:", error.message);
+    return;
+  }
+  console.log(user.name);
+});
+</code>
+<option correct>failed: user 2 not found</option>
+<option>Ada</option>
+<option>undefined</option>
+<option>failed: null</option>
+<explain><p>For id 2 the function calls back with an error first and no result. The callback checks <code>error</code> and returns before touching <code>user</code>.</p></explain>
+</question>
+
+<question id="callback-hell" type="choice">
+<q>Which is <strong>not</strong> one of the problems of "callback hell"?</q>
+<option>Each step pushes the code further to the right</option>
+<option>The same error check is repeated at every level</option>
+<option>A buggy function could call its callback twice</option>
+<option correct>Callbacks cannot pass any data to the next step</option>
+<explain><p>Callbacks do pass data (the result argument). Their problems are deep nesting, repeated error checks that are easy to forget, no <code>try/catch</code> across steps, and double calls. Promises fix these.</p></explain>
+</question>
+
+<question id="promise-what" type="choice">
+<q>What is a <code>Promise</code>?</q>
+<option>A function that runs twice</option>
+<option correct>An object that stands for a value you will have later</option>
+<option>A special kind of callback that runs first</option>
+<option>A way to make code run on a second thread</option>
+<explain><p>A function that works asynchronously returns a promise straight away. You attach what should happen once the value is there, with <code>.then</code> or <code>await</code>.</p></explain>
+</question>
+
+<question id="promise-returns-now" type="output">
+<q>What does this print?</q>
+<code file="returns-now.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function findTask(id) {
+  return wait(20).then(() => ({ id, title: "Buy milk" }));
+}
+
+const promise = findTask(1);
+console.log(promise instanceof Promise);
+promise.then((task) => console.log("Found:", task.title));
+console.log("waiting");
+</code>
+<option correct>true
+waiting
+Found: Buy milk</option>
+<option>true
+Found: Buy milk
+waiting</option>
+<option>false
+waiting
+Found: Buy milk</option>
+<option>Found: Buy milk
+true
+waiting</option>
+<explain><p><code>findTask</code> returns a promise at once, so <code>instanceof Promise</code> is true and "waiting" prints next. The <code>.then</code> function runs later, when the value is ready.</p></explain>
+</question>
+
+<question id="promise-states" type="choice">
+<q>Which list shows the three states of a promise?</q>
+<option>waiting, running, finished</option>
+<option correct>pending, fulfilled, rejected</option>
+<option>started, resolved, settled</option>
+<option>open, closed, failed</option>
+<explain><p>A promise starts <strong>pending</strong>, then becomes <strong>fulfilled</strong> with a value or <strong>rejected</strong> with a reason. Fulfilled and rejected together are called <strong>settled</strong>.</p></explain>
+</question>
+
+<question id="promise-settles-once" type="output">
+<q>What does this print?</q>
+<code file="settle-once.js">
+const p = new Promise((resolve, reject) => {
+  reject(new Error("disk full"));
+  resolve("too late");
+  reject(new Error("again"));
+});
+
+p.then(
+  (value) => console.log("fulfilled:", value),
+  (error) => console.log("rejected:", error.message),
+);
+</code>
+<option correct>rejected: disk full</option>
+<option>fulfilled: too late</option>
+<option>rejected: again</option>
+<option>rejected: disk full
+fulfilled: too late</option>
+<explain><p>A promise settles only once and never changes. The first call, <code>reject(disk full)</code>, wins; the later calls are ignored. That rule removes the "callback called twice" bug.</p></explain>
+</question>
+
+<question id="catch-finally-chain" type="output">
+<q>What does this print?</q>
+<code file="catch-chain.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const save = (report) =>
+  wait(10).then(() => {
+    if (report.length > 10) throw new Error("report too long");
+    return report;
+  });
+
+save("Ada: Buy milk, Call Grace")
+  .then((saved) => console.log("saved:", saved))
+  .catch((error) => console.log("failed:", error.message))
+  .finally(() => console.log("done"));
+</code>
+<option correct>failed: report too long
+done</option>
+<option>saved: Ada: Buy milk, Call Grace
+done</option>
+<option>failed: report too long</option>
+<option>done
+failed: report too long</option>
+<explain><p>The report is longer than 10 characters, so <code>save</code> rejects. The <code>.then</code> step is skipped, <code>.catch</code> handles it, and <code>.finally</code> runs at the end either way.</p></explain>
+</question>
+
+<question id="catch-covers-all" type="choice">
+<q>In a chain <code>a().then(b).then(c).catch(handle)</code>, which failures does <code>.catch(handle)</code> receive?</q>
+<option>Only a failure in <code>c</code></option>
+<option>Only a failure in <code>a</code></option>
+<option correct>A failure in any step above it: <code>a</code>, <code>b</code> or <code>c</code></option>
+<option>None: each step needs its own <code>.catch</code></option>
+<explain><p>A rejection skips the following <code>.then</code> steps until it reaches a <code>.catch</code>. One <code>.catch</code> at the end covers the whole chain.</p></explain>
+</question>
+
+<question id="async-returns-promise" type="output">
+<q>What does this print?</q>
+<code file="async-returns.js">
+async function getLimit() {
+  return 10;
+}
+
+const result = getLimit();
+console.log(result instanceof Promise);
+result.then((value) => console.log(value));
+</code>
+<option correct>true
+10</option>
+<option>false
+10</option>
+<option>10
+10</option>
+<option>true
+undefined</option>
+<explain><p>An <code>async</code> function always returns a promise, even when it returns a plain value. You get the value with <code>await</code> or <code>.then</code>.</p></explain>
+</question>
+
+<question id="await-pauses" type="output">
+<q>What does this print?</q>
+<code file="await-pauses.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function main() {
+  console.log("A");
+  await wait(20);
+  console.log("C");
+}
+
+main();
+console.log("B");
+</code>
+<option correct>A
+B
+C</option>
+<option>A
+C
+B</option>
+<option>B
+A
+C</option>
+<option>A
+B</option>
+<explain><p><code>await</code> pauses only <code>main</code>. The rest of the program keeps running, so "B" prints while <code>main</code> waits, and "C" comes after the 20 ms.</p></explain>
+</question>
+
+<question id="await-try-catch" type="output">
+<q>What does this print?</q>
+<code file="await-catch.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function saveTask(task) {
+  await wait(10);
+  if (task.title === "") throw new Error("title must not be empty");
+  return { ...task, id: 3 };
+}
+
+async function main() {
+  try {
+    const saved = await saveTask({ title: "Call Ada" });
+    console.log("Saved:", saved.id);
+    await saveTask({ title: "" });
+    console.log("This line never runs");
+  } catch (error) {
+    console.log("Could not save:", error.message);
+  }
+}
+
+main();
+</code>
+<option correct>Saved: 3
+Could not save: title must not be empty</option>
+<option>Saved: 3
+This line never runs</option>
+<option>Could not save: title must not be empty</option>
+<option>Saved: 3
+This line never runs
+Could not save: title must not be empty</option>
+<explain><p>When an async function throws, its promise is rejected. <code>await</code> turns the rejection back into a thrown error, which jumps to <code>catch</code> and skips the next line.</p></explain>
+</question>
+
+<question id="forgot-await-output" type="output">
+<q>The <code>await</code> is missing. What does this print? (The last line catches the error so the program does not crash.)</q>
+<code file="forgot.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function saveTask(task) {
+  await wait(10);
+  if (task.title === "") throw new Error("title must not be empty");
+  return task;
+}
+
+let promise;
+try {
+  promise = saveTask({ title: "" });
+  console.log("Saved, I think");
+} catch (error) {
+  console.log("Could not save:", error.message);
+}
+promise.catch((error) => console.log("later:", error.message));
+</code>
+<option correct>Saved, I think
+later: title must not be empty</option>
+<option>Could not save: title must not be empty</option>
+<option>Could not save: title must not be empty
+later: title must not be empty</option>
+<option>Saved, I think</option>
+<explain><p>Without <code>await</code>, the call returns a pending promise at once and <code>try</code> finishes happily. The error comes later, when the <code>try</code> block is long gone.</p></explain>
+</question>
+
+<question id="forgot-await-fix" type="choice">
+<q>What happens in Node.js when a rejected promise is never handled (no <code>await</code> in a <code>try</code>, no <code>.catch</code>)?</q>
+<option>Node.js ignores it silently</option>
+<option>Node.js retries the function</option>
+<option correct>It is an unhandled rejection, and Node.js stops the whole process</option>
+<option>The promise becomes fulfilled with <code>undefined</code></option>
+<explain><p>An error nobody saw is dangerous, so Node.js crashes on it. Whenever you call an async function, either <code>await</code> it or attach a <code>.catch</code>.</p></explain>
+</question>
+
+<question id="sequential-vs-parallel" type="choice">
+<q>You need the user count and the task count, and neither depends on the other. What is the better way?</q>
+<option><code>await</code> one, then <code>await</code> the other</option>
+<option correct>Start both, then wait for them together with <code>Promise.all</code></option>
+<option>Use <code>readFileSync</code> for both</option>
+<option>Use two nested callbacks</option>
+<explain><p>Independent waits should run at the same time. Two 100 ms lookups then take about 100 ms, not 200. Use sequential <code>await</code>s only when a step needs the previous result.</p></explain>
+</question>
+
+<question id="all-order" type="output">
+<q>The slow promise finishes last. What does this print?</q>
+<code file="all-order.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const fetchTask = (id, ms) => wait(ms).then(() => id);
+
+Promise.all([fetchTask(1, 40), fetchTask(2, 10), fetchTask(3, 20)]).then((ids) => {
+  console.log(ids);
+});
+</code>
+<option correct>[ 1, 2, 3 ]</option>
+<option>[ 2, 3, 1 ]</option>
+<option>[ 3, 2, 1 ]</option>
+<option>2</option>
+<explain><p><code>Promise.all</code> keeps the results in the same order as the input, whatever order they finish in.</p></explain>
+</question>
+
+<question id="parallel-too-many" type="choice">
+<q>You must load 10,000 records from a database. Why not start all 10,000 queries at once with <code>Promise.all</code>?</q>
+<option><code>Promise.all</code> only accepts 100 promises</option>
+<option correct>The database would struggle with so much at once; for large lists, work in batches</option>
+<option>The results would come back in random order</option>
+<option>JavaScript would run them one after another anyway</option>
+<explain><p>Parallel is not always right. Start a small number at a time (a batch), wait for them with <code>Promise.all</code>, then start the next batch.</p></explain>
+</question>
+
+<question id="all-fails" type="output">
+<q>What does this print?</q>
+<code file="all-fails.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const succeed = (value, ms) => wait(ms).then(() => value);
+const fail = (message, ms) => wait(ms).then(() => { throw new Error(message); });
+
+Promise.all([succeed("tasks", 20), fail("users down", 10)])
+  .then((values) => console.log("all:", values))
+  .catch((error) => console.log("all failed:", error.message));
+</code>
+<option correct>all failed: users down</option>
+<option>all: [ 'tasks', undefined ]</option>
+<option>all: [ 'tasks' ]</option>
+<option>all failed: tasks</option>
+<explain><p><code>Promise.all</code> rejects with the first error. The successful <code>"tasks"</code> value is lost. Use <code>allSettled</code> when partial results are useful.</p></explain>
+</question>
+
+<question id="allsettled-output" type="output">
+<q>What does this print?</q>
+<code file="settled.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const succeed = (value, ms) => wait(ms).then(() => value);
+const fail = (message, ms) => wait(ms).then(() => { throw new Error(message); });
+
+Promise.allSettled([succeed("tasks", 20), fail("users down", 10)]).then((results) => {
+  console.log(results.map((r) => r.status));
+  console.log(results.map((r) => (r.status === "fulfilled" ? r.value : r.reason.message)));
+});
+</code>
+<option correct>[ 'fulfilled', 'rejected' ]
+[ 'tasks', 'users down' ]</option>
+<option>[ 'rejected', 'fulfilled' ]
+[ 'users down', 'tasks' ]</option>
+<option>[ 'fulfilled', 'fulfilled' ]
+[ 'tasks', 'users down' ]</option>
+<option>[ 'fulfilled', 'rejected' ]
+[ 'tasks', undefined ]</option>
+<explain><p><code>allSettled</code> never fails. It reports each promise in input order: <code>status</code> plus <code>value</code> when fulfilled, or <code>reason</code> when rejected.</p></explain>
+</question>
+
+<question id="race-output" type="output">
+<q>What does this print?</q>
+<code file="race.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const succeed = (value, ms) => wait(ms).then(() => value);
+const fail = (message, ms) => wait(ms).then(() => { throw new Error(message); });
+
+Promise.race([succeed("slow", 40), fail("fast failure", 10)])
+  .then((value) => console.log("race:", value))
+  .catch((error) => console.log("race failed:", error.message));
+</code>
+<option correct>race failed: fast failure</option>
+<option>race: slow</option>
+<option>race: fast failure</option>
+<option>race failed: slow</option>
+<explain><p><code>Promise.race</code> settles like whichever promise settles first, success or failure. The failure came first, so the race fails.</p></explain>
+</question>
+
+<question id="any-output" type="output">
+<q>What does this print?</q>
+<code file="any.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const succeed = (value, ms) => wait(ms).then(() => value);
+const fail = (message, ms) => wait(ms).then(() => { throw new Error(message); });
+
+Promise.any([fail("mirror 1 down", 10), succeed("mirror 2", 30)]).then((value) => {
+  console.log("any:", value);
+});
+</code>
+<option correct>any: mirror 2</option>
+<option>any: mirror 1 down</option>
+<option>any: undefined</option>
+<option>AggregateError: All promises were rejected</option>
+<explain><p><code>Promise.any</code> waits for the first success and skips failures. It only fails if every promise fails.</p></explain>
+</question>
+
+<question id="any-all-fail" type="output">
+<q>What does this print?</q>
+<code file="any-fail.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const fail = (message, ms) => wait(ms).then(() => { throw new Error(message); });
+
+Promise.any([fail("a down", 10), fail("b down", 20)]).catch((error) => {
+  console.log(error.name, error.errors.map((e) => e.message));
+});
+</code>
+<option correct>AggregateError [ 'a down', 'b down' ]</option>
+<option>Error [ 'a down' ]</option>
+<option>AggregateError [ 'b down' ]</option>
+<option>Error a down</option>
+<explain><p>When every promise fails, <code>Promise.any</code> rejects with an <code>AggregateError</code>. Its <code>errors</code> array lists every reason.</p></explain>
+</question>
+
+<question id="which-combinator" type="choice">
+<q>A page needs the user and <em>may</em> show tasks and notifications. You want every result that arrived, even if some services failed. Which should you use?</q>
+<option><code>Promise.all</code></option>
+<option correct><code>Promise.allSettled</code></option>
+<option><code>Promise.race</code></option>
+<option><code>Promise.any</code></option>
+<explain><p><code>allSettled</code> reports each promise separately and never fails, so you keep the partial results. <code>all</code> would throw away everything on the first failure.</p></explain>
+</question>
+
+<question id="timeout-race" type="choice">
+<q>How does the lesson's <code>withTimeout(promise, ms)</code> put a time limit on a promise?</q>
+<option>It calls <code>promise.cancel()</code> after <code>ms</code></option>
+<option correct>It races the promise against a timer that rejects after <code>ms</code></option>
+<option>It uses a <code>while</code> loop that checks the clock</option>
+<option>It uses <code>Promise.all</code> with a timer</option>
+<explain><p><code>Promise.race([promise, timeout])</code> settles with whichever comes first. If the timer rejects first, the slow work counts as failed. <code>finally</code> then clears the timer.</p></explain>
+</question>
+
+<question id="timeout-clear" type="choice">
+<q>Why does <code>withTimeout</code> call <code>clearTimeout(timer)</code> in <code>.finally</code>?</q>
+<option>To make the promise reject</option>
+<option correct>So the timer does not keep the program waiting after the work has already finished</option>
+<option>Because <code>Promise.race</code> requires it</option>
+<option>To restart the timer for the next request</option>
+<explain><p>When the real work wins, the timer is no longer needed. Clearing it stops it from running later and from keeping the process alive.</p></explain>
+</question>
+
+<question id="timeout-output" type="output">
+<q>What does this print?</q>
+<code file="with-timeout.js">
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function withTimeout(promise, ms, name) {
+  let timer;
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${name} timed out`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+const tasks = wait(10).then(() => "tasks");
+const notes = wait(80).then(() => "notes");
+
+Promise.allSettled([withTimeout(tasks, 40, "tasks"), withTimeout(notes, 40, "notes")]).then((results) => {
+  console.log(results.map((r) => r.value ?? r.reason.message));
+});
+</code>
+<option correct>[ 'tasks', 'notes timed out' ]</option>
+<option>[ 'tasks', 'notes' ]</option>
+<option>[ 'tasks timed out', 'notes timed out' ]</option>
+<option>[ 'tasks' ]</option>
+<explain><p><code>tasks</code> answers in 10 ms, inside the 40 ms limit. <code>notes</code> needs 80 ms, so the timer rejects first and it counts as failed.</p></explain>
+</question>
+
+<question id="dashboard-required" type="choice">
+<q>In the dashboard loader, what happens when the <strong>user</strong> service fails, and when the <strong>notifications</strong> service fails?</q>
+<option>Both fail the whole request</option>
+<option>Neither fails the request; both go into <code>missing</code></option>
+<option correct>A user failure fails the whole request; a notifications failure only goes into <code>missing</code></option>
+<option>A notifications failure fails the request; a user failure goes into <code>missing</code></option>
+<explain><p>The user is required, so the loader re-throws <code>user.reason</code>. Tasks and notifications are nice to have: the page shows the rest and reports what is missing.</p></explain>
+</question>
+
+<question id="return-await" type="choice">
+<q>In <code>retry</code>, the lesson writes <code>return await fn(attempt);</code> inside <code>try</code>. Why not just <code>return fn(attempt);</code>?</q>
+<option><code>return</code> is not allowed inside <code>try</code></option>
+<option correct>Without <code>await</code>, the promise is returned before it fails, and <code>catch</code> never sees the error</option>
+<option><code>await</code> makes the function run faster</option>
+<option>There is no difference</option>
+<explain><p>This is the forgotten-await bug again. <code>await</code> makes the rejection happen inside the <code>try</code>, so <code>catch</code> can count the attempt and try again.</p></explain>
+</question>
+
+<question id="code-complete-task" type="code" file="complete-task.js">
+<q><p>Finish the async function <code>completeTask(id)</code>: wait 20 ms, find the task in <code>db</code>, throw <code>new Error(`Task ${id} not found`)</code> if it is missing, otherwise return a copy with <code>done: true</code>. The program should print <code>Buy milk true</code> and then <code>Task 9 not found</code>.</p></q>
+<starter>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const db = [{ id: 1, title: "Buy milk", done: false }];
+
+async function completeTask(id) {
+  // your code here
+}
+
+async function main() {
+  const task = await completeTask(1);
+  console.log(task.title, task.done);
+  try {
+    await completeTask(9);
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+
+main();
+</starter>
+<solution>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const db = [{ id: 1, title: "Buy milk", done: false }];
+
+async function completeTask(id) {
+  await wait(20);
+  const task = db.find((t) => t.id === id);
+  if (!task) {
+    throw new Error(`Task ${id} not found`);
+  }
+  return { ...task, done: true };
+}
+
+async function main() {
+  const task = await completeTask(1);
+  console.log(task.title, task.done);
+  try {
+    await completeTask(9);
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+
+main();
+</solution>
+<expected>
+Buy milk true
+Task 9 not found
+</expected>
+<explain><p>Inside an <code>async</code> function, a <code>throw</code> rejects its promise, and the caller's <code>await</code> turns it back into an error for <code>catch</code>.</p></explain>
+</question>
+
+<question id="code-wait-helper" type="code" file="wait.js">
+<q><p>Write <code>wait(ms)</code>: it returns a promise that is fulfilled after <code>ms</code> milliseconds, using <code>setTimeout</code>. The program should print <code>start</code>, then <code>after 20 ms</code>.</p></q>
+<starter>
+function wait(ms) {
+  // your code here
+}
+
+console.log("start");
+wait(20).then(() => console.log("after 20 ms"));
+</starter>
+<solution>
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+console.log("start");
+wait(20).then(() => console.log("after 20 ms"));
+</solution>
+<expected>
+start
+after 20 ms
+</expected>
+<explain><p><code>new Promise((resolve) =&gt; setTimeout(resolve, ms))</code> turns a timer callback into a promise you can <code>await</code>.</p></explain>
+</question>
+
+<question id="code-callback-to-promise" type="code" file="promisify.js">
+<q><p><code>getUser</code> uses an error-first callback. Write <code>getUserAsync(id)</code> that returns a promise: reject with the error, or fulfil with the user. The program should print <code>Ada</code> and then <code>failed: user 5 not found</code>.</p></q>
+<starter>
+function getUser(id, callback) {
+  setTimeout(() => {
+    if (id !== 1) return callback(new Error(`user ${id} not found`));
+    callback(null, { id, name: "Ada" });
+  }, 10);
+}
+
+function getUserAsync(id) {
+  // your code here
+}
+
+async function main() {
+  const user = await getUserAsync(1);
+  console.log(user.name);
+  try {
+    await getUserAsync(5);
+  } catch (error) {
+    console.log("failed:", error.message);
+  }
+}
+
+main();
+</starter>
+<solution>
+function getUser(id, callback) {
+  setTimeout(() => {
+    if (id !== 1) return callback(new Error(`user ${id} not found`));
+    callback(null, { id, name: "Ada" });
+  }, 10);
+}
+
+function getUserAsync(id) {
+  return new Promise((resolve, reject) => {
+    getUser(id, (error, user) => {
+      if (error) reject(error);
+      else resolve(user);
+    });
+  });
+}
+
+async function main() {
+  const user = await getUserAsync(1);
+  console.log(user.name);
+  try {
+    await getUserAsync(5);
+  } catch (error) {
+    console.log("failed:", error.message);
+  }
+}
+
+main();
+</solution>
+<expected>
+Ada
+failed: user 5 not found
+</expected>
+<explain><p>Wrap the callback call in <code>new Promise</code>. The error-first check decides between <code>reject(error)</code> and <code>resolve(user)</code>. Now callers can use <code>await</code> and <code>try/catch</code>.</p></explain>
+</question>
+
+<question id="code-parallel-counts" type="code" file="parallel.js">
+<q><p>Finish <code>loadCounts()</code> so it runs <code>countTasks()</code> and <code>countUsers()</code> <strong>at the same time</strong> with <code>Promise.all</code>, and returns <code>{ tasks, users }</code>. The program should print <code>{ tasks: 3, users: 2 }</code>.</p></q>
+<starter>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const countTasks = async () => { await wait(30); return 3; };
+const countUsers = async () => { await wait(30); return 2; };
+
+async function loadCounts() {
+  // your code here
+}
+
+loadCounts().then((counts) => console.log(counts));
+</starter>
+<solution>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const countTasks = async () => { await wait(30); return 3; };
+const countUsers = async () => { await wait(30); return 2; };
+
+async function loadCounts() {
+  const [tasks, users] = await Promise.all([countTasks(), countUsers()]);
+  return { tasks, users };
+}
+
+loadCounts().then((counts) => console.log(counts));
+</solution>
+<expected>{ tasks: 3, users: 2 }</expected>
+<explain><p>Call both functions first (that starts them), pass the promises to <code>Promise.all</code>, and destructure the array of values.</p></explain>
+</question>
+
+<question id="code-retry" type="code" file="retry.js">
+<q><p>Write <code>retry(fn, attempts)</code>. It calls the async function <code>fn(attempt)</code>; if that fails, it tries again, up to <code>attempts</code> times in total. If every attempt fails, it throws the last error. The program should print <code>tasks loaded</code> and then <code>gave up: service unavailable</code>.</p></q>
+<starter>
+async function retry(fn, attempts) {
+  // your code here
+}
+
+const flaky = async (attempt) => {
+  if (attempt < 3) throw new Error("service unavailable");
+  return "tasks loaded";
+};
+
+async function main() {
+  console.log(await retry(flaky, 5));
+  try {
+    await retry(flaky, 2);
+  } catch (error) {
+    console.log("gave up:", error.message);
+  }
+}
+
+main();
+</starter>
+<solution>
+async function retry(fn, attempts) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await fn(attempt);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+const flaky = async (attempt) => {
+  if (attempt < 3) throw new Error("service unavailable");
+  return "tasks loaded";
+};
+
+async function main() {
+  console.log(await retry(flaky, 5));
+  try {
+    await retry(flaky, 2);
+  } catch (error) {
+    console.log("gave up:", error.message);
+  }
+}
+
+main();
+</solution>
+<expected>
+tasks loaded
+gave up: service unavailable
+</expected>
+<explain><p>Use <code>return await fn(attempt)</code> inside <code>try</code>, so a failure is caught and the loop tries again. After the loop, throw the last error you saw.</p></explain>
+</question>
+
+<question id="code-batches" type="code" file="batches.js">
+<q><p>Load the tasks with ids 1 to 6, but never more than 2 at a time: split the ids into batches of 2 and use <code>Promise.all</code> for each batch. Push the results into <code>loaded</code> in order. The program should print <code>[ 1, 2, 3, 4, 5, 6 ]</code>.</p></q>
+<starter>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function fetchTask(id) {
+  await wait(10);
+  return { id };
+}
+
+async function main() {
+  const ids = [1, 2, 3, 4, 5, 6];
+  const loaded = [];
+  // your code here
+  console.log(loaded.map((task) => task.id));
+}
+
+main();
+</starter>
+<solution>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function fetchTask(id) {
+  await wait(10);
+  return { id };
+}
+
+async function main() {
+  const ids = [1, 2, 3, 4, 5, 6];
+  const loaded = [];
+  for (let i = 0; i < ids.length; i += 2) {
+    const batch = ids.slice(i, i + 2);
+    const tasks = await Promise.all(batch.map((id) => fetchTask(id)));
+    loaded.push(...tasks);
+  }
+  console.log(loaded.map((task) => task.id));
+}
+
+main();
+</solution>
+<expected>[ 1, 2, 3, 4, 5, 6 ]</expected>
+<explain><p>Each batch runs in parallel, and the <code>await</code> inside the loop makes the batches run one after another. <code>Promise.all</code> keeps each batch in input order.</p></explain>
+</question>
+
+<question id="code-with-timeout" type="code" file="timeout-code.js">
+<q><p>Finish <code>withTimeout(promise, ms)</code>: race the promise against a timer that rejects with <code>new Error("timed out")</code> after <code>ms</code>, and clear the timer in <code>finally</code>. The program should print <code>fast</code> and then <code>timed out</code>.</p></q>
+<starter>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function withTimeout(promise, ms) {
+  // your code here
+}
+
+async function main() {
+  console.log(await withTimeout(wait(10).then(() => "fast"), 50));
+  try {
+    await withTimeout(wait(90).then(() => "slow"), 30);
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+
+main();
+</starter>
+<solution>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("timed out")), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+async function main() {
+  console.log(await withTimeout(wait(10).then(() => "fast"), 50));
+  try {
+    await withTimeout(wait(90).then(() => "slow"), 30);
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+
+main();
+</solution>
+<expected>
+fast
+timed out
+</expected>
+<explain><p><code>Promise.race</code> settles with whichever finishes first. The timer rejects the slow call; <code>finally</code> clears the timer when the fast call wins.</p></explain>
+</question>
+
+<question id="code-partial-results" type="code" file="partial.js">
+<q><p>Finish <code>loadAll(sources)</code> with <code>Promise.allSettled</code>. Return <code>{ values, missing }</code>: the values of the fulfilled promises, and the error messages of the rejected ones, both in input order. The program should print <code>[ 'tasks', 'users' ] [ 'notes down' ]</code>.</p></q>
+<starter>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const ok = (value) => wait(10).then(() => value);
+const down = (message) => wait(10).then(() => { throw new Error(message); });
+
+async function loadAll(sources) {
+  // your code here
+}
+
+loadAll([ok("tasks"), down("notes down"), ok("users")]).then(({ values, missing }) => {
+  console.log(values, missing);
+});
+</starter>
+<solution>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const ok = (value) => wait(10).then(() => value);
+const down = (message) => wait(10).then(() => { throw new Error(message); });
+
+async function loadAll(sources) {
+  const results = await Promise.allSettled(sources);
+  const values = [];
+  const missing = [];
+  for (const result of results) {
+    if (result.status === "fulfilled") values.push(result.value);
+    else missing.push(result.reason.message);
+  }
+  return { values, missing };
+}
+
+loadAll([ok("tasks"), down("notes down"), ok("users")]).then(({ values, missing }) => {
+  console.log(values, missing);
+});
+</solution>
+<expected>[ 'tasks', 'users' ] [ 'notes down' ]</expected>
+<explain><p><code>allSettled</code> never rejects. Check each result's <code>status</code>: use <code>value</code> for fulfilled ones and <code>reason.message</code> for rejected ones.</p></explain>
+</question>
+
+<question id="code-then-chain" type="code" file="then-chain.js">
+<q><p>Finish the <code>async</code> function <code>report(id)</code> with <code>await</code> (no <code>.then</code>): get the user with <code>getUser(id)</code>, then the tasks with <code>getTasks(user)</code>, and return the user's name, a colon and the tasks joined with <code>", "</code>. The program should print <code>Ada: Buy milk, Call Grace</code>.</p></q>
+<starter>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const getUser = (id) => wait(10).then(() => ({ id, name: "Ada" }));
+const getTasks = () => wait(10).then(() => ["Buy milk", "Call Grace"]);
+
+async function report(id) {
+  // your code here
+}
+
+report(1).then((text) => console.log(text));
+</starter>
+<solution>
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const getUser = (id) => wait(10).then(() => ({ id, name: "Ada" }));
+const getTasks = () => wait(10).then(() => ["Buy milk", "Call Grace"]);
+
+async function report(id) {
+  const user = await getUser(id);
+  const tasks = await getTasks(user);
+  return `${user.name}: ${tasks.join(", ")}`;
+}
+
+report(1).then((text) => console.log(text));
+</solution>
+<expected>Ada: Buy milk, Call Grace</expected>
+<explain><p>Each <code>await</code> replaces one <code>.then</code>, and the code reads top to bottom. The second step needs the user, so sequential <code>await</code>s are right here.</p></explain>
+</question>

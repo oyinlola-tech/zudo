@@ -1,0 +1,819 @@
+<question id="stage-one" type="choice">
+<q>ShopFlow grows in three stages. Which one do you build first, and why?</q>
+<option>Services, because they scale best from day one</option>
+<option correct>A monolith with clean modules, because one process and one database keep checkout a single transaction</option>
+<option>A modular monolith with one database server per module</option>
+<option>A saga across four services</option>
+<explain><p>Start simple. In stage 3 the single checkout transaction becomes a saga across services, which is the price of microservices. You pay it only when there is a real reason.</p></explain>
+</question>
+
+<question id="module-boundaries" type="choice">
+<q>In stage 1, <code>users</code>, <code>catalog</code> and <code>orders</code> share the database connection, cache, event bus and queue. What else do they share?</q>
+<option>Their private helper functions</option>
+<option correct>Nothing: each module is created by one function that is its public API</option>
+<option>Their tables, which any module may update</option>
+<option>One big <code>utils.ts</code> file with all the business rules</option>
+<explain><p>Modules share infrastructure and nothing else. Orders never reads the catalog's code; things that should happen after a sale listen for an <code>order.placed</code> event.</p></explain>
+</question>
+
+<question id="money-cents" type="choice">
+<q>Why does ShopFlow store prices as whole cents in an <code>INT</code> column?</q>
+<option>Integers use less disk space than text</option>
+<option correct>Floating-point numbers cannot store most decimals exactly, so sums like 0.1 + 0.2 go slightly wrong</option>
+<option>PostgreSQL has no decimal types</option>
+<option>So prices can never be changed</option>
+<explain><p>Whole cents add up exactly. You divide by 100 only when you show a price.</p></explain>
+</question>
+
+<question id="float-output" type="output">
+<q>What does this print?</q>
+<code file="cents.js">
+console.log(0.1 + 0.2 === 0.3);
+console.log(10 + 20 === 30);
+console.log(((1200 * 2) / 100).toFixed(2));
+</code>
+<option correct>false
+true
+24.00</option>
+<option>true
+true
+24.00</option>
+<option>false
+true
+24</option>
+<option>false
+false
+24.00</option>
+<explain><p><code>0.1 + 0.2</code> is <code>0.30000000000000004</code>. Cents are whole numbers, so they add exactly. Two mugs at 1200 cents cost 2400 cents, shown as <code>24.00</code>.</p></explain>
+</question>
+
+<question id="check-constraint" type="choice">
+<q>The products table has <code>CHECK (stock &gt;= 0)</code>. What is it for, if the checkout code already checks the stock?</q>
+<option>It makes queries faster</option>
+<option correct>It is the last line of defence: if a bug ever gets past the code, the database itself refuses negative stock</option>
+<option>It replaces the need for transactions</option>
+<option>It sets the stock to 0 when it would go negative</option>
+<explain><p>Defence in depth. The database refuses the write with an error, so a bug cannot silently sell stock that does not exist.</p></explain>
+</question>
+
+<question id="session-hash" type="choice">
+<q>Why does the <code>sessions</code> table store only a <strong>hash</strong> of the session token?</q>
+<option>Hashes are shorter, so the table is smaller</option>
+<option correct>If the database leaks, the hashes cannot be used to log in, because the real tokens are not in it</option>
+<option>So the server can show the token to the user again later</option>
+<option>Because PostgreSQL cannot store random strings</option>
+<explain><p>The token goes to the client once. On each request the server hashes the token it receives and looks up the hash, together with an expiry date.</p></explain>
+</question>
+
+<question id="role-from-request" type="choice">
+<q>Ada registers with <code>{ "email": …, "password": …, "role": "admin" }</code>. What does ShopFlow do with <code>role</code>?</q>
+<option>Saves it, because the user asked for it</option>
+<option>Saves it only if the password is long enough</option>
+<option correct>Ignores it: every new account is a customer; admins are promoted by a setup script on the server</option>
+<option>Answers 500 because the field is unknown</option>
+<explain><p>If the body could set <code>role</code>, anyone could make themselves an admin. The role comes from the database, never from the request. Her later attempt to create a product got 403.</p></explain>
+</question>
+
+<question id="register-strips-role-output" type="output">
+<q>The <code>Credentials</code> schema parses a registration body. What does this print?</q>
+<code file="credentials.js">
+import { schema } from "@zudojs/schema";
+
+const Credentials = schema.object({
+  email: schema.string().trim().toLowerCase().email(),
+  password: schema.string().min(12).max(128),
+});
+
+console.log(Credentials.parse({ email: "  Ada@Example.com ", password: "long-s3cret-pass", role: "admin" }));
+</code>
+<option correct>{ email: 'ada@example.com', password: 'long-s3cret-pass' }</option>
+<option>{ email: 'Ada@Example.com', password: 'long-s3cret-pass', role: 'admin' }</option>
+<option>{ email: 'ada@example.com', password: 'long-s3cret-pass', role: 'admin' }</option>
+<option>{ email: '  Ada@Example.com ', password: 'long-s3cret-pass' }</option>
+<explain><p>The e-mail is trimmed and lower-cased, so <code>Ada@Example.com</code> and <code>ada@example.com</code> are one account. The object schema keeps only the fields it knows, so <code>role</code> never reaches the insert.</p></explain>
+</question>
+
+<question id="login-same-answer" type="choice">
+<q>Why does <code>login</code> give the same answer, <code>Wrong e-mail or password</code>, for an unknown e-mail and for a wrong password?</q>
+<option>To keep the code shorter</option>
+<option correct>So an attacker cannot find out which e-mail addresses have accounts</option>
+<option>Because the database cannot tell the two cases apart</option>
+<option>So users try again more often</option>
+<explain><p>Different answers would let anyone test a list of e-mails. For the same reason the code verifies a decoy hash when the e-mail is unknown, so both cases also take the same time.</p></explain>
+</question>
+
+<question id="decoy-hash" type="choice">
+<q>When the e-mail is unknown, <code>login</code> still runs <code>verifyPassword</code> against a <code>decoyHash</code>. Why?</q>
+<option>To create the account automatically</option>
+<option correct>So "no such e-mail" takes as long as "wrong password"; otherwise the response time would reveal which e-mails exist</option>
+<option>To slow down the server on purpose for every user</option>
+<option>Because <code>verifyPassword</code> must be called exactly once per request</option>
+<explain><p>Password hashing is slow on purpose. Skipping it for unknown e-mails would make those answers measurably faster, a timing leak.</p></explain>
+</question>
+
+<question id="permission-at-edge" type="choice">
+<q>The catalog module does not check permissions. Where does ShopFlow check them?</q>
+<option>Nowhere: products are public</option>
+<option correct>At the edge, in the HTTP layer, where the logged-in user is known</option>
+<option>In the database, with a trigger</option>
+<option>In the browser, before the request is sent</option>
+<explain><p>The module does not know who is calling. The HTTP route authenticates the user from the bearer token, calls <code>authorize(user, "product:create")</code>, and only then calls the module.</p></explain>
+</question>
+
+<question id="permissions-output" type="output">
+<q>These are ShopFlow's roles. What does this print?</q>
+<code file="permissions.js">
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const permissions = createPermissionEngine({
+  roles: [
+    { name: "customer", permissions: ["product:read", "order:create"] },
+    { name: "admin", permissions: ["*:*"] },
+  ],
+});
+
+const ada = createPermissionActor("2", { roles: ["customer"] });
+const boss = createPermissionActor("1", { roles: ["admin"] });
+console.log(await permissions.can(ada, "order:create"), await permissions.can(ada, "product:create"), await permissions.can(boss, "product:create"));
+</code>
+<option correct>true false true</option>
+<option>true true true</option>
+<option>false false true</option>
+<option>true false false</option>
+<explain><p>A customer may create orders but not products. The admin's <code>*:*</code> matches every permission. The HTTP layer turns a <code>false</code> into a 403 <code>AuthorizationError</code>.</p></explain>
+</question>
+
+<question id="conditional-update" type="choice">
+<q>Which statement takes stock safely, so two customers can never both buy the last mug?</q>
+<option><code>SELECT stock</code>, then in JavaScript <code>if (stock &gt;= qty)</code> run <code>UPDATE products SET stock = $new</code></option>
+<option correct><code>UPDATE products SET stock = stock - $1 WHERE sku = $2 AND stock &gt;= $1 RETURNING id, price_cents</code></option>
+<option><code>UPDATE products SET stock = stock - $1 WHERE sku = $2</code>, and fix negative stock later</option>
+<option><code>DELETE FROM products WHERE stock = 0</code> before each checkout</option>
+<explain><p>The check and the change are one statement. PostgreSQL locks the row for the first UPDATE, and the second one sees the new stock. If there is not enough, no row matches and <code>RETURNING</code> returns nothing.</p></explain>
+</question>
+
+<question id="race-output" type="output">
+<q>A teammate replaced the conditional UPDATE with "read, then write". Two checkouts for the last mug run at the same time. What does this print?</q>
+<code file="race.js">
+const db = { mug: 1 };
+const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+async function checkout(name) {
+  const stock = db.mug;
+  await pause();
+  if (stock < 1) return `${name}: sold out`;
+  db.mug = stock - 1;
+  return `${name}: bought`;
+}
+
+console.log(await Promise.all([checkout("ada"), checkout("linus")]), "left:", db.mug);
+</code>
+<option correct>[ 'ada: bought', 'linus: bought' ] left: 0</option>
+<option>[ 'ada: bought', 'linus: sold out' ] left: 0</option>
+<option>[ 'ada: bought', 'linus: bought' ] left: -1</option>
+<option>[ 'ada: sold out', 'linus: sold out' ] left: 1</option>
+<explain><p>Both read <code>1</code> before either writes, so both decide there is enough. Both write <code>0</code>: two mugs sold, one existed. This gap between reading and writing is a race condition; the single conditional UPDATE has no gap.</p></explain>
+</question>
+
+<question id="atomic-output" type="output">
+<q>Now the check and the change happen in one step, like the conditional UPDATE. What does this print?</q>
+<code file="atomic.js">
+const db = { mug: 1 };
+const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+function takeStock(sku, quantity) {
+  if (db[sku] < quantity) return false;
+  db[sku] -= quantity;
+  return true;
+}
+
+async function checkout(name) {
+  await pause();
+  return takeStock("mug", 1) ? `${name}: bought` : `${name}: sold out`;
+}
+
+console.log(await Promise.all([checkout("ada"), checkout("linus")]), "left:", db.mug);
+</code>
+<option correct>[ 'ada: bought', 'linus: sold out' ] left: 0</option>
+<option>[ 'ada: bought', 'linus: bought' ] left: 0</option>
+<option>[ 'ada: bought', 'linus: bought' ] left: -1</option>
+<option>[ 'ada: sold out', 'linus: bought' ] left: 0</option>
+<explain><p>With no <code>await</code> between the check and the change, nothing can run in between. The second checkout sees <code>0</code> and gets "sold out", just as the second UPDATE sees the new stock in PostgreSQL.</p></explain>
+</question>
+
+<question id="price-from-db" type="choice">
+<q>A client sends <code>{ "sku": "mug", "quantity": 1, "priceCents": 1 }</code> to <code>/checkout</code>. Which price does ShopFlow charge?</q>
+<option>1 cent, the price in the request</option>
+<option correct>The price from the database, returned by the <code>UPDATE … RETURNING price_cents</code></option>
+<option>The average of both prices</option>
+<option>It answers 500 because the field is unknown</option>
+<explain><p>The price comes from the database, never from the request, so a client cannot choose its own price. The checkout schema does not even read <code>priceCents</code>.</p></explain>
+</question>
+
+<question id="rollback-lines" type="choice">
+<q>Ada checks out a T-shirt and a mug. The T-shirt line succeeds, then the mug has no stock. What happens to the T-shirt's stock?</q>
+<option>It stays taken, and Ada gets half an order</option>
+<option correct>It is put back: the <code>ConflictError</code> rolls back the whole transaction, so the order is all or nothing</option>
+<option>It is put back the next night by a scheduled job</option>
+<option>The T-shirt is shipped and the mug is back-ordered</option>
+<explain><p>All lines, the order, its lines and the audit event run in one transaction. The final product list in the lesson still shows 5 T-shirts after the 409.</p></explain>
+</question>
+
+<question id="event-after-commit" type="choice">
+<q>Why is <code>order.placed</code> published <strong>after</strong> <code>db.transaction</code> returns, not inside it?</q>
+<option>Events cannot be published from async functions</option>
+<option correct>So no listener ever reacts to an order that is later rolled back, such as sending a receipt for it</option>
+<option>Because publishing inside a transaction is slower</option>
+<option>So the event includes the database password</option>
+<explain><p>Side effects happen after the commit. A crash between the commit and the publish could still lose the event, which the outbox milestone fixes.</p></explain>
+</question>
+
+<question id="event-after-commit-output" type="output">
+<q>This fake transaction throws halfway. What does this print?</q>
+<code file="after-commit.js">
+const receipts = [];
+const onPlaced = (order) => receipts.push(order.id);
+
+async function transaction(work) {
+  const writes = [];
+  await work(writes);
+  return writes;
+}
+
+async function checkout(id, inStock) {
+  try {
+    await transaction(async (writes) => {
+      writes.push(`order ${id}`);
+      if (!inStock) throw new Error("Not enough stock");
+    });
+    onPlaced({ id });
+    return "201";
+  } catch {
+    return "409";
+  }
+}
+
+console.log(await checkout(1, true), await checkout(2, false), receipts);
+</code>
+<option correct>201 409 [ 1 ]</option>
+<option>201 409 [ 1, 2 ]</option>
+<option>201 201 [ 1, 2 ]</option>
+<option>201 409 []</option>
+<explain><p>The event is published only after the transaction finished without an error. Order 2 failed, so no receipt goes out for an order that does not exist.</p></explain>
+</question>
+
+<question id="error-status-output" type="output">
+<q>What does this print?</q>
+<code file="error-status.js">
+import { AuthenticationError, AuthorizationError, ConflictError } from "@zudojs/errors";
+
+for (const error of [new AuthenticationError("Log in first"), new AuthorizationError("Missing permission"), new ConflictError("Not enough stock")]) {
+  console.log(error.statusCode, error.message);
+}
+</code>
+<option correct>401 Log in first
+403 Missing permission
+409 Not enough stock</option>
+<option>403 Log in first
+401 Missing permission
+409 Not enough stock</option>
+<option>401 Log in first
+403 Missing permission
+400 Not enough stock</option>
+<option>500 Log in first
+500 Missing permission
+500 Not enough stock</option>
+<explain><p>401 means "we do not know who you are", 403 means "we know you, and you may not do this", 409 means "this conflicts with the current state". The HTTP layer maps them for you.</p></explain>
+</question>
+
+<question id="checkout-schema-output" type="output">
+<q>What does the checkout schema say about these three bodies?</q>
+<code file="checkout-schema.js">
+import { schema } from "@zudojs/schema";
+
+const Checkout = schema.object({
+  items: schema
+    .array(schema.object({ sku: schema.string().max(40), quantity: schema.number().int().min(1).max(20) }))
+    .min(1)
+    .max(20),
+});
+
+const bodies = [{ items: [] }, { items: [{ sku: "tee", quantity: -3 }] }, { items: [{ sku: "tee", quantity: 2 }] }];
+console.log(bodies.map((body) => Checkout.safeParse(body).success));
+</code>
+<option correct>[ false, false, true ]</option>
+<option>[ true, false, true ]</option>
+<option>[ false, true, true ]</option>
+<option>[ true, true, true ]</option>
+<explain><p>An empty cart and a negative quantity are both refused before the database is touched (400). Limits on the array and the quantity also stop a single request from asking for millions of items.</p></explain>
+</question>
+
+<question id="rate-limit-login" type="choice">
+<q>Why does <code>/login</code> have its own rate limiter?</q>
+<option>To reduce the server's electricity bill</option>
+<option correct>To stop password guessing: after 5 attempts a minute from one address, login answers 429</option>
+<option>Because <code>/login</code> is the slowest route</option>
+<option>So each user can only log in once a day</option>
+<explain><p>Password hashing is slow on purpose, and login is the favourite target of guessing attacks. Milestone 1 adds a second limit per e-mail.</p></explain>
+</question>
+
+<question id="test-oversell" type="choice">
+<q>The "never oversells" test fires four checkouts at the same time for a product with two left. What must it require?</q>
+<option>All four succeed</option>
+<option correct>Exactly two succeed and the stock ends at 0</option>
+<option>Exactly one succeeds</option>
+<option>All four fail with 409</option>
+<explain><p>With <code>Promise.allSettled</code>, count the fulfilled results. Remove <code>AND stock &gt;= $1</code> on purpose and watch the test fail: that is how you know it protects something.</p></explain>
+</question>
+
+<question id="pglite-race" type="choice">
+<q>Why should the "never oversells" test also run against a real PostgreSQL server in CI?</q>
+<option>PGlite does not support <code>UPDATE</code></option>
+<option correct>PGlite runs one transaction at a time, so it can hide a race that appears with several real connections</option>
+<option>Real PostgreSQL is faster for tests</option>
+<option>Vitest cannot run PGlite</option>
+<explain><p>A race needs things to really happen at the same time. PGlite is great for fast, isolated tests, but it is gentler than production.</p></explain>
+</question>
+
+<question id="idor-404" type="choice">
+<q>Milestone 3: <code>GET /orders/:id</code> for someone else's order. What should it answer, and how?</q>
+<option>403, after loading the order and comparing owners</option>
+<option correct>404, with the owner in the SQL: <code>WHERE id = $1 AND user_id = $2</code></option>
+<option>200, because order ids are not secret</option>
+<option>401, and log the user out</option>
+<explain><p>Putting the owner in the SQL means an order that is not yours is never even loaded, so one forgotten check cannot leak data. 404 instead of 403 means nobody can learn which order ids exist.</p></explain>
+</question>
+
+<question id="idor-output" type="output">
+<q>This finds an order the way the lesson's <code>one(userId, orderId)</code> does. What does it print?</q>
+<code file="idor.js">
+const orders = [
+  { id: 1, userId: 2, totalCents: 2400 },
+  { id: 2, userId: 3, totalCents: 900 },
+];
+
+function one(userId, orderId) {
+  const order = orders.find((o) => o.id === orderId && o.userId === userId);
+  return order ? `200 ${order.totalCents}` : "404 No order " + orderId;
+}
+
+console.log(one(2, 1));
+console.log(one(2, 2));
+console.log(one(2, 3));
+</code>
+<option correct>200 2400
+404 No order 2
+404 No order 3</option>
+<option>200 2400
+403 No order 2
+404 No order 3</option>
+<option>200 2400
+200 900
+404 No order 3</option>
+<option>200 2400
+404 No order 2
+403 No order 3</option>
+<explain><p>Order 2 exists but belongs to user 3, and order 3 does not exist at all. Both answer the same 404, so user 2 cannot tell which ids are real.</p></explain>
+</question>
+
+<question id="sql-params" type="choice">
+<q>The milestones say "parameterized SQL only". Which query follows that rule?</q>
+<option><code>db.query(`SELECT * FROM orders WHERE user_id = ${userId}`)</code></option>
+<option><code>db.query("SELECT * FROM orders WHERE user_id = '" + userId + "'")</code></option>
+<option correct><code>db.query("SELECT id FROM orders WHERE user_id = $1", [userId])</code></option>
+<option><code>db.query("SELECT * FROM orders WHERE user_id = " + Number(userId))</code></option>
+<explain><p>With <code>$1</code> the value travels separately from the SQL text, so it can never change the query. Building SQL with strings, even after a conversion, is the habit that leads to injection.</p></explain>
+</question>
+
+<question id="support-role" type="choice">
+<q>Milestone 4 adds a <code>support</code> role. Which permission list fits "may read every order and cancel one, but may not touch products or roles"?</q>
+<option><code>["*:*"]</code></option>
+<option correct><code>["order:read", "order:cancel"]</code></option>
+<option><code>["order:*", "product:*"]</code></option>
+<option><code>["role:update", "order:read"]</code></option>
+<explain><p>Give each role only what it needs (least privilege). A wildcard such as <code>*:*</code> or <code>product:*</code> would let support staff change prices or roles.</p></explain>
+</question>
+
+<question id="code-take-stock" type="code" file="take-stock.js">
+<q><p>Finish <code>takeStock(products, sku, quantity)</code> like the conditional UPDATE: if the product exists and has at least <code>quantity</code> in stock, reduce it and return <code>{ priceCents }</code>; otherwise change nothing and return <code>null</code>. The program should print <code>1200 null null</code> and then <code>stock: 0</code>.</p></q>
+<starter>
+const products = { mug: { priceCents: 1200, stock: 2 } };
+
+function takeStock(products, sku, quantity) {
+  // your code here
+}
+
+const a = takeStock(products, "mug", 2);
+const b = takeStock(products, "mug", 1);
+const c = takeStock(products, "lamp", 1);
+console.log(a?.priceCents, b, c);
+console.log("stock:", products.mug.stock);
+</starter>
+<solution>
+const products = { mug: { priceCents: 1200, stock: 2 } };
+
+function takeStock(products, sku, quantity) {
+  const product = products[sku];
+  if (!product || product.stock < quantity) return null;
+  product.stock -= quantity;
+  return { priceCents: product.priceCents };
+}
+
+const a = takeStock(products, "mug", 2);
+const b = takeStock(products, "mug", 1);
+const c = takeStock(products, "lamp", 1);
+console.log(a?.priceCents, b, c);
+console.log("stock:", products.mug.stock);
+</solution>
+<expected>
+1200 null null
+stock: 0
+</expected>
+<explain><p>Check and change together, with nothing in between, and return the price from the stored product. An empty result is the "not enough stock" signal, like an empty <code>RETURNING</code>.</p></explain>
+</question>
+
+<question id="code-order-total" type="code" file="order-total.js">
+<q><p>Finish <code>orderTotal(items, catalog)</code>. Each item has <code>sku</code>, <code>quantity</code> and maybe a <code>priceCents</code> sent by the client. Use only the catalog's price, never the client's. The program should print <code>4400</code>.</p></q>
+<starter>
+const catalog = { mug: 1200, tee: 2000 };
+
+function orderTotal(items, catalog) {
+  // your code here
+}
+
+console.log(orderTotal([{ sku: "mug", quantity: 2, priceCents: 1 }, { sku: "tee", quantity: 1 }], catalog));
+</starter>
+<solution>
+const catalog = { mug: 1200, tee: 2000 };
+
+function orderTotal(items, catalog) {
+  let total = 0;
+  for (const item of items) total += catalog[item.sku] * item.quantity;
+  return total;
+}
+
+console.log(orderTotal([{ sku: "mug", quantity: 2, priceCents: 1 }, { sku: "tee", quantity: 1 }], catalog));
+</solution>
+<expected>4400</expected>
+<explain><p>2 × 1200 + 1 × 2000 = 4400 cents. The client's <code>priceCents: 1</code> is ignored: a client must never be able to choose its own price.</p></explain>
+</question>
+
+<question id="code-all-or-nothing" type="code" file="all-or-nothing.js">
+<q><p>Finish <code>checkout(stock, items)</code> so it is all or nothing: work on a copy of <code>stock</code>; for each item, throw <code>new Error(`Not enough stock for ${sku}`)</code> if there is not enough, otherwise take it. Only when every item worked, copy the new values back into <code>stock</code>. The program should print <code>Not enough stock for mug</code> and then <code>{ tee: 5, mug: 0 }</code>.</p></q>
+<starter>
+const stock = { tee: 5, mug: 0 };
+
+function checkout(stock, items) {
+  // your code here
+}
+
+try {
+  checkout(stock, [{ sku: "tee", quantity: 2 }, { sku: "mug", quantity: 1 }]);
+} catch (error) {
+  console.log(error.message);
+}
+console.log(stock);
+</starter>
+<solution>
+const stock = { tee: 5, mug: 0 };
+
+function checkout(stock, items) {
+  const next = { ...stock };
+  for (const { sku, quantity } of items) {
+    if ((next[sku] ?? 0) < quantity) throw new Error(`Not enough stock for ${sku}`);
+    next[sku] -= quantity;
+  }
+  Object.assign(stock, next);
+}
+
+try {
+  checkout(stock, [{ sku: "tee", quantity: 2 }, { sku: "mug", quantity: 1 }]);
+} catch (error) {
+  console.log(error.message);
+}
+console.log(stock);
+</solution>
+<expected>
+Not enough stock for mug
+{ tee: 5, mug: 0 }
+</expected>
+<explain><p>The T-shirt line worked on the copy, but the mug failed, so the copy is thrown away and the real stock still shows 5 T-shirts. A database transaction gives you exactly this, with <code>ROLLBACK</code>.</p></explain>
+</question>
+
+<question id="code-register-input" type="code" file="register-input.js">
+<q><p>Finish <code>registrationData(body)</code>. Return only <code>{ email, password, role }</code>, where <code>email</code> is trimmed and lower-cased, and <code>role</code> is always <code>"customer"</code>, whatever the body says. The program should print <code>{ email: 'ada@example.com', password: 's3cret-pass', role: 'customer' }</code>.</p></q>
+<starter>
+function registrationData(body) {
+  // your code here
+}
+
+console.log(registrationData({ email: " Ada@Example.com", password: "s3cret-pass", role: "admin", isAdmin: true }));
+</starter>
+<solution>
+function registrationData(body) {
+  return { email: body.email.trim().toLowerCase(), password: body.password, role: "customer" };
+}
+
+console.log(registrationData({ email: " Ada@Example.com", password: "s3cret-pass", role: "admin", isAdmin: true }));
+</solution>
+<expected>{ email: 'ada@example.com', password: 's3cret-pass', role: 'customer' }</expected>
+<explain><p>Pick the fields you want instead of copying the whole body. Anything the client adds, such as <code>role</code> or <code>isAdmin</code>, simply never reaches the database.</p></explain>
+</question>
+
+<question id="code-find-own-order" type="code" file="own-order.js">
+<q><p>Finish <code>getOrder(orders, userId, orderId)</code>. Return <code>{ status: 200, body: order }</code> when the order exists <strong>and</strong> belongs to <code>userId</code>, otherwise <code>{ status: 404, body: { error: "Not found" } }</code>, also when it belongs to someone else. The program should print <code>200 404 404</code>.</p></q>
+<starter>
+const orders = [
+  { id: 1, userId: 2, totalCents: 2400 },
+  { id: 2, userId: 3, totalCents: 900 },
+];
+
+function getOrder(orders, userId, orderId) {
+  // your code here
+}
+
+console.log(getOrder(orders, 2, 1).status, getOrder(orders, 2, 2).status, getOrder(orders, 2, 9).status);
+</starter>
+<solution>
+const orders = [
+  { id: 1, userId: 2, totalCents: 2400 },
+  { id: 2, userId: 3, totalCents: 900 },
+];
+
+function getOrder(orders, userId, orderId) {
+  const order = orders.find((o) => o.id === orderId && o.userId === userId);
+  return order ? { status: 200, body: order } : { status: 404, body: { error: "Not found" } };
+}
+
+console.log(getOrder(orders, 2, 1).status, getOrder(orders, 2, 2).status, getOrder(orders, 2, 9).status);
+</solution>
+<expected>200 404 404</expected>
+<explain><p>Search by id <strong>and</strong> owner in one condition, like <code>WHERE id = $1 AND user_id = $2</code>. Someone else's order and a missing order look the same, so ids cannot be probed.</p></explain>
+</question>
+
+<question id="code-bearer" type="code" file="bearer.js">
+<q><p>Finish <code>bearer(header)</code>. Return the token after <code>"Bearer "</code>, or <code>undefined</code> when the header is missing or does not start with <code>"Bearer "</code>. The program should print <code>abc123 undefined undefined</code>.</p></q>
+<starter>
+function bearer(header) {
+  // your code here
+}
+
+console.log(bearer("Bearer abc123"), bearer("Basic abc123"), bearer(undefined));
+</starter>
+<solution>
+function bearer(header) {
+  return header?.startsWith("Bearer ") ? header.slice(7) : undefined;
+}
+
+console.log(bearer("Bearer abc123"), bearer("Basic abc123"), bearer(undefined));
+</solution>
+<expected>abc123 undefined undefined</expected>
+<explain><p>The identity comes only from this token, which the server hashes and looks up. <code>?.</code> handles a missing header, and <code>"Bearer ".length</code> is 7.</p></explain>
+</question>
+
+<question id="code-authorize" type="code" file="authorize.js">
+<q><p>Finish <code>authorize(user, permission)</code> with the permission engine. Build an actor from <code>String(user.id)</code> with <code>roles: [user.role]</code>, and throw <code>new AuthorizationError(`Missing permission ${permission}`)</code> when <code>can</code> returns false. The program should print <code>ok</code> and then <code>403 Missing permission product:create</code>.</p></q>
+<starter>
+import { AuthorizationError } from "@zudojs/errors";
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const permissions = createPermissionEngine({
+  roles: [
+    { name: "customer", permissions: ["product:read", "order:create"] },
+    { name: "admin", permissions: ["*:*"] },
+  ],
+});
+
+async function authorize(user, permission) {
+  // your code here
+}
+
+const ada = { id: 2, role: "customer" };
+for (const permission of ["order:create", "product:create"]) {
+  try {
+    await authorize(ada, permission);
+    console.log("ok");
+  } catch (error) {
+    console.log(error.statusCode, error.message);
+  }
+}
+</starter>
+<solution>
+import { AuthorizationError } from "@zudojs/errors";
+import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const permissions = createPermissionEngine({
+  roles: [
+    { name: "customer", permissions: ["product:read", "order:create"] },
+    { name: "admin", permissions: ["*:*"] },
+  ],
+});
+
+async function authorize(user, permission) {
+  const actor = createPermissionActor(String(user.id), { roles: [user.role] });
+  if (!(await permissions.can(actor, permission))) throw new AuthorizationError(`Missing permission ${permission}`);
+}
+
+const ada = { id: 2, role: "customer" };
+for (const permission of ["order:create", "product:create"]) {
+  try {
+    await authorize(ada, permission);
+    console.log("ok");
+  } catch (error) {
+    console.log(error.statusCode, error.message);
+  }
+}
+</solution>
+<expected>
+ok
+403 Missing permission product:create
+</expected>
+<explain><p>The role comes from the user loaded from the database, never from the request. <code>can</code> is async, so await it before you check the result.</p></explain>
+</question>
+
+<question id="code-publish-after-commit" type="code" file="publish-after.js">
+<q><p>Finish <code>checkout(id, inStock)</code>. Call <code>transaction(work)</code>, where <code>work</code> throws <code>new Error("Not enough stock")</code> when <code>inStock</code> is false. Publish <code>order.placed</code> with <code>{ orderId: id }</code> on the bus only <strong>after</strong> the transaction succeeded, and return <code>"201"</code>; on an error return <code>"409"</code>. The program should print <code>201 409</code> and <code>receipts: [ 1 ]</code>.</p></q>
+<starter>
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+const receipts = [];
+bus.on("order.placed", (event) => receipts.push(event.payload.orderId));
+
+async function transaction(work) {
+  return work();
+}
+
+async function checkout(id, inStock) {
+  // your code here
+}
+
+console.log(await checkout(1, true), await checkout(2, false));
+console.log("receipts:", receipts);
+</starter>
+<solution>
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+const receipts = [];
+bus.on("order.placed", (event) => receipts.push(event.payload.orderId));
+
+async function transaction(work) {
+  return work();
+}
+
+async function checkout(id, inStock) {
+  try {
+    await transaction(async () => {
+      if (!inStock) throw new Error("Not enough stock");
+    });
+  } catch {
+    return "409";
+  }
+  await bus.publishEvent({ type: "order.placed", payload: { orderId: id } });
+  return "201";
+}
+
+console.log(await checkout(1, true), await checkout(2, false));
+console.log("receipts:", receipts);
+</solution>
+<expected>
+201 409
+receipts: [ 1 ]
+</expected>
+<explain><p>Publish after the transaction returns, never inside it. The failed order 2 gets no receipt, because no listener ever hears about a rolled-back order.</p></explain>
+</question>
+
+<question id="code-money-format" type="code" file="money.js">
+<q><p>Finish <code>formatCents(cents)</code> so it shows whole cents as money with two decimals and a dollar sign. The program should print <code>$24.00 $0.05 $1234.50</code>.</p></q>
+<starter>
+function formatCents(cents) {
+  // your code here
+}
+
+console.log(formatCents(2400), formatCents(5), formatCents(123450));
+</starter>
+<solution>
+function formatCents(cents) {
+  return "$" + (cents / 100).toFixed(2);
+}
+
+console.log(formatCents(2400), formatCents(5), formatCents(123450));
+</solution>
+<expected>$24.00 $0.05 $1234.50</expected>
+<explain><p>Store and add whole cents; divide by 100 only for display. <code>toFixed(2)</code> always shows two decimals.</p></explain>
+</question>
+
+<question id="token-hash-output" type="output">
+<q>The server stores only a SHA-256 hash of the session token. What does this print?</q>
+<code file="token-hash.js">
+async function sha256(text) {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+const token = "tok-7f3a9c";
+const stored = await sha256(token);
+
+console.log(stored.length, stored === token);
+console.log("login with token:", (await sha256(token)) === stored);
+console.log("login with stolen hash:", (await sha256(stored)) === stored);
+</code>
+<option correct>64 false
+login with token: true
+login with stolen hash: false</option>
+<option>64 false
+login with token: true
+login with stolen hash: true</option>
+<option>10 true
+login with token: true
+login with stolen hash: false</option>
+<option>32 false
+login with token: false
+login with stolen hash: false</option>
+<explain><p>The same token always gives the same hash, so the server can look it up. Someone who steals the hash from the database cannot log in with it: the server would hash it again and find nothing.</p></explain>
+</question>
+
+<question id="login-message-output" type="output">
+<q>What does this login function answer?</q>
+<code file="login-message.js">
+const users = new Map([["ada@example.com", "right-password"]]);
+
+function login(email, password) {
+  const stored = users.get(email);
+  if (!stored || stored !== password) return "401 Wrong e-mail or password";
+  return "200 token";
+}
+
+console.log(login("nobody@example.com", "x"));
+console.log(login("ada@example.com", "x"));
+console.log(login("ada@example.com", "right-password"));
+</code>
+<option correct>401 Wrong e-mail or password
+401 Wrong e-mail or password
+200 token</option>
+<option>404 No such user
+401 Wrong password
+200 token</option>
+<option>401 Wrong e-mail or password
+200 token
+200 token</option>
+<option>404 No such user
+401 Wrong e-mail or password
+200 token</option>
+<explain><p>An unknown e-mail and a wrong password get exactly the same answer, so the answer does not tell an attacker which e-mails have accounts. (Real code compares password <em>hashes</em>, never plain passwords.)</p></explain>
+</question>
+
+<question id="login-limit-output" type="output">
+<q>Login allows 5 attempts per minute from one address. What does this print?</q>
+<code file="login-limit.js">
+const attempts = new Map();
+
+function loginStatus(ip) {
+  const count = (attempts.get(ip) ?? 0) + 1;
+  attempts.set(ip, count);
+  return count > 5 ? 429 : 401;
+}
+
+const results = [];
+for (let i = 0; i < 7; i++) results.push(loginStatus("203.0.113.7"));
+console.log(results.join(" "));
+</code>
+<option correct>401 401 401 401 401 429 429</option>
+<option>401 401 401 401 429 429 429</option>
+<option>401 401 401 401 401 401 429</option>
+<option>429 429 429 429 429 429 429</option>
+<explain><p>The first five wrong passwords get 401. The sixth attempt in the window gets 429 Too Many Requests, so a password cannot be guessed by trying thousands of them.</p></explain>
+</question>
+
+<question id="after-sale-cache-output" type="output">
+<q>The <code>order.placed</code> listener clears the product cache. What does this print?</q>
+<code file="after-sale.js">
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+const cache = new Map([["products.all", "mug: 2 left"]]);
+let stock = 2;
+
+bus.on("order.placed", () => cache.delete("products.all"));
+
+const list = () => {
+  if (!cache.has("products.all")) cache.set("products.all", `mug: ${stock} left`);
+  return cache.get("products.all");
+};
+
+stock = 0;
+console.log(list());
+await bus.publishEvent({ type: "order.placed", payload: { orderId: 1 } });
+console.log(list());
+</code>
+<option correct>mug: 2 left
+mug: 0 left</option>
+<option>mug: 0 left
+mug: 0 left</option>
+<option>mug: 2 left
+mug: 2 left</option>
+<option>undefined
+mug: 0 left</option>
+<explain><p>Until the event is published, the cache still holds the old stock. The listener clears the entry, so the next read loads the new stock. Checkout itself does not know about the cache.</p></explain>
+</question>

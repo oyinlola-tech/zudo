@@ -1,0 +1,838 @@
+<question id="three-signals" type="choice">
+<q>A user says "the app is slow today". Which signal tells you <strong>where</strong> the time of one slow request went?</q>
+<option>Logs</option>
+<option>Metrics</option>
+<option correct>Traces</option>
+<option>The HTTP status code</option>
+<explain><p>A trace is the story of one request, split into timed steps (spans). Metrics tell you <em>how much and how fast</em> over time, and logs tell you <em>what happened</em> in detail.</p></explain>
+</question>
+
+<question id="create-observability-parts" type="choice">
+<q>What does <code>createObservability(...)</code> give you?</q>
+<option>Only a logger</option>
+<option>An HTTP server with logging built in</option>
+<option correct>A logger, a metrics registry, a tracer and a propagation manager, plus the exporters that send the data</option>
+<option>A dashboard website for your metrics</option>
+<explain><p>One object holds all three signals and the propagation that links them. The exporters are the parts that send the data somewhere, by default to the console.</p></explain>
+</question>
+
+<question id="safe-config" type="choice">
+<q>Which <code>createObservability</code> call follows the lesson's advice for a real service?</q>
+<option><code>createObservability({ serviceName: "task-api" })</code></option>
+<option correct><code>createObservability({ serviceName: "task-api", redaction: {} })</code></option>
+<option><code>createObservability({ serviceName: "task-api", redaction: false })</code></option>
+<option><code>createObservability({ redaction: {} })</code> with no service name</option>
+<explain><p>The lesson says: always pass <code>redaction: {}</code>, so secret fields such as <code>password</code> are hidden with the default field list. Being explicit keeps you safe whatever the default is. The service name tells the monitoring system which service sent the data.</p></explain>
+</question>
+
+<question id="redaction-output" type="output">
+<q>This project prints log records with its own exporter. What does it print?</q>
+<code file="redact.js" browser="no">
+import { createObservability } from "@zudojs/observability";
+
+const printLogs = {
+  async export(records) {
+    for (const r of records) console.log(r.levelName, r.message, JSON.stringify(r.context));
+  },
+  async shutdown() {},
+};
+
+const obs = createObservability({
+  serviceName: "task-api",
+  redaction: {},
+  useConsoleExporters: false,
+  logExporter: printLogs,
+});
+obs.logger.info("login", { userId: "ada", password: "hunter2" });
+await obs.shutdown();
+</code>
+<option correct>info login {"userId":"ada","password":"[REDACTED]"}</option>
+<option>info login {"userId":"ada","password":"hunter2"}</option>
+<option>info login {"userId":"ada"}</option>
+<option>info login {"userId":"[REDACTED]","password":"[REDACTED]"}</option>
+<explain><p>With <code>redaction: {}</code>, fields with secret names like <code>password</code> are replaced before any exporter sees them. In this logger the metadata is called <code>context</code>.</p></explain>
+</question>
+
+<question id="shutdown-why" type="choice">
+<q>Why must you call <code>await obs.shutdown()</code> before the process exits?</q>
+<option>It resets all counters to zero</option>
+<option correct>Exporters send in batches; shutdown sends what is left and closes them, or the last records are lost</option>
+<option>It stops the HTTP server</option>
+<option>It deletes the logs from the console</option>
+<explain><p>Batching is much cheaper than one network call per record, but records wait in memory until the next batch. <code>shutdown()</code> sends the rest, which are often the most important last records.</p></explain>
+</question>
+
+<question id="batch-print-order" type="output">
+<q>What does this print?</q>
+<code file="batch.js" browser="no">
+import { createObservability } from "@zudojs/observability";
+
+const printLogs = {
+  async export(records) {
+    for (const r of records) console.log("exported:", r.message);
+  },
+  async shutdown() {},
+};
+
+const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false, logExporter: printLogs });
+obs.logger.info("server started");
+console.log("still running");
+await obs.shutdown();
+</code>
+<option correct>still running
+exported: server started</option>
+<option>exported: server started
+still running</option>
+<option>still running</option>
+<option>exported: server started</option>
+<explain><p>The exporter works in batches, so the log record waits in memory. It is sent when <code>shutdown()</code> flushes the batch, after <code>"still running"</code> was printed.</p></explain>
+</question>
+
+<question id="counter-gauge-histogram" type="choice">
+<q>You want to track how many jobs are <strong>waiting</strong> in the email queue right now. Which kind of metric fits?</q>
+<option>A counter, because jobs are counted</option>
+<option correct>A gauge, because the number goes up and down</option>
+<option>A histogram, because it gives percentiles</option>
+<option>A log line for every job</option>
+<explain><p>A counter only goes up (requests served, tasks created). The queue length goes up when jobs arrive and down when they are done, which is what a gauge is for.</p></explain>
+</question>
+
+<question id="counter-same-name" type="output">
+<q>What does this print?</q>
+<code file="counter.js" browser="no">
+import { createObservability } from "@zudojs/observability";
+
+const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+obs.metrics.counter("tasks.created").increment();
+obs.metrics.counter("tasks.created").increment(2);
+obs.metrics.counter("tasks.created", { priority: "high" }).increment();
+console.log(obs.metrics.counter("tasks.created").getValue());
+await obs.shutdown();
+</code>
+<option correct>3</option>
+<option>4</option>
+<option>1</option>
+<option>2</option>
+<explain><p>A metric is identified by its name <strong>and</strong> its labels. The first two calls reach the same counter (1 + 2 = 3). The one with <code>{ priority: "high" }</code> is a different series.</p></explain>
+</question>
+
+<question id="counter-negative" type="output">
+<q>What does this print?</q>
+<code file="counter-negative.js" browser="no">
+import { createObservability, MetricValueError } from "@zudojs/observability";
+
+const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+const openTasks = obs.metrics.counter("tasks.open");
+openTasks.increment(5);
+try {
+  openTasks.increment(-1);
+} catch (error) {
+  if (error instanceof MetricValueError) console.log("rejected");
+}
+console.log(openTasks.getValue());
+await obs.shutdown();
+</code>
+<option correct>rejected
+5</option>
+<option>4</option>
+<option>rejected
+4</option>
+<option>5</option>
+<explain><p>A counter can never decrease, so <code>increment(-1)</code> throws a <code>MetricValueError</code> and the value stays 5. Something that goes up and down, like open tasks, needs a gauge.</p></explain>
+</question>
+
+<question id="gauge-output" type="output">
+<q>What does this print?</q>
+<code file="gauge.js" browser="no">
+import { createObservability } from "@zudojs/observability";
+
+const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+const waiting = obs.metrics.gauge("queue.waiting", { queue: "email" });
+waiting.setValue(12);
+waiting.decrement(2);
+waiting.increment();
+console.log(waiting.getValue());
+await obs.shutdown();
+</code>
+<option correct>11</option>
+<option>10</option>
+<option>13</option>
+<option>12</option>
+<explain><p>A gauge can be set, lowered and raised: 12, then 10, then 11.</p></explain>
+</question>
+
+<question id="histogram-basic" type="output">
+<q>What does this print?</q>
+<code file="histogram.js" browser="no">
+import { createObservability } from "@zudojs/observability";
+
+const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+const latency = obs.metrics.histogram("http.duration_ms", { route: "/tasks" });
+for (const ms of [10, 20, 30, 940]) latency.record(ms);
+const { count, min, max, mean } = latency.getValue();
+console.log({ count, min, max, mean });
+await obs.shutdown();
+</code>
+<option correct>{ count: 4, min: 10, max: 940, mean: 250 }</option>
+<option>{ count: 4, min: 10, max: 940, mean: 25 }</option>
+<option>{ count: 1000, min: 10, max: 940, mean: 250 }</option>
+<option>{ count: 4, min: 10, max: 940, mean: 20 }</option>
+<explain><p>Four measurements add up to 1000, so the mean is 250 ms, although three of the four requests took 30 ms or less. That is why you should not judge speed by the mean.</p></explain>
+</question>
+
+<question id="mean-vs-p95" type="choice">
+<q>Nine requests took 12 to 40 ms and one took 900 ms. The mean is 111.7 ms. What should you alert on?</q>
+<option>The mean, because it includes every request</option>
+<option correct>A percentile such as p95 or p99, because it shows what users actually feel</option>
+<option>The fastest request</option>
+<option>The number of requests only</option>
+<explain><p>The mean of 111.7 ms describes none of the real requests. A percentile says "95% were faster than this", which matches what users experience. Alert on p95 or p99, never on the mean.</p></explain>
+</question>
+
+<question id="p50-meaning" type="choice">
+<q>A histogram reports <code>p50: 23</code>. What does that mean?</q>
+<option>50 requests took 23 ms</option>
+<option correct>About half of the requests were faster than 23 ms</option>
+<option>The average request took 23 ms</option>
+<option>23% of the requests failed</option>
+<explain><p>p50 is the 50th percentile, also called the median: half the values are below it. The histogram estimates it from buckets, so it is close but not exact.</p></explain>
+</question>
+
+<question id="cardinality" type="choice">
+<q>Why should you <strong>not</strong> add <code>{ userId }</code> as a label on <code>http.requests</code>?</q>
+<option>Labels cannot contain strings</option>
+<option>The counter would count each request twice</option>
+<option correct>Each user becomes a separate series stored forever; a million users means a million series (a cardinality explosion)</option>
+<option>It would hide the user id from the logs</option>
+<explain><p>Every different set of labels is a separate series. A few values like <code>route</code> and <code>status</code> are fine. Ids belong in logs and traces, never in metric labels.</p></explain>
+</question>
+
+<question id="good-label" type="choice">
+<q>Which label is a good idea on a <code>tasks.created</code> counter?</q>
+<option><code>{ title }</code></option>
+<option><code>{ taskId }</code></option>
+<option correct><code>{ priority }</code> with the values low, medium and high</option>
+<option><code>{ createdAt }</code></option>
+<explain><p>A priority has three possible values, so it makes three series at most. A title, an id or a time can take endless values, and each one would become a new series.</p></explain>
+</question>
+
+<question id="series-output" type="output">
+<q>What does this print?</q>
+<code file="series.js" browser="no">
+import { createObservability } from "@zudojs/observability";
+
+const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+for (const priority of ["low", "high", "low", "low"]) {
+  obs.metrics.counter("tasks.created", { priority }).increment();
+}
+for (const series of obs.metrics.getSeries("tasks.created")) {
+  console.log(series.labels, series.value);
+}
+await obs.shutdown();
+</code>
+<option correct>{ priority: 'low' } 3
+{ priority: 'high' } 1</option>
+<option>{ priority: 'high' } 1
+{ priority: 'low' } 3</option>
+<option>{ priority: 'low' } 4</option>
+<option>{ priority: 'low' } 1
+{ priority: 'high' } 1
+{ priority: 'low' } 1
+{ priority: 'low' } 1</option>
+<explain><p>Each set of labels is one series, and asking again for the same labels returns the same counter. So there are two series: <code>low</code> with 3 and <code>high</code> with 1, in the order they were first created.</p></explain>
+</question>
+
+<question id="route-not-path" type="choice">
+<q>The request wrapper labels metrics with the route. Which value should it pass for <code>GET /tasks/7</code>?</q>
+<option><code>"/tasks/7"</code>, the real path</option>
+<option correct><code>"/tasks/:id"</code>, the route template</option>
+<option><code>"7"</code>, the task id</option>
+<option>The full URL with the query string</option>
+<explain><p>A real path contains an id, so every task would become a new series. The route template has one value for all tasks.</p></explain>
+</question>
+
+<question id="span-meaning" type="choice">
+<q>What is a <strong>span</strong>?</q>
+<option>The time between two deploys</option>
+<option correct>One step of a trace, with a name, a start, an end and attributes</option>
+<option>A group of log lines with the same level</option>
+<option>A metric that measures durations</option>
+<explain><p>A trace is made of spans, one per step. Spans nest: a span started inside another becomes its child, and all spans of one trace share one trace id.</p></explain>
+</question>
+
+<question id="withspan-return" type="output">
+<q>What does this print?</q>
+<code file="withspan-return.js" browser="no">
+import { createObservability, withSpan } from "@zudojs/observability";
+
+const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+const count = await withSpan(obs.tracer, "db.count", async (span) => {
+  span.setAttribute("db.table", "tasks");
+  return 42;
+});
+console.log("tasks:", count);
+await obs.shutdown();
+</code>
+<option correct>tasks: 42</option>
+<option>tasks: undefined</option>
+<option>tasks: [object Promise]</option>
+<option>tasks: db.count</option>
+<explain><p><code>withSpan</code> starts a span, runs your function, ends the span and gives back the function's result. So you can wrap a step without changing what it returns.</p></explain>
+</question>
+
+<question id="withspan-error" type="output">
+<q>This exporter prints each span's name and status. Spans are exported in the order they end. What does it print?</q>
+<code file="withspan-error.js" browser="no">
+import { createObservability, withSpan } from "@zudojs/observability";
+
+const printSpans = {
+  async export(spans) {
+    for (const s of spans) console.log(s.name, s.status);
+  },
+  async shutdown() {},
+};
+
+const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false, spanExporter: printSpans });
+await withSpan(obs.tracer, "POST /tasks", async () => {
+  await withSpan(obs.tracer, "db.insert", async () => {
+    throw new Error("duplicate key");
+  });
+}).catch((error) => console.log("failed:", error.message));
+await obs.shutdown();
+</code>
+<option correct>failed: duplicate key
+db.insert ERROR
+POST /tasks ERROR</option>
+<option>failed: duplicate key
+db.insert ERROR
+POST /tasks UNSET</option>
+<option>failed: duplicate key
+POST /tasks ERROR
+db.insert ERROR</option>
+<option>db.insert ERROR
+POST /tasks ERROR
+failed: duplicate key</option>
+<explain><p>The error went up through both spans, so both are marked <code>ERROR</code>. The inner span ends first. The spans are printed last, because the exporter sends its batch at shutdown.</p></explain>
+</question>
+
+<question id="nested-parent" type="output">
+<q>What does this print?</q>
+<code file="nested.js" browser="no">
+import { createObservability, withSpan } from "@zudojs/observability";
+
+const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+await withSpan(obs.tracer, "GET /tasks", async (request) => {
+  await withSpan(obs.tracer, "db.query", async (query) => {
+    console.log(query.context.traceId === request.context.traceId);
+    console.log(query.context.parentSpanId === request.context.spanId);
+  });
+});
+await obs.shutdown();
+</code>
+<option correct>true
+true</option>
+<option>true
+false</option>
+<option>false
+false</option>
+<option>false
+true</option>
+<explain><p>A span started while another is active becomes its child: it shares the trace id and points at the parent span id. Nobody passed the parent as a parameter; <code>withSpan</code> made it the active span.</p></explain>
+</question>
+
+<question id="span-kind" type="choice">
+<q>Which span kind marks the span that handles an <strong>incoming</strong> request?</q>
+<option correct><code>SpanKind.SERVER</code></option>
+<option><code>SpanKind.CLIENT</code></option>
+<option><code>SpanKind.INTERNAL</code></option>
+<option><code>SpanKind.REQUEST</code></option>
+<explain><p><code>SERVER</code> is for handling a request that came in. When your service calls another system, that span is a <code>CLIENT</code> span.</p></explain>
+</question>
+
+<question id="als-purpose" type="choice">
+<q>How does a nested span or a log line know the current trace id without a parameter?</q>
+<option>It reads a global variable that each request overwrites</option>
+<option correct>The context is kept in an <code>AsyncLocalStorage</code>, which follows one chain of async calls</option>
+<option>The trace id is stored in the log message text</option>
+<option>It asks the client for the trace id again</option>
+<explain><p><code>AsyncLocalStorage</code> stores a value for one chain of async calls, through any number of awaits. Two requests running at the same time each see their own value; a global variable would mix them up.</p></explain>
+</question>
+
+<question id="propagation-run" type="output">
+<q>What does this print?</q>
+<code file="propagation.js" browser="no">
+import { createObservability, createPropagationContext, getCurrentContext } from "@zudojs/observability";
+
+const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+const context = createPropagationContext({ requestId: "req-1", traceId: "4bf92f3577b34da6a3ce929d0e0e4736" });
+
+function whoAmI() {
+  return getCurrentContext()?.requestId ?? "none";
+}
+
+await obs.propagation.run(context, async () => {
+  console.log("inside:", whoAmI());
+});
+console.log("outside:", whoAmI());
+await obs.shutdown();
+</code>
+<option correct>inside: req-1
+outside: none</option>
+<option>inside: req-1
+outside: req-1</option>
+<option>inside: none
+outside: none</option>
+<option>inside: undefined
+outside: none</option>
+<explain><p>Inside <code>propagation.run</code>, every function can read the context, even without a parameter. Outside a run there is no context, so the fallback <code>"none"</code> is printed.</p></explain>
+</question>
+
+<question id="propagation-parallel" type="output">
+<q>Two requests run at the same time, and ada's takes longer. What does this print?</q>
+<code file="parallel.js" browser="no">
+import { createObservability, createPropagationContext, getCurrentContext } from "@zudojs/observability";
+
+const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false });
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function loadTasks(userId) {
+  await wait(userId === "ada" ? 30 : 5);
+  console.log(userId, "sees", getCurrentContext()?.requestId);
+}
+
+await Promise.all([
+  obs.propagation.run(createPropagationContext({ requestId: "req-1" }), () => loadTasks("ada")),
+  obs.propagation.run(createPropagationContext({ requestId: "req-2" }), () => loadTasks("linus")),
+]);
+await obs.shutdown();
+</code>
+<option correct>linus sees req-2
+ada sees req-1</option>
+<option>ada sees req-1
+linus sees req-2</option>
+<option>linus sees req-2
+ada sees req-2</option>
+<option>linus sees undefined
+ada sees undefined</option>
+<explain><p>linus finishes first, but each call still sees its own request: <code>AsyncLocalStorage</code> keeps one value per async chain. A shared global variable would have given both the last request.</p></explain>
+</question>
+
+<question id="log-gets-trace" type="output">
+<q>What does this print?</q>
+<code file="log-trace.js" browser="no">
+import { createObservability, createPropagationContext } from "@zudojs/observability";
+
+const printLogs = {
+  async export(records) {
+    for (const r of records) console.log(r.message, "trace=" + (r.traceId ?? "-"));
+  },
+  async shutdown() {},
+};
+
+const obs = createObservability({ serviceName: "task-api", redaction: {}, useConsoleExporters: false, logExporter: printLogs });
+const context = createPropagationContext({ traceId: "4bf92f3577b34da6a3ce929d0e0e4736" });
+await obs.propagation.run(context, async () => obs.logger.info("tasks loaded"));
+obs.logger.info("outside any request");
+await obs.shutdown();
+</code>
+<option correct>tasks loaded trace=4bf92f3577b34da6a3ce929d0e0e4736
+outside any request trace=-</option>
+<option>tasks loaded trace=-
+outside any request trace=-</option>
+<option>tasks loaded trace=4bf92f3577b34da6a3ce929d0e0e4736
+outside any request trace=4bf92f3577b34da6a3ce929d0e0e4736</option>
+<option>tasks loaded trace=4bf92f3577b34da6a3ce929d0e0e4736</option>
+<explain><p>Every log record written inside a propagation context gets its trace id automatically. The line outside any run has no trace id.</p></explain>
+</question>
+
+<question id="trace-id-correlation" type="choice">
+<q>A user reports an error. What does the lesson suggest putting in your error responses so you can find everything about that request?</q>
+<option>The stack trace</option>
+<option>The SQL query that failed</option>
+<option correct>The trace id, for example as a <code>traceId</code> field</option>
+<option>The server's hostname and memory use</option>
+<explain><p>The trace id is on every log line and span of the request, so it works as a correlation id. It reveals nothing about your system, unlike a stack trace or SQL.</p></explain>
+</question>
+
+<question id="traceparent-format" type="choice">
+<q>What does the W3C <code>traceparent</code> header contain?</q>
+<option>The user id and their role</option>
+<option correct><code>00-&lt;trace id&gt;-&lt;span id&gt;-&lt;flags&gt;</code></option>
+<option>The full list of spans of the caller</option>
+<option>A signed token that proves who the caller is</option>
+<explain><p>The caller sends its trace id and current span id, plus flags that say whether it kept (sampled) the trace. The receiver starts its spans as children of that span.</p></explain>
+</question>
+
+<question id="parse-valid" type="output">
+<q>What does this print?</q>
+<code file="parse.js" browser="no">
+import { parseTraceparent } from "@zudojs/observability";
+
+const parent = parseTraceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+console.log(parent.traceId);
+console.log(parent.spanId, parent.traceFlags);
+</code>
+<option correct>4bf92f3577b34da6a3ce929d0e0e4736
+00f067aa0ba902b7 1</option>
+<option>00-4bf92f3577b34da6a3ce929d0e0e4736
+00f067aa0ba902b7 01</option>
+<option>4bf92f3577b34da6a3ce929d0e0e4736
+00f067aa0ba902b7 01</option>
+<option>00f067aa0ba902b7
+4bf92f3577b34da6a3ce929d0e0e4736 1</option>
+<explain><p>The header has four parts separated by dashes: version <code>00</code>, the 32-character trace id, the 16-character span id and the flags. The flags <code>01</code> become the number 1: the caller kept the trace.</p></explain>
+</question>
+
+<question id="parse-malformed" type="output">
+<q>What does this print?</q>
+<code file="parse-bad.js" browser="no">
+import { parseTraceparent } from "@zudojs/observability";
+
+console.log(parseTraceparent("00-not-a-real-id-01"));
+console.log(parseTraceparent(undefined));
+</code>
+<option correct>undefined
+undefined</option>
+<option>null
+null</option>
+<option>{ traceId: 'not', spanId: 'a', traceFlags: 1 }
+undefined</option>
+<option>Error: invalid traceparent
+undefined</option>
+<explain><p><code>parseTraceparent</code> checks the header and returns <code>undefined</code> for anything malformed or missing. The server then simply starts a fresh trace instead of failing.</p></explain>
+</question>
+
+<question id="format-roundtrip" type="output">
+<q>What does this print?</q>
+<code file="format.js" browser="no">
+import { formatTraceparent, parseTraceparent } from "@zudojs/observability";
+
+const header = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00";
+const parent = parseTraceparent(header);
+console.log(parent.traceFlags);
+console.log(formatTraceparent(parent) === header);
+</code>
+<option correct>0
+true</option>
+<option>1
+true</option>
+<option>0
+false</option>
+<option>00
+true</option>
+<explain><p>The flags <code>00</code> mean the caller did not keep the trace, so <code>traceFlags</code> is 0. Formatting the parsed context gives back the same header.</p></explain>
+</question>
+
+<question id="traceparent-untrusted" type="choice">
+<q>A client sends <code>traceparent</code> and <code>x-user-role: admin</code>. The Task API joins the trace. What about the role?</q>
+<option>Trust it too: the client already sent a valid traceparent</option>
+<option>Trust it only when the traceparent's flags are <code>01</code></option>
+<option correct>Never trust it: roles come from your own authentication, such as a verified session or token</option>
+<option>Trust it for read requests only</option>
+<explain><p>Joining a trace only links spans; at worst, a client makes its request appear inside someone else's trace. A role decides what the caller may do, so it must never come from a header the client can type.</p></explain>
+</question>
+
+<question id="traceparent-power" type="choice">
+<q>What may an incoming <code>traceparent</code> header decide in your service?</q>
+<option>Which tenant's data the request can read</option>
+<option correct>Only how spans are linked into a trace (and, with a parent-based sampler, whether the trace is kept)</option>
+<option>Whether the request skips rate limiting</option>
+<option>Which log level the request uses</option>
+<explain><p>The header comes from outside, so it is untrusted. Give it only as much power as it can safely have: linking spans. It must never decide what a caller may do.</p></explain>
+</question>
+
+<question id="error-response" type="choice">
+<q>A handler throws <code>new Error("report service unreachable")</code>. What does the instrumented Task API send to the client?</q>
+<option>500 with <code>{ error: "report service unreachable" }</code></option>
+<option>500 with the stack trace, so the client can report it</option>
+<option correct>A plain 500 with <code>{ error: "Internal Server Error" }</code>; the message stays in the log and on the span</option>
+<option>200 with an empty list, so the client does not notice</option>
+<explain><p>Internal error messages can reveal how your system works. The wrapper records the error on the span and logs it, and gives the client only a safe message.</p></explain>
+</question>
+
+<question id="debug-path" type="choice">
+<q>During an incident, in which order does the lesson suggest using the three signals?</q>
+<option>Traces, then logs, then metrics</option>
+<option correct>Metrics show something is wrong, logs show what went wrong, the trace shows where</option>
+<option>Logs only; the others are for later</option>
+<option>Metrics, then restart the server</option>
+<explain><p>An alert on a metric (like 5xx rate or p95) tells you there is a problem. A log search finds the error and its trace id. The trace with that id shows which step failed or was slow.</p></explain>
+</question>
+
+<question id="console-exporters-prod" type="choice">
+<q>What should change about exporters before you deploy?</q>
+<option>Nothing: the console exporters are made for production</option>
+<option correct>Pass real exporters that send to your monitoring system, usually an OpenTelemetry collector</option>
+<option>Remove all exporters, so nothing slows the service</option>
+<option>Write every record to a local file</option>
+<explain><p>The console exporters are for development. In production you implement the <code>SpanExporter</code>, <code>LogExporter</code> and <code>MetricExporter</code> interfaces (or install a package that does) and send the data to a collector.</p></explain>
+</question>
+
+<question id="sampling-rule" type="choice">
+<q>With sampling, when is the "keep this trace or not" decision made?</q>
+<option>Separately for every span</option>
+<option correct>Once, for the first span of a trace; every child span follows it</option>
+<option>At shutdown, based on how slow the trace was</option>
+<option>By the client for every request</option>
+<explain><p>Deciding once per trace means you never get half a trace. A parent-based sampler also follows the caller's decision from the <code>traceparent</code> flags.</p></explain>
+</question>
+
+<question id="sampling-parent-output" type="output">
+<q>What does this print?</q>
+<code file="sampling.js" browser="no">
+import { createObservability, createParentBasedSampler, createProbabilitySampler, parseTraceparent } from "@zudojs/observability";
+
+const obs = createObservability({
+  serviceName: "task-api",
+  redaction: {},
+  useConsoleExporters: false,
+  sampler: createParentBasedSampler({ root: createProbabilitySampler(0.1) }),
+});
+
+for (const flags of ["01", "00"]) {
+  const parent = parseTraceparent(`00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-${flags}`);
+  const span = obs.tracer.startSpan("POST /notify", { parent });
+  console.log(flags, span.isRecording());
+  span.end();
+}
+await obs.shutdown();
+</code>
+<option correct>01 true
+00 false</option>
+<option>01 false
+00 true</option>
+<option>01 true
+00 true</option>
+<option>01 false
+00 false</option>
+<explain><p>A parent-based sampler follows the caller when there is one. Flags <code>01</code> mean the caller kept the trace, so this span records; <code>00</code> means it did not. The 10% root sampler is only used for traces that start here.</p></explain>
+</question>
+
+<question id="metrics-not-sampled" type="choice">
+<q>You sample 10% of traces. What happens to the <code>http.requests</code> counter?</q>
+<option>It also counts only 10% of requests</option>
+<option correct>It still counts every request: metrics are not sampled</option>
+<option>It stops counting until sampling is turned off</option>
+<option>It counts only the requests whose trace was kept</option>
+<explain><p>Sampling keeps a share of the traces, which are the expensive part. Metrics are cheap numbers and still count every request.</p></explain>
+</question>
+
+<question id="shutdown-order" type="choice">
+<q>Where should the Task API call <code>await obs.shutdown()</code>?</q>
+<option>At the start of every request</option>
+<option correct>In the SIGTERM handler, after the HTTP server has stopped</option>
+<option>Before the HTTP server stops, so no request is traced</option>
+<option>Never: the process exit sends the data</option>
+<explain><p>Stop accepting requests first, so the last requests can still be recorded. Then shut down observability, which sends the remaining batches.</p></explain>
+</question>
+
+<question id="noop-tests" type="output">
+<q>In unit tests you use <code>createNoopObservability()</code>. What does this print?</q>
+<code file="noop.js" browser="no">
+import { createNoopObservability } from "@zudojs/observability";
+
+const obs = createNoopObservability();
+obs.metrics.counter("tasks.created").increment(5);
+obs.logger.info("task created");
+console.log(obs.metrics.counter("tasks.created").getValue());
+</code>
+<option correct>0</option>
+<option>5</option>
+<option>undefined</option>
+<option>TypeError: obs.metrics.counter is not a function</option>
+<explain><p>The no-op object has the same methods as the real one, so your code runs unchanged, but it records nothing. The counter stays 0.</p></explain>
+</question>
+
+<question id="code-mean-median" type="code" file="mean-median.js">
+<q><p>Finish <code>summary(durations)</code>: return an object with the <code>mean</code> (the average) and the <code>median</code>, the middle value after sorting (use the element at index <code>Math.floor((n - 1) / 2)</code>). The program should print <code>{ mean: 111.7, median: 22 }</code>.</p></q>
+<starter>
+function summary(durations) {
+  // your code here
+}
+
+console.log(summary([25, 12, 900, 18, 40, 15, 22, 35, 20, 30]));
+</starter>
+<solution>
+function summary(durations) {
+  const sorted = [...durations].sort((a, b) => a - b);
+  const mean = sorted.reduce((sum, d) => sum + d, 0) / sorted.length;
+  const median = sorted[Math.floor((sorted.length - 1) / 2)];
+  return { mean, median };
+}
+
+console.log(summary([25, 12, 900, 18, 40, 15, 22, 35, 20, 30]));
+</solution>
+<expected>{ mean: 111.7, median: 22 }</expected>
+<explain><p>Sort numbers with <code>(a, b) =&gt; a - b</code>; the default sort compares text. One slow request pulls the mean up to 111.7 ms, while the median shows that a typical request takes about 22 ms.</p></explain>
+</question>
+
+<question id="code-valid-traceparent" type="code" file="traceparent-check.js">
+<q><p>Finish <code>isValidTraceparent(header)</code>: return <code>true</code> only for a string of the form <code>00-</code> + 32 lower-case hex characters + <code>-</code> + 16 lower-case hex characters + <code>-01</code> or <code>-00</code>. Anything else, including <code>undefined</code>, is <code>false</code>. The program should print <code>true false false false</code>.</p></q>
+<starter>
+function isValidTraceparent(header) {
+  // your code here
+}
+
+console.log(
+  isValidTraceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+  isValidTraceparent("00-not-a-real-id-01"),
+  isValidTraceparent(undefined),
+  isValidTraceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01; role=admin"),
+);
+</starter>
+<solution>
+function isValidTraceparent(header) {
+  return typeof header === "string" && /^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/.test(header);
+}
+
+console.log(
+  isValidTraceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+  isValidTraceparent("00-not-a-real-id-01"),
+  isValidTraceparent(undefined),
+  isValidTraceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01; role=admin"),
+);
+</solution>
+<expected>true false false false</expected>
+<explain><p>Anchor the pattern with <code>^</code> and <code>$</code>, so extra text at the end is rejected. The header comes from the client, so check it strictly and treat anything else as "no parent".</p></explain>
+</question>
+
+<question id="code-format-traceparent" type="code" file="format-traceparent.js">
+<q><p>Finish <code>toTraceparent(span)</code>: build the header <code>00-&lt;traceId&gt;-&lt;spanId&gt;-&lt;flags&gt;</code>, where the flags are <code>01</code> when <code>span.sampled</code> is true and <code>00</code> otherwise. The program should print:</p>
+<pre>00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00</pre></q>
+<starter>
+function toTraceparent(span) {
+  // your code here
+}
+
+console.log(toTraceparent({ traceId: "4bf92f3577b34da6a3ce929d0e0e4736", spanId: "00f067aa0ba902b7", sampled: true }));
+console.log(toTraceparent({ traceId: "0af7651916cd43dd8448eb211c80319c", spanId: "b7ad6b7169203331", sampled: false }));
+</starter>
+<solution>
+function toTraceparent(span) {
+  const flags = span.sampled ? "01" : "00";
+  return `00-${span.traceId}-${span.spanId}-${flags}`;
+}
+
+console.log(toTraceparent({ traceId: "4bf92f3577b34da6a3ce929d0e0e4736", spanId: "00f067aa0ba902b7", sampled: true }));
+console.log(toTraceparent({ traceId: "0af7651916cd43dd8448eb211c80319c", spanId: "b7ad6b7169203331", sampled: false }));
+</solution>
+<expected>
+00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00
+</expected>
+<explain><p>The caller sends its <em>current</em> span id, so the receiver's spans become its children. The last part tells the receiver whether the caller kept the trace.</p></explain>
+</question>
+
+<question id="code-metric-labels" type="code" file="metric-labels.js">
+<q><p>Finish <code>metricLabels(request, status)</code> so it returns only safe labels: the route <strong>template</strong> and the status as a string. Never the path, the user id or the task id. The program should print <code>{ route: '/tasks/:id', status: '200' }</code>.</p></q>
+<starter>
+function metricLabels(request, status) {
+  // your code here
+}
+
+const request = { method: "GET", path: "/tasks/7", route: "/tasks/:id", userId: "ada" };
+console.log(metricLabels(request, 200));
+</starter>
+<solution>
+function metricLabels(request, status) {
+  return { route: request.route, status: String(status) };
+}
+
+const request = { method: "GET", path: "/tasks/7", route: "/tasks/:id", userId: "ada" };
+console.log(metricLabels(request, 200));
+</solution>
+<expected>{ route: '/tasks/:id', status: '200' }</expected>
+<explain><p>Each different label set is a stored series. The template <code>/tasks/:id</code> has one value for every task, and a status has a handful. The path and the user id would make one series per task or per user.</p></explain>
+</question>
+
+<question id="code-series-key" type="code" file="series-key.js">
+<q><p>A metric is identified by its name and its labels. Finish <code>seriesKey(name, labels)</code>: sort the label names, and return <code>name{key=value,key=value}</code>. The same labels in a different order must give the same key. The program should print:</p>
+<pre>http.requests{route=/tasks,status=200}
+true</pre></q>
+<starter>
+function seriesKey(name, labels) {
+  // your code here
+}
+
+const a = seriesKey("http.requests", { route: "/tasks", status: "200" });
+const b = seriesKey("http.requests", { status: "200", route: "/tasks" });
+console.log(a);
+console.log(a === b);
+</starter>
+<solution>
+function seriesKey(name, labels) {
+  const parts = Object.keys(labels).sort().map((key) => `${key}=${labels[key]}`);
+  return `${name}{${parts.join(",")}}`;
+}
+
+const a = seriesKey("http.requests", { route: "/tasks", status: "200" });
+const b = seriesKey("http.requests", { status: "200", route: "/tasks" });
+console.log(a);
+console.log(a === b);
+</solution>
+<expected>
+http.requests{route=/tasks,status=200}
+true
+</expected>
+<explain><p>Sorting the keys makes the key independent of the order you wrote the labels in. That is how asking again for the same name and labels can return the same counter.</p></explain>
+</question>
+
+<question id="code-slowest-step" type="code" file="slowest-step.js">
+<q><p>Finish <code>slowestChild(spans, rootName)</code>: find the root span by name, then return the name of its child (a span whose <code>parent</code> is the root's <code>id</code>) with the largest <code>ms</code>. The program should print <code>db.insert</code>.</p></q>
+<starter>
+const spans = [
+  { id: "a", parent: null, name: "POST /tasks", ms: 65 },
+  { id: "b", parent: "a", name: "validate", ms: 2 },
+  { id: "c", parent: "a", name: "db.insert", ms: 45 },
+  { id: "d", parent: "a", name: "events.publish", ms: 13 },
+];
+
+function slowestChild(spans, rootName) {
+  // your code here
+}
+
+console.log(slowestChild(spans, "POST /tasks"));
+</starter>
+<solution>
+const spans = [
+  { id: "a", parent: null, name: "POST /tasks", ms: 65 },
+  { id: "b", parent: "a", name: "validate", ms: 2 },
+  { id: "c", parent: "a", name: "db.insert", ms: 45 },
+  { id: "d", parent: "a", name: "events.publish", ms: 13 },
+];
+
+function slowestChild(spans, rootName) {
+  const root = spans.find((s) => s.name === rootName);
+  const children = spans.filter((s) => s.parent === root.id);
+  const slowest = children.reduce((max, s) => (s.ms > max.ms ? s : max));
+  return slowest.name;
+}
+
+console.log(slowestChild(spans, "POST /tasks"));
+</solution>
+<expected>db.insert</expected>
+<explain><p>Spans point at their parent's id, which is how a trace becomes a tree. The child with the most time is where optimizing pays off.</p></explain>
+</question>
+
+<question id="code-safe-error-body" type="code" file="error-body.js">
+<q><p>Finish <code>errorBody(error, traceId)</code> for a 500 response: return <code>{ error: "Internal Server Error", traceId }</code>. Do not include the error's message or stack. The program should print <code>{"error":"Internal Server Error","traceId":"4bf92f3577b34da6a3ce929d0e0e4736"}</code>.</p></q>
+<starter>
+function errorBody(error, traceId) {
+  // your code here
+}
+
+const error = new Error("connect ECONNREFUSED 10.0.0.5:5432");
+console.log(JSON.stringify(errorBody(error, "4bf92f3577b34da6a3ce929d0e0e4736")));
+</starter>
+<solution>
+function errorBody(error, traceId) {
+  return { error: "Internal Server Error", traceId };
+}
+
+const error = new Error("connect ECONNREFUSED 10.0.0.5:5432");
+console.log(JSON.stringify(errorBody(error, "4bf92f3577b34da6a3ce929d0e0e4736")));
+</solution>
+<expected>{"error":"Internal Server Error","traceId":"4bf92f3577b34da6a3ce929d0e0e4736"}</expected>
+<explain><p>The message reveals an internal address, so it goes only to the log and the span. The trace id lets the user report the problem, and lets you find every log line and span of that request.</p></explain>
+</question>

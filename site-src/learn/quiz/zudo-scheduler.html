@@ -1,0 +1,747 @@
+<question id="scheduler-vs-queue" type="choice">
+<q>How do a scheduler and a queue share the work in the Task API?</q>
+<option>The queue decides when work runs; the scheduler retries it</option>
+<option correct>The scheduler decides when; the queue makes sure the work gets done, with retries and dead letters</option>
+<option>They do the same job, so you pick one of them</option>
+<option>The scheduler replaces the queue once you have cron</option>
+<explain><p>The scheduler starts work because of the time. The queue from the background jobs lesson makes the work reliable. Used together, the scheduler only has to add a job at the right moment.</p></explain>
+</question>
+
+<question id="undefined-job-throws" type="output">
+<q>What does this print?</q>
+<code file="undefined-job.js" browser="no">
+import { Scheduler } from "@zudojs/scheduler";
+
+const scheduler = new Scheduler();
+try {
+  scheduler.every("5m", "refresh-stats");
+  console.log("scheduled");
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option>scheduled</option>
+<option correct>InvalidJobError</option>
+<option>CronParseError</option>
+<option>InvalidDurationError</option>
+<explain><p>No job called <code>refresh-stats</code> was defined, so scheduling it throws at once. The lesson's rule: scheduling an id you never defined throws. The duration <code>"5m"</code> itself is fine.</p></explain>
+</question>
+
+<question id="duplicate-define" type="output">
+<q>What does this print?</q>
+<code file="duplicate-define.js" browser="no">
+import { Scheduler } from "@zudojs/scheduler";
+
+const scheduler = new Scheduler();
+scheduler.define({ id: "cleanup", name: "Cleanup", handler: () => {} });
+try {
+  scheduler.define({ id: "cleanup", name: "Cleanup again", handler: () => {} });
+  console.log("defined twice");
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option>defined twice</option>
+<option correct>SchedulerJobAlreadyExistsError</option>
+<option>InvalidScheduleError</option>
+<explain><p>A job id names one function. Defining the same id twice is refused, so two parts of the app cannot silently replace each other's job. One job can still have several schedules.</p></explain>
+</question>
+
+<question id="handle-state" type="output">
+<q>What does this print?</q>
+<code file="handle-state.js" browser="no">
+import { Scheduler } from "@zudojs/scheduler";
+
+const scheduler = new Scheduler();
+scheduler.define({ id: "refresh-stats", name: "Refresh", handler: () => {} });
+const handle = scheduler.every("5m", "refresh-stats");
+console.log(handle.state);
+await handle.pause();
+console.log(handle.state);
+await handle.cancel();
+console.log(handle.state);
+</code>
+<option correct>active
+paused
+cancelled</option>
+<option>idle
+paused
+cancelled</option>
+<option>active
+paused
+active</option>
+<option>active
+active
+cancelled</option>
+<explain><p><code>every</code> returns a handle, a remote control for that one schedule. It is <code>active</code> as soon as it is created, <code>pause()</code> makes it <code>paused</code>, and <code>cancel()</code> ends it for good.</p></explain>
+</question>
+
+<question id="stop-on-shutdown" type="choice">
+<q>Where should the Task API call <code>scheduler.stop()</code>?</q>
+<option>Nowhere; the scheduler stops when the process exits</option>
+<option>After every run, so timers do not pile up</option>
+<option correct>In the shutdown code, in the same place that stops the queue workers</option>
+<option>Only in tests</option>
+<explain><p><code>stop()</code> ends the timers and deals with running jobs. Call it on shutdown next to the queue workers, so a deploy does not cut a job off halfway without warning.</p></explain>
+</question>
+
+<question id="four-ways" type="choice">
+<q>You need "once, 30 seconds from now". Which call is it?</q>
+<option correct><code>scheduler.after("30s", id)</code></option>
+<option><code>scheduler.every("30s", id)</code></option>
+<option><code>scheduler.at("30s", id)</code></option>
+<option><code>scheduler.cron("30 * * * *", id)</code></option>
+<explain><p><code>after</code> runs once after a delay. <code>every</code> would repeat every 30 seconds, <code>at</code> takes a <code>Date</code>, and the cron expression means minute 30 of every hour.</p></explain>
+</question>
+
+<question id="parse-duration-values" type="output">
+<q>What does this print?</q>
+<code file="durations.js" browser="no">
+import { parseDuration } from "@zudojs/scheduler";
+
+console.log(parseDuration("90s"), parseDuration("1h30m"), parseDuration("2d"));
+</code>
+<option correct>90000 5400000 172800000</option>
+<option>90 5400 172800</option>
+<option>90000 3600000 172800000</option>
+<option>1.5 90 48</option>
+<explain><p>Durations are turned into milliseconds. 90 s is 90&nbsp;000 ms, 1 h 30 m is 90 minutes (5&nbsp;400&nbsp;000 ms), and 2 d is 48 hours (172&nbsp;800&nbsp;000 ms). Units can be combined, as in <code>1h30m</code>.</p></explain>
+</question>
+
+<question id="bare-number-duration" type="output">
+<q>What does this print?</q>
+<code file="bare-number.js" browser="no">
+import { InvalidDurationError, parseDuration } from "@zudojs/scheduler";
+
+try {
+  console.log(parseDuration("5"));
+} catch (error) {
+  console.log(error instanceof InvalidDurationError ? "refused" : "other error");
+}
+</code>
+<option>5</option>
+<option>5000</option>
+<option correct>refused</option>
+<option>other error</option>
+<explain><p>A bare number is rejected, because nobody can tell whether <code>5</code> means seconds or minutes. Always write the unit: <code>"5s"</code> or <code>"5m"</code>.</p></explain>
+</question>
+
+<question id="cron-field-order" type="choice">
+<q>What are the five fields of a cron expression, in order?</q>
+<option>second, minute, hour, day of month, month</option>
+<option>hour, minute, day of week, month, day of month</option>
+<option correct>minute, hour, day of month, month, day of week</option>
+<option>day of week, month, day of month, hour, minute</option>
+<explain><p>Minute comes first, which is why <code>0 9 * * 1-5</code> means "minute 0, hour 9". Getting minute and hour swapped is the most common cron mistake.</p></explain>
+</question>
+
+<question id="cron-read-weekday" type="choice">
+<q>What does <code>30 2 * * 1-5</code> mean?</q>
+<option correct>At 02:30, Monday to Friday</option>
+<option>Every 30 minutes on the 2nd of each month</option>
+<option>At 30:02 on weekdays</option>
+<option>At 02:30 on the 1st to the 5th of the month</option>
+<explain><p>Minute 30, hour 2, any day of the month, any month, day of week 1 to 5. Day of week counts 0 as Sunday, so 1-5 is Monday to Friday.</p></explain>
+</question>
+
+<question id="cron-write-every-15" type="choice">
+<q>Which expression runs at minutes 0, 15, 30 and 45 of every hour?</q>
+<option><code>15 * * * *</code></option>
+<option correct><code>*/15 * * * *</code></option>
+<option><code>* 15 * * *</code></option>
+<option><code>0-15 * * * *</code></option>
+<explain><p><code>*/15</code> means "every 15th". <code>15 * * * *</code> runs only at minute 15, <code>* 15 * * *</code> runs every minute from 15:00 to 15:59, and <code>0-15</code> runs at each of minutes 0 to 15.</p></explain>
+</question>
+
+<question id="cron-next-weekday" type="output">
+<q>Friday 2 October 2026, 12:00 UTC. What does this print?</q>
+<code file="next-weekday.js" browser="no">
+import { CronTrigger } from "@zudojs/scheduler";
+
+const trigger = new CronTrigger("0 9 * * 1-5", "UTC");
+const next = trigger.next(new Date("2026-10-02T12:00:00Z"));
+console.log(next.toISOString());
+</code>
+<option>2026-10-02T09:00:00.000Z</option>
+<option>2026-10-03T09:00:00.000Z</option>
+<option correct>2026-10-05T09:00:00.000Z</option>
+<option>2026-10-06T09:00:00.000Z</option>
+<explain><p>09:00 on Friday has already passed at 12:00. Saturday 3 and Sunday 4 are not in <code>1-5</code>, so the next run is Monday 5 October at 09:00.</p></explain>
+</question>
+
+<question id="cron-strictly-after" type="output">
+<q>What does this print?</q>
+<code file="strictly-after.js" browser="no">
+import { CronTrigger } from "@zudojs/scheduler";
+
+const trigger = new CronTrigger("*/15 * * * *", "UTC");
+console.log(trigger.next(new Date("2026-10-02T12:00:00Z")).toISOString());
+</code>
+<option>2026-10-02T12:00:00.000Z</option>
+<option correct>2026-10-02T12:15:00.000Z</option>
+<option>2026-10-02T12:01:00.000Z</option>
+<option>2026-10-02T12:30:00.000Z</option>
+<explain><p>12:00 matches <code>*/15</code>, but the next run is always <em>strictly after</em> the date you give. So the answer is 12:15.</p></explain>
+</question>
+
+<question id="cron-every-six-hours" type="output">
+<q>What does this print?</q>
+<code file="six-hours.js" browser="no">
+import { CronTrigger } from "@zudojs/scheduler";
+
+const trigger = new CronTrigger("0 */6 * * *", "UTC");
+let after = new Date("2026-10-02T12:00:00Z");
+const runs = [];
+for (let i = 0; i < 3; i++) {
+  after = trigger.next(after);
+  runs.push(after.toISOString().slice(11, 16));
+}
+console.log(runs.join(" "));
+</code>
+<option correct>18:00 00:00 06:00</option>
+<option>12:00 18:00 00:00</option>
+<option>18:00 24:00 06:00</option>
+<option>12:06 12:12 12:18</option>
+<explain><p><code>*/6</code> in the hour field is hours 0, 6, 12 and 18, at minute 0. 12:00 is not strictly after 12:00, so the runs are 18:00, then 00:00 of the next day, then 06:00.</p></explain>
+</question>
+
+<question id="cron-monthly" type="output">
+<q>What does this print?</q>
+<code file="monthly.js" browser="no">
+import { CronTrigger } from "@zudojs/scheduler";
+
+const trigger = new CronTrigger("@monthly", "UTC");
+console.log(trigger.next(new Date("2026-10-02T12:00:00Z")).toISOString().slice(0, 10));
+</code>
+<option>2026-10-01</option>
+<option correct>2026-11-01</option>
+<option>2026-10-03</option>
+<option>2026-11-02</option>
+<explain><p><code>@monthly</code> is a shortcut for <code>0 0 1 * *</code>: midnight on the 1st. 1 October has already passed, so the next one is 1 November.</p></explain>
+</question>
+
+<question id="cron-both-day-fields" type="output">
+<q>Both day fields are set. Starting from Friday 2 October 2026, what does this print?</q>
+<code file="friday-13.js" browser="no">
+import { CronTrigger } from "@zudojs/scheduler";
+
+const trigger = new CronTrigger("0 0 13 * 5", "UTC");
+let after = new Date("2026-10-02T12:00:00Z");
+const days = [];
+for (let i = 0; i < 3; i++) {
+  after = trigger.next(after);
+  days.push(after.toISOString().slice(0, 10));
+}
+console.log(days.join(" "));
+</code>
+<option correct>2026-10-09 2026-10-13 2026-10-16</option>
+<option>2026-11-13 2027-08-13 2028-10-13</option>
+<option>2026-10-13 2026-11-13 2026-12-13</option>
+<option>2026-10-09 2026-10-16 2026-10-23</option>
+<explain><p>When both day fields are set, cron runs when <em>either</em> matches. So this runs on every Friday (9, 16 October) and on the 13th (a Tuesday). It does not mean "Friday the 13th".</p></explain>
+</question>
+
+<question id="cron-parse-errors" type="output">
+<q>What does this print?</q>
+<code file="bad-cron.js" browser="no">
+import { Scheduler } from "@zudojs/scheduler";
+
+const scheduler = new Scheduler();
+scheduler.define({ id: "digest", name: "Digest", handler: () => {} });
+for (const expression of ["0 9 * *", "0 0 30 2 *"]) {
+  try {
+    scheduler.cron(expression, "digest", { timezone: "UTC" });
+    console.log("ok");
+  } catch (error) {
+    console.log(error.name);
+  }
+}
+</code>
+<option correct>CronParseError
+InvalidScheduleError</option>
+<option>CronParseError
+ok</option>
+<option>InvalidScheduleError
+CronParseError</option>
+<option>ok
+InvalidScheduleError</option>
+<explain><p>Four fields cannot be parsed, so the first fails with <code>CronParseError</code>. <code>0 0 30 2 *</code> is valid cron, but 30 February never comes, so the schedule is refused with <code>InvalidScheduleError</code>. Both fail when you write them, not at 2 a.m.</p></explain>
+</question>
+
+<question id="timezone-utc" type="choice">
+<q>Which time zone does the lesson recommend for cron schedules on servers, and why?</q>
+<option>The server's local zone, because it matches the office</option>
+<option correct>UTC, because it never jumps for daylight saving and is the same on every server</option>
+<option>The first user's zone</option>
+<option>Any named zone, such as <code>"Africa/Lagos"</code>, because the package converts it</option>
+<explain><p>Servers move between regions, and local time has daylight-saving gaps and repeats. UTC never jumps. For users who want 09:00 their time, store their zone and compute the UTC time.</p></explain>
+</question>
+
+<question id="dst-gap" type="choice">
+<q>A job is scheduled at 02:30 <strong>local</strong> time. On the night the clocks jump forward, what happens?</q>
+<option>It runs twice</option>
+<option correct>It is skipped, because 02:30 does not exist that night</option>
+<option>It runs at 02:30 UTC instead</option>
+<option>The scheduler throws</option>
+<explain><p>When clocks jump forward (say from 02:00 to 03:00), 02:30 local time never happens, so the job is skipped. When they jump back, 02:30 happens twice. UTC has neither problem.</p></explain>
+</question>
+
+<question id="named-zone-refused" type="output">
+<q>What does this print?</q>
+<code file="named-zone.js" browser="no">
+import { Scheduler } from "@zudojs/scheduler";
+
+const scheduler = new Scheduler();
+scheduler.define({ id: "digest", name: "Digest", handler: () => {} });
+try {
+  scheduler.cron("0 9 * * 1-5", "digest", { timezone: "Africa/Lagos" });
+  console.log("scheduled in Lagos time");
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option>scheduled in Lagos time</option>
+<option correct>InvalidScheduleError</option>
+<option>CronParseError</option>
+<explain><p>The package carries no time-zone database, so named zones are refused rather than silently ignored. It supports only <code>"UTC"</code> or the system local zone.</p></explain>
+</question>
+
+<question id="fixed-clock-why" type="choice">
+<q>Why does the lesson pass a <code>clock</code> to <code>new Scheduler({ clock })</code> in its examples?</q>
+<option>The scheduler cannot tell the time without one</option>
+<option correct>A fixed clock makes <code>nextRun()</code> give the same answer on every computer, so schedules can be tested without waiting</option>
+<option>It makes jobs run faster</option>
+<option>It sets the time zone</option>
+<explain><p>The clock is where the scheduler reads the current time. A clock that always says 12:00 on 2 October makes every answer predictable, which is how you test schedules.</p></explain>
+</question>
+
+<question id="clock-next-run" type="output">
+<q>What does this print?</q>
+<code file="clock.js" browser="no">
+import { Scheduler } from "@zudojs/scheduler";
+
+const now = new Date("2026-10-02T12:00:00Z");
+const scheduler = new Scheduler({
+  clock: { now: () => new Date(now), nowMs: () => now.getTime() },
+});
+scheduler.define({ id: "refresh-stats", name: "Refresh", handler: () => {} });
+const handle = scheduler.every("5m", "refresh-stats");
+console.log(handle.nextRun().toISOString());
+</code>
+<option>2026-10-02T12:00:00.000Z</option>
+<option correct>2026-10-02T12:05:00.000Z</option>
+<option>2026-10-02T12:00:05.000Z</option>
+<option>2026-10-02T17:00:00.000Z</option>
+<explain><p><code>every("5m")</code> first runs 5 minutes after now. The clock says 12:00, so the next run is 12:05.</p></explain>
+</question>
+
+<question id="resume-from-now" type="choice">
+<q>A schedule that runs every 5 minutes is paused for 15 minutes, then resumed. What happens?</q>
+<option>It fires three times at once to catch up</option>
+<option correct>It computes the next run from now; the missed fire times are not replayed</option>
+<option>It stays paused until the next day</option>
+<option>It throws, because fire times were missed</option>
+<explain><p>Resuming computes the next run from now. A schedule paused over three fire times does not fire three times at once.</p></explain>
+</question>
+
+<question id="cancel-next-run" type="output">
+<q>What does this print?</q>
+<code file="cancel.js" browser="no">
+import { Scheduler } from "@zudojs/scheduler";
+
+const scheduler = new Scheduler();
+scheduler.define({ id: "cleanup", name: "Cleanup", handler: () => {} });
+scheduler.define({ id: "stats", name: "Stats", handler: () => {} });
+const cleanup = scheduler.cron("30 2 * * *", "cleanup", { timezone: "UTC" });
+scheduler.every("5m", "stats");
+await cleanup.cancel();
+console.log(cleanup.nextRun(), scheduler.listSchedules().map((s) => s.jobId));
+</code>
+<option correct>undefined [ 'stats' ]</option>
+<option>undefined [ 'cleanup', 'stats' ]</option>
+<option>null [ 'stats' ]</option>
+<option>undefined []</option>
+<explain><p>A cancelled schedule has no next run, and <code>listSchedules()</code> no longer shows it. Only the <code>stats</code> schedule is left.</p></explain>
+</question>
+
+<question id="retry-attempts" type="choice">
+<q>A job has <code>retry: { attempts: 3 }</code>. It throws on attempts 1 and 2 and works on attempt 3. What does <code>onError</code> receive?</q>
+<option>Two errors, one per failed attempt</option>
+<option correct>Nothing, because the job succeeded in the end</option>
+<option>One error, for the first failure</option>
+<option>A <code>SchedulerJobTimeoutError</code></option>
+<explain><p><code>onError</code> hears only about what still fails after the last retry. Here the third attempt worked, so the run is recorded as <code>completed</code>.</p></explain>
+</question>
+
+<question id="timeout-signal" type="choice">
+<q>A job with <code>timeout: 50</code> runs for 150 ms. What must the handler do to really stop?</q>
+<option>Nothing; the scheduler kills the function</option>
+<option correct>Check <code>ctx.signal</code> and pass it on to <code>fetch</code> and database calls</option>
+<option>Catch <code>SchedulerJobTimeoutError</code> and return</option>
+<option>Call <code>scheduler.stop()</code></option>
+<explain><p>JavaScript cannot kill a running function. The scheduler aborts <code>ctx.signal</code> and reports a <code>SchedulerJobTimeoutError</code>, but the handler has to look at the signal and stop its own work.</p></explain>
+</question>
+
+<question id="on-error-alert" type="choice">
+<q>What should the Task API's <code>onError</code> callback do?</q>
+<option>Nothing; failures are in <code>getExecutions()</code> anyway</option>
+<option correct>Log the failure with the logger and raise an alert</option>
+<option>Restart the process</option>
+<option>Retry the job forever</option>
+<explain><p>A nightly job can fail every night for a month without anyone noticing. Sending failures to the logs and to an alert makes them visible. The history only holds the last 100 runs and lives in memory.</p></explain>
+</question>
+
+<question id="overlap-skip" type="choice">
+<q>A cleanup runs every 10 minutes but one run takes 25 minutes. Which <code>overlap</code> policy is usually right for it?</q>
+<option><code>"allow"</code>, so no work is ever lost</option>
+<option correct><code>"skip"</code>, because the running cleanup will do the work anyway</option>
+<option><code>"replace"</code>, to restart the cleanup every 10 minutes</option>
+<option>No policy; overlaps cannot happen</option>
+<explain><p><code>"skip"</code> drops fire times while a run is still going. <code>"allow"</code> (the default) lets runs pile up, each one slowing the database further. <code>"replace"</code> would abort the long cleanup every time, so it might never finish.</p></explain>
+</question>
+
+<question id="overlap-replace" type="choice">
+<q>Only the newest result matters: a slow run should be aborted and a fresh one started. Which policy fits?</q>
+<option><code>"skip"</code></option>
+<option><code>"queue"</code></option>
+<option correct><code>"replace"</code></option>
+<option><code>"allow"</code></option>
+<explain><p><code>"replace"</code> aborts the running one and starts fresh. <code>"queue"</code> would wait for the old run and then start one more.</p></explain>
+</question>
+
+<question id="restart-memory" type="choice">
+<q>The scheduler keeps schedules in memory. After a restart, how does the Task API get its weekday digest back?</q>
+<option>It is lost until someone adds it again by hand</option>
+<option>The scheduler reloads it from disk</option>
+<option correct>The digest is defined in code when the app starts, every time it starts</option>
+<option>From the queue's dead letters</option>
+<explain><p>Recurring schedules live in your code, which is the source of truth, so nothing is lost. Only schedules that <em>users</em> create, such as reminders, must be stored in the database.</p></explain>
+</question>
+
+<question id="user-reminders-stored" type="choice">
+<q>A user asks "remind me on 12 October at 08:00". Where should that reminder live so it survives a restart?</q>
+<option>Only in the scheduler, with <code>at(...)</code></option>
+<option correct>In the database; on start the app reads the rows and schedules them again</option>
+<option>In a global variable</option>
+<option>In <code>localStorage</code></option>
+<explain><p>A user-created reminder is data. Store it in the database and schedule it again on start. (A delayed job on a stored queue is often even simpler for one-off work.)</p></explain>
+</question>
+
+<question id="misfire-run-once" type="output">
+<q>The server was down at 08:00. The app restores the reminder at 12:00. What does this print?</q>
+<code file="misfire.js" browser="no">
+import { Scheduler } from "@zudojs/scheduler";
+
+const now = new Date("2026-10-02T12:00:00Z");
+const scheduler = new Scheduler({
+  clock: { now: () => new Date(now), nowMs: () => now.getTime() },
+});
+scheduler.define({ id: "task-reminder", name: "Reminder", handler: () => {} });
+const handle = scheduler.at(new Date("2026-10-02T08:00:00Z"), "task-reminder", {
+  misfire: "run-once",
+});
+console.log(handle.nextRun().toISOString());
+</code>
+<option>2026-10-02T08:00:00.000Z</option>
+<option correct>2026-10-02T12:00:00.000Z</option>
+<option>2026-10-03T08:00:00.000Z</option>
+<explain><p>The reminder's time already passed while the server was down. With <code>misfire: "run-once"</code> (the default) it runs once, right away, which is 12:00 on this clock.</p></explain>
+</question>
+
+<question id="many-instances" type="choice">
+<q>Three copies of the Task API run behind a load balancer, each with its own scheduler. What happens at 09:00 without any protection?</q>
+<option>Only the first copy sends the digest</option>
+<option correct>Each copy sends the digest, so users get it three times</option>
+<option>The schedulers notice each other and pick one</option>
+<option>None of them run</option>
+<explain><p>Each scheduler is independent and only knows its own process. You need one of the fixes: run it on one instance, take a shared lock, or only enqueue and let an idempotent worker drop duplicates.</p></explain>
+</question>
+
+<question id="dedup-key-limit" type="choice">
+<q>Why is a queue <code>deduplicationKey</code> alone not enough to stop a second digest?</q>
+<option>The queue ignores keys made from dates</option>
+<option correct>It only refuses a duplicate while the first job is still in the queue; after it finishes, the same key is accepted again</option>
+<option>Keys only work with Redis</option>
+<option>It refuses every job with a key</option>
+<explain><p>If server B fires a moment after server A's job has finished, the key no longer blocks it. An idempotent processor, backed by a unique column in the database, protects you no matter when the duplicate arrives.</p></explain>
+</question>
+
+<question id="day-from-scheduled-at" type="choice">
+<q>In the enqueue pattern, why is the day taken from <code>ctx.scheduledAt</code> rather than from <code>new Date()</code>?</q>
+<option><code>new Date()</code> does not work in handlers</option>
+<option correct><code>scheduledAt</code> is when the run was due, so two servers that fire a few ms apart get the same day</option>
+<option><code>scheduledAt</code> is always in local time</option>
+<option>It is shorter to type</option>
+<explain><p>The day must be the same for both servers so the duplicate is recognised. The time the run was <em>due</em> is the same on both; the real clock might already be past midnight on one of them.</p></explain>
+</question>
+
+<question id="checklist-handler-short" type="choice">
+<q>Which item belongs on the production checklist for scheduled work?</q>
+<option>Write cron expressions in the server's local time</option>
+<option>Use <code>overlap: "allow"</code> for long jobs</option>
+<option correct>Keep handlers short and put heavy work on a queue</option>
+<option>Never call <code>stop()</code>, so runs are not interrupted</option>
+<explain><p>A short handler that only enqueues gives the real work the queue's retries and dead letters. The checklist also says: UTC, <code>overlap: "skip"</code>, timeouts with <code>ctx.signal</code>, and <code>stop()</code> on shutdown.</p></explain>
+</question>
+
+<question id="code-cron-daily" type="code" file="daily-next.js">
+<q><p>For a daily cron rule <code>M H * * *</code> in UTC, finish <code>nextDaily(minute, hour, from)</code>: return the next run strictly after <code>from</code> as a <code>Date</code>. Build today's run time with <code>Date.UTC</code>; if it is not after <code>from</code>, add one day. The program should print <code>2026-10-02T23:45:00.000Z</code> and then <code>2026-10-03T02:30:00.000Z</code>.</p></q>
+<starter>
+function nextDaily(minute, hour, from) {
+  // your code here
+}
+
+const from = new Date("2026-10-02T12:00:00Z");
+console.log(nextDaily(45, 23, from).toISOString());
+console.log(nextDaily(30, 2, from).toISOString());
+</starter>
+<solution>
+function nextDaily(minute, hour, from) {
+  const today = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate(), hour, minute));
+  if (today.getTime() <= from.getTime()) {
+    return new Date(today.getTime() + 24 * 60 * 60 * 1000);
+  }
+  return today;
+}
+
+const from = new Date("2026-10-02T12:00:00Z");
+console.log(nextDaily(45, 23, from).toISOString());
+console.log(nextDaily(30, 2, from).toISOString());
+</solution>
+<expected>
+2026-10-02T23:45:00.000Z
+2026-10-03T02:30:00.000Z
+</expected>
+<explain><p>23:45 today is still ahead of 12:00, so it is the answer. 02:30 today has passed, so the run moves to tomorrow. Use <code>&lt;=</code>: the next run is always strictly after <code>from</code>. Working in UTC means no daylight-saving surprises.</p></explain>
+</question>
+
+<question id="code-duration" type="code" file="duration.js">
+<q><p>Write a small <code>toMs(text)</code> like the scheduler's <code>parseDuration</code>, for one number and one unit: <code>ms</code>, <code>s</code>, <code>m</code> or <code>h</code>. Return the milliseconds. For text without a known unit (such as <code>"5"</code>), throw an <code>Error</code> with the message <code>no unit</code>. The program should print <code>250 30000 300000 3600000</code> and then <code>no unit</code>.</p></q>
+<starter>
+function toMs(text) {
+  // your code here
+}
+
+console.log(toMs("250ms"), toMs("30s"), toMs("5m"), toMs("1h"));
+try {
+  toMs("5");
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+function toMs(text) {
+  const units = { ms: 1, s: 1000, m: 60000, h: 3600000 };
+  const match = /^(\d+)(ms|s|m|h)$/.exec(text);
+  if (!match) throw new Error("no unit");
+  return Number(match[1]) * units[match[2]];
+}
+
+console.log(toMs("250ms"), toMs("30s"), toMs("5m"), toMs("1h"));
+try {
+  toMs("5");
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>
+250 30000 300000 3600000
+no unit
+</expected>
+<explain><p>A regular expression reads the number and the unit, and a lookup table turns the unit into a factor. Put <code>ms</code> before <code>m</code> and <code>s</code> in the pattern (or anchor it with <code>$</code>) so <code>"250ms"</code> is not read as minutes. A missing unit is an error, never a guess.</p></explain>
+</question>
+
+<question id="code-cron-field" type="code" file="cron-field.js">
+<q><p>Finish <code>matches(field, value)</code> for one cron field. Support <code>*</code> (any value), <code>*/N</code> (values divisible by N), <code>A-B</code> (a range) and a plain number. The program should print <code>true true false true false</code>.</p></q>
+<starter>
+function matches(field, value) {
+  // your code here
+}
+
+console.log(
+  matches("*", 7),
+  matches("*/15", 45),
+  matches("*/15", 20),
+  matches("1-5", 3),
+  matches("9", 10),
+);
+</starter>
+<solution>
+function matches(field, value) {
+  if (field === "*") return true;
+  if (field.startsWith("*/")) return value % Number(field.slice(2)) === 0;
+  if (field.includes("-")) {
+    const [low, high] = field.split("-").map(Number);
+    return value >= low && value <= high;
+  }
+  return Number(field) === value;
+}
+
+console.log(
+  matches("*", 7),
+  matches("*/15", 45),
+  matches("*/15", 20),
+  matches("1-5", 3),
+  matches("9", 10),
+);
+</solution>
+<expected>true true false true false</expected>
+<explain><p>Check the special forms first: <code>*</code>, then <code>*/N</code> with the remainder operator, then a range. What is left is a single number. A real cron parser also handles lists like <code>1,15</code> and names like <code>mon</code>.</p></explain>
+</question>
+
+<question id="code-overlap-skip" type="code" file="overlap-skip.js">
+<q><p>Simulate <code>overlap: "skip"</code> without timers. <code>fireTimes</code> are the minutes a job fires, and every run lasts <code>duration</code> minutes. Finish <code>runStarts</code> so it returns the fire times that really start a run: skip a fire time while the previous run is still going (a run that started at 0 with duration 25 is busy until minute 25). The program should print <code>[ 0, 30, 60 ]</code>.</p></q>
+<starter>
+function runStarts(fireTimes, duration) {
+  // your code here
+}
+
+console.log(runStarts([0, 10, 20, 30, 40, 50, 60], 25));
+</starter>
+<solution>
+function runStarts(fireTimes, duration) {
+  const starts = [];
+  let busyUntil = -Infinity;
+  for (const time of fireTimes) {
+    if (time < busyUntil) continue;
+    starts.push(time);
+    busyUntil = time + duration;
+  }
+  return starts;
+}
+
+console.log(runStarts([0, 10, 20, 30, 40, 50, 60], 25));
+</solution>
+<expected>[ 0, 30, 60 ]</expected>
+<explain><p>Remember when the current run ends. A fire time before that is dropped; otherwise it starts a run and moves <code>busyUntil</code>. The run at 0 blocks 10 and 20, the run at 30 blocks 40 and 50. With <code>"allow"</code>, all seven would start and pile up.</p></explain>
+</question>
+
+<question id="code-idempotent-digest" type="code" file="idempotent-digest.js">
+<q><p>Two servers both fire the digest job. Finish <code>handleDigest(scheduledAt)</code> so the digest is sent at most once per day. Take the day from <code>scheduledAt</code> (the first 10 characters of its ISO string), remember sent days in <code>sentDays</code>, and return <code>"sent"</code> or <code>"skipped"</code>. The program should print <code>sent skipped sent</code>.</p></q>
+<starter>
+const sentDays = new Set();
+
+function handleDigest(scheduledAt) {
+  // your code here
+}
+
+const monday = new Date("2026-10-05T09:00:00Z");
+const tuesday = new Date("2026-10-06T09:00:00Z");
+console.log(handleDigest(monday), handleDigest(monday), handleDigest(tuesday));
+</starter>
+<solution>
+const sentDays = new Set();
+
+function handleDigest(scheduledAt) {
+  const day = scheduledAt.toISOString().slice(0, 10);
+  if (sentDays.has(day)) return "skipped";
+  sentDays.add(day);
+  return "sent";
+}
+
+const monday = new Date("2026-10-05T09:00:00Z");
+const tuesday = new Date("2026-10-06T09:00:00Z");
+console.log(handleDigest(monday), handleDigest(monday), handleDigest(tuesday));
+</solution>
+<expected>sent skipped sent</expected>
+<explain><p>The second Monday call is the duplicate from the other server and does nothing. Tuesday is a new day. In the real Task API, <code>sentDays</code> is a table with a unique <code>day</code> column, so the database refuses the second insert even across machines.</p></explain>
+</question>
+
+<question id="code-misfire" type="code" file="misfire.js">
+<q><p>On start, the app restores stored reminders. Finish <code>restore(row, now, policy)</code>: if the reminder's time is still in the future, return its ISO time. If it already passed, return <code>now</code> as an ISO string for policy <code>"run-once"</code>, or <code>"skipped"</code> for policy <code>"skip"</code>. The program should print the three lines shown in the comments.</p></q>
+<starter>
+function restore(row, now, policy) {
+  // your code here
+}
+
+const now = new Date("2026-10-02T12:00:00Z");
+console.log(restore({ remindAt: "2026-10-02T08:00:00Z" }, now, "run-once")); // 2026-10-02T12:00:00.000Z
+console.log(restore({ remindAt: "2026-10-02T08:00:00Z" }, now, "skip")); // skipped
+console.log(restore({ remindAt: "2026-10-12T08:00:00Z" }, now, "skip")); // 2026-10-12T08:00:00.000Z
+</starter>
+<solution>
+function restore(row, now, policy) {
+  const due = new Date(row.remindAt);
+  if (due.getTime() > now.getTime()) return due.toISOString();
+  return policy === "run-once" ? now.toISOString() : "skipped";
+}
+
+const now = new Date("2026-10-02T12:00:00Z");
+console.log(restore({ remindAt: "2026-10-02T08:00:00Z" }, now, "run-once")); // 2026-10-02T12:00:00.000Z
+console.log(restore({ remindAt: "2026-10-02T08:00:00Z" }, now, "skip")); // skipped
+console.log(restore({ remindAt: "2026-10-12T08:00:00Z" }, now, "skip")); // 2026-10-12T08:00:00.000Z
+</solution>
+<expected>
+2026-10-02T12:00:00.000Z
+skipped
+2026-10-12T08:00:00.000Z
+</expected>
+<explain><p>This is the misfire rule: a time in the future is kept; a missed time runs once right away with <code>"run-once"</code>, or is refused with <code>"skip"</code>. Comparing <code>getTime()</code> values compares instants, whatever the zone.</p></explain>
+</question>
+
+<question id="cron-weekend-names" type="output">
+<q>Day names work in the day-of-week field. Starting from Friday 2 October 2026, what does this print?</q>
+<code file="weekend.js" browser="no">
+import { CronTrigger } from "@zudojs/scheduler";
+
+const trigger = new CronTrigger("0 9 * * sat,sun", "UTC");
+let after = new Date("2026-10-02T12:00:00Z");
+const days = [];
+for (let i = 0; i < 3; i++) {
+  after = trigger.next(after);
+  days.push(after.toISOString().slice(0, 10));
+}
+console.log(days.join(" "));
+</code>
+<option correct>2026-10-03 2026-10-04 2026-10-10</option>
+<option>2026-10-03 2026-10-10 2026-10-17</option>
+<option>2026-10-05 2026-10-06 2026-10-07</option>
+<option>2026-10-02 2026-10-03 2026-10-04</option>
+<explain><p><code>sat,sun</code> is a list: Saturday or Sunday. The next weekend days after Friday are Saturday 3 and Sunday 4, then Saturday 10 October.</p></explain>
+</question>
+
+<question id="resume-next-run" type="output">
+<q>The clock is fixed at 12:00. What does this print?</q>
+<code file="resume.js" browser="no">
+import { Scheduler } from "@zudojs/scheduler";
+
+const now = new Date("2026-10-02T12:00:00Z");
+const scheduler = new Scheduler({
+  clock: { now: () => new Date(now), nowMs: () => now.getTime() },
+});
+scheduler.define({ id: "refresh-stats", name: "Refresh", handler: () => {} });
+const stats = scheduler.every("10m", "refresh-stats");
+await stats.pause();
+await stats.resume();
+console.log(stats.state, stats.nextRun().toISOString().slice(11, 16));
+</code>
+<option correct>active 12:10</option>
+<option>paused 12:10</option>
+<option>active 12:00</option>
+<option>active 12:20</option>
+<explain><p>After <code>resume()</code> the schedule is <code>active</code> again, and the next run is computed from now: 10 minutes after 12:00. Missed fire times are never replayed in a burst.</p></explain>
+</question>
+
+<question id="ctx-data-run" type="output">
+<q>What does this print?</q>
+<code file="ctx-data.js" browser="no">
+import { Scheduler } from "@zudojs/scheduler";
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const scheduler = new Scheduler();
+scheduler.define({
+  id: "sync",
+  name: "Sync",
+  handler: (ctx) => console.log(ctx.jobId, ctx.data.source),
+});
+scheduler.after("10ms", "sync", { data: { source: "billing" } });
+scheduler.start();
+await wait(100);
+await scheduler.stop();
+</code>
+<option correct>sync billing</option>
+<option>sync undefined</option>
+<option>Sync billing</option>
+<option>billing sync</option>
+<explain><p>The <code>data</code> passed when scheduling reaches the handler as <code>ctx.data</code>, and <code>ctx.jobId</code> is the job's id (<code>sync</code>), not its human name (<code>Sync</code>).</p></explain>
+</question>

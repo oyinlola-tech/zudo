@@ -1,0 +1,928 @@
+<question id="why-path-join" type="choice">
+<q>Why should you build file paths with <code>path.join</code> instead of adding strings with <code>+</code>?</q>
+<option correct>It uses exactly one separator, understands <code>..</code>, and uses the right separator for the system</option>
+<option>It checks that the file really exists on the disk</option>
+<option>It is faster, because <code>+</code> copies the strings twice</option>
+<option>It turns the path into an absolute path that starts at the root</option>
+<explain><p><code>path.join</code> follows the path rules of the system the program runs on: one separator between parts, <code>..</code> handled, <code>\</code> on Windows. It does not touch the disk, and it keeps a relative path relative (that is <code>path.resolve</code>'s job).</p></explain>
+</question>
+
+<question id="join-vs-plus" type="output">
+<q>What does this print on macOS or Linux?</q>
+<code file="join.js" browser="no">
+import path from "node:path";
+
+console.log(path.join("data/", "/tasks.json"));
+console.log("data/" + "/tasks.json");
+</code>
+<option correct>data/tasks.json
+data//tasks.json</option>
+<option>data//tasks.json
+data//tasks.json</option>
+<option>data/tasks.json
+data/tasks.json</option>
+<option>/tasks.json
+data//tasks.json</option>
+<explain><p><code>path.join</code> removes the extra separator. Adding the strings keeps both slashes, which is exactly the bug the lesson warns about.</p></explain>
+</question>
+
+<question id="join-dotdot" type="output">
+<q>What does this print on macOS or Linux?</q>
+<code file="dotdot.js" browser="no">
+import path from "node:path";
+
+console.log(path.join("data", "..", "notes", "today.txt"));
+console.log(path.join("a", "b", "..", "..", "c"));
+</code>
+<option correct>notes/today.txt
+c</option>
+<option>data/../notes/today.txt
+a/b/../../c</option>
+<option>data/notes/today.txt
+a/c</option>
+<option>notes/today.txt
+a/c</option>
+<explain><p><code>..</code> means "the folder above", and <code>path.join</code> applies it. Each <code>..</code> cancels the part before it, so <code>a/b/../../c</code> is just <code>c</code>.</p></explain>
+</question>
+
+<question id="ext-base-dir" type="output">
+<q>What does this print?</q>
+<code file="parts.js" browser="no">
+import path from "node:path";
+
+const file = "/home/ada/backup.tar.gz";
+console.log(path.extname(file));
+console.log(path.basename(file));
+console.log(path.dirname(file));
+</code>
+<option correct>.gz
+backup.tar.gz
+/home/ada</option>
+<option>.tar.gz
+backup.tar.gz
+/home/ada</option>
+<option>.gz
+backup
+/home/ada/</option>
+<option>gz
+backup.tar.gz
+home/ada</option>
+<explain><p><code>extname</code> only gives the <em>last</em> extension, with its dot. <code>basename</code> is the whole file name, and <code>dirname</code> is the folder it is in, without a slash at the end.</p></explain>
+</question>
+
+<question id="extname-none" type="output">
+<q>What does this print?</q>
+<code file="ext-none.js" browser="no">
+import path from "node:path";
+
+console.log(JSON.stringify(path.extname("README")));
+console.log(JSON.stringify(path.extname("notes.md")));
+</code>
+<option correct>""
+".md"</option>
+<option>"README"
+".md"</option>
+<option>undefined
+".md"</option>
+<option>""
+"md"</option>
+<explain><p>A file name without a dot has no extension, so <code>extname</code> returns an empty string (not <code>undefined</code>). When there is one, the dot is included.</p></explain>
+</question>
+
+<question id="resolve-absolute" type="choice">
+<q>What does <code>path.resolve("tasks.json")</code> return?</q>
+<option correct>An absolute path: the current working directory followed by <code>tasks.json</code></option>
+<option>The path of the file next to the script that is running</option>
+<option>The contents of <code>tasks.json</code></option>
+<option><code>"tasks.json"</code>, unchanged</option>
+<explain><p><code>path.resolve</code> builds an absolute path from the <strong>current working directory</strong>, the folder the program was started from. That is not always the folder your script is in.</p></explain>
+</question>
+
+<question id="import-meta-dirname" type="choice">
+<q>Your script needs <code>data/tasks.json</code>, which sits next to the script. It must work whatever folder the program is started from. Which path should you use?</q>
+<option correct><code>path.join(import.meta.dirname, "data", "tasks.json")</code></option>
+<option><code>path.resolve("data", "tasks.json")</code></option>
+<option><code>"./data/tasks.json"</code></option>
+<option><code>process.cwd() + "/data/tasks.json"</code></option>
+<explain><p><code>import.meta.dirname</code> is the folder of the current file. The other three all start from the working directory, so they break when you run the program from another folder.</p></explain>
+</question>
+
+<question id="resolve-absolute-name" type="output">
+<q>A user asks for a file called <code>/etc/passwd</code>. What does this print on Linux?</q>
+<code file="resolve.js" browser="no">
+import path from "node:path";
+
+const uploads = "/srv/uploads";
+console.log(path.resolve(uploads, "photo.png"));
+console.log(path.resolve(uploads, "../secret.txt"));
+console.log(path.resolve(uploads, "/etc/passwd"));
+</code>
+<option correct>/srv/uploads/photo.png
+/srv/secret.txt
+/etc/passwd</option>
+<option>/srv/uploads/photo.png
+/srv/uploads/secret.txt
+/srv/uploads/etc/passwd</option>
+<option>/srv/uploads/photo.png
+/srv/secret.txt
+/srv/uploads/etc/passwd</option>
+<option>/srv/uploads/photo.png
+/srv/uploads/../secret.txt
+/etc/passwd</option>
+<explain><p><code>..</code> climbs out of the folder, and an absolute name like <code>/etc/passwd</code> ignores the folder completely. That is why you must check the resolved path, not the name the user typed.</p></explain>
+</question>
+
+<question id="traversal-what" type="choice">
+<q>An API serves files with <code>path.join("uploads", name)</code>, where <code>name</code> comes from the URL. What is the danger?</q>
+<option correct>A name like <code>../.env</code> walks out of the uploads folder and can leak secret files (path traversal)</option>
+<option>A long name makes the server run out of memory</option>
+<option>The name may contain spaces, which <code>path.join</code> cannot handle</option>
+<option>There is no danger, because <code>path.join</code> only works inside the current folder</option>
+<explain><p>This attack is called <strong>path traversal</strong>. <code>path.join</code> happily follows <code>..</code>, so it can reach any file the server can read, such as keys and passwords.</p></explain>
+</question>
+
+<question id="safe-path-check" type="choice">
+<q>You have <code>const full = path.resolve(uploads, name)</code>, where <code>uploads</code> is an absolute path. Which check correctly refuses files outside the uploads folder?</q>
+<option correct><code>if (!full.startsWith(uploads + path.sep)) throw …</code></option>
+<option><code>if (!full.startsWith(uploads)) throw …</code></option>
+<option><code>if (name.startsWith("..")) throw …</code></option>
+<option><code>if (!path.isAbsolute(full)) throw …</code></option>
+<explain><p>Check the <em>resolved</em> path, and include the separator. Without <code>path.sep</code>, a neighbour folder such as <code>uploads-old</code> passes. Checking only the name misses <code>/etc/passwd</code> and <code>a/../../x</code>.</p></explain>
+</question>
+
+<question id="safe-path-neighbour" type="output">
+<q>What does this print on Linux?</q>
+<code file="neighbour.js" browser="no">
+import path from "node:path";
+
+const uploads = "/srv/uploads";
+const full = path.resolve(uploads, "../uploads-old/keys.txt");
+console.log(full);
+console.log(full.startsWith(uploads));
+console.log(full.startsWith(uploads + path.sep));
+</code>
+<option correct>/srv/uploads-old/keys.txt
+true
+false</option>
+<option>/srv/uploads-old/keys.txt
+false
+false</option>
+<option>/srv/uploads/uploads-old/keys.txt
+true
+true</option>
+<option>/srv/uploads-old/keys.txt
+true
+true</option>
+<explain><p><code>"/srv/uploads-old/..."</code> does start with the text <code>"/srv/uploads"</code>, so the short check lets it through. Adding <code>path.sep</code> (<code>/</code>) makes the check mean "inside the folder".</p></explain>
+</question>
+
+<question id="fs-write-append-read" type="output">
+<q>What does this print? (It works in a new temporary folder.)</q>
+<code file="files.js" browser="no">
+import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+const dir = await mkdtemp(path.join(os.tmpdir(), "quiz-"));
+const file = path.join(dir, "list.txt");
+
+await writeFile(file, "Buy milk\n");
+await appendFile(file, "Call Ada\n");
+await writeFile(file, "Write report\n");
+await appendFile(file, "Pay rent\n");
+
+console.log((await readFile(file, "utf8")).trim());
+await rm(dir, { recursive: true });
+</code>
+<option correct>Write report
+Pay rent</option>
+<option>Buy milk
+Call Ada
+Write report
+Pay rent</option>
+<option>Pay rent</option>
+<option>Buy milk
+Call Ada
+Pay rent</option>
+<explain><p><code>writeFile</code> replaces everything in the file, so the second <code>writeFile</code> throws away the first two lines. <code>appendFile</code> adds to the end.</p></explain>
+</question>
+
+<question id="writefile-vs-append" type="choice">
+<q>You want to add one line to the end of a log file and keep what is already there. Which function do you use?</q>
+<option correct><code>appendFile</code></option>
+<option><code>writeFile</code></option>
+<option><code>readFile</code> with <code>"utf8"</code></option>
+<option><code>mkdir</code> with <code>{ recursive: true }</code></option>
+<explain><p><code>appendFile</code> adds to the end (and creates the file if it is missing). <code>writeFile</code> starts the file over, which would delete the old log lines.</p></explain>
+</question>
+
+<question id="readfile-buffer" type="output">
+<q>What does this print?</q>
+<code file="buffer.js" browser="no">
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+const dir = await mkdtemp(path.join(os.tmpdir(), "quiz-"));
+const file = path.join(dir, "hi.txt");
+await writeFile(file, "hi");
+
+console.log(typeof (await readFile(file, "utf8")));
+console.log(Buffer.isBuffer(await readFile(file)));
+await rm(dir, { recursive: true });
+</code>
+<option correct>string
+true</option>
+<option>string
+false</option>
+<option>object
+true</option>
+<option>string
+string</option>
+<explain><p>With <code>"utf8"</code> you get text. Without it, <code>readFile</code> gives you the raw bytes as a <code>Buffer</code>.</p></explain>
+</question>
+
+<question id="mkdir-recursive" type="choice">
+<q>What does <code>{ recursive: true }</code> do in <code>await mkdir("data/2026/logs", { recursive: true })</code>?</q>
+<option correct>It also creates the missing parent folders, and does not fail if the folder already exists</option>
+<option>It creates the folder and copies every file from the current folder into it</option>
+<option>It deletes the folder first, then creates it empty</option>
+<option>It creates the folder in every subfolder of the current folder</option>
+<explain><p>With <code>recursive</code>, <code>mkdir</code> makes <code>data</code>, <code>data/2026</code> and <code>data/2026/logs</code> as needed, and is fine when they are already there. That makes it safe to call every time before writing.</p></explain>
+</question>
+
+<question id="mkdir-eexist" type="output">
+<q>What does this print?</q>
+<code file="eexist.js" browser="no">
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+const dir = await mkdtemp(path.join(os.tmpdir(), "quiz-"));
+const notes = path.join(dir, "notes");
+
+await mkdir(notes, { recursive: true });
+await mkdir(notes, { recursive: true });
+console.log("second recursive mkdir: ok");
+
+try {
+  await mkdir(notes);
+} catch (error) {
+  console.log(error.code);
+}
+await rm(dir, { recursive: true });
+</code>
+<option correct>second recursive mkdir: ok
+EEXIST</option>
+<option>EEXIST</option>
+<option>second recursive mkdir: ok
+ENOENT</option>
+<option>second recursive mkdir: ok</option>
+<explain><p><code>recursive</code> accepts an existing folder. Without it, <code>mkdir</code> throws an error whose <code>code</code> is <code>EEXIST</code>: "already exists".</p></explain>
+</question>
+
+<question id="readdir-stat" type="output">
+<q>What does this print?</q>
+<code file="stat.js" browser="no">
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+const dir = await mkdtemp(path.join(os.tmpdir(), "quiz-"));
+await mkdir(path.join(dir, "old"));
+await writeFile(path.join(dir, "b.txt"), "Buy milk\n");
+await writeFile(path.join(dir, "a.md"), "");
+
+console.log((await readdir(dir)).sort());
+const info = await stat(path.join(dir, "b.txt"));
+console.log(info.size, info.isFile(), info.isDirectory());
+await rm(dir, { recursive: true });
+</code>
+<option correct>[ 'a.md', 'b.txt', 'old' ]
+9 true false</option>
+<option>[ 'a.md', 'b.txt' ]
+9 true false</option>
+<option>[ 'a.md', 'b.txt', 'old' ]
+8 true false</option>
+<option>[ 'a.md', 'b.txt', 'old' ]
+9 false true</option>
+<explain><p><code>readdir</code> lists folders as well as files. <code>stat</code> gives the size in bytes: <code>"Buy milk\n"</code> is 9 bytes, because the line break counts too.</p></explain>
+</question>
+
+<question id="sync-in-server" type="choice">
+<q>Why should a server not call <code>readFileSync</code> while it handles a request?</q>
+<option correct>It blocks the event loop until the disk answers, so every other user has to wait</option>
+<option>It cannot read files bigger than 1 KB</option>
+<option>It always returns a <code>Buffer</code>, never text</option>
+<option>It only works in the browser</option>
+<explain><p>Sync functions stop the whole program while they wait. That is fine once at start-up, but in a request handler it freezes all other requests. Use <code>node:fs/promises</code> and <code>await</code>.</p></explain>
+</question>
+
+<question id="enoent-code" type="output">
+<q>What does this print?</q>
+<code file="enoent.js" browser="no">
+import { readFile } from "node:fs/promises";
+
+try {
+  await readFile("no-such-file-7c1e.txt", "utf8");
+  console.log("read it");
+} catch (error) {
+  console.log(error.code);
+  console.log(error.message);
+}
+</code>
+<option correct>ENOENT
+ENOENT: no such file or directory, open 'no-such-file-7c1e.txt'</option>
+<option>ENOENT
+File not found</option>
+<option>EEXIST
+ENOENT: no such file or directory, open 'no-such-file-7c1e.txt'</option>
+<option>read it</option>
+<explain><p>A missing file throws. The error's <code>code</code> is <code>ENOENT</code> ("error: no entry"), and the message names the file. Your code should check <code>error.code</code>, not the message text.</p></explain>
+</question>
+
+<question id="enoent-handle" type="choice">
+<q>Which <code>catch</code> block is right for reading a settings file that may not exist yet?</q>
+<option correct><code>if (error.code === "ENOENT") return defaults; throw error;</code></option>
+<option><code>return defaults;</code> for every error</option>
+<option><code>console.log(error); return null;</code></option>
+<option><code>if (error.message.includes("no such")) return defaults;</code> and nothing else</option>
+<explain><p>Handle only the error you expect, and throw the rest again. Returning defaults for every error hides real problems like broken JSON or <code>EACCES</code> (no permission).</p></explain>
+</question>
+
+<question id="settings-default" type="output">
+<q>What does this print?</q>
+<code file="settings.js" browser="no">
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+async function readSettings(file) {
+  try {
+    return JSON.parse(await readFile(file, "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT") return { theme: "light" };
+    throw error;
+  }
+}
+
+const dir = await mkdtemp(path.join(os.tmpdir(), "quiz-"));
+const file = path.join(dir, "settings.json");
+
+console.log((await readSettings(file)).theme);
+await writeFile(file, "{ broken");
+try {
+  console.log((await readSettings(file)).theme);
+} catch (error) {
+  console.log(error.name);
+}
+await rm(dir, { recursive: true });
+</code>
+<option correct>light
+SyntaxError</option>
+<option>light
+light</option>
+<option>light
+ENOENT</option>
+<option>SyntaxError
+SyntaxError</option>
+<explain><p>The first call finds no file, so it returns the defaults. The second file exists but holds broken JSON: that is not <code>ENOENT</code>, so the <code>SyntaxError</code> is thrown again instead of being hidden.</p></explain>
+</question>
+
+<question id="eisdir" type="output">
+<q>What does this print?</q>
+<code file="eisdir.js" browser="no">
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+const dir = await mkdtemp(path.join(os.tmpdir(), "quiz-"));
+try {
+  await readFile(dir, "utf8");
+} catch (error) {
+  console.log(error.code);
+}
+await rm(dir, { recursive: true });
+</code>
+<option correct>EISDIR</option>
+<option>ENOENT</option>
+<option>EEXIST</option>
+<option>EACCES</option>
+<explain><p>You tried to read a folder as if it were a file. The code <code>EISDIR</code> means "this is a directory".</p></explain>
+</question>
+
+<question id="os-what" type="choice">
+<q>A server wants to start one worker per processor core. Where does it find the number of cores?</q>
+<option correct><code>os.availableParallelism()</code> from <code>node:os</code></option>
+<option><code>process.argv.length</code></option>
+<option><code>path.sep</code> from <code>node:path</code></option>
+<option><code>crypto.randomUUID()</code> from <code>node:crypto</code></option>
+<explain><p><code>node:os</code> describes the machine: platform, processor, memory and line ending. <code>availableParallelism()</code> says how many things the processor can run at once.</p></explain>
+</question>
+
+<question id="os-platform" type="choice">
+<q>What does <code>os.platform()</code> return on a Mac?</q>
+<option correct><code>"darwin"</code></option>
+<option><code>"macos"</code></option>
+<option><code>"win32"</code></option>
+<option><code>"linux"</code></option>
+<explain><p>macOS is built on a system called Darwin, so Node.js says <code>"darwin"</code>. Windows is <code>"win32"</code> (even on 64-bit), and Linux is <code>"linux"</code>.</p></explain>
+</question>
+
+<question id="token-random" type="choice">
+<q>You need a token for a password-reset link. Which is safe?</q>
+<option correct><code>randomBytes(32).toString("hex")</code> from <code>node:crypto</code></option>
+<option><code>Math.random().toString(36).slice(2)</code></option>
+<option><code>String(Date.now())</code></option>
+<option><code>createHash("sha256").update(email).digest("hex")</code></option>
+<explain><p>Tokens must be unguessable. <code>Math.random()</code> can be predicted, a time can be guessed, and a hash of the e-mail is the same every time for anyone who knows the e-mail. <code>node:crypto</code> uses the system's secure random source.</p></explain>
+</question>
+
+<question id="random-lengths" type="output">
+<q>What does this print?</q>
+<code file="lengths.js" browser="no">
+import { randomBytes, randomUUID } from "node:crypto";
+
+console.log(randomUUID().length);
+console.log(randomBytes(16).toString("hex").length);
+console.log(randomUUID() === randomUUID());
+</code>
+<option correct>36
+32
+false</option>
+<option>32
+16
+false</option>
+<option>36
+16
+true</option>
+<option>36
+32
+true</option>
+<explain><p>A UUID is 36 characters (32 hex digits and 4 dashes). Each byte becomes 2 hex characters, so 16 bytes give 32. Every call gives a new random value.</p></explain>
+</question>
+
+<question id="hash-props" type="output">
+<q>What does this print?</q>
+<code file="hash.js" browser="no">
+import { createHash } from "node:crypto";
+
+const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+
+console.log(sha256("Buy milk") === sha256("Buy milk"));
+console.log(sha256("Buy milk") === sha256("Buy milk!"));
+console.log(sha256("a").length, sha256("a much longer piece of text").length);
+</code>
+<option correct>true
+false
+64 64</option>
+<option>false
+false
+64 64</option>
+<option>true
+false
+1 27</option>
+<option>true
+true
+64 64</option>
+<explain><p>The same input always gives the same hash, and a small change gives a different one. The length is fixed: SHA-256 in hex is always 64 characters, however long the input is.</p></explain>
+</question>
+
+<question id="hash-meaning" type="choice">
+<q>Which sentence about a hash like SHA-256 is true?</q>
+<option correct>It is a fixed-length fingerprint of the data, and you cannot turn it back into the data</option>
+<option>It is a way to encrypt data so you can decrypt it later with a key</option>
+<option>It gives a different result every time, like <code>randomUUID()</code></option>
+<option>Its length grows with the size of the input</option>
+<explain><p>A hash is one-way: same input, same fingerprint, but no way back. That makes it good for checking whether a file has changed. Encryption is different, because it can be undone with a key.</p></explain>
+</question>
+
+<question id="hash-passwords" type="choice">
+<q>Why should you not store passwords as SHA-256 hashes?</q>
+<option correct>SHA-256 is fast, so an attacker with your database can try billions of guesses per second; passwords need a slow, salted hash</option>
+<option>SHA-256 can be turned back into the password with the right key</option>
+<option>SHA-256 hashes are too long to store in a database</option>
+<option>SHA-256 gives a different hash each time, so the login check would fail</option>
+<explain><p>Speed is good for file fingerprints and bad for passwords. A password hash must be slow and salted so guessing is expensive. You will use one in the ZudoJS authentication lesson.</p></explain>
+</question>
+
+<question id="emitter-order" type="output">
+<q>What does this print?</q>
+<code file="order.js" browser="no">
+import { EventEmitter } from "node:events";
+
+const tasks = new EventEmitter();
+tasks.on("added", (task) => console.log(`log #${task.id}`));
+tasks.on("added", (task) => console.log(`mail #${task.id}`));
+
+console.log("before");
+tasks.emit("added", { id: 1 });
+console.log("after");
+</code>
+<option correct>before
+log #1
+mail #1
+after</option>
+<option>before
+after
+log #1
+mail #1</option>
+<option>before
+mail #1
+log #1
+after</option>
+<option>before
+log #1
+after</option>
+<explain><p>Every listener for the event runs, in the order it was added, and they run <em>synchronously</em> during <code>emit</code>. So both lines appear before <code>after</code>.</p></explain>
+</question>
+
+<question id="emitter-once" type="output">
+<q>What does this print?</q>
+<code file="once.js" browser="no">
+import { EventEmitter } from "node:events";
+
+const tasks = new EventEmitter();
+tasks.once("completed", (task) => console.log(`first: #${task.id}`));
+tasks.on("completed", (task) => console.log(`done: #${task.id}`));
+
+tasks.emit("completed", { id: 1 });
+tasks.emit("completed", { id: 2 });
+</code>
+<option correct>first: #1
+done: #1
+done: #2</option>
+<option>first: #1
+done: #1
+first: #2
+done: #2</option>
+<option>first: #1
+done: #2</option>
+<option>done: #1
+done: #2</option>
+<explain><p>A <code>once</code> listener is removed after its first call. The <code>on</code> listener stays, so it runs for both tasks.</p></explain>
+</question>
+
+<question id="emitter-error" type="output">
+<q>What does this print?</q>
+<code file="error-event.js" browser="no">
+import { EventEmitter } from "node:events";
+
+const store = new EventEmitter();
+try {
+  store.emit("error", new Error("disk full"));
+  console.log("nothing happened");
+} catch (error) {
+  console.log("thrown:", error.message);
+}
+
+store.on("error", (error) => console.log("handled:", error.message));
+store.emit("error", new Error("disk full"));
+</code>
+<option correct>thrown: disk full
+handled: disk full</option>
+<option>nothing happened
+handled: disk full</option>
+<option>thrown: disk full
+thrown: disk full</option>
+<option>handled: disk full</option>
+<explain><p>The <code>"error"</code> event is special: with no listener, <code>emit</code> throws it. Once a listener exists, the listener receives the error instead.</p></explain>
+</question>
+
+<question id="emitter-error-listen" type="choice">
+<q>What happens to a Node.js program when a stream emits <code>"error"</code> and nothing listens for it (and nothing catches it)?</q>
+<option correct><code>emit</code> throws, the error is uncaught, and the program ends</option>
+<option>The error is ignored and the stream carries on</option>
+<option>Node.js prints a warning and retries the operation</option>
+<option>The error is saved and given to the next listener that is added</option>
+<explain><p>An unheard <code>"error"</code> event is thrown. Always add an <code>"error"</code> listener to emitters that can fail, such as servers and streams.</p></explain>
+</question>
+
+<question id="events-why" type="choice">
+<q>The task store emits <code>"added"</code> instead of calling the logger and the mailer itself. What is the main benefit?</q>
+<option correct>The code that adds tasks does not need to know who reacts; you can add or remove reactions without changing it</option>
+<option>Events make the code run faster than normal function calls</option>
+<option>Listeners run in the background, so adding a task never waits for them</option>
+<option>Events save the tasks to the disk automatically</option>
+<explain><p>Events keep code apart. Note that listeners are <em>not</em> run in the background: they run synchronously during <code>emit</code>.</p></explain>
+</question>
+
+<question id="atomic-save" type="choice">
+<q>The task store's <code>save</code> writes to a temporary file and then renames it over <code>tasks.json</code>. Why?</q>
+<option correct>A rename happens all at once, so a crash while writing never leaves a half-written <code>tasks.json</code></option>
+<option>Renaming a file is the only way to change its contents in Node.js</option>
+<option>It makes a backup copy of every old version of the file</option>
+<option>It stops two saves at the same moment from losing a task</option>
+<explain><p>If the program crashes halfway through writing, only the temporary file is broken; the old <code>tasks.json</code> is still whole. It does <em>not</em> fix two saves at once: that race still loses a task.</p></explain>
+</question>
+
+<question id="temp-uuid" type="choice">
+<q>Why does the temporary file name in <code>save</code> contain <code>randomUUID()</code>?</q>
+<option correct>So two saves never write into the same temporary file</option>
+<option>So nobody can guess the name and read the tasks</option>
+<option>So the file is deleted automatically after one hour</option>
+<option>Because <code>rename</code> only accepts names that contain a UUID</option>
+<explain><p>If two saves used the same temporary name, they could mix their writes into one file. A unique name per save keeps them apart.</p></explain>
+</question>
+
+<question id="race-sim" type="output">
+<q>This copies how the JSON-file store adds a task: read, wait, then write. What does it print?</q>
+<code file="race.js">
+let saved = [];
+
+async function add(title) {
+  const tasks = [...saved];
+  await null;
+  const id = Math.max(0, ...tasks.map((t) => t.id)) + 1;
+  saved = [...tasks, { id, title }];
+  return id;
+}
+
+const ids = await Promise.all([add("Task A"), add("Task B")]);
+console.log(ids, saved.length);
+</code>
+<option correct>[ 1, 1 ] 1</option>
+<option>[ 1, 2 ] 2</option>
+<option>[ 1, 2 ] 1</option>
+<option>[ 1, 1 ] 2</option>
+<explain><p>Both calls read the list while it is still empty, so both pick id 1, and the second write replaces the first. One task is lost with no error. This is a <strong>race condition</strong>.</p></explain>
+</question>
+
+<question id="race-fix" type="choice">
+<q>Your API saves tasks in a JSON file, and two users sometimes add tasks at the same moment. What does the lesson say is the real fix?</q>
+<option correct>Use a database, which is built to handle many writes at once</option>
+<option>Use <code>writeFileSync</code> instead of <code>writeFile</code></option>
+<option>Write to a temporary file and rename it</option>
+<option>Add a listener for the <code>"error"</code> event</option>
+<explain><p>A JSON file works for one person at a time. Two writers read the same old list, and the last write wins. Databases exist to solve exactly this.</p></explain>
+</question>
+
+<question id="argv-command" type="output">
+<q>The task program is started as <code>node tasks.js add "Buy milk"</code>. This line copies how it reads the command. What does it print?</q>
+<code file="argv.js">
+const argv = ["/usr/bin/node", "/home/ada/tasks.js", "add", "Buy milk"];
+const [command, value] = argv.slice(2);
+console.log(command, "|", value);
+</code>
+<option correct>add | Buy milk</option>
+<option>/usr/bin/node | /home/ada/tasks.js</option>
+<option>tasks.js | add</option>
+<option>add | Buy</option>
+<explain><p><code>process.argv</code> starts with the path of <code>node</code> and of the script, so <code>slice(2)</code> skips them. The quotes in the shell keep <code>Buy milk</code> together as one value.</p></explain>
+</question>
+
+<question id="next-id-empty" type="output">
+<q>The store picks the next id with <code>Math.max(0, ...ids) + 1</code>. What does this print?</q>
+<code file="next-id.js">
+const nextId = (tasks) => Math.max(0, ...tasks.map((t) => t.id)) + 1;
+
+console.log(nextId([]), nextId([{ id: 1 }, { id: 5 }, { id: 2 }]));
+console.log(Math.max(...[]));
+</code>
+<option correct>1 6
+-Infinity</option>
+<option>1 6
+0</option>
+<option>NaN 6
+-Infinity</option>
+<option>1 4
+-Infinity</option>
+<explain><p><code>Math.max()</code> with no numbers gives <code>-Infinity</code>, so the store adds <code>0</code> as a starting value. Then an empty list gives id 1, and the next id is always one more than the biggest.</p></explain>
+</question>
+
+<question id="code-inside-folder" type="code" file="inside.js">
+<q><p>Finish <code>isInside(folder, full)</code>. Both are absolute paths with <code>/</code> as the separator. Return <code>true</code> only when <code>full</code> is a file <strong>inside</strong> <code>folder</code>. A neighbour folder like <code>/srv/uploads-old</code> must not pass, and neither must the folder itself.</p></q>
+<starter>
+function isInside(folder, full) {
+  // your code here
+}
+
+console.log(isInside("/srv/uploads", "/srv/uploads/photo.png"));
+console.log(isInside("/srv/uploads", "/srv/uploads/2026/a.pdf"));
+console.log(isInside("/srv/uploads", "/srv/uploads-old/keys.txt"));
+console.log(isInside("/srv/uploads", "/etc/passwd"));
+console.log(isInside("/srv/uploads", "/srv/uploads"));
+</starter>
+<solution>
+function isInside(folder, full) {
+  return full.startsWith(folder + "/");
+}
+
+console.log(isInside("/srv/uploads", "/srv/uploads/photo.png"));
+console.log(isInside("/srv/uploads", "/srv/uploads/2026/a.pdf"));
+console.log(isInside("/srv/uploads", "/srv/uploads-old/keys.txt"));
+console.log(isInside("/srv/uploads", "/etc/passwd"));
+console.log(isInside("/srv/uploads", "/srv/uploads"));
+</solution>
+<expected>
+true
+true
+false
+false
+false
+</expected>
+<explain><p>Add the separator before comparing: <code>full.startsWith(folder + "/")</code>. That is the same idea as <code>uploads + path.sep</code> in the lesson.</p></explain>
+</question>
+
+<question id="code-count-ext" type="code" file="extensions.js">
+<q><p>Finish <code>countByExtension(names)</code>. It returns an object counting the files per extension. The extension is the text from the <strong>last</strong> dot, including the dot, like <code>path.extname</code>. A name without a dot counts as <code>"(none)"</code>. The program should print <code>{"(none)":1,".md":1,".pdf":1,".txt":2}</code>.</p></q>
+<starter>
+function countByExtension(names) {
+  // your code here
+}
+
+const names = ["today.txt", "todo.txt", "plan.md", "report.final.pdf", "README"];
+const counts = countByExtension(names);
+console.log(JSON.stringify(counts, Object.keys(counts).sort()));
+</starter>
+<solution>
+function countByExtension(names) {
+  const counts = {};
+  for (const name of names) {
+    const dot = name.lastIndexOf(".");
+    const ext = dot > 0 ? name.slice(dot) : "(none)";
+    counts[ext] = (counts[ext] ?? 0) + 1;
+  }
+  return counts;
+}
+
+const names = ["today.txt", "todo.txt", "plan.md", "report.final.pdf", "README"];
+const counts = countByExtension(names);
+console.log(JSON.stringify(counts, Object.keys(counts).sort()));
+</solution>
+<expected>{"(none)":1,".md":1,".pdf":1,".txt":2}</expected>
+<explain><p>Find the last dot with <code>lastIndexOf(".")</code> and slice from there; no dot (<code>-1</code>) means <code>"(none)"</code>. Count with <code>counts[ext] = (counts[ext] ?? 0) + 1</code>.</p></explain>
+</question>
+
+<question id="code-load-or-default" type="code" file="load.js">
+<q><p>Finish <code>loadOrDefault(read, fallback)</code>. It calls <code>read()</code> and returns its result. If <code>read()</code> throws an error whose <code>code</code> is <code>"ENOENT"</code>, return <code>fallback</code>. Any other error must be thrown again.</p></q>
+<starter>
+function loadOrDefault(read, fallback) {
+  // your code here
+}
+
+function failWith(code) {
+  return () => {
+    const error = new Error(`failed with ${code}`);
+    error.code = code;
+    throw error;
+  };
+}
+
+console.log(loadOrDefault(() => "saved tasks", "no tasks"));
+console.log(loadOrDefault(failWith("ENOENT"), "no tasks"));
+try {
+  loadOrDefault(failWith("EACCES"), "no tasks");
+  console.log("error was hidden");
+} catch (error) {
+  console.log("re-thrown:", error.code);
+}
+</starter>
+<solution>
+function loadOrDefault(read, fallback) {
+  try {
+    return read();
+  } catch (error) {
+    if (error.code === "ENOENT") return fallback;
+    throw error;
+  }
+}
+
+function failWith(code) {
+  return () => {
+    const error = new Error(`failed with ${code}`);
+    error.code = code;
+    throw error;
+  };
+}
+
+console.log(loadOrDefault(() => "saved tasks", "no tasks"));
+console.log(loadOrDefault(failWith("ENOENT"), "no tasks"));
+try {
+  loadOrDefault(failWith("EACCES"), "no tasks");
+  console.log("error was hidden");
+} catch (error) {
+  console.log("re-thrown:", error.code);
+}
+</solution>
+<expected>
+saved tasks
+no tasks
+re-thrown: EACCES
+</expected>
+<explain><p>Wrap the call in <code>try</code>/<code>catch</code>, return the fallback only when <code>error.code === "ENOENT"</code>, and <code>throw error</code> for everything else, so real problems are not hidden.</p></explain>
+</question>
+
+<question id="code-emitter" type="code" file="emitter.js">
+<q><p>Build a tiny event emitter. <code>on(name, listener)</code> adds a listener; <code>emit(name, value)</code> calls every listener for that name, in the order they were added. Emitting a name with no listeners does nothing.</p></q>
+<starter>
+class Emitter {
+  // your code here
+}
+
+const tasks = new Emitter();
+tasks.on("added", (task) => console.log(`log: ${task}`));
+tasks.on("added", (task) => console.log(`mail: ${task}`));
+tasks.on("removed", (task) => console.log(`removed: ${task}`));
+tasks.emit("added", "Buy milk");
+tasks.emit("completed", "Buy milk");
+tasks.emit("removed", "Buy milk");
+</starter>
+<solution>
+class Emitter {
+  listeners = new Map();
+
+  on(name, listener) {
+    const list = this.listeners.get(name) ?? [];
+    list.push(listener);
+    this.listeners.set(name, list);
+  }
+
+  emit(name, value) {
+    for (const listener of this.listeners.get(name) ?? []) {
+      listener(value);
+    }
+  }
+}
+
+const tasks = new Emitter();
+tasks.on("added", (task) => console.log(`log: ${task}`));
+tasks.on("added", (task) => console.log(`mail: ${task}`));
+tasks.on("removed", (task) => console.log(`removed: ${task}`));
+tasks.emit("added", "Buy milk");
+tasks.emit("completed", "Buy milk");
+tasks.emit("removed", "Buy milk");
+</solution>
+<expected>
+log: Buy milk
+mail: Buy milk
+removed: Buy milk
+</expected>
+<explain><p>Keep a <code>Map</code> from event name to an array of listeners. <code>emit</code> loops over the array for that name; <code>?? []</code> handles names nobody listens for.</p></explain>
+</question>
+
+<question id="code-complete-task" type="code" file="complete.js">
+<q><p>Finish <code>complete(tasks, id)</code>. It marks the task with that id as done and returns it. When no task has that id, it throws an <code>Error</code> with the message <code>task 7 not found</code> (using the real id).</p></q>
+<starter>
+function complete(tasks, id) {
+  // your code here
+}
+
+const tasks = [
+  { id: 1, title: "Buy milk", done: false },
+  { id: 2, title: "Write report", done: false },
+];
+
+console.log(complete(tasks, 2).title, tasks[1].done);
+try {
+  complete(tasks, 7);
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+function complete(tasks, id) {
+  const task = tasks.find((t) => t.id === id);
+  if (!task) throw new Error(`task ${id} not found`);
+  task.done = true;
+  return task;
+}
+
+const tasks = [
+  { id: 1, title: "Buy milk", done: false },
+  { id: 2, title: "Write report", done: false },
+];
+
+console.log(complete(tasks, 2).title, tasks[1].done);
+try {
+  complete(tasks, 7);
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>
+Write report true
+task 7 not found
+</expected>
+<explain><p>Use <code>find</code> to get the task. If it is <code>undefined</code>, throw an error with a clear message; otherwise set <code>done</code> and return it.</p></explain>
+</question>
+
+<question id="code-hex" type="code" file="hex.js">
+<q><p><code>randomBytes(n).toString("hex")</code> writes each byte as two hexadecimal characters. Finish <code>toHex(bytes)</code>, which does the same for an array of numbers from 0 to 255. The program should print <code>00ff10a7</code>.</p></q>
+<starter>
+function toHex(bytes) {
+  // your code here
+}
+
+console.log(toHex([0, 255, 16, 167]));
+</starter>
+<solution>
+function toHex(bytes) {
+  return bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+console.log(toHex([0, 255, 16, 167]));
+</solution>
+<expected>00ff10a7</expected>
+<explain><p><code>b.toString(16)</code> writes a number in hexadecimal. Small numbers need a leading zero, so pad each to 2 characters with <code>padStart(2, "0")</code>, then join them.</p></explain>
+</question>

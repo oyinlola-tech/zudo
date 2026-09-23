@@ -1,0 +1,936 @@
+<question id="db-postgres-only" type="choice">
+<q>Which database does <code>@zudojs/database</code> support?</q>
+<option>Any SQL database: PostgreSQL, MySQL and SQLite</option>
+<option correct>PostgreSQL only</option>
+<option>Only PGlite, never a PostgreSQL server</option>
+<option>MongoDB and PostgreSQL</option>
+<explain><p>The package is built on Prisma and supports <strong>PostgreSQL only</strong>. PGlite is PostgreSQL itself, running inside Node.js, which is why the lesson can use it for learning.</p></explain>
+</question>
+
+<question id="db-prisma-client-like" type="choice">
+<q>ZudoJS talks to a <code>PrismaClientLike</code> object. What does it need from that object?</q>
+<option>A generated model for every table, and nothing else</option>
+<option>A connection string it can open by itself</option>
+<option correct>A few methods: <code>$connect</code>, <code>$disconnect</code>, <code>$queryRawUnsafe</code>, <code>$executeRawUnsafe</code> and <code>$transaction</code></option>
+<option>An instance of the <code>pg</code> driver's <code>Pool</code> class</option>
+<explain><p>Anything that has those five methods works. That is the <strong>adapter pattern</strong>: a small object that makes one thing (PGlite, or a real Prisma client) look like what ZudoJS expects.</p></explain>
+</question>
+
+<question id="db-field-not-parameter" type="choice">
+<q>In the lesson's <code>whereToSql</code>, values become <code>$1</code>, <code>$2</code>… parameters, but field names are checked against an allow-list instead. Why?</q>
+<option>Allow-lists are faster than parameters</option>
+<option>Parameters only work for numbers, not text</option>
+<option correct>A field (column) name cannot be a SQL parameter, so the only safe way is to accept known names only</option>
+<option>PostgreSQL ignores unknown columns, so the check is only for nicer errors</option>
+<explain><p>Parameters can only stand for <em>values</em>. A column name is part of the SQL text itself, so it must come from a fixed list of names you trust. Anything else is refused.</p></explain>
+</question>
+
+<question id="db-error-code-map" type="choice">
+<q>The PGlite adapter turns PostgreSQL error <code>23505</code> into the Prisma code <code>P2002</code>. What does <code>23505</code> mean?</q>
+<option>The row you asked for was not found</option>
+<option correct>A unique value is already used (a <code>UNIQUE</code> rule was broken)</option>
+<option>The SQL has a syntax error</option>
+<option>The connection timed out</option>
+<explain><p><code>23505</code> is a unique violation. ZudoJS understands the Prisma code <code>P2002</code> and turns it into a <strong>409 Conflict</strong>. A missing row becomes <code>P2025</code>, which ZudoJS turns into 404.</p></explain>
+</question>
+
+<question id="db-url-secret" type="choice">
+<q>Where should a connection string like <code>postgres://app:pa55@db:5432/tasks</code> come from?</q>
+<option>A constant at the top of <code>database.ts</code>, so it is easy to find</option>
+<option correct>An environment variable such as <code>DATABASE_URL</code>, checked when the app starts</option>
+<option>The request, so each client can choose its database</option>
+<option>A comment in the README, copied into the code when you deploy</option>
+<explain><p>It contains a password, so it is a secret: read it from the environment, never write it in code. Checking it at start-up makes a missing setting fail loudly at once, not at the first request.</p></explain>
+</question>
+
+<question id="db-url-message" type="choice">
+<q>Your start-up check finds that <code>DATABASE_URL</code> does not start with <code>postgres://</code>. Which error message is best?</q>
+<option><code>DATABASE_URL is invalid: mysql://root:hunter2@db/tasks</code></option>
+<option correct><code>DATABASE_URL must start with postgres://</code></option>
+<option><code>Error</code></option>
+<option>No message: just call <code>process.exit(1)</code></option>
+<explain><p>The message should name the setting and the problem, but never show the value. Error messages end up in logs, and the value contains a password.</p></explain>
+</question>
+
+<question id="code-db-url" type="code" file="db-url.js">
+<q><p>Finish <code>requireDatabaseUrl(env)</code>. Throw a <code>ConfigurationError</code> with the message <code>DATABASE_URL is not set</code> when it is missing or empty, and <code>DATABASE_URL must start with postgres://</code> when it starts with anything other than <code>postgres://</code> or <code>postgresql://</code>. Otherwise return the URL. Never put the value in a message.</p></q>
+<starter>
+import { ConfigurationError } from "@zudojs/errors";
+
+function requireDatabaseUrl(env) {
+  // your code here
+}
+
+for (const env of [{}, { DATABASE_URL: "mysql://root:hunter2@db/tasks" }, { DATABASE_URL: "postgresql://db/tasks" }]) {
+  try {
+    console.log("ok:", requireDatabaseUrl(env));
+  } catch (error) {
+    if (error instanceof ConfigurationError) console.log(error.name, "-", error.message);
+  }
+}
+</starter>
+<solution>
+import { ConfigurationError } from "@zudojs/errors";
+
+function requireDatabaseUrl(env) {
+  const url = env["DATABASE_URL"];
+  if (!url) {
+    throw new ConfigurationError("DATABASE_URL is not set");
+  }
+  if (!/^postgres(ql)?:\/\//.test(url)) {
+    throw new ConfigurationError("DATABASE_URL must start with postgres://");
+  }
+  return url;
+}
+
+for (const env of [{}, { DATABASE_URL: "mysql://root:hunter2@db/tasks" }, { DATABASE_URL: "postgresql://db/tasks" }]) {
+  try {
+    console.log("ok:", requireDatabaseUrl(env));
+  } catch (error) {
+    if (error instanceof ConfigurationError) console.log(error.name, "-", error.message);
+  }
+}
+</solution>
+<expected>
+ConfigurationError - DATABASE_URL is not set
+ConfigurationError - DATABASE_URL must start with postgres://
+ok: postgresql://db/tasks
+</expected>
+<explain><p>Check for a missing value first, then the format, with a regular expression such as <code>/^postgres(ql)?:\/\//</code>. The messages name the setting but never repeat the value, which may contain a password.</p></explain>
+</question>
+
+<question id="db-migrate-twice" type="output">
+<q>This runs the same migration list twice against PGlite. What does it print?</q>
+<code file="migrate-twice.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+import { createDatabaseClient, createMigrationRunner, noopDatabaseLogger } from "@zudojs/database";
+
+const pg = new PGlite();
+const raw = (db) => ({
+  $queryRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).rows,
+  $executeRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).affectedRows ?? 0,
+});
+const client = createDatabaseClient({
+  prisma: { ...raw(pg), $connect: () => pg.waitReady, $disconnect: () => pg.close(),
+    $transaction: (work) => pg.transaction((tx) => work(raw(tx))) },
+  logger: noopDatabaseLogger,
+});
+await client.connect();
+
+const runner = createMigrationRunner(client, [
+  { version: 1, name: "create-tasks", up: (tx) => tx.$executeRawUnsafe("CREATE TABLE tasks (id serial PRIMARY KEY, title text NOT NULL)") },
+  { version: 2, name: "add-done", up: (tx) => tx.$executeRawUnsafe("ALTER TABLE tasks ADD COLUMN done boolean NOT NULL DEFAULT false") },
+]);
+const first = await runner.migrate();
+const again = await runner.migrate();
+console.log(first.applied.length, again.applied.length, again.skipped.length);
+await client.disconnect();
+</code>
+<option correct>2 0 2</option>
+<option>2 2 0</option>
+<option>2 0 0</option>
+<option>The second run fails: relation "tasks" already exists</option>
+<explain><p>The runner records every applied migration in its <code>_migrations</code> table. The second <code>migrate()</code> sees both versions there and skips them, so it applies nothing and never runs <code>CREATE TABLE</code> again.</p></explain>
+</question>
+
+<question id="db-migrate-fails" type="output">
+<q>Migration 2 fails halfway. What does this print?</q>
+<code file="migrate-fails.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+import { createDatabaseClient, createMigrationRunner, noopDatabaseLogger } from "@zudojs/database";
+
+const pg = new PGlite();
+const raw = (db) => ({
+  $queryRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).rows,
+  $executeRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).affectedRows ?? 0,
+});
+const client = createDatabaseClient({
+  prisma: { ...raw(pg), $connect: () => pg.waitReady, $disconnect: () => pg.close(),
+    $transaction: (work) => pg.transaction((tx) => work(raw(tx))) },
+  logger: noopDatabaseLogger,
+});
+await client.connect();
+
+const runner = createMigrationRunner(client, [
+  { version: 1, name: "create-tasks", up: (tx) => tx.$executeRawUnsafe("CREATE TABLE tasks (id serial PRIMARY KEY, title text NOT NULL)") },
+  { version: 2, name: "demo-rows", up: async (tx) => {
+    await tx.$executeRawUnsafe("INSERT INTO tasks (title) VALUES ('Buy milk')");
+    throw new Error("oops");
+  } },
+]);
+try {
+  await runner.migrate();
+} catch {
+  console.log("migrate failed");
+}
+const status = await runner.status();
+const rows = await client.queryRawUnsafe("SELECT count(*)::int AS n FROM tasks");
+console.log("version", status.currentVersion, "rows", rows[0].n);
+await client.disconnect();
+</code>
+<option correct>migrate failed
+version 1 rows 0</option>
+<option>migrate failed
+version 0 rows 0</option>
+<option>migrate failed
+version 1 rows 1</option>
+<option>migrate failed
+version 2 rows 1</option>
+<explain><p>Each migration runs in its own transaction. Migration 1 committed, so the version is 1 and the table exists. Migration 2 threw, so its <code>INSERT</code> was rolled back and the table is empty.</p></explain>
+</question>
+
+<question id="db-frozen-migration" type="choice">
+<q>Migration 1 already ran on the shared staging database. You need one more column in <code>tasks</code>. What do you do?</q>
+<option>Edit migration 1 to add the column and run <code>migrate()</code> again</option>
+<option>Delete the row for version 1 from <code>_migrations</code>, then edit migration 1</option>
+<option correct>Add a new migration with the next version number that adds the column</option>
+<option>Run the <code>ALTER TABLE</code> by hand in the database console</option>
+<explain><p>An applied migration is frozen. The runner only looks at version numbers, so an edited migration 1 would never run again anywhere it already ran. A new migration (version 3) runs everywhere, in order.</p></explain>
+</question>
+
+<question id="db-migration-lock" type="choice">
+<q>Two copies of your server start at the same moment and both call <code>migrate()</code>. What stops them from applying the same migration twice?</q>
+<option>Nothing: you must start the servers one by one</option>
+<option correct>The runner takes a PostgreSQL advisory lock while it works, so the second copy waits and then skips what is done</option>
+<option>PostgreSQL refuses the second <code>CREATE TABLE</code>, and the error is ignored</option>
+<option>The runner keeps its history in memory, shared by both processes</option>
+<explain><p>An <strong>advisory lock</strong> lets only one runner work at a time. When the second one gets the lock, the <code>_migrations</code> table already lists the migrations, so it skips them.</p></explain>
+</question>
+
+<question id="db-seed-twice" type="output">
+<q>What does this print?</q>
+<code file="seed-twice.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+import { createDatabaseClient, createSeedRunner, noopDatabaseLogger } from "@zudojs/database";
+
+const pg = new PGlite();
+const raw = (db) => ({
+  $queryRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).rows,
+  $executeRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).affectedRows ?? 0,
+});
+const client = createDatabaseClient({
+  prisma: { ...raw(pg), $connect: () => pg.waitReady, $disconnect: () => pg.close(),
+    $transaction: (work) => pg.transaction((tx) => work(raw(tx))) },
+  logger: noopDatabaseLogger,
+});
+await client.connect();
+await client.executeRawUnsafe("CREATE TABLE roles (name text PRIMARY KEY)");
+
+const seeds = [{
+  name: "default-roles",
+  run: async (tx) => {
+    await tx.$executeRawUnsafe("INSERT INTO roles (name) VALUES ('admin'), ('member')");
+  },
+}];
+await createSeedRunner(client, seeds).run();
+const again = await createSeedRunner(client, seeds).run();
+const rows = await client.queryRawUnsafe("SELECT count(*)::int AS n FROM roles");
+console.log(again.skipped.map((s) => s.name), rows[0].n);
+await client.disconnect();
+</code>
+<option correct>[ 'default-roles' ] 2</option>
+<option>[] 4</option>
+<option>[ 'default-roles' ] 4</option>
+<option>[] 2</option>
+<explain><p>Like migrations, seeds are recorded (in a <code>_seeds</code> table) and run only once. The second run skipped <code>default-roles</code>, so there are still 2 roles, not 4.</p></explain>
+</question>
+
+<question id="db-raw-injection" type="output">
+<q>An attacker types <code>nothing' OR '1'='1</code> into the search box. What does this print?</q>
+<code file="injection.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+import { createDatabaseClient, noopDatabaseLogger } from "@zudojs/database";
+
+const pg = new PGlite();
+const raw = (db) => ({
+  $queryRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).rows,
+  $executeRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).affectedRows ?? 0,
+});
+const client = createDatabaseClient({
+  prisma: { ...raw(pg), $connect: () => pg.waitReady, $disconnect: () => pg.close(),
+    $transaction: (work) => pg.transaction((tx) => work(raw(tx))) },
+  logger: noopDatabaseLogger,
+});
+await client.connect();
+await client.executeRawUnsafe("CREATE TABLE tasks (id serial PRIMARY KEY, title text)");
+await client.executeRawUnsafe("INSERT INTO tasks (title) VALUES ('Buy milk'), ('Call the bank'), ('Read a book')");
+
+const search = "nothing' OR '1'='1";
+const built = await client.queryRawUnsafe(`SELECT id FROM tasks WHERE title = '${search}'`);
+const safe = await client.queryRawUnsafe("SELECT id FROM tasks WHERE title = $1", [search]);
+console.log(built.length, safe.length);
+await client.disconnect();
+</code>
+<option correct>3 0</option>
+<option>0 0</option>
+<option>0 3</option>
+<option>3 3</option>
+<explain><p>In the string-built query, the attacker's quote ends the string and <code>OR '1'='1'</code> is always true, so every row comes back. With <code>$1</code>, the whole input is one plain value, and no task has that odd title.</p></explain>
+</question>
+
+<question id="code-db-where" type="code" file="where-equals.js">
+<q><p>Finish <code>whereEquals(filter, fields)</code>. For each key of <code>filter</code>, check it is in <code>fields</code> (throw <code>TypeError("Unknown field")</code> otherwise) and add <code>"key" = $n</code>, with the value pushed to <code>params</code>. Join the parts with <code> AND </code>. Return <code>{ sql, params }</code>. Values must never go into the SQL text.</p></q>
+<starter>
+const FIELDS = ["title", "done", "priority"];
+
+function whereEquals(filter, fields) {
+  const params = [];
+  // your code here
+}
+
+console.log(whereEquals({ done: false, priority: "high" }, FIELDS));
+try {
+  whereEquals({ "1=1; --": 1 }, FIELDS);
+} catch (error) {
+  console.log(error.name, error.message);
+}
+</starter>
+<solution>
+const FIELDS = ["title", "done", "priority"];
+
+function whereEquals(filter, fields) {
+  const params = [];
+  const parts = [];
+  for (const [key, value] of Object.entries(filter)) {
+    if (!fields.includes(key)) throw new TypeError("Unknown field");
+    params.push(value);
+    parts.push(`"${key}" = $${params.length}`);
+  }
+  return { sql: parts.join(" AND "), params };
+}
+
+console.log(whereEquals({ done: false, priority: "high" }, FIELDS));
+try {
+  whereEquals({ "1=1; --": 1 }, FIELDS);
+} catch (error) {
+  console.log(error.name, error.message);
+}
+</solution>
+<expected>
+{ sql: '"done" = $1 AND "priority" = $2', params: [ false, 'high' ] }
+TypeError Unknown field
+</expected>
+<explain><p>Field names come from an allow-list; values only ever appear as <code>$1</code>, <code>$2</code>… with the real values in <code>params</code>. <code>params.push()</code> returns the new length, which is the number of the next parameter.</p></explain>
+</question>
+
+<question id="db-repository-role" type="choice">
+<q>What is a <strong>repository</strong>?</q>
+<option>A folder of SQL files</option>
+<option correct>One class that owns all access to one table; the rest of the app asks it for data and never writes SQL</option>
+<option>A copy of the database used for backups</option>
+<option>The npm registry where <code>@zudojs/database</code> is published</option>
+<explain><p>A repository keeps all the queries for one table in one place. Routes and services call methods like <code>findByTitle</code> and never see SQL.</p></explain>
+</question>
+
+<question id="db-repo-conflict" type="output">
+<q>The fake delegate below throws the Prisma error <code>P2002</code> (unique value already used). What does this print?</q>
+<code file="repo-conflict.js" browser="no">
+import { BaseRepository, isConflictError } from "@zudojs/database";
+
+const prismaError = (code) => Object.assign(new Error("duplicate key value"), { code, clientVersion: "demo" });
+const delegate = {
+  async create() {
+    throw prismaError("P2002");
+  },
+};
+const tasks = new BaseRepository(delegate, { modelName: "Task" });
+
+try {
+  await tasks.create({ title: "Buy milk" });
+} catch (error) {
+  console.log(error.statusCode, error.message, isConflictError(error));
+}
+</code>
+<option correct>409 Task already exists. true</option>
+<option>500 duplicate key value false</option>
+<option>400 Task already exists. false</option>
+<option>409 duplicate key value true</option>
+<explain><p>The repository maps <code>P2002</code> to a <code>DatabaseError</code> with status <strong>409 Conflict</strong>. The message is generic on purpose: it never repeats the database's own text, which could name constraints and tables.</p></explain>
+</question>
+
+<question id="db-repo-not-found" type="output">
+<q>The fake delegate below throws <code>P2025</code> (record not found). What does this print?</q>
+<code file="repo-not-found.js" browser="no">
+import { BaseRepository, isNotFoundError } from "@zudojs/database";
+
+const prismaError = (code) => Object.assign(new Error("Record not found"), { code, clientVersion: "demo" });
+const delegate = {
+  async update() {
+    throw prismaError("P2025");
+  },
+};
+const tasks = new BaseRepository(delegate, { modelName: "Task" });
+
+try {
+  await tasks.update(999, { done: true });
+} catch (error) {
+  console.log(error.statusCode, error.code, isNotFoundError(error));
+}
+</code>
+<option correct>404 ERR_NOT_FOUND true</option>
+<option>500 P2025 false</option>
+<option>409 ERR_CONFLICT false</option>
+<option>404 P2025 true</option>
+<explain><p>Updating a row that does not exist becomes a 404 with the code <code>ERR_NOT_FOUND</code>. Your API's error handler can pass that status on as it is.</p></explain>
+</question>
+
+<question id="db-soft-delete-scope" type="output">
+<q>The fake delegate records the arguments the repository sends it. What does this print?</q>
+<code file="soft-scope.js" browser="no">
+import { BaseRepository } from "@zudojs/database";
+
+const delegate = {
+  async findMany(args) {
+    console.log(JSON.stringify(args.where));
+    return [];
+  },
+};
+const tasks = new BaseRepository(delegate, { modelName: "Task", softDelete: true });
+await tasks.findMany({ done: false });
+</code>
+<option correct>{"AND":[{"done":false},{"deletedAt":null}]}</option>
+<option>{"done":false}</option>
+<option>{"done":false,"deletedAt":{"not":null}}</option>
+<option>{"deletedAt":null}</option>
+<explain><p>With <code>softDelete: true</code>, every read adds <code>deletedAt: null</code>, so soft-deleted rows are skipped. Use <code>findDeleted()</code> or <code>withDeleted()</code> when you really want to see them.</p></explain>
+</question>
+
+<question id="db-with-deleted" type="choice">
+<q>A support tool must count <strong>all</strong> tasks, including soft-deleted ones. Which call does that?</q>
+<option><code>tasks.count()</code></option>
+<option><code>tasks.findDeleted()</code></option>
+<option correct><code>tasks.withDeleted().count()</code></option>
+<option><code>tasks.count({ deletedAt: null })</code></option>
+<explain><p><code>withDeleted()</code> returns a copy of the repository that sees every row. Plain <code>count()</code> skips deleted rows, and <code>findDeleted()</code> lists only the deleted ones.</p></explain>
+</question>
+
+<question id="db-query-builder-args" type="output">
+<q>What does this print?</q>
+<code file="query-args.js" browser="no">
+import { createQueryBuilder } from "@zudojs/database";
+
+const query = createQueryBuilder()
+  .where("done", false)
+  .whereContains("title", "milk")
+  .orderByDesc("id")
+  .limit(10);
+console.log(JSON.stringify(query.toPrismaArgs()));
+</code>
+<option correct>{"where":{"done":{"equals":false},"title":{"contains":"milk"}},"orderBy":[{"id":"desc"}],"skip":0,"take":10}</option>
+<option>SELECT * FROM tasks WHERE done = false AND title LIKE '%milk%' ORDER BY id DESC LIMIT 10</option>
+<option>{"where":{"done":false,"title":"milk"},"orderBy":{"id":"desc"},"limit":10}</option>
+<option>{"where":{"done":{"equals":false},"title":{"contains":"milk"}},"orderBy":[{"id":"desc"}],"take":10}</option>
+<explain><p>The query builder never writes SQL. It produces a plain Prisma-style object; the repository hands it to the delegate, and the adapter turns it into SQL with parameters. <code>limit(10)</code> becomes <code>skip: 0, take: 10</code>.</p></explain>
+</question>
+
+<question id="db-query-builder-page" type="output">
+<q>What does this print?</q>
+<code file="query-page.js" browser="no">
+import { createQueryBuilder } from "@zudojs/database";
+
+const args = createQueryBuilder().where("priority", "high").page(3).limit(5).toPrismaArgs();
+console.log(args.skip, args.take);
+</code>
+<option correct>10 5</option>
+<option>15 5</option>
+<option>3 5</option>
+<option>5 3</option>
+<explain><p>Page 3 with 5 per page skips the first two pages: (3 − 1) × 5 = 10 rows, then takes 5.</p></explain>
+</question>
+
+<question id="db-contains-case" type="choice">
+<q>The lesson's tasks include <code>Call the bank</code> and <code>The weekly report</code>. Which does <code>whereContains("title", "the")</code> match?</q>
+<option correct>Only <code>Call the bank</code>, because the match is case-sensitive</option>
+<option>Both, because <code>contains</code> ignores case</option>
+<option>Neither, because <code>contains</code> needs the whole title</option>
+<option>Only <code>The weekly report</code>, because it starts with the word</option>
+<explain><p><code>whereContains</code> is case-sensitive: <code>"the"</code> does not match <code>"The"</code>.</p></explain>
+</question>
+
+<question id="db-sort-injection" type="output">
+<q>A client sends <code>?sort=title; DROP TABLE tasks</code>. What does this print?</q>
+<code file="sort-field.js" browser="no">
+import { BaseRepository } from "@zudojs/database";
+
+const delegate = {
+  async findMany() { return []; },
+  async count() { return 0; },
+};
+const tasks = new BaseRepository(delegate, { modelName: "Task" });
+try {
+  await tasks.findPaginated(undefined, {
+    pagination: { page: 1, limit: 2 },
+    sort: [{ field: "title; DROP TABLE tasks", direction: "asc" }],
+  });
+  console.log("query sent");
+} catch (error) {
+  console.log(error.name, error.message);
+}
+</code>
+<option correct>TypeError Invalid query field name "title; DROP TABLE tasks".</option>
+<option>query sent</option>
+<option>DatabaseError Unknown field "title; DROP TABLE tasks"</option>
+<option>SyntaxError Unexpected token ";"</option>
+<explain><p>ZudoJS checks sort fields before they reach the database and refuses any name that is not a plain identifier. The delegate is never called. In a real route, also check the field against a short allow-list and answer 400.</p></explain>
+</question>
+
+<question id="code-db-sort" type="code" file="sort-param.js">
+<q><p>Finish <code>parseSort(text)</code> for <code>GET /tasks?sort=…</code>. A leading <code>-</code> means descending. Only <code>id</code>, <code>title</code> and <code>createdAt</code> are allowed. Return <code>{ status: 200, sort: { field, direction } }</code>, or <code>{ status: 400 }</code> for any other field.</p></q>
+<starter>
+const SORTABLE = ["id", "title", "createdAt"];
+
+function parseSort(text) {
+  // your code here
+}
+
+console.log(parseSort("title"));
+console.log(parseSort("-createdAt"));
+console.log(parseSort("password"));
+console.log(parseSort("title; DROP TABLE tasks"));
+</starter>
+<solution>
+const SORTABLE = ["id", "title", "createdAt"];
+
+function parseSort(text) {
+  const desc = text.startsWith("-");
+  const field = desc ? text.slice(1) : text;
+  if (!SORTABLE.includes(field)) return { status: 400 };
+  return { status: 200, sort: { field, direction: desc ? "desc" : "asc" } };
+}
+
+console.log(parseSort("title"));
+console.log(parseSort("-createdAt"));
+console.log(parseSort("password"));
+console.log(parseSort("title; DROP TABLE tasks"));
+</solution>
+<expected>
+{ status: 200, sort: { field: 'title', direction: 'asc' } }
+{ status: 200, sort: { field: 'createdAt', direction: 'desc' } }
+{ status: 400 }
+{ status: 400 }
+</expected>
+<explain><p>Check the client's choice against a short list of allowed fields and answer 400 for anything else. <code>password</code> is a valid name, but not one the client may sort by.</p></explain>
+</question>
+
+<question id="db-keyset-vs-offset" type="choice">
+<q>When is keyset (cursor) pagination the better choice?</q>
+<option>When users need to jump straight to page 50</option>
+<option>When you need the total number of pages</option>
+<option correct>For "load more" and infinite scrolling on big tables, where new rows keep arriving</option>
+<option>Only for tables with fewer than 100 rows</option>
+<explain><p>Keyset pagination asks for "the rows after the last one I saw". It stays fast on huge tables and does not skip or repeat rows when new ones are added. Offset pagination is the one for page numbers.</p></explain>
+</question>
+
+<question id="db-pagination-meta" type="output">
+<q>What does this print?</q>
+<code file="page-meta.js" browser="no">
+import { createPaginationMeta } from "@zudojs/database";
+
+const meta = createPaginationMeta(3, 10, 25);
+console.log(meta.totalPages, meta.hasNextPage, meta.hasPreviousPage);
+</code>
+<option correct>3 false true</option>
+<option>2 true true</option>
+<option>3 true true</option>
+<option>2 false true</option>
+<explain><p>25 rows with 10 per page need 3 pages (the last one holds 5). Page 3 is the last, so there is no next page, but there is a previous one.</p></explain>
+</question>
+
+<question id="code-db-page-meta" type="code" file="page-meta-code.js">
+<q><p>Finish <code>pageInfo(page, limit, total)</code>. Return <code>{ offset, totalPages, hasNext }</code>: <code>offset</code> is how many rows to skip, <code>totalPages</code> is rounded up, and <code>hasNext</code> says whether a later page exists.</p></q>
+<starter>
+function pageInfo(page, limit, total) {
+  // your code here
+}
+
+console.log(pageInfo(1, 10, 25));
+console.log(pageInfo(3, 10, 25));
+console.log(pageInfo(2, 2, 5));
+</starter>
+<solution>
+function pageInfo(page, limit, total) {
+  const totalPages = Math.ceil(total / limit);
+  return { offset: (page - 1) * limit, totalPages, hasNext: page < totalPages };
+}
+
+console.log(pageInfo(1, 10, 25));
+console.log(pageInfo(3, 10, 25));
+console.log(pageInfo(2, 2, 5));
+</solution>
+<expected>
+{ offset: 0, totalPages: 3, hasNext: true }
+{ offset: 20, totalPages: 3, hasNext: false }
+{ offset: 2, totalPages: 3, hasNext: true }
+</expected>
+<explain><p>Skip <code>(page - 1) * limit</code> rows. Use <code>Math.ceil</code> so a half-full last page still counts. There is a next page while <code>page &lt; totalPages</code>.</p></explain>
+</question>
+
+<question id="db-cursor-decode" type="output">
+<q>The first part of a cursor, before the dot, is the position in Base64. What does this print?</q>
+<code file="cursor-part.js" browser="no">
+const cursor = "eyJpZCI6Mn0.nySv_IOv5J-S0Pqx2wp7NtmJoZLgIR3kP0ZwbiFLgRY";
+const [position] = cursor.split(".");
+console.log(Buffer.from(position, "base64url").toString("utf8"));
+</code>
+<option correct>{"id":2}</option>
+<option>{"page":2}</option>
+<option>nySv_IOv5J-S0Pqx2wp7NtmJoZLgIR3kP0ZwbiFLgRY</option>
+<option>2</option>
+<explain><p>Base64 is not encryption: anyone can read the position. That is why the second part, the <strong>signature</strong>, matters: it proves the server made this cursor.</p></explain>
+</question>
+
+<question id="db-cursor-signature" type="output">
+<q>A cursor signed with one secret is checked with another. What does this print?</q>
+<code file="cursor-sign.js" browser="no">
+import { decodeCursor, encodeCursor } from "@zudojs/database";
+
+const cursor = encodeCursor({ id: 2 }, { secret: "a".repeat(32) });
+console.log(decodeCursor(cursor, { secret: "a".repeat(32) }));
+try {
+  decodeCursor(cursor, { secret: "b".repeat(32) });
+} catch (error) {
+  console.log("refused:", error.message);
+}
+</code>
+<option correct>{ id: 2 }
+refused: Invalid pagination cursor signature.</option>
+<option>{ id: 2 }
+{ id: 2 }</option>
+<option>{ id: 2 }
+{ id: 0 }</option>
+<option>eyJpZCI6Mn0
+refused: Invalid pagination cursor signature.</option>
+<explain><p>With the right secret the position comes back. Any change, or another secret, breaks the signature and the cursor is refused. A cursor travels through the client, so signing it is what makes a forged one detectable.</p></explain>
+</question>
+
+<question id="db-cursor-400" type="choice">
+<q>A client sends a forged cursor, and <code>paginateCursor</code> refuses it with an error. What should your route answer?</q>
+<option>Nothing: the error handler turns it into a 500, which is fine</option>
+<option correct>Catch it and answer 400 Bad Request</option>
+<option>Retry the query without the cursor and return page 1</option>
+<option>Answer 200 with an empty list</option>
+<explain><p>A bad cursor is the client's mistake, so the answer is 400. If you let the error fall through as a 500, you wrongly say the server is broken.</p></explain>
+</question>
+
+<question id="db-tx-rollback" type="output">
+<q>The callback inserts a row, then throws. What does this print?</q>
+<code file="tx-rollback.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+import { createDatabaseClient, noopDatabaseLogger, withTransaction } from "@zudojs/database";
+
+const pg = new PGlite();
+const raw = (db) => ({
+  $queryRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).rows,
+  $executeRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).affectedRows ?? 0,
+});
+const client = createDatabaseClient({
+  prisma: { ...raw(pg), $connect: () => pg.waitReady, $disconnect: () => pg.close(),
+    $transaction: (work) => pg.transaction((tx) => work(raw(tx))) },
+  logger: noopDatabaseLogger,
+});
+await client.connect();
+await client.executeRawUnsafe("CREATE TABLE tasks (id serial PRIMARY KEY, title text)");
+
+try {
+  await withTransaction(client, async (tx) => {
+    await tx.$executeRawUnsafe("INSERT INTO tasks (title) VALUES ($1)", "Pack bags");
+    throw new Error("second step failed");
+  });
+} catch {
+  console.log("transaction failed");
+}
+const rows = await client.queryRawUnsafe("SELECT count(*)::int AS n FROM tasks");
+console.log("rows:", rows[0].n);
+await client.disconnect();
+</code>
+<option correct>transaction failed
+rows: 0</option>
+<option>transaction failed
+rows: 1</option>
+<option>rows: 1</option>
+<option>rows: 0</option>
+<explain><p><code>withTransaction</code> commits only if the callback returns. It threw, so the insert was rolled back: all-or-nothing.</p></explain>
+</question>
+
+<question id="db-tx-bound-repo" type="choice">
+<q>Inside a <code>withTransaction</code> callback, how should you use the <code>tasks</code> repository?</q>
+<option>Use <code>tasks</code> as usual; every query joins the open transaction by itself</option>
+<option correct>Use <code>tasks.withTransaction(tx)</code>, a copy bound to the transaction, for every query in the callback</option>
+<option>Create a new database client inside the callback</option>
+<option>Call <code>tasks.softDelete()</code> first, to lock the table</option>
+<explain><p>A query through the ordinary <code>tasks</code> repository runs outside the transaction, so it would not be rolled back. The <code>tx</code>-bound copy makes every query part of it.</p></explain>
+</question>
+
+<question id="db-tx-retry" type="choice">
+<q>When does <code>withTransactionRetry(client, callback, { retries: 3 })</code> run the callback again?</q>
+<option>After any error, including your own validation errors</option>
+<option correct>When PostgreSQL reports a serialization failure or a deadlock, errors that mean "try again"</option>
+<option>Every time, three times, to be sure the data is saved</option>
+<option>Only when the network is down</option>
+<explain><p>Serialization failures and deadlocks are safe to retry: running the whole callback again usually succeeds. A validation error would fail the same way every time, so it is not retried.</p></explain>
+</question>
+
+<question id="db-health-down" type="output">
+<q>What does this print once the database is gone?</q>
+<code file="health.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+import { checkDatabaseHealth, createDatabaseClient, noopDatabaseLogger } from "@zudojs/database";
+
+const pg = new PGlite();
+const raw = (db) => ({
+  $queryRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).rows,
+  $executeRawUnsafe: async (sql, ...values) => (await db.query(sql, values)).affectedRows ?? 0,
+});
+const client = createDatabaseClient({
+  prisma: { ...raw(pg), $connect: () => pg.waitReady,
+    $disconnect: async () => { if (!pg.closed) await pg.close(); },
+    $transaction: (work) => pg.transaction((tx) => work(raw(tx))) },
+  logger: noopDatabaseLogger,
+});
+await client.connect();
+
+async function healthRoute() {
+  const health = await checkDatabaseHealth(client, { timeoutMs: 2_000 });
+  return { status: health.healthy ? 200 : 503, body: { database: health.status } };
+}
+console.log(await healthRoute());
+await pg.close();
+console.log(await healthRoute());
+await client.disconnect();
+</code>
+<option correct>{ status: 200, body: { database: 'healthy' } }
+{ status: 503, body: { database: 'unhealthy' } }</option>
+<option>{ status: 200, body: { database: 'healthy' } }
+{ status: 200, body: { database: 'healthy' } }</option>
+<option>{ status: 200, body: { database: 'healthy' } }
+{ status: 500, body: { database: 'PGlite is closed' } }</option>
+<option>{ status: 200, body: { database: 'healthy' } }
+{ status: 503, body: { database: 'down' } }</option>
+<explain><p><code>checkDatabaseHealth</code> runs a tiny <code>SELECT 1</code> with a timeout. Once the database is gone it reports <code>unhealthy</code>, and the route answers <strong>503 Service Unavailable</strong>, so the load balancer stops sending traffic.</p></explain>
+</question>
+
+<question id="code-db-health" type="code" file="health-route.js">
+<q><p>Finish <code>healthRoute(check)</code>. <code>check</code> is an async function that returns <code>{ healthy, status, message }</code>. Answer <code>{ status: 200 }</code> or <code>{ status: 503 }</code>, with a body <code>{ database: … }</code> that holds only the <code>status</code> text. Never put <code>message</code> in the body: a health endpoint is public.</p></q>
+<starter>
+async function healthRoute(check) {
+  // your code here
+}
+
+const up = async () => ({ healthy: true, status: "healthy", message: "ok" });
+const down = async () => ({ healthy: false, status: "unhealthy", message: "connect ECONNREFUSED 10.0.0.5:5432" });
+console.log(await healthRoute(up));
+console.log(await healthRoute(down));
+</starter>
+<solution>
+async function healthRoute(check) {
+  const health = await check();
+  return { status: health.healthy ? 200 : 503, body: { database: health.status } };
+}
+
+const up = async () => ({ healthy: true, status: "healthy", message: "ok" });
+const down = async () => ({ healthy: false, status: "unhealthy", message: "connect ECONNREFUSED 10.0.0.5:5432" });
+console.log(await healthRoute(up));
+console.log(await healthRoute(down));
+</solution>
+<expected>
+{ status: 200, body: { database: 'healthy' } }
+{ status: 503, body: { database: 'unhealthy' } }
+</expected>
+<explain><p>Answer 503 when the database is down, so a load balancer stops sending traffic. The error message names an internal host and port, so it stays in your logs and out of the public body.</p></explain>
+</question>
+
+<question id="db-health-vs-ready" type="choice">
+<q>During start-up, before migrations are done, what should the server report?</q>
+<option>Not alive and not ready</option>
+<option correct>Alive (healthy) but not ready</option>
+<option>Ready but not alive</option>
+<option>Alive and ready</option>
+<explain><p>Health (liveness) asks "is this process working?". Readiness asks "can it take traffic right now?". A server running its migrations is working but cannot serve requests yet.</p></explain>
+</question>
+
+<question id="db-pool" type="choice">
+<q>With Prisma in production, where do you set the connection pool size (<code>max</code>)?</q>
+<option>In <code>createDatabaseClient</code>'s options</option>
+<option correct>In the driver adapter, <code>new PrismaPg({ connectionString, max: 10 })</code></option>
+<option>In the migration runner</option>
+<option>PostgreSQL chooses it; you cannot set it</option>
+<explain><p>The pool belongs to the driver adapter, not to <code>@zudojs/database</code>. Start with about 10 per server process, and remember that PostgreSQL has a total limit shared by all your servers.</p></explain>
+</question>
+
+<question id="code-db-update-data" type="code" file="update-data.js">
+<q><p>A PATCH body may leave fields out, and a form may send <code>undefined</code>. Finish <code>updateSql(id, data)</code>: skip keys whose value is <code>undefined</code> (they mean "leave it"), and build <code>UPDATE tasks SET "field" = $1, … WHERE "id" = $n</code> with the values in <code>params</code> and the id last. Return <code>{ sql, params }</code>.</p></q>
+<starter>
+function updateSql(id, data) {
+  const params = [];
+  // your code here
+}
+
+for (const { sql, params } of [
+  updateSql(4, { done: true, title: undefined, priority: "high" }),
+  updateSql(7, { title: "Pack bags" }),
+]) {
+  console.log(sql, params);
+}
+</starter>
+<solution>
+function updateSql(id, data) {
+  const params = [];
+  const sets = Object.entries(data)
+    .filter(([, value]) => value !== undefined)
+    .map(([field, value]) => `"${field}" = $${params.push(value)}`);
+  const sql = `UPDATE tasks SET ${sets.join(", ")} WHERE "id" = $${params.push(id)}`;
+  return { sql, params };
+}
+
+for (const { sql, params } of [
+  updateSql(4, { done: true, title: undefined, priority: "high" }),
+  updateSql(7, { title: "Pack bags" }),
+]) {
+  console.log(sql, params);
+}
+</solution>
+<expected>
+UPDATE tasks SET "done" = $1, "priority" = $2 WHERE "id" = $3 [ true, 'high', 4 ]
+UPDATE tasks SET "title" = $1 WHERE "id" = $2 [ 'Pack bags', 7 ]
+</expected>
+<explain><p>Filter out <code>undefined</code> first, like Prisma does: otherwise the title would be set to <code>NULL</code>. <code>params.push(value)</code> returns the new length, which is the right <code>$</code> number. (In a real app, field names also go through an allow-list.)</p></explain>
+</question>
+
+<question id="db-practice-model-fields" type="choice">
+<q>Migration 3 adds a <code>due_date</code> column. You then call <code>tasks.update(1, { dueDate: "2026-10-01" })</code> and get <code>Unknown field "dueDate"</code>. What did you forget?</q>
+<option>To run <code>migrate()</code> a second time</option>
+<option correct>To add <code>"dueDate"</code> to <code>TASK_MODEL.fields</code>, the adapter's allow-list</option>
+<option>To restart PostgreSQL</option>
+<option>To write a seed for the new column</option>
+<explain><p>The adapter only accepts field names in <code>TASK_MODEL.fields</code>. A new column needs its field name added there (and to the <code>Task</code> type), or the allow-list refuses it.</p></explain>
+</question>
+
+<question id="db-stable-sort" type="choice">
+<q>The seed created all five tasks in one transaction, so they share the same <code>createdAt</code>. How do you make "newest first" a stable order?</q>
+<option>Sort by <code>title</code> instead</option>
+<option correct>Sort by <code>createdAt</code> descending, then by <code>id</code> descending as a second field</option>
+<option>Remove <code>orderBy</code>; PostgreSQL returns rows in insert order</option>
+<option>Add a random number column and sort by it</option>
+<explain><p>When two rows have the same <code>createdAt</code>, the order between them is not fixed. A unique second sort field such as <code>id</code> breaks the tie. Without <code>ORDER BY</code>, PostgreSQL promises no order at all.</p></explain>
+</question>
+
+<question id="db-page-query-schema" type="choice">
+<q>Clients send <code>?page=2&amp;limit=5000</code>. What does the practice's <code>listTasks</code> do with <code>limit=5000</code>?</q>
+<option>It returns all rows, because the client asked for them</option>
+<option>It quietly uses 50 instead</option>
+<option correct>The schema (<code>limit</code> 1 to 50) rejects it, and the route answers 400</option>
+<option>It passes 5000 to the database, which caps it at 100</option>
+<explain><p>Query-string values are text and come from the client, so validate them: <code>schema.coerce.number().int().min(1).max(50)</code>. A limit that is too big is refused with 400, so no one can ask for the whole table.</p></explain>
+</question>
+
+<question id="db-with-deleted-args" type="output">
+<q>The fake delegate prints what the repository asks for. What does this print?</q>
+<code file="with-deleted.js" browser="no">
+import { BaseRepository } from "@zudojs/database";
+
+const delegate = {
+  async count(args) { console.log("count", JSON.stringify(args.where ?? null)); return 0; },
+  async findMany(args) { console.log("findMany", JSON.stringify(args.where)); return []; },
+};
+const tasks = new BaseRepository(delegate, { modelName: "Task", softDelete: true });
+await tasks.count();
+await tasks.withDeleted().count();
+await tasks.findDeleted();
+</code>
+<option correct>count {"deletedAt":null}
+count null
+findMany {"deletedAt":{"not":null}}</option>
+<option>count {"deletedAt":null}
+count {"deletedAt":null}
+findMany {"deletedAt":null}</option>
+<option>count null
+count null
+findMany {"deletedAt":{"not":null}}</option>
+<option>count {"deletedAt":null}
+count {"deletedAt":{"not":null}}
+findMany null</option>
+<explain><p>Normal reads skip deleted rows (<code>deletedAt: null</code>). <code>withDeleted()</code> removes that filter and sees everything. <code>findDeleted()</code> asks for only the rows whose <code>deletedAt</code> is set.</p></explain>
+</question>
+
+<question id="db-paginate-collection" type="output">
+<q>What does this print?</q>
+<code file="paginate-list.js" browser="no">
+import { paginateCollection } from "@zudojs/database";
+
+const page = paginateCollection(["a", "b", "c", "d", "e"], { page: 3, limit: 2 });
+console.log(page.data, page.meta.total, page.meta.hasNextPage);
+</code>
+<option correct>[ 'e' ] 5 false</option>
+<option>[ 'e', undefined ] 5 false</option>
+<option>[ 'c', 'd' ] 5 true</option>
+<option>[] 5 false</option>
+<explain><p>Page 3 with 2 per page skips 4 items, so only <code>'e'</code> is left. It is the last page, so <code>hasNextPage</code> is <code>false</code>.</p></explain>
+</question>
+
+<question id="code-db-escape-like" type="code" file="escape-like.js">
+<q><p>In a <code>LIKE</code> pattern, <code>%</code> and <code>_</code> are wildcards and <code>\</code> escapes. Finish <code>containsPattern(text)</code>: put a <code>\</code> before every <code>\</code>, <code>%</code> and <code>_</code> in the user's text, then wrap it in <code>%…%</code>. The result is sent as a <code>$1</code> parameter, so a search for <code>100%</code> finds only titles that really contain <code>100%</code>.</p></q>
+<starter>
+function containsPattern(text) {
+  // your code here
+}
+
+console.log(containsPattern("milk"));
+console.log(containsPattern("100%"));
+console.log(containsPattern("to_do"));
+</starter>
+<solution>
+function containsPattern(text) {
+  return `%${text.replace(/[\\%_]/g, "\\$&")}%`;
+}
+
+console.log(containsPattern("milk"));
+console.log(containsPattern("100%"));
+console.log(containsPattern("to_do"));
+</solution>
+<expected>
+%milk%
+%100\%%
+%to\_do%
+</expected>
+<explain><p>The lesson's adapter does the same: <code>text.replace(/[\\%_]/g, "\\$&amp;")</code>. <code>$&amp;</code> is the matched character. Without it, <code>100%</code> would match every title that starts with <code>100</code>.</p></explain>
+</question>
+
+<question id="code-db-column" type="code" file="column.js">
+<q><p>Finish <code>column(field, fields)</code>, like the lesson's adapter. If <code>field</code> is not in <code>fields</code>, throw <code>new TypeError(`Unknown field "${field}"`)</code>. Otherwise turn camelCase into snake_case and wrap it in double quotes: <code>createdAt</code> becomes <code>"created_at"</code>.</p></q>
+<starter>
+const FIELDS = ["id", "title", "createdAt", "deletedAt"];
+
+function column(field, fields) {
+  // your code here
+}
+
+console.log(column("title", FIELDS), column("createdAt", FIELDS));
+try {
+  column("password", FIELDS);
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+const FIELDS = ["id", "title", "createdAt", "deletedAt"];
+
+function column(field, fields) {
+  if (!fields.includes(field)) {
+    throw new TypeError(`Unknown field "${field}"`);
+  }
+  return `"${field.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase())}"`;
+}
+
+console.log(column("title", FIELDS), column("createdAt", FIELDS));
+try {
+  column("password", FIELDS);
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>
+"title" "created_at"
+Unknown field "password"
+</expected>
+<explain><p>Check the allow-list first, before the name goes near SQL. Then replace each capital letter with <code>_</code> and its lower-case form.</p></explain>
+</question>

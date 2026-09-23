@@ -1,0 +1,854 @@
+<question id="what-is-middleware" type="choice">
+<q>What is <strong>middleware</strong>?</q>
+<option>A route that answers every path</option>
+<option correct>A function that runs around the route: it gets the context and <code>next</code>, and calling <code>next()</code> runs the rest of the chain</option>
+<option>A database layer between the service and the store</option>
+<option>A separate server that sits in front of the Task API</option>
+<explain><p>Middleware is for work that belongs to every request (headers, CORS, rate limits, timing). It receives <code>context</code> and <code>next</code>; <code>next()</code> runs the next middleware and, at the end, the route.</p></explain>
+</question>
+
+<question id="short-circuit" type="choice">
+<q>A maintenance middleware returns a 503 response without calling <code>next()</code>. What is this called, and what happens to the route?</q>
+<option correct>Short-circuiting: the route never runs</option>
+<option>Short-circuiting: the route runs, but its answer is thrown away</option>
+<option>Bubbling: the route runs after the 503 is sent</option>
+<option>A preflight: the browser asks again later</option>
+<explain><p>Not calling <code>next()</code> stops the chain there. Nothing after that middleware, including the route, runs.</p></explain>
+</question>
+
+<question id="priority-order" type="choice">
+<q>In an <code>HttpMiddlewarePipeline</code>, how does <code>priority</code> decide the order?</q>
+<option>Higher numbers run first; the default is 100</option>
+<option correct>Lower numbers run first and wrap the rest; the default is 0; equal priorities keep the order you added them in</option>
+<option>The order is random unless every middleware has a priority</option>
+<option>Priority only matters for middleware that short-circuits</option>
+<explain><p><code>pipeline.use(mw, { priority: -10 })</code> runs before a middleware with the default 0. Lower priority means an outer layer of the onion: it starts first and finishes last.</p></explain>
+</question>
+
+<question id="see-every-response" type="choice">
+<q>A middleware adds <code>x-response-time</code> to responses. It must also appear on 503 answers from a maintenance middleware. Where should it go?</q>
+<option>After the maintenance middleware, with a higher priority</option>
+<option correct>Before everything else (lowest priority), so it wraps the middleware that answers early</option>
+<option>Inside the route</option>
+<option>Anywhere: every middleware sees every response</option>
+<explain><p>A middleware only sees responses from the layers inside it. Put middleware that must see <em>every</em> response first, so even a short-circuited answer passes back through it.</p></explain>
+</question>
+
+<question id="nosniff" type="choice">
+<q>What does <code>X-Content-Type-Options: nosniff</code> protect against?</q>
+<option>Other sites showing your pages in a frame</option>
+<option correct>The browser guessing the content type, so a JSON answer can never be run as a script</option>
+<option>Cookies being sent over plain HTTP</option>
+<option>Too many requests from one client</option>
+<explain><p>With <code>nosniff</code>, the browser must trust the <code>Content-Type</code> you send. Framing is <code>X-Frame-Options</code>, cookies over HTTPS is the <code>Secure</code> flag, and request floods are rate limiting.</p></explain>
+</question>
+
+<question id="clickjacking" type="choice">
+<q>Which headers from <code>createSecurityMiddleware()</code> stop <strong>clickjacking</strong>, where an invisible frame tricks the user into clicking your buttons?</q>
+<option><code>Referrer-Policy</code> and <code>Strict-Transport-Security</code></option>
+<option correct><code>X-Frame-Options: DENY</code> and CSP's <code>frame-ancestors 'none'</code></option>
+<option><code>X-Content-Type-Options: nosniff</code></option>
+<option><code>Access-Control-Allow-Origin</code></option>
+<explain><p>Both say "no other site may show my pages inside a frame". Without a frame, there is nothing invisible to click.</p></explain>
+</question>
+
+<question id="hsts-localhost" type="choice">
+<q>Why does the lesson use <code>createSecurityMiddleware({ strictTransportSecurity: "max-age=0" })</code> on a plain-HTTP development server?</q>
+<option>Because HSTS makes the server slower in development</option>
+<option correct>Browsers remember HSTS; if <code>localhost</code> sends it, some browsers refuse plain <code>http://localhost</code> for a year</option>
+<option>Because HSTS is not allowed on port 3000</option>
+<option>To turn off every security header in development</option>
+<explain><p>HSTS says "only ever talk to me over HTTPS". <code>max-age=0</code> tells browsers to forget it. In production, behind HTTPS, keep the default.</p></explain>
+</question>
+
+<question id="cors-not-auth" type="choice">
+<q>Your CORS allow-list only contains your own web app. A script uses <code>curl</code> to call the API directly. What happens?</q>
+<option>The server refuses it with 403, because the origin is not allowed</option>
+<option correct>It works: CORS protects users' browsers, not your server, and <code>curl</code> ignores CORS completely</option>
+<option>The request never reaches the server</option>
+<option>The rate limiter blocks it at once</option>
+<explain><p>Even a browser request from another site got status 200 and the data; only the missing header made the browser hide it. CORS never replaces authentication or permissions.</p></explain>
+</question>
+
+<question id="cors-wildcard-credentials" type="choice">
+<q>Why does <code>createCorsMiddleware({ allowOrigin: "*", credentials: true })</code> throw a <code>ConfigurationError</code>?</q>
+<option>Because <code>"*"</code> is not a valid string</option>
+<option correct>Any website could then make requests with your users' cookies</option>
+<option>Because credentials only work with <code>GET</code></option>
+<option>Because CORS needs at least two origins</option>
+<explain><p><code>credentials: true</code> lets the browser send cookies along. With "every origin", any site could act as your logged-in users. List the exact origins instead.</p></explain>
+</question>
+
+<question id="cors-startswith" type="choice">
+<q>A teammate writes their own origin check: <code>origin.startsWith("https://tasks.example.com")</code>. What is wrong?</q>
+<option>Nothing: it is the same as the allow-list</option>
+<option correct><code>https://tasks.example.com.evil.example</code> starts with that text and would be allowed</option>
+<option>It is too slow for every request</option>
+<option>It refuses your own web app</option>
+<explain><p>An attacker can register a domain that merely starts with yours. The allow-list in <code>createCorsMiddleware</code> compares whole origins exactly; never replace it with <code>startsWith</code> or a loose regular expression.</p></explain>
+</question>
+
+<question id="cors-config" type="choice">
+<q>Where should the CORS allow-list live?</q>
+<option>Hard-coded in the middleware file forever</option>
+<option correct>In configuration, so development can allow <code>http://localhost:5173</code> and production only the real domain</option>
+<option>In a cookie, so each browser can choose</option>
+<option>In the request's <code>Origin</code> header</option>
+<explain><p>The allowed origins differ per environment. Configuration holds them, and the code stays the same everywhere. The config lesson does exactly this.</p></explain>
+</question>
+
+<question id="rate-limit-why" type="choice">
+<q>Why must a public API have a rate limit?</q>
+<option>To make every response faster</option>
+<option correct>Without one, a single script can flood the API with junk or guess passwords all day</option>
+<option>Because browsers refuse APIs without one</option>
+<option>To replace authentication</option>
+<explain><p>A rate limiter counts requests per client in a time window and answers <strong>429 Too Many Requests</strong> when the client goes over, usually with a <code>Retry-After</code> header.</p></explain>
+</question>
+
+<question id="sliding-window" type="choice">
+<q>The limiter allows 3 requests per 60 seconds, and its window <em>slides</em>. What does that prevent?</q>
+<option>A client sending 3 requests in one second</option>
+<option correct>A client sending 3 requests at 11:59:59 and 3 more at 12:00:00</option>
+<option>Two different clients using the same allowance</option>
+<option>The limiter using memory</option>
+<explain><p>Each check forgets only requests older than <code>windowMs</code>, so there is no fixed moment when the counter resets and a burst can slip through.</p></explain>
+</question>
+
+<question id="trust-proxy" type="choice">
+<q>The Task API runs behind one load balancer, so every request seems to come from the balancer's IP. What is the safe fix?</q>
+<option>Always read the client's IP from the <code>X-Forwarded-For</code> header</option>
+<option correct>Tell the adapter how many proxies you run, for example <code>createNodeHttpAdapter({ trustProxy: 1 })</code></option>
+<option>Turn off rate limiting behind a proxy</option>
+<option>Rate limit by the <code>User-Agent</code> header instead</option>
+<explain><p>Any client can send <code>X-Forwarded-For</code> and pick its own address. Only with <code>trustProxy</code> set to the real number of proxies does the adapter believe it.</p></explain>
+</question>
+
+<question id="write-limit" type="choice">
+<q>Why does the Task API use a gentle limit for every request plus a stricter one only for writes?</q>
+<option>Because GET requests cannot be rate limited</option>
+<option correct>Creating tasks costs more than reading them, so writes get a lower allowance while reading keeps working</option>
+<option>Because the stricter limit also handles CORS</option>
+<option>So write requests skip the security headers</option>
+<explain><p><code>limitWrites</code> only calls the strict middleware for methods that are not <code>GET</code>, <code>HEAD</code> or <code>OPTIONS</code>. A client that hit the write limit can still read its tasks.</p></explain>
+</question>
+
+<question id="memory-counts" type="choice">
+<q>The Task API runs as three copies of the same process, each with the in-memory limiter set to 100 per minute. What really happens?</q>
+<option>All three share one count of 100</option>
+<option correct>Each copy counts separately, so a client may get up to about 300 per minute</option>
+<option>The limiter refuses to start with more than one copy</option>
+<option>Only the first copy counts requests</option>
+<explain><p>The counts live in the memory of one process. With several copies you need a shared store; the security lesson covers that case.</p></explain>
+</question>
+
+<question id="order-cors-before-limit" type="choice">
+<q>In the Task API pipeline, why does CORS come <strong>before</strong> the rate limits?</q>
+<option>CORS is faster than rate limiting</option>
+<option correct>So a preflight is answered at once and does not use up the client's allowance</option>
+<option>So rate-limited answers never get CORS headers</option>
+<option>Because the rate limiter needs the <code>Origin</code> header</option>
+<explain><p>The CORS middleware answers <code>OPTIONS</code> preflights by itself. Placed first, those extra browser requests never reach the limiter. Security headers go before both, so every answer gets them.</p></explain>
+</question>
+
+<question id="generic-middleware" type="choice">
+<q>When should you use <code>@zudojs/middleware</code>'s <code>createPipeline</code> instead of <code>HttpMiddlewarePipeline</code>?</q>
+<option>For every HTTP route, because it is more general</option>
+<option correct>For work that is not an HTTP request, such as a background job that sends reminders</option>
+<option>Only for CORS</option>
+<option>Never: it is deprecated</option>
+<explain><p><code>createPipeline</code> works with any kind of context and reports whether the run succeeded. For HTTP, stay with <code>HttpMiddlewarePipeline</code>, which knows about requests and responses.</p></explain>
+</question>
+
+<question id="graceful-stop" type="choice">
+<q>What does <code>server.stop()</code> do with a request that is already running?</q>
+<option>Cuts it off immediately with a 503</option>
+<option correct>Lets it finish (up to <code>gracefulShutdownTimeout</code>), while refusing new connections at once</option>
+<option>Restarts it after the server comes back</option>
+<option>Waits forever until every client disconnects</option>
+<explain><p>That is a graceful shutdown: the door closes to new connections, and requests in progress get a full answer. The default wait is 30 seconds.</p></explain>
+</question>
+
+<question id="shutdown-order" type="choice">
+<q>What is the right order in <code>src/server.ts</code> when <code>SIGTERM</code> arrives?</q>
+<option>Dispose the container, stop the runtime, stop the HTTP server, exit</option>
+<option>Exit with 0 at once; the OS cleans up</option>
+<option correct>Stop the HTTP server, stop the runtime, dispose the container, exit with 0 (log and exit 1 on failure)</option>
+<option>Stop the runtime, exit, then stop the HTTP server</option>
+<explain><p>Requests in progress still use the store, so the server stops first. Then the modules stop, and the container is disposed last.</p></explain>
+</question>
+
+<question id="graceful-timeout" type="choice">
+<q>Your platform kills the process 30 seconds after <code>SIGTERM</code>. How should you set <code>gracefulShutdownTimeout</code>?</q>
+<option>Higher than 30 seconds, to be safe</option>
+<option correct>Below 30 seconds (for example 20 000 ms), so your shutdown finishes before the platform kills the process</option>
+<option>0, so shutdown is instant</option>
+<option>It does not matter; the platform waits for it</option>
+<explain><p>If the platform kills the process first, requests are cut off and the runtime never stops cleanly. Leave time for the runtime and the container after the server.</p></explain>
+</question>
+
+<question id="out-onion" type="output">
+<q>What does this print?</q>
+<code file="onion.js" browser="no">
+import { createRequestContext, createResponseContext, HttpMiddlewarePipeline } from "@zudojs/http";
+
+function trace(name) {
+  return async (context, next) => {
+    console.log(`${name}: before`);
+    const response = await next();
+    console.log(`${name}: after`);
+    return response;
+  };
+}
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(trace("timing"));
+pipeline.use(trace("security"), { priority: -10 });
+pipeline.use(async (context) => {
+  console.log("route");
+  return context.response.json({ ok: true });
+});
+
+await pipeline.execute(createRequestContext({ method: "GET", url: "/tasks" }), createResponseContext());
+</code>
+<option correct>security: before
+timing: before
+route
+timing: after
+security: after</option>
+<option>timing: before
+security: before
+route
+security: after
+timing: after</option>
+<option>security: before
+timing: before
+route
+security: after
+timing: after</option>
+<option>timing: before
+timing: after
+security: before
+security: after
+route</option>
+<explain><p><code>security</code> has the lower priority (-10), so it runs first even though it was added second. The calls nest like an onion: the first to start is the last to finish.</p></explain>
+</question>
+
+<question id="out-equal-priority" type="output">
+<q>No middleware has a priority. What does this print?</q>
+<code file="equal.js" browser="no">
+import { createRequestContext, createResponseContext, HttpMiddlewarePipeline } from "@zudojs/http";
+
+const pipeline = new HttpMiddlewarePipeline();
+const order = [];
+for (const name of ["a", "b", "c"]) {
+  pipeline.use(async (context, next) => {
+    order.push(name);
+    return next();
+  });
+}
+pipeline.use(async (context) => context.response.json({}));
+
+await pipeline.execute(createRequestContext({ method: "GET", url: "/" }), createResponseContext());
+console.log(order.join(" "));
+</code>
+<option correct>a b c</option>
+<option>c b a</option>
+<option>a</option>
+<option>b a c</option>
+<explain><p>All three have the default priority 0, and equal priorities keep the order you added them in.</p></explain>
+</question>
+
+<question id="out-short-circuit" type="output">
+<q>What does this print?</q>
+<code file="maintenance.js" browser="no">
+import { createRequestContext, createResponseContext, HttpMiddlewarePipeline } from "@zudojs/http";
+
+let routeCalls = 0;
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(async (context, next) => {
+  if (context.request.method !== "GET") {
+    return context.response.setStatus(503).json({ error: "read-only today" });
+  }
+  return next();
+});
+pipeline.use(async (context) => {
+  routeCalls += 1;
+  return context.response.json({ ok: true });
+});
+
+const post = await pipeline.execute(createRequestContext({ method: "POST", url: "/tasks" }), createResponseContext());
+const get = await pipeline.execute(createRequestContext({ method: "GET", url: "/tasks" }), createResponseContext());
+console.log(post.status, get.status, routeCalls);
+</code>
+<option correct>503 200 1</option>
+<option>503 200 2</option>
+<option>200 200 2</option>
+<option>503 503 0</option>
+<explain><p>For the POST the middleware answered by itself and never called <code>next()</code>, so the route did not run. Only the GET reached the route: one call.</p></explain>
+</question>
+
+<question id="out-after-next" type="output">
+<q>What does this print?</q>
+<code file="wrap.js" browser="no">
+import { createRequestContext, createResponseContext, HttpMiddlewarePipeline } from "@zudojs/http";
+
+const version = async (context, next) => {
+  const response = await next();
+  return response.setHeader("x-api-version", "1");
+};
+const maintenance = async (context) =>
+  context.response.setStatus(503).json({ error: "maintenance" });
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(maintenance);
+pipeline.use(version, { priority: -100 });
+pipeline.use(async (context) => context.response.json({ ok: true }));
+
+const response = await pipeline.execute(createRequestContext({ method: "GET", url: "/" }), createResponseContext());
+console.log(response.status, response.headers["x-api-version"]);
+</code>
+<option correct>503 1</option>
+<option>503 undefined</option>
+<option>200 1</option>
+<option>200 undefined</option>
+<explain><p><code>version</code> has the lowest priority, so it wraps everything, including the maintenance middleware that answers early. Its work after <code>next()</code> still runs on the 503.</p></explain>
+</question>
+
+<question id="out-security-headers" type="output">
+<q>What does this print?</q>
+<code file="security-headers.js" browser="no">
+import { createRequestContext, createResponseContext, createSecurityMiddleware, HttpMiddlewarePipeline } from "@zudojs/http";
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(createSecurityMiddleware());
+pipeline.use(async (context) => context.response.json([]));
+
+const response = await pipeline.execute(createRequestContext({ method: "GET", url: "/tasks" }), createResponseContext());
+console.log(response.headers["x-content-type-options"], response.headers["x-frame-options"]);
+</code>
+<option correct>nosniff DENY</option>
+<option>nosniff SAMEORIGIN</option>
+<option>undefined undefined</option>
+<option>sniff DENY</option>
+<explain><p><code>createSecurityMiddleware()</code> sends a safe set: <code>nosniff</code> so the browser never guesses the content type, and <code>DENY</code> so no site may frame your pages.</p></explain>
+</question>
+
+<question id="out-hsts-dev" type="output">
+<q>What does this print?</q>
+<code file="hsts.js" browser="no">
+import { createRequestContext, createResponseContext, createSecurityMiddleware, HttpMiddlewarePipeline } from "@zudojs/http";
+
+const production = false;
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(createSecurityMiddleware(production ? {} : { strictTransportSecurity: "max-age=0" }));
+pipeline.use(async (context) => context.response.json([]));
+
+const response = await pipeline.execute(createRequestContext({ method: "GET", url: "/" }), createResponseContext());
+console.log(response.headers["strict-transport-security"], response.headers["x-frame-options"]);
+</code>
+<option correct>max-age=0 DENY</option>
+<option>max-age=31536000; includeSubDomains; preload DENY</option>
+<option>max-age=0 undefined</option>
+<option>undefined DENY</option>
+<explain><p>Outside production, HSTS is set to <code>max-age=0</code> so browsers forget it. Only that header changes; the other security headers stay on.</p></explain>
+</question>
+
+<question id="out-cors-origins" type="output">
+<q>What does this print?</q>
+<code file="cors.js" browser="no">
+import { createCorsMiddleware, createRequestContext, createResponseContext, HttpMiddlewarePipeline } from "@zudojs/http";
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(createCorsMiddleware({ allowOrigin: ["https://tasks.example.com"] }));
+pipeline.use(async (context) => context.response.json([{ id: 1 }]));
+
+for (const origin of ["https://tasks.example.com", "https://evil.example"]) {
+  const request = createRequestContext({ method: "GET", url: "/tasks", headers: { origin } });
+  const response = await pipeline.execute(request, createResponseContext());
+  console.log(response.status, response.headers["access-control-allow-origin"]);
+}
+</code>
+<option correct>200 https://tasks.example.com
+200 undefined</option>
+<option>200 https://tasks.example.com
+403 undefined</option>
+<option>200 https://tasks.example.com
+200 https://evil.example</option>
+<option>200 *
+200 *</option>
+<explain><p>The other site still gets 200 and the data. Only the missing <code>access-control-allow-origin</code> header makes the <em>browser</em> hide the answer. CORS protects browsers, not your server.</p></explain>
+</question>
+
+<question id="out-cors-lookalike" type="output">
+<q>What does this print?</q>
+<code file="cors-lookalike.js" browser="no">
+import { createCorsMiddleware, createRequestContext, createResponseContext, HttpMiddlewarePipeline } from "@zudojs/http";
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(createCorsMiddleware({ allowOrigin: ["https://tasks.example.com", "https://m.tasks.example.com"] }));
+pipeline.use(async (context) => context.response.json([]));
+
+for (const origin of ["https://m.tasks.example.com", "https://tasks.example.com.evil.example"]) {
+  const request = createRequestContext({ method: "GET", url: "/tasks", headers: { origin } });
+  const response = await pipeline.execute(request, createResponseContext());
+  console.log(response.headers["access-control-allow-origin"] ?? "refused");
+}
+</code>
+<option correct>https://m.tasks.example.com
+refused</option>
+<option>https://m.tasks.example.com
+https://tasks.example.com.evil.example</option>
+<option>refused
+refused</option>
+<option>https://tasks.example.com
+refused</option>
+<explain><p>The allow-list compares whole origins exactly. The second origin only <em>starts</em> with an allowed one, so it is refused.</p></explain>
+</question>
+
+<question id="out-preflight" type="output">
+<q>What does this print?</q>
+<code file="preflight.js" browser="no">
+import { createCorsMiddleware, createRequestContext, createResponseContext, HttpMiddlewarePipeline } from "@zudojs/http";
+
+let routeCalls = 0;
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(createCorsMiddleware({ allowOrigin: ["https://tasks.example.com"] }));
+pipeline.use(async (context) => {
+  routeCalls += 1;
+  return context.response.json([]);
+});
+
+const request = createRequestContext({
+  method: "OPTIONS",
+  url: "/tasks",
+  headers: { origin: "https://tasks.example.com", "access-control-request-method": "POST" },
+});
+const response = await pipeline.execute(request, createResponseContext());
+console.log(response.status, routeCalls);
+</code>
+<option correct>204 0</option>
+<option>200 1</option>
+<option>204 1</option>
+<option>405 0</option>
+<explain><p>The CORS middleware answers the preflight itself with 204 and never calls <code>next()</code>, so the route does not run.</p></explain>
+</question>
+
+<question id="out-cors-wildcard" type="output">
+<q>What does this print?</q>
+<code file="cors-wildcard.js" browser="no">
+import { createCorsMiddleware } from "@zudojs/http";
+
+try {
+  createCorsMiddleware({ allowOrigin: "*", credentials: true });
+  console.log("created");
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option correct>ConfigurationError</option>
+<option>created</option>
+<option>TypeError</option>
+<option>HttpError</option>
+<explain><p>Every origin plus credentials would let any website send requests with your users' cookies, so the package refuses it at startup.</p></explain>
+</question>
+
+<question id="out-limiter" type="output">
+<q>What does this print?</q>
+<code file="limiter.js" browser="no">
+import { createRateLimiter } from "@zudojs/security";
+
+const limiter = createRateLimiter({ windowMs: 60_000, max: 2 });
+const results = [];
+for (let i = 1; i <= 3; i++) {
+  const decision = limiter.check({ ip: "203.0.113.7" });
+  results.push(`${decision.allowed}/${decision.remaining}`);
+}
+console.log(results.join(" "));
+console.log("another client:", limiter.check({ ip: "198.51.100.2" }).allowed);
+limiter.destroy();
+</code>
+<option correct>true/1 true/0 false/0
+another client: true</option>
+<option>true/2 true/1 false/0
+another client: true</option>
+<option>true/1 true/0 false/0
+another client: false</option>
+<option>true/1 true/0 true/0
+another client: true</option>
+<explain><p>With <code>max: 2</code>, the third request inside the window is refused. The count is per key (here the IP), so a different client still has its full allowance.</p></explain>
+</question>
+
+<question id="out-rate-limit-mw" type="output">
+<q>What does this print?</q>
+<code file="rate-limit.js" browser="no">
+import { createRateLimitMiddleware, createRequestContext, createResponseContext, HttpMiddlewarePipeline } from "@zudojs/http";
+
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use(createRateLimitMiddleware({ windowMs: 60_000, max: 2 }));
+pipeline.use(async (context) => context.response.json({ ok: true }));
+
+const statuses = [];
+for (let i = 0; i < 3; i++) {
+  const request = createRequestContext({ method: "POST", url: "/tasks", remoteAddress: "203.0.113.7" });
+  const response = await pipeline.execute(request, createResponseContext());
+  statuses.push(response.status);
+}
+console.log(statuses.join(" "));
+</code>
+<option correct>200 200 429</option>
+<option>200 200 200</option>
+<option>200 429 429</option>
+<option>200 200 503</option>
+<explain><p>The client is identified by its address. After two requests in the window, the third gets <strong>429 Too Many Requests</strong>.</p></explain>
+</question>
+
+<question id="out-generic-pipeline" type="output">
+<q>What does this print?</q>
+<code file="job.js" browser="no">
+import { createPipeline, timeoutMiddleware } from "@zudojs/middleware";
+
+const announce = async (job, next) => {
+  console.log(`start ${job.name}`);
+  const result = await next();
+  console.log(`done ${job.name}`);
+  return result;
+};
+
+const run = createPipeline(
+  [{ name: "announce", handler: announce }, timeoutMiddleware(1_000)],
+  async (job) => `sent reminders for ${job.name}`,
+);
+
+const outcome = await run({ name: "due-today" });
+console.log(outcome.success, outcome.result);
+console.log(outcome.executedMiddleware);
+</code>
+<option correct>start due-today
+done due-today
+true sent reminders for due-today
+[ 'announce', 'timeout' ]</option>
+<option>start due-today
+done due-today
+true sent reminders for due-today
+[ 'announce' ]</option>
+<option>true sent reminders for due-today
+[ 'announce', 'timeout' ]</option>
+<option>start due-today
+true sent reminders for due-today
+done due-today
+[ 'announce', 'timeout' ]</option>
+<explain><p>Each middleware is given with a name, and the outcome tells you whether the run succeeded, what it returned, and which middleware ran. <code>timeoutMiddleware</code> is named <code>timeout</code>.</p></explain>
+</question>
+
+<question id="out-graceful" type="output">
+<q>A slow request is running when the server stops. What does this print?</q>
+<code file="graceful.js" browser="no">
+import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+
+let reportStarted;
+const started = new Promise((resolve) => (reportStarted = resolve));
+
+const router = createRouter();
+router.get("/report", async () => {
+  reportStarted();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  console.log("report: finished");
+  return createResponseContext().json({ tasks: 3 });
+});
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
+  handler: async (request) => (await router.dispatch(request)).response,
+  gracefulShutdownTimeout: 5_000,
+});
+server.on("onStopped", () => console.log("server: stopped"));
+await server.start();
+
+const slow = fetch(`http://127.0.0.1:${server.address?.port}/report`)
+  .then(async (r) => console.log("client got", r.status, await r.text()));
+await started;
+await Promise.all([slow, server.stop()]);
+</code>
+<option correct>report: finished
+client got 200 {"tasks":3}
+server: stopped</option>
+<option>server: stopped
+report: finished
+client got 200 {"tasks":3}</option>
+<option>server: stopped
+client got 503 {"error":"Service Unavailable"}</option>
+<option>report: finished
+server: stopped
+client got 500 {"error":"Internal Server Error"}</option>
+<explain><p><code>server.stop()</code> waits for requests already running. The report finishes, its client gets a full 200, and only then does the server report it has stopped.</p></explain>
+</question>
+
+<question id="out-retry-after" type="output">
+<q>Only writes are limited here. What does this print?</q>
+<code file="retry-after.js" browser="no">
+import { createRateLimitMiddleware, createRequestContext, createResponseContext, HttpMiddlewarePipeline } from "@zudojs/http";
+import { createRateLimiter } from "@zudojs/security";
+
+const writes = createRateLimitMiddleware({ limiter: createRateLimiter({ windowMs: 60_000, max: 1 }) });
+const pipeline = new HttpMiddlewarePipeline();
+pipeline.use((context, next) => (context.request.method === "GET" ? next() : writes(context, next)));
+pipeline.use(async (context) => context.response.json({ ok: true }));
+
+for (const method of ["POST", "POST", "GET"]) {
+  const request = createRequestContext({ method, url: "/tasks", remoteAddress: "203.0.113.7" });
+  const response = await pipeline.execute(request, createResponseContext());
+  console.log(method, response.status, response.headers["retry-after"] ?? "-");
+}
+</code>
+<option correct>POST 200 -
+POST 429 60
+GET 200 -</option>
+<option>POST 200 -
+POST 429 60
+GET 429 60</option>
+<option>POST 200 -
+POST 429 -
+GET 200 -</option>
+<option>POST 200 -
+POST 200 -
+GET 200 -</option>
+<explain><p>The second POST goes over the write limit and gets 429 with <code>Retry-After</code>: the seconds to wait (the 60-second window). The GET skips the write limit, so reading still works.</p></explain>
+</question>
+
+<question id="code-trace" type="code" file="trace.js">
+<q><p>This tiny runner works like a middleware pipeline. Finish <code>trace(name)</code> so the middleware it returns pushes <code>`${name} in`</code> into <code>log</code> before calling <code>next()</code>, and <code>`${name} out`</code> after it, and returns what <code>next()</code> returned. The program should print <code>outer in, inner in, route, inner out, outer out</code>.</p></q>
+<starter>
+const log = [];
+
+async function run(middlewares, route) {
+  const call = (i) => (i < middlewares.length ? middlewares[i](() => call(i + 1)) : route());
+  return call(0);
+}
+
+function trace(name) {
+  return async (next) => {
+    // your code here
+  };
+}
+
+await run([trace("outer"), trace("inner")], async () => {
+  log.push("route");
+  return "ok";
+});
+console.log(log.join(", "));
+</starter>
+<solution>
+const log = [];
+
+async function run(middlewares, route) {
+  const call = (i) => (i < middlewares.length ? middlewares[i](() => call(i + 1)) : route());
+  return call(0);
+}
+
+function trace(name) {
+  return async (next) => {
+    log.push(`${name} in`);
+    const result = await next();
+    log.push(`${name} out`);
+    return result;
+  };
+}
+
+await run([trace("outer"), trace("inner")], async () => {
+  log.push("route");
+  return "ok";
+});
+console.log(log.join(", "));
+</solution>
+<expected>outer in, inner in, route, inner out, outer out</expected>
+<explain><p>Work before <code>await next()</code> happens on the way in, work after it on the way out. That is why the first middleware to start is the last to finish: the onion.</p></explain>
+</question>
+
+<question id="code-maintenance" type="code" file="maintenance-switch.js">
+<q><p>Finish the <code>maintenance</code> middleware. When <code>state.on</code> is true, it must <strong>not</strong> call <code>next()</code> and return <code>{ status: 503 }</code>. Otherwise it returns what <code>next()</code> returns. The program should print <code>200 503 routeCalls=1</code>.</p></q>
+<starter>
+const state = { on: false };
+let routeCalls = 0;
+
+async function run(middlewares, route) {
+  const call = (i) => (i < middlewares.length ? middlewares[i](() => call(i + 1)) : route());
+  return call(0);
+}
+
+async function maintenance(next) {
+  // your code here
+}
+
+const route = async () => {
+  routeCalls += 1;
+  return { status: 200 };
+};
+
+const first = await run([maintenance], route);
+state.on = true;
+const second = await run([maintenance], route);
+console.log(first?.status, second?.status, `routeCalls=${routeCalls}`);
+</starter>
+<solution>
+const state = { on: false };
+let routeCalls = 0;
+
+async function run(middlewares, route) {
+  const call = (i) => (i < middlewares.length ? middlewares[i](() => call(i + 1)) : route());
+  return call(0);
+}
+
+async function maintenance(next) {
+  if (state.on) {
+    return { status: 503 };
+  }
+  return next();
+}
+
+const route = async () => {
+  routeCalls += 1;
+  return { status: 200 };
+};
+
+const first = await run([maintenance], route);
+state.on = true;
+const second = await run([maintenance], route);
+console.log(first?.status, second?.status, `routeCalls=${routeCalls}`);
+</solution>
+<expected>200 503 routeCalls=1</expected>
+<explain><p>Returning without calling <code>next()</code> short-circuits the chain, so the route runs only for the first request.</p></explain>
+</question>
+
+<question id="code-add-header" type="code" file="add-header.js">
+<q><p>Finish <code>cacheControl</code>: call <code>next()</code>, then set <code>headers["cache-control"]</code> to <code>"no-store"</code> on the response it returned, and return that response. The program should print <code>200 no-store</code>.</p></q>
+<starter>
+async function run(middlewares, route) {
+  const call = (i) => (i < middlewares.length ? middlewares[i](() => call(i + 1)) : route());
+  return call(0);
+}
+
+async function cacheControl(next) {
+  // your code here
+}
+
+const response = await run([cacheControl], async () => ({ status: 200, headers: {} }));
+console.log(response?.status, response?.headers["cache-control"]);
+</starter>
+<solution>
+async function run(middlewares, route) {
+  const call = (i) => (i < middlewares.length ? middlewares[i](() => call(i + 1)) : route());
+  return call(0);
+}
+
+async function cacheControl(next) {
+  const response = await next();
+  response.headers["cache-control"] = "no-store";
+  return response;
+}
+
+const response = await run([cacheControl], async () => ({ status: 200, headers: {} }));
+console.log(response?.status, response?.headers["cache-control"]);
+</solution>
+<expected>200 no-store</expected>
+<explain><p>This is work <em>after</em> <code>next()</code>: the response only exists once the rest of the chain has built it.</p></explain>
+</question>
+
+<question id="code-priority-order" type="code" file="priority.js">
+<q><p>Finish <code>runOrder</code>: return the middleware names in the order a pipeline runs them. Lower <code>priority</code> runs first, a missing priority counts as 0, and equal priorities keep their original order. The program should print <code>security, cors, rate-limit, router</code>.</p></q>
+<starter>
+function runOrder(entries) {
+  // your code here
+}
+
+console.log(runOrder([
+  { name: "cors" },
+  { name: "rate-limit" },
+  { name: "router", priority: 10 },
+  { name: "security", priority: -100 },
+]).join(", "));
+</starter>
+<solution>
+function runOrder(entries) {
+  return [...entries]
+    .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+    .map((entry) => entry.name);
+}
+
+console.log(runOrder([
+  { name: "cors" },
+  { name: "rate-limit" },
+  { name: "router", priority: 10 },
+  { name: "security", priority: -100 },
+]).join(", "));
+</solution>
+<expected>security, cors, rate-limit, router</expected>
+<explain><p>Sort by <code>priority ?? 0</code>. JavaScript's <code>sort</code> is stable, so <code>cors</code> and <code>rate-limit</code> (both 0) keep the order they were added in. Copy the array first so you do not change the caller's list.</p></explain>
+</question>
+
+<question id="code-exact-origin" type="code" file="origin-check.js">
+<q><p>Finish <code>allowOrigin</code>: return the origin when it is <strong>exactly</strong> one of <code>allowed</code>, otherwise <code>null</code>. Do not use <code>startsWith</code>. The program should print <code>https://tasks.example.com null null</code>.</p></q>
+<starter>
+const allowed = ["https://tasks.example.com", "https://m.tasks.example.com"];
+
+function allowOrigin(origin) {
+  // your code here
+}
+
+console.log(
+  allowOrigin("https://tasks.example.com"),
+  allowOrigin("https://tasks.example.com.evil.example"),
+  allowOrigin(undefined),
+);
+</starter>
+<solution>
+const allowed = ["https://tasks.example.com", "https://m.tasks.example.com"];
+
+function allowOrigin(origin) {
+  return allowed.includes(origin) ? origin : null;
+}
+
+console.log(
+  allowOrigin("https://tasks.example.com"),
+  allowOrigin("https://tasks.example.com.evil.example"),
+  allowOrigin(undefined),
+);
+</solution>
+<expected>https://tasks.example.com null null</expected>
+<explain><p><code>includes</code> compares whole strings exactly, so a look-alike domain that merely starts with yours is refused. In a real app, <code>createCorsMiddleware</code> does this for you.</p></explain>
+</question>
+
+<question id="code-only-writes" type="code" file="only-writes.js">
+<q><p>Finish <code>onlyWrites(middleware)</code>. It returns a new middleware <code>(method, next)</code> that calls <code>next()</code> directly for <code>GET</code>, <code>HEAD</code> and <code>OPTIONS</code>, and otherwise calls <code>middleware(method, next)</code>. The program should print <code>GET:ok POST:limited DELETE:limited OPTIONS:ok</code>.</p></q>
+<starter>
+const strictLimit = async (method, next) => "limited";
+
+function onlyWrites(middleware) {
+  // your code here
+}
+
+const limitWrites = onlyWrites(strictLimit);
+const results = [];
+for (const method of ["GET", "POST", "DELETE", "OPTIONS"]) {
+  results.push(`${method}:${await limitWrites?.(method, async () => "ok")}`);
+}
+console.log(results.join(" "));
+</starter>
+<solution>
+const strictLimit = async (method, next) => "limited";
+
+function onlyWrites(middleware) {
+  return (method, next) =>
+    ["GET", "HEAD", "OPTIONS"].includes(method) ? next() : middleware(method, next);
+}
+
+const limitWrites = onlyWrites(strictLimit);
+const results = [];
+for (const method of ["GET", "POST", "DELETE", "OPTIONS"]) {
+  results.push(`${method}:${await limitWrites?.(method, async () => "ok")}`);
+}
+console.log(results.join(" "));
+</solution>
+<expected>GET:ok POST:limited DELETE:limited OPTIONS:ok</expected>
+<explain><p>This is the Task API's <code>limitWrites</code>: reads skip the strict limit, writes go through it. A middleware that wraps another middleware is just a function that returns a function.</p></explain>
+</question>

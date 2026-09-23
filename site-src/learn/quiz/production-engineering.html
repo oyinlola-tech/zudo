@@ -1,0 +1,831 @@
+<question id="node-env-unset" type="choice">
+<q>Your server starts without <code>NODE_ENV</code> set at all. Which environment does <code>resolveEnvironment</code> choose?</q>
+<option>production, because it is on a server</option>
+<option correct>development</option>
+<option>test</option>
+<option>It stops the app with an error</option>
+<explain><p>An unset <code>NODE_ENV</code> means development. That is why the one thing every production deployment must do is set <code>NODE_ENV=production</code>; otherwise development behaviour, such as full error details, switches on silently.</p></explain>
+</question>
+
+<question id="node-env-output" type="output">
+<q>What does this print?</q>
+<code file="node-env.js">
+import { resolveEnvironment } from "@zudojs/constants";
+
+console.log(
+  resolveEnvironment({ NODE_ENV: "prod" }),
+  resolveEnvironment({}),
+  resolveEnvironment({ NODE_ENV: "staging" }),
+);
+</code>
+<option correct>production development staging</option>
+<option>prod development staging</option>
+<option>production production staging</option>
+<option>production undefined staging</option>
+<explain><p><code>prod</code> is an accepted alias for <code>production</code>. A missing value falls back to <code>development</code>, and <code>staging</code> is one of the four known environments.</p></explain>
+</question>
+
+<question id="node-env-strict-output" type="output">
+<q>Someone typed <code>prodution</code>. The app uses <code>{ strict: true }</code>. What does this print?</q>
+<code file="node-env-strict.js">
+import { resolveEnvironment } from "@zudojs/constants";
+
+try {
+  console.log("running as", resolveEnvironment({ NODE_ENV: "prodution" }, { strict: true }));
+} catch {
+  console.log("startup stopped: bad NODE_ENV");
+}
+</code>
+<option correct>startup stopped: bad NODE_ENV</option>
+<option>running as production</option>
+<option>running as development</option>
+<option>running as prodution</option>
+<explain><p>Without <code>strict</code> a typo only warns and falls back to development, which is dangerous in production. With <code>strict: true</code> the typo throws, so the app stops at startup instead of running with the wrong behaviour.</p></explain>
+</question>
+
+<question id="dev-vs-prod-errors" type="choice">
+<q>A request fails in production with an unexpected error. What should the client receive?</q>
+<option>The full stack trace, so the user can report it</option>
+<option correct>A generic error message; the details go only into the logs</option>
+<option>The SQL query that failed</option>
+<option>Nothing at all: close the connection</option>
+<explain><p>Stack traces, file paths and queries help an attacker and confuse users. In production the client gets a generic message, and you find the details in the logs by request id.</p></explain>
+</question>
+
+<question id="config-from-env" type="choice">
+<q>Which rule does the lesson give for settings such as ports, URLs, secrets and feature switches?</q>
+<option>Put production values in the code and development values in <code>.env</code></option>
+<option correct>Everything that differs between environments comes from the environment, so the same build runs everywhere</option>
+<option>Build a separate version of the app for each environment</option>
+<option>Read them from a JSON file committed to git</option>
+<explain><p>One build, many environments. The code reads its settings from the environment; only the values change between your laptop, staging and production.</p></explain>
+</question>
+
+<question id="config-fail-fast" type="choice">
+<q>Why check all configuration at startup and list every problem at once?</q>
+<option>Because checking later is slower</option>
+<option correct>So a missing value stops the app at once with a clear list, instead of failing at 3 a.m. on the first request that needs it</option>
+<option>Because environment variables disappear after startup</option>
+<option>So that secrets are printed where you can see them</option>
+<explain><p>Failing at startup means the deployment fails, not a customer's request. Listing every problem, not just the first, saves you a deploy for each missing value.</p></explain>
+</question>
+
+<question id="config-schema-issues-output" type="output">
+<q>What does this print?</q>
+<code file="config-issues.js">
+import { schema } from "@zudojs/schema";
+
+const ConfigSchema = schema.object({
+  PORT: schema.coerce.number().int().min(1).max(65535).default(3000),
+  JWT_SECRET: schema.string().min(32),
+});
+
+const result = ConfigSchema.safeParse({ PORT: "eighty" });
+console.log(result.success, result.success ? "" : result.issues.map((issue) => issue.path.join(".")));
+</code>
+<option correct>false [ 'PORT', 'JWT_SECRET' ]</option>
+<option>false [ 'PORT' ]</option>
+<option>false [ 'JWT_SECRET' ]</option>
+<option>true </option>
+<explain><p><code>"eighty"</code> cannot become a number, and <code>JWT_SECRET</code> is missing. <code>safeParse</code> reports <strong>both</strong> problems, by path only, so you fix them in one go.</p></explain>
+</question>
+
+<question id="config-default-output" type="output">
+<q>What does this print?</q>
+<code file="config-default.js">
+import { schema } from "@zudojs/schema";
+
+const ConfigSchema = schema.object({
+  PORT: schema.coerce.number().int().min(1).max(65535).default(3000),
+  JWT_SECRET: schema.string().min(32),
+});
+
+const config = ConfigSchema.parse({ JWT_SECRET: "x".repeat(40) });
+console.log(config.PORT, typeof config.PORT, `secret: ${config.JWT_SECRET.length} characters`);
+</code>
+<option correct>3000 number secret: 40 characters</option>
+<option>3000 string secret: 40 characters</option>
+<option>undefined undefined secret: 40 characters</option>
+<option>3000 number secret: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</option>
+<explain><p>A missing <code>PORT</code> falls back to its default and is a number. The program prints only the secret's <strong>length</strong>: a secret must never appear in output or logs.</p></explain>
+</question>
+
+<question id="secrets-where" type="choice">
+<q>Where should the real production database password live?</q>
+<option>In <code>.env</code>, committed so the whole team has it</option>
+<option>In the source code, in a file called <code>secrets.ts</code></option>
+<option correct>In environment variables set by the host: a systemd EnvironmentFile readable only by the app's user, Docker secrets, or a secret manager</option>
+<option>In the README, so the deployment steps are complete</option>
+<explain><p>A local <code>.env</code> holds throwaway values and is never committed. On a server, the host provides secrets to the process, and only the app's user can read them.</p></explain>
+</question>
+
+<question id="secrets-rotate" type="choice">
+<q>A developer who knew the production JWT secret leaves the company. What should you do?</q>
+<option>Nothing, as long as they promise not to use it</option>
+<option correct>Rotate it: replace it with a new secret in the host's environment; the code needs no change</option>
+<option>Change the variable name in the code</option>
+<option>Delete the secret and run without one</option>
+<explain><p>Rotate whenever someone who knew a secret leaves, and at once if it may have leaked. Because the code reads it from the environment, rotating is a configuration change, not a code change.</p></explain>
+</question>
+
+<question id="json-logs-why" type="choice">
+<q>Why should production logs be one line of JSON per event, with the same fields every time?</q>
+<option>JSON is shorter than plain text</option>
+<option correct>Logs from every server go into one tool, which can filter by fields such as <code>level</code> or <code>requestId</code></option>
+<option>Terminals can only show JSON</option>
+<option>JSON logs cannot contain secrets</option>
+<explain><p>Nobody watches the terminal in production. A log tool searches millions of lines; that works when each event is structured the same way. Pretty output is for development.</p></explain>
+</question>
+
+<question id="logs-stdout" type="choice">
+<q>Where should the production app write its logs?</q>
+<option>Into a log file it rotates itself every night</option>
+<option correct>To standard output; the process manager or Docker collects them</option>
+<option>Into the database, in a <code>logs</code> table</option>
+<option>Nowhere: logs slow the app down</option>
+<explain><p>Writing to stdout keeps the app simple and lets the platform decide where logs go. The app should not manage log files itself.</p></explain>
+</question>
+
+<question id="log-level-output" type="output">
+<q>A tiny logger drops entries below its level. What does this print?</q>
+<code file="log-level.js">
+const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
+
+function makeLogger(level) {
+  return (entryLevel, msg) => {
+    if (LEVELS[entryLevel] >= LEVELS[level]) console.log(JSON.stringify({ level: entryLevel, msg }));
+  };
+}
+
+const log = makeLogger("info");
+log("debug", "cache lookup");
+log("info", "task created");
+log("error", "database timeout");
+</code>
+<option correct>{"level":"info","msg":"task created"}
+{"level":"error","msg":"database timeout"}</option>
+<option>{"level":"debug","msg":"cache lookup"}
+{"level":"info","msg":"task created"}
+{"level":"error","msg":"database timeout"}</option>
+<option>{"level":"error","msg":"database timeout"}</option>
+<option>{ level: 'info', msg: 'task created' }
+{ level: 'error', msg: 'database timeout' }</option>
+<explain><p>With level <code>info</code>, debug entries are dropped. Use INFO in production and switch one service to DEBUG for a while when hunting a bug. <code>JSON.stringify</code> prints double quotes, one line per entry.</p></explain>
+</question>
+
+<question id="redact-output" type="output">
+<q>This redacts field names that look secret before logging. What does it print?</q>
+<code file="redact.js">
+const SECRET = /password|secret|token/i;
+
+function redact(meta) {
+  const out = {};
+  for (const [key, value] of Object.entries(meta)) out[key] = SECRET.test(key) ? "[REDACTED]" : value;
+  return out;
+}
+
+console.log(JSON.stringify(redact({ requestId: "req-7", password: "hunter2", apiToken: "abc" })));
+</code>
+<option correct>{"requestId":"req-7","password":"[REDACTED]","apiToken":"[REDACTED]"}</option>
+<option>{"requestId":"req-7","password":"[REDACTED]","apiToken":"abc"}</option>
+<option>{"requestId":"[REDACTED]","password":"[REDACTED]","apiToken":"[REDACTED]"}</option>
+<option>{"requestId":"req-7"}</option>
+<explain><p>The regular expression has the <code>i</code> flag and no anchors, so <code>apiToken</code> matches <code>token</code> too. Redaction is a safety net only: still never log request bodies whole.</p></explain>
+</question>
+
+<question id="golden-signals" type="choice">
+<q>Which four "golden signals" does the lesson tell you to measure first?</q>
+<option>CPU, RAM, disk and network card</option>
+<option correct>Traffic, errors, latency and saturation</option>
+<option>Users, orders, revenue and refunds</option>
+<option>Logs, traces, spans and events</option>
+<explain><p>How many requests, how many fail, how long they take, and how full your resources are. Together they tell you how the whole system is doing.</p></explain>
+</question>
+
+<question id="percentile-output" type="output">
+<q>Nine requests are fast and one is slow. What does this print?</q>
+<code file="percentile.js">
+const durations = [12, 15, 11, 14, 13, 16, 12, 480, 15, 14];
+const sorted = [...durations].sort((a, b) => a - b);
+const pct = (p) => sorted[Math.ceil((p / 100) * sorted.length) - 1];
+const mean = durations.reduce((sum, ms) => sum + ms, 0) / durations.length;
+
+console.log("mean:", Math.round(mean), "p50:", pct(50), "p95:", pct(95));
+</code>
+<option correct>mean: 60 p50: 14 p95: 480</option>
+<option>mean: 14 p50: 14 p95: 16</option>
+<option>mean: 60 p50: 60 p95: 480</option>
+<option>mean: 48 p50: 14 p95: 480</option>
+<explain><p>The mean of 60 ms describes none of the requests. p50 shows the typical request (14 ms) and p95 shows the slow tail your unluckiest users feel (480 ms). That is why latency is watched as percentiles.</p></explain>
+</question>
+
+<question id="health-no-db" type="choice">
+<q>Why should the liveness check <code>/health</code> NOT check the database?</q>
+<option>Database checks are too slow to write</option>
+<option correct>If the database is down, the platform would restart every app server, which does not fix the database and only makes things worse</option>
+<option>The database is checked by the browser instead</option>
+<option>Liveness checks are not allowed to return JSON</option>
+<explain><p>A failed liveness check means "restart me". Restarting cannot fix a database outage. Dependencies belong in the readiness check, which only stops traffic.</p></explain>
+</question>
+
+<question id="ready-fails" type="choice">
+<q><code>/ready</code> answers 503 because the database is down. What should the platform do?</q>
+<option>Restart the app at once</option>
+<option correct>Stop sending it requests, without restarting it, until it is ready again</option>
+<option>Delete the database and create a new one</option>
+<option>Keep sending requests and let them fail</option>
+<explain><p>Readiness means "can I serve traffic right now?". When it fails, traffic goes to other servers. When the database comes back, the app becomes ready again by itself.</p></explain>
+</question>
+
+<question id="classify-payment" type="choice">
+<q>Where does "the payment provider's API is reachable" belong?</q>
+<option>Liveness, so the app restarts until the provider is back</option>
+<option>Readiness, so the whole site stops getting traffic</option>
+<option correct>Neither: handle it per request with a timeout and a clear error, and watch it with a metric</option>
+<option>In the configuration check at startup</option>
+<explain><p>Most pages still work without the payment provider. Taking the whole app out of traffic because one outside service is slow would turn a small problem into an outage.</p></explain>
+</question>
+
+<question id="health-body" type="choice">
+<q>Health endpoints are usually public. What should <code>/ready</code> return?</q>
+<option>The app version, the host name and the database connection string</option>
+<option>The full error message from the failed check</option>
+<option correct>Only a status, such as <code>{ ready: false }</code></option>
+<option>A list of all environment variables</option>
+<explain><p>Versions, host names, connection strings and error messages help an attacker. Return a status; put the details in the logs.</p></explain>
+</question>
+
+<question id="readiness-output" type="output">
+<q>What does this readiness endpoint answer?</q>
+<code file="readiness.js">
+async function ready(checks) {
+  const results = await Promise.all(Object.values(checks).map((check) => check()));
+  const ok = results.every(Boolean);
+  return { status: ok ? 200 : 503, body: { ready: ok } };
+}
+
+const health = () => ({ status: 200, body: { status: "alive" } });
+
+console.log(health().status, (await ready({ database: async () => false, migrations: async () => true })).status);
+console.log(health().status, (await ready({ database: async () => true, migrations: async () => true })).status);
+</code>
+<option correct>200 503
+200 200</option>
+<option>503 503
+200 200</option>
+<option>200 200
+200 200</option>
+<option>200 503
+200 503</option>
+<explain><p>Liveness says "alive" even while the database is down. Readiness needs every check to pass: one <code>false</code> makes it 503, and when the database comes back it answers 200 again.</p></explain>
+</question>
+
+<question id="sigterm" type="choice">
+<q>The platform sends <code>SIGTERM</code> during a deployment. What does a graceful shutdown do?</q>
+<option>Exits at once so the new version can start faster</option>
+<option correct>Stops accepting new requests, lets the ones in flight finish, closes resources such as the database pool, then exits</option>
+<option>Ignores the signal and keeps running</option>
+<option>Finishes new requests first, then old ones</option>
+<explain><p>Without a graceful shutdown, every deployment cuts some customers' requests in half. The new requests are refused so a load balancer sends them elsewhere.</p></explain>
+</question>
+
+<question id="shutdown-timeout" type="choice">
+<q>Docker waits 10 seconds after <code>SIGTERM</code> and then kills the process. How should you set <code>gracefulShutdownTimeout</code>?</q>
+<option>Longer than 10 seconds, so every request can finish</option>
+<option correct>Shorter than the platform's wait, so shutdown finishes before the process is killed</option>
+<option>To zero, so the process never waits</option>
+<option>It does not matter: the platform always waits for the app</option>
+<explain><p>If your timeout is longer than the platform's wait, the platform kills the process in the middle of shutdown, and the database pool and logs are not closed cleanly.</p></explain>
+</question>
+
+<question id="shutdown-output" type="output">
+<q>This simulates a graceful shutdown. What does it print?</q>
+<code file="shutdown.js">
+let accepting = true;
+const inFlight = new Set();
+
+async function handle(name) {
+  if (!accepting) return console.log(`${name}: refused`);
+  const job = new Promise((resolve) => setTimeout(resolve, 20)).then(() => console.log(`${name}: done`));
+  inFlight.add(job);
+  await job;
+  inFlight.delete(job);
+}
+
+async function shutdown() {
+  accepting = false;
+  console.log("SIGTERM: stop accepting");
+  await Promise.all(inFlight);
+  console.log("closed");
+}
+
+const first = handle("order-1");
+const stopping = shutdown();
+await handle("order-2");
+await Promise.all([first, stopping]);
+</code>
+<option correct>SIGTERM: stop accepting
+order-2: refused
+order-1: done
+closed</option>
+<option>SIGTERM: stop accepting
+closed
+order-2: refused
+order-1: done</option>
+<option>order-1: done
+SIGTERM: stop accepting
+order-2: done
+closed</option>
+<option>SIGTERM: stop accepting
+order-2: refused
+closed
+order-1: done</option>
+<explain><p>The new request is refused at once. The shutdown waits for the request already in flight, so <code>order-1</code> finishes before <code>closed</code>, just like the lesson's HTTP example.</p></explain>
+</question>
+
+<question id="statement-timeout" type="choice">
+<q>What does <code>SET statement_timeout = '5s'</code> protect you from in PostgreSQL?</q>
+<option>Slow network connections to the browser</option>
+<option correct>One bad query holding a database connection for minutes</option>
+<option>Too many login attempts</option>
+<option>Running out of disk space</option>
+<explain><p>A timeout at every edge: incoming requests, outgoing calls and the database. A stuck query that is cancelled after 5 seconds frees its connection for other requests.</p></explain>
+</question>
+
+<question id="rate-limit-output" type="output">
+<q>What does this print?</q>
+<code file="rate-limit.js" browser="no">
+import { createRateLimiter } from "@zudojs/security";
+
+const limiter = createRateLimiter({ windowMs: 60_000, max: 2 });
+const results = [];
+for (let i = 0; i < 3; i++) results.push(limiter.check({ ip: "203.0.113.7" }).allowed);
+results.push(limiter.check({ ip: "198.51.100.2" }).allowed);
+console.log(results);
+limiter.destroy();
+</code>
+<option correct>[ true, true, false, true ]</option>
+<option>[ true, true, true, true ]</option>
+<option>[ true, true, false, false ]</option>
+<option>[ true, false, false, true ]</option>
+<explain><p>The limiter counts per client. The first client gets 2 requests in the window and the third is refused. The second client has its own count, so it is allowed.</p></explain>
+</question>
+
+<question id="rate-limit-proxy" type="choice">
+<q>Your app runs behind a reverse proxy and rate-limits by IP address. Everyone suddenly gets 429. What went wrong?</q>
+<option>The limit is too high</option>
+<option correct>Every request comes from the proxy's address, so all users share one bucket; set <code>trustProxy</code> to the proxy you run</option>
+<option>Rate limiting does not work with HTTPS</option>
+<option>The proxy blocks the <code>Retry-After</code> header</option>
+<explain><p>Behind a proxy the app sees the proxy's IP. Trust the forwarded client address only from the proxy you actually run; trusting it from anyone would let attackers pick any IP they like.</p></explain>
+</question>
+
+<question id="rate-limit-proxy-output" type="output">
+<q>This limiter counts by the address the app sees. Two different users come through the same proxy. What does it print?</q>
+<code file="shared-bucket.js">
+const counts = new Map();
+
+function allow(ip, max) {
+  const count = (counts.get(ip) ?? 0) + 1;
+  counts.set(ip, count);
+  return count <= max;
+}
+
+const proxy = "10.0.0.5";
+console.log("ada:", allow(proxy, 2), allow(proxy, 2));
+console.log("bob:", allow(proxy, 2));
+</code>
+<option correct>ada: true true
+bob: false</option>
+<option>ada: true true
+bob: true</option>
+<option>ada: true false
+bob: true</option>
+<option>ada: true true
+bob: undefined</option>
+<explain><p>Both users arrive from the proxy's address, so they share one counter and Bob is blocked by Ada's requests. The fix is to read the real client address from a proxy you trust.</p></explain>
+</question>
+
+<question id="rate-limit-many-servers" type="choice">
+<q>You run four app servers, each with an in-memory rate limiter of 5 logins per minute. What is the real limit for one attacker?</q>
+<option>5 per minute, whichever server they reach</option>
+<option correct>Up to 20 per minute, because each server counts on its own; keep the counters in Redis for a strict limit</option>
+<option>1 per minute</option>
+<option>No limit at all</option>
+<explain><p>An in-memory limiter counts per server. For a strict limit across servers, keep the counters in a shared store such as Redis.</p></explain>
+</question>
+
+<question id="cache-output" type="output">
+<q>What does this print?</q>
+<code file="cache-tags.js">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter({ maxEntries: 100 }), config: { defaultTtl: 60_000 } });
+let price = 12;
+let queries = 0;
+const loadMug = async () => {
+  queries += 1;
+  return price;
+};
+
+const a = await cache.getOrSet("product.mug", loadMug, { tags: ["products"] });
+price = 10;
+const b = await cache.getOrSet("product.mug", loadMug, { tags: ["products"] });
+await cache.invalidateByTag(["products"]);
+const c = await cache.getOrSet("product.mug", loadMug, { tags: ["products"] });
+console.log(a.value, b.value, c.value, "queries:", queries);
+</code>
+<option correct>12 12 10 queries: 2</option>
+<option>12 10 10 queries: 3</option>
+<option>12 12 12 queries: 1</option>
+<option>12 10 10 queries: 2</option>
+<explain><p>The second read comes from the cache, so it shows the old price. Only after <code>invalidateByTag</code> does the next read go to the database again. That is why every write must invalidate what it changed.</p></explain>
+</question>
+
+<question id="cache-ttl" type="choice">
+<q>Every write already invalidates the cache. Why give every entry a TTL as well?</q>
+<option>TTLs make the cache faster</option>
+<option correct>So a missed invalidation heals itself when the entry expires</option>
+<option>So the cache never uses memory</option>
+<option>Because tags do not work without a TTL</option>
+<explain><p>Sooner or later a code path forgets to invalidate. A TTL limits how long stale data can live. Also watch the hit rate: a cache that rarely hits costs memory for nothing.</p></explain>
+</question>
+
+<question id="index-seq-scan" type="choice">
+<q><code>EXPLAIN</code> shows <code>Seq Scan on orders</code> with <code>Filter: (customer_id = 42)</code>. What does it mean, and what is the usual fix?</q>
+<option>The query uses an index; nothing to do</option>
+<option correct>PostgreSQL reads the whole table; add an index on <code>customer_id</code> if you filter by it often</option>
+<option>The table is corrupted; restore a backup</option>
+<option>The query has a syntax error</option>
+<explain><p>A sequential scan reads every row. With an index, PostgreSQL looks the value up instead, which made the lesson's queries about ten times faster. Index the columns you filter, join and sort by often.</p></explain>
+</question>
+
+<question id="n-plus-one-output" type="output">
+<q>This counts database queries for two ways of loading 10 orders with their customers. What does it print?</q>
+<code file="n-plus-one.js">
+let queries = 0;
+const query = (sql) => {
+  queries += 1;
+  return sql;
+};
+
+const orders = Array.from({ length: 10 }, (_, i) => ({ id: i + 1, customerId: i }));
+
+queries = 0;
+query("SELECT * FROM orders LIMIT 10");
+for (const order of orders) query(`SELECT * FROM customers WHERE id = ${order.customerId}`);
+const nPlusOne = queries;
+
+queries = 0;
+query("SELECT * FROM orders LIMIT 10");
+query("SELECT * FROM customers WHERE id = ANY($1)");
+console.log("one per item:", nPlusOne, "with ANY:", queries);
+</code>
+<option correct>one per item: 11 with ANY: 2</option>
+<option>one per item: 10 with ANY: 2</option>
+<option>one per item: 11 with ANY: 11</option>
+<option>one per item: 1 with ANY: 2</option>
+<explain><p>One query for the list plus one per item is the <strong>N+1</strong> problem: 11 queries for 10 orders, and it grows with the list. <code>WHERE id = ANY($1)</code> or a join loads all customers in one query. (In real code, always pass values as parameters, never in the SQL text.)</p></explain>
+</question>
+
+<question id="pool-total-output" type="output">
+<q>What does this print?</q>
+<code file="pool-math.js">
+const limit = 100;
+const reserved = 10;
+const processes = 6;
+const workerPool = 3;
+const perProcess = Math.floor((limit - reserved) / processes);
+console.log(perProcess, perProcess - workerPool, perProcess * processes <= limit - reserved);
+</code>
+<option correct>15 12 true</option>
+<option>16 13 true</option>
+<option>15 12 false</option>
+<option>90 87 true</option>
+<explain><p>90 connections are shared by 6 processes: 15 each. The background worker already uses 3 of them, so the web pool gets 12. Total connections = pool size × number of processes.</p></explain>
+</question>
+
+<question id="pool-wait-output" type="output">
+<q>A pool has 2 connections and 3 queries start at once. What does this print?</q>
+<code file="pool.js">
+let free = 2;
+const waiting = [];
+
+async function query(name) {
+  if (free > 0) free -= 1;
+  else {
+    console.log(`${name}: waiting`);
+    await new Promise((resolve) => waiting.push(resolve));
+  }
+  console.log(`${name}: running`);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const next = waiting.shift();
+  if (next) next();
+  else free += 1;
+}
+
+await Promise.all(["q1", "q2", "q3"].map((name) => query(name)));
+</code>
+<option correct>q1: running
+q2: running
+q3: waiting
+q3: running</option>
+<option>q1: running
+q2: running
+q3: running</option>
+<option>q1: running
+q2: waiting
+q3: waiting
+q2: running
+q3: running</option>
+<option>q3: waiting
+q1: running
+q2: running
+q3: running</option>
+<explain><p>Only two queries run at a time. The third waits in line and starts when a connection is handed back. Real pools such as the <code>pg</code> package's <code>Pool</code> work the same way.</p></explain>
+</question>
+
+<question id="pool-size" type="choice">
+<q>Four app servers each have a database pool of 20. PostgreSQL allows 100 connections by default. What is the lesson's advice?</q>
+<option>Raise every pool to 100 to be safe</option>
+<option correct>Remember that 4 × 20 = 80 is close to the limit; start small (about 10 per process) and set a wait timeout for getting a connection</option>
+<option>Open a new connection for every query instead</option>
+<option>Use one pool of 100 per server</option>
+<explain><p>A database works best with a few busy connections. Small pools, a wait timeout so a full pool fails fast, and a pooler such as PgBouncer if deployments briefly double the number of processes.</p></explain>
+</question>
+
+<question id="code-required-env" type="code" file="required-env.js">
+<q><p>Finish <code>checkEnv(env, required)</code>. Return a list of the names in <code>required</code> whose value is missing or an empty string. The program should print <code>[ 'DATABASE_URL', 'JWT_SECRET' ]</code> and then <code>[]</code>.</p></q>
+<starter>
+function checkEnv(env, required) {
+  // your code here
+}
+
+const required = ["NODE_ENV", "DATABASE_URL", "JWT_SECRET"];
+console.log(checkEnv({ NODE_ENV: "production", DATABASE_URL: "" }, required));
+console.log(checkEnv({ NODE_ENV: "production", DATABASE_URL: "postgres://db/shop", JWT_SECRET: "s".repeat(40) }, required));
+</starter>
+<solution>
+function checkEnv(env, required) {
+  return required.filter((name) => !env[name]);
+}
+
+const required = ["NODE_ENV", "DATABASE_URL", "JWT_SECRET"];
+console.log(checkEnv({ NODE_ENV: "production", DATABASE_URL: "" }, required));
+console.log(checkEnv({ NODE_ENV: "production", DATABASE_URL: "postgres://db/shop", JWT_SECRET: "s".repeat(40) }, required));
+</solution>
+<expected>
+[ 'DATABASE_URL', 'JWT_SECRET' ]
+[]
+</expected>
+<explain><p>Collect every missing name, not just the first, and report names only, never values. An empty string counts as missing, because <code>!""</code> is <code>true</code>.</p></explain>
+</question>
+
+<question id="code-readiness" type="code" file="ready.js">
+<q><p>Finish <code>ready(checks)</code>. Each check is an async function that returns <code>true</code> or <code>false</code>. Run them all and return <code>{ status: 200, body: { ready: true } }</code> when every check passed, otherwise <code>{ status: 503, body: { ready: false } }</code>. The program should print <code>503 false</code> and then <code>200 true</code>.</p></q>
+<starter>
+async function ready(checks) {
+  // your code here
+}
+
+let databaseConnected = false;
+const checks = { database: async () => databaseConnected, migrations: async () => true };
+
+const before = await ready(checks);
+console.log(before.status, before.body.ready);
+databaseConnected = true;
+const after = await ready(checks);
+console.log(after.status, after.body.ready);
+</starter>
+<solution>
+async function ready(checks) {
+  const results = await Promise.all(Object.values(checks).map((check) => check()));
+  const ok = results.every((result) => result === true);
+  return { status: ok ? 200 : 503, body: { ready: ok } };
+}
+
+let databaseConnected = false;
+const checks = { database: async () => databaseConnected, migrations: async () => true };
+
+const before = await ready(checks);
+console.log(before.status, before.body.ready);
+databaseConnected = true;
+const after = await ready(checks);
+console.log(after.status, after.body.ready);
+</solution>
+<expected>
+503 false
+200 true
+</expected>
+<explain><p>Run the checks together with <code>Promise.all</code> and require all of them. The body is only a status: never put error messages or connection strings in a public health endpoint.</p></explain>
+</question>
+
+<question id="code-redact" type="code" file="redact-meta.js">
+<q><p>Finish <code>redact(meta)</code>. Return a new object where every key whose name contains <code>password</code>, <code>secret</code> or <code>token</code> (any case) has the value <code>"[REDACTED]"</code>. Other values stay. The program should print <code>{"requestId":"req-7","password":"[REDACTED]","JWT_SECRET":"[REDACTED]","taskId":42}</code>.</p></q>
+<starter>
+function redact(meta) {
+  // your code here
+}
+
+console.log(JSON.stringify(redact({ requestId: "req-7", password: "hunter2", JWT_SECRET: "abc", taskId: 42 })));
+</starter>
+<solution>
+function redact(meta) {
+  const out = {};
+  for (const [key, value] of Object.entries(meta)) {
+    out[key] = /password|secret|token/i.test(key) ? "[REDACTED]" : value;
+  }
+  return out;
+}
+
+console.log(JSON.stringify(redact({ requestId: "req-7", password: "hunter2", JWT_SECRET: "abc", taskId: 42 })));
+</solution>
+<expected>{"requestId":"req-7","password":"[REDACTED]","JWT_SECRET":"[REDACTED]","taskId":42}</expected>
+<explain><p>The <code>i</code> flag makes the match ignore case, so <code>JWT_SECRET</code> is caught. Build a new object instead of changing the caller's one.</p></explain>
+</question>
+
+<question id="code-percentile" type="code" file="p95.js">
+<q><p>Finish <code>percentile(values, p)</code> using the nearest-rank method: sort a copy of the numbers from small to large and return the item at index <code>Math.ceil(p / 100 * length) - 1</code>. The program should print <code>p50: 14 p95: 480</code>.</p></q>
+<starter>
+function percentile(values, p) {
+  // your code here
+}
+
+const durations = [12, 15, 11, 14, 13, 16, 12, 480, 15, 14];
+console.log("p50:", percentile(durations, 50), "p95:", percentile(durations, 95));
+</starter>
+<solution>
+function percentile(values, p) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.ceil((p / 100) * sorted.length) - 1];
+}
+
+const durations = [12, 15, 11, 14, 13, 16, 12, 480, 15, 14];
+console.log("p50:", percentile(durations, 50), "p95:", percentile(durations, 95));
+</solution>
+<expected>p50: 14 p95: 480</expected>
+<explain><p>Sort with <code>(a, b) =&gt; a - b</code>: the default <code>sort()</code> compares numbers as text. Copy first with <code>[...values]</code> so the caller's array is not changed.</p></explain>
+</question>
+
+<question id="code-rate-limiter" type="code" file="fixed-window.js">
+<q><p>Finish <code>check(ip, now)</code> for a fixed-window rate limiter: at most <code>max</code> requests per client in each window of <code>windowMs</code>. Keep, per ip, the window's start time and a count; start a new window when <code>now - start &gt;= windowMs</code>. Return <code>true</code> when the request is allowed. The program should print <code>[ true, true, true, false, true ]</code>.</p></q>
+<starter>
+const windowMs = 60_000;
+const max = 3;
+const windows = new Map();
+
+function check(ip, now) {
+  // your code here
+}
+
+const ip = "203.0.113.7";
+console.log([check(ip, 0), check(ip, 1000), check(ip, 2000), check(ip, 3000), check(ip, 61_000)]);
+</starter>
+<solution>
+const windowMs = 60_000;
+const max = 3;
+const windows = new Map();
+
+function check(ip, now) {
+  let entry = windows.get(ip);
+  if (!entry || now - entry.start >= windowMs) {
+    entry = { start: now, count: 0 };
+    windows.set(ip, entry);
+  }
+  entry.count += 1;
+  return entry.count <= max;
+}
+
+const ip = "203.0.113.7";
+console.log([check(ip, 0), check(ip, 1000), check(ip, 2000), check(ip, 3000), check(ip, 61_000)]);
+</solution>
+<expected>[ true, true, true, false, true ]</expected>
+<explain><p>The fourth login attempt inside the minute is refused (in an app, a 429 with <code>Retry-After</code>). At 61 s a new window starts. The time is passed in, so the result is the same on every run.</p></explain>
+</question>
+
+<question id="code-pool-size" type="code" file="pool-size.js">
+<q><p>Finish <code>webPoolSize({ limit, reserved, processes, workerPool })</code>. Share <code>limit - reserved</code> connections equally between the processes (round down), then subtract the worker's pool. The program should print <code>12</code> and <code>20</code>.</p></q>
+<starter>
+function webPoolSize({ limit, reserved, processes, workerPool }) {
+  // your code here
+}
+
+console.log(webPoolSize({ limit: 100, reserved: 10, processes: 6, workerPool: 3 }));
+console.log(webPoolSize({ limit: 100, reserved: 10, processes: 4, workerPool: 2 }));
+</starter>
+<solution>
+function webPoolSize({ limit, reserved, processes, workerPool }) {
+  return Math.floor((limit - reserved) / processes) - workerPool;
+}
+
+console.log(webPoolSize({ limit: 100, reserved: 10, processes: 6, workerPool: 3 }));
+console.log(webPoolSize({ limit: 100, reserved: 10, processes: 4, workerPool: 2 }));
+</solution>
+<expected>
+12
+20
+</expected>
+<explain><p><code>Math.floor</code> rounds down, because you can never use part of a connection, and rounding up would exceed the limit. 90 / 4 = 22.5 → 22, minus 2 for the worker.</p></explain>
+</question>
+
+<question id="code-cache-invalidate" type="code" file="cache-invalidate.js">
+<q><p>The product cache shows a stale price after an update. Finish <code>updatePrice(sku, price)</code>: change the price in <code>db</code>, then invalidate the <code>products</code> tag. The program should print <code>12</code> and then <code>10</code>.</p></q>
+<starter>
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter({ maxEntries: 100 }), config: { defaultTtl: 60_000 } });
+const db = { mug: 12 };
+const getPrice = async (sku) => (await cache.getOrSet(`product.${sku}`, async () => db[sku], { tags: ["products"] })).value;
+
+async function updatePrice(sku, price) {
+  // your code here
+}
+
+console.log(await getPrice("mug"));
+await updatePrice("mug", 10);
+console.log(await getPrice("mug"));
+</starter>
+<solution>
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter({ maxEntries: 100 }), config: { defaultTtl: 60_000 } });
+const db = { mug: 12 };
+const getPrice = async (sku) => (await cache.getOrSet(`product.${sku}`, async () => db[sku], { tags: ["products"] })).value;
+
+async function updatePrice(sku, price) {
+  db[sku] = price;
+  await cache.invalidateByTag(["products"]);
+}
+
+console.log(await getPrice("mug"));
+await updatePrice("mug", 10);
+console.log(await getPrice("mug"));
+</solution>
+<expected>
+12
+10
+</expected>
+<explain><p>Write first, then invalidate. The next read misses the cache and loads the new price. Forgetting the invalidation is the classic caching bug: customers see the old price until the TTL runs out.</p></explain>
+</question>
+
+<question id="config-message-output" type="output">
+<q>This loader reports every problem by name. What does it print?</q>
+<code file="config-message.js">
+function loadConfig(env) {
+  const problems = [];
+  if (!/^\d+$/.test(env.PORT ?? "3000")) problems.push("PORT: must be a whole number");
+  if (!env.JWT_SECRET || env.JWT_SECRET.length < 32) problems.push("JWT_SECRET: at least 32 characters");
+  if (problems.length) throw new Error(`Invalid configuration:\n  ${problems.join("\n  ")}`);
+  return { port: Number(env.PORT ?? "3000") };
+}
+
+try {
+  loadConfig({ PORT: "eighty", JWT_SECRET: "hunter2" });
+} catch (error) {
+  console.log(error.message);
+}
+</code>
+<option correct>Invalid configuration:
+  PORT: must be a whole number
+  JWT_SECRET: at least 32 characters</option>
+<option>Invalid configuration:
+  PORT: must be a whole number</option>
+<option>Invalid configuration:
+  PORT: eighty
+  JWT_SECRET: hunter2</option>
+<option>{ port: NaN }</option>
+<explain><p>The loader collects all problems before it throws, so you fix everything in one deploy. The message names the settings and never shows their values, so a nearly-right secret cannot leak through a log.</p></explain>
+</question>
+
+<question id="query-timeout-output" type="output">
+<q>Every outgoing call gets a time limit. What does this print?</q>
+<code file="query-timeout.js">
+function withTimeout(work, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
+
+const slowQuery = new Promise((resolve) => setTimeout(() => resolve("rows"), 80));
+const fastQuery = new Promise((resolve) => setTimeout(() => resolve("rows"), 5));
+
+for (const [name, query] of [["fast", fastQuery], ["slow", slowQuery]]) {
+  try {
+    console.log(name, await withTimeout(query, 30));
+  } catch (error) {
+    console.log(name, error.message);
+  }
+}
+</code>
+<option correct>fast rows
+slow timed out after 30 ms</option>
+<option>fast rows
+slow rows</option>
+<option>fast timed out after 30 ms
+slow timed out after 30 ms</option>
+<option>slow timed out after 30 ms
+fast rows</option>
+<explain><p>The fast query wins the race. The slow one loses to the 30 ms timer, so the caller stops waiting instead of holding memory and a connection. <code>clearTimeout</code> in <code>finally</code> cleans up the timer either way.</p></explain>
+</question>

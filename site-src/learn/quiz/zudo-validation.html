@@ -1,0 +1,889 @@
+<question id="trust-boundary" type="choice">
+<q>What is the <strong>trust boundary</strong> of an HTTP API?</q>
+<option>The line between the service and the store</option>
+<option correct>The place where outside data (route parameters, query string, headers, body) comes into your program</option>
+<option>The firewall in front of the server</option>
+<option>The list of users who may log in</option>
+<explain><p>Every value from outside is untrusted until a schema has checked it. Validate at the boundary, once, and the services behind it can rely on clean, typed data.</p></explain>
+</question>
+
+<question id="untrusted-inputs" type="choice">
+<q>Which of these does <strong>not</strong> need a schema check at the boundary of the Task API?</q>
+<option>The <code>:id</code> route parameter</option>
+<option>The <code>?limit=</code> query value</option>
+<option>The JSON request body</option>
+<option correct>The <code>createdAt</code> date the service computes with its own clock</option>
+<explain><p>Route parameters, query strings, headers and bodies come from the client, so they are untrusted. A value your own code computes did not cross the boundary.</p></explain>
+</question>
+
+<question id="parse-vs-safeparse" type="choice">
+<q>What is the difference between <code>parse</code> and <code>safeParse</code>?</q>
+<option><code>safeParse</code> is slower but checks more rules</option>
+<option correct><code>parse</code> throws a <code>SchemaError</code> on bad input; <code>safeParse</code> returns <code>{ success, data }</code> or <code>{ success, issues }</code></option>
+<option><code>parse</code> only checks types; <code>safeParse</code> also checks lengths</option>
+<option><code>safeParse</code> fixes bad input automatically</option>
+<explain><p>Both run the same rules. Use <code>parse</code> when a failure should become an error (a 400 in a route), and <code>safeParse</code> when you want to look at the issues yourself.</p></explain>
+</question>
+
+<question id="issue-parts" type="choice">
+<q>A schema issue has a <code>code</code>, a <code>path</code> and a <code>message</code>. Which is meant for your <strong>program</strong> to react to?</q>
+<option correct><code>code</code>, such as <code>"invalid_enum"</code></option>
+<option><code>message</code>, such as <code>"Expected one of …"</code></option>
+<option><code>path</code>, such as <code>["priority"]</code></option>
+<option>None: issues are only for people</option>
+<explain><p>The <code>code</code> is stable for programs, the <code>message</code> is text for people, and the <code>path</code> says which field it is about.</p></explain>
+</question>
+
+<question id="issue-path" type="choice">
+<q>An issue has <code>path: ["tags", 1]</code>. What does it point at?</q>
+<option>The first tag</option>
+<option correct>The second tag (index 1 of the <code>tags</code> array)</option>
+<option>A field called <code>tags1</code></option>
+<option>The whole body</option>
+<explain><p>A path lists the keys and indexes from the top of the value down to the field. Array indexes start at 0, so 1 is the second item.</p></explain>
+</question>
+
+<question id="abort-early" type="choice">
+<q>What does <code>schema.safeParse(value, { abortEarly: true })</code> do?</q>
+<option>Stops the program when the value is invalid</option>
+<option correct>Stops at the first problem instead of collecting all of them</option>
+<option>Skips the checks and returns the value</option>
+<option>Only checks the first field of the object</option>
+<explain><p>Normally all issues are reported at once, which is what a form wants. When you only need to know "valid or not", <code>abortEarly</code> saves work.</p></explain>
+</question>
+
+<question id="when-coerce" type="choice">
+<q>Where should you use <code>schema.coerce.number()</code> instead of <code>schema.number()</code>?</q>
+<option>Everywhere, because it accepts more input</option>
+<option correct>For input that really arrives as text: query strings, route parameters, headers, environment variables</option>
+<option>Only for JSON request bodies</option>
+<option>Only for response schemas</option>
+<explain><p>A JSON body has real numbers and booleans. Coercing there would accept <code>"1"</code> where the client should have sent <code>1</code>, and hide the client's mistake.</p></explain>
+</question>
+
+<question id="coerce-boolean" type="choice">
+<q>Why use <code>schema.coerce.boolean()</code> for <code>?done=false</code> instead of <code>Boolean(ctx.query.done)</code>?</q>
+<option>They give the same result</option>
+<option correct><code>Boolean("false")</code> is <code>true</code>; the schema turns <code>"false"</code> into <code>false</code> and refuses text it does not understand</option>
+<option><code>Boolean</code> does not work on strings</option>
+<option>The schema is faster</option>
+<explain><p>Any non-empty string is truthy. The coercing schema knows the words: <code>"true"</code>, <code>"1"</code>, <code>"yes"</code>, <code>"on"</code> become <code>true</code>, <code>"false"</code> becomes <code>false</code>.</p></explain>
+</question>
+
+<question id="transform-type" type="choice">
+<q>A schema is <code>schema.string().max(200).transform((text) =&gt; text.split(","))</code>. What does <code>Infer&lt;typeof TagList&gt;</code> give?</q>
+<option><code>string</code></option>
+<option correct><code>string[]</code></option>
+<option><code>unknown</code></option>
+<option><code>string | string[]</code></option>
+<explain><p>The schema accepts a <code>string</code>, but its output type follows whatever the transform function returns: an array of strings.</p></explain>
+</question>
+
+<question id="transform-when" type="choice">
+<q>When does a <code>.transform(fn)</code> function run?</q>
+<option>Before the checks, on the raw input</option>
+<option correct>Only after the checks before it have passed</option>
+<option>Always, even for invalid input</option>
+<option>Only when you call <code>safeParse</code></option>
+<explain><p>The transform receives a value that is already valid. For <code>42</code>, which is not a string, the transform never runs and the parse fails.</p></explain>
+</question>
+
+<question id="refine-object" type="choice">
+<q>You need a rule that compares two fields of an object (reminder date not after due date). How do you write it?</q>
+<option>Add <code>.refine()</code> to one of the two string fields</option>
+<option correct>Wrap the object: <code>schema.refine(schema.object({ … }), (value) =&gt; …, "message")</code></option>
+<option>Check it in every route by hand</option>
+<option>It cannot be done with a schema</option>
+<explain><p>A field-level rule only sees its own field. <code>.transform()</code> and <code>.refine()</code> exist as methods on string and number schemas; for objects, use the wrapper functions <code>schema.refine(inner, check, message)</code> and <code>schema.transform(inner, fn)</code>.</p></explain>
+</question>
+
+<question id="refine-pure" type="choice">
+<q>Should the schema check "does a task with this title already exist?" in a <code>refine</code>?</q>
+<option>Yes, refinements are for every rule</option>
+<option correct>No: refinements should be synchronous and pure; a check that needs the database belongs in the service, which throws <code>ConflictError</code></option>
+<option>Yes, but only with <code>abortEarly</code></option>
+<option>No, it belongs in the router</option>
+<explain><p>A schema checks the value itself, nothing else. Rules that need stored data belong in the service, which knows the store and throws the right error (409).</p></explain>
+</question>
+
+<question id="date-compare" type="choice">
+<q>Why does comparing <code>value.remindOn &lt;= value.dueOn</code> as <strong>strings</strong> work for <code>YYYY-MM-DD</code> dates?</q>
+<option>JavaScript converts date strings to dates automatically</option>
+<option correct>In <code>YYYY-MM-DD</code> form, the text sorts in the same order as the dates themselves</option>
+<option>It does not work; you must use <code>Date.parse</code></option>
+<option>Because both strings have the same length</option>
+<explain><p>Year first, then month, then day, each with a fixed number of digits: comparing character by character gives the same order as comparing the dates. That is not true for <code>DD/MM/YYYY</code>.</p></explain>
+</question>
+
+<question id="update-no-defaults" type="choice">
+<q>Why does the lesson write the <code>PATCH</code> update schema by hand, <strong>without defaults</strong>?</q>
+<option>Because defaults make parsing slower</option>
+<option correct>An update must not invent values: a default like <code>priority: "normal"</code> could reset a stored <code>high</code> priority the client never mentioned</option>
+<option>Because <code>PATCH</code> requests have no body</option>
+<option>Because defaults only work with <code>safeParse</code></option>
+<explain><p>Defaults describe <em>creating</em> a task. An update should change only the fields the client sent, so its schema lists the changeable fields, all optional, with no defaults.</p></explain>
+</question>
+
+<question id="strip-vs-strict" type="choice">
+<q>An object schema gets a body with an extra key <code>id</code>. What is the difference between the default behaviour and <code>.strict()</code>?</q>
+<option>Both keep the key</option>
+<option correct>By default the key is stripped (dropped from the result); <code>.strict()</code> rejects the body with an issue</option>
+<option>By default the body is rejected; <code>.strict()</code> strips the key</option>
+<option>Both throw an error</option>
+<explain><p>Stripping is already safe: the extra key never reaches your code. <code>.strict()</code> goes further, so a client that sends a field you do not accept learns about its mistake.</p></explain>
+</question>
+
+<question id="mass-assignment" type="choice">
+<q>What is <strong>mass assignment</strong>?</q>
+<option>Creating many tasks in one request</option>
+<option correct>Copying request fields blindly onto a stored object, so a client can add <code>"ownerId"</code> or <code>"role": "admin"</code> and take over data or rights</option>
+<option>Assigning the same value to many variables</option>
+<option>A database bulk insert</option>
+<explain><p>The defence is an explicit schema that lists exactly the changeable fields (strict or stripping), and code that copies only those fields. Never write <code>{ ...task, ...body }</code>.</p></explain>
+</question>
+
+<question id="safe-update-code" type="choice">
+<q>Which update code is safe?</q>
+<option><code>return { ...task, ...body };</code></option>
+<option><code>return { ...task, ...body } as StoredTask;</code></option>
+<option correct><code>const changes = UpdateTaskSchema.parse(body); return { ...task, title: changes.title ?? task.title, done: changes.done ?? task.done };</code></option>
+<option><code>Object.assign(task, JSON.parse(body));</code></option>
+<explain><p>Parse first, then copy each known field. Only the listed fields can change, and a field the client did not send keeps its stored value. <code>as StoredTask</code> only hides the problem from TypeScript.</p></explain>
+</question>
+
+<question id="response-allowlist" type="choice">
+<q>Why send every task through a <code>TaskResponse</code> schema before it leaves the server?</q>
+<option>To make the JSON smaller by removing spaces</option>
+<option correct>It is an allow-list: only the listed fields go out, so internal fields like <code>ownerId</code> or a password hash never leak</option>
+<option>Because clients cannot read objects that were not parsed</option>
+<option>To add default values for the client</option>
+<explain><p>Object schemas strip unknown keys, so parsing the stored object keeps only the fields you chose to publish, including after someone adds new internal fields next year.</p></explain>
+</question>
+
+<question id="response-bug-500" type="choice">
+<q>A stored task is missing its <code>priority</code>, and <code>TaskResponse.parse(task)</code> fails in a route. What status is right?</q>
+<option>400, because validation failed</option>
+<option>404, because the priority was not found</option>
+<option correct>500: it is a bug in your own code, not a client mistake, so let it fail and fix the bug</option>
+<option>200 with the task anyway</option>
+<explain><p>The client sent nothing wrong. A response that does not match its schema means the server has a bug, and the response schema caught it before the client saw bad data.</p></explain>
+</question>
+
+<question id="guards-why" type="choice">
+<q>Why run <code>assertDepthWithinLimit</code> and <code>assertSizeWithinLimit</code> <strong>before</strong> the schema?</q>
+<option>They replace the schema</option>
+<option correct>A hostile client can send JSON built to make the schema's walk expensive (thousands of levels deep, megabytes in one field); the guards stop cheaply as soon as a limit is passed</option>
+<option>They turn the body into a string</option>
+<option>They are needed for TypeScript</option>
+<explain><p>A schema walks the whole value. The structural guards are cheap checks that refuse absurd input before any expensive work starts.</p></explain>
+</question>
+
+<question id="validation-zod" type="choice">
+<q><code>@zudojs/validation</code> also has a complete Zod-based schema system. What does the course advise?</q>
+<option>Use both systems for every value, to be safe</option>
+<option correct>Pick one schema system per project; the course uses <code>@zudojs/schema</code> and only borrows the guards</option>
+<option>Replace <code>@zudojs/schema</code> with Zod everywhere</option>
+<option>Use Zod for bodies and <code>@zudojs/schema</code> for responses</option>
+<explain><p>The two systems do not share schemas. Mixing them means writing every rule twice.</p></explain>
+</question>
+
+<question id="out-issue-paths" type="output">
+<q>What does this print?</q>
+<code file="issue-paths.js">
+import { schema } from "@zudojs/schema";
+
+const NewTask = schema.object({
+  title: schema.string().trim().min(3).max(100),
+  priority: schema.default(schema.enum(["low", "normal", "high"]), "normal"),
+  tags: schema.default(schema.array(schema.string().max(20)).max(5), []),
+});
+
+const result = NewTask.safeParse({ title: "no", priority: "urgent", tags: ["home", 42] });
+console.log(result.issues.map((issue) => issue.path.join(".")));
+</code>
+<option correct>[ 'title', 'priority', 'tags.1' ]</option>
+<option>[ 'title', 'priority', 'tags' ]</option>
+<option>[ 'title' ]</option>
+<option>[ 'title', 'priority', 'tags.2' ]</option>
+<explain><p>All the problems are reported at once. The bad tag is the second one, index 1, so its path joins to <code>tags.1</code>.</p></explain>
+</question>
+
+<question id="out-issue-code" type="output">
+<q>What does this print?</q>
+<code file="issue-code.js">
+import { schema } from "@zudojs/schema";
+
+const Priority = schema.enum(["low", "normal", "high"]);
+const result = Priority.safeParse("urgent");
+console.log(result.success, result.issues[0].code);
+console.log(result.issues[0].message);
+</code>
+<option correct>false invalid_enum
+Expected one of "low", "normal", "high"</option>
+<option>false invalid_type
+Expected string, received string</option>
+<option>true undefined
+undefined</option>
+<option>false custom
+Invalid value</option>
+<explain><p>The <code>code</code> (<code>invalid_enum</code>) is for your program; the <code>message</code> lists the allowed values for people.</p></explain>
+</question>
+
+<question id="out-abort-early" type="output">
+<q>What does this print?</q>
+<code file="abort-early.js">
+import { schema } from "@zudojs/schema";
+
+const NewTask = schema.object({
+  title: schema.string().min(3),
+  priority: schema.enum(["low", "normal", "high"]),
+});
+
+const all = NewTask.safeParse({ title: 1, priority: 2 });
+const early = NewTask.safeParse({ title: 1, priority: 2 }, { abortEarly: true });
+console.log(all.issues.length, early.issues.length);
+</code>
+<option correct>2 1</option>
+<option>2 2</option>
+<option>1 1</option>
+<option>1 2</option>
+<explain><p>Without options, both problems are collected. <code>abortEarly: true</code> stops at the first one.</p></explain>
+</question>
+
+<question id="out-coerce-query" type="output">
+<q>What does this print?</q>
+<code file="query.js">
+import { schema } from "@zudojs/schema";
+
+const ListTasksQuery = schema.object({
+  page: schema.coerce.number().int().min(1).default(1),
+  limit: schema.coerce.number().int().min(1).max(50).default(20),
+  done: schema.coerce.boolean().optional(),
+});
+
+const a = ListTasksQuery.parse({ page: "2", done: "false" });
+const b = ListTasksQuery.parse({});
+console.log(a.page, typeof a.page, a.limit, a.done);
+console.log(b.page, b.limit);
+</code>
+<option correct>2 number 20 false
+1 20</option>
+<option>2 string 20 false
+1 20</option>
+<option>2 number 20 true
+1 20</option>
+<option>2 number undefined false
+undefined undefined</option>
+<explain><p><code>"2"</code> becomes the number 2, <code>"false"</code> the boolean <code>false</code>, and missing values get their defaults: page 1, 20 per page.</p></explain>
+</question>
+
+<question id="out-coerce-yes" type="output">
+<q>What does this print?</q>
+<code file="coerce-yes.js">
+import { schema } from "@zudojs/schema";
+
+const Done = schema.coerce.boolean();
+console.log(Done.parse("yes"), Done.parse("1"), Done.parse("false"), Boolean("false"));
+</code>
+<option correct>true true false true</option>
+<option>true true false false</option>
+<option>false true false true</option>
+<option>true true true true</option>
+<explain><p>The coercing schema knows the words: <code>"yes"</code> and <code>"1"</code> mean true, <code>"false"</code> means false. Plain <code>Boolean("false")</code> is <code>true</code>, because every non-empty string is truthy.</p></explain>
+</question>
+
+<question id="out-coerce-refused" type="output">
+<q>What does this print?</q>
+<code file="coerce-refused.js">
+import { schema } from "@zudojs/schema";
+
+const Query = schema.object({
+  page: schema.coerce.number().int().min(1).default(1),
+  limit: schema.coerce.number().int().min(1).max(50).default(20),
+});
+
+const result = Query.safeParse({ page: "", limit: "7.5" });
+for (const issue of result.issues) {
+  console.log(`${issue.path.join(".")}: ${issue.message}`);
+}
+</code>
+<option correct>page: Cannot coerce string to number
+limit: Expected integer, received 7.5</option>
+<option>limit: Expected integer, received 7.5</option>
+<option>page: Cannot coerce string to number</option>
+<option>page: Expected >= 1, received 0
+limit: Expected integer, received 7.5</option>
+<explain><p>An empty <code>page=</code> is refused instead of quietly becoming 0. <code>"7.5"</code> is a number, but not a whole one.</p></explain>
+</question>
+
+<question id="out-coerce-array" type="output">
+<q>The client sent <code>?page=1&amp;page=2</code>. What does this print?</q>
+<code file="coerce-array.js">
+import { schema } from "@zudojs/schema";
+
+const Query = schema.object({ page: schema.coerce.number().int().min(1).default(1) });
+const result = Query.safeParse({ page: ["1", "2"] });
+console.log(result.success, result.issues[0].message);
+</code>
+<option correct>false Cannot coerce array to number</option>
+<option>true undefined</option>
+<option>false Expected integer, received 1,2</option>
+<option>true Cannot coerce array to number</option>
+<explain><p>A repeated query key arrives as an array of strings, which cannot become one number, so the schema refuses it.</p></explain>
+</question>
+
+<question id="out-no-coerce-json" type="output">
+<q>A JSON body sends <code>"1"</code> where a number was expected. What does this print?</q>
+<code file="no-coerce.js">
+import { schema } from "@zudojs/schema";
+
+console.log(schema.number().safeParse("1").success, schema.coerce.number().safeParse("1").success);
+</code>
+<option correct>false true</option>
+<option>true true</option>
+<option>false false</option>
+<option>true false</option>
+<explain><p><code>schema.number()</code> refuses the string, so the client learns it sent the wrong type. That is what you want for JSON bodies; <code>coerce</code> is for input that can only be text.</p></explain>
+</question>
+
+<question id="out-transform" type="output">
+<q>What does this print?</q>
+<code file="tags.js">
+import { schema } from "@zudojs/schema";
+
+const TagList = schema
+  .string()
+  .max(200)
+  .transform((text) => text.split(",").map((tag) => tag.trim().toLowerCase()).filter((tag) => tag.length > 0));
+
+console.log(TagList.parse(" Home, URGENT,,errands "));
+console.log(TagList.safeParse(42).success);
+</code>
+<option correct>[ 'home', 'urgent', 'errands' ]
+false</option>
+<option>[ 'Home', 'URGENT', 'errands' ]
+false</option>
+<option>[ 'home', 'urgent', '', 'errands' ]
+false</option>
+<option>[ 'home', 'urgent', 'errands' ]
+true</option>
+<explain><p>The transform splits, trims, lower-cases and drops the empty piece between the two commas. For <code>42</code> the string check fails first, so the transform never runs.</p></explain>
+</question>
+
+<question id="out-search-q" type="output">
+<q>What does this print?</q>
+<code file="search.js">
+import { schema } from "@zudojs/schema";
+
+const Q = schema.string().trim().toLowerCase().min(1).max(50);
+
+console.log(Q.parse(" MILK "));
+console.log(Q.safeParse("   ").success);
+</code>
+<option correct>milk
+false</option>
+<option>Milk
+false</option>
+<option>MILK
+false</option>
+<option>milk
+true</option>
+<explain><p><code>trim()</code> and <code>toLowerCase()</code> are small built-in transformations. After trimming, <code>"   "</code> is empty, so <code>min(1)</code> refuses it instead of matching every task.</p></explain>
+</question>
+
+<question id="out-object-refine" type="output">
+<q>What does this print?</q>
+<code file="reminder.js">
+import { schema } from "@zudojs/schema";
+
+const Reminder = schema.refine(
+  schema.object({ remindOn: schema.string(), dueOn: schema.string() }),
+  (value) => value.remindOn <= value.dueOn,
+  "The reminder must not be after the due date",
+);
+
+console.log(Reminder.safeParse({ remindOn: "2026-09-30", dueOn: "2026-10-01" }).success);
+const bad = Reminder.safeParse({ remindOn: "2026-10-05", dueOn: "2026-10-01" });
+console.log(bad.issues[0].code, bad.issues[0].path, bad.issues[0].message);
+</code>
+<option correct>true
+custom [] The reminder must not be after the due date</option>
+<option>true
+custom [ 'remindOn' ] The reminder must not be after the due date</option>
+<option>false
+custom [] The reminder must not be after the due date</option>
+<option>true
+invalid_type [] Invalid input</option>
+<explain><p>The rule belongs to the whole object, so its issue has an empty path. Your own rules report the code <code>custom</code> with your message.</p></explain>
+</question>
+
+<question id="out-strict" type="output">
+<q>What does this print?</q>
+<code file="strict.js">
+import { schema } from "@zudojs/schema";
+
+const UpdateTask = schema
+  .object({ title: schema.string().min(3), done: schema.boolean() })
+  .partial()
+  .strict();
+
+const result = UpdateTask.safeParse({ title: "Walk", id: 1, createdAt: "2020-01-01" });
+console.log(result.success ? "ok" : result.issues.map((issue) => issue.message));
+</code>
+<option correct>[ 'Unknown key: id', 'Unknown key: createdAt' ]</option>
+<option>ok</option>
+<option>[ 'Unknown key: id' ]</option>
+<option>[ 'Validation failed' ]</option>
+<explain><p><code>.strict()</code> rejects every key the schema does not list, and names each one, so the client learns exactly what it sent wrong.</p></explain>
+</question>
+
+<question id="out-strip" type="output">
+<q>What does this print?</q>
+<code file="strip.js">
+import { schema } from "@zudojs/schema";
+
+const NewTask = schema.object({ title: schema.string().min(3) });
+console.log(NewTask.parse({ title: "Buy milk", id: 99, role: "admin" }));
+</code>
+<option correct>{ title: 'Buy milk' }</option>
+<option>{ title: 'Buy milk', id: 99, role: 'admin' }</option>
+<option>SchemaError: Validation failed</option>
+<option>{ title: 'Buy milk', id: 99 }</option>
+<explain><p>By default an object schema <strong>strips</strong> unknown keys: they disappear from the result, so they can never be copied onto a stored task.</p></explain>
+</question>
+
+<question id="out-response-allowlist" type="output">
+<q>What does this print?</q>
+<code file="response.js">
+import { schema } from "@zudojs/schema";
+
+const TaskResponse = schema.object({
+  id: schema.number().int().min(1),
+  title: schema.string().max(100),
+  done: schema.boolean(),
+});
+
+const stored = { id: 7, title: "Buy milk", done: false, ownerId: 42, internalNotes: "flagged" };
+console.log(TaskResponse.parse(stored));
+</code>
+<option correct>{ id: 7, title: 'Buy milk', done: false }</option>
+<option>{ id: 7, title: 'Buy milk', done: false, ownerId: 42, internalNotes: 'flagged' }</option>
+<option>{ id: 7, title: 'Buy milk', done: false, ownerId: 42 }</option>
+<option>SchemaError: Validation failed</option>
+<explain><p>The response schema is an allow-list: the internal fields are dropped, and only the published ones leave the server.</p></explain>
+</question>
+
+<question id="out-response-missing" type="output">
+<q>What does this print?</q>
+<code file="response-missing.js">
+import { schema } from "@zudojs/schema";
+
+const TaskResponse = schema.object({
+  id: schema.number(),
+  priority: schema.enum(["low", "normal", "high"]),
+});
+
+const result = TaskResponse.safeParse({ id: 7 });
+console.log(result.success, result.issues[0].code, result.issues[0].path);
+</code>
+<option correct>false required [ 'priority' ]</option>
+<option>true undefined undefined</option>
+<option>false invalid_enum [ 'priority' ]</option>
+<option>false required []</option>
+<explain><p>The response schema caught a stored task with a missing field, a bug in your own code, before it was sent. In a route, let that become a 500 and fix the bug.</p></explain>
+</question>
+
+<question id="out-schema-error" type="output">
+<q>What does this print?</q>
+<code file="schema-error.js">
+import { schema } from "@zudojs/schema";
+
+const Params = schema.object({ id: schema.coerce.number().int().min(1) });
+
+try {
+  Params.parse({ id: "0" });
+} catch (error) {
+  console.log(error.name, error.statusCode, error.message);
+}
+</code>
+<option correct>SchemaError 400 Validation failed</option>
+<option>SchemaError 500 Validation failed</option>
+<option>TypeError 400 id must be at least 1</option>
+<option>ValidationError 422 Expected >= 1, received 0</option>
+<explain><p><code>parse</code> throws a <code>SchemaError</code>, which carries status 400. That is why <code>@zudojs/http</code> answers a failed <code>parse</code> in a route with a 400 by itself.</p></explain>
+</question>
+
+<question id="out-depth-guard" type="output">
+<q>What does this print?</q>
+<code file="depth.js">
+import { assertDepthWithinLimit } from "@zudojs/validation";
+
+const bodies = [
+  ["normal", { title: "Buy milk", tags: ["home"] }],
+  ["too deep", JSON.parse("[".repeat(500) + "]".repeat(500))],
+];
+
+for (const [label, body] of bodies) {
+  try {
+    assertDepthWithinLimit(body, 10);
+    console.log(label, "-> passed");
+  } catch (error) {
+    console.log(label, "->", error.name);
+  }
+}
+</code>
+<option correct>normal -> passed
+too deep -> SerializationDepthError</option>
+<option>normal -> passed
+too deep -> passed</option>
+<option>normal -> passed
+too deep -> RangeError</option>
+<option>normal -> SerializationDepthError
+too deep -> SerializationDepthError</option>
+<explain><p>An array nested 500 levels deep passes the limit of 10, so the guard stops it before any schema has to walk it. A normal task is only a few levels deep.</p></explain>
+</question>
+
+<question id="out-size-guard" type="output">
+<q>What does this print?</q>
+<code file="size.js">
+import { assertSizeWithinLimit } from "@zudojs/validation";
+
+for (const body of [{ title: "Buy milk" }, { title: "x".repeat(50_000) }]) {
+  try {
+    assertSizeWithinLimit(body, 16_384);
+    console.log("passed");
+  } catch (error) {
+    console.log(error.name, error.statusCode);
+  }
+}
+</code>
+<option correct>passed
+SerializationPayloadTooLargeError 413</option>
+<option>passed
+SerializationPayloadTooLargeError 400</option>
+<option>passed
+passed</option>
+<option>SerializationPayloadTooLargeError 413
+SerializationPayloadTooLargeError 413</option>
+<explain><p>50 000 characters is far over the 16 384-byte limit (the estimate counts two bytes per character). The error carries 413, the status for a body that is too large.</p></explain>
+</question>
+
+<question id="code-field-errors" type="code" file="field-errors.js">
+<q><p>Finish <code>fieldErrors</code>: turn the issues into an object with one message per field. The key is <code>issue.path.join(".")</code>, or <code>"(body)"</code> when the path is empty, and only the <strong>first</strong> message for a field is kept. The program should print an object with <code>title: 'String must be at least 3 characters'</code> and <code>'tags.1': 'Expected string, received number'</code>.</p></q>
+<starter>
+import { schema } from "@zudojs/schema";
+
+const NewTask = schema.object({
+  title: schema.string().trim().min(3).max(100),
+  tags: schema.array(schema.string().max(20)).max(5),
+});
+
+function fieldErrors(issues) {
+  const errors = {};
+  // your code here
+  return errors;
+}
+
+const result = NewTask.safeParse({ title: "no", tags: ["home", 42] });
+console.log(fieldErrors(result.issues));
+</starter>
+<solution>
+import { schema } from "@zudojs/schema";
+
+const NewTask = schema.object({
+  title: schema.string().trim().min(3).max(100),
+  tags: schema.array(schema.string().max(20)).max(5),
+});
+
+function fieldErrors(issues) {
+  const errors = {};
+  for (const issue of issues) {
+    errors[issue.path.join(".") || "(body)"] ??= issue.message;
+  }
+  return errors;
+}
+
+const result = NewTask.safeParse({ title: "no", tags: ["home", 42] });
+console.log(fieldErrors(result.issues));
+</solution>
+<expected>
+{
+  title: 'String must be at least 3 characters',
+  'tags.1': 'Expected string, received number'
+}
+</expected>
+<explain><p><code>??=</code> only sets the key when it has no message yet, so the first problem per field wins. A web form can show each message next to its input.</p></explain>
+</question>
+
+<question id="code-list-query" type="code" file="list-query.js">
+<q><p>Write <code>ListTasksQuery</code> with <code>page</code> (a whole number, at least 1, default 1) and <code>limit</code> (a whole number from 1 to 50, default 20). Both arrive as query strings, so coerce them. The program should print <code>2 10</code>, <code>1 20</code> and <code>false</code>.</p></q>
+<starter>
+import { schema } from "@zudojs/schema";
+
+// your code here
+const ListTasksQuery = schema.object({});
+
+const a = ListTasksQuery.parse({ page: "2", limit: "10" });
+const b = ListTasksQuery.parse({});
+console.log(a.page, a.limit);
+console.log(b.page, b.limit);
+console.log(ListTasksQuery.safeParse({ limit: "500" }).success);
+</starter>
+<solution>
+import { schema } from "@zudojs/schema";
+
+const ListTasksQuery = schema.object({
+  page: schema.coerce.number().int().min(1).default(1),
+  limit: schema.coerce.number().int().min(1).max(50).default(20),
+});
+
+const a = ListTasksQuery.parse({ page: "2", limit: "10" });
+const b = ListTasksQuery.parse({});
+console.log(a.page, a.limit);
+console.log(b.page, b.limit);
+console.log(ListTasksQuery.safeParse({ limit: "500" }).success);
+</solution>
+<expected>
+2 10
+1 20
+false
+</expected>
+<explain><p><code>schema.coerce.number()</code> turns the text into a number, <code>.int().min().max()</code> check it, and <code>.default()</code> fills in a missing value. A limit of 500 is refused, so one request cannot ask for everything.</p></explain>
+</question>
+
+<question id="code-tag-list" type="code" file="tag-list.js">
+<q><p>Add a <code>.transform</code> to <code>TagList</code> that splits the text on commas, trims and lower-cases each tag, and drops empty tags. The program should print <code>[ 'home', 'urgent', 'errands' ]</code>.</p></q>
+<starter>
+import { schema } from "@zudojs/schema";
+
+const TagList = schema.string().max(200); // your code here: add .transform(...)
+
+console.log(TagList.parse(" Home, URGENT,,errands "));
+</starter>
+<solution>
+import { schema } from "@zudojs/schema";
+
+const TagList = schema
+  .string()
+  .max(200)
+  .transform((text) => text.split(",").map((tag) => tag.trim().toLowerCase()).filter((tag) => tag.length > 0));
+
+console.log(TagList.parse(" Home, URGENT,,errands "));
+</solution>
+<expected>[ 'home', 'urgent', 'errands' ]</expected>
+<explain><p>The transform runs after the string checks pass, and its return value (an array) becomes the schema's output.</p></explain>
+</question>
+
+<question id="code-real-date" type="code" file="real-date.js">
+<q><p>Finish <code>isRealDate</code>: build the date with <code>new Date(Date.UTC(year, month - 1, day))</code> and return <code>true</code> only when its <code>toISOString().slice(0, 10)</code> equals the text (so 30 February, which rolls over to March, is refused). The program should print <code>true false false</code>.</p></q>
+<starter>
+import { schema } from "@zudojs/schema";
+
+function isRealDate(text) {
+  const [year, month, day] = text.split("-").map(Number);
+  // your code here
+}
+
+const DueDate = schema.string().max(10).refine(isRealDate, "Must be a real calendar date");
+console.log(DueDate.safeParse("2026-10-01").success, DueDate.safeParse("2026-02-30").success, DueDate.safeParse("2026-13-45").success);
+</starter>
+<solution>
+import { schema } from "@zudojs/schema";
+
+function isRealDate(text) {
+  const [year, month, day] = text.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === text;
+}
+
+const DueDate = schema.string().max(10).refine(isRealDate, "Must be a real calendar date");
+console.log(DueDate.safeParse("2026-10-01").success, DueDate.safeParse("2026-02-30").success, DueDate.safeParse("2026-13-45").success);
+</solution>
+<expected>true false false</expected>
+<explain><p>JavaScript rolls impossible dates over: 30 February becomes 2 March, and month 13 becomes next January. Comparing the result with the original text catches that. A refinement returns <code>true</code> when the value is fine.</p></explain>
+</question>
+
+<question id="code-object-refine" type="code" file="password-match.js">
+<q><p>Wrap the object with <code>schema.refine</code> so it fails with the message <code>Passwords do not match</code> when <code>password</code> and <code>confirm</code> differ. The program should print <code>true</code> and then <code>Passwords do not match</code>.</p></q>
+<starter>
+import { schema } from "@zudojs/schema";
+
+const SignUp = schema.object({
+  password: schema.string().min(12).max(128),
+  confirm: schema.string().max(128),
+}); // your code here: wrap it with schema.refine(...)
+
+console.log(SignUp.safeParse({ password: "correct horse battery", confirm: "correct horse battery" }).success);
+const bad = SignUp.safeParse({ password: "correct horse battery", confirm: "correct horse" });
+console.log(bad.success ? "ok" : bad.issues[0].message);
+</starter>
+<solution>
+import { schema } from "@zudojs/schema";
+
+const SignUp = schema.refine(
+  schema.object({
+    password: schema.string().min(12).max(128),
+    confirm: schema.string().max(128),
+  }),
+  (value) => value.password === value.confirm,
+  "Passwords do not match",
+);
+
+console.log(SignUp.safeParse({ password: "correct horse battery", confirm: "correct horse battery" }).success);
+const bad = SignUp.safeParse({ password: "correct horse battery", confirm: "correct horse" });
+console.log(bad.success ? "ok" : bad.issues[0].message);
+</solution>
+<expected>
+true
+Passwords do not match
+</expected>
+<explain><p>A rule that compares two fields belongs on the object: <code>schema.refine(inner, check, message)</code>. The check is synchronous and pure; it only looks at the value.</p></explain>
+</question>
+
+<question id="code-strict-update" type="code" file="strict-update.js">
+<q><p>Make <code>UpdateTask</code> refuse unknown keys, so a client cannot send <code>ownerId</code>. The program should print <code>true</code> and then <code>[ 'Unknown key: ownerId' ]</code>.</p></q>
+<starter>
+import { schema } from "@zudojs/schema";
+
+const UpdateTask = schema
+  .object({ title: schema.string().trim().min(3).max(100), done: schema.boolean() })
+  .partial(); // your code here
+
+console.log(UpdateTask.safeParse({ done: true }).success);
+const result = UpdateTask.safeParse({ done: true, ownerId: 1 });
+console.log(result.success ? "accepted" : result.issues.map((issue) => issue.message));
+</starter>
+<solution>
+import { schema } from "@zudojs/schema";
+
+const UpdateTask = schema
+  .object({ title: schema.string().trim().min(3).max(100), done: schema.boolean() })
+  .partial()
+  .strict();
+
+console.log(UpdateTask.safeParse({ done: true }).success);
+const result = UpdateTask.safeParse({ done: true, ownerId: 1 });
+console.log(result.success ? "accepted" : result.issues.map((issue) => issue.message));
+</solution>
+<expected>
+true
+[ 'Unknown key: ownerId' ]
+</expected>
+<explain><p>Without <code>.strict()</code>, <code>ownerId</code> would be quietly stripped (safe, but silent). <code>.strict()</code> rejects it, so the client learns about its mistake.</p></explain>
+</question>
+
+<question id="code-apply-changes" type="code" file="apply-changes.js">
+<q><p>Finish <code>applyChanges</code> the safe way: copy only <code>title</code> and <code>done</code>, each with <code>??</code> so a field the client did not send keeps its stored value. Never spread <code>changes</code>. The program should print <code>{ id: 1, ownerId: 7, title: 'Buy milk', done: true }</code>.</p></q>
+<starter>
+function applyChanges(task, changes) {
+  // your code here
+}
+
+const stored = { id: 1, ownerId: 7, title: "Buy milk", done: false };
+const changes = { title: undefined, done: true, ownerId: 1 };
+console.log(applyChanges(stored, changes));
+</starter>
+<solution>
+function applyChanges(task, changes) {
+  return {
+    ...task,
+    title: changes.title ?? task.title,
+    done: changes.done ?? task.done,
+  };
+}
+
+const stored = { id: 1, ownerId: 7, title: "Buy milk", done: false };
+const changes = { title: undefined, done: true, ownerId: 1 };
+console.log(applyChanges(stored, changes));
+</solution>
+<expected>{ id: 1, ownerId: 7, title: 'Buy milk', done: true }</expected>
+<explain><p>Copying each known field means <code>ownerId</code> can never change (no mass assignment), and <code>?? task.title</code> keeps the stored title when the change is <code>undefined</code>. <code>{ ...task, ...changes }</code> would both lose the title and hand the task to user 1.</p></explain>
+</question>
+
+<question id="code-drop-undefined" type="code" file="drop-undefined.js">
+<q><p>Finish <code>sentOnly</code>: return a copy of <code>changes</code> without the keys whose value is <code>undefined</code>. Use <code>Object.entries</code>, <code>filter</code> and <code>Object.fromEntries</code>. The program should print <code>{ done: true }</code> and then <code>{ id: 1, title: 'Buy milk', done: true }</code>.</p></q>
+<starter>
+function sentOnly(changes) {
+  // your code here
+}
+
+const stored = { id: 1, title: "Buy milk", done: false };
+const sent = sentOnly({ title: undefined, done: true });
+console.log(sent);
+console.log({ ...stored, ...sent });
+</starter>
+<solution>
+function sentOnly(changes) {
+  return Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== undefined));
+}
+
+const stored = { id: 1, title: "Buy milk", done: false };
+const sent = sentOnly({ title: undefined, done: true });
+console.log(sent);
+console.log({ ...stored, ...sent });
+</solution>
+<expected>
+{ done: true }
+{ id: 1, title: 'Buy milk', done: true }
+</expected>
+<explain><p>A key set to <code>undefined</code> still overwrites when you spread it. Dropping those keys first keeps the stored title. Only do this with <em>parsed</em> changes, never with a raw body.</p></explain>
+</question>
+
+<question id="code-response-schema" type="code" file="response-schema.js">
+<q><p>Write <code>TaskResponse</code>, an object schema with exactly <code>id</code> (number), <code>title</code> (string, at most 100) and <code>done</code> (boolean). Parsing the stored user task must drop the internal fields. The program should print <code>{ id: 7, title: 'Buy milk', done: false }</code>.</p></q>
+<starter>
+import { schema } from "@zudojs/schema";
+
+// your code here
+const TaskResponse = { parse: (value) => value };
+
+const stored = { id: 7, title: "Buy milk", done: false, ownerId: 42, passwordHash: "$2b$12$abc" };
+console.log(TaskResponse.parse(stored));
+</starter>
+<solution>
+import { schema } from "@zudojs/schema";
+
+const TaskResponse = schema.object({
+  id: schema.number(),
+  title: schema.string().max(100),
+  done: schema.boolean(),
+});
+
+const stored = { id: 7, title: "Buy milk", done: false, ownerId: 42, passwordHash: "$2b$12$abc" };
+console.log(TaskResponse.parse(stored));
+</solution>
+<expected>{ id: 7, title: 'Buy milk', done: false }</expected>
+<explain><p>Object schemas strip unknown keys, so a response schema is an allow-list: <code>ownerId</code> and <code>passwordHash</code> never leave the server, even if someone adds more internal fields later.</p></explain>
+</question>
+
+<question id="code-body-guards" type="code" file="body-guards.js">
+<q><p>Finish <code>checkBody</code>: run <code>assertDepthWithinLimit(body, 10)</code> and <code>assertSizeWithinLimit(body, 16384)</code>. Return <code>"ok"</code> when both pass, <code>400</code> when the error's <code>name</code> is <code>SerializationDepthError</code> (a too-deep body is the client's mistake), and the error's <code>statusCode</code> otherwise. The program should print <code>ok 400 413</code>.</p></q>
+<starter>
+import { assertDepthWithinLimit, assertSizeWithinLimit } from "@zudojs/validation";
+
+function checkBody(body) {
+  // your code here
+}
+
+const deep = JSON.parse("[".repeat(100) + "]".repeat(100));
+console.log(checkBody({ title: "Buy milk" }), checkBody(deep), checkBody({ title: "x".repeat(50_000) }));
+</starter>
+<solution>
+import { assertDepthWithinLimit, assertSizeWithinLimit } from "@zudojs/validation";
+
+function checkBody(body) {
+  try {
+    assertDepthWithinLimit(body, 10);
+    assertSizeWithinLimit(body, 16384);
+    return "ok";
+  } catch (error) {
+    return error.name === "SerializationDepthError" ? 400 : error.statusCode;
+  }
+}
+
+const deep = JSON.parse("[".repeat(100) + "]".repeat(100));
+console.log(checkBody({ title: "Buy milk" }), checkBody(deep), checkBody({ title: "x".repeat(50_000) }));
+</solution>
+<expected>ok 400 413</expected>
+<explain><p>The guards are cheap and stop as soon as a limit is passed, before any schema walks the body. A too-deep body and a too-large body are both the client's fault, so they get 4xx answers.</p></explain>
+</question>

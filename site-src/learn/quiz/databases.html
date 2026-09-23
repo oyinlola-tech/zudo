@@ -1,0 +1,775 @@
+<question id="json-file-problems" type="choice">
+<q>Your Task API saves its tasks to a JSON file. Which problem does the lesson say this causes?</q>
+<option>JSON files cannot hold arrays</option>
+<option correct>Two requests writing at the same moment can overwrite each other, and a crash mid-write can leave a broken file</option>
+<option>Node.js can only read a JSON file once</option>
+<option>JSON files are always slower to read than a network call</option>
+<explain><p>A file has no protection for many writers at once and no way to undo a half-finished write. A database is built exactly for these jobs: safe concurrent writes, crash recovery and fast lookups.</p></explain>
+</question>
+
+<question id="db-family-redis" type="choice">
+<q>Which database family stores a value under a key, like a giant <code>Map</code>?</q>
+<option>Relational, like PostgreSQL</option>
+<option>Document, like MongoDB</option>
+<option correct>Key-value, like Redis</option>
+<option>Graph, like Neo4j</option>
+<explain><p>Key-value stores such as Redis and Valkey look up a value by its key. Relational databases store tables of rows and columns; document databases store JSON-like documents.</p></explain>
+</question>
+
+<question id="why-relational" type="choice">
+<q>Why does the lesson call relational (SQL) databases the right default for most backends?</q>
+<option>They are the only databases that can store text</option>
+<option correct>They check the shape of your data and link records safely</option>
+<option>They never need a server</option>
+<option>They do not need any schema</option>
+<explain><p>A relational database enforces column types, required values and links between tables. Everything that is not relational is often called NoSQL.</p></explain>
+</question>
+
+<question id="pglite-what" type="choice">
+<q>What is PGlite?</q>
+<option>A smaller SQL language that only looks like PostgreSQL</option>
+<option correct>The real PostgreSQL, compiled to WebAssembly so it runs inside your Node.js program</option>
+<option>A cloud service that hosts PostgreSQL for free</option>
+<option>A JSON file format for storing tables</option>
+<explain><p>PGlite needs no separate server and no password, which makes it perfect for learning and for tests. The next lesson installs a normal PostgreSQL server.</p></explain>
+</question>
+
+<question id="pglite-memory" type="choice">
+<q>You create a database with <code>new PGlite()</code> and add some rows. What happens to them when the program ends?</q>
+<option>They are saved to <code>./data</code> automatically</option>
+<option correct>They are gone: the database lived only in memory</option>
+<option>They are saved in the browser's local storage</option>
+<option>They are written to <code>package.json</code></option>
+<explain><p>Without an argument, PGlite starts an empty database in memory each time. Pass a folder, <code>new PGlite("./data")</code>, to keep it on disk.</p></explain>
+</question>
+
+<question id="placeholders-why" type="choice">
+<q>Why does the lesson write <code>db.query("insert into tasks (title) values ($1)", [title])</code> instead of putting <code>title</code> into the SQL text?</q>
+<option>Placeholders make the query run twice as fast</option>
+<option>PostgreSQL does not accept text values inside SQL</option>
+<option correct>The value is sent separately from the SQL text, so outside input can never change the query itself</option>
+<option>The array is needed so the database can pick the next id</option>
+<explain><p>Always pass outside values as parameters. Gluing user input into SQL text allows SQL injection, which the next lesson demonstrates.</p></explain>
+</question>
+
+<question id="exec-vs-query" type="choice">
+<q>In PGlite, what is the difference between <code>db.exec</code> and <code>db.query</code> as the lesson uses them?</q>
+<option correct><code>exec</code> runs one or more statements (used for setup); <code>query</code> runs one statement with placeholder values</option>
+<option><code>exec</code> reads data; <code>query</code> only writes data</option>
+<option><code>exec</code> is for PostgreSQL; <code>query</code> is for MySQL</option>
+<option>They are the same function with two names</option>
+<explain><p>Use <code>exec</code> for fixed SQL such as <code>create table</code>, and <code>query(sql, params)</code> whenever a statement includes values, especially values from outside.</p></explain>
+</question>
+
+<question id="first-insert" type="output">
+<q>What does this print?</q>
+<code file="first.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table tasks (
+    id integer generated always as identity primary key,
+    title text not null,
+    done boolean not null default false
+  )
+`);
+await db.query("insert into tasks (title) values ($1)", ["Buy milk"]);
+await db.query("insert into tasks (title) values ($1)", ["Fix bike"]);
+const { rows } = await db.query("select id, done from tasks where title = $1", ["Fix bike"]);
+console.log(rows);
+await db.close();
+</code>
+<option correct>[ { id: 2, done: false } ]</option>
+<option>[ { id: 1, done: false } ]</option>
+<option>[ { id: 2, done: null } ]</option>
+<option>[ { id: null, done: false } ]</option>
+<explain><p>The database picks the ids 1, 2, … by itself, and the column default fills in <code>done</code> as <code>false</code>. <code>rows</code> is an array of plain objects.</p></explain>
+</question>
+
+<question id="primary-key-rules" type="choice">
+<q>Which two rules does a primary key enforce?</q>
+<option>It must be a number, and it must be the first column</option>
+<option correct>No two rows may share it, and it can never be empty</option>
+<option>It must be text, and it must be unique per user</option>
+<option>It must be sorted, and it can change at any time</option>
+<explain><p>A primary key identifies each row, so it is unique and not null. It can be a number (<code>id</code>) or a <strong>natural key</strong> from the data, like a tag's name.</p></explain>
+</question>
+
+<question id="identity-why" type="choice">
+<q>Why let the database pick ids with <code>generated always as identity</code> instead of computing "highest id + 1" in your code?</q>
+<option>Your code cannot add numbers</option>
+<option correct>Two requests at the same moment could compute the same id; the database never hands out the same one twice</option>
+<option>Identity ids are shorter</option>
+<option>Identity ids are secret, so users cannot guess them</option>
+<explain><p>Two requests could both read "highest id is 7" and both pick 8. The database hands out the numbers itself, so they never collide.</p></explain>
+</question>
+
+<question id="duplicate-code" type="output">
+<q>What does this print?</q>
+<code file="dup.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("create table tags (name text primary key)");
+await db.query("insert into tags (name) values ($1)", ["home"]);
+try {
+  await db.query("insert into tags (name) values ($1)", ["home"]);
+  console.log("saved twice");
+} catch (error) {
+  console.log(error.code);
+}
+await db.close();
+</code>
+<option correct>23505</option>
+<option>saved twice</option>
+<option>409</option>
+<option>404</option>
+<explain><p>The second insert breaks the primary key. PostgreSQL's error code <code>23505</code> always means "unique violation". It is a database code, not an HTTP status: your API turns it into <code>409 Conflict</code>.</p></explain>
+</question>
+
+<question id="unique-to-http" type="choice">
+<q>A sign-up request fails with PostgreSQL error code <code>23505</code> on the <code>email</code> column. What should your API answer?</q>
+<option><code>500</code> with the database error message</option>
+<option correct><code>409 Conflict</code>, saying the email is already in use</option>
+<option><code>200</code>, because the user already exists</option>
+<option><code>404 Not Found</code></option>
+<explain><p><code>23505</code> is a unique violation: the value already exists. That is a conflict with the current state, so <code>409</code> fits. Do not forward raw database messages to the client.</p></explain>
+</question>
+
+<question id="unique-case" type="output">
+<q><code>email</code> is <code>unique</code>. What does this print?</q>
+<code file="unique-case.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("create table users (id integer generated always as identity primary key, email text not null unique)");
+await db.query("insert into users (email) values ($1)", ["ada@example.com"]);
+await db.query("insert into users (email) values ($1)", ["Ada@Example.com"]);
+const { rows } = await db.query("select count(*)::int as n from users");
+console.log(rows[0].n);
+await db.close();
+</code>
+<option correct>2</option>
+<option>1</option>
+<option>23505</option>
+<option>0</option>
+<explain><p>Text comparison in PostgreSQL is case-sensitive, so the two emails are different values and both rows are saved. Store emails in one form (for example lower case) before you insert them.</p></explain>
+</question>
+
+<question id="one-to-many-key" type="choice">
+<q>Each comment is on one task, and a task has many comments. Where does the key go?</q>
+<option>A <code>comment_id</code> column on <code>tasks</code></option>
+<option correct>A <code>task_id</code> column on <code>comments</code></option>
+<option>A join table <code>task_comments</code></option>
+<option>A list of comment ids in a text column on <code>tasks</code></option>
+<explain><p>One-to-many: put the foreign key on the "many" side. A task cannot hold a single <code>comment_id</code>, because it has many comments.</p></explain>
+</question>
+
+<question id="many-to-many-key" type="choice">
+<q>Students take many courses, and each course has many students. How do you store this?</q>
+<option>A <code>course_id</code> column on <code>students</code></option>
+<option>A <code>student_id</code> column on <code>courses</code></option>
+<option correct>A join table such as <code>enrollments (student_id, course_id)</code></option>
+<option>A unique <code>student_id</code> on <code>courses</code></option>
+<explain><p>Many-to-many: neither table can hold a single id for the other, so a third table holds one row per link.</p></explain>
+</question>
+
+<question id="one-to-one-key" type="choice">
+<q>Each user has at most one settings row. How does the lesson make sure no user gets two?</q>
+<option>By checking in JavaScript before every insert</option>
+<option>By putting a <code>settings_id</code> on <code>users</code> with no rules</option>
+<option correct>By putting a <code>user_id</code> on <code>settings</code> and making it <code>unique</code> (or the primary key)</option>
+<option>By using a join table</option>
+<explain><p>A <strong>unique</strong> foreign key turns one-to-many into one-to-one. In the lesson's <code>profiles</code> table, <code>user_id</code> is both the primary key and the foreign key.</p></explain>
+</question>
+
+<question id="join-table-pk" type="output">
+<q><code>task_tags</code> has the primary key <code>(task_id, tag_id)</code>. What does this print?</q>
+<code file="pair.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("create table task_tags (task_id integer not null, tag_id integer not null, primary key (task_id, tag_id))");
+for (const [task, tag] of [[1, 1], [1, 2], [2, 1], [1, 1]]) {
+  try {
+    await db.query("insert into task_tags values ($1, $2)", [task, tag]);
+    console.log("added", task, tag);
+  } catch (error) {
+    console.log("refused", task, tag);
+  }
+}
+await db.close();
+</code>
+<option correct>added 1 1
+added 1 2
+added 2 1
+refused 1 1</option>
+<option>added 1 1
+refused 1 2
+refused 2 1
+refused 1 1</option>
+<option>added 1 1
+added 1 2
+added 2 1
+added 1 1</option>
+<option>added 1 1
+refused 1 2
+added 2 1
+refused 1 1</option>
+<explain><p>The <em>pair</em> must be unique, not each column on its own. Task 1 may have many tags and tag 1 may be on many tasks, but the same tag cannot be added to the same task twice.</p></explain>
+</question>
+
+<question id="fk-orphan" type="output">
+<q>What does this print?</q>
+<code file="orphan.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table users (id integer primary key);
+  create table tasks (id integer generated always as identity primary key, user_id integer not null references users (id), title text not null);
+  insert into users values (1);
+`);
+for (const userId of [1, 99]) {
+  try {
+    await db.query("insert into tasks (user_id, title) values ($1, $2)", [userId, "Task"]);
+    console.log("saved for", userId);
+  } catch (error) {
+    console.log("refused for", userId);
+  }
+}
+await db.close();
+</code>
+<option correct>saved for 1
+refused for 99</option>
+<option>saved for 1
+saved for 99</option>
+<option>refused for 1
+refused for 99</option>
+<option>saved for 1</option>
+<explain><p>A foreign key must point at a row that exists. User 99 does not exist, so the database refuses the task instead of storing an orphan row forever.</p></explain>
+</question>
+
+<question id="cascade-count" type="output">
+<q>What does this print?</q>
+<code file="cascade.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table users (id integer primary key);
+  create table tasks (id integer generated always as identity primary key, user_id integer not null references users (id) on delete cascade);
+  insert into users values (1), (2);
+  insert into tasks (user_id) values (1), (1), (2);
+`);
+await db.query("delete from users where id = $1", [1]);
+const { rows } = await db.query("select user_id from tasks");
+console.log(rows);
+await db.close();
+</code>
+<option correct>[ { user_id: 2 } ]</option>
+<option>[ { user_id: 1 }, { user_id: 1 }, { user_id: 2 } ]</option>
+<option>[ { user_id: null }, { user_id: null }, { user_id: 2 } ]</option>
+<option>[]</option>
+<explain><p><code>on delete cascade</code> deletes the user's tasks together with the user. Only user 2's task is left.</p></explain>
+</question>
+
+<question id="set-null" type="output">
+<q>What does this print?</q>
+<code file="set-null.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table projects (id integer primary key);
+  create table tasks (id integer primary key, project_id integer references projects (id) on delete set null);
+  insert into projects values (1);
+  insert into tasks values (1, 1), (2, null);
+`);
+await db.query("delete from projects where id = $1", [1]);
+const { rows } = await db.query("select * from tasks order by id");
+console.log(rows);
+await db.close();
+</code>
+<option correct>[ { id: 1, project_id: null }, { id: 2, project_id: null } ]</option>
+<option>[ { id: 2, project_id: null } ]</option>
+<option>[ { id: 1, project_id: 1 }, { id: 2, project_id: null } ]</option>
+<option>[]</option>
+<explain><p><code>on delete set null</code> keeps the tasks but clears their link to the deleted project. <code>cascade</code> would have deleted task 1 instead.</p></explain>
+</question>
+
+<question id="cascade-meaning" type="choice">
+<q>What does <code>references users (id) on delete cascade</code> on <code>tasks.user_id</code> mean?</q>
+<option>A user cannot be deleted while they have tasks</option>
+<option correct>When a user is deleted, their tasks are deleted too</option>
+<option>When a task is deleted, its user is deleted too</option>
+<option>Deleted users are copied into the tasks table</option>
+<explain><p>The cascade flows from the referenced row (the user) to the rows that point at it (the tasks). Without any <code>on delete</code> rule, deleting a user who still has tasks is refused.</p></explain>
+</question>
+
+<question id="check-constraint" type="output">
+<q>What does this print?</q>
+<code file="check.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("create table tasks (title text not null check (length(trim(title)) between 1 and 100), priority integer not null default 2 check (priority between 1 and 3))");
+for (const [title, priority] of [["Buy milk", 3], ["   ", 1], ["Fix bike", 7], ["Call Ada", 1]]) {
+  try {
+    await db.query("insert into tasks (title, priority) values ($1, $2)", [title, priority]);
+  } catch {
+    console.log("refused", JSON.stringify(title));
+  }
+}
+console.log((await db.query("select count(*)::int as n from tasks")).rows[0].n);
+await db.close();
+</code>
+<option correct>refused "   "
+refused "Fix bike"
+2</option>
+<option>refused "Fix bike"
+3</option>
+<option>refused "   "
+3</option>
+<option>refused "   "
+refused "Fix bike"
+4</option>
+<explain><p>A title of only spaces trims to length 0, and priority 7 is outside 1 to 3. The database refuses both, whichever program tries the insert, so two rows are saved.</p></explain>
+</question>
+
+<question id="constraints-and-validation" type="choice">
+<q>The database has <code>check</code> and <code>not null</code> constraints. Should your API still validate input?</q>
+<option>No, the constraints make API validation useless</option>
+<option correct>Yes: the API answers with a friendly 400, and constraints are the last line of defence against bugs and other writers</option>
+<option>No, validation in two places is always a bug</option>
+<option>Yes, but only for <code>GET</code> requests</option>
+<explain><p>The API gives clients clear errors. Constraints protect the data from bugs, scripts run by hand, and a second service that forgot a check.</p></explain>
+</question>
+
+<question id="money-type" type="choice">
+<q>Which PostgreSQL column type does the lesson name for money?</q>
+<option><code>integer</code> with decimals</option>
+<option><code>text</code></option>
+<option correct><code>numeric</code>, for exact decimals</option>
+<option><code>timestamptz</code></option>
+<explain><p><code>numeric</code> stores exact decimals, so there is no <code>0.1 + 0.2</code> rounding problem. <code>timestamptz</code> is a date and time with time zone.</p></explain>
+</question>
+
+<question id="fk-index" type="choice">
+<q>Which columns get an index automatically in PostgreSQL?</q>
+<option>Every column</option>
+<option>Foreign key columns</option>
+<option correct>Primary keys and <code>unique</code> columns, but <strong>not</strong> foreign keys</option>
+<option>No columns; you must always create every index yourself</option>
+<explain><p>Foreign keys like <code>tasks.user_id</code> are exactly what you filter and join by, yet they get no index. Add one yourself.</p></explain>
+</question>
+
+<question id="seq-scan" type="output">
+<q>No index exists on <code>user_id</code>. What does this print?</q>
+<code file="plan.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table tasks (id integer primary key, user_id integer not null);
+  insert into tasks select n, n % 1000 from generate_series(1, 50000) as n;
+  analyze tasks;
+`);
+const { rows } = await db.query("explain (costs off) select * from tasks where user_id = 42");
+console.log(rows[0]["QUERY PLAN"]);
+await db.close();
+</code>
+<option correct>Seq Scan on tasks</option>
+<option>Index Scan using tasks_pkey on tasks</option>
+<option>Bitmap Index Scan on tasks_user_id_idx</option>
+<option>Index Only Scan on tasks</option>
+<explain><p>Without an index on <code>user_id</code>, the database has to read every one of the 50,000 rows and keep the matches: a sequential scan. The primary key index only helps when you search by <code>id</code>.</p></explain>
+</question>
+
+<question id="index-cost" type="choice">
+<q>Why not simply add an index to every column?</q>
+<option>PostgreSQL allows only one index per table</option>
+<option correct>Each index takes disk space and makes every insert and update a little slower</option>
+<option>Indexes make <code>select</code> queries slower</option>
+<option>Indexes delete rows that are not used often</option>
+<explain><p>Every write must update every index on the table. Add indexes for the columns you actually search, filter, join and sort by.</p></explain>
+</question>
+
+<question id="index-what" type="choice">
+<q>What is an index?</q>
+<option>A copy of the whole table kept as a backup</option>
+<option correct>A sorted lookup structure that jumps straight to the matching rows, like the index at the back of a book</option>
+<option>The row number of each row</option>
+<option>A list of the queries that ran most often</option>
+<explain><p>Without an index the database reads every row (a sequential scan), which gets slower as the table grows. An index finds the matches directly.</p></explain>
+</question>
+
+<question id="acid-atomic" type="choice">
+<q>Which ACID letter means "all or nothing: if one statement fails, every change in the transaction is undone"?</q>
+<option correct>Atomic</option>
+<option>Consistent</option>
+<option>Isolated</option>
+<option>Durable</option>
+<explain><p>Atomic: the transaction cannot be split. Isolated means others do not see your half-finished changes; durable means a committed change survives a crash.</p></explain>
+</question>
+
+<question id="acid-durable" type="choice">
+<q>The database says "committed", and a second later the power goes out. Which ACID promise says the change is still there after restart?</q>
+<option>Atomic</option>
+<option>Consistent</option>
+<option>Isolated</option>
+<option correct>Durable</option>
+<explain><p>Durable: once committed, the change survives a crash or power cut. Consistent means every constraint still holds when the transaction ends.</p></explain>
+</question>
+
+<question id="transaction-rollback" type="output">
+<q>The second statement breaks a <code>check</code> constraint. What does this print?</q>
+<code file="tx.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec(`
+  create table tasks (id integer primary key, owner text not null);
+  create table activity (message text not null check (message <> ''));
+  insert into tasks values (1, 'ada');
+`);
+try {
+  await db.transaction(async (tx) => {
+    await tx.query("update tasks set owner = $1 where id = $2", ["alan", 1]);
+    await tx.query("insert into activity (message) values ($1)", [""]);
+  });
+} catch {
+  console.log("failed");
+}
+console.log((await db.query("select owner from tasks")).rows[0].owner);
+await db.close();
+</code>
+<option correct>failed
+ada</option>
+<option>failed
+alan</option>
+<option>alan</option>
+<option>ada</option>
+<explain><p>Both statements ran in one transaction. When the insert failed, the owner change was rolled back too, so the task still belongs to Ada.</p></explain>
+</question>
+
+<question id="id-gaps" type="output">
+<q>What does this print?</q>
+<code file="gaps.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const db = new PGlite();
+await db.exec("create table log (id integer generated always as identity primary key, message text not null check (message <> ''))");
+for (const message of ["first", "", "second"]) {
+  try {
+    await db.query("insert into log (message) values ($1)", [message]);
+  } catch {}
+}
+console.log((await db.query("select id from log order by id")).rows.map((r) => r.id));
+await db.close();
+</code>
+<option correct>[ 1, 3 ]</option>
+<option>[ 1, 2 ]</option>
+<option>[ 1, 2, 3 ]</option>
+<option>[ 2, 3 ]</option>
+<explain><p>The failed insert used up number 2, and generated numbers are never handed back. Ids can have gaps, so never use them to count rows.</p></explain>
+</question>
+
+<question id="why-transaction" type="choice">
+<q>Moving a task from Ada to Alan also writes a line to an activity log. Why wrap both statements in a transaction?</q>
+<option>So the two statements run in parallel and finish faster</option>
+<option correct>So a crash or error between them cannot leave the task moved without a log line, or the other way round</option>
+<option>Because <code>update</code> only works inside a transaction</option>
+<option>So other clients can see the change before it is finished</option>
+<explain><p>The two changes only make sense together. A transaction makes them all happen or none happen. Others do not see the half-finished state (isolation).</p></explain>
+</question>
+
+<question id="migration-why" type="choice">
+<q>Tasks need a new <code>due_date</code> column, and production already holds real data. What do you do?</q>
+<option>Edit the original <code>create table</code> statement and restart the server</option>
+<option>Drop the table and create it again with the new column</option>
+<option correct>Write a new numbered migration, such as <code>alter table tasks add column due_date date</code></option>
+<option>Add the field in JavaScript only, without changing the database</option>
+<option>Ask every developer to add the column by hand</option>
+<explain><p>The <code>create table</code> already ran and will not run again, and dropping the table destroys data. A migration is a small change that runs exactly once, in order, on every database.</p></explain>
+</question>
+
+<question id="never-edit-migration" type="choice">
+<q>Migration 3 already ran on production. You notice it should also have created an index. What is the safe fix?</q>
+<option>Edit migration 3; the runner will notice the change</option>
+<option correct>Add a new migration 4 that creates the index</option>
+<option>Delete migration 3 from the list</option>
+<option>Delete the row for migration 3 from <code>schema_migrations</code> in production</option>
+<explain><p>Every database that ran migration 3 has it recorded and will never run it again, so an edit would never reach them. A new id runs everywhere exactly once.</p></explain>
+</question>
+
+<question id="migration-transaction" type="choice">
+<q>Why does the lesson's runner apply each migration inside a transaction together with its <code>schema_migrations</code> row?</q>
+<option>To run all migrations at the same time</option>
+<option correct>A failing migration leaves no half-changed table behind and is not marked as done</option>
+<option>So the migration can be edited later</option>
+<option>Because <code>alter table</code> is not allowed outside a transaction</option>
+<explain><p>The schema change and the "this ran" record succeed or fail together. After a failure you fix the migration and run it again cleanly.</p></explain>
+</question>
+
+<question id="migrate-twice" type="output">
+<q>What does this print?</q>
+<code file="migrate.js" browser="no">
+import { PGlite } from "@electric-sql/pglite";
+
+const migrations = [
+  { id: 1, sql: "create table tasks (id integer primary key)" },
+  { id: 2, sql: "alter table tasks add column title text" },
+];
+
+async function migrate(db) {
+  await db.exec("create table if not exists schema_migrations (id integer primary key)");
+  const done = new Set((await db.query("select id from schema_migrations")).rows.map((r) => r.id));
+  const applied = [];
+  for (const m of migrations) {
+    if (done.has(m.id)) continue;
+    await db.transaction(async (tx) => {
+      await tx.exec(m.sql);
+      await tx.query("insert into schema_migrations (id) values ($1)", [m.id]);
+    });
+    applied.push(m.id);
+  }
+  return applied;
+}
+
+const db = new PGlite();
+console.log(await migrate(db), await migrate(db));
+await db.close();
+</code>
+<option correct>[ 1, 2 ] []</option>
+<option>[ 1, 2 ] [ 1, 2 ]</option>
+<option>[ 1, 2 ] [ 2 ]</option>
+<option>[] []</option>
+<explain><p>The first run applies both and records their ids. The second run finds both ids in <code>schema_migrations</code> and does nothing, which is exactly what makes it safe to run on every start.</p></explain>
+</question>
+
+<question id="pending-set" type="output">
+<q>A runner decides which migrations still need to run. What does this print?</q>
+<code file="pending.js">
+const migrations = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }];
+const applied = new Set([1, 2, 4]);
+console.log(migrations.filter((m) => !applied.has(m.id)).map((m) => m.id));
+</code>
+<option correct>[ 3 ]</option>
+<option>[ 3, 4 ]</option>
+<option>[ 1, 2, 4 ]</option>
+<option>[]</option>
+<explain><p>Only migrations whose ids are not recorded yet will run. Each migration runs exactly once on each database, whatever its position in the list.</p></explain>
+</question>
+
+<question id="in-memory-join" type="output">
+<q>This JavaScript does what a join through <code>task_tags</code> does. What does it print?</q>
+<code file="join.js">
+const tasks = [{ id: 1, title: "Buy milk" }, { id: 2, title: "Write report" }];
+const tags = [{ id: 1, name: "home" }, { id: 2, name: "work" }, { id: 3, name: "urgent" }];
+const taskTags = [{ taskId: 1, tagId: 1 }, { taskId: 2, tagId: 2 }, { taskId: 2, tagId: 3 }];
+
+const rows = taskTags.map((link) => ({
+  title: tasks.find((t) => t.id === link.taskId).title,
+  tag: tags.find((t) => t.id === link.tagId).name,
+}));
+console.log(rows.length, rows.filter((r) => r.title === "Write report").map((r) => r.tag));
+</code>
+<option correct>3 [ 'work', 'urgent' ]</option>
+<option>2 [ 'work', 'urgent' ]</option>
+<option>3 [ 'work' ]</option>
+<option>2 [ 'work' ]</option>
+<explain><p>A join produces one row per link, so "Write report" appears twice: once per tag. Three links give three rows.</p></explain>
+</question>
+
+<question id="code-db-error-to-http" type="code" file="db-error.js">
+<q><p>Finish <code>toHttp(error)</code>. A PostgreSQL error with <code>code</code> <code>"23505"</code> (unique violation) becomes <code>{ status: 409, detail: "Already exists." }</code>. Any other error becomes <code>{ status: 500, detail: "Internal error." }</code>. Never copy <code>error.message</code> into the answer.</p></q>
+<starter>
+function toHttp(error) {
+  // your code here
+}
+
+const unique = { code: "23505", message: 'duplicate key value violates unique constraint "users_email_key"' };
+const other = { code: "57P01", message: "terminating connection due to administrator command" };
+console.log(toHttp(unique));
+console.log(toHttp(other));
+</starter>
+<solution>
+function toHttp(error) {
+  if (error.code === "23505") return { status: 409, detail: "Already exists." };
+  return { status: 500, detail: "Internal error." };
+}
+
+const unique = { code: "23505", message: 'duplicate key value violates unique constraint "users_email_key"' };
+const other = { code: "57P01", message: "terminating connection due to administrator command" };
+console.log(toHttp(unique));
+console.log(toHttp(other));
+</solution>
+<expected>
+{ status: 409, detail: 'Already exists.' }
+{ status: 500, detail: 'Internal error.' }
+</expected>
+<explain><p>Branch on the stable <code>code</code>, not on the message text. The raw message names your tables and constraints, so it goes to the server log, not to the client.</p></explain>
+</question>
+
+<question id="code-pending-migrations" type="code" file="pending-migrations.js">
+<q><p>Finish <code>pending(migrations, appliedIds)</code>. It returns the names of the migrations that have not run yet, sorted by id (the list may be out of order).</p></q>
+<starter>
+const migrations = [
+  { id: 3, name: "add due date" },
+  { id: 1, name: "create tasks" },
+  { id: 4, name: "index due date" },
+  { id: 2, name: "add done" },
+];
+
+function pending(migrations, appliedIds) {
+  // your code here
+}
+
+console.log(pending(migrations, [1, 2]));
+console.log(pending(migrations, [1, 2, 3, 4]));
+</starter>
+<solution>
+const migrations = [
+  { id: 3, name: "add due date" },
+  { id: 1, name: "create tasks" },
+  { id: 4, name: "index due date" },
+  { id: 2, name: "add done" },
+];
+
+function pending(migrations, appliedIds) {
+  const done = new Set(appliedIds);
+  return migrations
+    .filter((m) => !done.has(m.id))
+    .toSorted((a, b) => a.id - b.id)
+    .map((m) => m.name);
+}
+
+console.log(pending(migrations, [1, 2]));
+console.log(pending(migrations, [1, 2, 3, 4]));
+</solution>
+<expected>
+[ 'add due date', 'index due date' ]
+[]
+</expected>
+<explain><p>Migrations run in order, so sort by id. A <code>Set</code> of applied ids gives a fast "already ran?" check. When everything ran, there is nothing to do.</p></explain>
+</question>
+
+<question id="code-check-task" type="code" file="check-task.js">
+<q><p>Finish <code>checkTask</code> so it applies the same rules as the lesson's constraints: the title (after trimming) must be 1 to 100 characters, and the priority a whole number from 1 to 3. Return an array of the names of the broken rules: <code>"title"</code>, <code>"priority"</code>, or both.</p></q>
+<starter>
+function checkTask(task) {
+  // your code here
+}
+
+console.log(checkTask({ title: "Buy milk", priority: 1 }));
+console.log(checkTask({ title: "   ", priority: 2 }));
+console.log(checkTask({ title: "Fix bike", priority: 7 }));
+console.log(checkTask({ title: "", priority: 1.5 }));
+</starter>
+<solution>
+function checkTask(task) {
+  const broken = [];
+  const length = task.title.trim().length;
+  if (length < 1 || length > 100) broken.push("title");
+  if (!Number.isInteger(task.priority) || task.priority < 1 || task.priority > 3) broken.push("priority");
+  return broken;
+}
+
+console.log(checkTask({ title: "Buy milk", priority: 1 }));
+console.log(checkTask({ title: "   ", priority: 2 }));
+console.log(checkTask({ title: "Fix bike", priority: 7 }));
+console.log(checkTask({ title: "", priority: 1.5 }));
+</solution>
+<expected>
+[]
+[ 'title' ]
+[ 'priority' ]
+[ 'title', 'priority' ]
+</expected>
+<explain><p>Checking in the API lets you answer with a clear 400 listing every problem. The database constraints stay in place as the last line of defence.</p></explain>
+</question>
+
+<question id="code-all-or-nothing" type="code" file="all-or-nothing.js">
+<q><p>Finish <code>runAll(state, steps)</code> so it behaves like a transaction. Each step is a function that changes the object it gets, and may throw. Work on a copy (<code>structuredClone</code>). If every step succeeds, return the copy. If any step throws, return the original <code>state</code> unchanged.</p></q>
+<starter>
+function runAll(state, steps) {
+  // your code here
+}
+
+const start = { owner: "ada", log: [] };
+const move = (s) => { s.owner = "alan"; };
+const logIt = (s) => { s.log.push("moved"); };
+const fail = () => { throw new Error("log is full"); };
+
+console.log(runAll(start, [move, logIt]));
+console.log(runAll(start, [move, fail]));
+</starter>
+<solution>
+function runAll(state, steps) {
+  const copy = structuredClone(state);
+  try {
+    for (const step of steps) step(copy);
+    return copy;
+  } catch {
+    return state;
+  }
+}
+
+const start = { owner: "ada", log: [] };
+const move = (s) => { s.owner = "alan"; };
+const logIt = (s) => { s.log.push("moved"); };
+const fail = () => { throw new Error("log is full"); };
+
+console.log(runAll(start, [move, logIt]));
+console.log(runAll(start, [move, fail]));
+</solution>
+<expected>
+{ owner: 'alan', log: [ 'moved' ] }
+{ owner: 'ada', log: [] }
+</expected>
+<explain><p>Changes go to a copy and are kept only if every step succeeds: that is atomicity. In the second call <code>move</code> ran, but its change was thrown away with the copy, just like a rollback.</p></explain>
+</question>
+
+<question id="code-index-map" type="code" file="index-map.js">
+<q><p>An index lets you find rows without reading them all. Finish <code>buildIndex(rows, column)</code>: return a <code>Map</code> from each value of <code>column</code> to the array of ids of the rows with that value.</p></q>
+<starter>
+const tasks = [
+  { id: 1, userId: 7 },
+  { id: 2, userId: 9 },
+  { id: 3, userId: 7 },
+  { id: 4, userId: 8 },
+];
+
+function buildIndex(rows, column) {
+  // your code here
+}
+
+const byUser = buildIndex(tasks, "userId");
+console.log(byUser.get(7), byUser.get(8), byUser.get(42));
+</starter>
+<solution>
+const tasks = [
+  { id: 1, userId: 7 },
+  { id: 2, userId: 9 },
+  { id: 3, userId: 7 },
+  { id: 4, userId: 8 },
+];
+
+function buildIndex(rows, column) {
+  const index = new Map();
+  for (const row of rows) {
+    const key = row[column];
+    if (!index.has(key)) index.set(key, []);
+    index.get(key).push(row.id);
+  }
+  return index;
+}
+
+const byUser = buildIndex(tasks, "userId");
+console.log(byUser.get(7), byUser.get(8), byUser.get(42));
+</solution>
+<expected>[ 1, 3 ] [ 4 ] undefined</expected>
+<explain><p>Building the map reads every row once; after that each lookup jumps straight to the answer. That is also why an index costs something on every write: it has to be kept up to date.</p></explain>
+</question>

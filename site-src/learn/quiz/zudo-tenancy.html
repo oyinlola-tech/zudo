@@ -1,0 +1,778 @@
+<question id="tenant-meaning" type="choice">
+<q>In a multi-tenant Task API, what is a <strong>tenant</strong>?</q>
+<option>One user account</option>
+<option correct>One customer, such as a company, that shares the same application with other customers</option>
+<option>One server that runs a copy of the app</option>
+<option>One database table</option>
+<explain><p>Acme and Globex are tenants. Each has its own users and tasks, but they all use one copy of the application and, with shared tables, one database.</p></explain>
+</question>
+
+<question id="isolation-rule" type="choice">
+<q>What is the most important rule of multi-tenancy?</q>
+<option>Every tenant must have its own server</option>
+<option correct>A request from one tenant must never read or change another tenant's data</option>
+<option>Tenant names must be secret</option>
+<option>Each tenant must use a different programming language</option>
+<explain><p>This is tenant isolation. A bug here is not small: it shows one company's data to another company, possibly a competitor.</p></explain>
+</question>
+
+<question id="shared-tables-risk" type="choice">
+<q>The Task API uses <strong>shared tables</strong>: every row has a <code>tenant_id</code> column. What is the main risk of this strategy?</q>
+<option>It is the most expensive strategy</option>
+<option>Migrations must run once per tenant</option>
+<option correct>One forgotten <code>tenant_id</code> filter in a query leaks data</option>
+<option>It cannot store more than one tenant</option>
+<explain><p>Shared tables are the cheapest and simplest to run, but every query must filter on <code>tenant_id</code>. That is why the repository adds the filter itself instead of trusting each caller.</p></explain>
+</question>
+
+<question id="strategy-strongest" type="choice">
+<q>Which strategy gives the strongest isolation, and is usually kept for large customers because it costs the most?</q>
+<option>Shared tables with a <code>tenant_id</code> column</option>
+<option>Schema per tenant</option>
+<option correct>Database per tenant</option>
+<option>One table per user</option>
+<explain><p>A whole database per tenant has the strongest walls but the highest cost. Schema per tenant sits in between. Shared tables are the usual starting point.</p></explain>
+</question>
+
+<question id="tenant-status" type="choice">
+<q>Initech did not pay, and its tenant status is <code>suspended</code>. What should happen when an Initech user sends a request?</q>
+<option>It works, because the user is logged in</option>
+<option correct>It is refused: only <code>active</code> tenants may use the app</option>
+<option>It works in read-only mode automatically</option>
+<option>The user is moved to another tenant</option>
+<explain><p><code>manager.requireActive(id)</code> loads the tenant and throws <code>TenantUnavailableError</code> when it is not active. The user logged in before the suspension, but that does not matter.</p></explain>
+</question>
+
+<question id="try-create-id" type="output">
+<q>What does this print?</q>
+<code file="tenant-id.js" browser="no">
+import { tryCreateTenantId } from "@zudojs/tenancy";
+
+console.log(tryCreateTenantId("  ACME "));
+console.log(tryCreateTenantId("acme:admin"), tryCreateTenantId("../globex"));
+</code>
+<option correct>acme
+undefined undefined</option>
+<option>  ACME
+acme:admin ../globex</option>
+<option>acme
+acme:admin undefined</option>
+<option>ACME
+undefined undefined</option>
+<explain><p>A tenant id is trimmed and lower-cased, then it must match <code>^[a-z0-9][a-z0-9_-]*$</code>. <code>:</code>, <code>.</code> and <code>/</code> are not allowed, so <code>tryCreateTenantId</code> returns <code>undefined</code> for those.</p></explain>
+</question>
+
+<question id="create-id-throws" type="output">
+<q>What does this print?</q>
+<code file="create-id.js" browser="no">
+import { createTenantId, TenantError } from "@zudojs/tenancy";
+
+try {
+  createTenantId("acme:admin");
+  console.log("created");
+} catch (error) {
+  if (error instanceof TenantError) console.log(error.name);
+}
+</code>
+<option correct>InvalidTenantIdError</option>
+<option>created</option>
+<option>TypeError</option>
+<option>TenantNotFoundError</option>
+<explain><p><code>createTenantId</code> throws for an invalid id, while <code>tryCreateTenantId</code> returns <code>undefined</code>. The error is an <code>InvalidTenantIdError</code>, which extends <code>TenantError</code>.</p></explain>
+</question>
+
+<question id="why-validate-id" type="choice">
+<q>Why must a tenant id like <code>acme:admin</code> be refused?</q>
+<option>Colons make the id too long</option>
+<option correct>Tenant ids end up in cache keys, file paths and log lines; such an id could forge a key that belongs to someone else</option>
+<option>JavaScript strings cannot contain colons</option>
+<option>The database cannot store it</option>
+<explain><p>Characters like <code>:</code>, <code>/</code> and <code>..</code> have a meaning inside keys and paths. A strict pattern keeps every tenant id a plain, safe name.</p></explain>
+</question>
+
+<question id="resolution-meaning" type="choice">
+<q>What is <strong>tenant resolution</strong>?</q>
+<option>Deleting tenants that no longer pay</option>
+<option correct>Finding out which tenant a request belongs to</option>
+<option>Choosing the database strategy</option>
+<option>Merging two tenants into one</option>
+<explain><p>Every request must be tied to one tenant. Resolvers do this, each looking at a different part of the request: the session, the host name, a header or the path.</p></explain>
+</question>
+
+<question id="trust-levels" type="choice">
+<q>Which list gives the lesson's trust levels correctly?</q>
+<option>Header: trusted. Subdomain: verified. Session: untrusted.</option>
+<option correct>Session or token claim: trusted. Subdomain or domain: verified. Header or path: untrusted.</option>
+<option>All resolvers are trusted once the user is logged in.</option>
+<option>Session: verified. Header: trusted. Path: verified.</option>
+<explain><p>Your server created the session when the user logged in, so its tenant is trusted. A header or path is written by the client, so it is untrusted.</p></explain>
+</question>
+
+<question id="header-untrusted-why" type="choice">
+<q>Why is an <code>x-tenant-id</code> header sent by the client <strong>untrusted</strong>?</q>
+<option>Headers are often lost by proxies</option>
+<option>Headers cannot contain lower-case letters</option>
+<option correct>The client writes it: anybody can send <code>x-tenant-id: globex</code> with curl</option>
+<option>Headers are encrypted, so the server cannot read them</option>
+<explain><p>If your app believed the header, every Acme user could read Globex's tasks by adding one line to their request. The tenant must come from something your server created, like the session.</p></explain>
+</question>
+
+<question id="chain-session" type="output">
+<q>What does this print?</q>
+<code file="chain.js" browser="no">
+import { createHeaderResolver, createJwtResolver, createResolverChain } from "@zudojs/tenancy";
+
+const fakeRequest = (r) => ({
+  getClaims: () => r.claims,
+  getHost: () => r.host,
+  getHeader: (name) => r.headers?.[name],
+  getPath: () => "/tasks",
+});
+const chain = createResolverChain([createJwtResolver(), createHeaderResolver()]);
+
+for (const request of [
+  { claims: { tenant_id: "acme" } },
+  { headers: { "x-tenant-id": "globex" } },
+]) {
+  const found = await chain.resolveTenant(fakeRequest(request));
+  console.log(found.tenantId, found.source, found.trust);
+}
+</code>
+<option correct>acme jwt trusted
+globex header untrusted</option>
+<option>acme jwt trusted
+globex header trusted</option>
+<option>acme jwt verified
+globex header verified</option>
+<option>acme jwt trusted
+globex jwt trusted</option>
+<explain><p>The session claim is trusted. The header-only request still finds <code>globex</code>, but marks it <code>untrusted</code>, so the next check can refuse it.</p></explain>
+</question>
+
+<question id="chain-session-header" type="output">
+<q>ada from Acme is logged in and also sends <code>x-tenant-id: globex</code>. What does this print?</q>
+<code file="chain-both.js" browser="no">
+import { createHeaderResolver, createJwtResolver, createResolverChain } from "@zudojs/tenancy";
+
+const request = {
+  getClaims: () => ({ tenant_id: "acme" }),
+  getHost: () => undefined,
+  getHeader: (name) => (name === "x-tenant-id" ? "globex" : undefined),
+  getPath: () => "/tasks",
+};
+const chain = createResolverChain([createJwtResolver(), createHeaderResolver()]);
+const found = await chain.resolveTenant(request);
+console.log(found.tenantId, found.trust);
+</code>
+<option correct>acme trusted</option>
+<option>globex untrusted</option>
+<option>globex trusted</option>
+<option>acme untrusted</option>
+<explain><p>The chain asks by priority, and the JWT resolver has the highest. It answers first, so the header is never even read. The trusted session wins.</p></explain>
+</question>
+
+<question id="chain-priority-not-order" type="output">
+<q>This chain lists the header resolver <strong>first</strong>. What does this print?</q>
+<code file="chain-order.js" browser="no">
+import { createHeaderResolver, createJwtResolver, createResolverChain } from "@zudojs/tenancy";
+
+const request = {
+  getClaims: () => ({ tenant_id: "acme" }),
+  getHost: () => undefined,
+  getHeader: (name) => (name === "x-tenant-id" ? "globex" : undefined),
+  getPath: () => "/tasks",
+};
+const chain = createResolverChain([createHeaderResolver(), createJwtResolver()]);
+const found = await chain.resolveTenant(request);
+console.log(found.tenantId, found.source);
+</code>
+<option correct>acme jwt</option>
+<option>globex header</option>
+<option>acme header</option>
+<option>globex jwt</option>
+<explain><p>A resolver chain asks its resolvers in order of <strong>priority</strong>, not in the order of the array. The JWT resolver has the highest priority, so the trusted session still wins.</p></explain>
+</question>
+
+<question id="subdomain-resolver" type="output">
+<q>What does this print?</q>
+<code file="subdomain.js" browser="no">
+import { createResolverChain, createSubdomainResolver } from "@zudojs/tenancy";
+
+const chain = createResolverChain([createSubdomainResolver({ baseDomain: "tasks.test" })]);
+for (const host of ["globex.tasks.test", "www.tasks.test", "tasks.test"]) {
+  const found = await chain.resolveTenant({
+    getClaims: () => undefined,
+    getHost: () => host,
+    getHeader: () => undefined,
+    getPath: () => "/tasks",
+  });
+  console.log(host, found ? `${found.tenantId} (${found.trust})` : "no tenant");
+}
+</code>
+<option correct>globex.tasks.test globex (verified)
+www.tasks.test no tenant
+tasks.test no tenant</option>
+<option>globex.tasks.test globex (trusted)
+www.tasks.test www (verified)
+tasks.test no tenant</option>
+<option>globex.tasks.test globex (verified)
+www.tasks.test www (verified)
+tasks.test tasks (verified)</option>
+<option>globex.tasks.test globex (untrusted)
+www.tasks.test no tenant
+tasks.test no tenant</option>
+<explain><p>The subdomain names the tenant and counts as <code>verified</code>. <code>www</code> and the bare domain do not count as tenants.</p></explain>
+</question>
+
+<question id="resolver-throws" type="choice">
+<q>In a resolver chain, the JWT resolver throws because the token is invalid. What happens?</q>
+<option>The chain skips it and asks the header resolver</option>
+<option correct>The whole chain stops with the error; a failed login can never fall through to the header</option>
+<option>The chain returns the default tenant</option>
+<option>The chain retries the JWT resolver</option>
+<explain><p>If a broken token fell through to the next resolver, an attacker could send a bad token plus an <code>x-tenant-id</code> header. Stopping the chain closes that door.</p></explain>
+</question>
+
+<question id="trust-assert" type="output">
+<q>What does this print?</q>
+<code file="trust.js" browser="no">
+import { assertTrustLevel, TenantError } from "@zudojs/tenancy";
+
+for (const trust of ["trusted", "verified", "untrusted"]) {
+  try {
+    assertTrustLevel(trust, "verified", "test");
+    console.log(trust, "OK");
+  } catch (error) {
+    if (error instanceof TenantError) console.log(trust, "DENY", error.statusCode);
+  }
+}
+</code>
+<option correct>trusted OK
+verified OK
+untrusted DENY 403</option>
+<option>trusted DENY 403
+verified OK
+untrusted DENY 403</option>
+<option>trusted OK
+verified DENY 403
+untrusted DENY 403</option>
+<option>trusted OK
+verified OK
+untrusted OK</option>
+<explain><p><code>assertTrustLevel</code> refuses anything <em>below</em> the level you require. <code>trusted</code> is above <code>verified</code>, so it passes. <code>untrusted</code> throws a <code>TenantTrustLevelError</code> with status 403.</p></explain>
+</question>
+
+<question id="require-active" type="output">
+<q>What does this print?</q>
+<code file="require-active.js" browser="no">
+import { createMemoryTenantRepository, createTenantContextStorage, createTenantId, createTenantManager, TenantError } from "@zudojs/tenancy";
+
+const tenants = createMemoryTenantRepository();
+tenants.add({ id: createTenantId("acme"), name: "Acme", status: "active", metadata: {} });
+tenants.add({ id: createTenantId("initech"), name: "Initech", status: "suspended", metadata: {} });
+const manager = createTenantManager({ repository: tenants, storage: createTenantContextStorage() });
+
+for (const id of ["acme", "initech"]) {
+  try {
+    console.log("OK", (await manager.requireActive(createTenantId(id))).name);
+  } catch (error) {
+    if (error instanceof TenantError) console.log("DENY", error.name);
+  }
+}
+</code>
+<option correct>OK Acme
+DENY TenantUnavailableError</option>
+<option>OK Acme
+OK Initech</option>
+<option>OK Acme
+DENY TenantNotFoundError</option>
+<option>DENY TenantUnavailableError
+DENY TenantUnavailableError</option>
+<explain><p><code>requireActive</code> loads the tenant and refuses one that is not active. Initech exists, so it is not "not found"; it is suspended, so it is unavailable.</p></explain>
+</question>
+
+<question id="deny-without-reason" type="choice">
+<q>A tenant check fails. What should the client receive?</q>
+<option>The exact reason, like "tenant initech is suspended"</option>
+<option>A list of valid tenant names</option>
+<option correct>A plain 403 without the reason</option>
+<option>A 200 with an empty list</option>
+<explain><p>An attacker probing tenant names should not learn which ones exist or are suspended. Log the reason on the server; send the client only "Forbidden".</p></explain>
+</question>
+
+<question id="tenant-error-status" type="output">
+<q>What does this print?</q>
+<code file="tenant-error.js" browser="no">
+import { AuthorizationError } from "@zudojs/errors";
+import { TenantError } from "@zudojs/tenancy";
+
+const error = new TenantError("No tenant for this request");
+console.log(error instanceof AuthorizationError, error.statusCode);
+</code>
+<option correct>true 403</option>
+<option>false 403</option>
+<option>true 401</option>
+<option>false 500</option>
+<explain><p>Every tenancy error extends <code>TenantError</code>, which is an <code>AuthorizationError</code> from <code>@zudojs/errors</code>, so it already carries status 403.</p></explain>
+</question>
+
+<question id="header-when-ok" type="choice">
+<q>When is it acceptable to resolve the tenant from an <code>x-tenant-id</code> header?</q>
+<option>When the value passes <code>tryCreateTenantId</code></option>
+<option>When the request uses HTTPS</option>
+<option correct>Only when a proxy you control removes the client's header and sets its own, for example after checking an API key</option>
+<option>When the tenant is active</option>
+<explain><p>Then the header was written by your proxy, not by the client, and you create the resolver with <code>createHeaderResolver({ trust: "verified" })</code>. The app must never be reachable without that proxy.</p></explain>
+</question>
+
+<question id="query-param-tenant" type="choice">
+<q>A developer suggests choosing the tenant with <code>?tenant=acme</code>. Is that safe on its own?</q>
+<option>Yes, because query parameters are part of the URL</option>
+<option>Yes, if the tenant id is validated</option>
+<option correct>No: the client writes it, like a header, so it is untrusted</option>
+<option>Yes, for GET requests</option>
+<explain><p>Validating the id only checks its format, not who may use it. Anything the client writes is untrusted; the tenant must come from the verified session or a key your server issued.</p></explain>
+</question>
+
+<question id="api-key-tenant" type="choice">
+<q>A partner system calls your API with an API key. How should you find its tenant?</q>
+<option>Ask the partner to send <code>x-tenant-id</code> with each call</option>
+<option correct>Look the tenant up from the API key on the server: trusted, because your server issued the key</option>
+<option>Read it from the partner's IP address</option>
+<option>Use the first tenant in the database</option>
+<explain><p>The key was created by your server and stored with its tenant. Looking up the tenant from the key is like reading it from a session.</p></explain>
+</question>
+
+<question id="detect-conflicts" type="output">
+<q>A user logged in to Acme opens <code>globex.tasks.test</code>. What does this print?</q>
+<code file="conflict.js" browser="no">
+import { createJwtResolver, createResolverChain, createSubdomainResolver, TenantError } from "@zudojs/tenancy";
+
+const chain = createResolverChain(
+  [createJwtResolver(), createSubdomainResolver({ baseDomain: "tasks.test" })],
+  { detectConflicts: true },
+);
+try {
+  const found = await chain.resolveTenant({
+    getClaims: () => ({ tenant_id: "acme" }),
+    getHost: () => "globex.tasks.test",
+    getHeader: () => undefined,
+    getPath: () => "/tasks",
+  });
+  console.log("tenant:", found.tenantId);
+} catch (error) {
+  if (error instanceof TenantError) console.log(error.name, error.statusCode);
+}
+</code>
+<option correct>TenantResolutionConflictError 403</option>
+<option>tenant: acme</option>
+<option>tenant: globex</option>
+<option>TenantTrustLevelError 403</option>
+<explain><p>With <code>detectConflicts: true</code>, the chain asks all resolvers and throws when they disagree. The session says Acme, the subdomain says Globex: that is refused.</p></explain>
+</question>
+
+<question id="why-context" type="choice">
+<q>Why does the tenancy package keep the current tenant in an <code>AsyncLocalStorage</code> instead of passing it as a parameter?</q>
+<option>Parameters are slower</option>
+<option correct>Passing it through every function is tedious, and one forgotten parameter is a leak</option>
+<option>So the client can change it</option>
+<option>So every request shares the same tenant</option>
+<explain><p>Services, repositories, cache keys and log lines all need the tenant. <code>AsyncLocalStorage</code> gives each request's async chain its own value, so code reads it without a parameter to forget.</p></explain>
+</question>
+
+<question id="context-parallel" type="output">
+<q>Three calls run at the same time. What does this print?</q>
+<code file="context.js" browser="no">
+import { createContextManager, createMemoryTenantRepository, createTenantContextStorage, createTenantId } from "@zudojs/tenancy";
+
+const tenants = createMemoryTenantRepository();
+tenants.add({ id: createTenantId("acme"), name: "Acme", status: "active", metadata: {} });
+tenants.add({ id: createTenantId("globex"), name: "Globex", status: "active", metadata: {} });
+const tenantContext = createContextManager({ storage: createTenantContextStorage() });
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function listTasks(delayMs) {
+  await wait(delayMs);
+  console.log("listing tasks of", tenantContext.requireCurrentTenant().name);
+}
+
+const acme = await tenants.findById(createTenantId("acme"));
+const globex = await tenants.findById(createTenantId("globex"));
+await Promise.all([
+  tenantContext.run(acme, () => listTasks(30)),
+  tenantContext.run(globex, () => listTasks(10)),
+]);
+</code>
+<option correct>listing tasks of Globex
+listing tasks of Acme</option>
+<option>listing tasks of Acme
+listing tasks of Globex</option>
+<option>listing tasks of Globex
+listing tasks of Globex</option>
+<option>listing tasks of Acme
+listing tasks of Acme</option>
+<explain><p>Globex's call waits less, so it prints first. Each call still sees its own tenant, although <code>listTasks</code> has no tenant parameter: <code>run</code> gives each async chain its own value.</p></explain>
+</question>
+
+<question id="context-missing" type="output">
+<q>What does this print?</q>
+<code file="context-missing.js" browser="no">
+import { createContextManager, createTenantContextStorage, TenantContextMissingError } from "@zudojs/tenancy";
+
+const tenantContext = createContextManager({ storage: createTenantContextStorage() });
+try {
+  console.log(tenantContext.requireCurrentTenant().name);
+} catch (error) {
+  if (error instanceof TenantContextMissingError) console.log("outside:", error.message);
+}
+</code>
+<option correct>outside: Tenant context is required but none was found</option>
+<option>undefined</option>
+<option>outside: undefined</option>
+<option>TypeError: Cannot read properties of undefined</option>
+<explain><p>Outside <code>run</code> there is no tenant, and <code>requireCurrentTenant()</code> throws. Code that needs a tenant fails loudly instead of quietly reading everybody's data.</p></explain>
+</question>
+
+<question id="run-suspended" type="output">
+<q>What does this print?</q>
+<code file="run-suspended.js" browser="no">
+import { createContextManager, createMemoryTenantRepository, createTenantContextStorage, createTenantId, TenantError } from "@zudojs/tenancy";
+
+const tenants = createMemoryTenantRepository();
+tenants.add({ id: createTenantId("initech"), name: "Initech", status: "suspended", metadata: {} });
+const tenantContext = createContextManager({ storage: createTenantContextStorage() });
+const initech = await tenants.findById(createTenantId("initech"));
+
+try {
+  await tenantContext.run(initech, async () => console.log("inside"));
+} catch (error) {
+  if (error instanceof TenantError) console.log(error.name);
+}
+</code>
+<option correct>TenantUnavailableError</option>
+<option>inside</option>
+<option>TenantNotFoundError</option>
+<option>TenantContextMissingError</option>
+<explain><p><code>run</code> refuses a tenant that is not active, so code for a suspended tenant never starts. This is a second safety net behind <code>requireActive</code>.</p></explain>
+</question>
+
+<question id="tenant-in-query" type="choice">
+<q>Which repository method is written the safe way?</q>
+<option><code>db.query(`select * from tasks where tenant_id = '${tenantId}'`)</code></option>
+<option><code>list(tenantId) { return db.query("select * from tasks where tenant_id = $1", [tenantId]) }</code>, called with a tenant from the request body</option>
+<option correct><code>db.query("select id, title from tasks where tenant_id = $1", [tenantContext.requireCurrentTenant().id])</code></option>
+<option><code>db.query("select id, title from tasks")</code>, then filter in the handler</option>
+<explain><p>The repository reads the tenant from the context itself, so callers cannot pass a wrong one, and the id goes in as a parameter, never glued into the SQL text. Filtering later is one forgotten line away from a leak.</p></explain>
+</question>
+
+<question id="get-needs-tenant" type="choice">
+<q>Why does <code>get(id)</code> use <code>where id = $1 and tenant_id = $2</code> and not only <code>where id = $1</code>?</q>
+<option>It makes the query faster</option>
+<option correct>Ids count up and are easy to guess; without the tenant filter, Acme could read Globex's task 2</option>
+<option>Postgres requires two conditions</option>
+<option>So the query returns two rows</option>
+<explain><p>The id alone identifies a row in the whole table, across all tenants. Adding <code>tenant_id</code> to the lookup means another tenant's row is simply not found.</p></explain>
+</question>
+
+<question id="other-tenant-404" type="choice">
+<q>Acme asks for <code>GET /tasks/2</code>, and task 2 belongs to Globex. Which status should the API answer?</q>
+<option>403, because Acme may not see it</option>
+<option correct>404, exactly like an id that does not exist</option>
+<option>200 with Globex's task, because the id is valid</option>
+<option>500, because something is wrong</option>
+<explain><p>For the client, "belongs to someone else" and "does not exist" must look the same. A 403 would tell an attacker that the id exists.</p></explain>
+</question>
+
+<question id="writes-too" type="choice">
+<q>You add <code>rename(id, title)</code> to the repository. What must its <code>update</code> query contain?</q>
+<option>Only <code>where id = $2</code>, because the reads already check the tenant</option>
+<option correct><code>where id = $2 and tenant_id = $3</code>, with the tenant from the context</option>
+<option>The tenant name in the new title</option>
+<option>Nothing special: updates cannot leak data</option>
+<explain><p>Writes need the tenant filter just as much as reads. Without it, Acme could rename or delete Globex's task by guessing its id.</p></explain>
+</question>
+
+<question id="tenant-key" type="output">
+<q>What does this print?</q>
+<code file="tenant-key.js" browser="no">
+import { createTenantId, tenantKey } from "@zudojs/tenancy";
+
+console.log(tenantKey(createTenantId("acme"), "tasks"));
+console.log(tenantKey(createTenantId("globex"), "tasks") === tenantKey(createTenantId("acme"), "tasks"));
+</code>
+<option correct>tenant:acme:tasks
+false</option>
+<option>tasks
+true</option>
+<option>acme:tasks
+false</option>
+<option>tenant:acme:tasks
+true</option>
+<explain><p><code>tenantKey</code> puts the tenant in the cache key, so Acme's cached list is never served to Globex. The two keys differ.</p></explain>
+</question>
+
+<question id="ownership" type="output">
+<q>What does this print?</q>
+<code file="ownership.js" browser="no">
+import { assertTenantOwnership, createTenantId, TenantError } from "@zudojs/tenancy";
+
+const task = { id: 2, tenantId: "globex", title: "Globex: secret merger plan" };
+try {
+  assertTenantOwnership(task, createTenantId("acme"));
+  console.log("ok:", task.title);
+} catch (error) {
+  if (error instanceof TenantError) console.log(error.name);
+}
+</code>
+<option correct>TenantIsolationError</option>
+<option>ok: Globex: secret merger plan</option>
+<option>TenantNotFoundError</option>
+<option>TenantTrustLevelError</option>
+<explain><p><code>assertTenantOwnership(resource, tenantId)</code> throws a <code>TenantIsolationError</code> when an object from the wrong tenant reaches your code: a last check before data leaves.</p></explain>
+</question>
+
+<question id="no-session-401" type="choice">
+<q>In the final Task API, a request has <code>x-tenant-id: globex</code> but no session. What happens?</q>
+<option>It lists Globex's tasks, because the header names a tenant</option>
+<option correct>401: the request is not logged in, so the header is not even looked at</option>
+<option>403: the header is untrusted</option>
+<option>200 with an empty list</option>
+<explain><p>The handler finds the session first. No session means 401 before tenant resolution runs.</p></explain>
+</question>
+
+<question id="suspended-status-final" type="choice">
+<q>In the final Task API, Initech's user logged in before the tenant was suspended. What does the handler answer now?</q>
+<option>200: the session is still valid</option>
+<option>401: the user must log in again</option>
+<option correct>A plain 403 <code>{"error":"Forbidden"}</code> without the reason</option>
+<option>404 with the message "tenant suspended"</option>
+<explain><p><code>manager.requireActive</code> throws a <code>TenantError</code>, and the server turns every <code>TenantError</code> into a plain 403 without details.</p></explain>
+</question>
+
+<question id="code-clean-tenant-id" type="code" file="clean-tenant-id.js">
+<q><p>Finish <code>cleanTenantId(raw)</code>: trim and lower-case the text, then return it only if it matches <code>^[a-z0-9][a-z0-9_-]*$</code>; otherwise return <code>undefined</code>. The program should print <code>acme undefined undefined acme-eu</code>.</p></q>
+<starter>
+function cleanTenantId(raw) {
+  // your code here
+}
+
+console.log(cleanTenantId("  ACME "), cleanTenantId("acme:admin"), cleanTenantId("../globex"), cleanTenantId("Acme-EU"));
+</starter>
+<solution>
+function cleanTenantId(raw) {
+  const id = raw.trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9_-]*$/.test(id) ? id : undefined;
+}
+
+console.log(cleanTenantId("  ACME "), cleanTenantId("acme:admin"), cleanTenantId("../globex"), cleanTenantId("Acme-EU"));
+</solution>
+<expected>acme undefined undefined acme-eu</expected>
+<explain><p>Normalize first, then validate against a strict pattern anchored with <code>^</code> and <code>$</code>. Ids with <code>:</code>, <code>.</code> or <code>/</code> could forge cache keys or paths.</p></explain>
+</question>
+
+<question id="code-trust-order" type="code" file="trust-order.js">
+<q><p>Finish <code>meetsTrust(actual, required)</code>: the levels from low to high are <code>untrusted</code>, <code>verified</code>, <code>trusted</code>. Return <code>true</code> when <code>actual</code> is at least <code>required</code>. The program should print <code>true true false false</code>.</p></q>
+<starter>
+const LEVELS = ["untrusted", "verified", "trusted"];
+
+function meetsTrust(actual, required) {
+  // your code here
+}
+
+console.log(
+  meetsTrust("trusted", "verified"),
+  meetsTrust("verified", "verified"),
+  meetsTrust("untrusted", "verified"),
+  meetsTrust("verified", "trusted"),
+);
+</starter>
+<solution>
+const LEVELS = ["untrusted", "verified", "trusted"];
+
+function meetsTrust(actual, required) {
+  return LEVELS.indexOf(actual) >= LEVELS.indexOf(required);
+}
+
+console.log(
+  meetsTrust("trusted", "verified"),
+  meetsTrust("verified", "verified"),
+  meetsTrust("untrusted", "verified"),
+  meetsTrust("verified", "trusted"),
+);
+</solution>
+<expected>true true false false</expected>
+<explain><p>A higher level also satisfies a lower requirement. An <code>untrusted</code> answer, like a client header, never reaches <code>verified</code>.</p></explain>
+</question>
+
+<question id="code-resolve-tenant" type="code" file="resolve-tenant.js">
+<q><p>Finish <code>tenantFor(request)</code>: use <code>request.session.tenantId</code> when there is a session. Never use <code>request.headers["x-tenant-id"]</code>. Without a session, return <code>"DENY"</code>. The program should print <code>acme acme DENY</code>.</p></q>
+<starter>
+function tenantFor(request) {
+  // your code here
+}
+
+console.log(
+  tenantFor({ session: { userId: "ada", tenantId: "acme" }, headers: {} }),
+  tenantFor({ session: { userId: "ada", tenantId: "acme" }, headers: { "x-tenant-id": "globex" } }),
+  tenantFor({ headers: { "x-tenant-id": "globex" } }),
+);
+</starter>
+<solution>
+function tenantFor(request) {
+  if (!request.session) return "DENY";
+  return request.session.tenantId;
+}
+
+console.log(
+  tenantFor({ session: { userId: "ada", tenantId: "acme" }, headers: {} }),
+  tenantFor({ session: { userId: "ada", tenantId: "acme" }, headers: { "x-tenant-id": "globex" } }),
+  tenantFor({ headers: { "x-tenant-id": "globex" } }),
+);
+</solution>
+<expected>acme acme DENY</expected>
+<explain><p>The session was created by your server at login, so its tenant is trusted. The header is written by the client: ada's <code>x-tenant-id: globex</code> changes nothing, and a header without a session gets nothing.</p></explain>
+</question>
+
+<question id="code-scoped-list" type="code" file="scoped-list.js">
+<q><p>Finish <code>listTasks(tenantId)</code> and <code>getTask(tenantId, id)</code> so they only ever return rows of that tenant. The program should print:</p>
+<pre>[ { id: 1, title: 'Acme: ship order 1001' } ]
+undefined</pre></q>
+<starter>
+const rows = [
+  { id: 1, tenantId: "acme", title: "Acme: ship order 1001" },
+  { id: 2, tenantId: "globex", title: "Globex: secret merger plan" },
+];
+
+function listTasks(tenantId) {
+  // your code here
+}
+
+function getTask(tenantId, id) {
+  // your code here
+}
+
+console.log(listTasks("acme"));
+console.log(getTask("acme", 2));
+</starter>
+<solution>
+const rows = [
+  { id: 1, tenantId: "acme", title: "Acme: ship order 1001" },
+  { id: 2, tenantId: "globex", title: "Globex: secret merger plan" },
+];
+
+function listTasks(tenantId) {
+  return rows.filter((r) => r.tenantId === tenantId).map((r) => ({ id: r.id, title: r.title }));
+}
+
+function getTask(tenantId, id) {
+  const row = rows.find((r) => r.id === id && r.tenantId === tenantId);
+  return row ? { id: row.id, title: row.title } : undefined;
+}
+
+console.log(listTasks("acme"));
+console.log(getTask("acme", 2));
+</solution>
+<expected>
+[ { id: 1, title: 'Acme: ship order 1001' } ]
+undefined
+</expected>
+<explain><p>Both lookups must check the tenant, just like <code>where id = $1 and tenant_id = $2</code>. Acme guessing Globex's id 2 finds nothing.</p></explain>
+</question>
+
+<question id="code-status-for" type="code" file="status-for.js">
+<q><p>Finish <code>statusFor(tenantId, id)</code>: return <code>200</code> when the task exists <strong>and</strong> belongs to the tenant; otherwise return <code>404</code>, whether the task is missing or belongs to someone else. The program should print <code>200 404 404</code>.</p></q>
+<starter>
+const rows = [
+  { id: 1, tenantId: "acme", title: "Acme task" },
+  { id: 2, tenantId: "globex", title: "Globex task" },
+];
+
+function statusFor(tenantId, id) {
+  // your code here
+}
+
+console.log(statusFor("acme", 1), statusFor("acme", 2), statusFor("acme", 99));
+</starter>
+<solution>
+const rows = [
+  { id: 1, tenantId: "acme", title: "Acme task" },
+  { id: 2, tenantId: "globex", title: "Globex task" },
+];
+
+function statusFor(tenantId, id) {
+  const task = rows.find((r) => r.id === id && r.tenantId === tenantId);
+  return task ? 200 : 404;
+}
+
+console.log(statusFor("acme", 1), statusFor("acme", 2), statusFor("acme", 99));
+</solution>
+<expected>200 404 404</expected>
+<explain><p>Another tenant's task and a missing task give the same 404. A 403 for task 2 would tell an attacker that id 2 exists.</p></explain>
+</question>
+
+<question id="code-rename" type="code" file="rename.js">
+<q><p>Finish <code>rename(tenantId, id, title)</code>: change the title only when the row has that id <strong>and</strong> that tenant, and return whether a row was changed. The program should print:</p>
+<pre>true false
+[ 'Acme task, renamed', 'Globex task' ]</pre></q>
+<starter>
+const rows = [
+  { id: 1, tenantId: "acme", title: "Acme task" },
+  { id: 2, tenantId: "globex", title: "Globex task" },
+];
+
+function rename(tenantId, id, title) {
+  // your code here
+}
+
+console.log(rename("acme", 1, "Acme task, renamed"), rename("acme", 2, "hacked"));
+console.log(rows.map((r) => r.title));
+</starter>
+<solution>
+const rows = [
+  { id: 1, tenantId: "acme", title: "Acme task" },
+  { id: 2, tenantId: "globex", title: "Globex task" },
+];
+
+function rename(tenantId, id, title) {
+  const row = rows.find((r) => r.id === id && r.tenantId === tenantId);
+  if (!row) return false;
+  row.title = title;
+  return true;
+}
+
+console.log(rename("acme", 1, "Acme task, renamed"), rename("acme", 2, "hacked"));
+console.log(rows.map((r) => r.title));
+</solution>
+<expected>
+true false
+[ 'Acme task, renamed', 'Globex task' ]
+</expected>
+<explain><p>Writes need the tenant check as much as reads. Acme's attempt on Globex's task changes nothing and reports <code>false</code>.</p></explain>
+</question>
+
+<question id="code-cache-key" type="code" file="cache-key.js">
+<q><p>Finish <code>cacheKey(tenantId, key)</code>: return <code>tenant:&lt;tenantId&gt;:&lt;key&gt;</code>, so each tenant's cached data has its own key. The program should print:</p>
+<pre>tenant:acme:tasks:list
+false</pre></q>
+<starter>
+function cacheKey(tenantId, key) {
+  // your code here
+}
+
+console.log(cacheKey("acme", "tasks:list"));
+console.log(cacheKey("acme", "tasks:list") === cacheKey("globex", "tasks:list"));
+</starter>
+<solution>
+function cacheKey(tenantId, key) {
+  return `tenant:${tenantId}:${key}`;
+}
+
+console.log(cacheKey("acme", "tasks:list"));
+console.log(cacheKey("acme", "tasks:list") === cacheKey("globex", "tasks:list"));
+</solution>
+<expected>
+tenant:acme:tasks:list
+false
+</expected>
+<explain><p>Without the tenant in the key, Acme's cached task list could be served to Globex. (The real <code>tenantKey</code> also escapes <code>:</code> inside the key, and tenant ids are validated so they cannot contain one.)</p></explain>
+</question>

@@ -1,0 +1,683 @@
+<question id="advisory-lock" type="choice">
+<q>Why does the migration script take <code>pg_advisory_xact_lock(4242)</code> first?</q>
+<option>To stop users from reading tasks during the migration</option>
+<option correct>So two copies of the script started at the same moment wait for each other instead of both applying the same migration</option>
+<option>To encrypt the migration</option>
+<option>To make the migration faster</option>
+<explain><p>Two servers may start the migration at the same time. The lock makes the second one wait; when it gets the lock, it sees the migration is already recorded and skips it.</p></explain>
+</question>
+
+<question id="migrations-runner-output" type="output">
+<q>This simulates the migration script run twice. What does it print?</q>
+<code file="migrate.js">
+const applied = new Set();
+const migrations = [
+  { id: 1, sql: "CREATE TABLE tasks (...)" },
+  { id: 2, sql: "ALTER TABLE tasks ADD COLUMN due DATE" },
+];
+
+function migrate() {
+  for (const migration of migrations) {
+    if (applied.has(migration.id)) continue;
+    applied.add(migration.id);
+    console.log(`applied migration ${migration.id}`);
+  }
+  console.log("database is up to date");
+}
+
+migrate();
+migrate();
+</code>
+<option correct>applied migration 1
+applied migration 2
+database is up to date
+database is up to date</option>
+<option>applied migration 1
+applied migration 2
+database is up to date
+applied migration 1
+applied migration 2
+database is up to date</option>
+<option>applied migration 1
+database is up to date
+applied migration 2
+database is up to date</option>
+<option>database is up to date
+database is up to date</option>
+<explain><p>Migrations that are already recorded are skipped, so running the script a second time is safe and only prints <code>database is up to date</code>. That is what lets you run it on every deployment.</p></explain>
+</question>
+
+<question id="migration-rollback" type="choice">
+<q>The migration script runs every migration inside <code>BEGIN</code> … <code>COMMIT</code>, with <code>ROLLBACK</code> in the <code>catch</code>. What happens if migration 2 fails?</q>
+<option>Migration 1 stays applied and migration 2 is half done</option>
+<option correct>Everything in the transaction is undone, so the database is left as it was before the run</option>
+<option>The script retries migration 2 forever</option>
+<option>The failed migration is marked as applied</option>
+<explain><p>With a transaction the run is all or nothing. You fix the migration and run the script again, instead of repairing a half-changed database by hand.</p></explain>
+</question>
+
+<question id="npm-ci-omit-dev" type="choice">
+<q>On the server you run <code>npm ci --omit=dev</code>. What does it do?</q>
+<option>Installs the newest version of every package</option>
+<option correct>Installs exactly the versions in <code>package-lock.json</code>, without development tools such as TypeScript, tsx and Vitest</option>
+<option>Compiles the TypeScript code</option>
+<option>Deletes <code>node_modules</code> and exits</option>
+<explain><p><code>npm ci</code> follows the lock file exactly, so the server gets the same versions you tested. <code>--omit=dev</code> leaves out tools that production never needs.</p></explain>
+</question>
+
+<question id="server-firewall" type="choice">
+<q>Which ports should the firewall of your Linux server allow from the internet?</q>
+<option>22, 80, 443 and 5432, so you can reach the database</option>
+<option correct>Only 22 (SSH), 80 and 443 (web)</option>
+<option>All ports, and let the app decide</option>
+<option>Only 3000, where the app listens</option>
+<explain><p>PostgreSQL's 5432 is never open to the internet. The app itself is reached through the proxy on 80 and 443, and SSH uses 22 with a key, not a password.</p></explain>
+</question>
+
+<question id="app-user" type="choice">
+<q>Why does the lesson create a separate system user <code>taskapi</code> with no login and no admin rights?</q>
+<option>systemd cannot run programs as root</option>
+<option correct>If an attacker takes over the app, they get only that user's small rights, not the whole server</option>
+<option>So the app can read every user's home folder</option>
+<option>Because Node.js refuses to run as root</option>
+<explain><p>Least privilege: the app never runs as root. A bug in the app then cannot change system files or read other users' data.</p></explain>
+</question>
+
+<question id="systemd-restart" type="choice">
+<q>In the unit file, what does <code>Restart=on-failure</code> with <code>RestartSec=5</code> do?</q>
+<option>Restarts the app every 5 seconds</option>
+<option correct>If the process crashes, systemd starts it again after 5 seconds</option>
+<option>Restarts the whole server when the app fails</option>
+<option>Stops the app after 5 failures</option>
+<explain><p>A crash no longer means downtime until someone notices. The app comes back by itself after 5 seconds.</p></explain>
+</question>
+
+<question id="systemd-timeoutstop" type="choice">
+<q>The runtime's graceful shutdown can take up to 30 seconds. Why does the unit file set <code>TimeoutStopSec=40</code>?</q>
+<option>To make deployments take longer</option>
+<option correct>So systemd waits longer than the app's own shutdown before it kills the process</option>
+<option>So the app restarts after 40 seconds</option>
+<option>Because systemd requires a value over 30</option>
+<explain><p>After <code>SIGTERM</code>, systemd waits <code>TimeoutStopSec</code> and then kills the process. The platform's wait must be longer than the app's shutdown, or requests in flight are cut off.</p></explain>
+</question>
+
+<question id="env-file-perms" type="choice">
+<q>The secrets are in <code>/etc/task-api/env</code>. Which permissions does the lesson set?</q>
+<option><code>chmod 777</code>, so the app can surely read it</option>
+<option correct><code>chmod 640</code> and <code>chown root:taskapi</code>: root can write it, the app's group can read it, nobody else can</option>
+<option><code>chmod 644</code>, readable by every user on the server</option>
+<option>No permissions: the file is committed to Git instead</option>
+<explain><p>Only root and the app need the secrets. Any other user on the server, or a process that breaks out of another service, cannot read them.</p></explain>
+</question>
+
+<question id="image-vs-container" type="choice">
+<q>What is the difference between a Docker <strong>image</strong> and a <strong>container</strong>?</q>
+<option>An image runs on Linux, a container runs on Windows</option>
+<option correct>An image is the package of the app and everything it needs; a container is a running copy of an image</option>
+<option>They are two words for the same thing</option>
+<option>A container is built from a Compose file, an image from a unit file</option>
+<explain><p>You build an image once with a Dockerfile, then start as many containers from it as you need, on your laptop, in CI and on the server.</p></explain>
+</question>
+
+<question id="multi-stage" type="choice">
+<q>Why does the Dockerfile use a <strong>multi-stage</strong> build?</q>
+<option>So the image can run two apps at once</option>
+<option correct>The final image gets only the compiled code and production packages, not the build tools</option>
+<option>So that <code>npm ci</code> runs twice for safety</option>
+<option>Because Docker cannot run <code>tsc</code> in the final image</option>
+<explain><p>In the lesson the build stage installed 85 packages and the final stage only 30. The 55 development tools never reach the image you ship.</p></explain>
+</question>
+
+<question id="docker-layer-cache" type="choice">
+<q>Why does the Dockerfile copy <code>package.json</code> and <code>package-lock.json</code> before <code>src</code>?</q>
+<option>Docker needs them to find the source code</option>
+<option correct>Docker caches each step, so when only the code changes, <code>npm ci</code> is not run again and the build takes seconds</option>
+<option>It makes the image smaller</option>
+<option>So the lock file overwrites the source code</option>
+<explain><p>A step is rebuilt only when its inputs change. Dependencies change rarely, code changes often, so copy the dependency files first and the source code after.</p></explain>
+</question>
+
+<question id="cmd-list-form" type="choice">
+<q>Why is <code>CMD ["node", "dist/server.js"]</code> written in the list form?</q>
+<option>The list form runs faster</option>
+<option correct>So <code>node</code> itself receives <code>SIGTERM</code> and can shut down gracefully</option>
+<option>So the app can read <code>.env</code></option>
+<option>Docker does not accept any other form</option>
+<explain><p>With the list form there is no shell in between, so the stop signal reaches Node.js directly and the graceful shutdown runs.</p></explain>
+</question>
+
+<question id="dockerignore" type="choice">
+<q>Which file must <code>.dockerignore</code> keep out of the image, above all?</q>
+<option><code>package.json</code></option>
+<option><code>tsconfig.json</code></option>
+<option correct><code>.env</code>, with your secrets</option>
+<option><code>src</code></option>
+<explain><p>Anyone who gets the image could read files inside it. Secrets are passed as environment variables when the container runs, never baked into the image.</p></explain>
+</question>
+
+<question id="image-tag-output" type="output">
+<q>This splits an image reference into a name and a tag. What does it print?</q>
+<code file="image-tag.js">
+function parseImage(ref) {
+  const colon = ref.lastIndexOf(":");
+  if (colon === -1) return { name: ref, tag: "latest" };
+  return { name: ref.slice(0, colon), tag: ref.slice(colon + 1) };
+}
+
+for (const ref of ["task-api:1.0.0", "postgres:17", "task-api"]) {
+  const { name, tag } = parseImage(ref);
+  console.log(`${name} -> ${tag}`);
+}
+</code>
+<option correct>task-api -> 1.0.0
+postgres -> 17
+task-api -> latest</option>
+<option>task-api -> 1.0.0
+postgres -> 17
+task-api -> undefined</option>
+<option>task-api:1.0.0 -> latest
+postgres:17 -> latest
+task-api -> latest</option>
+<option>task-api -> 1
+postgres -> 17
+task-api -> latest</option>
+<explain><p>An image with no tag means <code>latest</code>, which tells you nothing about the version. Deploy with version tags such as <code>task-api:1.0.0</code> so you know what runs and can go back.</p></explain>
+</question>
+
+<question id="compose-dns" type="choice">
+<q>Inside Docker Compose, why does the app connect to <code>db:5432</code>?</q>
+<option>Because <code>db</code> is PostgreSQL's default host name</option>
+<option correct>Compose puts the services on a private network where each one reaches the others by its service name</option>
+<option>Because port 5432 is published to the internet</option>
+<option>Because Caddy forwards database traffic</option>
+<explain><p>This is the DNS-based service discovery from the microservices lesson. The name <code>db</code> keeps working even when the database container is replaced.</p></explain>
+</question>
+
+<question id="compose-ports" type="choice">
+<q>In the lesson's <code>compose.yaml</code>, only the proxy service has <code>ports</code>. Why?</q>
+<option>The other images do not support ports</option>
+<option correct>The app, database and Redis are reachable only inside the Compose network, never from the internet</option>
+<option>Ports cost money on a server</option>
+<option>Because Redis would crash with a port</option>
+<explain><p>Every request goes through the proxy and its HTTPS. Publishing the app or the database directly would let people go around it.</p></explain>
+</question>
+
+<question id="compose-volumes" type="choice">
+<q>What happens to the database if the <code>db</code> service has no volume for <code>/var/lib/postgresql/data</code>?</q>
+<option>Nothing, containers always keep their data</option>
+<option correct>The data lives inside the container and is lost when the container is replaced, for example on a deployment</option>
+<option>PostgreSQL refuses to start</option>
+<option>The data is copied into the image</option>
+<explain><p>Volumes keep data when containers are replaced. That is also why <code>docker compose down --volumes</code> must never run on a real server: it deletes them.</p></explain>
+</question>
+
+<question id="compose-required-var-output" type="output">
+<q>This mimics Compose's <code>${NAME:?message}</code> rule. What does it print?</q>
+<code file="interpolate.js">
+function interpolate(text, env) {
+  return text.replace(/\$\{(\w+):\?([^}]*)\}/g, (_, name, message) => {
+    if (!env[name]) throw new Error(`required variable ${name} is missing a value: ${message}`);
+    return env[name];
+  });
+}
+
+const template = "postgres://taskapi:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/taskapi";
+try {
+  console.log(interpolate(template, {}));
+} catch (error) {
+  console.log(error.message);
+}
+console.log(interpolate(template, { POSTGRES_PASSWORD: "p4ss" }));
+</code>
+<option correct>required variable POSTGRES_PASSWORD is missing a value: set POSTGRES_PASSWORD in .env
+postgres://taskapi:p4ss@db:5432/taskapi</option>
+<option>postgres://taskapi:@db:5432/taskapi
+postgres://taskapi:p4ss@db:5432/taskapi</option>
+<option>postgres://taskapi:undefined@db:5432/taskapi
+postgres://taskapi:p4ss@db:5432/taskapi</option>
+<option>required variable POSTGRES_PASSWORD is missing a value: set POSTGRES_PASSWORD in .env
+required variable POSTGRES_PASSWORD is missing a value: set POSTGRES_PASSWORD in .env</option>
+<explain><p><code>:?</code> means "required": with no value, the start stops with the message. There is no default password, so a forgotten secret can never silently become an empty or weak one.</p></explain>
+</question>
+
+<question id="database-url-output" type="output">
+<q>The <code>URL</code> class can read a <code>DATABASE_URL</code>. What does this print?</q>
+<code file="database-url.js">
+const url = new URL("postgres://taskapi:s3cret@db:5432/taskapi");
+console.log(url.protocol, url.hostname, url.port, url.pathname.slice(1), url.username);
+</code>
+<option correct>postgres: db 5432 taskapi taskapi</option>
+<option>postgres db 5432 /taskapi taskapi</option>
+<option>postgres: db:5432 5432 taskapi s3cret</option>
+<option>postgres: localhost 5432 taskapi taskapi</option>
+<explain><p><code>protocol</code> keeps its colon, <code>hostname</code> has no port, and <code>pathname</code> starts with <code>/</code>, so <code>slice(1)</code> gives the database name. Never print <code>url.password</code>.</p></explain>
+</question>
+
+<question id="database-url-mask-output" type="output">
+<q>You want to log which database the app uses without leaking the password. What does this print?</q>
+<code file="mask-url.js">
+function safeDatabaseUrl(raw) {
+  const url = new URL(raw);
+  if (url.password) url.password = "***";
+  return url.href;
+}
+
+console.log(safeDatabaseUrl("postgres://taskapi:s3cret@db:5432/taskapi"));
+</code>
+<option correct>postgres://taskapi:***@db:5432/taskapi</option>
+<option>postgres://taskapi:s3cret@db:5432/taskapi</option>
+<option>postgres://***@db:5432/taskapi</option>
+<option>postgres://taskapi:%2A%2A%2A@db:5432/taskapi</option>
+<explain><p>Setting <code>url.password</code> replaces only the password part, and <code>*</code> is allowed there as it is. The host and database name stay readable for debugging.</p></explain>
+</question>
+
+<question id="ready-db-down" type="choice">
+<q>The lesson stops the database. What do <code>/health</code> and <code>/ready</code> answer?</q>
+<option>Both 503</option>
+<option>Both 200</option>
+<option correct><code>/health</code> 200 and <code>/ready</code> 503</option>
+<option><code>/health</code> 503 and <code>/ready</code> 200</option>
+<explain><p>The app is alive but cannot serve, so nothing restarts it and traffic stops going to it. When the database starts again, <code>/ready</code> answers 200 by itself.</p></explain>
+</question>
+
+<question id="caddy-https" type="choice">
+<q>You replace <code>:80</code> in the Caddyfile with <code>api.example.com</code>. What does Caddy then do by itself?</q>
+<option>Nothing until you install certbot</option>
+<option correct>Gets a free TLS certificate from Let's Encrypt, renews it, redirects HTTP to HTTPS and adds the Strict-Transport-Security header</option>
+<option>Moves the app to another server</option>
+<option>Buys the domain for you</option>
+<explain><p>It needs the DNS record in place and ports 80 and 443 open. Add a volume for <code>/data</code> so the certificates survive a restart.</p></explain>
+</question>
+
+<question id="trust-proxy-true" type="choice">
+<q>Why must you never set <code>trustProxy: true</code> on an app that is also reachable directly?</q>
+<option>The app would stop answering HTTPS requests</option>
+<option correct>Anyone can send an <code>X-Forwarded-For</code> header, so an attacker could pick their own IP address and walk around your per-IP rate limit</option>
+<option>It makes the app slower</option>
+<option>Caddy refuses to connect to it</option>
+<explain><p>Believe the forwarded address only from your own proxy: <code>"loopback"</code> when nginx runs on the same machine, <code>"private"</code> inside Docker.</p></explain>
+</question>
+
+<question id="forwarded-for-output" type="output">
+<q>This picks the client IP the way a trusted-proxy check does. What does it print?</q>
+<code file="client-ip.js">
+function isPrivate(ip) {
+  return ip.startsWith("10.") || ip.startsWith("172.") || ip.startsWith("192.168.") || ip === "127.0.0.1";
+}
+
+function clientIp(socketIp, forwardedFor) {
+  if (!forwardedFor || !isPrivate(socketIp)) return socketIp;
+  const hops = forwardedFor.split(",").map((part) => part.trim());
+  return hops[hops.length - 1];
+}
+
+console.log(clientIp("172.18.0.5", "203.0.113.7"));
+console.log(clientIp("198.51.100.9", "1.2.3.4"));
+</code>
+<option correct>203.0.113.7
+198.51.100.9</option>
+<option>172.18.0.5
+198.51.100.9</option>
+<option>203.0.113.7
+1.2.3.4</option>
+<option>172.18.0.5
+1.2.3.4</option>
+<explain><p>The first request came from Caddy on the private Docker network, so its forwarded address is believed. The second came straight from the internet with a forged header, so the app uses the real socket address.</p></explain>
+</question>
+
+<question id="deploy-order" type="choice">
+<q>What is the order of the deployment steps in the lesson?</q>
+<option>Replace the app, then migrate, then back up</option>
+<option correct>Back up, build a new tag, migrate, replace the app, check</option>
+<option>Migrate, back up, replace, build</option>
+<option>Build, replace, check, and back up only if something breaks</option>
+<explain><p>The backup comes first so you can recover from a bad migration. Migrate before replacing, keep the old image tag, and watch <code>/ready</code>, the logs and the dashboard afterwards.</p></explain>
+</question>
+
+<question id="expand-contract" type="choice">
+<q>You want to rename the column <code>title</code> to <code>name</code>. Why split it into two deployments (expand and contract)?</q>
+<option>Because PostgreSQL cannot rename columns</option>
+<option correct>Between migrating and replacing the app, the old app still runs against the new database, so every migration must work with both versions</option>
+<option>So the deployment takes longer</option>
+<option>Because migrations can change only one column per day</option>
+<explain><p>Deployment 1 adds <code>name</code>, copies the data and writes both. Deployment 2, when no old code is left, removes <code>title</code>. It also keeps rolling back to the previous image possible.</p></explain>
+</question>
+
+<question id="edit-old-migration" type="choice">
+<q>A migration that already ran in production has a mistake. What should you do?</q>
+<option>Edit that migration file and run the script again</option>
+<option correct>Add a new migration that fixes it</option>
+<option>Delete the row from <code>schema_migrations</code> and run it again</option>
+<option>Fix the table by hand in <code>psql</code></option>
+<explain><p>The old migration is recorded as applied, so an edited version never runs there, and other environments end up different. A new migration fixes every database the same way.</p></explain>
+</question>
+
+<question id="expand-contract-output" type="output">
+<q>During the rename, the new code writes both columns. What does this print?</q>
+<code file="expand.js">
+const row = { id: 1, title: "Write docs" };
+
+function oldRead(r) { return r.title; }
+function newRead(r) { return r.name ?? r.title; }
+function newWrite(r, value) { r.name = value; r.title = value; }
+
+console.log(oldRead(row), "|", newRead(row));
+newWrite(row, "Write the deploy guide");
+console.log(oldRead(row), "|", newRead(row));
+</code>
+<option correct>Write docs | Write docs
+Write the deploy guide | Write the deploy guide</option>
+<option>Write docs | undefined
+Write the deploy guide | Write the deploy guide</option>
+<option>Write docs | Write docs
+Write docs | Write the deploy guide</option>
+<option>undefined | Write docs
+Write the deploy guide | Write the deploy guide</option>
+<explain><p>Because the new code writes both columns, the old code still sees correct data while both versions run. Only in the second deployment is <code>title</code> removed.</p></explain>
+</question>
+
+<question id="backup-restore" type="choice">
+<q>"A backup you have never restored is only a hope." How does the lesson prove a backup works?</q>
+<option>By checking that the file is larger than 0 bytes</option>
+<option correct>By restoring it with <code>pg_restore</code> into a scratch database and reading the rows back</option>
+<option>By running <code>pg_dump</code> twice and comparing the files</option>
+<option>By opening the <code>.dump</code> file in a text editor</option>
+<explain><p>Only a restore shows that the file really contains your data. Then the scratch database is dropped. Test a restore regularly, not only once.</p></explain>
+</question>
+
+<question id="backup-where" type="choice">
+<q>Where should nightly backups be stored?</q>
+<option>In the <code>backups</code> folder on the same server</option>
+<option correct>Somewhere else, such as encrypted object storage in another region</option>
+<option>In the Git repository</option>
+<option>In the Docker image</option>
+<explain><p>A backup on the same server dies with the server. Keep several copies (for example 7 daily, 4 weekly, 12 monthly) away from it, encrypted.</p></explain>
+</question>
+
+<question id="down-volumes" type="choice">
+<q>What does <code>docker compose down --volumes</code> do, and where must you never run it?</q>
+<option>Stops the containers only; it is safe anywhere</option>
+<option correct>Removes the containers, the network and the volumes with the database; never run it on a real server</option>
+<option>Makes a backup of the volumes; run it every night</option>
+<option>Restarts the containers with fresh images; run it on every deployment</option>
+<explain><p>It is the clean-up command for your own computer. On a production server it deletes the production data.</p></explain>
+</question>
+
+<question id="compose-mistakes" type="choice">
+<q>A Compose service has <code>image: task-api:latest</code>, <code>ports: "3000:3000"</code> and <code>DATABASE_URL: postgres://admin:admin123@db:5432/taskapi</code>. Which is <strong>not</strong> one of its problems?</q>
+<option><code>latest</code> hides which version runs and makes going back hard</option>
+<option>Port 3000 publishes the app around the proxy and its HTTPS</option>
+<option>The password is weak, written in the file, and belongs to an admin user</option>
+<option correct>The database host <code>db</code> is wrong and must be an IP address</option>
+<explain><p><code>db</code> is correct: Compose resolves service names. The real problems are the <code>latest</code> tag, the published port, and a weak, hard-coded superuser password.</p></explain>
+</question>
+
+<question id="cron-output" type="output">
+<q>A crontab line starts with five time fields. What does this print for <code>30 2 * * *</code>?</q>
+<code file="cron.js">
+const [minute, hour, day, month, weekday] = "30 2 * * *".split(" ");
+const every = (field) => field === "*";
+
+console.log(`at ${hour.padStart(2, "0")}:${minute}`, every(day) && every(month) && every(weekday) ? "every day" : "some days");
+</code>
+<option correct>at 02:30 every day</option>
+<option>at 30:02 every day</option>
+<option>at 02:30 some days</option>
+<option>at 2:30 some days</option>
+<explain><p>The fields are minute, hour, day of month, month and day of week. <code>30 2 * * *</code> means 02:30 on every day: the nightly backup time in the lesson's practice.</p></explain>
+</question>
+
+<question id="retention-output" type="output">
+<q>This keeps backups for 14 days, like <code>find backups -mtime +14 -delete</code>. What does it print?</q>
+<code file="retention.js">
+const files = [
+  { name: "taskapi-2026-09-01.dump", ageDays: 22 },
+  { name: "taskapi-2026-09-09.dump", ageDays: 14 },
+  { name: "taskapi-2026-09-22.dump", ageDays: 1 },
+];
+
+const keep = files.filter((file) => file.ageDays <= 14).map((file) => file.name);
+console.log(keep);
+</code>
+<option correct>[ 'taskapi-2026-09-09.dump', 'taskapi-2026-09-22.dump' ]</option>
+<option>[ 'taskapi-2026-09-22.dump' ]</option>
+<option>[ 'taskapi-2026-09-01.dump' ]</option>
+<option>[ 'taskapi-2026-09-01.dump', 'taskapi-2026-09-09.dump', 'taskapi-2026-09-22.dump' ]</option>
+<explain><p>Only files older than 14 days are removed, so the 14-day-old file stays. Old backups are deleted automatically, but copies outside the server keep your longer history.</p></explain>
+</question>
+
+<question id="log-budget-output" type="output">
+<q>How much log space does the lesson's <code>logging</code> option allow per container?</q>
+<code file="log-budget.js">
+const options = { "max-size": "10m", "max-file": "3" };
+const sizeMb = parseInt(options["max-size"], 10);
+const files = Number(options["max-file"]);
+console.log(`${sizeMb * files} MB`);
+</code>
+<option correct>30 MB</option>
+<option>13 MB</option>
+<option>10 MB</option>
+<option>NaN MB</option>
+<explain><p><code>parseInt("10m", 10)</code> reads the leading digits, 10. Three files of 10 MB is at most 30 MB; older lines are dropped.</p></explain>
+</question>
+
+<question id="code-required-env" type="code" file="check-env.js">
+<q><p>Finish <code>missingVars(env, names)</code>. Return the names whose value is missing or empty, joined with <code>", "</code>, or <code>"ok"</code> when none are missing. The program should print <code>DATABASE_URL, POSTGRES_PASSWORD</code> and then <code>ok</code>.</p></q>
+<starter>
+function missingVars(env, names) {
+  // your code here
+}
+
+const names = ["NODE_ENV", "DATABASE_URL", "POSTGRES_PASSWORD"];
+console.log(missingVars({ NODE_ENV: "production", POSTGRES_PASSWORD: "" }, names));
+console.log(missingVars({ NODE_ENV: "production", DATABASE_URL: "postgres://db/taskapi", POSTGRES_PASSWORD: "p4ss" }, names));
+</starter>
+<solution>
+function missingVars(env, names) {
+  const missing = names.filter((name) => !env[name]);
+  return missing.length ? missing.join(", ") : "ok";
+}
+
+const names = ["NODE_ENV", "DATABASE_URL", "POSTGRES_PASSWORD"];
+console.log(missingVars({ NODE_ENV: "production", POSTGRES_PASSWORD: "" }, names));
+console.log(missingVars({ NODE_ENV: "production", DATABASE_URL: "postgres://db/taskapi", POSTGRES_PASSWORD: "p4ss" }, names));
+</solution>
+<expected>
+DATABASE_URL, POSTGRES_PASSWORD
+ok
+</expected>
+<explain><p>Like Compose's <code>${NAME:?…}</code>, an empty value counts as missing. Report every missing name at once, never the values.</p></explain>
+</question>
+
+<question id="code-parse-database-url" type="code" file="parse-db-url.js">
+<q><p>Finish <code>parseDatabaseUrl(raw)</code> with the <code>URL</code> class. Return <code>{ host, port, database, user }</code>: <code>port</code> as a number (use <code>5432</code> when the URL has none), <code>database</code> without the leading <code>/</code>. Do not return the password. The program should print the two objects shown in the comment.</p></q>
+<starter>
+function parseDatabaseUrl(raw) {
+  // your code here
+}
+
+// Should print:
+// { host: 'db', port: 5432, database: 'taskapi', user: 'taskapi' }
+// { host: 'localhost', port: 6543, database: 'shop', user: 'app' }
+console.log(parseDatabaseUrl("postgres://taskapi:s3cret@db/taskapi"));
+console.log(parseDatabaseUrl("postgres://app:pw@localhost:6543/shop"));
+</starter>
+<solution>
+function parseDatabaseUrl(raw) {
+  const url = new URL(raw);
+  return {
+    host: url.hostname,
+    port: url.port ? Number(url.port) : 5432,
+    database: url.pathname.slice(1),
+    user: url.username,
+  };
+}
+
+// Should print:
+// { host: 'db', port: 5432, database: 'taskapi', user: 'taskapi' }
+// { host: 'localhost', port: 6543, database: 'shop', user: 'app' }
+console.log(parseDatabaseUrl("postgres://taskapi:s3cret@db/taskapi"));
+console.log(parseDatabaseUrl("postgres://app:pw@localhost:6543/shop"));
+</solution>
+<expected>
+{ host: 'db', port: 5432, database: 'taskapi', user: 'taskapi' }
+{ host: 'localhost', port: 6543, database: 'shop', user: 'app' }
+</expected>
+<explain><p><code>url.port</code> is a string, and an empty one when the URL has no port. Leaving the password out means the result is safe to log.</p></explain>
+</question>
+
+<question id="code-readiness" type="code" file="readiness.js">
+<q><p>Finish <code>readiness(checks)</code>. Each check is an async function that returns <code>true</code> or throws. Run every check; return <code>{ status: 200, body: { status: "ready" } }</code> if all passed, otherwise <code>{ status: 503, body: { status: "not ready" } }</code>. Do not put the error message in the body. The program should print <code>503 not ready</code> and then <code>200 ready</code>.</p></q>
+<starter>
+async function readiness(checks) {
+  // your code here
+}
+
+let dbUp = false;
+const checks = [
+  async () => {
+    if (!dbUp) throw new Error("connect ECONNREFUSED 172.18.0.2:5432");
+    return true;
+  },
+];
+
+let r = await readiness(checks);
+console.log(r.status, r.body.status);
+dbUp = true;
+r = await readiness(checks);
+console.log(r.status, r.body.status);
+</starter>
+<solution>
+async function readiness(checks) {
+  try {
+    for (const check of checks) await check();
+    return { status: 200, body: { status: "ready" } };
+  } catch {
+    return { status: 503, body: { status: "not ready" } };
+  }
+}
+
+let dbUp = false;
+const checks = [
+  async () => {
+    if (!dbUp) throw new Error("connect ECONNREFUSED 172.18.0.2:5432");
+    return true;
+  },
+];
+
+let r = await readiness(checks);
+console.log(r.status, r.body.status);
+dbUp = true;
+r = await readiness(checks);
+console.log(r.status, r.body.status);
+</solution>
+<expected>
+503 not ready
+200 ready
+</expected>
+<explain><p>A failed check means 503, so the proxy stops sending traffic. The error message contains an internal address, which is why it goes to the logs, never into the public response.</p></explain>
+</question>
+
+<question id="code-backoff" type="code" file="startup-backoff.js">
+<q><p>At startup the app waits for the database with retries. Finish <code>backoffSchedule(attempts, base, max)</code>: return the wait before each retry, doubling from <code>base</code> and never above <code>max</code>. The program should print <code>[ 250, 500, 1000, 2000, 2000 ]</code>.</p></q>
+<starter>
+function backoffSchedule(attempts, base, max) {
+  // your code here
+}
+
+console.log(backoffSchedule(5, 250, 2000));
+</starter>
+<solution>
+function backoffSchedule(attempts, base, max) {
+  return Array.from({ length: attempts }, (_, i) => Math.min(base * 2 ** i, max));
+}
+
+console.log(backoffSchedule(5, 250, 2000));
+</solution>
+<expected>[ 250, 500, 1000, 2000, 2000 ]</expected>
+<explain><p>Doubling gives the database time to start without hammering it; the cap keeps the waits short. <code>depends_on</code> with <code>service_healthy</code> helps too, but the app should still cope with a slow database.</p></explain>
+</question>
+
+<question id="code-pending-migrations" type="code" file="pending.js">
+<q><p>Finish <code>pending(migrations, appliedIds)</code>. Return the ids of migrations not yet applied, in order. The program should print <code>[ 3, 4 ]</code> and then <code>[]</code>.</p></q>
+<starter>
+function pending(migrations, appliedIds) {
+  // your code here
+}
+
+const migrations = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }];
+console.log(pending(migrations, [1, 2]));
+console.log(pending(migrations, [1, 2, 3, 4]));
+</starter>
+<solution>
+function pending(migrations, appliedIds) {
+  const applied = new Set(appliedIds);
+  return migrations.filter((migration) => !applied.has(migration.id)).map((migration) => migration.id);
+}
+
+const migrations = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }];
+console.log(pending(migrations, [1, 2]));
+console.log(pending(migrations, [1, 2, 3, 4]));
+</solution>
+<expected>
+[ 3, 4 ]
+[]
+</expected>
+<explain><p>This is the heart of the migration script: skip what <code>schema_migrations</code> already records. An empty list is why a second run only prints "database is up to date".</p></explain>
+</question>
+
+<question id="stop-timeout-output" type="output">
+<q>The platform waits <code>waitMs</code> after <code>SIGTERM</code>, then kills the process. What does this print?</q>
+<code file="stop-timeout.js">
+function afterStop(shutdownMs, waitMs) {
+  return shutdownMs <= waitMs ? "clean shutdown" : "killed mid-shutdown";
+}
+
+console.log("systemd:", afterStop(30_000, 40_000));
+console.log("docker default:", afterStop(30_000, 10_000));
+</code>
+<option correct>systemd: clean shutdown
+docker default: killed mid-shutdown</option>
+<option>systemd: clean shutdown
+docker default: clean shutdown</option>
+<option>systemd: killed mid-shutdown
+docker default: killed mid-shutdown</option>
+<option>systemd: killed mid-shutdown
+docker default: clean shutdown</option>
+<explain><p>With <code>TimeoutStopSec=40</code>, systemd waits longer than the runtime's 30 s, so shutdown finishes. A 10 s wait is shorter, so a slow shutdown would be cut off: keep the app's timeout below the platform's wait.</p></explain>
+</question>
+
+<question id="crontab-percent-output" type="output">
+<q>In a crontab, <code>%</code> has a special meaning. What does this print?</q>
+<code file="crontab-escape.js">
+const command = "pg_dump -U taskapi -d taskapi --format=custom > backups/taskapi-$(date +%F).dump";
+console.log("30 2 * * * " + command.replaceAll("%", "\\%"));
+</code>
+<option correct>30 2 * * * pg_dump -U taskapi -d taskapi --format=custom > backups/taskapi-$(date +\%F).dump</option>
+<option>30 2 * * * pg_dump -U taskapi -d taskapi --format=custom > backups/taskapi-$(date +%F).dump</option>
+<option>30 2 * * * pg_dump -U taskapi -d taskapi --format=custom > backups/taskapi-$(date +\\%F).dump</option>
+<option>30 2 * * * pg_dump -U taskapi -d taskapi --format=custom > backups/taskapi-2026-09-23.dump</option>
+<explain><p>In the JavaScript string <code>"\\%"</code> is a backslash followed by <code>%</code>, so each <code>%</code> becomes <code>\%</code>, as a crontab needs. The date is filled in by the shell when the job runs, not now.</p></explain>
+</question>
+
+<question id="expose-check-output" type="output">
+<q>This checks a Compose file for services that publish ports. What does it print?</q>
+<code file="published.js">
+const services = {
+  app: { image: "task-api:1.0.0" },
+  db: { image: "postgres:17" },
+  redis: { image: "redis:8-alpine" },
+  proxy: { image: "caddy:2-alpine", ports: ["8080:80"] },
+};
+
+const published = Object.entries(services)
+  .filter(([, service]) => (service.ports ?? []).length > 0)
+  .map(([name]) => name);
+console.log(published);
+</code>
+<option correct>[ 'proxy' ]</option>
+<option>[ 'app', 'proxy' ]</option>
+<option>[ 'app', 'db', 'redis', 'proxy' ]</option>
+<option>[]</option>
+<explain><p>Only the proxy is reachable from outside. The app, database and Redis talk on the private Compose network, so nobody can go around the proxy and its HTTPS.</p></explain>
+</question>

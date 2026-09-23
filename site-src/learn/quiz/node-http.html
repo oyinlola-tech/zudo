@@ -1,0 +1,839 @@
+<question id="handler-args" type="choice">
+<q>In <code>createServer((req, res) =&gt; { … })</code>, when does Node.js call the function, and what are <code>req</code> and <code>res</code>?</q>
+<option correct>Once for every request; <code>req</code> is the request that arrived and <code>res</code> is the response you build</option>
+<option>Once when the server starts; <code>req</code> is the port and <code>res</code> is the host name</option>
+<option>Only for the first request; later requests reuse its answer</option>
+<option>Once per client; <code>req</code> and <code>res</code> hold every request that client will send</option>
+<explain><p>The function is the <strong>request handler</strong>. Node.js calls it for each request with a fresh <code>req</code> and <code>res</code>.</p></explain>
+</question>
+
+<question id="port-zero" type="choice">
+<q>The lesson's examples call <code>server.listen(0)</code>. What does port 0 mean?</q>
+<option correct>"Any free port": the system picks one, and <code>server.address().port</code> tells you which</option>
+<option>The server does not listen at all</option>
+<option>The default web port, 80</option>
+<option>Only requests from the same computer are accepted</option>
+<explain><p>Port 0 lets the system choose a free port, so a test never clashes with another program. Read the real port from <code>server.address().port</code> after the <code>"listening"</code> event.</p></explain>
+</question>
+
+<question id="hello-server" type="output">
+<q>What does this print?</q>
+<code file="hello.js" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+
+const server = createServer((req, res) => {
+  res.statusCode = 200;
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.end("Hello");
+});
+
+server.listen(0);
+await once(server, "listening");
+
+const response = await fetch(`http://localhost:${server.address().port}/anything`);
+console.log(response.status, response.headers.get("content-type"), await response.text());
+server.close();
+</code>
+<option correct>200 text/plain; charset=utf-8 Hello</option>
+<option>404 text/plain; charset=utf-8 Hello</option>
+<option>200 application/json Hello</option>
+<option>200 text/plain; charset=utf-8 "Hello"</option>
+<explain><p>This handler answers every path the same way, so <code>/anything</code> gets 200 too. The status, the header and the body are exactly what the handler set.</p></explain>
+</question>
+
+<question id="res-end-once" type="choice">
+<q>A handler sets the status and headers but forgets to call <code>res.end()</code>. What happens?</q>
+<option correct>The response never finishes, so the client keeps waiting</option>
+<option>Node.js sends an empty 200 response automatically</option>
+<option>Node.js sends a 500 error</option>
+<option>The server crashes</option>
+<explain><p>Every request must end with exactly one <code>res.end</code>. Without it, the client waits until it gives up.</p></explain>
+</question>
+
+<question id="content-type-why" type="choice">
+<q>What does the response header <code>Content-Type: application/json</code> do?</q>
+<option correct>It tells the client that the body is JSON text, so it knows how to read it</option>
+<option>It turns the object you pass to <code>res.end</code> into JSON</option>
+<option>It checks that the client sent valid JSON</option>
+<option>It makes the response smaller</option>
+<explain><p>A header is information <em>about</em> the response. You still turn the object into text yourself with <code>JSON.stringify</code>.</p></explain>
+</question>
+
+<question id="headers-lowercase" type="output">
+<q>The client sends headers with capital letters. What does this print?</q>
+<code file="headers.js" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+
+const server = createServer((req, res) => {
+  res.end(`${req.method} ${req.headers["x-task-owner"]} ${req.headers["X-Task-Owner"]}`);
+});
+
+server.listen(0);
+await once(server, "listening");
+
+const response = await fetch(`http://localhost:${server.address().port}/`, {
+  method: "PATCH",
+  headers: { "X-Task-Owner": "Ada" },
+});
+console.log(await response.text());
+server.close();
+</code>
+<option correct>PATCH Ada undefined</option>
+<option>PATCH Ada Ada</option>
+<option>PATCH undefined Ada</option>
+<option>GET Ada undefined</option>
+<explain><p>Header names arrive in lower case, whatever case the client used. So read <code>req.headers["x-task-owner"]</code>; the capitalised name is not there.</p></explain>
+</question>
+
+<question id="req-url-query" type="output">
+<q>What does this print?</q>
+<code file="req-url.js" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+
+const server = createServer((req, res) => {
+  res.statusCode = req.url === "/tasks" ? 200 : 404;
+  res.end(req.url);
+});
+
+server.listen(0);
+await once(server, "listening");
+const base = `http://localhost:${server.address().port}`;
+
+for (const path of ["/tasks", "/tasks?done=true"]) {
+  const response = await fetch(base + path);
+  console.log(response.status, await response.text());
+}
+server.close();
+</code>
+<option correct>200 /tasks
+404 /tasks?done=true</option>
+<option>200 /tasks
+200 /tasks?done=true</option>
+<option>200 /tasks
+200 /tasks</option>
+<option>200 http://localhost/tasks
+404 http://localhost/tasks?done=true</option>
+<explain><p><code>req.url</code> is the path <em>and</em> the query string, without the host. Comparing it with <code>"/tasks"</code> fails as soon as there is a query. Route on <code>new URL(req.url, "http://localhost").pathname</code>.</p></explain>
+</question>
+
+<question id="route-on-pathname" type="choice">
+<q>Which is the right way to find the path to route on?</q>
+<option correct><code>new URL(req.url, "http://localhost").pathname</code></option>
+<option><code>req.url</code></option>
+<option><code>req.headers.path</code></option>
+<option><code>req.url.split("/")[1]</code></option>
+<explain><p><code>req.url</code> includes the query string, so <code>/tasks?done=true</code> would not equal <code>/tasks</code>. <code>URL</code> needs a base because <code>req.url</code> is only the path; <code>pathname</code> is the path without the query.</p></explain>
+</question>
+
+<question id="routes-statuses" type="output">
+<q>What does this print?</q>
+<code file="routes.js" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+
+const server = createServer((req, res) => {
+  if (req.url === "/tasks" && req.method === "GET") {
+    res.statusCode = 200;
+  } else if (req.url === "/tasks") {
+    res.setHeader("Allow", "GET");
+    res.statusCode = 405;
+  } else {
+    res.statusCode = 404;
+  }
+  res.end();
+});
+
+server.listen(0);
+await once(server, "listening");
+const base = `http://localhost:${server.address().port}`;
+
+for (const [method, path] of [["GET", "/tasks"], ["DELETE", "/tasks"], ["GET", "/users"]]) {
+  const response = await fetch(base + path, { method });
+  console.log(method, path, response.status, response.headers.get("allow"));
+}
+server.close();
+</code>
+<option correct>GET /tasks 200 null
+DELETE /tasks 405 GET
+GET /users 404 null</option>
+<option>GET /tasks 200 null
+DELETE /tasks 404 null
+GET /users 404 null</option>
+<option>GET /tasks 200 GET
+DELETE /tasks 405 GET
+GET /users 404 GET</option>
+<option>GET /tasks 200 null
+DELETE /tasks 405 GET
+GET /users 405 GET</option>
+<explain><p>A known path with the wrong method gets 405, with an <code>Allow</code> header listing the methods that would work. An unknown path gets 404. <code>headers.get</code> returns <code>null</code> for a header that was not sent.</p></explain>
+</question>
+
+<question id="404-vs-405" type="choice">
+<q>Your server has only <code>GET /tasks</code>. A client sends <code>PUT /tasks</code>. Which status code fits best?</q>
+<option correct>405 Method Not Allowed, with an <code>Allow: GET</code> header</option>
+<option>404 Not Found</option>
+<option>400 Bad Request</option>
+<option>500 Internal Server Error</option>
+<explain><p>The path exists, but not with this method: that is 405. A path the server does not know at all is 404.</p></explain>
+</question>
+
+<question id="send-json-helper" type="choice">
+<q>Why does the lesson write a small <code>sendJson(res, status, body)</code> helper?</q>
+<option correct>So every JSON answer sets its status, its <code>Content-Type</code> and its body the same way</option>
+<option>Because <code>res.end</code> cannot send text without it</option>
+<option>Because Node.js requires a function with that name</option>
+<option>To make the server read request bodies faster</option>
+<explain><p>Repeating three lines in every route invites mistakes, such as a forgotten header. One helper keeps every answer consistent.</p></explain>
+</question>
+
+<question id="match-route-out" type="output">
+<q>What does this print?</q>
+<code file="match.js">
+function matchRoute(pattern, path) {
+  const patternParts = pattern.split("/");
+  const pathParts = path.split("/");
+  if (patternParts.length !== pathParts.length) return null;
+
+  const params = {};
+  for (let i = 0; i < patternParts.length; i++) {
+    if (patternParts[i].startsWith(":")) {
+      params[patternParts[i].slice(1)] = decodeURIComponent(pathParts[i]);
+    } else if (patternParts[i] !== pathParts[i]) {
+      return null;
+    }
+  }
+  return params;
+}
+
+console.log(JSON.stringify(matchRoute("/tasks/:id", "/tasks/42")));
+console.log(JSON.stringify(matchRoute("/tasks/:id", "/tasks/42/notes")));
+console.log(JSON.stringify(matchRoute("/tasks/:id", "/users/42")));
+console.log(JSON.stringify(matchRoute("/tasks/:id", "/tasks/a%2Fb")));
+</code>
+<option correct>{"id":"42"}
+null
+null
+{"id":"a/b"}</option>
+<option>{"id":42}
+null
+null
+{"id":"a/b"}</option>
+<option>{"id":"42"}
+{"id":"42"}
+null
+{"id":"a%2Fb"}</option>
+<option>{"id":"42"}
+null
+{"id":"42"}
+{"id":"a/b"}</option>
+<explain><p>The number of parts must match, and fixed parts must be equal. A parameter is always text (<code>"42"</code>, not 42), and <code>decodeURIComponent</code> turns <code>%2F</code> into <code>/</code>: anything can arrive in a parameter.</p></explain>
+</question>
+
+<question id="param-is-text" type="choice">
+<q>A route parameter <code>id</code> arrives from <code>/tasks/42</code>. Which statement is true?</q>
+<option correct>It is the text <code>"42"</code>, input from a stranger, and must be checked before use</option>
+<option>It is the number 42, because the path contains digits</option>
+<option>It is always a valid id, because the route matched</option>
+<option>It is <code>undefined</code> until the body is read</option>
+<explain><p>Everything in a URL is text, and anybody can send anything, such as <code>/tasks/abc</code> or <code>/tasks/-3</code>. Validate the text, then convert it.</p></explain>
+</question>
+
+<question id="parse-id-out" type="output">
+<q>What does this print?</q>
+<code file="parse-id.js">
+function parseId(text) {
+  if (!/^[1-9][0-9]{0,8}$/.test(text)) return null;
+  return Number(text);
+}
+
+console.log(["7", "007", "0", "7.0", " 7", "123456789"].map(parseId));
+</code>
+<option correct>[ 7, null, null, null, null, 123456789 ]</option>
+<option>[ 7, 7, null, 7, 7, 123456789 ]</option>
+<option>[ 7, 7, 0, 7, 7, 123456789 ]</option>
+<option>[ 7, null, null, null, 7, 123456789 ]</option>
+<explain><p>The pattern allows only a digit from 1 to 9 followed by up to eight more digits, with nothing before or after. Leading zeros, decimals and spaces are refused.</p></explain>
+</question>
+
+<question id="number-vs-check" type="output">
+<q>Why does the lesson check the text with a pattern instead of just calling <code>Number</code>? What does this print?</q>
+<code file="number.js">
+console.log(Number("12abc"), Number(""), Number(" 42 "), Number("4.5"));
+</code>
+<option correct>NaN 0 42 4.5</option>
+<option>12 NaN NaN 4.5</option>
+<option>NaN NaN 42 4</option>
+<option>12 0 42 4</option>
+<explain><p><code>Number</code> turns empty text into <code>0</code>, ignores spaces and accepts decimals. None of those is a valid id. Checking the text first is safer than converting and hoping.</p></explain>
+</question>
+
+<question id="query-parts" type="output">
+<q>What does this print?</q>
+<code file="query.js">
+const url = new URL("/tasks?done=false&limit=5&tag=home&tag=work", "http://localhost");
+const q = url.searchParams;
+
+console.log(url.pathname, q.get("done"), typeof q.get("limit"), q.get("page"));
+console.log(q.get("tag"), q.getAll("tag"));
+</code>
+<option correct>/tasks false string null
+home [ 'home', 'work' ]</option>
+<option>/tasks?done=false false number null
+home [ 'home', 'work' ]</option>
+<option>/tasks false string undefined
+home [ 'home', 'work' ]</option>
+<option>/tasks false string null
+[ 'home', 'work' ] [ 'home', 'work' ]</option>
+<explain><p><code>pathname</code> has no query. Every query value is text, even <code>"5"</code>, and a missing one is <code>null</code>. <code>get</code> returns the first value; <code>getAll</code> returns every value for a repeated name.</p></explain>
+</question>
+
+<question id="query-false-truthy" type="output">
+<q>A client asks for <code>/tasks?done=false</code>. What does this print?</q>
+<code file="done-filter.js">
+const tasks = [
+  { id: 1, title: "Buy milk", done: false },
+  { id: 2, title: "Write report", done: true },
+];
+const done = new URL("/tasks?done=false", "http://localhost").searchParams.get("done");
+
+console.log(tasks.filter((t) => t.done === Boolean(done)).map((t) => t.id));
+console.log(tasks.filter((t) => String(t.done) === done).map((t) => t.id));
+</code>
+<option correct>[ 2 ]
+[ 1 ]</option>
+<option>[ 1 ]
+[ 1 ]</option>
+<option>[ 2 ]
+[ 2 ]</option>
+<option>[]
+[ 1 ]</option>
+<explain><p><code>done</code> is the text <code>"false"</code>, and any non-empty text is truthy, so <code>Boolean(done)</code> is <code>true</code>: the wrong filter. The build compares text with text: <code>String(t.done) === done</code>.</p></explain>
+</question>
+
+<question id="searchparams-encoding" type="output">
+<q>What does this print?</q>
+<code file="encode.js">
+const params = new URLSearchParams({ title: "Buy milk & eggs", tag: "home" });
+console.log(params.toString());
+
+const back = new URLSearchParams(params.toString());
+console.log(back.get("title"));
+</code>
+<option correct>title=Buy+milk+%26+eggs&amp;tag=home
+Buy milk &amp; eggs</option>
+<option>title=Buy milk &amp; eggs&amp;tag=home
+Buy milk</option>
+<option>title=Buy%20milk%20&amp;%20eggs&amp;tag=home
+Buy milk &amp; eggs</option>
+<option>title=Buy+milk+%26+eggs&amp;tag=home
+Buy+milk+%26+eggs</option>
+<explain><p><code>URLSearchParams</code> encodes values safely: a space becomes <code>+</code> and <code>&amp;</code> becomes <code>%26</code>, so the <code>&amp;</code> inside the title is not mistaken for the start of a new parameter. Reading it back decodes it.</p></explain>
+</question>
+
+<question id="req-is-stream" type="choice">
+<q>How does the body of a <code>POST</code> request reach your handler?</q>
+<option correct><code>req</code> is a readable stream; the body arrives in chunks you collect</option>
+<option>It is already parsed into <code>req.body</code></option>
+<option>It is in <code>req.headers.body</code></option>
+<option>It is part of <code>req.url</code> after a <code>#</code></option>
+<explain><p>With no framework, nothing parses the body for you. Read it with <code>for await (const chunk of req)</code>, join the chunks, then decode and parse.</p></explain>
+</question>
+
+<question id="body-limit-why" type="choice">
+<q>Why must a server limit the size of a request body?</q>
+<option correct>Without a limit, anyone can send gigabytes and fill the server's memory</option>
+<option>Because <code>JSON.parse</code> only works on text shorter than 1 KB</option>
+<option>Because Node.js rejects bodies over 1 KB on its own</option>
+<option>A limit is only needed for file uploads, never for JSON</option>
+<explain><p>An unlimited body is an easy attack. Count the bytes as they arrive and answer 413 as soon as the limit is passed, instead of reading everything first. Real JSON limits are often 100 KB to 1 MB, but never missing.</p></explain>
+</question>
+
+<question id="body-statuses" type="output">
+<q>This server reads a JSON body like the lesson's <code>readJson</code>. What does it print?</q>
+<code file="body.js" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+
+const LIMIT = 100;
+
+const server = createServer(async (req, res) => {
+  if (!req.headers["content-type"]?.startsWith("application/json")) {
+    res.statusCode = 415;
+    return res.end();
+  }
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > LIMIT) {
+      res.statusCode = 413;
+      return res.end();
+    }
+    chunks.push(chunk);
+  }
+  try {
+    JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    res.statusCode = 200;
+  } catch {
+    res.statusCode = 400;
+  }
+  res.end();
+});
+
+server.listen(0);
+await once(server, "listening");
+const base = `http://localhost:${server.address().port}`;
+const json = { "Content-Type": "application/json" };
+
+const tries = [
+  { headers: { "Content-Type": "text/plain" }, body: '{"title":"Buy milk"}' },
+  { headers: json, body: "{title: Buy milk}" },
+  { headers: json, body: JSON.stringify({ title: "x".repeat(500) }) },
+  { headers: json, body: '{"title":"Buy milk"}' },
+];
+const statuses = [];
+for (const options of tries) {
+  statuses.push((await fetch(base, { method: "POST", ...options })).status);
+}
+console.log(statuses.join(" "));
+server.close();
+</code>
+<option correct>415 400 413 200</option>
+<option>400 400 413 200</option>
+<option>415 400 400 200</option>
+<option>200 400 413 200</option>
+<explain><p>Plain text gets 415 (wrong <code>Content-Type</code>), broken JSON gets 400, a body over the limit gets 413, and the good one gets 200. Each problem has its own status code.</p></explain>
+</question>
+
+<question id="concat-before-decode" type="choice">
+<q>Why does <code>readJson</code> join the chunks with <code>Buffer.concat</code> before calling <code>toString("utf8")</code>?</q>
+<option correct>A character cut in half between two chunks is only decoded correctly once the bytes are joined</option>
+<option>Because <code>JSON.parse</code> only accepts buffers</option>
+<option>Because <code>toString</code> does not work on a single chunk</option>
+<option>To make the body smaller before parsing</option>
+<explain><p>This is the <code>café</code> problem from Streams and buffers. <code>req.setEncoding("utf8")</code>, used in the build, also solves it by decoding correctly across chunks.</p></explain>
+</question>
+
+<question id="parse-error-message" type="choice">
+<q><code>JSON.parse</code> fails on a request body. What should the server send back?</q>
+<option correct>A 400 with a short message you wrote, such as <code>{"error":"Body is not valid JSON"}</code></option>
+<option>A 400 with the <code>SyntaxError</code>'s message and stack trace, so the client can debug</option>
+<option>A 500, because an exception was thrown</option>
+<option>A 200 with an empty object, so the client does not see an error</option>
+<explain><p>Broken input is the client's mistake, so 400. The message should be your own: error messages you did not write can reveal details about your code, so keep them on the server.</p></explain>
+</question>
+
+<question id="status-families" type="choice">
+<q>What does the first digit of a status code tell you?</q>
+<option correct>2xx success, 4xx the client made a mistake, 5xx the server failed</option>
+<option>2xx the client made a mistake, 4xx success, 5xx a redirect</option>
+<option>How many seconds the server took to answer</option>
+<option>The version of HTTP that was used</option>
+<explain><p>Clients check the status code first. A 4xx means "fix your request"; a 5xx means "not your fault, the server broke".</p></explain>
+</question>
+
+<question id="status-401-403" type="choice">
+<q>A logged-in user who is not an admin tries to delete another user's account. Which status fits?</q>
+<option correct>403 Forbidden</option>
+<option>401 Unauthorized</option>
+<option>404 Not Found</option>
+<option>405 Method Not Allowed</option>
+<explain><p>401 means "who are you? log in first". Here the server knows who the user is, and they may not do this: that is 403.</p></explain>
+</question>
+
+<question id="status-201" type="choice">
+<q>A <code>POST /tasks</code> request created a new task. What is the usual answer?</q>
+<option correct>201 Created, with a <code>Location</code> header pointing to the new task</option>
+<option>200 OK, with no body</option>
+<option>204 No Content, with the new task in the body</option>
+<option>302 Found, sending the client to <code>/tasks</code></option>
+<explain><p>201 says a new record was made, and <code>Location: /tasks/2</code> says where it lives. 204 means there is no body at all.</p></explain>
+</question>
+
+<question id="status-codes-node" type="output">
+<q>What does this print?</q>
+<code file="codes.js" browser="no">
+import { STATUS_CODES } from "node:http";
+
+for (const code of [201, 204, 405, 415]) {
+  console.log(code, STATUS_CODES[code]);
+}
+</code>
+<option correct>201 Created
+204 No Content
+405 Method Not Allowed
+415 Unsupported Media Type</option>
+<option>201 OK
+204 No Content
+405 Method Not Allowed
+415 Unsupported Media Type</option>
+<option>201 Created
+204 Deleted
+405 Not Found
+415 Payload Too Large</option>
+<option>201 Created
+204 No Content
+405 Forbidden
+415 Unsupported Media Type</option>
+<explain><p><code>STATUS_CODES</code> from <code>node:http</code> holds the standard phrase for each code. 415 is about the <em>type</em> of the body; 413 is about its size.</p></explain>
+</question>
+
+<question id="status-500" type="choice">
+<q>When should your server answer <strong>500 Internal Server Error</strong>?</q>
+<option correct>When something broke on the server that is not the client's fault, such as a bug or a failed database</option>
+<option>When the client sends invalid JSON</option>
+<option>When the requested task does not exist</option>
+<option>When the client is not logged in</option>
+<explain><p>5xx means the server failed. Invalid JSON is 400, a missing task is 404, and a missing login is 401: those are all the client's side.</p></explain>
+</question>
+
+<question id="created-location" type="output">
+<q>What does this print?</q>
+<code file="created.js" browser="no">
+import { once } from "node:events";
+import { createServer } from "node:http";
+
+const server = createServer((req, res) => {
+  if (req.method === "POST") {
+    res.statusCode = 201;
+    res.setHeader("Location", "/tasks/2");
+    res.setHeader("Content-Type", "application/json");
+    return res.end(JSON.stringify({ id: 2, title: "Call Ada" }));
+  }
+  res.statusCode = 204;
+  res.end();
+});
+
+server.listen(0);
+await once(server, "listening");
+const base = `http://localhost:${server.address().port}/tasks`;
+
+const created = await fetch(base, { method: "POST" });
+console.log(created.status, created.headers.get("location"), (await created.json()).title);
+
+const deleted = await fetch(base + "/2", { method: "DELETE" });
+console.log(deleted.status, JSON.stringify(await deleted.text()));
+server.close();
+</code>
+<option correct>201 /tasks/2 Call Ada
+204 ""</option>
+<option>201 null Call Ada
+204 ""</option>
+<option>200 /tasks/2 Call Ada
+204 ""</option>
+<option>201 /tasks/2 Call Ada
+204 "null"</option>
+<explain><p>The 201 answer carries the <code>Location</code> header and the new task. A 204 answer is finished with <code>res.end()</code> and nothing in it, so the body is the empty string.</p></explain>
+</question>
+
+<question id="id-regex" type="output">
+<q>The build matches one task's path with a regular expression. What does this print?</q>
+<code file="id-regex.js">
+const pattern = /^\/tasks\/([1-9][0-9]{0,8})$/;
+
+for (const path of ["/tasks/2", "/tasks/abc", "/tasks/2/", "/tasks/0"]) {
+  const match = path.match(pattern);
+  console.log(path, match ? Number(match[1]) : "no match");
+}
+</code>
+<option correct>/tasks/2 2
+/tasks/abc no match
+/tasks/2/ no match
+/tasks/0 no match</option>
+<option>/tasks/2 2
+/tasks/abc no match
+/tasks/2/ 2
+/tasks/0 no match</option>
+<option>/tasks/2 /tasks/2
+/tasks/abc no match
+/tasks/2/ no match
+/tasks/0 no match</option>
+<option>/tasks/2 2
+/tasks/abc no match
+/tasks/2/ no match
+/tasks/0 0</option>
+<explain><p><code>match[1]</code> is the text caught by the brackets. <code>^</code> and <code>$</code> make the whole path match, so a trailing <code>/</code> fails, and the id must start with 1 to 9. A path that does not match falls through to 404.</p></explain>
+</question>
+
+<question id="title-validation" type="choice">
+<q>The build checks <code>typeof body?.title !== "string" || body.title.trim() === "" || body.title.length &gt; 200</code>. Why the <code>?.</code>?</q>
+<option correct>The body may be valid JSON but <code>null</code>, and <code>null.title</code> would throw</option>
+<option>Because <code>title</code> is optional</option>
+<option>It makes the check faster</option>
+<option>It trims the title</option>
+<explain><p><code>JSON.parse("null")</code> works and gives <code>null</code>. <code>body?.title</code> gives <code>undefined</code> instead of throwing, so the request gets a clean 400.</p></explain>
+</question>
+
+<question id="argv-filename" type="choice">
+<q>Why does <code>server.js</code> start listening only when <code>process.argv[1] === import.meta.filename</code>?</q>
+<option correct>So it listens on port 3000 when you run <code>node server.js</code>, but not when a test file imports it</option>
+<option>So it only starts on Linux</option>
+<option>So nobody can start the server twice on the same computer</option>
+<option>It checks that the file was not changed since it was saved</option>
+<explain><p><code>process.argv[1]</code> is the script Node.js was started with. When a test imports <code>server.js</code>, they differ, so the test can start its own copy on port 0.</p></explain>
+</question>
+
+<question id="curl-flags" type="choice">
+<q>In <code>curl -i -X POST http://localhost:3000/tasks -H "Content-Type: application/json" -d '{"title":"Call Ada"}'</code>, what does <code>-d</code> do?</q>
+<option correct>It sends the text after it as the request body</option>
+<option>It deletes the task</option>
+<option>It prints the response headers</option>
+<option>It sets the method to DELETE</option>
+<explain><p><code>-i</code> prints the status line and headers, <code>-X</code> sets the method, <code>-H</code> adds a header and <code>-d</code> sends a body.</p></explain>
+</question>
+
+<question id="memory-tasks" type="choice">
+<q>The build keeps tasks in an array in memory. What happens to them when you stop the server?</q>
+<option correct>They are gone; the next start begins with only the starting tasks</option>
+<option>Node.js saves them to <code>tasks.json</code> automatically</option>
+<option>They are kept in the browser's cache</option>
+<option>They stay in memory until the computer restarts</option>
+<explain><p>Memory belongs to the running process. To keep data, you need a file or, better, a database.</p></explain>
+</question>
+
+<question id="code-match-route" type="code" file="match-route.js">
+<q><p>Finish <code>matchRoute(pattern, path)</code>. Split both on <code>/</code>. If they have a different number of parts, return <code>null</code>. A pattern part starting with <code>:</code> is a parameter: store the path part under that name. Any other part must be equal, or return <code>null</code>.</p></q>
+<starter>
+function matchRoute(pattern, path) {
+  // your code here
+}
+
+console.log(JSON.stringify(matchRoute("/tasks/:id", "/tasks/42")));
+console.log(JSON.stringify(matchRoute("/users/:userId/tasks/:id", "/users/7/tasks/3")));
+console.log(JSON.stringify(matchRoute("/tasks/:id", "/tasks")));
+console.log(JSON.stringify(matchRoute("/tasks/:id", "/notes/42")));
+</starter>
+<solution>
+function matchRoute(pattern, path) {
+  const patternParts = pattern.split("/");
+  const pathParts = path.split("/");
+  if (patternParts.length !== pathParts.length) return null;
+  const params = {};
+  for (let i = 0; i < patternParts.length; i++) {
+    if (patternParts[i].startsWith(":")) {
+      params[patternParts[i].slice(1)] = pathParts[i];
+    } else if (patternParts[i] !== pathParts[i]) {
+      return null;
+    }
+  }
+  return params;
+}
+
+console.log(JSON.stringify(matchRoute("/tasks/:id", "/tasks/42")));
+console.log(JSON.stringify(matchRoute("/users/:userId/tasks/:id", "/users/7/tasks/3")));
+console.log(JSON.stringify(matchRoute("/tasks/:id", "/tasks")));
+console.log(JSON.stringify(matchRoute("/tasks/:id", "/notes/42")));
+</solution>
+<expected>
+{"id":"42"}
+{"userId":"7","id":"3"}
+null
+null
+</expected>
+<explain><p>Compare the parts one by one. <code>part.slice(1)</code> removes the <code>:</code> to get the parameter name. The values stay text; the route handler validates them next.</p></explain>
+</question>
+
+<question id="code-parse-id" type="code" file="parse-id.js">
+<q><p>Finish <code>parseId(text)</code>. Return the number when <code>text</code> is a whole number from 1 to 999999999 written with digits only and no leading zero; otherwise return <code>null</code>.</p></q>
+<starter>
+function parseId(text) {
+  // your code here
+}
+
+console.log(JSON.stringify(["42", "0", "-3", "4.5", "abc", "12abc", "", "007", "999999999", "1000000000"].map(parseId)));
+</starter>
+<solution>
+function parseId(text) {
+  if (!/^[1-9][0-9]{0,8}$/.test(text)) return null;
+  return Number(text);
+}
+
+console.log(JSON.stringify(["42", "0", "-3", "4.5", "abc", "12abc", "", "007", "999999999", "1000000000"].map(parseId)));
+</solution>
+<expected>[42,null,null,null,null,null,null,null,999999999,null]</expected>
+<explain><p>Check the text first with <code>/^[1-9][0-9]{0,8}$/</code>, then convert. Converting first would turn <code>""</code> into 0 and accept <code>"4.5"</code>.</p></explain>
+</question>
+
+<question id="code-route-status" type="code" file="route-status.js">
+<q><p>The server knows <code>GET /tasks</code>, <code>POST /tasks</code> and <code>GET /tasks/:id</code> (id made of digits). Finish <code>statusFor(method, url)</code>: return 200 for a known route, 405 for a known path with another method, and 404 for anything else. Route on the path, not on the query string.</p></q>
+<starter>
+function statusFor(method, url) {
+  // your code here
+}
+
+const tries = [
+  ["GET", "/tasks?done=true"],
+  ["POST", "/tasks"],
+  ["DELETE", "/tasks"],
+  ["GET", "/tasks/12"],
+  ["PUT", "/tasks/12"],
+  ["GET", "/tasks/abc"],
+  ["GET", "/users"],
+];
+console.log(tries.map(([method, url]) => statusFor(method, url)).join(" "));
+</starter>
+<solution>
+function statusFor(method, url) {
+  const path = new URL(url, "http://localhost").pathname;
+  if (path === "/tasks") {
+    return method === "GET" || method === "POST" ? 200 : 405;
+  }
+  if (/^\/tasks\/[0-9]+$/.test(path)) {
+    return method === "GET" ? 200 : 405;
+  }
+  return 404;
+}
+
+const tries = [
+  ["GET", "/tasks?done=true"],
+  ["POST", "/tasks"],
+  ["DELETE", "/tasks"],
+  ["GET", "/tasks/12"],
+  ["PUT", "/tasks/12"],
+  ["GET", "/tasks/abc"],
+  ["GET", "/users"],
+];
+console.log(tries.map(([method, url]) => statusFor(method, url)).join(" "));
+</solution>
+<expected>200 200 405 200 405 404 404</expected>
+<explain><p>Get the path with <code>new URL(url, "http://localhost").pathname</code> so the query does not get in the way. First decide whether the path is known, then whether the method fits: unknown path is 404, wrong method is 405.</p></explain>
+</question>
+
+<question id="code-paging" type="code" file="paging.js">
+<q><p>Finish <code>readPaging(query)</code>. Read <code>limit</code> (default 10) and <code>offset</code> (default 0) from a query string with <code>URLSearchParams</code>. Both must be digits only, and <code>limit</code> must be from 1 to 50. On a problem, return <code>{ error: "bad paging" }</code>.</p></q>
+<starter>
+function readPaging(query) {
+  // your code here
+}
+
+for (const query of ["", "limit=5&offset=10", "limit=500", "offset=-1", "limit=abc"]) {
+  console.log(JSON.stringify(readPaging(query)));
+}
+</starter>
+<solution>
+function readPaging(query) {
+  const params = new URLSearchParams(query);
+  const limitText = params.get("limit") ?? "10";
+  const offsetText = params.get("offset") ?? "0";
+  if (!/^[0-9]{1,6}$/.test(limitText) || !/^[0-9]{1,6}$/.test(offsetText)) {
+    return { error: "bad paging" };
+  }
+  const limit = Number(limitText);
+  if (limit < 1 || limit > 50) return { error: "bad paging" };
+  return { limit, offset: Number(offsetText) };
+}
+
+for (const query of ["", "limit=5&offset=10", "limit=500", "offset=-1", "limit=abc"]) {
+  console.log(JSON.stringify(readPaging(query)));
+}
+</solution>
+<expected>
+{"limit":10,"offset":0}
+{"limit":5,"offset":10}
+{"error":"bad paging"}
+{"error":"bad paging"}
+{"error":"bad paging"}
+</expected>
+<explain><p>A missing value is <code>null</code>, so <code>?? "10"</code> gives the default. Check the text with a pattern, convert, then check the range. The maximum stops one request from asking for millions of rows.</p></explain>
+</question>
+
+<question id="code-validate-title" type="code" file="validate-title.js">
+<q><p>Finish <code>validateTask(body)</code> like the build. <code>body</code> is whatever <code>JSON.parse</code> returned, so it can be anything, even <code>null</code>. Return <code>"ok"</code> when <code>body.title</code> is a string that is not empty after trimming and has at most 200 characters; otherwise return <code>"400"</code>.</p></q>
+<starter>
+function validateTask(body) {
+  // your code here
+}
+
+const bodies = [{ title: "Buy milk" }, { title: "   " }, { title: 42 }, null, [], { title: "x".repeat(201) }, "Buy milk"];
+console.log(bodies.map(validateTask).join(" "));
+</starter>
+<solution>
+function validateTask(body) {
+  const title = body?.title;
+  if (typeof title !== "string" || title.trim() === "" || title.length > 200) return "400";
+  return "ok";
+}
+
+const bodies = [{ title: "Buy milk" }, { title: "   " }, { title: 42 }, null, [], { title: "x".repeat(201) }, "Buy milk"];
+console.log(bodies.map(validateTask).join(" "));
+</solution>
+<expected>ok 400 400 400 400 400 400</expected>
+<explain><p><code>body?.title</code> copes with <code>null</code>. Then check the type first, so <code>trim</code> is only called on a string, and finish with the emptiness and length checks.</p></explain>
+</question>
+
+<question id="code-body-status" type="code" file="body-status.js">
+<q><p>Finish <code>bodyStatus(contentType, text, limit)</code>. Return <code>415</code> when <code>contentType</code> does not start with <code>application/json</code> (it may be <code>undefined</code>), <code>413</code> when <code>text.length</code> is over <code>limit</code>, <code>400</code> when <code>JSON.parse</code> fails, and <code>200</code> otherwise. Check them in that order.</p></q>
+<starter>
+function bodyStatus(contentType, text, limit) {
+  // your code here
+}
+
+console.log(
+  bodyStatus("application/json", '{"title":"Buy milk"}', 100),
+  bodyStatus("application/json; charset=utf-8", "{title: x}", 100),
+  bodyStatus("text/plain", '{"title":"Buy milk"}', 100),
+  bodyStatus(undefined, "{}", 100),
+  bodyStatus("application/json", JSON.stringify({ title: "x".repeat(200) }), 100),
+);
+</starter>
+<solution>
+function bodyStatus(contentType, text, limit) {
+  if (!contentType?.startsWith("application/json")) return 415;
+  if (text.length > limit) return 413;
+  try {
+    JSON.parse(text);
+    return 200;
+  } catch {
+    return 400;
+  }
+}
+
+console.log(
+  bodyStatus("application/json", '{"title":"Buy milk"}', 100),
+  bodyStatus("application/json; charset=utf-8", "{title: x}", 100),
+  bodyStatus("text/plain", '{"title":"Buy milk"}', 100),
+  bodyStatus(undefined, "{}", 100),
+  bodyStatus("application/json", JSON.stringify({ title: "x".repeat(200) }), 100),
+);
+</solution>
+<expected>200 400 415 415 413</expected>
+<explain><p><code>contentType?.startsWith(...)</code> handles a missing header. The size check comes before parsing, so the server never parses a huge body, and a parse failure becomes 400.</p></explain>
+</question>
+
+<question id="code-status-kind" type="code" file="status-kind.js">
+<q><p>Finish <code>kind(status)</code>. Return <code>"success"</code> for 2xx, <code>"client error"</code> for 4xx and <code>"server error"</code> for 5xx. Anything else is <code>"other"</code>.</p></q>
+<starter>
+function kind(status) {
+  // your code here
+}
+
+for (const status of [201, 204, 404, 413, 500, 302]) {
+  console.log(status, kind(status));
+}
+</starter>
+<solution>
+function kind(status) {
+  const family = Math.floor(status / 100);
+  if (family === 2) return "success";
+  if (family === 4) return "client error";
+  if (family === 5) return "server error";
+  return "other";
+}
+
+for (const status of [201, 204, 404, 413, 500, 302]) {
+  console.log(status, kind(status));
+}
+</solution>
+<expected>
+201 success
+204 success
+404 client error
+413 client error
+500 server error
+302 other
+</expected>
+<explain><p>The first digit is the family: <code>Math.floor(status / 100)</code>. That is the first thing a client looks at.</p></explain>
+</question>

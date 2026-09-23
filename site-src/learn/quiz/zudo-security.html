@@ -1,0 +1,759 @@
+<question id="defense-in-depth" type="choice">
+<q>What does <strong>defense in depth</strong> mean for a public API?</q>
+<option>One very strong check at the start of every request</option>
+<option correct>Several independent checks in a row, so an attack that gets past one layer is stopped by the next</option>
+<option>Hiding the API address so attackers cannot find it</option>
+<option>Checking every request twice with the same function</option>
+<explain><p>No single check stops everything. Rate limits, CORS, CSRF, authentication, validation and safe headers each stop different attacks, and together one mistake is not a breach.</p></explain>
+</question>
+
+<question id="two-packages" type="choice">
+<q>How does ZudoJS split security work between <code>@zudojs/security</code> and <code>@zudojs/http</code>?</q>
+<option correct><code>@zudojs/security</code> has plain building-block functions; <code>@zudojs/http</code> has middleware built on them</option>
+<option><code>@zudojs/security</code> is the web server; <code>@zudojs/http</code> only has status codes</option>
+<option>They do the same thing, so you pick one of them</option>
+<option><code>@zudojs/http</code> is for browsers and <code>@zudojs/security</code> is for servers</option>
+<explain><p>The security package answers questions like "is this origin allowed?" and knows nothing about servers. The http package wraps those answers into middleware you put in front of your routes.</p></explain>
+</question>
+
+<question id="trust-proxy" type="choice">
+<q>Your API runs behind one load balancer that <strong>you</strong> operate. What should you pass to <code>extractClientIp</code>?</q>
+<option correct><code>trustProxy: 1</code>, the number of proxies you run</option>
+<option><code>trustProxy: true</code>, to trust every address in the header</option>
+<option>Nothing: always use <code>remoteAddress</code>, even behind a proxy</option>
+<option>The first address in <code>X-Forwarded-For</code></option>
+<explain><p>Behind your proxy, every request seems to come from the proxy. <code>trustProxy: 1</code> reads the address your proxy added and ignores whatever the client wrote before it. Trusting the whole header would let clients fake their address again.</p></explain>
+</question>
+
+<question id="one-process" type="choice">
+<q>The in-memory limiter allows <code>max: 5</code> login attempts. You run three copies of the Task API. How many attempts can an attacker make per window?</q>
+<option>5, because the limit is in the code</option>
+<option>1, because the copies divide the limit</option>
+<option correct>Up to 15, because each process counts on its own</option>
+<option>Unlimited, because in-memory limiters do not work with several copies</option>
+<explain><p>The counts live in one process's memory, so each copy allows 5. It still slows guessing a lot, but for an exact limit across servers you need a shared store such as Redis.</p></explain>
+</question>
+
+<question id="cors-evil-200" type="choice">
+<q>In the attack test, <code>https://evil.example</code> fetched <code>/tasks</code> and got status <code>200</code> but <code>allow-origin = null</code>. What protects the user?</q>
+<option>The status 200 means the attack failed</option>
+<option>The server deleted the response body</option>
+<option correct>Without <code>Access-Control-Allow-Origin</code>, the browser hides the response from the evil page's script</option>
+<option>Nothing: the evil page can read the tasks</option>
+<explain><p>CORS is enforced by the browser, not the server, so the status is still 200. The missing <code>Access-Control-Allow-Origin</code> header is what makes the browser refuse to show the response to the script.</p></explain>
+</question>
+
+<question id="cors-credentials-star" type="choice">
+<q>Why does <code>@zudojs/security</code> refuse <code>{ origin: "*", credentials: true }</code>?</q>
+<option>Because <code>"*"</code> is not a valid string</option>
+<option correct>It would let every website on the internet act as your logged-in user</option>
+<option>Because credentials only work over plain HTTP</option>
+<option>Because an array is faster than <code>"*"</code></option>
+<explain><p><code>credentials: true</code> lets the browser send cookies. With <code>"*"</code>, any site could send them and read the answer. List the exact origins instead.</p></explain>
+</question>
+
+<question id="cors-regex-anchor" type="choice">
+<q>You want to allow only <code>https://app.example.com</code> with a <code>RegExp</code>. Which one is safe?</q>
+<option><code>/https:\/\/app\.example\.com/</code></option>
+<option><code>/app\.example\.com$/</code></option>
+<option correct><code>/^https:\/\/app\.example\.com$/</code></option>
+<option><code>/^https:\/\/app.example.com/</code></option>
+<explain><p>Anchor both ends with <code>^</code> and <code>$</code>. Without them, <code>https://app.example.com.evil.example</code> or <code>https://evil-app.example.com</code> can match. An array of exact strings is even safer.</p></explain>
+</question>
+
+<question id="csrf-when-needed" type="choice">
+<q>The Task API sends its JWT in an <code>Authorization</code> header that your own JavaScript adds. When do you need CSRF tokens?</q>
+<option>Always, for every API</option>
+<option correct>Only once credentials are sent automatically by the browser, which means cookies</option>
+<option>Only for <code>GET</code> requests</option>
+<option>Never, because CORS already stops forged requests</option>
+<explain><p>Another website cannot make the browser add your <code>Authorization</code> header. Cookies are attached automatically, so the moment the token moves into a cookie, add CSRF protection. CORS only hides responses; the forged request still arrives.</p></explain>
+</question>
+
+<question id="csrf-session-bound" type="choice">
+<q>Why was the attacker's POST with Mallory's own valid CSRF token refused for Ada's session?</q>
+<option>Mallory's token had expired</option>
+<option correct>Each token is tied to one session by <code>sessionId</code>, at issue time and at verify time</option>
+<option>Tokens can only be used once per day</option>
+<option>POST requests never accept tokens</option>
+<explain><p>A token signed for <code>session-mallory</code> does not match <code>session-ada</code>. That is why you always pass <code>sessionId</code> both when you issue and when you verify.</p></explain>
+</question>
+
+<question id="csrf-get" type="choice">
+<q>CSRF protection lets safe methods like <code>GET</code> through without a token. What rule follows from that?</q>
+<option>Put the CSRF token in the URL of every GET</option>
+<option>Use GET for deletes, since it is simpler</option>
+<option correct>Never change data in a GET handler</option>
+<option>Turn CSRF protection off for the whole API</option>
+<explain><p>A GET passes without a token, so a GET that deletes or updates something would be open to forged requests. Changes belong in POST, PUT, PATCH or DELETE.</p></explain>
+</question>
+
+<question id="cookie-attributes" type="choice">
+<q>What does the <code>HttpOnly</code> cookie attribute do?</q>
+<option>Sends the cookie only over HTTPS</option>
+<option correct>Stops page scripts from reading the cookie</option>
+<option>Stops the cookie from being sent by other sites</option>
+<option>Deletes the cookie when the tab closes</option>
+<explain><p><code>HttpOnly</code> hides the cookie from JavaScript, so an injected script cannot steal it. <code>Secure</code> means HTTPS only, and <code>SameSite</code> controls sending it on requests from other sites.</p></explain>
+</question>
+
+<question id="csp-purpose" type="choice">
+<q>What does the CSP rule <code>script-src 'self'</code> protect against?</q>
+<option>Password guessing</option>
+<option>Huge request bodies</option>
+<option correct>XSS: a script an attacker injected into the page will not run</option>
+<option>Requests from other origins to your API</option>
+<explain><p>It allows only scripts from your own origin. An injected inline script is blocked. That makes CSP the strongest browser-side defence against XSS; <code>'unsafe-inline'</code> weakens it.</p></explain>
+</question>
+
+<question id="hsts-when" type="choice">
+<q>When should you send <code>Strict-Transport-Security</code> (HSTS)?</q>
+<option>Right away, even while parts of the domain only work over HTTP</option>
+<option correct>Once your whole domain works over HTTPS, and think carefully before keeping <code>preload</code></option>
+<option>Only on plain HTTP responses</option>
+<option>Never, because browsers ignore it</option>
+<explain><p>HSTS tells the browser to use only HTTPS for a long time. Sent too early, it can lock users out of HTTP-only parts. <code>preload</code> asks browsers to hard-code your domain as HTTPS-only, which is hard to undo.</p></explain>
+</question>
+
+<question id="ssrf-what" type="choice">
+<q>A user pastes <code>http://169.254.169.254/latest/meta-data/</code> into your "link preview" feature. Why is that dangerous?</q>
+<option>It is a very large page that is slow to fetch</option>
+<option correct>It is the cloud metadata service: your server can reach it and it hands out the server's cloud credentials</option>
+<option>It contains JavaScript that runs in the user's browser</option>
+<option>It is not dangerous, because it is not a domain name</option>
+<explain><p>Your server sits inside your network, so it can reach addresses the attacker cannot. Making your server send requests for an attacker is Server-Side Request Forgery (SSRF).</p></explain>
+</question>
+
+<question id="ssrf-dns" type="choice">
+<q><code>isSafeUrl("https://preview.attacker.example/page")</code> returns <code>true</code>. What must you still do before fetching it?</q>
+<option>Nothing, the URL is safe</option>
+<option>Check that the page title is not an attack</option>
+<option correct>Look up the name and check every address it resolves to with <code>isPrivateHostname</code></option>
+<option>Retry the check a second time</option>
+<explain><p><code>isSafeUrl</code> cannot see DNS. An attacker can point a normal-looking name at <code>169.254.169.254</code>. If <em>any</em> resolved address is private, refuse it.</p></explain>
+</question>
+
+<question id="ssrf-redirect" type="choice">
+<q>A public page you fetch answers with a redirect to <code>http://169.254.169.254/</code>. How do you close that hole?</q>
+<option>Follow redirects automatically; <code>fetch</code> checks them</option>
+<option correct>Fetch with <code>redirect: "manual"</code> and check every redirect target the same way</option>
+<option>Only fetch URLs that end in <code>.html</code></option>
+<option>Add the page to the CORS allow-list</option>
+<explain><p>An automatic redirect sends your server to the private address without any check. With <code>redirect: "manual"</code> you see each target and run <code>isSafeUrl</code> and the DNS check on it.</p></explain>
+</question>
+
+<question id="sql-defence" type="choice">
+<q>What is the real defence against SQL injection?</q>
+<option>Blocking every input where <code>detectThreats</code> finds <code>SQL_INJECTION</code></option>
+<option>Removing quotes from all input</option>
+<option correct>Parameterized queries: the input is sent to the database as a value, never pasted into the SQL text</option>
+<option>Using a longer database password</option>
+<option>Checking inputs with a regular expression block-list</option>
+<explain><p>With parameters like <code>$1</code> and <code>$2</code>, the database treats <code>1 or true</code> as a value and refuses it for an integer column. Detectors and block-lists miss attacks and flag innocent text.</p></explain>
+</question>
+
+<question id="detector-use" type="choice">
+<q>How should you use <code>detectThreats</code>?</q>
+<option>Block every request it flags, and allow every request it does not flag</option>
+<option correct>Log and alert on what it finds, to spot someone probing your API; never rely on it as the defence</option>
+<option>Use it instead of schema validation</option>
+<option>Run it only on responses</option>
+<explain><p>It is a heuristic: it flagged "Please select a date and update the notes" and missed <code>1 or true</code>. "No threats found" never means "safe".</p></explain>
+</question>
+
+<question id="xss-defence" type="choice">
+<q>A task title contains <code>&lt;script&gt;</code>. What stops it from running on your pages?</q>
+<option>Rejecting every title with a <code>&lt;</code> in it</option>
+<option>Rate limiting the create route</option>
+<option correct>Encoding output for HTML (like <code>escapeHtml</code>) plus a strict CSP as a second layer</option>
+<option>A CSRF token on the form</option>
+<explain><p>Encode text for the place it goes, so <code>&lt;</code> becomes <code>&amp;lt;</code> and shows as text. CSP then blocks injected scripts even if encoding is missed somewhere.</p></explain>
+</question>
+
+<question id="out-rate-limit" type="output">
+<q>What does this print?</q>
+<code file="limit.js" browser="no">
+import { createRateLimiter } from "@zudojs/security";
+
+const limiter = createRateLimiter({ windowMs: 60_000, max: 2 });
+for (let i = 1; i <= 3; i++) {
+  const result = limiter.check({ ip: "203.0.113.7" });
+  console.log(i, result.allowed, result.remaining);
+}
+limiter.destroy();
+</code>
+<option correct>1 true 1
+2 true 0
+3 false 0</option>
+<option>1 true 2
+2 true 1
+3 true 0</option>
+<option>1 true 1
+2 false 0
+3 false 0</option>
+<option>1 true 1
+2 true 0
+3 false -1</option>
+<explain><p><code>max: 2</code> allows two requests per window. <code>remaining</code> counts down to <code>0</code> and stays there; the third request is refused.</p></explain>
+</question>
+
+<question id="out-client-ip" type="output">
+<q>An attacker sends a fake <code>X-Forwarded-For</code>. What does this print?</q>
+<code file="client-ip.js" browser="no">
+import { extractClientIp } from "@zudojs/security";
+
+const headers = { "x-forwarded-for": "198.51.100.9" };
+console.log(extractClientIp(headers, { remoteAddress: "203.0.113.7" }));
+</code>
+<option>198.51.100.9</option>
+<option correct>203.0.113.7</option>
+<option>198.51.100.9, 203.0.113.7</option>
+<option>undefined</option>
+<explain><p>Without <code>trustProxy</code>, the header is ignored and the real connection address is used. That is what makes the fake header useless.</p></explain>
+</question>
+
+<question id="out-client-ip-proxy" type="output">
+<q>Your own proxy at <code>10.0.0.1</code> forwards the request. What does this print?</q>
+<code file="proxy-ip.js" browser="no">
+import { extractClientIp } from "@zudojs/security";
+
+const headers = { "x-forwarded-for": "6.6.6.6, 198.51.100.9" };
+console.log(extractClientIp(headers, { remoteAddress: "10.0.0.1", trustProxy: 1 }));
+</code>
+<option>6.6.6.6</option>
+<option correct>198.51.100.9</option>
+<option>10.0.0.1</option>
+<option>6.6.6.6, 198.51.100.9</option>
+<explain><p>With one trusted proxy, the address your proxy added (the last one) is used. <code>6.6.6.6</code> was written by the client before it and is ignored.</p></explain>
+</question>
+
+<question id="out-cors-lookalikes" type="output">
+<q>What does this print?</q>
+<code file="cors.js" browser="no">
+import { isOriginAllowed } from "@zudojs/security";
+
+const config = { origin: ["https://app.example.com"], credentials: true };
+for (const origin of ["https://app.example.com", "https://app.example.com.evil.example", "http://app.example.com"]) {
+  console.log(isOriginAllowed(origin, config) ?? "refused");
+}
+</code>
+<option correct>https://app.example.com
+refused
+refused</option>
+<option>https://app.example.com
+https://app.example.com.evil.example
+refused</option>
+<option>https://app.example.com
+refused
+http://app.example.com</option>
+<option>https://app.example.com
+https://app.example.com.evil.example
+http://app.example.com</option>
+<explain><p>Only the exact origin passes. A longer name that starts with yours is a different host, and <code>http</code> is a different scheme, so both are refused.</p></explain>
+</question>
+
+<question id="out-cors-regex" type="output">
+<q>A developer forgot the anchors in a <code>RegExp</code> origin. What does this print?</q>
+<code file="cors-regex.js" browser="no">
+import { isOriginAllowed } from "@zudojs/security";
+
+const evil = "https://app.example.com.evil.example";
+console.log(isOriginAllowed(evil, { origin: /https:\/\/app\.example\.com/ }) ?? "refused");
+console.log(isOriginAllowed(evil, { origin: /^https:\/\/app\.example\.com$/ }) ?? "refused");
+</code>
+<option>refused
+refused</option>
+<option correct>https://app.example.com.evil.example
+refused</option>
+<option>refused
+https://app.example.com.evil.example</option>
+<option>https://app.example.com.evil.example
+https://app.example.com.evil.example</option>
+<explain><p>Without <code>^</code> and <code>$</code>, the pattern only has to appear <em>somewhere</em> in the origin, so the evil host matches. The anchored version refuses it.</p></explain>
+</question>
+
+<question id="out-secure-cookie" type="output">
+<q>What does this print?</q>
+<code file="cookie.js" browser="no">
+import { createSecureCookie } from "@zudojs/security";
+
+console.log(createSecureCookie("sid", "f3a9c1", { maxAge: 60 }));
+</code>
+<option correct>sid=f3a9c1; Max-Age=60; Secure; HttpOnly; SameSite=Lax</option>
+<option>sid=f3a9c1; Max-Age=60</option>
+<option>sid=f3a9c1; Max-Age=60; SameSite=None</option>
+<option>sid=f3a9c1; Max-Age=60; Secure; SameSite=Strict</option>
+<explain><p><code>createSecureCookie</code> turns on the three attributes that matter: <code>Secure</code>, <code>HttpOnly</code> and <code>SameSite=Lax</code>.</p></explain>
+</question>
+
+<question id="out-cookie-injection" type="output">
+<q>An attacker picks their own theme name. What does this print?</q>
+<code file="cookie-inject.js" browser="no">
+import { createSecureCookie } from "@zudojs/security";
+
+console.log(createSecureCookie("theme", "x; Domain=evil.example"));
+</code>
+<option>theme=x; Domain=evil.example; Secure; HttpOnly; SameSite=Lax</option>
+<option correct>theme=x%3B%20Domain%3Devil.example; Secure; HttpOnly; SameSite=Lax</option>
+<option>theme=x; Secure; HttpOnly; SameSite=Lax</option>
+<option>theme=; Secure; HttpOnly; SameSite=Lax</option>
+<explain><p>The value is percent-encoded, so <code>;</code> and <code>=</code> become harmless text and cannot add a <code>Domain</code> attribute.</p></explain>
+</question>
+
+<question id="out-csrf-verify" type="output">
+<q>What does this print?</q>
+<code file="csrf.js" browser="no">
+import { randomBytes } from "node:crypto";
+import { createCsrfProtection } from "@zudojs/security";
+
+const csrf = createCsrfProtection({ secret: randomBytes(32).toString("hex") });
+const ada = csrf.issue({ sessionId: "session-ada" });
+const cookieHeader = ada.setCookie.split(";")[0];
+
+console.log(csrf.verify({ method: "DELETE", headers: {}, cookieHeader }, { sessionId: "session-ada" }));
+console.log(csrf.verify({ method: "DELETE", headers: { "x-csrf-token": ada.token }, cookieHeader }, { sessionId: "session-ada" }));
+console.log(csrf.verify({ method: "HEAD", headers: {}, cookieHeader }, { sessionId: "session-ada" }));
+</code>
+<option>true
+true
+true</option>
+<option>false
+true
+false</option>
+<option correct>false
+true
+true</option>
+<option>false
+false
+true</option>
+<explain><p>A <code>DELETE</code> changes data, so it needs the token in the header. With Ada's token it passes. <code>HEAD</code> is a safe method, like <code>GET</code>, so it passes without one.</p></explain>
+</question>
+
+<question id="out-csrf-short-secret" type="output">
+<q>What does this print?</q>
+<code file="csrf-secret.js" browser="no">
+import { createCsrfProtection, MIN_CSRF_SECRET_LENGTH } from "@zudojs/security";
+
+try {
+  createCsrfProtection({ secret: "secret" });
+  console.log("started");
+} catch (error) {
+  if (error instanceof Error) console.log(error.name, MIN_CSRF_SECRET_LENGTH);
+}
+</code>
+<option>started</option>
+<option correct>ConfigurationError 32</option>
+<option>ConfigurationError 6</option>
+<option>ValidationError 16</option>
+<explain><p>A 6-character secret is far too weak to sign tokens, so the package refuses to start. It needs at least 32 characters of random data from the environment.</p></explain>
+</question>
+
+<question id="out-content-length" type="output">
+<q>What does this print?</q>
+<code file="length.js" browser="no">
+import { validateContentLength } from "@zudojs/security";
+
+console.log(validateContentLength("512", 16_384));
+console.log(validateContentLength("20000", 16_384));
+</code>
+<option correct>undefined
+Content-Length 20000 exceeds maximum 16384 bytes</option>
+<option>true
+false</option>
+<option>512
+20000</option>
+<option>Content-Length 512 is fine
+Content-Length 20000 exceeds maximum 16384 bytes</option>
+<explain><p>Each check returns an error message, or <code>undefined</code> when all is well. 20000 bytes is over the 16384 limit.</p></explain>
+</question>
+
+<question id="out-nan-limit" type="output">
+<q><code>BODY_LIMIT</code> is not set in the environment, so the code reads <code>undefined</code>. What does this print?</q>
+<code file="nan.js">
+const limit = Number(undefined);
+const size = 5_000_000_000;
+console.log(limit, size > limit);
+</code>
+<option>0 true</option>
+<option>undefined true</option>
+<option correct>NaN false</option>
+<option>NaN true</option>
+<explain><p><code>Number(undefined)</code> is <code>NaN</code>, and every comparison with <code>NaN</code> is false. So a naive <code>size &gt; limit</code> check lets a 5 GB body through. That is why <code>createBodySizeChecker</code> refuses a <code>NaN</code> limit.</p></explain>
+</question>
+
+<question id="out-safe-url" type="output">
+<q>What does this print?</q>
+<code file="ssrf.js" browser="no">
+import { isSafeUrl } from "@zudojs/security";
+
+for (const url of ["https://example.com/a", "http://0x7f000001/", "http://192.168.1.1/", "ftp://example.com/"]) {
+  console.log(isSafeUrl(url) ? "allowed" : "blocked");
+}
+</code>
+<option>allowed
+allowed
+blocked
+allowed</option>
+<option correct>allowed
+blocked
+blocked
+blocked</option>
+<option>allowed
+allowed
+blocked
+blocked</option>
+<option>allowed
+blocked
+blocked
+allowed</option>
+<explain><p><code>0x7f000001</code> is <code>127.0.0.1</code> written in hex, <code>192.168.1.1</code> is a private address, and only <code>http</code> and <code>https</code> are allowed, so <code>ftp</code> is blocked too.</p></explain>
+</question>
+
+<question id="out-private-dns" type="output">
+<q>A name resolves to two addresses. What does this print?</q>
+<code file="dns.js" browser="no">
+import { isPrivateHostname } from "@zudojs/security";
+
+const addresses = ["93.184.215.14", "10.0.0.8"];
+console.log(addresses.map(isPrivateHostname));
+console.log(addresses.some(isPrivateHostname) ? "blocked" : "ok");
+</code>
+<option>[ false, false ]
+ok</option>
+<option correct>[ false, true ]
+blocked</option>
+<option>[ true, true ]
+blocked</option>
+<option>[ false, true ]
+ok</option>
+<explain><p><code>10.0.0.8</code> is private. If <em>any</em> address is private, refuse the URL; checking only the first one would let this attacker through.</p></explain>
+</question>
+
+<question id="out-detect-threats" type="output">
+<q>What does this print?</q>
+<code file="detect.js" browser="no">
+import { detectThreats } from "@zudojs/security";
+
+console.log(detectThreats("Please drop off the keys"));
+console.log(detectThreats("1 or true"));
+</code>
+<option>[]
+[ 'SQL_INJECTION' ]</option>
+<option correct>[ 'SQL_INJECTION' ]
+[]</option>
+<option>[]
+[]</option>
+<option>[ 'SQL_INJECTION' ]
+[ 'SQL_INJECTION' ]</option>
+<explain><p>The heuristic flags an innocent sentence because it contains "drop", and misses <code>1 or true</code>, which is a real attack. That is why detectors are for logging, not for protection.</p></explain>
+</question>
+
+<question id="out-escape-html" type="output">
+<q>What does this print?</q>
+<code file="escape.js" browser="no">
+import { escapeHtml } from "@zudojs/security";
+
+console.log(escapeHtml("<b>Tom & Jerry</b>"));
+</code>
+<option>&lt;b&gt;Tom &amp; Jerry&lt;/b&gt;</option>
+<option correct>&amp;lt;b&amp;gt;Tom &amp;amp; Jerry&amp;lt;/b&amp;gt;</option>
+<option>Tom &amp; Jerry</option>
+<option>&amp;lt;b&amp;gt;Tom &amp; Jerry&amp;lt;/b&amp;gt;</option>
+<explain><p>Every <code>&lt;</code>, <code>&gt;</code> and <code>&amp;</code> is encoded, so the browser shows the text instead of making it a tag. <code>&amp;</code> must be encoded too, or text like <code>&amp;lt;</code> would turn back into a tag.</p></explain>
+</question>
+
+<question id="out-security-headers" type="output">
+<q>What does this print?</q>
+<code file="headers.js" browser="no">
+import { generateSecurityHeaders } from "@zudojs/security";
+
+const headers = generateSecurityHeaders();
+console.log(headers["X-Frame-Options"], headers["X-Content-Type-Options"]);
+</code>
+<option>SAMEORIGIN nosniff</option>
+<option correct>DENY nosniff</option>
+<option>DENY sniff</option>
+<option>undefined undefined</option>
+<explain><p>The strict defaults are <code>X-Frame-Options: DENY</code> (no framing at all) and <code>X-Content-Type-Options: nosniff</code> (no guessing file types).</p></explain>
+</question>
+
+<question id="code-origin-allowed" type="code" file="origin.js">
+<q><p>Write <code>allowOrigin(origin, allowed)</code> by hand. Return the origin when it is <strong>exactly</strong> one of the strings in <code>allowed</code>, otherwise return <code>undefined</code>. Do not use <code>startsWith</code> or <code>includes</code> on the string.</p></q>
+<starter>
+function allowOrigin(origin, allowed) {
+  // your code here
+}
+
+const allowed = ["https://app.example.com", "https://staging.app.example.com"];
+for (const origin of ["https://app.example.com", "https://app.example.com.evil.example", "http://app.example.com", "https://staging.app.example.com"]) {
+  console.log(allowOrigin(origin, allowed) ?? "refused");
+}
+</starter>
+<solution>
+function allowOrigin(origin, allowed) {
+  return allowed.some((entry) => entry === origin) ? origin : undefined;
+}
+
+const allowed = ["https://app.example.com", "https://staging.app.example.com"];
+for (const origin of ["https://app.example.com", "https://app.example.com.evil.example", "http://app.example.com", "https://staging.app.example.com"]) {
+  console.log(allowOrigin(origin, allowed) ?? "refused");
+}
+</solution>
+<expected>
+https://app.example.com
+refused
+refused
+https://staging.app.example.com
+</expected>
+<explain><p>Compare with <code>===</code> against each entry (or <code>allowed.includes(origin)</code> on the array). <code>origin.startsWith("https://app.example.com")</code> would let <code>https://app.example.com.evil.example</code> through.</p></explain>
+</question>
+
+<question id="code-private-ipv4" type="code" file="private-ip.js">
+<q><p>Write <code>isPrivateIPv4(address)</code> for an SSRF check. Return <code>true</code> for <code>10.x.x.x</code>, <code>127.x.x.x</code>, <code>169.254.x.x</code>, <code>192.168.x.x</code> and <code>172.16.x.x</code> to <code>172.31.x.x</code>; otherwise <code>false</code>. Split the address on <code>"."</code> and compare numbers.</p></q>
+<starter>
+function isPrivateIPv4(address) {
+  // your code here
+}
+
+for (const ip of ["93.184.215.14", "10.0.0.8", "127.0.0.1", "169.254.169.254", "172.20.1.1", "172.32.0.1", "192.168.1.5"]) {
+  console.log(ip, isPrivateIPv4(ip));
+}
+</starter>
+<solution>
+function isPrivateIPv4(address) {
+  const [a, b] = address.split(".").map(Number);
+  if (a === 10 || a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  return false;
+}
+
+for (const ip of ["93.184.215.14", "10.0.0.8", "127.0.0.1", "169.254.169.254", "172.20.1.1", "172.32.0.1", "192.168.1.5"]) {
+  console.log(ip, isPrivateIPv4(ip));
+}
+</solution>
+<expected>
+93.184.215.14 false
+10.0.0.8 true
+127.0.0.1 true
+169.254.169.254 true
+172.20.1.1 true
+172.32.0.1 false
+192.168.1.5 true
+</expected>
+<explain><p>Look at the first two numbers. <code>172.16</code> to <code>172.31</code> is a range, so compare the second number as a number, not as text. In a real app use <code>isPrivateHostname</code>, which also knows IPv6 and odd spellings like <code>0x7f000001</code>.</p></explain>
+</question>
+
+<question id="code-any-private" type="code" file="resolve-check.js">
+<q><p>A host name can resolve to several addresses. Finish <code>checkAddresses(addresses)</code>: return <code>"blocked"</code> when the list is empty or when <strong>any</strong> address is private (use the given <code>isPrivate</code>), otherwise return <code>"ok: "</code> followed by the addresses joined with <code>", "</code>.</p></q>
+<starter>
+const isPrivate = (ip) => ip.startsWith("10.") || ip.startsWith("127.") || ip.startsWith("169.254.");
+
+function checkAddresses(addresses) {
+  // your code here
+}
+
+console.log(checkAddresses(["93.184.215.14"]));
+console.log(checkAddresses(["169.254.169.254"]));
+console.log(checkAddresses(["93.184.215.14", "10.0.0.8"]));
+console.log(checkAddresses([]));
+</starter>
+<solution>
+const isPrivate = (ip) => ip.startsWith("10.") || ip.startsWith("127.") || ip.startsWith("169.254.");
+
+function checkAddresses(addresses) {
+  if (addresses.length === 0 || addresses.some(isPrivate)) return "blocked";
+  return `ok: ${addresses.join(", ")}`;
+}
+
+console.log(checkAddresses(["93.184.215.14"]));
+console.log(checkAddresses(["169.254.169.254"]));
+console.log(checkAddresses(["93.184.215.14", "10.0.0.8"]));
+console.log(checkAddresses([]));
+</solution>
+<expected>
+ok: 93.184.215.14
+blocked
+blocked
+blocked
+</expected>
+<explain><p>Use <code>some</code>, not a check on the first address: the attacker mixes one public and one private address. An empty list means the name did not resolve, so refuse it too.</p></explain>
+</question>
+
+<question id="code-http-only-url" type="code" file="scheme.js">
+<q><p>Finish <code>isFetchableUrl(text)</code>: return <code>true</code> only when the text parses with <code>new URL</code>, the protocol is <code>"http:"</code> or <code>"https:"</code>, and the URL has no username or password. Return <code>false</code> when <code>new URL</code> throws.</p></q>
+<starter>
+function isFetchableUrl(text) {
+  // your code here
+}
+
+for (const text of ["https://example.com/a", "file:///etc/passwd", "http://user:pass@example.com/", "not a url", "http://example.com:8080/"]) {
+  console.log(isFetchableUrl(text), text);
+}
+</starter>
+<solution>
+function isFetchableUrl(text) {
+  let url;
+  try {
+    url = new URL(text);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  return url.username === "" && url.password === "";
+}
+
+for (const text of ["https://example.com/a", "file:///etc/passwd", "http://user:pass@example.com/", "not a url", "http://example.com:8080/"]) {
+  console.log(isFetchableUrl(text), text);
+}
+</solution>
+<expected>
+true https://example.com/a
+false file:///etc/passwd
+false http://user:pass@example.com/
+false not a url
+true http://example.com:8080/
+</expected>
+<explain><p>Parse with <code>new URL</code> instead of looking at the text, and allow only the schemes you need. This is only the first step: the host must still be checked against private addresses.</p></explain>
+</question>
+
+<question id="code-fixed-window" type="code" file="limiter.js">
+<q><p>Build a tiny rate limiter. <code>createLimiter(max)</code> returns a function <code>check(ip)</code> that counts calls per IP in a <code>Map</code> and returns <code>true</code> while the count is at most <code>max</code>, and <code>false</code> after that.</p></q>
+<starter>
+function createLimiter(max) {
+  // your code here
+}
+
+const check = createLimiter(2);
+console.log(check("203.0.113.7"), check("203.0.113.7"), check("203.0.113.7"), check("198.51.100.1"));
+</starter>
+<solution>
+function createLimiter(max) {
+  const counts = new Map();
+  return (ip) => {
+    const count = (counts.get(ip) ?? 0) + 1;
+    counts.set(ip, count);
+    return count <= max;
+  };
+}
+
+const check = createLimiter(2);
+console.log(check("203.0.113.7"), check("203.0.113.7"), check("203.0.113.7"), check("198.51.100.1"));
+</solution>
+<expected>true true false true</expected>
+<explain><p>Each IP has its own counter, so a new address starts at 1. A real limiter also resets the count when the time window ends; that is what <code>windowMs</code> does in <code>createRateLimiter</code>.</p></explain>
+</question>
+
+<question id="code-escape-html" type="code" file="escape.js">
+<q><p>Write <code>escapeHtml(text)</code> by hand. Replace <code>&amp;</code> with <code>&amp;amp;</code>, <code>&lt;</code> with <code>&amp;lt;</code>, <code>&gt;</code> with <code>&amp;gt;</code> and <code>"</code> with <code>&amp;quot;</code>. Replace <code>&amp;</code> first.</p></q>
+<starter>
+function escapeHtml(text) {
+  // your code here
+}
+
+console.log(escapeHtml('<img src=x onerror="alert(1)">'));
+console.log(escapeHtml("Tom & Jerry"));
+</starter>
+<solution>
+function escapeHtml(text) {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+console.log(escapeHtml('<img src=x onerror="alert(1)">'));
+console.log(escapeHtml("Tom & Jerry"));
+</solution>
+<expected>
+&lt;img src=x onerror=&quot;alert(1)&quot;&gt;
+Tom &amp; Jerry
+</expected>
+<explain><p>If you replaced <code>&lt;</code> first, the next step would turn its <code>&amp;</code> into <code>&amp;amp;</code> and break it. In a real app use <code>escapeHtml</code> from the package, and add a strict CSP.</p></explain>
+</question>
+
+<question id="code-needs-csrf" type="code" file="needs-csrf.js">
+<q><p>Finish <code>needsCsrfToken(method)</code>: return <code>false</code> for the safe methods <code>GET</code>, <code>HEAD</code> and <code>OPTIONS</code>, and <code>true</code> for every other method. Accept lower-case method names too.</p></q>
+<starter>
+function needsCsrfToken(method) {
+  // your code here
+}
+
+console.log(["GET", "post", "HEAD", "DELETE", "options", "PATCH"].map(needsCsrfToken).join(" "));
+</starter>
+<solution>
+function needsCsrfToken(method) {
+  return !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
+}
+
+console.log(["GET", "post", "HEAD", "DELETE", "options", "PATCH"].map(needsCsrfToken).join(" "));
+</solution>
+<expected>false true false true false true</expected>
+<explain><p>Every method that can change data needs the token. Safe methods pass without one, which is why a GET handler must never change data.</p></explain>
+</question>
+
+<question id="code-body-limit-env" type="code" file="body-limit.js">
+<q><p>Finish <code>readBodyLimit(text)</code>, which reads a limit from an environment variable. Return the number when it is finite and above 0. Otherwise throw an <code>Error</code> with the message <code>BODY_LIMIT must be a positive number</code>.</p></q>
+<starter>
+function readBodyLimit(text) {
+  // your code here
+}
+
+for (const text of ["16384", undefined, "abc", "0"]) {
+  try {
+    console.log(readBodyLimit(text));
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</starter>
+<solution>
+function readBodyLimit(text) {
+  const limit = Number(text);
+  if (!Number.isFinite(limit) || limit <= 0) throw new Error("BODY_LIMIT must be a positive number");
+  return limit;
+}
+
+for (const text of ["16384", undefined, "abc", "0"]) {
+  try {
+    console.log(readBodyLimit(text));
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</solution>
+<expected>
+16384
+BODY_LIMIT must be a positive number
+BODY_LIMIT must be a positive number
+BODY_LIMIT must be a positive number
+</expected>
+<explain><p><code>Number(undefined)</code> and <code>Number("abc")</code> are <code>NaN</code>, and <code>NaN</code> makes every size comparison false. Refusing to start is safer than running with no limit.</p></explain>
+</question>
+
+<question id="code-secure-cookie" type="code" file="cookie.js">
+<q><p>Finish <code>secureCookie(name, value)</code>. Encode the value with <code>encodeURIComponent</code> and add the attributes <code>Secure</code>, <code>HttpOnly</code> and <code>SameSite=Lax</code>, separated by <code>"; "</code>.</p></q>
+<starter>
+function secureCookie(name, value) {
+  // your code here
+}
+
+console.log(secureCookie("sid", "f3a9c1"));
+console.log(secureCookie("theme", "x; Domain=evil.example"));
+</starter>
+<solution>
+function secureCookie(name, value) {
+  return `${name}=${encodeURIComponent(value)}; Secure; HttpOnly; SameSite=Lax`;
+}
+
+console.log(secureCookie("sid", "f3a9c1"));
+console.log(secureCookie("theme", "x; Domain=evil.example"));
+</solution>
+<expected>
+sid=f3a9c1; Secure; HttpOnly; SameSite=Lax
+theme=x%3B%20Domain%3Devil.example; Secure; HttpOnly; SameSite=Lax
+</expected>
+<explain><p>Encoding the value stops an attacker from adding their own <code>Domain</code> or other attributes with <code>;</code>. In the Task API, use <code>createSecureCookie</code>, which does the same.</p></explain>
+</question>

@@ -1,0 +1,965 @@
+<question id="why-records" type="choice">
+<q>Why is <code>{ message: "task created", taskId: 7, userId: "ada" }</code> easier to use later than the sentence <code>"Task 7 created by ada"</code>?</q>
+<option>It is shorter, so the log file uses less disk space</option>
+<option correct>Log tools can filter and count by named fields, without guessing how each sentence was worded</option>
+<option>Sentences cannot contain numbers in a log</option>
+<option>Only objects can be printed with <code>console.log</code></option>
+<explain><p>A structured entry is a record: a short fixed message plus named fields. You can search <code>userId === "ada"</code> exactly, like a database column. With sentences you must guess every way the text could be worded.</p></explain>
+</question>
+
+<question id="metadata-meaning" type="choice">
+<q>In a structured log entry, what is the <strong>metadata</strong>?</q>
+<option>The time and the level of the entry</option>
+<option>The name of the file that wrote the entry</option>
+<option correct>The details, stored in separate named fields next to a short fixed message</option>
+<option>The full sentence that describes what happened</option>
+<explain><p>The message says <em>what</em> happened (<code>"task created"</code>) and stays the same every time. The details that change (<code>taskId</code>, <code>userId</code>) go into metadata fields.</p></explain>
+</question>
+
+<question id="records-filter" type="output">
+<q>What does this print?</q>
+<code file="records.js">
+const records = [
+  { level: "info", message: "task created", taskId: 7, userId: "ada" },
+  { level: "warn", message: "slow query", durationMs: 840 },
+  { level: "info", message: "task completed", taskId: 7, userId: "ada" },
+  { level: "info", message: "task created", taskId: 9, userId: "linus" },
+];
+console.log(records.filter((r) => r.message === "task created").map((r) => r.userId));
+console.log(records.filter((r) => r.taskId === 7).length);
+</code>
+<option correct>[ 'ada', 'linus' ]
+2</option>
+<option>[ 'ada', 'ada', 'linus' ]
+2</option>
+<option>[ 'ada', 'linus' ]
+1</option>
+<option>[ 'ada' ]
+2</option>
+<explain><p>Two records have the message <code>"task created"</code>, from ada and linus. Two records have <code>taskId</code> 7. Because the message is fixed and the details are fields, these searches are exact.</p></explain>
+</question>
+
+<question id="formatter-vs-transport" type="choice">
+<q>A logger has a <strong>formatter</strong> and one or more <strong>transports</strong>. What does a transport do?</q>
+<option>It decides which levels are written</option>
+<option>It turns an entry into readable text or JSON</option>
+<option correct>It sends the formatted entry somewhere: the terminal, a file or a log service</option>
+<option>It hides passwords before the entry is written</option>
+<explain><p>The formatter turns an entry into text. The transport receives the entry and sends the text somewhere. A transport can be a plain function.</p></explain>
+</question>
+
+<question id="text-format-line" type="output">
+<q>What does this print?</q>
+<code file="first-logger.js">
+import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+logger.info("task created", { taskId: 7, title: "Buy milk" });
+</code>
+<option correct>[INFO] [task-api] task created taskId=7 title="Buy milk"</option>
+<option>[INFO] [task-api] task created taskId=7 title=Buy milk</option>
+<option>[task-api] [INFO] task created taskId=7 title="Buy milk"</option>
+<option>[INFO] task created { taskId: 7, title: 'Buy milk' }</option>
+<explain><p>The text formatter writes the level, the logger name, the message, then the metadata as <code>key=value</code> pairs. A value with a space gets quotes, so <code>title="Buy milk"</code> stays one field.</p></explain>
+</question>
+
+<question id="transport-fields" type="output">
+<q>This transport prints fields of the entry instead of the formatted text. What does it print?</q>
+<code file="transport-fields.js">
+import { createLogger } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  transports: [(entry) => console.log(entry.levelName, entry.logger, entry.metadata)],
+});
+
+logger.warn("slow query", { durationMs: 840 });
+</code>
+<option correct>warn task-api { durationMs: 840 }</option>
+<option>WARN task-api { durationMs: 840 }</option>
+<option>warn task-api durationMs=840</option>
+<option>2 task-api { durationMs: 840 }</option>
+<explain><p><code>entry.levelName</code> is the lower-case name <code>"warn"</code> (the number is in <code>entry.level</code>). <code>entry.metadata</code> is a real object, so <code>console.log</code> prints it as an object, not as <code>key=value</code> text.</p></explain>
+</question>
+
+<question id="level-order" type="choice">
+<q>Which list shows the six log levels from <strong>most</strong> to <strong>least</strong> serious?</q>
+<option correct>fatal, error, warn, info, debug, trace</option>
+<option>error, fatal, warn, info, trace, debug</option>
+<option>trace, debug, info, warn, error, fatal</option>
+<option>fatal, error, info, warn, debug, trace</option>
+<explain><p><code>fatal</code> means the process cannot continue. <code>trace</code> is the most detailed step-by-step information. <code>warn</code> (unusual but handled) is more serious than <code>info</code> (normal events).</p></explain>
+</question>
+
+<question id="level-threshold" type="output">
+<q>The default threshold is <code>info</code>. What does this print?</q>
+<code file="levels.js">
+import { createLogger, createTextLoggerFormatter, LoggerLevel } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+logger.debug("cache miss");
+logger.info("task created");
+logger.setLevel(LoggerLevel.WARN);
+logger.info("task updated");
+logger.error("could not save task");
+</code>
+<option correct>[INFO] [task-api] task created
+[ERROR] [task-api] could not save task</option>
+<option>[DEBUG] [task-api] cache miss
+[INFO] [task-api] task created
+[ERROR] [task-api] could not save task</option>
+<option>[INFO] [task-api] task created
+[INFO] [task-api] task updated
+[ERROR] [task-api] could not save task</option>
+<option>[INFO] [task-api] task created</option>
+<explain><p>With the threshold <code>info</code>, the <code>debug</code> entry is dropped. After <code>setLevel(LoggerLevel.WARN)</code>, the logger only writes <code>warn</code> and more serious, so <code>"task updated"</code> is dropped but the <code>error</code> is written.</p></explain>
+</question>
+
+<question id="level-option" type="output">
+<q>What does this print?</q>
+<code file="level-option.js">
+import { createLogger, createTextLoggerFormatter, LoggerLevel } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "worker",
+  level: LoggerLevel.DEBUG,
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+logger.trace("step 1");
+logger.debug("job picked", { jobId: 3 });
+logger.info("job done", { jobId: 3 });
+</code>
+<option correct>[DEBUG] [worker] job picked jobId=3
+[INFO] [worker] job done jobId=3</option>
+<option>[TRACE] [worker] step 1
+[DEBUG] [worker] job picked jobId=3
+[INFO] [worker] job done jobId=3</option>
+<option>[INFO] [worker] job done jobId=3</option>
+<option>[DEBUG] [worker] job picked jobId=3</option>
+<explain><p>With the threshold <code>debug</code>, the logger writes <code>debug</code> and everything more serious, like <code>info</code>. <code>trace</code> is less serious than <code>debug</code>, so it is still dropped.</p></explain>
+</question>
+
+<question id="level-slow-query" type="choice">
+<q>A database query took 2 seconds, but the request still worked. Which level fits best?</q>
+<option><code>error</code></option>
+<option correct><code>warn</code></option>
+<option><code>fatal</code></option>
+<option><code>trace</code></option>
+<explain><p><code>warn</code> is for something unusual that was handled. <code>error</code> is for something that failed and should have worked, and <code>fatal</code> means the process cannot continue.</p></explain>
+</question>
+
+<question id="level-from-config" type="choice">
+<q>Where should the Task API get its log level from?</q>
+<option>A constant in each service file</option>
+<option correct>Configuration: a <code>LOG_LEVEL</code> environment variable</option>
+<option>The client, through a query parameter such as <code>?log=debug</code></option>
+<option>It should always be <code>trace</code>, so nothing is lost</option>
+<explain><p>The level belongs in configuration, so you can change it per environment without changing code. Never let a client choose it, and don't log everything at <code>trace</code>: the real problems drown in noise.</p></explain>
+</question>
+
+<question id="child-metadata" type="output">
+<q>What does this print?</q>
+<code file="child.js">
+import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  metadata: { version: "0.1.0" },
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+const dbLogger = logger.child({ name: "task-api.db", metadata: { component: "db" } });
+dbLogger.info("connected", { pool: 10 });
+</code>
+<option correct>[INFO] [task-api.db] connected version=0.1.0 component=db pool=10</option>
+<option>[INFO] [task-api.db] connected component=db pool=10</option>
+<option>[INFO] [task-api] connected version=0.1.0 component=db pool=10</option>
+<option>[INFO] [task-api.db] connected pool=10</option>
+<explain><p>A child logger gets its own name and adds its metadata to the parent's. So the line carries the parent's <code>version</code>, the child's <code>component</code>, and the entry's own <code>pool</code>.</p></explain>
+</question>
+
+<question id="child-not-createlogger" type="choice">
+<q>Inside a service you need a logger. What does the lesson tell you to do?</q>
+<option>Call <code>createLogger</code> inside the service, so it has its own settings</option>
+<option>Use <code>console.log</code>, because services should not know about the logger</option>
+<option correct>Create a child of the main logger when the app starts and pass it into the service</option>
+<option>Import the main logger and change its name inside the service</option>
+<explain><p>A logger made with <code>createLogger</code> inside a service ignores every setting of the main one: level, formatter, transports. A child shares them and adds its own name and metadata.</p></explain>
+</question>
+
+<question id="request-id-why" type="choice">
+<q>Why put a request id on every log line a request writes?</q>
+<option>It makes the log lines sort by time</option>
+<option>It stops the client from sending the same request twice</option>
+<option correct>The lines of many requests are mixed together; one search for the id shows one request's whole story</option>
+<option>The log store refuses lines without an id</option>
+<explain><p>A server handles many users at once, so their lines interleave. With the same id on every line of one request, you can pull out exactly that request's lines.</p></explain>
+</question>
+
+<question id="correlation-id" type="choice">
+<q>Several services pass the same id along, so one user action can be followed through all of them. What is this id called?</q>
+<option>A session id</option>
+<option correct>A correlation id</option>
+<option>A tenant id</option>
+<option>A log level</option>
+<explain><p>A request id follows one request in one service. When the same id is passed from service to service, it is called a correlation id.</p></explain>
+</question>
+
+<question id="with-context" type="output">
+<q>What does this print?</q>
+<code file="context.js">
+import { createLogger, createLoggerContext, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+const requestLog = logger.withContext(createLoggerContext({ requestId: "req-41", userId: "ada" }));
+requestLog.info("task created", { taskId: 7 });
+logger.info("no request here");
+</code>
+<option correct>[INFO] [task-api] task created requestId=req-41 userId=ada taskId=7
+[INFO] [task-api] no request here</option>
+<option>[INFO] [task-api] task created taskId=7
+[INFO] [task-api] no request here</option>
+<option>[INFO] [task-api] task created requestId=req-41 userId=ada taskId=7
+[INFO] [task-api] no request here requestId=req-41 userId=ada</option>
+<option>[INFO] [req-41] task created userId=ada taskId=7
+[INFO] [task-api] no request here</option>
+<explain><p><code>withContext</code> returns a new logger that adds the context to every entry. The original <code>logger</code> is unchanged, so its line has no request id.</p></explain>
+</question>
+
+<question id="context-into-child" type="output">
+<q>What does this print?</q>
+<code file="context-child.js">
+import { createLogger, createLoggerContext, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+const requestLog = logger.withContext(createLoggerContext({ requestId: "req-8" }));
+requestLog.child({ name: "task-api.db" }).info("row inserted", { table: "tasks" });
+</code>
+<option correct>[INFO] [task-api.db] row inserted requestId=req-8 table=tasks</option>
+<option>[INFO] [task-api.db] row inserted table=tasks</option>
+<option>[INFO] [task-api] row inserted requestId=req-8 table=tasks</option>
+<option>[INFO] [task-api.db] row inserted requestId=req-8</option>
+<explain><p>The context travels into child loggers of the scoped logger. So the database line of this request still carries <code>requestId=req-8</code>.</p></explain>
+</question>
+
+<question id="client-request-id" type="choice">
+<q>A client sends its own <code>x-request-id</code> header. What is the safe way to handle it?</q>
+<option>Use it as the request id, so the client and server share one id</option>
+<option>Reject every request that has the header</option>
+<option correct>Create your own id; if you keep the client's value, log it as a separate field after checking its length and characters</option>
+<option>Use it only when it looks like a UUID, without any other checks</option>
+<explain><p>The header comes from the client, so anyone can choose it and mix fake lines into another request's story. Your own id (for example from <code>randomUUID()</code>) is the one you trust. The client's value is just extra, checked data.</p></explain>
+</question>
+
+<question id="error-object" type="choice">
+<q>When something throws, why should you log the error object and not only <code>error.message</code>?</q>
+<option>The message is always empty</option>
+<option correct>The object carries the error's name and its stack trace, which shows where the error was created</option>
+<option>Logging the object sends it to the client too</option>
+<option>The logger refuses strings as errors</option>
+<explain><p>The stack trace is the list of function calls that led to the error. Its first frame points at the line where the error was created: that is where you start looking.</p></explain>
+</question>
+
+<question id="log-error-entry" type="output">
+<q>This transport prints fields of the entry. What does it print?</q>
+<code file="log-error.js">
+import { createLogger, logError } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  transports: [(entry) => console.log(entry.levelName, entry.error.name, entry.error.message, entry.metadata)],
+});
+
+logError(logger, new TypeError("title must be a string"), "request failed", { status: 500 });
+</code>
+<option correct>error TypeError title must be a string { status: 500 }</option>
+<option>error Error title must be a string { status: 500 }</option>
+<option>warn TypeError title must be a string { status: 500 }</option>
+<option>error TypeError request failed { status: 500 }</option>
+<explain><p><code>logError(logger, error, message, metadata)</code> writes an <code>error</code> entry with the error attached. <code>entry.error</code> keeps the error's real name and message, while the entry's own message is <code>"request failed"</code>.</p></explain>
+</question>
+
+<question id="four-xx-level" type="choice">
+<q>A client asks for a task that does not exist, and your API answers <code>404</code>. How should you log it?</q>
+<option>As <code>error</code> with a stack trace, so nothing is missed</option>
+<option correct>As <code>warn</code> (or <code>info</code>) without a stack trace, because it is the client's mistake</option>
+<option>As <code>fatal</code>, because a task is missing</option>
+<option>Don't log it, and don't count it anywhere</option>
+<explain><p>A 4xx is not a failure of your server. Keep <code>error</code> for 5xx, the failures you must fix. If every 404 is an error, the real errors drown.</p></explain>
+</question>
+
+<question id="classify-output" type="output">
+<q>What does this print?</q>
+<code file="classify.js">
+import { BaseError, NotFoundError } from "@zudojs/errors";
+import { createLogger, createTextLoggerFormatter, logError } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted.split("\n")[0])],
+});
+
+function logFailure(error) {
+  const status = error instanceof BaseError ? error.statusCode : 500;
+  if (status < 500) logger.warn("request rejected", { status });
+  else logError(logger, error, "request failed", { status });
+}
+
+logFailure(new NotFoundError("Task 9 not found"));
+logFailure(new Error("connect ECONNREFUSED"));
+</code>
+<option correct>[WARN] [task-api] request rejected status=404
+[ERROR] [task-api] request failed status=500</option>
+<option>[ERROR] [task-api] request failed status=404
+[ERROR] [task-api] request failed status=500</option>
+<option>[WARN] [task-api] request rejected status=404
+[WARN] [task-api] request rejected status=500</option>
+<option>[WARN] [task-api] request rejected status=500
+[ERROR] [task-api] request failed status=500</option>
+<explain><p><code>NotFoundError</code> is a <code>BaseError</code> with <code>statusCode</code> 404, so it is logged as a warning. A plain <code>Error</code> is not a <code>BaseError</code>, so it counts as 500 and is logged as an error.</p></explain>
+</question>
+
+<question id="log-once" type="choice">
+<q>A save fails in the repository. Where should the error be logged?</q>
+<option>In the repository, the service and the handler, so every layer sees it</option>
+<option correct>Once, in the request wrapper, where the request id is also available</option>
+<option>Nowhere: the client gets the error, that is enough</option>
+<option>In the repository only, and then the error is swallowed</option>
+<explain><p>Logging the same error in every layer makes three entries for one problem. Let it travel up and log it once, in the request wrapper, which also knows the request id.</p></explain>
+</question>
+
+<question id="error-to-client" type="choice">
+<q>A database error happens while handling a request. What should the client receive?</q>
+<option>The error message and stack trace, so they can report it</option>
+<option>The SQL that failed</option>
+<option correct>The status and a safe message; the details go only to the log</option>
+<option>Nothing at all: close the connection</option>
+<explain><p>Error details can reveal how your system works, file paths or data. They belong in the log. The client gets a status like 500 and a safe message.</p></explain>
+</question>
+
+<question id="redact-default" type="output">
+<q>What does this print?</q>
+<code file="redact.js">
+import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+logger.info("login", { userId: "ada", password: "hunter2" });
+</code>
+<option correct>[INFO] [task-api] login userId=ada password=[REDACTED]</option>
+<option>[INFO] [task-api] login userId=ada password=hunter2</option>
+<option>[INFO] [task-api] login userId=ada</option>
+<option>[INFO] [task-api] login userId=[REDACTED] password=[REDACTED]</option>
+<explain><p>Redaction is on by default. A field whose name looks secret, like <code>password</code>, is replaced with <code>[REDACTED]</code> before any formatter or transport sees it. <code>userId</code> is not secret, so it stays.</p></explain>
+</question>
+
+<question id="redact-nested" type="output">
+<q>What does this print?</q>
+<code file="redact-nested.js">
+import { createLogger } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  transports: [(entry) => console.log(entry.metadata.headers)],
+});
+
+logger.debug("ignored");
+logger.info("request", { headers: { authorization: "Bearer abc.def", accept: "application/json" } });
+</code>
+<option correct>{ authorization: '[REDACTED]', accept: 'application/json' }</option>
+<option>{ authorization: 'Bearer abc.def', accept: 'application/json' }</option>
+<option>{ accept: 'application/json' }</option>
+<option>[REDACTED]</option>
+<explain><p>Redaction also works inside nested objects: <code>authorization</code> is hidden, while <code>accept</code> is kept. The transport already receives the redacted metadata. The <code>debug</code> entry was dropped by the level check.</p></explain>
+</question>
+
+<question id="redact-custom-key" type="output">
+<q>What does this print?</q>
+<code file="redact-email.js">
+import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  redact: { keys: ["email"] },
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+logger.info("signup", { userId: "ada", email: "ada@example.com", token: "t-1" });
+</code>
+<option correct>[INFO] [task-api] signup userId=ada email=[REDACTED] token=[REDACTED]</option>
+<option>[INFO] [task-api] signup userId=ada email=[REDACTED] token=t-1</option>
+<option>[INFO] [task-api] signup userId=ada email=ada@example.com token=[REDACTED]</option>
+<option>[INFO] [task-api] signup userId=ada email=[REDACTED]</option>
+<explain><p><code>redact.keys</code> <em>adds</em> names to the default list. So <code>email</code> is hidden because you added it, and <code>token</code> is still hidden by default.</p></explain>
+</question>
+
+<question id="redact-message-leak" type="output">
+<q>What does this print?</q>
+<code file="leak.js">
+import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+const token = "abc123";
+logger.info(`token issued: ${token}`);
+</code>
+<option correct>[INFO] [task-api] token issued: abc123</option>
+<option>[INFO] [task-api] token issued: [REDACTED]</option>
+<option>[INFO] [task-api] [REDACTED]</option>
+<option>[INFO] [task-api] token issued: token=[REDACTED]</option>
+<explain><p>Redaction works on field names only. The token was glued into the message text, so it leaked. Never build messages from outside values: keep the message fixed, like <code>"token issued"</code>, and leave the token out.</p></explain>
+</question>
+
+<question id="which-line-leaks" type="choice">
+<q>Which of these lines leaks a secret into the logs?</q>
+<option><code>log.info("login", { user, password })</code></option>
+<option correct><code>log.info(`login with password ${password}`)</code></option>
+<option><code>log.info("login", { userId: user.id })</code></option>
+<option><code>log.warn("login failed", { userId: user.id, reason: "bad password" })</code></option>
+<explain><p>The <code>password</code> <em>field</em> is redacted by name. But a value glued into the message text is never redacted, so the template string leaks it. The last option names the reason, not the password itself.</p></explain>
+</question>
+
+<question id="log-injection" type="output">
+<q>A task title contains a newline. What does this print?</q>
+<code file="injection.js">
+import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+logger.info("task created", { title: "Milk\n[ERROR] fake" });
+</code>
+<option correct>[INFO] [task-api] task created title="Milk\n[ERROR] fake"</option>
+<option>[INFO] [task-api] task created title="Milk
+[ERROR] fake"</option>
+<option>[INFO] [task-api] task created title=Milk
+[ERROR] fake</option>
+<option>[INFO] [task-api] task created title=[REDACTED]</option>
+<explain><p>A newline in a value is an attempt to fake a second log line: <strong>log injection</strong>. The formatter escapes it to <code>\n</code>, so everything stays inside one entry.</p></explain>
+</question>
+
+<question id="headers-logging" type="choice">
+<q>You write <code>log.debug("request", { headers: request.headers })</code>. What is the best advice?</q>
+<option>It is fully safe: redaction hides every header</option>
+<option correct><code>authorization</code> and <code>cookie</code> are redacted, but other headers may be personal; log only the headers you need</option>
+<option>It is safe because <code>debug</code> lines are never stored</option>
+<option>Headers can never contain secrets, so log all of them</option>
+<explain><p>Redaction knows secret names like <code>authorization</code> and <code>cookie</code>. Other headers can still carry personal data. Logging only the fields you need is the safest habit.</p></explain>
+</question>
+
+<question id="prod-rules" type="choice">
+<q>Which set of rules does the lesson give for logs in production?</q>
+<option>Readable text lines, written to a file that the app rotates each day</option>
+<option correct>One JSON object per line, written to standard output, and flush before the process exits</option>
+<option>One JSON array with all entries, written when the process exits</option>
+<option>Only <code>error</code> entries, written to the terminal</option>
+<explain><p>The platform (Docker, Kubernetes, a cloud service) collects standard output and ships it to a log store, which reads JSON fields without guessing. Rotating files is the platform's job, not your app's. <code>await logger.flush()</code> waits until every entry is written.</p></explain>
+</question>
+
+<question id="json-format" type="output">
+<q>The JSON formatter writes one line of JSON per entry. This transport parses it and prints three fields. What does it print?</q>
+<code file="json-format.js">
+import { createJsonLoggerFormatter, createLogger } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  formatter: createJsonLoggerFormatter(),
+  transports: [(entry) => {
+    const line = JSON.parse(entry.formatted);
+    console.log(line.levelName, line.message, JSON.stringify(line.metadata));
+  }],
+});
+
+logger.info("task created", { taskId: 7, apiKey: "k-1" });
+</code>
+<option correct>info task created {"taskId":7,"apiKey":"[REDACTED]"}</option>
+<option>info task created {"taskId":7,"apiKey":"k-1"}</option>
+<option>3 task created {"taskId":7,"apiKey":"[REDACTED]"}</option>
+<option>info task created taskId=7 apiKey=[REDACTED]</option>
+<explain><p>In JSON the metadata is a real object, not <code>key=value</code> text. Redaction runs in both formats, so <code>apiKey</code> is hidden here too.</p></explain>
+</question>
+
+<question id="level-numbers" type="output">
+<q>Levels are numbers inside the logger. What does this print?</q>
+<code file="level-numbers.js">
+import { LoggerLevel, loggerLevelFromName } from "@zudojs/logger";
+
+console.log(LoggerLevel.ERROR, LoggerLevel.INFO, LoggerLevel.DEBUG);
+console.log(loggerLevelFromName("warn") === LoggerLevel.WARN);
+</code>
+<option correct>1 3 4
+true</option>
+<option>4 2 1
+true</option>
+<option>1 3 4
+false</option>
+<option>error info debug
+true</option>
+<explain><p>The more serious the level, the smaller the number: <code>FATAL</code> is 0 and <code>TRACE</code> is 5. <code>loggerLevelFromName("warn")</code> turns the name into the same number as <code>LoggerLevel.WARN</code>.</p></explain>
+</question>
+
+<question id="invalid-level" type="output">
+<q>What does this print?</q>
+<code file="invalid-level.js">
+import { InvalidLoggerLevelError, loggerLevelFromName } from "@zudojs/logger";
+
+try {
+  loggerLevelFromName("loud");
+  console.log("ok");
+} catch (error) {
+  if (error instanceof InvalidLoggerLevelError) console.log(error.name, "-", error.message);
+}
+</code>
+<option correct>InvalidLoggerLevelError - Invalid logger level: loud.</option>
+<option>ok</option>
+<option>InvalidLoggerLevelError - loud</option>
+<option>Error - Invalid logger level: loud.</option>
+<explain><p><code>loud</code> is not one of the six level names, so <code>loggerLevelFromName</code> throws an <code>InvalidLoggerLevelError</code> and <code>"ok"</code> is never printed.</p></explain>
+</question>
+
+<question id="invalid-level-why" type="choice">
+<q>Why should <code>createAppLogger</code> throw at start-up when <code>LOG_LEVEL</code> contains a typo like <code>"loud"</code>?</q>
+<option>To make the app start faster</option>
+<option correct>You notice the mistake at once, instead of silently logging the wrong things for weeks</option>
+<option>Because the logger cannot work without a level</option>
+<option>So the client learns the correct level name</option>
+<explain><p>A bad setting that fails loudly at start-up is found in seconds. A bad setting that is silently ignored can hide every log line you needed for weeks.</p></explain>
+</question>
+
+<question id="env-parameter" type="choice">
+<q><code>createAppLogger(env = process.env)</code> takes the environment as a parameter. Why?</q>
+<option>Because <code>process.env</code> cannot be read inside a function</option>
+<option correct>A test can pass a plain object instead of changing real environment variables</option>
+<option>So each request can choose its own log level</option>
+<option>It is required by <code>createLogger</code></option>
+<explain><p>With the environment as a parameter, a test calls <code>createAppLogger({ LOG_LEVEL: "debug" })</code> and checks the result. The default <code>process.env</code> keeps real use simple.</p></explain>
+</question>
+
+<question id="flush-purpose" type="choice">
+<q>What does <code>await logger.flush()</code> do?</q>
+<option>It deletes all old log entries</option>
+<option>It sets the level back to <code>info</code></option>
+<option correct>It waits until every pending entry has been written</option>
+<option>It sends the logs to the client</option>
+<explain><p>Some transports write in the background. Before the process exits, flush so that the last entries, often the most important ones, are not lost.</p></explain>
+</question>
+
+<question id="count-transport-output" type="output">
+<q>This transport counts entries per level name. What does it print?</q>
+<code file="count.js">
+import { createLogger } from "@zudojs/logger";
+
+const counts = new Map();
+const logger = createLogger({
+  name: "task-api",
+  transports: [(entry) => {
+    counts.set(entry.levelName, (counts.get(entry.levelName) ?? 0) + 1);
+  }],
+});
+
+logger.info("task created");
+logger.debug("cache miss");
+logger.error("save failed");
+logger.info("task completed");
+console.log(counts);
+</code>
+<option correct>Map(2) { 'info' => 2, 'error' => 1 }</option>
+<option>Map(3) { 'info' => 2, 'debug' => 1, 'error' => 1 }</option>
+<option>Map(2) { 'info' => 1, 'error' => 1 }</option>
+<option>Map(3) { 'info' => 1, 'debug' => 1, 'error' => 1 }</option>
+<explain><p>The level check happens before any transport runs. With the default threshold <code>info</code>, the <code>debug</code> entry never reaches the transport.</p></explain>
+</question>
+
+<question id="code-count-levels" type="code" file="count-levels.js">
+<q><p>Write a transport that counts entries per level name (<code>entry.levelName</code>) in the <code>counts</code> Map. The program should print <code>Map(2) { 'warn' => 2, 'info' => 1 }</code>.</p></q>
+<starter>
+import { createLogger } from "@zudojs/logger";
+
+const counts = new Map();
+const logger = createLogger({
+  name: "task-api",
+  transports: [(entry) => {
+    // your code here
+  }],
+});
+
+logger.warn("slow query");
+logger.info("task created");
+logger.debug("cache miss");
+logger.warn("mail server slow");
+console.log(counts);
+</starter>
+<solution>
+import { createLogger } from "@zudojs/logger";
+
+const counts = new Map();
+const logger = createLogger({
+  name: "task-api",
+  transports: [(entry) => {
+    counts.set(entry.levelName, (counts.get(entry.levelName) ?? 0) + 1);
+  }],
+});
+
+logger.warn("slow query");
+logger.info("task created");
+logger.debug("cache miss");
+logger.warn("mail server slow");
+console.log(counts);
+</solution>
+<expected>Map(2) { 'warn' => 2, 'info' => 1 }</expected>
+<explain><p>Read the old count with <code>counts.get(...) ?? 0</code> and store it plus one. The <code>debug</code> entry never reaches the transport, because the default threshold is <code>info</code>.</p></explain>
+</question>
+
+<question id="code-collect-messages" type="code" file="collect.js">
+<q><p>Tests often check what the code logged. Finish the options: set the logger's level so only <code>warn</code> and more serious entries are kept, and add a transport that pushes each entry's <code>levelName</code> into <code>seen</code>. The program should print <code>[ 'warn', 'error' ]</code>.</p></q>
+<starter>
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+
+const seen = [];
+const logger = createLogger({
+  name: "task-api",
+  // your code here: the level and a transport
+});
+
+logger.info("task created");
+logger.warn("disk almost full");
+logger.error("save failed");
+console.log(seen);
+</starter>
+<solution>
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+
+const seen = [];
+const logger = createLogger({
+  name: "task-api",
+  level: LoggerLevel.WARN,
+  transports: [(entry) => {
+    seen.push(entry.levelName);
+  }],
+});
+
+logger.info("task created");
+logger.warn("disk almost full");
+logger.error("save failed");
+console.log(seen);
+</solution>
+<expected>[ 'warn', 'error' ]</expected>
+<explain><p>Pass <code>level: LoggerLevel.WARN</code> to <code>createLogger</code>. The <code>info</code> entry is dropped before any transport runs, so only the <code>warn</code> and <code>error</code> entries reach <code>seen</code>.</p></explain>
+</question>
+
+<question id="code-child-logger" type="code" file="child-logger.js">
+<q><p>Create <code>queueLogger</code>, a child of <code>logger</code> with the name <code>task-api.queue</code> and the metadata <code>{ component: "queue" }</code>. The program should print <code>[INFO] [task-api.queue] job done version=0.2.0 component=queue jobId=5</code>.</p></q>
+<starter>
+import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  metadata: { version: "0.2.0" },
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+const queueLogger = logger; // your code here
+
+queueLogger.info("job done", { jobId: 5 });
+</starter>
+<solution>
+import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  metadata: { version: "0.2.0" },
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+const queueLogger = logger.child({ name: "task-api.queue", metadata: { component: "queue" } });
+
+queueLogger.info("job done", { jobId: 5 });
+</solution>
+<expected>[INFO] [task-api.queue] job done version=0.2.0 component=queue jobId=5</expected>
+<explain><p><code>logger.child({ name, metadata })</code> shares the parent's formatter, transports and level, and adds its own name and metadata after the parent's <code>version</code>.</p></explain>
+</question>
+
+<question id="code-request-context" type="code" file="request-context.js">
+<q><p>Finish <code>handleRequest</code>: build a scoped logger with <code>logger.withContext(createLoggerContext({ requestId }))</code>, log <code>"listing tasks"</code> with <code>{ count }</code>, then log <code>"request done"</code> with <code>{ status: 200 }</code>. The program should print:</p>
+<pre>[INFO] [task-api] listing tasks requestId=req-1 count=2
+[INFO] [task-api] request done requestId=req-1 status=200</pre></q>
+<starter>
+import { createLogger, createLoggerContext, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+function handleRequest(requestId, count) {
+  // your code here
+}
+
+handleRequest("req-1", 2);
+</starter>
+<solution>
+import { createLogger, createLoggerContext, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+function handleRequest(requestId, count) {
+  const log = logger.withContext(createLoggerContext({ requestId }));
+  log.info("listing tasks", { count });
+  log.info("request done", { status: 200 });
+}
+
+handleRequest("req-1", 2);
+</solution>
+<expected>
+[INFO] [task-api] listing tasks requestId=req-1 count=2
+[INFO] [task-api] request done requestId=req-1 status=200
+</expected>
+<explain><p>Create the scoped logger once per request and use it for every line of that request. Both lines then carry the same <code>requestId</code> without you repeating it.</p></explain>
+</question>
+
+<question id="code-level-from-env" type="code" file="level-from-env.js">
+<q><p>Finish <code>levelFromEnv</code>: when <code>env.LOG_LEVEL</code> has text, trim it, lower-case it and turn it into a level with <code>loggerLevelFromName</code>; otherwise return <code>LoggerLevel.INFO</code>. The program should print <code>3 4 2</code>.</p></q>
+<starter>
+import { LoggerLevel, loggerLevelFromName } from "@zudojs/logger";
+
+function levelFromEnv(env) {
+  // your code here
+}
+
+console.log(levelFromEnv({}), levelFromEnv({ LOG_LEVEL: "debug" }), levelFromEnv({ LOG_LEVEL: " WARN " }));
+</starter>
+<solution>
+import { LoggerLevel, loggerLevelFromName } from "@zudojs/logger";
+
+function levelFromEnv(env) {
+  const name = env.LOG_LEVEL?.trim();
+  return name ? loggerLevelFromName(name.toLowerCase()) : LoggerLevel.INFO;
+}
+
+console.log(levelFromEnv({}), levelFromEnv({ LOG_LEVEL: "debug" }), levelFromEnv({ LOG_LEVEL: " WARN " }));
+</solution>
+<expected>3 4 2</expected>
+<explain><p>An empty or missing value falls back to <code>info</code> (3). A set value is cleaned up and converted, so <code>" WARN "</code> becomes <code>warn</code> (2). A typo would throw, which is what you want at start-up.</p></explain>
+</question>
+
+<question id="code-log-failure" type="code" file="log-failure.js">
+<q><p>Finish <code>logFailure</code>: use the error's <code>statusCode</code> when it is a <code>BaseError</code>, otherwise 500. Below 500, write <code>logger.warn("request rejected", { status })</code>; otherwise <code>logError(logger, error, "request failed", { status })</code>. The program should print:</p>
+<pre>warn 400
+error 500</pre></q>
+<starter>
+import { BaseError, ValidationError } from "@zudojs/errors";
+import { createLogger, logError } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  transports: [(entry) => console.log(entry.levelName, entry.metadata.status)],
+});
+
+function logFailure(error) {
+  // your code here
+}
+
+logFailure(new ValidationError("title is required"));
+logFailure(new Error("connect ECONNREFUSED"));
+</starter>
+<solution>
+import { BaseError, ValidationError } from "@zudojs/errors";
+import { createLogger, logError } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  transports: [(entry) => console.log(entry.levelName, entry.metadata.status)],
+});
+
+function logFailure(error) {
+  const status = error instanceof BaseError ? error.statusCode : 500;
+  if (status < 500) {
+    logger.warn("request rejected", { status });
+  } else {
+    logError(logger, error, "request failed", { status });
+  }
+}
+
+logFailure(new ValidationError("title is required"));
+logFailure(new Error("connect ECONNREFUSED"));
+</solution>
+<expected>
+warn 400
+error 500
+</expected>
+<explain><p>A <code>ValidationError</code> has status 400: the client's mistake, so a warning. An unknown error counts as 500: your failure, so an error entry with the error attached.</p></explain>
+</question>
+
+<question id="code-redact-keys" type="code" file="redact-keys.js">
+<q><p>The Task API also logs <code>email</code> and <code>phone</code>, which are personal data. Configure the logger so both are redacted. The program should print <code>[INFO] [task-api] signup userId=ada email=[REDACTED] phone=[REDACTED] plan=free</code>.</p></q>
+<starter>
+import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  // your code here
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+logger.info("signup", { userId: "ada", email: "ada@example.com", phone: "555-0100", plan: "free" });
+</starter>
+<solution>
+import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  redact: { keys: ["email", "phone"] },
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+logger.info("signup", { userId: "ada", email: "ada@example.com", phone: "555-0100", plan: "free" });
+</solution>
+<expected>[INFO] [task-api] signup userId=ada email=[REDACTED] phone=[REDACTED] plan=free</expected>
+<explain><p><code>redact: { keys: [...] }</code> adds your own names to the default list. Redaction happens before any formatter or transport sees the entry.</p></explain>
+</question>
+
+<question id="code-no-secret-in-message" type="code" file="safe-message.js">
+<q><p>This line leaks the token, because it is inside the message text. Rewrite <code>issueToken</code> so it logs the fixed message <code>"token issued"</code> with only <code>{ userId }</code> as metadata, and no token at all. The program should print <code>[INFO] [auth] token issued userId=ada</code>.</p></q>
+<starter>
+import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "auth",
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+function issueToken(userId, token) {
+  logger.info(`token issued for ${userId}: ${token}`);
+}
+
+issueToken("ada", "eyJhbGciOi.secret");
+</starter>
+<solution>
+import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "auth",
+  formatter: createTextLoggerFormatter({ includeTimestamp: false }),
+  transports: [(entry) => console.log(entry.formatted)],
+});
+
+function issueToken(userId, token) {
+  logger.info("token issued", { userId });
+}
+
+issueToken("ada", "eyJhbGciOi.secret");
+</solution>
+<expected>[INFO] [auth] token issued userId=ada</expected>
+<explain><p>Keep the message fixed and put harmless values in metadata. Redaction never looks inside message text, so the safest token log contains no token at all.</p></explain>
+</question>
+
+<question id="code-json-fields" type="code" file="json-fields.js">
+<q><p>Finish the transport: parse the JSON line in <code>entry.formatted</code> and print its <code>levelName</code>, <code>logger</code> and <code>message</code> fields, separated by spaces. The program should print <code>error task-api save failed</code>.</p></q>
+<starter>
+import { createJsonLoggerFormatter, createLogger } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  formatter: createJsonLoggerFormatter(),
+  transports: [(entry) => {
+    // your code here
+  }],
+});
+
+logger.error("save failed", { taskId: 7 });
+</starter>
+<solution>
+import { createJsonLoggerFormatter, createLogger } from "@zudojs/logger";
+
+const logger = createLogger({
+  name: "task-api",
+  formatter: createJsonLoggerFormatter(),
+  transports: [(entry) => {
+    const line = JSON.parse(entry.formatted);
+    console.log(line.levelName, line.logger, line.message);
+  }],
+});
+
+logger.error("save failed", { taskId: 7 });
+</solution>
+<expected>error task-api save failed</expected>
+<explain><p>With the JSON formatter, the formatter's text (<code>entry.formatted</code>) is one line of JSON. <code>JSON.parse</code> turns it back into an object whose fields a log store can read directly.</p></explain>
+</question>
+
+<question id="code-filter-records" type="code" file="filter-records.js">
+<q><p>Finish <code>messagesFor(records, userId)</code>: return the <code>message</code> of every record whose <code>userId</code> matches. The program should print <code>[ 'task created', 'task completed' ]</code>.</p></q>
+<starter>
+const records = [
+  { level: "info", message: "task created", taskId: 7, userId: "ada" },
+  { level: "info", message: "task created", taskId: 9, userId: "linus" },
+  { level: "info", message: "task completed", taskId: 7, userId: "ada" },
+];
+
+function messagesFor(records, userId) {
+  // your code here
+}
+
+console.log(messagesFor(records, "ada"));
+</starter>
+<solution>
+const records = [
+  { level: "info", message: "task created", taskId: 7, userId: "ada" },
+  { level: "info", message: "task created", taskId: 9, userId: "linus" },
+  { level: "info", message: "task completed", taskId: 7, userId: "ada" },
+];
+
+function messagesFor(records, userId) {
+  return records.filter((r) => r.userId === userId).map((r) => r.message);
+}
+
+console.log(messagesFor(records, "ada"));
+</solution>
+<expected>[ 'task created', 'task completed' ]</expected>
+<explain><p>Because each record has a named <code>userId</code> field, the search is an exact comparison. With free sentences you would have to guess every way a user's name could appear.</p></explain>
+</question>

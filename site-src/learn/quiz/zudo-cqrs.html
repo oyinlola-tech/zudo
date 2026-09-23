@@ -1,0 +1,1076 @@
+<question id="cqrs-rule" type="choice">
+<q>What is the one rule of CQRS?</q>
+<option>Every operation must go through a queue</option>
+<option correct>Every operation either changes data (a command) or reads data (a query), never both</option>
+<option>Reads and writes must use two different databases</option>
+<option>Every command must return the full object it changed</option>
+<explain><p>A command asks for a change and returns little. A query asks for data and must not change anything. Separate databases are an advanced version, not the rule itself.</p></explain>
+</question>
+
+<question id="which-query" type="choice">
+<q>Which of these is a <strong>query</strong>?</q>
+<option><code>MarkAllAsRead</code></option>
+<option><code>ArchiveOldTasks</code></option>
+<option correct><code>GetTaskCount</code></option>
+<option><code>CompleteTask</code></option>
+<explain><p><code>GetTaskCount</code> only reads. The others change data, so they are commands.</p></explain>
+</question>
+
+<question id="search-analytics" type="choice">
+<q><code>SearchTasks</code> returns matching tasks and also saves the search term for analytics. What should you do?</q>
+<option>Nothing, a query may change a little data</option>
+<option>Make it a command, since it changes data</option>
+<option correct>Keep <code>SearchTasks</code> a pure query, and record the term separately, for example with a <code>search.performed</code> event</option>
+<option>Run it twice, once as a command and once as a query</option>
+<explain><p>As described it is both, which breaks the rule. Split it: then the search can be cached and retried safely, and analytics happens on its own.</p></explain>
+</question>
+
+<question id="query-safe" type="choice">
+<q>Why is it valuable that a query can never change anything?</q>
+<option>Queries run without a database</option>
+<option correct>You can cache it, retry it and run it anywhere without fear: nothing in the world is different afterwards</option>
+<option>Queries never need permission checks</option>
+<option>Queries are always faster than commands</option>
+<explain><p>Running a pure query twice or a hundred times has no effect on your data, which makes caching and retries safe. Queries still check who is asking, because they return private data.</p></explain>
+</question>
+
+<question id="command-returns" type="choice">
+<q><code>CreateTask</code> returns <code>{ id: 1 }</code>. The caller wants the whole task. What should it do?</q>
+<option>Change the command to return every field</option>
+<option correct>Ask for it with a query</option>
+<option>Read the handler's private array directly</option>
+<option>Execute <code>CreateTask</code> again</option>
+<explain><p>Commands usually return little: an id, or nothing. Reading is the query side's job, and it may be shaped and cached for the screen that needs it.</p></explain>
+</question>
+
+<question id="command-naming" type="choice">
+<q>Commands are named <code>CreateTask</code> and <code>CompleteTask</code>, events <code>task.completed</code>. What is the difference in meaning?</q>
+<option>None, it is only a style choice</option>
+<option correct>A command is an order that can be refused; an event already happened</option>
+<option>Commands run in the browser, events on the server</option>
+<option>Events are for errors, commands for success</option>
+<explain><p>A command is in the imperative: "complete task 7". The handler may refuse it. An event in the past tense reports a fact that cannot be undone.</p></explain>
+</question>
+
+<question id="one-handler" type="choice">
+<q>Why does a command bus allow exactly one handler per type?</q>
+<option>To save memory</option>
+<option correct>"Complete task 7" should be done once, by one piece of code, not by whoever happens to listen</option>
+<option>Because JavaScript maps cannot hold two values</option>
+<option>So that handlers can run in parallel</option>
+<explain><p>A command is a single job with a single result. A second handler throws <code>DuplicateHandlerError</code> at registration, while the app starts.</p></explain>
+</question>
+
+<question id="missing-handler" type="choice">
+<q>You execute <code>CompleteTsk</code> (a typo) on a command bus. How is this different from the message bus?</q>
+<option>Both report a success with an empty value</option>
+<option correct>The command bus throws <code>CommandHandlerNotFoundError</code> (500), while the message bus counted a message nobody handled as a success</option>
+<option>The command bus silently does nothing</option>
+<option>The command bus picks the closest matching handler</option>
+<explain><p>On a command bus a missing handler is a bug, and a status of 500 says so. You find the typo at once instead of wondering why nothing happened.</p></explain>
+</question>
+
+<question id="create-command-type-wins" type="choice">
+<q>Why does it matter that <code>createCommand("CompleteTask", body)</code> ignores a <code>type</code> field inside <code>body</code>?</q>
+<option>It makes commands smaller</option>
+<option correct>When the data comes from a request body, a client cannot turn a <code>CompleteTask</code> into <code>DeleteAllTasks</code></option>
+<option>Because <code>type</code> is a reserved word in JavaScript</option>
+<option>So that commands can be sorted by type</option>
+<explain><p>The type you pass always wins. If the body's <code>type</code> won, the client would choose which handler runs.</p></explain>
+</question>
+
+<question id="class-handler" type="choice">
+<q>Why would you write a handler as a class like <code>CompleteTaskHandler extends CommandHandler</code>?</q>
+<option>Classes run faster than functions</option>
+<option correct>It can receive its dependencies (a repository, the event bus) in its constructor, which fits the DI container</option>
+<option>Functions cannot be registered on a bus</option>
+<option>Only classes can throw errors</option>
+<explain><p>Both forms work. A class gets its dependencies from outside, so the container can wire it and a test can pass in fakes.</p></explain>
+</question>
+
+<question id="execute-throws" type="choice">
+<q>A handler throws <code>new NotFoundError("Task 9 not found")</code>. What does the caller of <code>execute</code> get?</q>
+<option>A result object with <code>success: false</code></option>
+<option>A generic <code>Error</code> without a status</option>
+<option correct>The same <code>NotFoundError</code>, unchanged, with its 404</option>
+<option><code>undefined</code></option>
+<explain><p>Unlike the message bus, there is no result object: <code>execute</code> returns the handler's value or throws its error. The HTTP layer can turn the 404 into the right response.</p></explain>
+</question>
+
+<question id="userid-in-body" type="choice">
+<q>A <code>CompleteTask</code> command carries <code>{ taskId, userId }</code> from the request body, and the handler checks <code>owner === command.userId</code>. What is wrong?</q>
+<option>Nothing, the check compares the owner</option>
+<option correct>Linus can send <code>"userId": "ada"</code> and complete Ada's task: he chose the value the check compares with</option>
+<option>The command is too big</option>
+<option><code>userId</code> should be a number</option>
+<explain><p>Who is asking must never come from data the client sends. The HTTP layer reads the user from the verified login token and puts it in the execution context.</p></explain>
+</question>
+
+<question id="not-found-not-forbidden" type="choice">
+<q>Linus tries to complete Ada's task 1. Why does the handler throw <code>NotFoundError</code> (404) instead of a 403?</q>
+<option>Because 403 is not supported by the bus</option>
+<option correct>Saying "forbidden" would confirm that task 1 exists; "not found" tells an outsider nothing</option>
+<option>Because Linus is not signed in</option>
+<option>Because 404 is faster to send</option>
+<explain><p>A 403 leaks that the task exists and belongs to someone else. For another user's private data, "not found" is the safer answer. A caller with no user at all gets 401.</p></explain>
+</question>
+
+<question id="with-user-new" type="choice">
+<q>What does <code>withUser(request, "ada")</code> do?</q>
+<option>It changes <code>request</code> so its <code>userId</code> becomes <code>"ada"</code></option>
+<option correct>It returns a <em>new</em> frozen context with the user set; <code>request</code> itself is unchanged</option>
+<option>It logs Ada in</option>
+<option>It checks Ada's password</option>
+<explain><p>Contexts are frozen, and nothing is changed in place. That is why one base context can produce an Ada context and a Linus context safely.</p></explain>
+</question>
+
+<question id="child-context" type="choice">
+<q>A command causes another command. What does <code>createChildExecutionContext(parent)</code> give the second one?</q>
+<option>A new user and a new correlation id</option>
+<option correct>The same user and correlation id, with the parent's <code>requestId</code> as its <code>causationId</code></option>
+<option>An empty context</option>
+<option>The parent context itself, unchanged</option>
+<explain><p>It keeps the chain intact: the same operation (correlation id), a clear parent (causation id), and its own new request id.</p></explain>
+</question>
+
+<question id="next-once" type="choice">
+<q>What is the rule for calling <code>next</code> in CQRS middleware?</q>
+<option>Call it at least twice, so the handler runs again on failure</option>
+<option correct>Call it at most once; skipping it is only right for a guard that throws or returns a deliberate answer</option>
+<option>Never call it; the bus calls the handler</option>
+<option>Call it only for queries</option>
+<explain><p>A second call throws. Not calling it skips the handler silently, which is a bug unless the middleware deliberately answers or refuses the request.</p></explain>
+</question>
+
+<question id="error-middleware" type="choice">
+<q>What does <code>errorMiddleware()</code> do with a plain <code>Error("connection to the database was reset")</code>?</q>
+<option>It sends the database message to the client</option>
+<option correct>It wraps it in a <code>CqrsError</code> with status 500 and <code>expose: false</code>, so the HTTP layer sends a generic message</option>
+<option>It retries the command</option>
+<option>It swallows the error and returns <code>undefined</code></option>
+<explain><p>Internal messages can leak details about your system. Errors from <code>@zudojs/errors</code>, like <code>NotFoundError</code>, pass through unchanged, because they are meant for the client.</p></explain>
+</question>
+
+<question id="guard-and-handler" type="choice">
+<q>A guard middleware throws <code>AuthenticationError</code> when the context has no user. Can the handlers drop their ownership checks?</q>
+<option>Yes, the guard already checked the user</option>
+<option correct>No: "signed in" and "allowed to touch this task" are different questions, so keep ownership checks in the handlers</option>
+<option>Yes, if the guard runs first</option>
+<option>No, because guards do not work on command buses</option>
+<explain><p>The guard is a safety net for "is anyone signed in?". Only the handler knows who owns the task, so it must still refuse other users' tasks.</p></explain>
+</question>
+
+<question id="when-skip" type="choice">
+<q>When is CQRS probably <strong>not</strong> worth it?</q>
+<option>When you have many operations and want each in a small, testable handler</option>
+<option>When you want one place to audit or authorize every change</option>
+<option correct>When the app is small, mostly simple create-read-update-delete, and a bus would only sit between a route and one function call</option>
+<option>When reads need caching and writes need transactions</option>
+<explain><p>CQRS adds a bus, a type per operation and a handler per type. For a small app, a service class with methods is clearer. Indirection costs reading time.</p></explain>
+</question>
+
+<question id="out-first-bus" type="output">
+<q>What does this print?</q>
+<code file="first.js">
+import { createCommandBus, createQueryBus } from "@zudojs/cqrs";
+
+const tasks = [];
+const commands = createCommandBus();
+const queries = createQueryBus();
+
+commands.register("CreateTask", (command) => {
+  const task = { id: tasks.length + 1, title: command.title };
+  tasks.push(task);
+  return { id: task.id };
+});
+queries.register("ListTasks", () => tasks);
+
+console.log(await commands.execute({ type: "CreateTask", title: "Buy milk" }));
+console.log(await queries.execute({ type: "ListTasks" }));
+</code>
+<option correct>{ id: 1 }
+[ { id: 1, title: 'Buy milk' } ]</option>
+<option>{ id: 1, title: 'Buy milk' }
+[ { id: 1, title: 'Buy milk' } ]</option>
+<option>{ success: true, value: { id: 1 } }
+[ { id: 1, title: 'Buy milk' } ]</option>
+<option>{ id: 1 }
+[]</option>
+<explain><p><code>execute</code> returns exactly what the handler returns: the command gives the new id, and the query gives the list.</p></explain>
+</question>
+
+<question id="out-duplicate" type="output">
+<q>What does this print?</q>
+<code file="duplicate.js">
+import { createCommandBus } from "@zudojs/cqrs";
+
+const bus = createCommandBus();
+bus.register("CompleteTask", () => "first");
+try {
+  bus.register("CompleteTask", () => "second");
+} catch (error) {
+  console.log(error.name);
+}
+console.log(await bus.execute({ type: "CompleteTask" }));
+</code>
+<option>second</option>
+<option>[ 'first', 'second' ]</option>
+<option correct>DuplicateHandlerError
+first</option>
+<option>DuplicateHandlerError
+second</option>
+<explain><p>Each type has exactly one handler. The second registration throws, and the first handler stays in place.</p></explain>
+</question>
+
+<question id="out-not-found-handler" type="output">
+<q>What does this print?</q>
+<code file="typo.js">
+import { createQueryBus } from "@zudojs/cqrs";
+
+const queries = createQueryBus();
+queries.register("ListTasks", () => []);
+try {
+  console.log(await queries.execute({ type: "ListTask" }));
+} catch (error) {
+  console.log(error.name, error.statusCode);
+}
+</code>
+<option>[]</option>
+<option>undefined</option>
+<option correct>QueryHandlerNotFoundError 500</option>
+<option>QueryHandlerNotFoundError 404</option>
+<explain><p>A type with no handler is a bug in your code, so the bus throws with status 500. It does not guess a similar name.</p></explain>
+</question>
+
+<question id="out-create-command" type="output">
+<q>The data came from a request body. What does this print?</q>
+<code file="create-command.js">
+import { createCommand } from "@zudojs/cqrs";
+
+const body = { taskId: 7, type: "DeleteAllTasks" };
+const command = createCommand("CompleteTask", body);
+console.log(command.type, command.taskId, Object.isFrozen(command));
+</code>
+<option>DeleteAllTasks 7 true</option>
+<option correct>CompleteTask 7 true</option>
+<option>CompleteTask 7 false</option>
+<option>CompleteTask undefined true</option>
+<explain><p>The type you pass always wins over a <code>type</code> field in the data, and the command is frozen. A client cannot choose a different command.</p></explain>
+</question>
+
+<question id="out-handler-error" type="output">
+<q>What does this print?</q>
+<code file="not-found.js">
+import { createCommandBus } from "@zudojs/cqrs";
+import { NotFoundError } from "@zudojs/errors";
+
+const rows = new Map([[1, { title: "Buy milk", done: false }]]);
+const bus = createCommandBus();
+bus.register("CompleteTask", (command) => {
+  const row = rows.get(command.taskId);
+  if (!row) throw new NotFoundError(`Task ${command.taskId} not found`);
+  row.done = true;
+});
+
+await bus.execute({ type: "CompleteTask", taskId: 1 });
+console.log(rows.get(1).done);
+try {
+  await bus.execute({ type: "CompleteTask", taskId: 9 });
+} catch (error) {
+  console.log(error.name, error.statusCode, error.message);
+}
+</code>
+<option correct>true
+NotFoundError 404 Task 9 not found</option>
+<option>true
+CqrsError 500 Task 9 not found</option>
+<option>false
+NotFoundError 404 Task 9 not found</option>
+<option>true
+undefined</option>
+<explain><p>An error thrown by a handler comes straight out of <code>execute</code>, unchanged, still carrying its 404.</p></explain>
+</question>
+
+<question id="out-insecure" type="output">
+<q>Linus is logged in, but he sends this body. What does this print?</q>
+<code file="insecure.js">
+import { createCommandBus } from "@zudojs/cqrs";
+
+const owners = new Map([[1, "ada"]]);
+const bus = createCommandBus();
+bus.register("CompleteTask", (command) => {
+  if (owners.get(command.taskId) !== command.userId) return "refused";
+  return `task ${command.taskId} completed for ${command.userId}`;
+});
+
+const body = JSON.parse('{ "taskId": 1, "userId": "ada" }');
+console.log(await bus.execute({ ...body, type: "CompleteTask" }));
+</code>
+<option>refused</option>
+<option correct>task 1 completed for ada</option>
+<option>task 1 completed for linus</option>
+<option>NotFoundError</option>
+<explain><p>This is the security hole: the check passes because Linus chose the <code>userId</code> it compares with. The user must come from the verified login, in the execution context.</p></explain>
+</question>
+
+<question id="out-secure-context" type="output">
+<q>What does this print?</q>
+<code file="secure.js">
+import { createCommandBus, createExecutionContext, withUser } from "@zudojs/cqrs";
+import { AuthenticationError, NotFoundError } from "@zudojs/errors";
+
+const owners = new Map([[1, "ada"]]);
+const bus = createCommandBus();
+bus.register("CompleteTask", (command, context) => {
+  const userId = context?.userId;
+  if (!userId) throw new AuthenticationError("Sign in first");
+  if (owners.get(command.taskId) !== userId) throw new NotFoundError(`Task ${command.taskId} not found`);
+  return `completed for ${userId}`;
+});
+
+const request = createExecutionContext({ source: "http" });
+for (const context of [withUser(request, "linus"), withUser(request, "ada"), request]) {
+  try {
+    console.log(await bus.execute({ type: "CompleteTask", taskId: 1 }, context));
+  } catch (error) {
+    console.log(error.statusCode, error.message);
+  }
+}
+</code>
+<option>completed for linus
+completed for ada
+401 Sign in first</option>
+<option correct>404 Task 1 not found
+completed for ada
+401 Sign in first</option>
+<option>403 Task 1 not found
+completed for ada
+401 Sign in first</option>
+<option>404 Task 1 not found
+completed for ada
+completed for undefined</option>
+<explain><p>The user comes from the context. Linus gets a 404, which does not reveal that the task exists. A context with no user gets 401.</p></explain>
+</question>
+
+<question id="out-with-user" type="output">
+<q>What does this print?</q>
+<code file="with-user.js">
+import { createExecutionContext, withUser } from "@zudojs/cqrs";
+
+const request = createExecutionContext({ source: "http", correlationId: "req-7f3a" });
+const ada = withUser(request, "ada");
+console.log(request.userId, ada.userId, ada.correlationId);
+console.log(Object.isFrozen(ada), ada === request);
+</code>
+<option>ada ada req-7f3a
+true false</option>
+<option correct>undefined ada req-7f3a
+true false</option>
+<option>undefined ada undefined
+true false</option>
+<option>undefined ada req-7f3a
+false true</option>
+<explain><p><code>withUser</code> returns a new frozen context and keeps the other fields. The original context still has no user.</p></explain>
+</question>
+
+<question id="out-child-context" type="output">
+<q>What does this print?</q>
+<code file="child.js">
+import { createChildExecutionContext, createExecutionContext, withUser } from "@zudojs/cqrs";
+
+const parent = withUser(createExecutionContext({ correlationId: "req-7f3a" }), "ada");
+const child = createChildExecutionContext(parent);
+console.log(child.userId, child.correlationId);
+console.log(child.causationId === parent.requestId, child.requestId === parent.requestId);
+</code>
+<option correct>ada req-7f3a
+true false</option>
+<option>undefined req-7f3a
+true false</option>
+<option>ada req-7f3a
+false true</option>
+<option>ada undefined
+true true</option>
+<explain><p>The child keeps the user and the correlation id, points to its parent with <code>causationId</code>, and gets its own <code>requestId</code>.</p></explain>
+</question>
+
+<question id="out-middleware-order" type="output">
+<q>What does this print?</q>
+<code file="order.js">
+import { createCommandBus } from "@zudojs/cqrs";
+
+const log = (name) => async (request, context, next) => {
+  console.log(name);
+  return next(request, context);
+};
+const bus = createCommandBus({ middleware: [log("audit"), log("timing")] });
+bus.use(log("guard"));
+bus.register("CreateTask", () => "created");
+
+console.log(await bus.execute({ type: "CreateTask" }));
+</code>
+<option correct>audit
+timing
+guard
+created</option>
+<option>guard
+audit
+timing
+created</option>
+<option>timing
+audit
+guard
+created</option>
+<option>audit
+timing
+created</option>
+<explain><p>Middleware runs in the order you list it. <code>bus.use</code> adds one more at the end, closest to the handler.</p></explain>
+</question>
+
+<question id="out-next-twice" type="output">
+<q>What does this print?</q>
+<code file="twice.js">
+import { createCommandBus } from "@zudojs/cqrs";
+
+const retry = async (request, context, next) => {
+  await next(request, context);
+  return next(request, context);
+};
+const bus = createCommandBus({ middleware: [retry] });
+bus.register("ChargeCard", () => "charged");
+
+try {
+  console.log(await bus.execute({ type: "ChargeCard" }));
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option>charged</option>
+<option>charged
+charged</option>
+<option correct>MiddlewareExecutionError</option>
+<option>undefined</option>
+<explain><p>A middleware must call <code>next</code> at most once. Running a command twice by accident, like charging a card, is exactly what this rule prevents.</p></explain>
+</question>
+
+<question id="out-skip-next" type="output">
+<q>What does this print?</q>
+<code file="skip.js">
+import { createCommandBus } from "@zudojs/cqrs";
+
+const forgetful = async (request, context, next) => {
+  return "done";
+};
+const bus = createCommandBus({ middleware: [forgetful] });
+bus.register("CreateTask", () => {
+  console.log("handler ran");
+  return { id: 1 };
+});
+
+console.log(await bus.execute({ type: "CreateTask" }));
+</code>
+<option>handler ran
+{ id: 1 }</option>
+<option>handler ran
+done</option>
+<option correct>done</option>
+<option>MiddlewareExecutionError</option>
+<explain><p>Not calling <code>next</code> skips the handler silently. The caller believes the task was created. Only guards that throw or answer on purpose should skip <code>next</code>.</p></explain>
+</question>
+
+<question id="out-error-middleware" type="output">
+<q>What does this print?</q>
+<code file="errors.js">
+import { createCommandBus, errorMiddleware } from "@zudojs/cqrs";
+import { NotFoundError } from "@zudojs/errors";
+
+const bus = createCommandBus({ middleware: [errorMiddleware()] });
+bus.register("ExportTasks", () => {
+  throw new Error("connection to 10.0.0.8 was reset");
+});
+bus.register("CompleteTask", () => {
+  throw new NotFoundError("Task 9 not found");
+});
+
+for (const type of ["ExportTasks", "CompleteTask"]) {
+  try {
+    await bus.execute({ type });
+  } catch (error) {
+    console.log(error.name, error.statusCode, error.expose);
+  }
+}
+</code>
+<option>Error undefined undefined
+NotFoundError 404 true</option>
+<option correct>CqrsError 500 false
+NotFoundError 404 true</option>
+<option>CqrsError 500 false
+CqrsError 500 false</option>
+<option>CqrsError 500 true
+NotFoundError 404 true</option>
+<explain><p>The unexpected plain error is wrapped in a <code>CqrsError</code> with <code>expose: false</code>, so its internal details are not shown to clients. The <code>NotFoundError</code> passes through unchanged.</p></explain>
+</question>
+
+<question id="out-bus-info" type="output">
+<q>What does this print?</q>
+<code file="info.js">
+import { createCommandBus } from "@zudojs/cqrs";
+
+const bus = createCommandBus();
+bus.register("CreateTask", () => ({ id: 1 }));
+bus.register("CompleteTask", () => undefined);
+console.log(bus.size(), bus.has("CompleteTask"), bus.has("DeleteTask"));
+console.log(bus.getCommandTypes());
+</code>
+<option correct>2 true false
+[ 'CreateTask', 'CompleteTask' ]</option>
+<option>2 true true
+[ 'CreateTask', 'CompleteTask' ]</option>
+<option>1 true false
+[ 'CreateTask' ]</option>
+<option>2 false false
+[]</option>
+<explain><p><code>size</code>, <code>has</code> and <code>getCommandTypes</code> describe what is registered. They are handy for a start-up check.</p></explain>
+</question>
+
+<question id="out-command-result" type="output">
+<q>What does this print?</q>
+<code file="result.js">
+import { createCommand, createCommandResult, createFailedCommandResult, isSuccessfulCommandResult } from "@zudojs/cqrs";
+
+const command = createCommand("CreateTask", { title: "Buy milk" });
+const ok = createCommandResult({ id: 1 }, { command });
+const refused = createFailedCommandResult({ reason: "Title already used" }, { command });
+console.log(ok.status, ok.commandType, isSuccessfulCommandResult(ok));
+console.log(refused.status, isSuccessfulCommandResult(refused));
+</code>
+<option correct>success CreateTask true
+failure false</option>
+<option>ok CreateTask true
+failed false</option>
+<option>success CreateTask true
+failure true</option>
+<option>true CreateTask true
+false false</option>
+<explain><p>The optional result type has a <code>status</code> of <code>success</code> or <code>failure</code>. Always check it, or use <code>isSuccessfulCommandResult</code>, before you use <code>result</code>.</p></explain>
+</question>
+
+<question id="code-first-command" type="code" file="first.ts">
+<q><p>Register a handler for the <code>CreateTask</code> command that adds a task to <code>tasks</code> (id = length + 1, <code>done: false</code>) and returns <code>{ id }</code>. Register a <code>ListTasks</code> query handler that returns <code>tasks</code>.</p></q>
+<starter>
+import { createCommandBus, createQueryBus } from "@zudojs/cqrs";
+import type { CommandOf, QueryOf } from "@zudojs/cqrs";
+
+interface Task {
+  readonly id: number;
+  readonly title: string;
+  readonly done: boolean;
+}
+
+type CreateTask = CommandOf<"CreateTask", { title: string }>;
+type ListTasks = QueryOf<"ListTasks">;
+
+const tasks: Task[] = [];
+const commands = createCommandBus();
+const queries = createQueryBus();
+
+// your code here
+
+console.log(await commands.execute<CreateTask, { id: number }>({ type: "CreateTask", title: "Buy milk" }));
+console.log(await commands.execute<CreateTask, { id: number }>({ type: "CreateTask", title: "Write report" }));
+console.log(await queries.execute<ListTasks, readonly Task[]>({ type: "ListTasks" }));
+</starter>
+<solution>
+import { createCommandBus, createQueryBus } from "@zudojs/cqrs";
+import type { CommandOf, QueryOf } from "@zudojs/cqrs";
+
+interface Task {
+  readonly id: number;
+  readonly title: string;
+  readonly done: boolean;
+}
+
+type CreateTask = CommandOf<"CreateTask", { title: string }>;
+type ListTasks = QueryOf<"ListTasks">;
+
+const tasks: Task[] = [];
+const commands = createCommandBus();
+const queries = createQueryBus();
+
+commands.register<CreateTask, { id: number }>("CreateTask", (command) => {
+  const task: Task = { id: tasks.length + 1, title: command.title, done: false };
+  tasks.push(task);
+  return { id: task.id };
+});
+queries.register<ListTasks, readonly Task[]>("ListTasks", () => tasks);
+
+console.log(await commands.execute<CreateTask, { id: number }>({ type: "CreateTask", title: "Buy milk" }));
+console.log(await commands.execute<CreateTask, { id: number }>({ type: "CreateTask", title: "Write report" }));
+console.log(await queries.execute<ListTasks, readonly Task[]>({ type: "ListTasks" }));
+</solution>
+<expected>
+{ id: 1 }
+{ id: 2 }
+[
+  { id: 1, title: 'Buy milk', done: false },
+  { id: 2, title: 'Write report', done: false }
+]
+</expected>
+<explain><p>The command changes data and returns only the id; the query only reads. The type arguments on <code>register</code> tell TypeScript what goes in and what comes back.</p></explain>
+</question>
+
+<question id="code-open-query" type="code" file="open.js">
+<q><p>Register a <code>ListTasks</code> query handler that returns the titles of the tasks, only the ones that are not done when <code>query.onlyOpen</code> is <code>true</code>. It must not change anything.</p></q>
+<starter>
+import { createQueryBus } from "@zudojs/cqrs";
+
+const rows = [
+  { id: 1, title: "Buy milk", done: true },
+  { id: 2, title: "Write report", done: false },
+  { id: 3, title: "Call the bank", done: false },
+];
+const queries = createQueryBus();
+
+// your code here
+
+console.log(await queries.execute({ type: "ListTasks", onlyOpen: true }));
+console.log(await queries.execute({ type: "ListTasks", onlyOpen: false }));
+</starter>
+<solution>
+import { createQueryBus } from "@zudojs/cqrs";
+
+const rows = [
+  { id: 1, title: "Buy milk", done: true },
+  { id: 2, title: "Write report", done: false },
+  { id: 3, title: "Call the bank", done: false },
+];
+const queries = createQueryBus();
+
+queries.register("ListTasks", (query) =>
+  rows.filter((task) => !query.onlyOpen || !task.done).map((task) => task.title),
+);
+
+console.log(await queries.execute({ type: "ListTasks", onlyOpen: true }));
+console.log(await queries.execute({ type: "ListTasks", onlyOpen: false }));
+</solution>
+<expected>
+[ 'Write report', 'Call the bank' ]
+[ 'Buy milk', 'Write report', 'Call the bank' ]
+</expected>
+<explain><p><code>filter</code> and <code>map</code> build new arrays, so the query leaves <code>rows</code> untouched and can run any number of times.</p></explain>
+</question>
+
+<question id="code-class-handler" type="code" file="class-handler.js">
+<q><p>Finish the <code>CompleteTaskHandler</code> class. It gets the rows in its constructor. <code>execute(command)</code> finds the row by <code>command.taskId</code>, throws <code>new NotFoundError("Task &lt;id&gt; not found")</code> when it is missing, and otherwise sets <code>done</code> to <code>true</code>.</p></q>
+<starter>
+import { CommandHandler, createCommandBus } from "@zudojs/cqrs";
+import { NotFoundError } from "@zudojs/errors";
+
+class CompleteTaskHandler extends CommandHandler {
+  commandType = "CompleteTask";
+
+  // your code here
+}
+
+const rows = new Map([[1, { id: 1, title: "Buy milk", done: false }]]);
+const bus = createCommandBus().register("CompleteTask", new CompleteTaskHandler(rows));
+
+await bus.execute({ type: "CompleteTask", taskId: 1 });
+console.log(rows.get(1));
+try {
+  await bus.execute({ type: "CompleteTask", taskId: 9 });
+} catch (error) {
+  console.log(error.statusCode, error.message);
+}
+</starter>
+<solution>
+import { CommandHandler, createCommandBus } from "@zudojs/cqrs";
+import { NotFoundError } from "@zudojs/errors";
+
+class CompleteTaskHandler extends CommandHandler {
+  commandType = "CompleteTask";
+
+  constructor(rows) {
+    super();
+    this.rows = rows;
+  }
+
+  execute(command) {
+    const row = this.rows.get(command.taskId);
+    if (!row) throw new NotFoundError(`Task ${command.taskId} not found`);
+    row.done = true;
+  }
+}
+
+const rows = new Map([[1, { id: 1, title: "Buy milk", done: false }]]);
+const bus = createCommandBus().register("CompleteTask", new CompleteTaskHandler(rows));
+
+await bus.execute({ type: "CompleteTask", taskId: 1 });
+console.log(rows.get(1));
+try {
+  await bus.execute({ type: "CompleteTask", taskId: 9 });
+} catch (error) {
+  console.log(error.statusCode, error.message);
+}
+</solution>
+<expected>
+{ id: 1, title: 'Buy milk', done: true }
+404 Task 9 not found
+</expected>
+<explain><p>The rows arrive through the constructor, so a container (or a test) decides what the handler works with. Call <code>super()</code> before using <code>this</code>.</p></explain>
+</question>
+
+<question id="code-secure-handler" type="code" file="secure.js">
+<q><p>Register a secure <code>CompleteTask</code> handler. Take the user from <code>context?.userId</code>, never from the command. No user: throw <code>AuthenticationError("Sign in first")</code>. Not the owner: throw <code>NotFoundError("Task &lt;id&gt; not found")</code>. Otherwise return <code>completed for &lt;user&gt;</code>.</p></q>
+<starter>
+import { createCommandBus, createExecutionContext, withUser } from "@zudojs/cqrs";
+import { AuthenticationError, NotFoundError } from "@zudojs/errors";
+
+const owners = new Map([[1, "ada"]]);
+const bus = createCommandBus();
+
+// your code here
+
+const request = createExecutionContext({ source: "http" });
+const attempts = [
+  [{ type: "CompleteTask", taskId: 1, userId: "ada" }, withUser(request, "linus")],
+  [{ type: "CompleteTask", taskId: 1 }, withUser(request, "ada")],
+  [{ type: "CompleteTask", taskId: 1 }, request],
+];
+for (const [command, context] of attempts) {
+  try {
+    console.log(await bus.execute(command, context));
+  } catch (error) {
+    console.log(error.name, error.message);
+  }
+}
+</starter>
+<solution>
+import { createCommandBus, createExecutionContext, withUser } from "@zudojs/cqrs";
+import { AuthenticationError, NotFoundError } from "@zudojs/errors";
+
+const owners = new Map([[1, "ada"]]);
+const bus = createCommandBus();
+
+bus.register("CompleteTask", (command, context) => {
+  const userId = context?.userId;
+  if (!userId) throw new AuthenticationError("Sign in first");
+  if (owners.get(command.taskId) !== userId) throw new NotFoundError(`Task ${command.taskId} not found`);
+  return `completed for ${userId}`;
+});
+
+const request = createExecutionContext({ source: "http" });
+const attempts = [
+  [{ type: "CompleteTask", taskId: 1, userId: "ada" }, withUser(request, "linus")],
+  [{ type: "CompleteTask", taskId: 1 }, withUser(request, "ada")],
+  [{ type: "CompleteTask", taskId: 1 }, request],
+];
+for (const [command, context] of attempts) {
+  try {
+    console.log(await bus.execute(command, context));
+  } catch (error) {
+    console.log(error.name, error.message);
+  }
+}
+</solution>
+<expected>
+NotFoundError Task 1 not found
+completed for ada
+AuthenticationError Sign in first
+</expected>
+<explain><p>Linus even put <code>userId: "ada"</code> in his command, but the handler ignores it and uses the verified user from the context. That is what closes the hole.</p></explain>
+</question>
+
+<question id="code-audit-middleware" type="code" file="audit.js">
+<q><p>Write an <code>audit</code> middleware that prints <code>audit: &lt;userId or anonymous&gt; runs &lt;type&gt;</code> and then passes the request on with <code>next(request, context)</code>.</p></q>
+<starter>
+import { createCommandBus } from "@zudojs/cqrs";
+
+const audit = async (request, context, next) => {
+  // your code here
+};
+
+const bus = createCommandBus({ middleware: [audit] });
+bus.register("CreateTask", () => ({ id: 1 }));
+
+console.log(await bus.execute({ type: "CreateTask" }, { userId: "ada" }));
+console.log(await bus.execute({ type: "CreateTask" }));
+</starter>
+<solution>
+import { createCommandBus } from "@zudojs/cqrs";
+
+const audit = async (request, context, next) => {
+  console.log(`audit: ${context?.userId ?? "anonymous"} runs ${request.type}`);
+  return next(request, context);
+};
+
+const bus = createCommandBus({ middleware: [audit] });
+bus.register("CreateTask", () => ({ id: 1 }));
+
+console.log(await bus.execute({ type: "CreateTask" }, { userId: "ada" }));
+console.log(await bus.execute({ type: "CreateTask" }));
+</solution>
+<expected>
+audit: ada runs CreateTask
+{ id: 1 }
+audit: anonymous runs CreateTask
+{ id: 1 }
+</expected>
+<explain><p>CQRS middleware passes the request and context on as <code>next(request, context)</code>, and returns what it returns. The context may be missing, so use <code>?.</code> and <code>??</code>.</p></explain>
+</question>
+
+<question id="code-guard-middleware" type="code" file="guard.js">
+<q><p>Write a <code>requireUser</code> middleware that throws <code>new AuthenticationError("Sign in first")</code> when the context has no <code>userId</code>, and otherwise calls <code>next</code> once.</p></q>
+<starter>
+import { createQueryBus } from "@zudojs/cqrs";
+import { AuthenticationError } from "@zudojs/errors";
+
+const requireUser = async (request, context, next) => {
+  // your code here
+};
+
+const queries = createQueryBus({ middleware: [requireUser] });
+queries.register("ListTasks", (query, context) => [`tasks of ${context?.userId}`]);
+
+console.log(await queries.execute({ type: "ListTasks" }, { userId: "ada" }));
+try {
+  console.log(await queries.execute({ type: "ListTasks" }));
+} catch (error) {
+  console.log(error.statusCode, error.message);
+}
+</starter>
+<solution>
+import { createQueryBus } from "@zudojs/cqrs";
+import { AuthenticationError } from "@zudojs/errors";
+
+const requireUser = async (request, context, next) => {
+  if (!context?.userId) throw new AuthenticationError("Sign in first");
+  return next(request, context);
+};
+
+const queries = createQueryBus({ middleware: [requireUser] });
+queries.register("ListTasks", (query, context) => [`tasks of ${context?.userId}`]);
+
+console.log(await queries.execute({ type: "ListTasks" }, { userId: "ada" }));
+try {
+  console.log(await queries.execute({ type: "ListTasks" }));
+} catch (error) {
+  console.log(error.statusCode, error.message);
+}
+</solution>
+<expected>
+[ 'tasks of ada' ]
+401 Sign in first
+</expected>
+<explain><p>With the guard in the bus, no handler can forget the "signed in?" check. Ownership checks still belong in the handlers.</p></explain>
+</question>
+
+<question id="code-rename-task" type="code" file="rename.js">
+<q><p>Register a <code>RenameTask</code> handler: no user in the context throws <code>AuthenticationError("Sign in first")</code>; a trimmed title shorter than 3 characters throws <code>ValidationError("Title must be at least 3 characters")</code>; a task that is missing or not the caller's throws <code>NotFoundError("Task &lt;id&gt; not found")</code>. Otherwise save the trimmed title.</p></q>
+<starter>
+import { createCommandBus, createExecutionContext, withUser } from "@zudojs/cqrs";
+import { AuthenticationError, NotFoundError, ValidationError } from "@zudojs/errors";
+
+const rows = new Map([[1, { id: 1, userId: "ada", title: "Buy milk" }]]);
+const bus = createCommandBus();
+
+// your code here
+
+const ada = withUser(createExecutionContext(), "ada");
+const linus = withUser(createExecutionContext(), "linus");
+for (const [title, context] of [["  Buy oat milk ", ada], ["no", ada], ["Hacked", linus]]) {
+  try {
+    await bus.execute({ type: "RenameTask", taskId: 1, title }, context);
+    console.log("renamed:", rows.get(1).title);
+  } catch (error) {
+    console.log(error.name, error.message);
+  }
+}
+</starter>
+<solution>
+import { createCommandBus, createExecutionContext, withUser } from "@zudojs/cqrs";
+import { AuthenticationError, NotFoundError, ValidationError } from "@zudojs/errors";
+
+const rows = new Map([[1, { id: 1, userId: "ada", title: "Buy milk" }]]);
+const bus = createCommandBus();
+
+bus.register("RenameTask", (command, context) => {
+  const userId = context?.userId;
+  if (!userId) throw new AuthenticationError("Sign in first");
+  const title = command.title.trim();
+  if (title.length < 3) throw new ValidationError("Title must be at least 3 characters");
+  const row = rows.get(command.taskId);
+  if (!row || row.userId !== userId) throw new NotFoundError(`Task ${command.taskId} not found`);
+  row.title = title;
+});
+
+const ada = withUser(createExecutionContext(), "ada");
+const linus = withUser(createExecutionContext(), "linus");
+for (const [title, context] of [["  Buy oat milk ", ada], ["no", ada], ["Hacked", linus]]) {
+  try {
+    await bus.execute({ type: "RenameTask", taskId: 1, title }, context);
+    console.log("renamed:", rows.get(1).title);
+  } catch (error) {
+    console.log(error.name, error.message);
+  }
+}
+</solution>
+<expected>
+renamed: Buy oat milk
+ValidationError Title must be at least 3 characters
+NotFoundError Task 1 not found
+</expected>
+<explain><p>Every rule for renaming lives in one handler: who is asking, whether the input is valid, and whether the task is theirs. Errors from <code>@zudojs/errors</code> carry the right status for the HTTP layer.</p></explain>
+</question>
+
+<question id="code-on-error" type="code" file="on-error.js">
+<q><p>Add <code>onErrorMiddleware</code> with <code>bus.use</code> so every failure is logged as <code>error: &lt;type&gt; failed: &lt;message&gt;</code>. The error must still reach the caller.</p></q>
+<starter>
+import { createCommandBus, onErrorMiddleware } from "@zudojs/cqrs";
+
+const bus = createCommandBus();
+
+// your code here
+
+bus.register("CreateTask", () => ({ id: 1 }));
+bus.register("ExportTasks", () => {
+  throw new Error("export service is down");
+});
+
+console.log(await bus.execute({ type: "CreateTask" }));
+try {
+  await bus.execute({ type: "ExportTasks" });
+} catch (error) {
+  console.log("caller sees:", error.message);
+}
+</starter>
+<solution>
+import { createCommandBus, onErrorMiddleware } from "@zudojs/cqrs";
+
+const bus = createCommandBus();
+
+bus.use(onErrorMiddleware((request, error) => {
+  console.log(`error: ${request.type} failed: ${error instanceof Error ? error.message : error}`);
+}));
+
+bus.register("CreateTask", () => ({ id: 1 }));
+bus.register("ExportTasks", () => {
+  throw new Error("export service is down");
+});
+
+console.log(await bus.execute({ type: "CreateTask" }));
+try {
+  await bus.execute({ type: "ExportTasks" });
+} catch (error) {
+  console.log("caller sees:", error.message);
+}
+</solution>
+<expected>
+{ id: 1 }
+error: ExportTasks failed: export service is down
+caller sees: export service is down
+</expected>
+<explain><p><code>onErrorMiddleware(fn)</code> calls <code>fn</code> for every failure and then re-throws it, so you log in one place without hiding the error.</p></explain>
+</question>
+
+<question id="code-publish-after-save" type="code" file="complete.js">
+<q><p>Finish the <code>CompleteTask</code> handler: find the caller's task (use <code>context?.userId</code>), throw <code>NotFoundError("Task &lt;id&gt; not found")</code> if it is missing or not theirs, set <code>done</code> to <code>true</code>, and only then publish <code>task.completed</code> on the event bus with <code>{ taskId, userId }</code>.</p></q>
+<starter>
+import { createCommandBus, createExecutionContext, withUser } from "@zudojs/cqrs";
+import { NotFoundError } from "@zudojs/errors";
+import { createEventBus } from "@zudojs/events";
+
+const events = createEventBus();
+events.on("task.completed", (event) => console.log("event:", event.payload));
+const rows = new Map([[1, { id: 1, userId: "ada", done: false }]]);
+const commands = createCommandBus();
+
+commands.register("CompleteTask", async (command, context) => {
+  // your code here
+});
+
+const base = createExecutionContext();
+for (const user of ["linus", "ada"]) {
+  try {
+    await commands.execute({ type: "CompleteTask", taskId: 1 }, withUser(base, user));
+    console.log(user, "done:", rows.get(1).done);
+  } catch (error) {
+    console.log(user, error.message);
+  }
+}
+</starter>
+<solution>
+import { createCommandBus, createExecutionContext, withUser } from "@zudojs/cqrs";
+import { NotFoundError } from "@zudojs/errors";
+import { createEventBus } from "@zudojs/events";
+
+const events = createEventBus();
+events.on("task.completed", (event) => console.log("event:", event.payload));
+const rows = new Map([[1, { id: 1, userId: "ada", done: false }]]);
+const commands = createCommandBus();
+
+commands.register("CompleteTask", async (command, context) => {
+  const userId = context?.userId;
+  const task = rows.get(command.taskId);
+  if (!task || task.userId !== userId) throw new NotFoundError(`Task ${command.taskId} not found`);
+  task.done = true;
+  await events.publishEvent({ type: "task.completed", payload: { taskId: task.id, userId } });
+});
+
+const base = createExecutionContext();
+for (const user of ["linus", "ada"]) {
+  try {
+    await commands.execute({ type: "CompleteTask", taskId: 1 }, withUser(base, user));
+    console.log(user, "done:", rows.get(1).done);
+  } catch (error) {
+    console.log(user, error.message);
+  }
+}
+</solution>
+<expected>
+linus Task 1 not found
+event: { taskId: 1, userId: 'ada' }
+ada done: true
+</expected>
+<explain><p>The command handler checks, changes, and then announces. Emails, statistics and cache clearing react to the event without the handler knowing about them, and Linus's refused attempt publishes nothing.</p></explain>
+</question>
+
+<question id="code-unknown-command" type="code" file="unknown.js">
+<q><p>Finish <code>run(type)</code>: execute <code>{ type }</code> on the bus and return the result. If the bus throws a <code>CommandHandlerNotFoundError</code>, return <code>unknown command: &lt;type&gt;</code> instead. Any other error must be re-thrown.</p></q>
+<starter>
+import { CommandHandlerNotFoundError, createCommandBus } from "@zudojs/cqrs";
+
+const bus = createCommandBus();
+bus.register("CreateTask", () => "created");
+
+async function run(type) {
+  // your code here
+}
+
+console.log(await run("CreateTask"));
+console.log(await run("CreateTsk"));
+</starter>
+<solution>
+import { CommandHandlerNotFoundError, createCommandBus } from "@zudojs/cqrs";
+
+const bus = createCommandBus();
+bus.register("CreateTask", () => "created");
+
+async function run(type) {
+  try {
+    return await bus.execute({ type });
+  } catch (error) {
+    if (error instanceof CommandHandlerNotFoundError) return `unknown command: ${type}`;
+    throw error;
+  }
+}
+
+console.log(await run("CreateTask"));
+console.log(await run("CreateTsk"));
+</solution>
+<expected>
+created
+unknown command: CreateTsk
+</expected>
+<explain><p>Check the error class with <code>instanceof</code> and handle only the case you expect. Re-throwing everything else keeps real failures visible. Write <code>return await</code> so the error is caught inside the <code>try</code>.</p></explain>
+</question>

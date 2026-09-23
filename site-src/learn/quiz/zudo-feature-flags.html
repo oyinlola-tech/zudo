@@ -1,0 +1,1018 @@
+<question id="deploy-vs-release" type="choice">
+<q>What does a feature flag separate?</q>
+<option>The frontend from the backend</option>
+<option correct>Deploying the code from releasing the feature to users</option>
+<option>Tests from production code</option>
+<option>Free users from paying users, as a permission check</option>
+<explain><p>With a flag, new code goes to production switched off (deploy). You switch it on later, for a few users first (release). If something breaks, you switch it off in seconds, without another deploy.</p></explain>
+</question>
+
+<question id="flag-uses" type="choice">
+<q>Which of these is <strong>not</strong> one of the flag uses the lesson describes?</q>
+<option>A gradual release to more and more users</option>
+<option>A kill switch that turns off a feature causing trouble</option>
+<option>An A/B test that shows two versions to two groups</option>
+<option correct>Deciding whether a user is allowed to delete another user's task</option>
+<explain><p>A flag says whether a feature is switched on. Whether a user <em>may</em> do something is a permission check, which you keep from the permissions lesson.</p></explain>
+</question>
+
+<question id="provider-meaning" type="choice">
+<q>In <code>@zudojs/feature-flags</code>, what is a <strong>provider</strong>?</q>
+<option>The user who asks for a flag</option>
+<option correct>The place where the flag definitions are stored, such as memory, a database or a flag service</option>
+<option>A rule that turns a flag on for some users</option>
+<option>The npm package that sends flags to the browser</option>
+<explain><p><code>createFeatureFlags</code> reads definitions from a provider and answers questions. <code>createMemoryProvider</code> keeps them in memory; a real system reads them from a database or a flag service.</p></explain>
+</question>
+
+<question id="first-flags" type="output">
+<q>What does this print?</q>
+<code file="first-flags.js">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([
+    { key: "task-comments", enabled: true, defaultValue: false },
+    { key: "task-export", enabled: true, defaultValue: true },
+  ]),
+});
+
+console.log(await flags.isEnabled("task-comments"), await flags.isEnabled("task-export"), await flags.isEnabled("task-exprot"));
+</code>
+<option correct>false true false</option>
+<option>false true true</option>
+<option>true true false</option>
+<option>false true undefined</option>
+<explain><p>With no rules, each flag serves its <code>defaultValue</code>. An unknown key, like the typo <code>"task-exprot"</code>, is simply off, so a typo never switches a feature on by accident.</p></explain>
+</question>
+
+<question id="evaluate-reason" type="output">
+<q>What does this print?</q>
+<code file="evaluate.js">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{ key: "task-export", enabled: true, defaultValue: true }]),
+});
+
+console.log(await flags.evaluate("task-export"));
+</code>
+<option correct>{ key: 'task-export', value: true, reason: 'default', defaulted: true }</option>
+<option>true</option>
+<option>{ key: 'task-export', value: true }</option>
+<option>{ key: 'task-export', value: true, reason: 'rule_match', defaulted: false }</option>
+<explain><p><code>evaluate</code> returns the value <strong>and</strong> the reason. No rule decided here, so the reason is <code>default</code>. This is what you log when you wonder why a user sees a feature.</p></explain>
+</question>
+
+<question id="rule-order" type="choice">
+<q>A flag has several rules. How is the value chosen?</q>
+<option>All matching rules are combined</option>
+<option>The last matching rule wins</option>
+<option correct>Rules are checked in order; the first one that matches wins, and if none matches the default is served</option>
+<option>A random matching rule is used</option>
+<explain><p>Order matters: put the most specific rule first, like the staff or beta list, and the broad rules, like a percentage, after it.</p></explain>
+</question>
+
+<question id="rules-output" type="output">
+<q>What does this print?</q>
+<code file="rules.js">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "task-comments",
+    enabled: true,
+    defaultValue: false,
+    rules: [
+      { type: "user", users: ["ada", "grace"], value: true },
+      { type: "attribute", attribute: "email", operator: "ends_with", value: "@taskapi.dev" },
+    ],
+  }]),
+});
+
+const users = [
+  { userId: "ada", attributes: { email: "ada@example.com" } },
+  { userId: "linus", attributes: { email: "linus@taskapi.dev" } },
+  { userId: "alan", attributes: { email: "alan@example.com" } },
+];
+for (const context of users) {
+  const result = await flags.evaluate("task-comments", context);
+  console.log(context.userId, result.value, result.reason);
+}
+</code>
+<option correct>ada true target_match
+linus true rule_match
+alan false default</option>
+<option>ada false default
+linus true rule_match
+alan false default</option>
+<option>ada true target_match
+linus false default
+alan false default</option>
+<option>ada true rule_match
+linus true rule_match
+alan false rule_match</option>
+<explain><p>ada is on the user list (<code>target_match</code>). linus is not, but his email ends with <code>@taskapi.dev</code>, so the attribute rule matches (<code>rule_match</code>). alan matches no rule and gets the default.</p></explain>
+</question>
+
+<question id="number-flag" type="output">
+<q>A flag value does not have to be a boolean. What does this print?</q>
+<code file="page-size.js">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "page-size",
+    enabled: true,
+    defaultValue: 20,
+    rules: [{ type: "attribute", attribute: "plan", operator: "in", value: ["pro", "team"], result: 100 }],
+  }]),
+});
+
+for (const plan of ["free", "team", "pro"]) {
+  console.log(plan, await flags.get("page-size", { userId: "u1", attributes: { plan } }));
+}
+</code>
+<option correct>free 20
+team 100
+pro 100</option>
+<option>free 20
+team 20
+pro 100</option>
+<option>free false
+team true
+pro true</option>
+<option>free 100
+team 100
+pro 100</option>
+<explain><p>The operator <code>in</code> matches when the attribute is one of the listed values. A matching attribute rule serves its <code>result</code> (100); otherwise the default (20) is served.</p></explain>
+</question>
+
+<question id="first-match-wins" type="output">
+<q>ada matches both rules. What does this print?</q>
+<code file="first-match.js">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "upload-limit-mb",
+    enabled: true,
+    defaultValue: 5,
+    rules: [
+      { type: "user", users: ["ada"], value: 500 },
+      { type: "attribute", attribute: "plan", operator: "equals", value: "pro", result: 50 },
+    ],
+  }]),
+});
+
+console.log(await flags.get("upload-limit-mb", { userId: "ada", attributes: { plan: "pro" } }));
+console.log(await flags.get("upload-limit-mb", { userId: "linus", attributes: { plan: "pro" } }));
+</code>
+<option correct>500
+50</option>
+<option>50
+50</option>
+<option>500
+500</option>
+<option>5
+50</option>
+<explain><p>The rules are checked in order and the first match wins. ada matches the user rule first, so she gets 500. linus only matches the plan rule and gets 50.</p></explain>
+</question>
+
+<question id="tenant-rule" type="output">
+<q>What does this print?</q>
+<code file="tenant-rule.js">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "acme-migration",
+    enabled: true,
+    defaultValue: false,
+    rules: [{ type: "tenant", tenants: ["acme"], value: true }],
+  }]),
+});
+
+console.log(await flags.isEnabled("acme-migration", { userId: "ada", tenantId: "acme" }));
+console.log(await flags.isEnabled("acme-migration", { userId: "ada", tenantId: "globex" }));
+console.log(await flags.isEnabled("acme-migration", { userId: "ada" }));
+</code>
+<option correct>true
+false
+false</option>
+<option>true
+false
+true</option>
+<option>true
+true
+true</option>
+<option>false
+false
+false</option>
+<explain><p>A tenant rule matches on the context's <code>tenantId</code>. A context without a tenant matches no rule and gets the default <code>false</code>.</p></explain>
+</question>
+
+<question id="context-source" type="choice">
+<q>Where should the Task API get the <code>plan</code> attribute for the evaluation context?</q>
+<option>From the request body, where the client sends <code>"plan": "pro"</code></option>
+<option>From an <code>x-plan</code> header</option>
+<option correct>From the verified logged-in user and your database</option>
+<option>From a query parameter, so it is easy to test</option>
+<explain><p>Anything the client sends can be changed by the client. If <code>plan</code> came from the body or a header, anyone could send <code>"pro"</code> and get pro features for free.</p></explain>
+</question>
+
+<question id="flag-not-permission" type="choice">
+<q>An <code>admin-panel</code> flag is on for users with <code>role: "admin"</code>. What else does the admin route need?</q>
+<option>Nothing: the flag already checks the role</option>
+<option correct>The normal permission check; a flag says a feature is on, not that this user may use it</option>
+<option>A second flag with the same rule</option>
+<option>A <code>visibility: "client"</code> setting on the flag</option>
+<explain><p>A flag is not a permission. Keep the permission check from the permissions lesson on the server, and read the role from your own authentication, never from a header.</p></explain>
+</question>
+
+<question id="percentage-not-random" type="choice">
+<q>Why is a percentage rollout deterministic instead of random?</q>
+<option>Random numbers are too slow in JavaScript</option>
+<option correct>A user who saw the feature must still see it after a reload</option>
+<option>So that every user gets the feature at the same time</option>
+<option>So the server can skip the rules</option>
+<explain><p>If the answer were random, a feature could appear and vanish on every page load. The rule hashes the flag key and the user id into one of 10,000 buckets, so the same user always lands in the same bucket.</p></explain>
+</question>
+
+<question id="bucket-stable" type="output">
+<q>What does this print?</q>
+<code file="bucket.js">
+import { getBucket } from "@zudojs/feature-flags";
+
+const first = getBucket("task-comments", "ada");
+const second = getBucket("task-comments", "ada");
+console.log(first === second, first >= 0 && first < 10000);
+</code>
+<option correct>true true</option>
+<option>false true</option>
+<option>true false</option>
+<option>false false</option>
+<explain><p>The bucket comes from a hash of the flag key and the user id, so the same pair always gives the same bucket, a number from 0 to 9,999.</p></explain>
+</question>
+
+<question id="rollout-limits" type="output">
+<q>What does this print?</q>
+<code file="rollout-limits.js">
+import { isInRollout } from "@zudojs/feature-flags";
+
+let atZero = 0;
+let atHundred = 0;
+for (let i = 0; i < 1000; i++) {
+  if (isInRollout("task-comments", `user-${i}`, 0)) atZero++;
+  if (isInRollout("task-comments", `user-${i}`, 100)) atHundred++;
+}
+console.log(atZero, atHundred);
+</code>
+<option correct>0 1000</option>
+<option>0 100</option>
+<option>1 1000</option>
+<option>500 500</option>
+<explain><p>0% reaches nobody and 100% reaches everybody. Between them, a percentage reaches about that share of users.</p></explain>
+</question>
+
+<question id="rollout-keeps-users" type="output">
+<q>You raise a rollout from 20% to 50%. What does this print?</q>
+<code file="raise-rollout.js">
+import { isInRollout } from "@zudojs/feature-flags";
+
+const users = Array.from({ length: 2000 }, (_, i) => `user-${i}`);
+const early = users.filter((u) => isInRollout("task-comments", u, 20));
+console.log(early.every((u) => isInRollout("task-comments", u, 50)));
+</code>
+<option correct>true</option>
+<option>false</option>
+<option>400</option>
+<option>1000</option>
+<explain><p>A user is inside when their bucket is below the percentage. Raising the percentage only adds buckets, so everybody who already had the feature keeps it.</p></explain>
+</question>
+
+<question id="key-in-hash" type="choice">
+<q>The flag key is part of the hash, not only the user id. Why?</q>
+<option>So the bucket changes on every request</option>
+<option correct>So the same 20% of users do not end up in every experiment</option>
+<option>So users can pick their own bucket</option>
+<option>Because user ids can be empty</option>
+<explain><p>With the key in the hash, each flag spreads users differently. Otherwise the same unlucky users would be first in line for every new feature.</p></explain>
+</question>
+
+<question id="anonymous-context" type="output">
+<q>What does this print?</q>
+<code file="anonymous.js">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "new-home",
+    enabled: true,
+    defaultValue: false,
+    rules: [{ type: "percentage", percentage: 50, value: true }],
+  }]),
+});
+
+const answers = new Set();
+for (let i = 0; i < 20; i++) answers.add(await flags.isEnabled("new-home", {}));
+console.log(answers.size);
+</code>
+<option correct>1</option>
+<option>2</option>
+<option>20</option>
+<option>0</option>
+<explain><p>A context without <code>userId</code>, <code>tenantId</code> or <code>sessionId</code> counts as the single user "anonymous", so every anonymous visitor gets the same answer. Give logged-out visitors a session id if they should be spread out.</p></explain>
+</question>
+
+<question id="variant-stable" type="output">
+<q>What does this print?</q>
+<code file="variant.js">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "task-sorting",
+    enabled: true,
+    defaultValue: "by-date",
+    rules: [{ type: "variant", variants: [{ key: "by-date", weight: 50 }, { key: "by-priority", weight: 50 }] }],
+  }]),
+});
+
+const first = await flags.evaluate("task-sorting", { userId: "grace" });
+const again = await flags.evaluate("task-sorting", { userId: "grace" });
+console.log(first.value === again.value, first.reason);
+console.log(["by-date", "by-priority"].includes(first.value));
+</code>
+<option correct>true variant_assignment
+true</option>
+<option>false variant_assignment
+true</option>
+<option>true default
+true</option>
+<option>true variant_assignment
+false</option>
+<explain><p>A variant rule puts each user into one named group, using the same stable buckets as a percentage rollout. grace always sees the same version, and the reason is <code>variant_assignment</code>.</p></explain>
+</question>
+
+<question id="ab-measure" type="choice">
+<q>How do you learn which sorting variant wins the A/B test?</q>
+<option>Ask the users which group they are in</option>
+<option correct>Record the variant with what the user did, for example a <code>tasks.completed</code> metric with a <code>variant</code> label</option>
+<option>Add a <code>userId</code> label to the metric</option>
+<option>Look at which variant has the higher weight</option>
+<explain><p>A <code>variant</code> label has only two values, so it is safe as a metric label. Comparing completed tasks per variant shows which version works better.</p></explain>
+</question>
+
+<question id="safe-kill-switch" type="choice">
+<q>Which definition is the safe way to write a kill switch for task emails?</q>
+<option><code>{ key: "task-emails", enabled: true, defaultValue: true }</code></option>
+<option correct><code>{ key: "task-emails", enabled: true, defaultValue: false, rules: [{ type: "static", value: true }] }</code></option>
+<option><code>{ key: "task-emails", enabled: false, defaultValue: true }</code></option>
+<option><code>{ key: "task-emails", enabled: true, defaultValue: "on" }</code></option>
+<explain><p>The default is the safe "off" value, and a rule switches the feature on. Then disabling the flag, deleting it, or losing the flag store all lead to "off".</p></explain>
+</question>
+
+<question id="kill-switch-output" type="output">
+<q>What does this print?</q>
+<code file="kill-switch.js">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const emails = { key: "task-emails", enabled: true, defaultValue: false, rules: [{ type: "static", value: true }] };
+const provider = createMemoryProvider([emails]);
+const flags = createFeatureFlags({ provider });
+
+console.log("before:", await flags.isEnabled("task-emails"));
+provider.set({ ...emails, enabled: false });
+const after = await flags.evaluate("task-emails");
+console.log("after:", after.value, after.reason);
+flags.close();
+</code>
+<option correct>before: true
+after: false disabled</option>
+<option>before: true
+after: true disabled</option>
+<option>before: false
+after: false disabled</option>
+<option>before: true
+after: true static</option>
+<explain><p>The static rule switches emails on. <code>provider.set</code> changes the flag while the program runs, and the next evaluation sees it at once: the flag is disabled, so emails are off. No deploy, no restart.</p></explain>
+</question>
+
+<question id="kill-switch-when" type="choice">
+<q>The mail provider is down, and every task completion fails while sending an email. What does a kill switch give you?</q>
+<option>A way to retry the emails faster</option>
+<option correct>Turn emails off in seconds, without a deploy, while tasks can still be completed</option>
+<option>A way to hide the error from the logs</option>
+<option>An automatic switch to another mail provider</option>
+<explain><p>One change to the flag stops the failing optional work. The core feature, completing tasks, keeps working.</p></explain>
+</question>
+
+<question id="fail-closed" type="choice">
+<q>What does "fail closed" mean for feature flags?</q>
+<option>When the flag store fails, turn every flag on so users are not blocked</option>
+<option correct>When in doubt (disabled, expired or unreachable flag), the feature is off</option>
+<option>Close the server when the flag store fails</option>
+<option>Close the browser tab of users without flags</option>
+<explain><p>An unreachable flag store must never switch a feature on. The safe answer is "off", and the failure is reported to <code>onError</code>.</p></explain>
+</question>
+
+<question id="broken-provider" type="output">
+<q>The flag store is down. What does this print?</q>
+<code file="broken.js">
+import { createFeatureFlags } from "@zudojs/feature-flags";
+
+const brokenProvider = {
+  get: async () => { throw new Error("flag service unreachable"); },
+  getAll: async () => { throw new Error("flag service unreachable"); },
+};
+const errors = [];
+const flags = createFeatureFlags({ provider: brokenProvider, onError: (error) => errors.push(error.message) });
+
+console.log(await flags.isEnabled("task-comments", { userId: "ada" }));
+console.log(await flags.getBoolean("task-export", true, { userId: "ada" }));
+console.log(errors);
+</code>
+<option correct>false
+true
+[ 'flag service unreachable' ]</option>
+<option>true
+true
+[ 'flag service unreachable' ]</option>
+<option>false
+false
+[ 'flag service unreachable' ]</option>
+<option>false
+true
+[]</option>
+<explain><p><code>isEnabled</code> fails closed: <code>false</code>. <code>getBoolean(key, fallback)</code> serves your fallback, here <code>true</code>. After the first failure the instance leaves the provider alone for 5 seconds, so <code>onError</code> received one error, not two.</p></explain>
+</question>
+
+<question id="getboolean-true" type="choice">
+<q>When is <code>getBoolean(key, true)</code> a good choice?</q>
+<option>For a new beta feature</option>
+<option>For a payment change that is still being tested</option>
+<option correct>For a feature that every user already has and that is safe to keep running, like task export</option>
+<option>For every flag, so users are never blocked</option>
+<explain><p>The fallback is used when the flag is missing or unreachable. Use <code>true</code> only for features that are safe to keep on; everything new should fall back to off.</p></explain>
+</question>
+
+<question id="on-error-log" type="choice">
+<q>What should the Task API do in <code>onError</code>?</q>
+<option>Throw, so the request fails</option>
+<option correct>Log the problem, so you notice the flag store is failing</option>
+<option>Switch every flag on</option>
+<option>Nothing: errors are handled already</option>
+<explain><p>The flags already fail closed, so the request can continue. But someone must learn that the flag store is down, and the log is where they look.</p></explain>
+</question>
+
+<question id="snapshot-visibility" type="choice">
+<q>Why does a snapshot include only flags marked <code>visibility: "client"</code>?</q>
+<option>Other flags are too big to send</option>
+<option correct>Flag definitions can reveal unannounced plans or the names of beta customers</option>
+<option>The browser cannot read boolean values</option>
+<option>Server flags are always off</option>
+<explain><p>A snapshot sends evaluated values to the browser, and only for flags you chose. Rules and other flags stay on the server, so the client cannot see who else is on the beta list.</p></explain>
+</question>
+
+<question id="snapshot-output" type="output">
+<q>What does this print?</q>
+<code file="snapshot.js">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([
+    { key: "task-comments", enabled: true, defaultValue: false, visibility: "client",
+      rules: [{ type: "user", users: ["ada"], value: true }] },
+    { key: "dark-mode", enabled: true, defaultValue: true, visibility: "client" },
+    { key: "acme-migration", enabled: true, defaultValue: false,
+      rules: [{ type: "tenant", tenants: ["acme"], value: true }] },
+  ]),
+});
+
+const snapshot = await flags.snapshot({ userId: "linus" });
+const body = Object.fromEntries([...snapshot].map(([key, result]) => [key, result.value]));
+console.log(JSON.stringify(body));
+</code>
+<option correct>{"task-comments":false,"dark-mode":true}</option>
+<option>{"task-comments":true,"dark-mode":true}</option>
+<option>{"task-comments":false,"dark-mode":true,"acme-migration":false}</option>
+<option>{"dark-mode":true}</option>
+<explain><p>linus is not on the user list, so <code>task-comments</code> is <code>false</code> for him. <code>acme-migration</code> has no <code>visibility: "client"</code>, so it stays on the server.</p></explain>
+</question>
+
+<question id="snapshot-trust" type="choice">
+<q>The browser received <code>{"task-comments": true}</code> in its snapshot. What must the server still do when the user posts a comment?</q>
+<option>Nothing: the snapshot came from the server</option>
+<option correct>Check the flag (and the permission) again on the server, because the user can change anything in their browser</option>
+<option>Ask the browser to send the snapshot back and trust it</option>
+<option>Check only that the request has a comment body</option>
+<explain><p>Use the snapshot to decide what to <em>show</em>. Anything in the browser can be edited, so every action is checked again on the server.</p></explain>
+</question>
+
+<question id="flag-hygiene" type="choice">
+<q>Why does the Task API keep all flags in one file with an <code>owner</code> and an <code>expiresAt</code> date?</q>
+<option>The package refuses flags without them</option>
+<option correct>So old flags get removed; a forgotten flag becomes an <code>if</code> nobody dares to delete</option>
+<option>So the browser can see who owns each flag</option>
+<option>So the flag turns on by itself at that date</option>
+<explain><p>When a feature is fully rolled out, delete the flag and its <code>if</code>. The owner and date make it clear who should do that and when.</p></explain>
+</question>
+
+<question id="expired-output" type="output">
+<q>Today is after the <code>expiresAt</code> date. What does this print?</q>
+<code file="expired.js">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "old-banner",
+    enabled: true,
+    defaultValue: false,
+    rules: [{ type: "static", value: true }],
+    metadata: { owner: "tasks-team", expiresAt: new Date("2020-01-01") },
+  }]),
+});
+
+const result = await flags.evaluate("old-banner");
+console.log(result.value, result.reason);
+</code>
+<option correct>false expired</option>
+<option>true static</option>
+<option>true expired</option>
+<option>false default</option>
+<explain><p>After its <code>expiresAt</code> date, a flag serves its default with the reason <code>expired</code>. With a safe default of <code>false</code>, the feature switches off and somebody notices the forgotten flag.</p></explain>
+</question>
+
+<question id="close-flags" type="choice">
+<q>What does <code>flags.close()</code> do when the app shuts down?</q>
+<option>It deletes all flags from the provider</option>
+<option>It switches every flag off</option>
+<option correct>It stops listening to the provider's change announcements</option>
+<option>It sends a snapshot to every browser</option>
+<explain><p>The flags instance listens to the provider so it sees changes at once. <code>close()</code> stops that listener, so the process can shut down cleanly.</p></explain>
+</question>
+
+<question id="practice-order" type="output">
+<q>What does this print?</q>
+<code file="new-editor.js">
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "new-editor",
+    enabled: true,
+    defaultValue: false,
+    rules: [
+      { type: "attribute", attribute: "email", operator: "ends_with", value: "@taskapi.dev" },
+      { type: "percentage", percentage: 0, value: true },
+    ],
+  }]),
+});
+
+const staff = await flags.evaluate("new-editor", { userId: "ada", attributes: { email: "ada@taskapi.dev" } });
+const other = await flags.evaluate("new-editor", { userId: "user-1" });
+console.log(staff.value, staff.reason);
+console.log(other.value, other.reason);
+</code>
+<option correct>true rule_match
+false default</option>
+<option>true percentage_rollout
+false default</option>
+<option>false default
+false default</option>
+<option>true rule_match
+true percentage_rollout</option>
+<explain><p>Staff are checked first, so ada matches the attribute rule. user-1 has no email and only reaches the percentage rule, which is at 0%, so the default is served.</p></explain>
+</question>
+
+<question id="unsafe-header-role" type="choice">
+<q>A flag rule checks <code>{ type: "attribute", attribute: "role", operator: "equals", value: "admin" }</code>, and the Task API fills <code>role</code> from a request header. What is wrong?</q>
+<option>Nothing, as long as the header is lower-case</option>
+<option correct>The client controls the header, so anyone can become "admin"; and a flag must not replace the permission check</option>
+<option>Attribute rules cannot compare strings</option>
+<option>Only the <code>in</code> operator works for roles</option>
+<explain><p>It is unsafe twice. The role must come from your verified authentication, and admin actions still need the real permission check on the server.</p></explain>
+</question>
+
+<question id="code-beta-users" type="code" file="beta-users.js">
+<q><p>Add a rule to <code>task-comments</code> so it is on for the users <code>ada</code> and <code>grace</code> only. The program should print <code>true true false</code>.</p></q>
+<starter>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "task-comments",
+    enabled: true,
+    defaultValue: false,
+    // your code here
+  }]),
+});
+
+console.log(
+  await flags.isEnabled("task-comments", { userId: "ada" }),
+  await flags.isEnabled("task-comments", { userId: "grace" }),
+  await flags.isEnabled("task-comments", { userId: "linus" }),
+);
+</starter>
+<solution>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "task-comments",
+    enabled: true,
+    defaultValue: false,
+    rules: [{ type: "user", users: ["ada", "grace"], value: true }],
+  }]),
+});
+
+console.log(
+  await flags.isEnabled("task-comments", { userId: "ada" }),
+  await flags.isEnabled("task-comments", { userId: "grace" }),
+  await flags.isEnabled("task-comments", { userId: "linus" }),
+);
+</solution>
+<expected>true true false</expected>
+<explain><p>A <code>user</code> rule lists user ids and the value to serve. Everyone else gets the safe default <code>false</code>.</p></explain>
+</question>
+
+<question id="code-staff-rule" type="code" file="staff-rule.js">
+<q><p>Add an attribute rule so <code>new-editor</code> is on for users whose <code>email</code> attribute ends with <code>@taskapi.dev</code>. The program should print <code>true false</code>.</p></q>
+<starter>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "new-editor",
+    enabled: true,
+    defaultValue: false,
+    // your code here
+  }]),
+});
+
+console.log(
+  await flags.isEnabled("new-editor", { userId: "linus", attributes: { email: "linus@taskapi.dev" } }),
+  await flags.isEnabled("new-editor", { userId: "alan", attributes: { email: "alan@example.com" } }),
+);
+</starter>
+<solution>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "new-editor",
+    enabled: true,
+    defaultValue: false,
+    rules: [{ type: "attribute", attribute: "email", operator: "ends_with", value: "@taskapi.dev" }],
+  }]),
+});
+
+console.log(
+  await flags.isEnabled("new-editor", { userId: "linus", attributes: { email: "linus@taskapi.dev" } }),
+  await flags.isEnabled("new-editor", { userId: "alan", attributes: { email: "alan@example.com" } }),
+);
+</solution>
+<expected>true false</expected>
+<explain><p>An attribute rule compares one attribute with an operator. Without a <code>result</code>, a match serves <code>true</code>.</p></explain>
+</question>
+
+<question id="code-page-size" type="code" file="page-size-rule.js">
+<q><p>Add a rule so <code>page-size</code> is 100 for the plans <code>pro</code> and <code>team</code>, and stays 20 for everyone else. The program should print <code>20 100 100</code>.</p></q>
+<starter>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "page-size",
+    enabled: true,
+    defaultValue: 20,
+    // your code here
+  }]),
+});
+
+const sizes = [];
+for (const plan of ["free", "pro", "team"]) {
+  sizes.push(await flags.get("page-size", { userId: "u1", attributes: { plan } }));
+}
+console.log(...sizes);
+</starter>
+<solution>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "page-size",
+    enabled: true,
+    defaultValue: 20,
+    rules: [{ type: "attribute", attribute: "plan", operator: "in", value: ["pro", "team"], result: 100 }],
+  }]),
+});
+
+const sizes = [];
+for (const plan of ["free", "pro", "team"]) {
+  sizes.push(await flags.get("page-size", { userId: "u1", attributes: { plan } }));
+}
+console.log(...sizes);
+</solution>
+<expected>20 100 100</expected>
+<explain><p>The <code>in</code> operator matches one of several values, and <code>result</code> sets the value a match serves. A flag value can be a number, not only a boolean.</p></explain>
+</question>
+
+<question id="code-safe-kill-switch" type="code" file="safe-kill-switch.js">
+<q><p>Write the <code>emails</code> definition as a safe kill switch: on while enabled, and off after it is disabled. Use a safe <code>defaultValue</code> and a rule that switches it on. The program should print <code>true false</code>.</p></q>
+<starter>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const emails = {
+  key: "task-emails",
+  // your code here
+};
+const provider = createMemoryProvider([emails]);
+const flags = createFeatureFlags({ provider });
+
+const before = await flags.isEnabled("task-emails");
+provider.set({ ...emails, enabled: false });
+const after = await flags.isEnabled("task-emails");
+console.log(before, after);
+flags.close();
+</starter>
+<solution>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const emails = {
+  key: "task-emails",
+  enabled: true,
+  defaultValue: false,
+  rules: [{ type: "static", value: true }],
+};
+const provider = createMemoryProvider([emails]);
+const flags = createFeatureFlags({ provider });
+
+const before = await flags.isEnabled("task-emails");
+provider.set({ ...emails, enabled: false });
+const after = await flags.isEnabled("task-emails");
+console.log(before, after);
+flags.close();
+</solution>
+<expected>true false</expected>
+<explain><p><code>defaultValue: false</code> plus a <code>static</code> rule that serves <code>true</code>. The feature is on while the flag is enabled, and every failure path (disabled, deleted, unreachable) leads to off.</p></explain>
+</question>
+
+<question id="code-context-from-user" type="code" file="context-from-user.js">
+<q><p>Finish <code>contextFor(user, body)</code>: build the evaluation context from the <strong>verified</strong> user only (<code>userId</code> and the <code>plan</code> attribute). Ignore the request body, whose <code>plan</code> the client can set to anything. The program should print <code>100 20</code>.</p></q>
+<starter>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "page-size",
+    enabled: true,
+    defaultValue: 20,
+    rules: [{ type: "attribute", attribute: "plan", operator: "equals", value: "pro", result: 100 }],
+  }]),
+});
+
+function contextFor(user, body) {
+  // your code here
+}
+
+const ada = { id: "ada", plan: "pro" };
+const alan = { id: "alan", plan: "free" };
+console.log(
+  await flags.get("page-size", contextFor(ada, { plan: "free" })),
+  await flags.get("page-size", contextFor(alan, { plan: "pro" })),
+);
+</starter>
+<solution>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "page-size",
+    enabled: true,
+    defaultValue: 20,
+    rules: [{ type: "attribute", attribute: "plan", operator: "equals", value: "pro", result: 100 }],
+  }]),
+});
+
+function contextFor(user, body) {
+  return { userId: user.id, attributes: { plan: user.plan } };
+}
+
+const ada = { id: "ada", plan: "pro" };
+const alan = { id: "alan", plan: "free" };
+console.log(
+  await flags.get("page-size", contextFor(ada, { plan: "free" })),
+  await flags.get("page-size", contextFor(alan, { plan: "pro" })),
+);
+</solution>
+<expected>100 20</expected>
+<explain><p>The body is written by the client, so its <code>plan</code> proves nothing. The verified users say ada is on pro (100) and alan is on free (20), whatever their bodies claim.</p></explain>
+</question>
+
+<question id="code-snapshot-body" type="code" file="snapshot-body.js">
+<q><p>Finish <code>clientFlags(context)</code>: take <code>flags.snapshot(context)</code> (a Map from key to result) and return a plain object from each key to its <code>value</code>. The program should print <code>{"task-comments":true,"dark-mode":true}</code>.</p></q>
+<starter>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([
+    { key: "task-comments", enabled: true, defaultValue: false, visibility: "client",
+      rules: [{ type: "user", users: ["ada"], value: true }] },
+    { key: "dark-mode", enabled: true, defaultValue: true, visibility: "client" },
+    { key: "acme-migration", enabled: true, defaultValue: false },
+  ]),
+});
+
+async function clientFlags(context) {
+  // your code here
+}
+
+console.log(JSON.stringify(await clientFlags({ userId: "ada" })));
+</starter>
+<solution>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([
+    { key: "task-comments", enabled: true, defaultValue: false, visibility: "client",
+      rules: [{ type: "user", users: ["ada"], value: true }] },
+    { key: "dark-mode", enabled: true, defaultValue: true, visibility: "client" },
+    { key: "acme-migration", enabled: true, defaultValue: false },
+  ]),
+});
+
+async function clientFlags(context) {
+  const snapshot = await flags.snapshot(context);
+  return Object.fromEntries([...snapshot].map(([key, result]) => [key, result.value]));
+}
+
+console.log(JSON.stringify(await clientFlags({ userId: "ada" })));
+</solution>
+<expected>{"task-comments":true,"dark-mode":true}</expected>
+<explain><p>The client gets values, not rules. Only <code>visibility: "client"</code> flags are in the snapshot, so <code>acme-migration</code> stays on the server.</p></explain>
+</question>
+
+<question id="code-rollout-count" type="code" file="rollout-count.js">
+<q><p>Finish <code>countInside(percentage)</code>: count how many of the users <code>user-0</code> to <code>user-999</code> are inside the <code>task-comments</code> rollout, using <code>isInRollout(key, userId, percentage)</code>. The program should print <code>0 1000 true</code>.</p></q>
+<starter>
+import { isInRollout } from "@zudojs/feature-flags";
+
+function countInside(percentage) {
+  // your code here
+}
+
+const twenty = countInside(20);
+console.log(countInside(0), countInside(100), twenty > 150 && twenty < 250);
+</starter>
+<solution>
+import { isInRollout } from "@zudojs/feature-flags";
+
+function countInside(percentage) {
+  let count = 0;
+  for (let i = 0; i < 1000; i++) {
+    if (isInRollout("task-comments", `user-${i}`, percentage)) count++;
+  }
+  return count;
+}
+
+const twenty = countInside(20);
+console.log(countInside(0), countInside(100), twenty > 150 && twenty < 250);
+</solution>
+<expected>0 1000 true</expected>
+<explain><p>A 20% rollout reaches about 200 of 1000 users, not exactly 200, because each user's bucket comes from a hash. 0% reaches nobody and 100% everybody.</p></explain>
+</question>
+
+<question id="code-onerror" type="code" file="on-error.js">
+<q><p>The flag store is down. Add an <code>onError</code> option that pushes <code>error.message</code> into <code>problems</code>, so the failure can be logged. The program should print <code>false [ 'flag service unreachable' ]</code>.</p></q>
+<starter>
+import { createFeatureFlags } from "@zudojs/feature-flags";
+
+const brokenProvider = {
+  get: async () => { throw new Error("flag service unreachable"); },
+  getAll: async () => { throw new Error("flag service unreachable"); },
+};
+const problems = [];
+const flags = createFeatureFlags({
+  provider: brokenProvider,
+  // your code here
+});
+
+console.log(await flags.isEnabled("task-comments", { userId: "ada" }), problems);
+</starter>
+<solution>
+import { createFeatureFlags } from "@zudojs/feature-flags";
+
+const brokenProvider = {
+  get: async () => { throw new Error("flag service unreachable"); },
+  getAll: async () => { throw new Error("flag service unreachable"); },
+};
+const problems = [];
+const flags = createFeatureFlags({
+  provider: brokenProvider,
+  onError: (error) => {
+    problems.push(error.message);
+  },
+});
+
+console.log(await flags.isEnabled("task-comments", { userId: "ada" }), problems);
+</solution>
+<expected>false [ 'flag service unreachable' ]</expected>
+<explain><p>The flag fails closed (<code>false</code>), and the failure reaches <code>onError</code>. In the Task API you would log it there, so someone notices the flag store is down.</p></explain>
+</question>
+
+<question id="code-email-service" type="code" file="email-service.js">
+<q><p>Finish <code>complete(userId, id)</code>: ask <code>flags.isEnabled("task-emails", { userId })</code> and return <code>task &lt;id&gt; done, email sent</code> when it is on, or <code>task &lt;id&gt; done, email skipped</code> when it is off. The program should print:</p>
+<pre>task 1 done, email sent
+task 1 done, email skipped</pre></q>
+<starter>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const emails = { key: "task-emails", enabled: true, defaultValue: false, rules: [{ type: "static", value: true }] };
+const provider = createMemoryProvider([emails]);
+const flags = createFeatureFlags({ provider });
+
+async function complete(userId, id) {
+  // your code here
+}
+
+console.log(await complete("ada", 1));
+provider.set({ ...emails, enabled: false });
+console.log(await complete("ada", 1));
+flags.close();
+</starter>
+<solution>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const emails = { key: "task-emails", enabled: true, defaultValue: false, rules: [{ type: "static", value: true }] };
+const provider = createMemoryProvider([emails]);
+const flags = createFeatureFlags({ provider });
+
+async function complete(userId, id) {
+  const sendEmail = await flags.isEnabled("task-emails", { userId });
+  return sendEmail ? `task ${id} done, email sent` : `task ${id} done, email skipped`;
+}
+
+console.log(await complete("ada", 1));
+provider.set({ ...emails, enabled: false });
+console.log(await complete("ada", 1));
+flags.close();
+</solution>
+<expected>
+task 1 done, email sent
+task 1 done, email skipped
+</expected>
+<explain><p>Ask the flag before the optional work. When the kill switch is flipped, the task is still completed; only the email is skipped.</p></explain>
+</question>
+
+<question id="code-variant-groups" type="code" file="variant-groups.js">
+<q><p>Finish <code>groupSizes(count)</code>: evaluate <code>task-sorting</code> for the users <code>user-0</code> to <code>user-(count-1)</code> and count how many get each value in a Map. Then the program checks that both groups exist and that the sizes add up. It should print <code>2 true</code>.</p></q>
+<starter>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "task-sorting",
+    enabled: true,
+    defaultValue: "by-date",
+    rules: [{ type: "variant", variants: [{ key: "by-date", weight: 50 }, { key: "by-priority", weight: 50 }] }],
+  }]),
+});
+
+async function groupSizes(count) {
+  const groups = new Map();
+  // your code here
+  return groups;
+}
+
+const groups = await groupSizes(200);
+console.log(groups.size, (groups.get("by-date") ?? 0) + (groups.get("by-priority") ?? 0) === 200);
+</starter>
+<solution>
+import { createFeatureFlags, createMemoryProvider } from "@zudojs/feature-flags";
+
+const flags = createFeatureFlags({
+  provider: createMemoryProvider([{
+    key: "task-sorting",
+    enabled: true,
+    defaultValue: "by-date",
+    rules: [{ type: "variant", variants: [{ key: "by-date", weight: 50 }, { key: "by-priority", weight: 50 }] }],
+  }]),
+});
+
+async function groupSizes(count) {
+  const groups = new Map();
+  for (let i = 0; i < count; i++) {
+    const result = await flags.evaluate("task-sorting", { userId: `user-${i}` });
+    groups.set(result.value, (groups.get(result.value) ?? 0) + 1);
+  }
+  return groups;
+}
+
+const groups = await groupSizes(200);
+console.log(groups.size, (groups.get("by-date") ?? 0) + (groups.get("by-priority") ?? 0) === 200);
+</solution>
+<expected>2 true</expected>
+<explain><p>Each user lands in one of the two named groups, about half in each. Record the variant with what users do to learn which version wins.</p></explain>
+</question>

@@ -1,0 +1,1123 @@
+<question id="typed-errors-why" type="choice">
+<q>A repository finds out that book 42 does not exist. What should it throw?</q>
+<option><code>new HttpError(404, "not_found", "Book 42 not found")</code></option>
+<option correct><code>new NotFoundError("Book 42")</code>, and let the HTTP layer choose the status code</option>
+<option>Nothing: it should return <code>{ status: 404 }</code></option>
+<option><code>new Error("404")</code></option>
+<explain><p>Code deep inside the app should not need to know HTTP. It says <em>what</em> went wrong with a typed error. One function in the HTTP layer, <code>toErrorResponse</code>, maps each type to its status code.</p></explain>
+</question>
+
+<question id="status-map" type="choice">
+<q>Which mapping does the BookStore's <code>toErrorResponse</code> use?</q>
+<option><code>ValidationError</code> 422, <code>NotFoundError</code> 404, <code>ConflictError</code> 400</option>
+<option correct><code>ValidationError</code> 400, <code>NotFoundError</code> 404, <code>ConflictError</code> 409</option>
+<option><code>ValidationError</code> 400, <code>NotFoundError</code> 410, <code>ConflictError</code> 500</option>
+<option>All three become 500</option>
+<explain><p>400: fix your request, the issues say what is wrong. 404: the thing in the URL does not exist. 409: the request is fine but clashes with the current data. Unknown errors are still a generic 500.</p></explain>
+</question>
+
+<question id="conflict-meaning" type="choice">
+<q>Which situation is a 409 Conflict in the BookStore?</q>
+<option>The body has <code>"quantity": "two"</code></option>
+<option>The URL asks for book 999, which does not exist</option>
+<option correct>A client orders 5 copies, but only 1 is left in stock</option>
+<option>The server has a bug in a repository</option>
+<explain><p>The order is well-formed, but it clashes with the current data. The same goes for creating a second author with a name that already exists. A wrong field is 400, and a missing resource in the URL is 404.</p></explain>
+</question>
+
+<question id="collect-issues" type="choice">
+<q>Why do the helpers <code>text</code> and <code>whole</code> push a message to <code>issues</code> and return a placeholder, instead of throwing?</q>
+<option>Because throwing is slow</option>
+<option correct>So one request gets all its problems reported at once, not one per attempt</option>
+<option>Because type guards are not allowed to throw</option>
+<option>So invalid values can still be saved with the placeholder</option>
+<explain><p>After all fields are read, <code>done</code> throws one <code>ValidationError</code> with every issue. The client can fix everything in one go. The placeholders are never saved, because <code>done</code> throws first.</p></explain>
+</question>
+
+<question id="max-limits" type="choice">
+<q>Why does every check have a maximum, such as a title of at most 200 characters and a quantity of at most 100?</q>
+<option>Because PostgreSQL <code>text</code> columns cannot hold more</option>
+<option correct>Because a 5 MB "title" or a quantity of a billion is wrong too, and can hurt the server or the business</option>
+<option>Because JSON strings are limited to 200 characters</option>
+<option>To make the error messages shorter</option>
+<explain><p>Valid-looking but huge values waste memory and storage, or place absurd orders. A check that only looks at the type is not enough: always set a sensible range.</p></explain>
+</question>
+
+<question id="extra-fields" type="choice">
+<q>A client sends <code>{"name": "Ada", "id": 1, "isAdmin": true}</code> to <code>POST /authors</code>. What does <code>parseNewAuthor</code> return?</q>
+<option>The whole body, because <code>name</code> is valid</option>
+<option correct><code>{ name: "Ada" }</code>: a new object with only the checked fields</option>
+<option>A <code>ValidationError</code> for the unknown fields</option>
+<option><code>{ name: "Ada", id: 1 }</code>, because <code>id</code> is a real column</option>
+<explain><p>The parser builds a new object from the fields it checked. Extra fields like <code>id</code> or <code>isAdmin</code> are dropped here and can never reach the database.</p></explain>
+</question>
+
+<question id="pglite-what" type="choice">
+<q>What is PGlite?</q>
+<option>A lightweight SQL dialect that looks like PostgreSQL</option>
+<option correct>Real PostgreSQL compiled to WebAssembly, running inside your Node.js process</option>
+<option>An in-memory <code>Map</code> with an SQL-like API</option>
+<option>A client that connects to a PostgreSQL server over the network</option>
+<explain><p>It is the real database engine with no server to install. It keeps data in memory, or in a folder if you give it one. The SQL is the same, so moving to a PostgreSQL server later changes one file.</p></explain>
+</question>
+
+<question id="no-dash-d" type="choice">
+<q>Why is PGlite installed with <code>npm install @electric-sql/pglite</code>, without <code>-D</code>?</q>
+<option>Because <code>-D</code> does not work with scoped packages</option>
+<option correct>Because the running app needs it, while <code>-D</code> is for tools only needed during development</option>
+<option>Because it is a global command</option>
+<option>It does not matter; both put it in <code>devDependencies</code></option>
+<explain><p>TypeScript, tsx and <code>@types/node</code> are development tools (<code>-D</code>). The database library is used by the server when it runs, so it goes in <code>dependencies</code>.</p></explain>
+</question>
+
+<question id="foreign-key" type="choice">
+<q><code>author_id integer NOT NULL REFERENCES authors (id)</code>. What does <code>REFERENCES</code> do?</q>
+<option>It copies the author's name into the books table</option>
+<option correct>It is a foreign key: PostgreSQL refuses a book whose author does not exist</option>
+<option>It makes <code>author_id</code> unique</option>
+<option>It deletes the books when the author is deleted</option>
+<explain><p>A foreign key makes the database protect its own data. Even a bug in your TypeScript cannot create a book pointing at a missing author, or delete an author who still has books.</p></explain>
+</question>
+
+<question id="constraints-why" type="choice">
+<q>The code already validates bodies. Why also add <code>UNIQUE</code>, <code>CHECK (stock &gt;= 0)</code> and foreign keys to the tables?</q>
+<option>They are required by PGlite</option>
+<option correct>The database then protects its data even when the application code has a bug, or two requests race</option>
+<option>They make queries faster</option>
+<option>They replace the need to validate bodies</option>
+<explain><p>Validation checks the shape of one request. Only the database sees all the data at once, so rules like "no duplicate names" and "stock never below 0" belong there too. Both layers work together.</p></explain>
+</question>
+
+<question id="if-not-exists" type="choice">
+<q>Why do the migrations use <code>CREATE TABLE IF NOT EXISTS</code>?</q>
+<option>So the table is dropped and recreated with fresh data</option>
+<option correct>So they are safe to run on every start: an existing table is left alone</option>
+<option>Because PostgreSQL requires it</option>
+<option>So the table exists only in memory</option>
+<explain><p><code>openDatabase</code> runs the migrations every time the server starts. Without <code>IF NOT EXISTS</code>, the second start would fail because the tables are already there. Real projects use a migration tool that remembers which steps ran.</p></explain>
+</question>
+
+<question id="pg-codes" type="choice">
+<q>PostgreSQL throws an error with <code>code: "23505"</code> when creating an author. What happened, and what does the repository throw?</q>
+<option>A foreign key was broken; it throws <code>ValidationError</code></option>
+<option correct>A unique rule was broken (the name exists); it throws <code>ConflictError</code></option>
+<option>The table is missing; it throws <code>NotFoundError</code></option>
+<option>The connection failed; it throws <code>HttpError(500)</code></option>
+<explain><p><code>23505</code> means "unique rule broken" and becomes a 409 conflict. <code>23503</code> means "foreign key broken", which the book repository reports as a 400 validation issue (<code>authorId 7 does not exist</code>).</p></explain>
+</question>
+
+<question id="safe-query" type="choice">
+<q><code>search</code> comes from a query string. Which query is safe?</q>
+<option><code>db.query(`SELECT title FROM books WHERE title = '${search}'`)</code></option>
+<option><code>db.query("SELECT title FROM books WHERE title = '" + search.replace("'", "") + "'")</code></option>
+<option correct><code>db.query("SELECT title FROM books WHERE title = $1", [search])</code></option>
+<option><code>db.query(`SELECT title FROM books WHERE title = "${search}"`)</code></option>
+<explain><p>With <code>$1</code>, the SQL and the value travel to PostgreSQL separately, so the value is only ever data, never SQL. Pasting it into the string, even with quotes removed or changed, lets crafted input rewrite the query: SQL injection.</p></explain>
+</question>
+
+<question id="columns-safe" type="choice">
+<q>The book repository writes <code>`SELECT ${COLUMNS} FROM books WHERE id = $1`</code>. Why is pasting <code>COLUMNS</code> into the SQL safe?</q>
+<option>Because template strings escape values automatically</option>
+<option correct>Because <code>COLUMNS</code> is a fixed string written in the code, never user input</option>
+<option>Because column names cannot contain quotes</option>
+<option>It is not safe; it should be <code>$2</code></option>
+<explain><p>The danger is outside input in SQL. A constant you wrote yourself cannot be changed by a client. Every value from outside still goes in as <code>$1</code>, <code>$2</code>, …</p></explain>
+</question>
+
+<question id="one-statement-order" type="choice">
+<q>Why does placing an order take the stock and insert the order in <strong>one</strong> SQL statement?</q>
+<option>Because PGlite allows only one query per request</option>
+<option correct>Two customers may buy the last copy at the same moment; one statement runs as a single step, so stock cannot be sold twice</option>
+<option>Because it is shorter to write</option>
+<option>To avoid using <code>$1</code> parameters</option>
+<explain><p>With a separate "read stock" and "write order", both requests could read "1 left" and both succeed. <code>UPDATE … WHERE stock &gt;= $2</code> inside the same statement only changes the book if there is enough stock.</p></explain>
+</question>
+
+<question id="price-from-db" type="choice">
+<q>Where does an order's <code>total_cents</code> come from?</q>
+<option>From <code>totalCents</code> in the request body</option>
+<option>From <code>priceCents</code> in the request body, times the quantity</option>
+<option correct>From the book's <code>price_cents</code> in the database, times the quantity</option>
+<option>From the client's previous order</option>
+<explain><p>The price comes from the database, never from the client, so nobody can send their own price. The client only says which book and how many.</p></explain>
+</question>
+
+<question id="queryable-why" type="choice">
+<q>Why is moving from PGlite to a PostgreSQL server (with <code>pg</code>) only one new file?</q>
+<option>Because <code>pg</code> and PGlite are the same package</option>
+<option correct>Because every repository depends only on the small <code>Queryable</code> interface, and both can be wrapped to fit it</option>
+<option>Because the repositories read <code>DATABASE_URL</code> themselves</option>
+<option>Because TypeScript converts PGlite calls to <code>pg</code> calls</option>
+<explain><p>Repositories get a <code>Queryable</code> through their constructor: "run this SQL with these parameters and give me rows". <code>connectPostgres</code> wraps a <code>pg.Pool</code> in that shape, and no repository changes.</p></explain>
+</question>
+
+<question id="database-url-secret" type="choice">
+<q><code>DATABASE_URL</code> looks like <code>postgres://postgres:PASSWORD@localhost:5440/bookstore</code>. How should you handle it?</q>
+<option>Put it in <code>config.ts</code> as the default value</option>
+<option>Commit it in a <code>.env</code> file so the team has it</option>
+<option correct>Set it only in the server's environment; never commit it, log it or put it in an error message</option>
+<option>Send it to the client in the 500 response, to help debugging</option>
+<explain><p>The URL contains the password. It belongs in the environment of the server. The lesson even creates a random password in a shell variable, so it never appears in a file.</p></explain>
+</question>
+
+<question id="delete-author-books" type="choice">
+<q>A client deletes an author who still has books. PostgreSQL throws error <code>23503</code>. What should the API answer?</q>
+<option>200, and delete the books too</option>
+<option>404, because the author cannot be found</option>
+<option correct>409 Conflict: "Author 1 still has books"</option>
+<option>500, because the database threw an error</option>
+<explain><p>The foreign key refuses to leave books without an author. The repository turns that code into a <code>ConflictError</code>, so the client learns why with a 409 instead of a generic 500.</p></explain>
+</question>
+
+<question id="new-target-output" type="output">
+<q>What does this print?</q>
+<code file="app-errors.ts">
+class AppError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = new.target.name;
+    this.code = code;
+  }
+}
+class NotFoundError extends AppError {
+  constructor(what: string) {
+    super("not_found", `${what} not found`);
+  }
+}
+class ConflictError extends AppError {
+  constructor(message: string) {
+    super("conflict", message);
+  }
+}
+
+const errors: AppError[] = [new NotFoundError("Book 42"), new ConflictError("Only 1 left of book 1")];
+for (const error of errors) {
+  console.log(error.name, error.code, error.message, error instanceof AppError);
+}
+</code>
+<option correct>NotFoundError not_found Book 42 not found true
+ConflictError conflict Only 1 left of book 1 true</option>
+<option>AppError not_found Book 42 not found true
+AppError conflict Only 1 left of book 1 true</option>
+<option>Error not_found Book 42 not found true
+Error conflict Only 1 left of book 1 true</option>
+<option>NotFoundError not_found Book 42 not found false
+ConflictError conflict Only 1 left of book 1 false</option>
+<explain><p><code>new.target</code> is the class actually created with <code>new</code>, so each subclass gets its own name without repeating it. Both are still <code>AppError</code>s, which is how the HTTP layer knows they are expected errors.</p></explain>
+</question>
+
+<question id="to-error-response-output" type="output">
+<q>What does this print?</q>
+<code file="error-map.ts">
+class AppError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+  }
+}
+class ValidationError extends AppError {
+  constructor(readonly issues: readonly string[]) {
+    super("validation_failed", "The request is not valid");
+  }
+}
+class NotFoundError extends AppError {
+  constructor(what: string) {
+    super("not_found", `${what} not found`);
+  }
+}
+class ConflictError extends AppError {
+  constructor(message: string) {
+    super("conflict", message);
+  }
+}
+
+function statusOf(error: unknown): number {
+  if (error instanceof ValidationError) return 400;
+  if (error instanceof NotFoundError) return 404;
+  if (error instanceof ConflictError) return 409;
+  return 500;
+}
+
+console.log([
+  new ValidationError(["quantity must be a whole number from 1 to 100"]),
+  new NotFoundError("Book 42"),
+  new ConflictError("An author called \"Ada\" already exists"),
+  new TypeError("rows is undefined"),
+  new AppError("weird", "an AppError with no mapping"),
+].map(statusOf));
+</code>
+<option correct>[ 400, 404, 409, 500, 500 ]</option>
+<option>[ 400, 404, 409, 500, 400 ]</option>
+<option>[ 422, 404, 409, 500, 500 ]</option>
+<option>[ 400, 404, 400, 500, 500 ]</option>
+<explain><p>Each typed error has one status. A plain <code>TypeError</code> is a bug, and an <code>AppError</code> with no special mapping also falls through to 500, just like <code>statusFor</code> in the lesson.</p></explain>
+</question>
+
+<question id="text-helper-output" type="output">
+<q>What does this print?</q>
+<code file="text-helper.ts">
+function text(value: unknown, name: string, max: number, issues: string[]): string {
+  if (typeof value === "string" && value.trim() !== "" && value.length <= max) {
+    return value.trim();
+  }
+  issues.push(`${name} must be text of 1 to ${max} characters`);
+  return "";
+}
+
+const issues: string[] = [];
+const a = text("  Kindred ", "title", 200, issues);
+const b = text("   ", "title", 200, issues);
+const c = text(42, "name", 100, issues);
+console.log(JSON.stringify([a, b, c]), issues.length);
+</code>
+<option correct>["Kindred","",""] 2</option>
+<option>["Kindred","   ","42"] 0</option>
+<option>["  Kindred ","",""] 2</option>
+<option>["Kindred","",""] 3</option>
+<explain><p>A good value comes back trimmed. A blank string and a number both fail: each adds one issue and returns the placeholder <code>""</code>. The helper never throws.</p></explain>
+</question>
+
+<question id="whole-helper-output" type="output">
+<q>What does this print?</q>
+<code file="whole-helper.ts">
+function whole(value: unknown, name: string, min: number, max: number, issues: string[]): number {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max) {
+    return value;
+  }
+  issues.push(`${name} must be a whole number from ${min} to ${max}`);
+  return min;
+}
+
+const issues: string[] = [];
+const results = [3, "3", 10.5, 0, 1e20].map((v) => whole(v, "quantity", 1, 100, issues));
+console.log(results, issues.length);
+</code>
+<option correct>[ 3, 1, 1, 1, 1 ] 4</option>
+<option>[ 3, 3, 1, 1, 1 ] 3</option>
+<option>[ 3, 1, 10, 1, 100 ] 2</option>
+<option>[ 3, 1, 1, 0, 1 ] 3</option>
+<explain><p>Only <code>3</code> passes. <code>"3"</code> is a string, <code>10.5</code> is not whole, <code>0</code> is below the minimum and <code>1e20</code> is above the maximum, so each of those adds an issue and returns the placeholder <code>min</code>, which is 1.</p></explain>
+</question>
+
+<question id="parse-book-output" type="output">
+<q>What does this print?</q>
+<code file="parse-book.ts">
+class ValidationError extends Error {
+  constructor(readonly issues: readonly string[]) {
+    super("The request is not valid");
+  }
+}
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function text(value: unknown, name: string, max: number, issues: string[]): string {
+  if (typeof value === "string" && value.trim() !== "" && value.length <= max) return value.trim();
+  issues.push(`${name}: text`);
+  return "";
+}
+function whole(value: unknown, name: string, min: number, max: number, issues: string[]): number {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max) return value;
+  issues.push(`${name}: whole`);
+  return min;
+}
+function parseNewBook(input: unknown) {
+  if (!isRecord(input)) throw new ValidationError(["the body must be a JSON object"]);
+  const issues: string[] = [];
+  const book = {
+    title: text(input["title"], "title", 200, issues),
+    authorId: whole(input["authorId"], "authorId", 1, 2_147_483_647, issues),
+    priceCents: whole(input["priceCents"], "priceCents", 0, 1_000_000, issues),
+    stock: whole(input["stock"], "stock", 0, 10_000, issues),
+  };
+  if (issues.length > 0) throw new ValidationError(issues);
+  return book;
+}
+
+const bodies: unknown[] = [
+  { title: "  Kindred ", authorId: 3, priceCents: 1099, stock: 5, id: 1, isAdmin: true },
+  { title: "", authorId: "3", priceCents: 10.5 },
+  "Kindred",
+];
+for (const body of bodies) {
+  try {
+    console.log(JSON.stringify(parseNewBook(body)));
+  } catch (error) {
+    if (error instanceof ValidationError) console.log(error.issues.join(", "));
+  }
+}
+</code>
+<option correct>{"title":"Kindred","authorId":3,"priceCents":1099,"stock":5}
+title: text, authorId: whole, priceCents: whole, stock: whole
+the body must be a JSON object</option>
+<option>{"title":"Kindred","authorId":3,"priceCents":1099,"stock":5,"id":1,"isAdmin":true}
+title: text, authorId: whole, priceCents: whole, stock: whole
+the body must be a JSON object</option>
+<option>{"title":"Kindred","authorId":3,"priceCents":1099,"stock":5}
+title: text
+the body must be a JSON object</option>
+<option>{"title":"Kindred","authorId":3,"priceCents":1099,"stock":5}
+title: text, authorId: whole, priceCents: whole
+the body must be a JSON object</option>
+<explain><p>The parser builds a new object, so <code>id</code> and <code>isAdmin</code> are dropped. The second body gets all four problems at once: empty title, id as a string, half a cent, and a missing stock (<code>undefined</code> is not a number).</p></explain>
+</question>
+
+<question id="injection-output" type="output">
+<q>This code only <em>builds</em> the SQL text, the unsafe way. What does it print?</q>
+<code file="injection.ts">
+const search = "x' OR '1'='1";
+const sql = `SELECT title FROM books WHERE title = '${search}'`;
+console.log(sql);
+</code>
+<option correct>SELECT title FROM books WHERE title = 'x' OR '1'='1'</option>
+<option>SELECT title FROM books WHERE title = 'x\' OR \'1\'=\'1'</option>
+<option>SELECT title FROM books WHERE title = $1</option>
+<option>SELECT title FROM books WHERE title = "x' OR '1'='1"</option>
+<explain><p>The quote in the input ends the text early, and <code>OR '1'='1'</code> becomes part of the SQL. It is always true, so the query returns every book. That is SQL injection; <code>$1</code> parameters keep the value as data only.</p></explain>
+</question>
+
+<question id="safe-integer-output" type="output">
+<q>What does this print?</q>
+<code file="safe-integer.ts">
+const big = 2 ** 53;
+console.log(Number.isInteger(big), Number.isSafeInteger(big));
+console.log(big === big + 1, Number.isSafeInteger(2_147_483_647));
+</code>
+<option correct>true false
+true true</option>
+<option>true true
+false true</option>
+<option>false false
+true true</option>
+<option>true false
+false true</option>
+<explain><p>Above 2<sup>53</sup> − 1, JavaScript numbers can no longer count by one, so <code>big + 1</code> equals <code>big</code>. <code>Number.isSafeInteger</code> refuses such values, which is why <code>whole</code> uses it.</p></explain>
+</question>
+
+<question id="optional-filter-output" type="output">
+<q>The book repository sends <code>[authorId ?? null]</code> as the parameter for <code>$1::integer IS NULL OR author_id = $1</code>. What does this print?</q>
+<code file="optional-filter.ts">
+function listParams(authorId?: number): unknown[] {
+  return [authorId ?? null];
+}
+console.log(listParams(), listParams(2), listParams(0));
+</code>
+<option correct>[ null ] [ 2 ] [ 0 ]</option>
+<option>[ undefined ] [ 2 ] [ 0 ]</option>
+<option>[ null ] [ 2 ] [ null ]</option>
+<option>[] [ 2 ] [ 0 ]</option>
+<explain><p>With no author, <code>$1</code> is <code>NULL</code>, so <code>$1::integer IS NULL</code> is true and every book matches. <code>??</code> keeps <code>0</code>, unlike <code>||</code>. One query handles both cases, and the value still travels as a parameter.</p></explain>
+</question>
+
+<question id="is-pg-error-output" type="output">
+<q>What does this print?</q>
+<code file="is-pg-error.ts">
+function isPgError(error: unknown): error is Error & { code: string } {
+  return error instanceof Error && "code" in error && typeof error.code === "string";
+}
+
+const unique = Object.assign(new Error("duplicate key value"), { code: "23505" });
+const numeric = Object.assign(new Error("odd"), { code: 23505 });
+const plain = { message: "duplicate key value", code: "23505" };
+console.log(isPgError(unique), isPgError(numeric), isPgError(plain), isPgError(new Error("no code")));
+</code>
+<option correct>true false false false</option>
+<option>true true true false</option>
+<option>true true false false</option>
+<option>true false true false</option>
+<explain><p>The guard needs a real <code>Error</code> with a string <code>code</code>. A number code fails the <code>typeof</code> check, and a plain object that only looks like an error fails <code>instanceof Error</code>.</p></explain>
+</question>
+
+<question id="conflict-json-output" type="output">
+<q>What does this print?</q>
+<code file="conflict-json.ts">
+const name = "Chinua Achebe";
+const body = { error: "conflict", message: `An author called "${name}" already exists` };
+console.log(JSON.stringify(body));
+</code>
+<option correct>{"error":"conflict","message":"An author called \"Chinua Achebe\" already exists"}</option>
+<option>{"error":"conflict","message":"An author called "Chinua Achebe" already exists"}</option>
+<option>{"error":"conflict","message":"An author called 'Chinua Achebe' already exists"}</option>
+<option>{error:"conflict",message:"An author called \"Chinua Achebe\" already exists"}</option>
+<explain><p>JSON strings are written with double quotes, so a double quote inside one is escaped as <code>\"</code>. That is the exact body the client receives for a duplicate author.</p></explain>
+</question>
+
+<question id="place-order-output" type="output">
+<q>This in-memory version follows the same rules as the order repository. What does it print?</q>
+<code file="place-order.ts">
+const books = new Map([[1, { priceCents: 1299, stock: 3 }]]);
+
+function place(bookId: number, quantity: number): string {
+  const book = books.get(bookId);
+  if (book !== undefined && book.stock >= quantity) {
+    book.stock -= quantity;
+    return `order: ${quantity} x ${bookId} = ${book.priceCents * quantity}`;
+  }
+  if (book === undefined) return `400 bookId ${bookId} does not exist`;
+  return `409 Only ${book.stock} left of book ${bookId}`;
+}
+
+console.log(place(1, 2));
+console.log(place(1, 5));
+console.log(place(99, 1));
+console.log(place(1, 1));
+console.log(books.get(1)!.stock);
+</code>
+<option correct>order: 2 x 1 = 2598
+409 Only 1 left of book 1
+400 bookId 99 does not exist
+order: 1 x 1 = 1299
+0</option>
+<option>order: 2 x 1 = 2598
+409 Only 3 left of book 1
+400 bookId 99 does not exist
+order: 1 x 1 = 1299
+0</option>
+<option>order: 2 x 1 = 2598
+order: 5 x 1 = 6495
+400 bookId 99 does not exist
+order: 1 x 1 = 1299
+-5</option>
+<option>order: 2 x 1 = 2598
+409 Only 1 left of book 1
+404 bookId 99 does not exist
+order: 1 x 1 = 1299
+0</option>
+<explain><p>Stock is only taken when there is enough. The second order wants 5 of the 1 left: 409. An unknown book in the <em>body</em> is a validation problem (400), not a 404. The last copy then sells normally.</p></explain>
+</question>
+
+<question id="row-mapper-output" type="output">
+<q>What does this print?</q>
+<code file="row-mapper.ts">
+interface BookRow {
+  id: number;
+  title: string;
+  author_id: number;
+  price_cents: number;
+}
+interface Book {
+  readonly id: number;
+  readonly title: string;
+  readonly authorId: number;
+  readonly priceCents: number;
+}
+function toBook(row: BookRow): Book {
+  return { id: row.id, title: row.title, authorId: row.author_id, priceCents: row.price_cents };
+}
+const row: BookRow = { id: 1, title: "Things Fall Apart", author_id: 1, price_cents: 1299 };
+console.log(toBook(row));
+</code>
+<option correct>{ id: 1, title: 'Things Fall Apart', authorId: 1, priceCents: 1299 }</option>
+<option>{ id: 1, title: 'Things Fall Apart', author_id: 1, price_cents: 1299 }</option>
+<option>{
+  id: 1,
+  title: 'Things Fall Apart',
+  author_id: 1,
+  price_cents: 1299,
+  authorId: 1,
+  priceCents: 1299
+}</option>
+<option>{ id: 1, title: 'Things Fall Apart' }</option>
+<explain><p>SQL columns are snake_case and TypeScript properties are camelCase. The lesson renames them in SQL with <code>AS "authorId"</code>; a mapper function like this does the same in code, copying only the fields the API should send.</p></explain>
+</question>
+
+<question id="done-output" type="output">
+<q>What does this print?</q>
+<code file="done.ts">
+class ValidationError extends Error {
+  constructor(readonly issues: readonly string[]) {
+    super("The request is not valid");
+  }
+}
+function done<T>(value: T, issues: readonly string[]): T {
+  if (issues.length > 0) throw new ValidationError(issues);
+  return value;
+}
+
+console.log(done({ quantity: 2 }, []));
+try {
+  done({ quantity: 1 }, ["quantity must be a whole number from 1 to 100"]);
+} catch (error) {
+  if (error instanceof ValidationError) console.log(error.message, error.issues.length);
+}
+</code>
+<option correct>{ quantity: 2 }
+The request is not valid 1</option>
+<option>{ quantity: 2 }
+{ quantity: 1 }</option>
+<option>{ quantity: 2 }
+quantity must be a whole number from 1 to 100 1</option>
+<option>undefined
+The request is not valid 1</option>
+<explain><p><code>done</code> returns the checked value only when there are no issues. Otherwise it throws one <code>ValidationError</code> holding every issue, and the placeholder value is never used.</p></explain>
+</question>
+
+<question id="code-new-target" type="code" file="errors.ts">
+<q><p>The base class <code>AppError</code> is given. Write <code>NotFoundError</code> (code <code>not_found</code>, message <code>&lt;what&gt; not found</code>) and <code>ConflictError</code> (code <code>conflict</code>, message passed in). The program should print:</p><pre>NotFoundError not_found Order 2 not found
+ConflictError conflict Author 1 still has books</pre></q>
+<starter>
+class AppError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = new.target.name;
+    this.code = code;
+  }
+}
+
+// your code here
+
+for (const error of [new NotFoundError("Order 2"), new ConflictError("Author 1 still has books")]) {
+  console.log(error.name, error.code, error.message);
+}
+</starter>
+<solution>
+class AppError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = new.target.name;
+    this.code = code;
+  }
+}
+
+class NotFoundError extends AppError {
+  constructor(what: string) {
+    super("not_found", `${what} not found`);
+  }
+}
+
+class ConflictError extends AppError {
+  constructor(message: string) {
+    super("conflict", message);
+  }
+}
+
+for (const error of [new NotFoundError("Order 2"), new ConflictError("Author 1 still has books")]) {
+  console.log(error.name, error.code, error.message);
+}
+</solution>
+<expected>
+NotFoundError not_found Order 2 not found
+ConflictError conflict Author 1 still has books
+</expected>
+<explain><p>Each subclass only passes its code and message to <code>super</code>. The name comes for free from <code>new.target.name</code> in the base class. None of them knows about HTTP status codes.</p></explain>
+</question>
+
+<question id="code-status-for" type="code" file="status-for.ts">
+<q><p>Write <code>toStatus(error)</code>: <code>ValidationError</code> gives 400, <code>NotFoundError</code> 404, <code>ConflictError</code> 409, and anything else 500. The program should print <code>[ 400, 404, 409, 500 ]</code>.</p></q>
+<starter>
+class AppError extends Error {}
+class ValidationError extends AppError {
+  constructor(readonly issues: readonly string[]) {
+    super("The request is not valid");
+  }
+}
+class NotFoundError extends AppError {}
+class ConflictError extends AppError {}
+
+function toStatus(error: unknown): number {
+  // your code here
+}
+
+console.log([
+  new ValidationError(["title must be text of 1 to 200 characters"]),
+  new NotFoundError("Book 42 not found"),
+  new ConflictError("Only 1 left of book 1"),
+  new RangeError("bug"),
+].map(toStatus));
+</starter>
+<solution>
+class AppError extends Error {}
+class ValidationError extends AppError {
+  constructor(readonly issues: readonly string[]) {
+    super("The request is not valid");
+  }
+}
+class NotFoundError extends AppError {}
+class ConflictError extends AppError {}
+
+function toStatus(error: unknown): number {
+  if (error instanceof ValidationError) return 400;
+  if (error instanceof NotFoundError) return 404;
+  if (error instanceof ConflictError) return 409;
+  return 500;
+}
+
+console.log([
+  new ValidationError(["title must be text of 1 to 200 characters"]),
+  new NotFoundError("Book 42 not found"),
+  new ConflictError("Only 1 left of book 1"),
+  new RangeError("bug"),
+].map(toStatus));
+</solution>
+<expected>[ 400, 404, 409, 500 ]</expected>
+<explain><p>All the HTTP knowledge sits in this one function. <code>instanceof</code> works because the errors are classes, real values at runtime. Anything unexpected is a bug and becomes a plain 500.</p></explain>
+</question>
+
+<question id="code-text-helper" type="code" file="text.ts">
+<q><p>Write the helper <code>text(value, name, max, issues)</code>. When <code>value</code> is a string that is not blank and at most <code>max</code> characters long, return it trimmed. Otherwise push <code>&lt;name&gt; must be text of 1 to &lt;max&gt; characters</code> to <code>issues</code> and return <code>""</code>. Do not throw. The program should print:</p><pre>Kindred|
+[ 'name must be text of 1 to 5 characters' ]</pre></q>
+<starter>
+function text(value: unknown, name: string, max: number, issues: string[]): string {
+  // your code here
+}
+
+const issues: string[] = [];
+const title = text(" Kindred ", "title", 200, issues);
+const name = text("Octavia", "name", 5, issues);
+console.log(`${title}|${name}`);
+console.log(issues);
+</starter>
+<solution>
+function text(value: unknown, name: string, max: number, issues: string[]): string {
+  if (typeof value === "string" && value.trim() !== "" && value.length <= max) {
+    return value.trim();
+  }
+  issues.push(`${name} must be text of 1 to ${max} characters`);
+  return "";
+}
+
+const issues: string[] = [];
+const title = text(" Kindred ", "title", 200, issues);
+const name = text("Octavia", "name", 5, issues);
+console.log(`${title}|${name}`);
+console.log(issues);
+</solution>
+<expected>
+Kindred|
+[ 'name must be text of 1 to 5 characters' ]
+</expected>
+<explain><p>The helper collects problems instead of throwing, so the parser can check every field and report all issues together. The maximum matters as much as the type.</p></explain>
+</question>
+
+<question id="code-whole-helper" type="code" file="whole.ts">
+<q><p>Write the helper <code>whole(value, name, min, max, issues)</code>. Accept only a number that is a safe integer from <code>min</code> to <code>max</code>. Otherwise push <code>&lt;name&gt; must be a whole number from &lt;min&gt; to &lt;max&gt;</code> and return <code>min</code>. The program should print:</p><pre>[ 2, 1, 1 ]
+[
+  'quantity must be a whole number from 1 to 100',
+  'quantity must be a whole number from 1 to 100'
+]</pre></q>
+<starter>
+function whole(value: unknown, name: string, min: number, max: number, issues: string[]): number {
+  // your code here
+}
+
+const issues: string[] = [];
+console.log([2, "2", 500].map((v) => whole(v, "quantity", 1, 100, issues)));
+console.log(issues);
+</starter>
+<solution>
+function whole(value: unknown, name: string, min: number, max: number, issues: string[]): number {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max) {
+    return value;
+  }
+  issues.push(`${name} must be a whole number from ${min} to ${max}`);
+  return min;
+}
+
+const issues: string[] = [];
+console.log([2, "2", 500].map((v) => whole(v, "quantity", 1, 100, issues)));
+console.log(issues);
+</solution>
+<expected>
+[ 2, 1, 1 ]
+[
+  'quantity must be a whole number from 1 to 100',
+  'quantity must be a whole number from 1 to 100'
+]
+</expected>
+<explain><p><code>"2"</code> is text, not a number, and JSON bodies keep that difference. <code>Number.isSafeInteger</code> refuses decimals, <code>NaN</code> and numbers too large to count exactly.</p></explain>
+</question>
+
+<question id="code-parse-order" type="code" file="parse-order.ts">
+<q><p>Using the given helpers, write <code>parseNewOrder(input)</code>. If <code>input</code> is not a plain object, throw <code>new ValidationError(["the body must be a JSON object"])</code>. Read <code>bookId</code> (1 to 2147483647) and <code>quantity</code> (1 to 100) with <code>whole</code>, and throw one <code>ValidationError</code> with every issue if there are any. Return a new object with only those two fields. The program should print:</p><pre>{"bookId":1,"quantity":2}
+bookId must be a whole number from 1 to 2147483647; quantity must be a whole number from 1 to 100
+the body must be a JSON object</pre></q>
+<starter>
+class ValidationError extends Error {
+  constructor(readonly issues: readonly string[]) {
+    super("The request is not valid");
+  }
+}
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function whole(value: unknown, name: string, min: number, max: number, issues: string[]): number {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max) return value;
+  issues.push(`${name} must be a whole number from ${min} to ${max}`);
+  return min;
+}
+
+interface NewOrder {
+  readonly bookId: number;
+  readonly quantity: number;
+}
+
+function parseNewOrder(input: unknown): NewOrder {
+  // your code here
+}
+
+for (const body of [{ bookId: 1, quantity: 2, totalCents: 1 }, { bookId: "1", quantity: 0 }, [1, 2]] as unknown[]) {
+  try {
+    console.log(JSON.stringify(parseNewOrder(body)));
+  } catch (error) {
+    if (error instanceof ValidationError) console.log(error.issues.join("; "));
+  }
+}
+</starter>
+<solution>
+class ValidationError extends Error {
+  constructor(readonly issues: readonly string[]) {
+    super("The request is not valid");
+  }
+}
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function whole(value: unknown, name: string, min: number, max: number, issues: string[]): number {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max) return value;
+  issues.push(`${name} must be a whole number from ${min} to ${max}`);
+  return min;
+}
+
+interface NewOrder {
+  readonly bookId: number;
+  readonly quantity: number;
+}
+
+function parseNewOrder(input: unknown): NewOrder {
+  if (!isRecord(input)) throw new ValidationError(["the body must be a JSON object"]);
+  const issues: string[] = [];
+  const order = {
+    bookId: whole(input["bookId"], "bookId", 1, 2_147_483_647, issues),
+    quantity: whole(input["quantity"], "quantity", 1, 100, issues),
+  };
+  if (issues.length > 0) throw new ValidationError(issues);
+  return order;
+}
+
+for (const body of [{ bookId: 1, quantity: 2, totalCents: 1 }, { bookId: "1", quantity: 0 }, [1, 2]] as unknown[]) {
+  try {
+    console.log(JSON.stringify(parseNewOrder(body)));
+  } catch (error) {
+    if (error instanceof ValidationError) console.log(error.issues.join("; "));
+  }
+}
+</solution>
+<expected>
+{"bookId":1,"quantity":2}
+bookId must be a whole number from 1 to 2147483647; quantity must be a whole number from 1 to 100
+the body must be a JSON object
+</expected>
+<explain><p>The client tried to send its own <code>totalCents</code>; it is dropped because only checked fields are copied. Both bad fields of the second body are reported together.</p></explain>
+</question>
+
+<question id="code-pg-error-map" type="code" file="pg-error-map.ts">
+<q><p>Write <code>translate(error, authorId)</code>, the <code>catch</code> part of a repository. If <code>error</code> is a PostgreSQL error (use <code>isPgError</code>) with code <code>23505</code>, return <code>new ConflictError("already exists")</code>; with code <code>23503</code>, return <code>new ValidationError([`authorId ${authorId} does not exist`])</code>. Return any other error unchanged. The program should print:</p><pre>ConflictError already exists
+ValidationError authorId 7 does not exist
+Error connection lost</pre></q>
+<starter>
+class ConflictError extends Error {
+  override name = "ConflictError";
+}
+class ValidationError extends Error {
+  override name = "ValidationError";
+  constructor(readonly issues: readonly string[]) {
+    super(issues.join(", "));
+  }
+}
+function isPgError(error: unknown): error is Error & { code: string } {
+  return error instanceof Error && "code" in error && typeof error.code === "string";
+}
+
+function translate(error: unknown, authorId: number): unknown {
+  // your code here
+}
+
+const errors = [
+  Object.assign(new Error("duplicate key"), { code: "23505" }),
+  Object.assign(new Error("foreign key"), { code: "23503" }),
+  new Error("connection lost"),
+];
+for (const error of errors) {
+  const result = translate(error, 7) as Error;
+  console.log(result.name, result.message);
+}
+</starter>
+<solution>
+class ConflictError extends Error {
+  override name = "ConflictError";
+}
+class ValidationError extends Error {
+  override name = "ValidationError";
+  constructor(readonly issues: readonly string[]) {
+    super(issues.join(", "));
+  }
+}
+function isPgError(error: unknown): error is Error & { code: string } {
+  return error instanceof Error && "code" in error && typeof error.code === "string";
+}
+
+function translate(error: unknown, authorId: number): unknown {
+  if (isPgError(error) && error.code === "23505") return new ConflictError("already exists");
+  if (isPgError(error) && error.code === "23503") {
+    return new ValidationError([`authorId ${authorId} does not exist`]);
+  }
+  return error;
+}
+
+const errors = [
+  Object.assign(new Error("duplicate key"), { code: "23505" }),
+  Object.assign(new Error("foreign key"), { code: "23503" }),
+  new Error("connection lost"),
+];
+for (const error of errors) {
+  const result = translate(error, 7) as Error;
+  console.log(result.name, result.message);
+}
+</solution>
+<expected>
+ConflictError already exists
+ValidationError authorId 7 does not exist
+Error connection lost
+</expected>
+<explain><p>Known database codes become typed errors with a clear message. Anything else is passed on unchanged (in the repository: <code>throw error</code>), so a real failure still ends as a 500 and is logged.</p></explain>
+</question>
+
+<question id="code-row-mapper" type="code" file="dto.ts">
+<q><p>Write <code>toOrderDto(row)</code>. It turns a database row with snake_case columns into the camelCase object the API sends, with only these four fields: <code>id</code>, <code>bookId</code>, <code>quantity</code>, <code>totalCents</code>. The program should print <code>{"id":1,"bookId":1,"quantity":2,"totalCents":2598}</code>.</p></q>
+<starter>
+interface OrderRow {
+  id: number;
+  book_id: number;
+  quantity: number;
+  total_cents: number;
+  internal_note: string;
+}
+interface OrderDto {
+  readonly id: number;
+  readonly bookId: number;
+  readonly quantity: number;
+  readonly totalCents: number;
+}
+
+function toOrderDto(row: OrderRow): OrderDto {
+  // your code here
+}
+
+const row: OrderRow = { id: 1, book_id: 1, quantity: 2, total_cents: 2598, internal_note: "fraud check pending" };
+console.log(JSON.stringify(toOrderDto(row)));
+</starter>
+<solution>
+interface OrderRow {
+  id: number;
+  book_id: number;
+  quantity: number;
+  total_cents: number;
+  internal_note: string;
+}
+interface OrderDto {
+  readonly id: number;
+  readonly bookId: number;
+  readonly quantity: number;
+  readonly totalCents: number;
+}
+
+function toOrderDto(row: OrderRow): OrderDto {
+  return { id: row.id, bookId: row.book_id, quantity: row.quantity, totalCents: row.total_cents };
+}
+
+const row: OrderRow = { id: 1, book_id: 1, quantity: 2, total_cents: 2598, internal_note: "fraud check pending" };
+console.log(JSON.stringify(toOrderDto(row)));
+</solution>
+<expected>{"id":1,"bookId":1,"quantity":2,"totalCents":2598}</expected>
+<explain><p>List every field you send. The internal note never reaches the client, and the names follow the API's camelCase style. In SQL the lesson does the same with <code>total_cents AS "totalCents"</code>.</p></explain>
+</question>
+
+<question id="code-fake-queryable" type="code" file="fake-db.ts">
+<q><p>Finish <code>BookRepository.get(id)</code>. Run <code>SELECT id, title FROM books WHERE id = $1</code> with <code>[id]</code> as the parameters, never by pasting <code>id</code> into the SQL. If there is no row, throw <code>new NotFoundError(`Book ${id}`)</code>. The fake database records every call. The program should print:</p><pre>Things Fall Apart
+Book 42 not found
+[ 1 ] [ 42 ]</pre></q>
+<starter>
+interface Queryable {
+  query<T>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
+}
+class NotFoundError extends Error {
+  constructor(what: string) {
+    super(`${what} not found`);
+  }
+}
+interface Book {
+  readonly id: number;
+  readonly title: string;
+}
+
+class BookRepository {
+  constructor(private readonly db: Queryable) {}
+  async get(id: number): Promise<Book> {
+    // your code here
+  }
+}
+
+const calls: unknown[][] = [];
+const fakeDb: Queryable = {
+  async query<T>(sql: string, params: unknown[] = []) {
+    calls.push(params);
+    const rows = sql.includes("$1") && params[0] === 1 ? [{ id: 1, title: "Things Fall Apart" }] : [];
+    return { rows: rows as T[] };
+  },
+};
+
+const books = new BookRepository(fakeDb);
+console.log((await books.get(1)).title);
+try {
+  await books.get(42);
+} catch (error) {
+  if (error instanceof NotFoundError) console.log(error.message);
+}
+console.log(...calls);
+</starter>
+<solution>
+interface Queryable {
+  query<T>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
+}
+class NotFoundError extends Error {
+  constructor(what: string) {
+    super(`${what} not found`);
+  }
+}
+interface Book {
+  readonly id: number;
+  readonly title: string;
+}
+
+class BookRepository {
+  constructor(private readonly db: Queryable) {}
+  async get(id: number): Promise<Book> {
+    const { rows } = await this.db.query<Book>("SELECT id, title FROM books WHERE id = $1", [id]);
+    if (rows[0] === undefined) throw new NotFoundError(`Book ${id}`);
+    return rows[0];
+  }
+}
+
+const calls: unknown[][] = [];
+const fakeDb: Queryable = {
+  async query<T>(sql: string, params: unknown[] = []) {
+    calls.push(params);
+    const rows = sql.includes("$1") && params[0] === 1 ? [{ id: 1, title: "Things Fall Apart" }] : [];
+    return { rows: rows as T[] };
+  },
+};
+
+const books = new BookRepository(fakeDb);
+console.log((await books.get(1)).title);
+try {
+  await books.get(42);
+} catch (error) {
+  if (error instanceof NotFoundError) console.log(error.message);
+}
+console.log(...calls);
+</solution>
+<expected>
+Things Fall Apart
+Book 42 not found
+[ 1 ] [ 42 ]
+</expected>
+<explain><p>Because the repository only needs a <code>Queryable</code>, a test can pass a fake one and see exactly which parameters were sent. The id travels as <code>$1</code>, so it is always data, never SQL.</p></explain>
+</question>
+
+<question id="code-place-order" type="code" file="place-order.ts">
+<q><p>Write <code>place(bookId, quantity)</code> for an in-memory store, following the repository's rules. If the book exists and has enough stock, take the stock and return <code>{ bookId, quantity, totalCents }</code>, with the total from the <strong>stored</strong> price. If the book does not exist, throw <code>new ValidationError(`bookId ${bookId} does not exist`)</code>. If the stock is too low, throw <code>new ConflictError(`Only ${stock} left of book ${bookId}`)</code>. The program should print:</p><pre>{"bookId":1,"quantity":2,"totalCents":2598}
+ConflictError Only 1 left of book 1
+ValidationError bookId 99 does not exist</pre></q>
+<starter>
+class ConflictError extends Error {
+  override name = "ConflictError";
+}
+class ValidationError extends Error {
+  override name = "ValidationError";
+}
+
+const books = new Map<number, { priceCents: number; stock: number }>([[1, { priceCents: 1299, stock: 3 }]]);
+
+function place(bookId: number, quantity: number): { bookId: number; quantity: number; totalCents: number } {
+  // your code here
+}
+
+for (const [bookId, quantity] of [[1, 2], [1, 5], [99, 1]] as const) {
+  try {
+    console.log(JSON.stringify(place(bookId, quantity)));
+  } catch (error) {
+    if (error instanceof Error) console.log(error.name, error.message);
+  }
+}
+</starter>
+<solution>
+class ConflictError extends Error {
+  override name = "ConflictError";
+}
+class ValidationError extends Error {
+  override name = "ValidationError";
+}
+
+const books = new Map<number, { priceCents: number; stock: number }>([[1, { priceCents: 1299, stock: 3 }]]);
+
+function place(bookId: number, quantity: number): { bookId: number; quantity: number; totalCents: number } {
+  const book = books.get(bookId);
+  if (book === undefined) throw new ValidationError(`bookId ${bookId} does not exist`);
+  if (book.stock < quantity) throw new ConflictError(`Only ${book.stock} left of book ${bookId}`);
+  book.stock -= quantity;
+  return { bookId, quantity, totalCents: book.priceCents * quantity };
+}
+
+for (const [bookId, quantity] of [[1, 2], [1, 5], [99, 1]] as const) {
+  try {
+    console.log(JSON.stringify(place(bookId, quantity)));
+  } catch (error) {
+    if (error instanceof Error) console.log(error.name, error.message);
+  }
+}
+</solution>
+<expected>
+{"bookId":1,"quantity":2,"totalCents":2598}
+ConflictError Only 1 left of book 1
+ValidationError bookId 99 does not exist
+</expected>
+<explain><p>The price always comes from the store, never from the client. In PostgreSQL, the check and the update happen in one statement (<code>UPDATE … WHERE stock &gt;= $2</code>), so two buyers cannot both take the last copy.</p></explain>
+</question>
+
+<question id="code-list-query" type="code" file="list-query.ts">
+<q><p>Write <code>listQuery(authorId?)</code>. It always returns the same SQL, <code>SELECT id, title FROM books WHERE $1::integer IS NULL OR author_id = $1 ORDER BY id</code>, and the parameters <code>[authorId ?? null]</code>. The program should print:</p><pre>[ null ]
+[ 3 ]
+true</pre></q>
+<starter>
+function listQuery(authorId?: number): { sql: string; params: unknown[] } {
+  // your code here
+}
+
+const all = listQuery();
+const byAuthor = listQuery(3);
+console.log(all.params);
+console.log(byAuthor.params);
+console.log(all.sql === byAuthor.sql && !all.sql.includes("3"));
+</starter>
+<solution>
+function listQuery(authorId?: number): { sql: string; params: unknown[] } {
+  return {
+    sql: "SELECT id, title FROM books WHERE $1::integer IS NULL OR author_id = $1 ORDER BY id",
+    params: [authorId ?? null],
+  };
+}
+
+const all = listQuery();
+const byAuthor = listQuery(3);
+console.log(all.params);
+console.log(byAuthor.params);
+console.log(all.sql === byAuthor.sql && !all.sql.includes("3"));
+</solution>
+<expected>
+[ null ]
+[ 3 ]
+true
+</expected>
+<explain><p>The SQL text never changes; only the parameter does. With <code>NULL</code>, <code>$1::integer IS NULL</code> is true and every book matches. The value is never pasted into the SQL, so there is nothing to inject.</p></explain>
+</question>

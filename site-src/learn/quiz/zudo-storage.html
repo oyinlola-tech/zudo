@@ -1,0 +1,903 @@
+<question id="st-contracts" type="choice">
+<q>What is the main idea of <code>@zudojs/storage</code>?</q>
+<option>It is a faster PostgreSQL driver</option>
+<option correct>It defines small contracts (interfaces) for storage, and your code depends only on those, not on one driver</option>
+<option>It replaces your database with files on disk</option>
+<option>It generates SQL tables from TypeScript types</option>
+<explain><p>Your app depends on what storage does (<code>Database</code>, <code>ObjectStorage</code>, <code>LockManager</code>…), not on what it is. To move files from disk to a cloud bucket, you write a new <code>ObjectStorage</code>, and nothing else changes.</p></explain>
+</question>
+
+<question id="st-no-db-impl" type="choice">
+<q>Which contract comes <strong>without</strong> a ready-made implementation, so you write a small adapter for your driver?</q>
+<option correct><code>Database</code></option>
+<option><code>ObjectStorage</code></option>
+<option><code>Serializer</code></option>
+<option><code>LockManager</code></option>
+<explain><p><code>ObjectStorage</code> has <code>LocalObjectStorage</code>, <code>Serializer</code> has <code>JsonSerializer</code> and <code>LockManager</code> has <code>InMemoryLockManager</code>. For <code>Database</code> you write an adapter, like the lesson's <code>PgliteDatabase</code>.</p></explain>
+</question>
+
+<question id="st-query-object" type="choice">
+<q>In the <code>Database</code> contract, a query is an object: <code>{ text, parameters }</code>. Why does that help security?</q>
+<option>It encrypts the SQL before it is sent</option>
+<option correct>SQL text and values travel apart, so there is no way to call it with values glued into the SQL</option>
+<option>It makes every query read-only</option>
+<option>It checks that the table exists before running</option>
+<explain><p>The contract has no method that takes one SQL string with values inside. Values always go in <code>parameters</code> as <code>$1</code>, <code>$2</code>…, so user input cannot become SQL.</p></explain>
+</question>
+
+<question id="st-savepoint-names" type="choice">
+<q>The <code>PgliteDatabase</code> adapter writes savepoint names straight into SQL: <code>SAVEPOINT "${name}"</code>. What is the rule for those names?</q>
+<option>Any name is fine, because it is inside double quotes</option>
+<option correct>Only pass names from your own code, never from a request</option>
+<option>Names must come from the request, so each user has their own savepoint</option>
+<option>Always use the user's id as the name</option>
+<explain><p>A name is part of the SQL text, not a parameter. A name made by an attacker could close the quote and add their own SQL. Use fixed names written in your code.</p></explain>
+</question>
+
+<question id="st-row-count" type="choice">
+<q>What should <code>rowCount</code> report for an <code>UPDATE</code> in the lesson's adapter?</q>
+<option>The number of rows in the whole table</option>
+<option correct>The number of rows it changed</option>
+<option>Always 1</option>
+<option>The number of columns it changed</option>
+<explain><p>A <code>SELECT</code> reports the rows it returned; <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code> report the rows they changed. That is why the adapter uses <code>affectedRows</code> when there are no result fields.</p></explain>
+</question>
+
+<question id="st-repo-update-sql" type="output">
+<q>The fake database below prints the query the repository sends. What does this print?</q>
+<code file="repo-update.js" browser="no">
+import { BaseRepository } from "@zudojs/storage";
+
+const db = {
+  async query(q) {
+    console.log(q.text, q.parameters);
+    return { rows: [{ id: 1 }], rowCount: 1, fields: [], durationMs: 0 };
+  },
+};
+const tasks = new BaseRepository(db, { tableName: "tasks", columns: ["title", "done", "owner_id"] });
+await tasks.update(1, { done: true });
+</code>
+<option correct>UPDATE tasks SET done = $1 WHERE id = $2 RETURNING * [ true, 1 ]</option>
+<option>UPDATE tasks SET done = true WHERE id = 1 RETURNING * []</option>
+<option>UPDATE tasks SET done = $1 WHERE id = $2 RETURNING * [ 1, true ]</option>
+<option>UPDATE tasks SET $1 = $2 WHERE id = $3 RETURNING * [ 'done', true, 1 ]</option>
+<explain><p>Values become <code>$1</code>, <code>$2</code> parameters, in order: first the new value, then the id. The column name <code>done</code> is written into the SQL, which is why it must be on the allow-list.</p></explain>
+</question>
+
+<question id="st-repo-findall-sql" type="output">
+<q>What does this print?</q>
+<code file="repo-findall.js" browser="no">
+import { BaseRepository } from "@zudojs/storage";
+
+const db = {
+  async query(q) {
+    console.log(q.text, q.parameters);
+    return { rows: [], rowCount: 0, fields: [], durationMs: 0 };
+  },
+};
+const tasks = new BaseRepository(db, { tableName: "tasks", columns: ["title", "done", "owner_id"] });
+await tasks.findAll({ orderBy: "title", order: "DESC", limit: 5, offset: 10 });
+</code>
+<option correct>SELECT * FROM tasks ORDER BY title DESC LIMIT $1 OFFSET $2 [ 5, 10 ]</option>
+<option>SELECT * FROM tasks ORDER BY $1 DESC LIMIT $2 OFFSET $3 [ 'title', 5, 10 ]</option>
+<option>SELECT * FROM tasks ORDER BY title DESC LIMIT 5 OFFSET 10 []</option>
+<option>SELECT * FROM tasks ORDER BY title DESC LIMIT $1 OFFSET $2 [ 10, 5 ]</option>
+<explain><p>Limit and offset are values, so they are parameters. The sort column is a name, not a value, so it goes into the SQL text, after the allow-list check.</p></explain>
+</question>
+
+<question id="st-repo-count-sql" type="output">
+<q>What does this print?</q>
+<code file="repo-count.js" browser="no">
+import { BaseRepository } from "@zudojs/storage";
+
+const db = {
+  async query(q) {
+    console.log(q.text, q.parameters);
+    return { rows: [{ count: 2 }], rowCount: 1, fields: [], durationMs: 0 };
+  },
+};
+const tasks = new BaseRepository(db, { tableName: "tasks", columns: ["title", "done", "owner_id"] });
+console.log(await tasks.count({ owner_id: "ada" }));
+</code>
+<option correct>SELECT COUNT(*) as count FROM tasks WHERE owner_id = $1 [ 'ada' ]
+2</option>
+<option>SELECT COUNT(*) as count FROM tasks WHERE owner_id = 'ada' []
+2</option>
+<option>SELECT COUNT(*) as count FROM tasks WHERE owner_id = $1 [ 'ada' ]
+1</option>
+<option>SELECT * FROM tasks WHERE owner_id = $1 [ 'ada' ]
+2</option>
+<explain><p>The filter value <code>'ada'</code> is a parameter. The repository returns the <code>count</code> from the row, which is 2 here.</p></explain>
+</question>
+
+<question id="st-unknown-column" type="output">
+<q>A client sends <code>{ "is_admin": true }</code> and a careless route passes it to <code>update</code>. What does this print?</q>
+<code file="unknown-column.js" browser="no">
+import { BaseRepository } from "@zudojs/storage";
+
+const db = {
+  async query() {
+    console.log("query sent");
+    return { rows: [{ id: 1 }], rowCount: 1, fields: [], durationMs: 0 };
+  },
+};
+const tasks = new BaseRepository(db, { tableName: "tasks", columns: ["title", "done", "owner_id"] });
+try {
+  await tasks.update(1, { is_admin: true });
+} catch (error) {
+  console.log(error.statusCode, error.code);
+}
+</code>
+<option correct>400 STORAGE_IDENTIFIER_NOT_ALLOWED</option>
+<option>query sent</option>
+<option>500 STORAGE_QUERY_FAILED</option>
+<option>403 STORAGE_FORBIDDEN</option>
+<explain><p><code>is_admin</code> is not in <code>columns</code>, so the repository refuses it with a 400 before any SQL is sent.</p></explain>
+</question>
+
+<question id="st-sql-in-value" type="output">
+<q>A client puts SQL into the title. What does this print?</q>
+<code file="sql-in-value.js" browser="no">
+import { BaseRepository } from "@zudojs/storage";
+
+const db = {
+  async query(q) {
+    console.log(q.text, q.parameters);
+    return { rows: [{ id: 1 }], rowCount: 1, fields: [], durationMs: 0 };
+  },
+};
+const tasks = new BaseRepository(db, { tableName: "tasks", columns: ["title", "done", "owner_id"] });
+await tasks.update(1, { title: "x', owner_id = 'mallory" });
+</code>
+<option correct>UPDATE tasks SET title = $1 WHERE id = $2 RETURNING * [ "x', owner_id = 'mallory", 1 ]</option>
+<option>UPDATE tasks SET title = 'x', owner_id = 'mallory' WHERE id = 1 RETURNING * []</option>
+<option>UPDATE tasks SET title = $1, owner_id = $2 WHERE id = $3 RETURNING * [ 'x', 'mallory', 1 ]</option>
+<option>STORAGE_SQL_INJECTION</option>
+<explain><p>The value is a parameter, so PostgreSQL stores it as an odd title and nothing else changes. That is exactly right: values never need escaping by hand when they are parameters.</p></explain>
+</question>
+
+<question id="st-mass-assignment" type="choice">
+<q>A route passes the request body to <code>tasks.update(id, body)</code>. The body is <code>{ "done": true, "owner_id": "mallory" }</code>, and <code>owner_id</code> is on the repository's <code>columns</code> list. What happens?</q>
+<option>The repository refuses it, because clients may not change owners</option>
+<option correct>The update succeeds and Mallory now owns the task: the allow-list cannot know who the caller is</option>
+<option>PostgreSQL refuses it with a permission error</option>
+<option>Only <code>done</code> is saved; <code>owner_id</code> is ignored</option>
+<explain><p>This is <strong>mass assignment</strong>. <code>owner_id</code> must be on the list so your own code can set it. The allow-list is a safety net for SQL, not a permission system.</p></explain>
+</question>
+
+<question id="st-mass-assignment-fix" type="choice">
+<q>What is the right fix for the mass-assignment bug?</q>
+<option>Remove <code>owner_id</code> from <code>columns</code></option>
+<option>Escape the body with <code>JSON.stringify</code> first</option>
+<option correct>Validate the body with a strict schema that accepts only fields a client may change, and set the owner on the server from the logged-in user</option>
+<option>Check that <code>owner_id</code> is a valid user id</option>
+<explain><p>The fix belongs at the edge of your app. A <code>.strict()</code> schema answers 400 for any unknown key such as <code>owner_id</code>, and the owner always comes from the session, never from the body.</p></explain>
+</question>
+
+<question id="code-st-allowed-fields" type="code" file="task-changes.js">
+<q><p>Finish <code>taskChanges(body)</code>, a plain-JavaScript version of a strict schema. A client may change only <code>title</code> and <code>done</code>. If the body has any other key, return <code>{ status: 400, unknown: [...] }</code> listing those keys. Otherwise return <code>{ status: 200, changes }</code> with only the allowed keys that are present.</p></q>
+<starter>
+const ALLOWED = ["title", "done"];
+
+function taskChanges(body) {
+  // your code here
+}
+
+console.log(taskChanges({ done: true }));
+console.log(taskChanges({ done: true, owner_id: "mallory" }));
+console.log(taskChanges({ title: "Buy oat milk", is_admin: true, id: 9 }));
+</starter>
+<solution>
+const ALLOWED = ["title", "done"];
+
+function taskChanges(body) {
+  const unknown = Object.keys(body).filter((key) => !ALLOWED.includes(key));
+  if (unknown.length > 0) return { status: 400, unknown };
+  const changes = {};
+  for (const key of ALLOWED) {
+    if (key in body) changes[key] = body[key];
+  }
+  return { status: 200, changes };
+}
+
+console.log(taskChanges({ done: true }));
+console.log(taskChanges({ done: true, owner_id: "mallory" }));
+console.log(taskChanges({ title: "Buy oat milk", is_admin: true, id: 9 }));
+</solution>
+<expected>
+{ status: 200, changes: { done: true } }
+{ status: 400, unknown: [ 'owner_id' ] }
+{ status: 400, unknown: [ 'is_admin', 'id' ] }
+</expected>
+<explain><p>Refuse unknown keys instead of silently dropping them: the client learns its request was wrong, and <code>owner_id</code> never gets near the database.</p></explain>
+</question>
+
+<question id="code-st-owner-server" type="code" file="new-task.js">
+<q><p>Finish <code>newTaskRow(body, user)</code>. It builds the row to insert: <code>title</code> (trimmed) and <code>done</code> (default <code>false</code>) come from the body, but <code>owner_id</code> always comes from the logged-in <code>user.id</code>, whatever the body says.</p></q>
+<starter>
+function newTaskRow(body, user) {
+  // your code here
+}
+
+const ada = { id: "ada" };
+console.log(newTaskRow({ title: "  Buy milk " }, ada));
+console.log(newTaskRow({ title: "Steal", done: true, owner_id: "mallory" }, ada));
+</starter>
+<solution>
+function newTaskRow(body, user) {
+  return {
+    title: body.title.trim(),
+    done: body.done ?? false,
+    owner_id: user.id,
+  };
+}
+
+const ada = { id: "ada" };
+console.log(newTaskRow({ title: "  Buy milk " }, ada));
+console.log(newTaskRow({ title: "Steal", done: true, owner_id: "mallory" }, ada));
+</solution>
+<expected>
+{ title: 'Buy milk', done: false, owner_id: 'ada' }
+{ title: 'Steal', done: true, owner_id: 'ada' }
+</expected>
+<explain><p>Pick each field on purpose instead of spreading the body (<code>{ ...body }</code>), which would copy <code>owner_id</code> from the client. The owner is the server's decision.</p></explain>
+</question>
+
+<question id="code-st-defined-only" type="code" file="defined-only.js">
+<q><p>Parsed data can hold keys whose value is <code>undefined</code>, like <code>{ title: undefined, done: true }</code>. Passed to an update, such a key could set the column to <code>NULL</code>. Finish <code>definedOnly(data)</code> so it returns a copy without those keys. Keep <code>null</code> and <code>false</code>: they are real values.</p></q>
+<starter>
+function definedOnly(data) {
+  // your code here
+}
+
+console.log(definedOnly({ title: undefined, done: true }));
+console.log(definedOnly({ title: "Buy milk", done: false, note: null, due: undefined }));
+</starter>
+<solution>
+function definedOnly(data) {
+  return Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined));
+}
+
+console.log(definedOnly({ title: undefined, done: true }));
+console.log(definedOnly({ title: "Buy milk", done: false, note: null, due: undefined }));
+</solution>
+<expected>
+{ done: true }
+{ title: 'Buy milk', done: false, note: null }
+</expected>
+<explain><p><code>Object.entries</code>, a <code>filter</code> on <code>value !== undefined</code>, then <code>Object.fromEntries</code>. A check like <code>if (value)</code> would wrongly drop <code>false</code> and <code>null</code>.</p></explain>
+</question>
+
+<question id="st-sort-not-allowed" type="output">
+<q>A client asks to sort by <code>id</code>. What does this print?</q>
+<code file="sort-id.js" browser="no">
+import { BaseRepository } from "@zudojs/storage";
+
+const db = {
+  async query() {
+    return { rows: [], rowCount: 0, fields: [], durationMs: 0 };
+  },
+};
+const tasks = new BaseRepository(db, { tableName: "tasks", columns: ["title", "done", "owner_id"] });
+for (const orderBy of ["title; DROP TABLE tasks", "id", "title"]) {
+  try {
+    await tasks.findAll({ orderBy });
+    console.log(orderBy, "ok");
+  } catch (error) {
+    console.log(orderBy, error.code);
+  }
+}
+</code>
+<option correct>title; DROP TABLE tasks STORAGE_INVALID_IDENTIFIER
+id STORAGE_IDENTIFIER_NOT_ALLOWED
+title ok</option>
+<option>title; DROP TABLE tasks STORAGE_INVALID_IDENTIFIER
+id ok
+title ok</option>
+<option>title; DROP TABLE tasks ok
+id STORAGE_IDENTIFIER_NOT_ALLOWED
+title ok</option>
+<option>title; DROP TABLE tasks STORAGE_IDENTIFIER_NOT_ALLOWED
+id STORAGE_IDENTIFIER_NOT_ALLOWED
+title STORAGE_IDENTIFIER_NOT_ALLOWED</option>
+<explain><p>A name with <code>;</code> and spaces is not even a valid identifier. <code>id</code> is valid, but not on the <code>columns</code> list, so it is refused too. The allow-list is used for writes, filters and sorting alike.</p></explain>
+</question>
+
+<question id="st-add-id-column" type="choice">
+<q>You want clients to sort by <code>id</code>, so you add <code>id</code> to <code>columns</code>. What else changes?</q>
+<option>Nothing else changes</option>
+<option correct><code>update</code> would now accept a new <code>id</code> too, so a strict schema at the edge becomes even more important</option>
+<option>The repository stops using parameters for <code>id</code></option>
+<option><code>findById</code> stops working</option>
+<explain><p>The same list controls writes, filters and sorting. With a strict schema at the edge that is harmless; without one, <code>id</code> is one more field a client could change.</p></explain>
+</question>
+
+<question id="st-object-storage-what" type="choice">
+<q>Where should a task's PDF attachment go?</q>
+<option>In a <code>text</code> column of the <code>tasks</code> table</option>
+<option correct>In object storage, under a key like <code>tasks/1/&lt;id&gt;</code>, with its content type and size as metadata</option>
+<option>In an environment variable</option>
+<option>In the lock manager</option>
+<explain><p>Databases are for rows; files go into object storage. An object is the file plus a little metadata, stored under a key. Cloud services such as Amazon S3 work the same way.</p></explain>
+</question>
+
+<question id="st-put-result" type="output">
+<q>What does this print?</q>
+<code file="put.js" browser="no">
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { LocalObjectStorage } from "@zudojs/storage";
+
+const folder = await mkdtemp(join(tmpdir(), "task-files-"));
+const files = new LocalObjectStorage(folder);
+const saved = await files.put("tasks/1/notes.txt", new TextEncoder().encode("Oat milk"), {
+  contentType: "text/plain",
+});
+console.log(saved.key, saved.size, saved.contentType);
+console.log("missing:", await files.get("tasks/9/nothing.txt"));
+await rm(folder, { recursive: true, force: true });
+</code>
+<option correct>tasks/1/notes.txt 8 text/plain
+missing: null</option>
+<option>tasks/1/notes.txt 8 text/plain
+missing: undefined</option>
+<option>notes.txt 8 text/plain
+missing: null</option>
+<option>tasks/1/notes.txt 8 text/plain
+NotFoundError: tasks/9/nothing.txt</option>
+<explain><p><code>put</code> returns the object's metadata: key, size in bytes (8 for <code>"Oat milk"</code>) and content type. <code>get</code> returns <code>null</code> for a missing key, so your route can answer 404.</p></explain>
+</question>
+
+<question id="st-list-prefix" type="output">
+<q>What does this print?</q>
+<code file="list-prefix.js" browser="no">
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { LocalObjectStorage } from "@zudojs/storage";
+
+const folder = await mkdtemp(join(tmpdir(), "task-files-"));
+const files = new LocalObjectStorage(folder);
+const bytes = new Uint8Array(3);
+await files.put("tasks/1/a.txt", bytes);
+await files.put("tasks/2/b.txt", bytes);
+await files.put("tasks/10/c.txt", bytes);
+console.log((await files.list("tasks/1/")).objects.map((o) => o.key));
+console.log((await files.list("tasks/1")).objects.map((o) => o.key));
+await rm(folder, { recursive: true, force: true });
+</code>
+<option correct>[ 'tasks/1/a.txt' ]
+[ 'tasks/1/a.txt', 'tasks/10/c.txt' ]</option>
+<option>[ 'tasks/1/a.txt' ]
+[ 'tasks/1/a.txt' ]</option>
+<option>[ 'tasks/1/a.txt', 'tasks/10/c.txt' ]
+[ 'tasks/1/a.txt', 'tasks/10/c.txt' ]</option>
+<option>[ 'a.txt' ]
+[ 'a.txt', 'c.txt' ]</option>
+<explain><p><code>list(prefix)</code> finds every key that <em>starts with</em> the text. <code>"tasks/10/c.txt"</code> starts with <code>"tasks/1"</code>, so end your prefix with <code>/</code> to list one task only.</p></explain>
+</question>
+
+<question id="st-list-truncated" type="choice">
+<q>A task has 2500 attachments. <code>files.list("tasks/1/")</code> returns 1000 objects and <code>isTruncated: true</code>. What do you do?</q>
+<option>Nothing: the other 1500 are lost</option>
+<option correct>Call <code>list</code> again with the <code>continuationToken</code> it returned, until <code>isTruncated</code> is false</option>
+<option>Delete 1500 objects so the list fits</option>
+<option>Call <code>list</code> with a bigger folder name</option>
+<explain><p><code>list</code> returns at most <code>maxKeys</code> objects (1000 by default). The <code>continuationToken</code> tells the next call where to go on, like a cursor.</p></explain>
+</question>
+
+<question id="st-etag" type="choice">
+<q><code>put</code> also computes an <code>etag</code>, a SHA-256 hash of the content. What is it useful for?</q>
+<option>Encrypting the file</option>
+<option correct>Telling whether a file changed: different content gives a different etag</option>
+<option>Choosing the file's key</option>
+<option>Proving who uploaded the file</option>
+<explain><p>A hash is a fingerprint of the bytes. Same content, same etag; change one byte and the etag changes. It is not encryption and says nothing about who uploaded it.</p></explain>
+</question>
+
+<question id="st-bad-keys" type="output">
+<q>What does this print?</q>
+<code file="bad-keys.js" browser="no">
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { LocalObjectStorage } from "@zudojs/storage";
+
+const folder = await mkdtemp(join(tmpdir(), "task-files-"));
+const files = new LocalObjectStorage(folder, { maxObjectBytes: 1024 });
+const attempts = [
+  ["tasks/1/../../../etc/passwd", new Uint8Array(1)],
+  ["tasks/1/huge.bin", new Uint8Array(5000)],
+  ["tasks/1/ok.txt", new Uint8Array(1)],
+];
+for (const [key, data] of attempts) {
+  try {
+    await files.put(key, data);
+    console.log("stored");
+  } catch (error) {
+    console.log(error.statusCode, error.code);
+  }
+}
+await rm(folder, { recursive: true, force: true });
+</code>
+<option correct>400 STORAGE_PATH_TRAVERSAL
+413 STORAGE_OBJECT_TOO_LARGE
+stored</option>
+<option>stored
+413 STORAGE_OBJECT_TOO_LARGE
+stored</option>
+<option>400 STORAGE_PATH_TRAVERSAL
+stored
+stored</option>
+<option>404 STORAGE_NOT_FOUND
+413 STORAGE_OBJECT_TOO_LARGE
+stored</option>
+<explain><p>A key with <code>..</code> would climb out of the storage folder (<strong>path traversal</strong>), so it is refused with 400. A file larger than <code>maxObjectBytes</code> gets <strong>413 Payload Too Large</strong>.</p></explain>
+</question>
+
+<question id="st-path-traversal" type="choice">
+<q>What can a <strong>path traversal</strong> attack do if keys are not checked?</q>
+<option>Only make the file name longer</option>
+<option correct>Read or overwrite any file the server can reach, such as <code>/etc/passwd</code> or your source code</option>
+<option>Slow down the upload</option>
+<option>Nothing, because the files are in a temporary folder</option>
+<explain><p>On disk a key becomes a path, and <code>..</code> climbs out of the folder. With enough <code>../</code>, a key reaches anywhere your server process can write or read.</p></explain>
+</question>
+
+<question id="st-user-filename" type="choice">
+<q>A user uploads <code>holiday photo.png</code> to task 7. Which key is best?</q>
+<option><code>holiday photo.png</code></option>
+<option><code>tasks/7/holiday photo.png</code></option>
+<option correct><code>tasks/7/&lt;a random UUID&gt;</code>, with the original name kept in the metadata</option>
+<option><code>&lt;the user's id&gt;/holiday photo.png</code></option>
+<explain><p>Don't use a user's file name as the key: make the key yourself, so it is always safe and never collides. Keep the original name in the metadata for display. Also check that the user may touch task 7.</p></explain>
+</question>
+
+<question id="code-st-attachment-key" type="code" file="attachment-key.js">
+<q><p>Finish <code>attachmentKey(taskId, fileName, id)</code>. Throw <code>RangeError("taskId must be a positive whole number")</code> unless <code>taskId</code> is a safe integer of at least 1. Return <code>{ key, metadata }</code> where <code>key</code> is <code>tasks/&lt;taskId&gt;/&lt;id&gt;</code> and <code>metadata.fileName</code> is the original name cut to 200 characters. (In the app, <code>id</code> comes from <code>randomUUID()</code>.)</p></q>
+<starter>
+function attachmentKey(taskId, fileName, id) {
+  // your code here
+}
+
+console.log(attachmentKey(1, "../../secret.txt", "3f1c"));
+for (const bad of [-1, 1.5, "1"]) {
+  try {
+    attachmentKey(bad, "a.txt", "x");
+  } catch (error) {
+    console.log(error.name, error.message);
+  }
+}
+</starter>
+<solution>
+function attachmentKey(taskId, fileName, id) {
+  if (!Number.isSafeInteger(taskId) || taskId < 1) {
+    throw new RangeError("taskId must be a positive whole number");
+  }
+  return { key: `tasks/${taskId}/${id}`, metadata: { fileName: fileName.slice(0, 200) } };
+}
+
+console.log(attachmentKey(1, "../../secret.txt", "3f1c"));
+for (const bad of [-1, 1.5, "1"]) {
+  try {
+    attachmentKey(bad, "a.txt", "x");
+  } catch (error) {
+    console.log(error.name, error.message);
+  }
+}
+</solution>
+<expected>
+{ key: 'tasks/1/3f1c', metadata: { fileName: '../../secret.txt' } }
+RangeError taskId must be a positive whole number
+RangeError taskId must be a positive whole number
+RangeError taskId must be a positive whole number
+</expected>
+<explain><p>The dangerous name is kept only as metadata; the key is built from values you control. <code>Number.isSafeInteger</code> refuses <code>1.5</code> and the string <code>"1"</code>.</p></explain>
+</question>
+
+<question id="st-json-loses" type="output">
+<q>What does plain JSON do to these values?</q>
+<code file="json-loses.js">
+const snapshot = { due: new Date(0), tags: new Set(["home"]), views: 1 };
+console.log(JSON.parse(JSON.stringify(snapshot)));
+</code>
+<option correct>{ due: '1970-01-01T00:00:00.000Z', tags: {}, views: 1 }</option>
+<option>{ due: 1970-01-01T00:00:00.000Z, tags: Set(1) { 'home' }, views: 1 }</option>
+<option>{ due: '1970-01-01T00:00:00.000Z', tags: [ 'home' ], views: 1 }</option>
+<option>{ due: {}, tags: {}, views: 1 }</option>
+<explain><p><code>JSON.stringify</code> turns a <code>Date</code> into a string and a <code>Set</code> into an empty object. After parsing you get a plain string and <code>{}</code> back, and the tags are gone.</p></explain>
+</question>
+
+<question id="st-serializer-tags" type="output">
+<q>What does this print?</q>
+<code file="serializer.js" browser="no">
+import { JsonSerializer } from "@zudojs/storage";
+
+const serializer = new JsonSerializer();
+const bytes = serializer.serialize({ due: new Date(0), views: 12n });
+console.log(bytes.constructor.name);
+console.log(new TextDecoder().decode(bytes));
+</code>
+<option correct>Uint8Array
+{"due":{"$type":"Date","$value":"1970-01-01T00:00:00.000Z"},"views":{"$type":"BigInt","$value":"12"}}</option>
+<option>String
+{"due":"1970-01-01T00:00:00.000Z","views":12}</option>
+<option>Uint8Array
+{"due":"1970-01-01T00:00:00.000Z","views":"12"}</option>
+<option>Buffer
+{"due":{"$type":"Date","$value":0},"views":{"$type":"BigInt","$value":12}}</option>
+<explain><p>The result is bytes (<code>Uint8Array</code>), ready for object storage or a cache. Each special value is tagged with <code>$type</code>, so <code>deserialize</code> knows what to rebuild.</p></explain>
+</question>
+
+<question id="st-serializer-roundtrip" type="output">
+<q>What does this print?</q>
+<code file="roundtrip.js" browser="no">
+import { JsonSerializer } from "@zudojs/storage";
+
+const serializer = new JsonSerializer();
+const back = serializer.deserialize(
+  serializer.serialize({ due: new Date(0), tags: new Set(["home"]), counts: new Map([["a", 1]]) }),
+);
+console.log(back.due instanceof Date, back.tags.has("home"), back.counts.get("a"));
+</code>
+<option correct>true true 1</option>
+<option>false false undefined</option>
+<option>true false undefined</option>
+<option>false true 1</option>
+<explain><p><code>JsonSerializer</code> keeps <code>Date</code>, <code>Set</code>, <code>Map</code> and <code>BigInt</code> through the round trip to bytes, thanks to the <code>$type</code> tags.</p></explain>
+</question>
+
+<question id="st-serializer-format" type="output">
+<q>What does this print?</q>
+<code file="format.js" browser="no">
+import { JsonSerializer } from "@zudojs/storage";
+
+try {
+  new JsonSerializer().serialize({ id: 1 }, "msgpack");
+  console.log("serialized");
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option correct>StorageError</option>
+<option>serialized</option>
+<option>TypeError</option>
+<option>SyntaxError</option>
+<explain><p><code>JsonSerializer</code> only speaks JSON. Asking for another format throws a <code>StorageError</code> that says so, instead of silently writing JSON.</p></explain>
+</question>
+
+<question id="st-lost-update" type="choice">
+<q>Two requests edit task 1 at the same moment: both read it, both change it, both save. What goes wrong without a lock?</q>
+<option>The database crashes</option>
+<option correct>The first change is lost, because the second save overwrites it</option>
+<option>Both changes are merged automatically</option>
+<option>The second request gets a 409 by itself</option>
+<explain><p>This is the <strong>lost update</strong>. A lock lets only one request work on the task at a time, so the second one reads the first one's result before changing it.</p></explain>
+</question>
+
+<question id="st-lock-fence" type="output">
+<q>What does this print?</q>
+<code file="locks.js" browser="no">
+import { InMemoryLockManager } from "@zudojs/storage";
+
+const locks = new InMemoryLockManager();
+const first = await locks.acquire("task:1", { ttl: 5_000 });
+console.log(first.fence, await locks.tryAcquire("task:1", 5_000));
+await first.release();
+const second = await locks.tryAcquire("task:1", 5_000);
+console.log(second.fence, first.isHeld(), second.isHeld());
+await second.release();
+locks.clear();
+</code>
+<option correct>1 null
+2 false true</option>
+<option>1 null
+1 false true</option>
+<option>1 undefined
+2 false true</option>
+<option>1 null
+2 true true</option>
+<explain><p><code>tryAcquire</code> gives up at once and returns <code>null</code> while the lock is held. After the release, the next lock gets a <strong>bigger fence</strong> (2). The old lock no longer holds it.</p></explain>
+</question>
+
+<question id="st-lock-expired" type="output">
+<q>The first holder is too slow and its lock's TTL runs out. What does this print?</q>
+<code file="expired.js" browser="no">
+import { InMemoryLockManager } from "@zudojs/storage";
+
+const locks = new InMemoryLockManager();
+const slow = await locks.acquire("task:1", { ttl: 30 });
+await new Promise((resolve) => setTimeout(resolve, 60));
+const fast = await locks.acquire("task:1", { ttl: 5_000 });
+console.log(slow.isHeld(), slow.fence, fast.fence);
+await fast.release();
+locks.clear();
+</code>
+<option correct>false 1 2</option>
+<option>true 1 2</option>
+<option>false 1 1</option>
+<option>true 1 1</option>
+<explain><p>After 30 ms the slow holder's lock expired, so the fast one got it, with fence 2. The slow worker may not notice; that is why the protected store must refuse writes with an older fence.</p></explain>
+</question>
+
+<question id="st-ttl-why" type="choice">
+<q>Why does every lock have a <code>ttl</code> (time to live)?</q>
+<option>To make locks faster</option>
+<option correct>If the holder crashes, the lock expires and others can go on, instead of waiting forever</option>
+<option>So that the lock can be shared by two holders</option>
+<option>To decide the fence number</option>
+<explain><p>A crashed process never calls <code>release()</code>. The TTL makes sure the lock is freed anyway. The price is that a slow (not crashed) holder can lose its lock, which fencing handles.</p></explain>
+</question>
+
+<question id="code-st-fence" type="code" file="fence.js">
+<q><p>Finish <code>save(title, fence)</code> in <code>TaskStore</code>. If <code>fence</code> is smaller than the highest fence seen so far, throw <code>new Error(`stale fence ${fence}, current is ${this.highestFence}`)</code>. Otherwise remember the fence and save the title.</p></q>
+<starter>
+class TaskStore {
+  highestFence = 0;
+  title = "Buy milk";
+
+  save(title, fence) {
+    // your code here
+  }
+}
+
+const store = new TaskStore();
+store.save("Buy oat milk", 2);
+try {
+  store.save("Buy cow milk", 1);
+} catch (error) {
+  console.log(error.message);
+}
+store.save("Buy soy milk", 3);
+console.log("title:", store.title);
+</starter>
+<solution>
+class TaskStore {
+  highestFence = 0;
+  title = "Buy milk";
+
+  save(title, fence) {
+    if (fence < this.highestFence) {
+      throw new Error(`stale fence ${fence}, current is ${this.highestFence}`);
+    }
+    this.highestFence = fence;
+    this.title = title;
+  }
+}
+
+const store = new TaskStore();
+store.save("Buy oat milk", 2);
+try {
+  store.save("Buy cow milk", 1);
+} catch (error) {
+  console.log(error.message);
+}
+store.save("Buy soy milk", 3);
+console.log("title:", store.title);
+</solution>
+<expected>
+stale fence 1, current is 2
+title: Buy soy milk
+</expected>
+<explain><p>Every new lock gets a bigger fence, so a write with an older fence comes from a holder that lost its lock. Refusing it keeps the newer work safe.</p></explain>
+</question>
+
+<question id="st-inmemory-limit" type="choice">
+<q>You run three copies of your server behind a load balancer, each with an <code>InMemoryLockManager</code>. What do the locks protect?</q>
+<option>Everything: the copies share their memory</option>
+<option correct>Only work inside the same process; two copies can hold "the same" lock at once</option>
+<option>Only the first copy that started</option>
+<option>Nothing on the first request, then everything</option>
+<explain><p>An in-memory lock lives in one process. For several servers, use a lock they share, such as PostgreSQL advisory locks via <code>createLockManager</code> from <code>@zudojs/database</code>, or a <code>LockManager</code> over Redis.</p></explain>
+</question>
+
+<question id="code-st-with-lock" type="code" file="with-lock.js">
+<q><p>Finish <code>withLock(locks, key, work)</code>: acquire the lock, run <code>work(lock.fence)</code> and return its result, and <strong>always</strong> release the lock, even when <code>work</code> throws. The small <code>locks</code> object below prints when it acquires and releases.</p></q>
+<starter>
+let nextFence = 1;
+const locks = {
+  async acquire(key) {
+    console.log("acquire", key);
+    return { fence: nextFence++, release: async () => console.log("release", key) };
+  },
+};
+
+async function withLock(locks, key, work) {
+  // your code here
+}
+
+console.log(await withLock(locks, "task:1", async (fence) => `saved with fence ${fence}`));
+try {
+  await withLock(locks, "task:2", async () => {
+    throw new Error("work failed");
+  });
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+let nextFence = 1;
+const locks = {
+  async acquire(key) {
+    console.log("acquire", key);
+    return { fence: nextFence++, release: async () => console.log("release", key) };
+  },
+};
+
+async function withLock(locks, key, work) {
+  const lock = await locks.acquire(key);
+  try {
+    return await work(lock.fence);
+  } finally {
+    await lock.release();
+  }
+}
+
+console.log(await withLock(locks, "task:1", async (fence) => `saved with fence ${fence}`));
+try {
+  await withLock(locks, "task:2", async () => {
+    throw new Error("work failed");
+  });
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>
+acquire task:1
+release task:1
+saved with fence 1
+acquire task:2
+release task:2
+work failed
+</expected>
+<explain><p><code>try { return await work(…) } finally { release }</code> is the pattern. The <code>await</code> inside <code>try</code> matters: without it, <code>finally</code> would run before the work finishes.</p></explain>
+</question>
+
+<question id="st-pool-stats" type="output">
+<q>The pool has <code>min: 1, max: 2</code>. What does this print?</q>
+<code file="pool.js" browser="no">
+import { ConnectionPool } from "@zudojs/storage";
+
+let opened = 0;
+async function openConnection() {
+  opened += 1;
+  const id = `conn-${opened}`;
+  return {
+    id,
+    state: "connected",
+    query: async () => ({ rows: [], rowCount: 0, fields: [], durationMs: 0 }),
+    execute: async () => ({ rowCount: 0 }),
+    ping: async () => true,
+    close: async () => {},
+  };
+}
+const pool = new ConnectionPool(openConnection, { min: 1, max: 2, acquireTimeout: 200 });
+await pool.initialize();
+console.log(pool.getStats());
+const a = await pool.acquire();
+const b = await pool.acquire();
+const waiting = pool.acquire();
+console.log(pool.getStats());
+await pool.release(a);
+console.log((await waiting).id);
+await pool.drain();
+</code>
+<option correct>{ total: 1, idle: 1, active: 0, waiting: 0 }
+{ total: 2, idle: 0, active: 2, waiting: 1 }
+conn-1</option>
+<option>{ total: 2, idle: 2, active: 0, waiting: 0 }
+{ total: 2, idle: 0, active: 2, waiting: 1 }
+conn-1</option>
+<option>{ total: 1, idle: 1, active: 0, waiting: 0 }
+{ total: 3, idle: 0, active: 3, waiting: 0 }
+conn-3</option>
+<option>{ total: 1, idle: 1, active: 0, waiting: 0 }
+{ total: 2, idle: 0, active: 2, waiting: 1 }
+conn-3</option>
+<explain><p><code>min: 1</code> opens one connection at start. The second is opened when needed, and never more than <code>max: 2</code>. The third <code>acquire</code> waits, and gets <code>conn-1</code> as soon as it is released.</p></explain>
+</question>
+
+<question id="st-pool-use" type="choice">
+<q>Why should you prefer <code>pool.use(fn)</code> over <code>acquire()</code> and <code>release()</code>?</q>
+<option>It is the only way to run a query</option>
+<option correct>It always gives the connection back, even when <code>fn</code> throws; a forgotten release loses that connection for good</option>
+<option>It opens a new connection for every call</option>
+<option>It retries failed queries</option>
+<explain><p><code>use</code> acquires, runs your function and releases in a <code>finally</code>. With manual <code>acquire</code>, one missed <code>release</code> on an error path slowly drains the pool.</p></explain>
+</question>
+
+<question id="st-pool-fail-fast" type="choice">
+<q>All connections are busy, and a request has waited longer than <code>acquireTimeout</code>. Why is it good that it fails instead of waiting forever?</q>
+<option>It is not good: requests should always wait</option>
+<option correct>Under heavy load, failing fast stops requests from piling up and using memory while they wait</option>
+<option>So that the pool can open more than <code>max</code> connections</option>
+<option>Because the database closes waiting connections anyway</option>
+<explain><p>A request that waits forever holds memory and a client connection. Failing fast gives a quick error, and the server stays responsive for the rest.</p></explain>
+</question>
+
+<question id="st-pool-drain" type="choice">
+<q>When do you call <code>pool.drain()</code>?</q>
+<option>Before every query</option>
+<option correct>On shutdown: it waits for connections in use, then closes them all</option>
+<option>When a query fails</option>
+<option>Every minute, to free memory</option>
+<explain><p><code>drain()</code> lets running work finish and then closes every connection, which is what a clean shutdown needs.</p></explain>
+</question>
+
+<question id="st-lifecycle-order" type="choice">
+<q>What does <code>StorageLifecycleManager</code> do?</q>
+<option>It backs up the database every night</option>
+<option correct>It runs <code>initialize</code> and <code>start</code> for every registered component before requests, and <code>drain</code> and <code>shutdown</code> when the app stops</option>
+<option>It decides which user may use which storage</option>
+<option>It picks the fastest storage for each query</option>
+<explain><p>Storage has to start before the server takes requests and stop after the last one. The manager runs those steps for every component that implements <code>StorageLifecycle</code>.</p></explain>
+</question>
+
+<question id="st-health-report" type="output">
+<q>One component is healthy and one is not. What does this print?</q>
+<code file="health-report.js" browser="no">
+import { HealthChecker } from "@zudojs/storage";
+
+const component = (health) => ({ healthCheck: async () => health });
+const checker = new HealthChecker();
+checker.register("database", component({ healthy: true, latencyMs: 1, status: "connected" }));
+checker.register("files", component({ healthy: false, latencyMs: 0, status: "disk full" }));
+const report = await checker.checkAll();
+const failing = report.components.filter((c) => !c.health.healthy).map((c) => c.name);
+console.log(report.healthy, failing);
+</code>
+<option correct>false [ 'files' ]</option>
+<option>true [ 'files' ]</option>
+<option>false []</option>
+<option>true []</option>
+<explain><p>The report is unhealthy as a whole when any component is, and it names which one. Your <code>/health</code> route turns that into a 503, while the details go to your logs.</p></explain>
+</question>
+
+<question id="code-st-health-summary" type="code" file="health-summary.js">
+<q><p>Finish <code>healthResponse(components)</code>. Each item is <code>{ name, healthy, status }</code>. Answer <code>{ status: 200, body: { healthy: true } }</code> when all are healthy. Otherwise answer 503 with <code>body: { healthy: false, failing: [names] }</code>. Never put the <code>status</code> texts in the body: they can hold internal details.</p></q>
+<starter>
+function healthResponse(components) {
+  // your code here
+}
+
+console.log(healthResponse([
+  { name: "database", healthy: true, status: "connected" },
+  { name: "files", healthy: true, status: "ok" },
+]));
+console.log(healthResponse([
+  { name: "database", healthy: true, status: "connected" },
+  { name: "files", healthy: false, status: "EACCES /srv/app/uploads" },
+]));
+</starter>
+<solution>
+function healthResponse(components) {
+  const failing = components.filter((c) => !c.healthy).map((c) => c.name);
+  if (failing.length === 0) return { status: 200, body: { healthy: true } };
+  return { status: 503, body: { healthy: false, failing } };
+}
+
+console.log(healthResponse([
+  { name: "database", healthy: true, status: "connected" },
+  { name: "files", healthy: true, status: "ok" },
+]));
+console.log(healthResponse([
+  { name: "database", healthy: true, status: "connected" },
+  { name: "files", healthy: false, status: "EACCES /srv/app/uploads" },
+]));
+</solution>
+<expected>
+{ status: 200, body: { healthy: true } }
+{ status: 503, body: { healthy: false, failing: [ 'files' ] } }
+</expected>
+<explain><p>Healthy only when every component is. The public body names what is failing, while the detailed texts (like a folder path) stay in your logs.</p></explain>
+</question>
+
+<question id="st-contract-swap" type="choice">
+<q>Your app uses <code>LocalObjectStorage</code>. Next month you move files to a cloud bucket. If your code depends only on the <code>ObjectStorage</code> contract, what must change?</q>
+<option>Every route that reads or writes files</option>
+<option correct>Only the place that creates the storage: you pass a new <code>ObjectStorage</code> implementation there</option>
+<option>The database schema</option>
+<option>Nothing, <code>LocalObjectStorage</code> uploads to the cloud by itself</option>
+<explain><p>That is the point of contracts: code that calls <code>put</code>, <code>get</code> and <code>list</code> does not care where the bytes live. You swap the implementation in one place, as with the dependency container.</p></explain>
+</question>

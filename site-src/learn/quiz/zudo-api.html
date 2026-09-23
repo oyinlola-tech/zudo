@@ -1,0 +1,768 @@
+<question id="why-operations" type="choice">
+<q>"Create a task" exists as an HTTP route, an RPC procedure and a queue job, each written separately. What is the problem the lesson points out?</q>
+<option>Three copies run too slowly</option>
+<option correct>The copies drift apart: one forgets the title check, another returns a different error</option>
+<option>HTTP and RPC cannot share a database</option>
+<option>A queue job cannot create tasks</option>
+<explain><p>Logic written three times is changed three times, and sooner or later one copy is missed. An operation holds the rules once; each transport only translates.</p></explain>
+</question>
+
+<question id="transport-role" type="choice">
+<q>In <code>@zudojs/api</code>, what is a transport's job?</q>
+<option>To hold the business rules, such as the title check</option>
+<option correct>To translate: turn an HTTP request, RPC frame or queue job into an operation call, and the result back into its own answer</option>
+<option>To store operations by name</option>
+<option>To validate the output schema</option>
+<explain><p>A transport is the door a call comes through. It finds the operation, builds a context from what it verified, calls the executor, and translates the result. The rules live in the operation.</p></explain>
+</question>
+
+<question id="define-checks-early" type="output">
+<q>What does this print?</q>
+<code file="bad-name.js" browser="no">
+import { defineOperation } from "@zudojs/api";
+
+try {
+  defineOperation({ name: "Create Task!", handler: async () => null });
+  console.log("defined");
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option correct>RangeError</option>
+<option>defined</option>
+<option>APIValidationError</option>
+<option>TypeError</option>
+<explain><p><code>defineOperation</code> checks the definition at once, so a bad name fails when the program starts, not on the first request. Names use letters, digits and signs like <code>.</code>, as in <code>tasks.create</code>.</p></explain>
+</question>
+
+<question id="timeout-cannot-disable" type="output">
+<q>What does this print?</q>
+<code file="bad-timeout.js" browser="no">
+import { defineOperation } from "@zudojs/api";
+
+try {
+  defineOperation({ name: "tasks.report", timeout: 0, handler: async () => null });
+  console.log("no timeout");
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option correct>RangeError</option>
+<option>no timeout</option>
+<option>APITimeoutError</option>
+<explain><p>Every operation has a timeout, and it cannot be switched off with 0. A bad timeout is refused when the operation is defined.</p></explain>
+</question>
+
+<question id="execute-success" type="output">
+<q>What does this print?</q>
+<code file="execute.js" browser="no">
+import { APIExecutor, createAPIContext, defineOperation } from "@zudojs/api";
+import { schema } from "@zudojs/schema";
+
+const createTask = defineOperation({
+  name: "tasks.create",
+  input: schema.object({ title: schema.string().trim().min(3) }),
+  handler: async (input) => ({ id: 1, title: input.title, done: false }),
+});
+const result = await new APIExecutor().execute(createTask, { title: "  Buy milk  " }, createAPIContext("req-1", {}));
+console.log(result);
+</code>
+<option correct>{ ok: true, data: { id: 1, title: 'Buy milk', done: false } }</option>
+<option>{ id: 1, title: 'Buy milk', done: false }</option>
+<option>{ ok: true, data: { id: 1, title: '  Buy milk  ', done: false } }</option>
+<option>{ success: true, result: { id: 1, title: 'Buy milk', done: false } }</option>
+<explain><p>The executor wraps every answer in a result: <code>{ ok: true, data }</code>. The handler got the cleaned input, so the spaces around the title were trimmed by the schema.</p></explain>
+</question>
+
+<question id="execute-never-throws" type="choice">
+<q>How do you find out whether <code>executor.execute(...)</code> failed?</q>
+<option>Wrap it in <code>try/catch</code>; it throws on failure</option>
+<option correct>Check <code>result.ok</code>: the executor never throws and returns <code>{ ok: false, error }</code> on failure</option>
+<option>Check whether <code>result</code> is <code>undefined</code></option>
+<option>Listen for an <code>error</code> event</option>
+<explain><p>Every call gives back a result. With <code>ok</code> you cannot forget the failure case: TypeScript only lets you read <code>data</code> after checking <code>ok</code>.</p></explain>
+</question>
+
+<question id="validation-422" type="output">
+<q>What does this print?</q>
+<code file="invalid.js" browser="no">
+import { APIExecutor, createAPIContext, defineOperation } from "@zudojs/api";
+import { schema } from "@zudojs/schema";
+
+const createTask = defineOperation({
+  name: "tasks.create",
+  input: schema.object({ title: schema.string().trim().min(3) }),
+  handler: async (input) => input,
+});
+const result = await new APIExecutor().execute(createTask, { title: "no" }, createAPIContext("req-1", {}));
+console.log(result.ok, result.error.statusCode, result.error.issues);
+</code>
+<option correct>false 422 [ 'title: invalid' ]</option>
+<option>false 400 [ 'title: String must be at least 3 characters' ]</option>
+<option>false 422 [ 'title: no' ]</option>
+<option>true 200 undefined</option>
+<explain><p>A bad input fails with 422. The issue says where the problem is (<code>title</code>) but not what was sent. The executor leaves the value out on purpose.</p></explain>
+</question>
+
+<question id="issues-no-value" type="choice">
+<q>Why do the executor's validation issues say only <code>title: invalid</code> and not the value that was sent?</q>
+<option>To keep responses short</option>
+<option correct>Schema messages often repeat the value, and that value can be a password or other secret</option>
+<option>Because the value was already deleted</option>
+<option>Because issues are only for logs</option>
+<explain><p>An error message goes back to the caller and often into logs. Repeating the input there can leak a password typed into the wrong field. The path alone is enough to fix the request.</p></explain>
+</question>
+
+<question id="conflict-409" type="output">
+<q>What does this print?</q>
+<code file="conflict.js" browser="no">
+import { APIConflictError, APIExecutor, createAPIContext, defineOperation } from "@zudojs/api";
+
+const titles = new Set(["Buy milk"]);
+const createTask = defineOperation({
+  name: "tasks.create",
+  handler: async (input) => {
+    if (titles.has(input.title)) throw new APIConflictError(`A task called "${input.title}" already exists.`);
+    return input;
+  },
+});
+const result = await new APIExecutor().execute(createTask, { title: "Buy milk" }, createAPIContext("req-1", {}));
+console.log(result.error.statusCode, result.error.message);
+</code>
+<option correct>409 A task called "Buy milk" already exists.</option>
+<option>500 An unexpected internal error occurred in operation "tasks.create".</option>
+<option>422 A task called "Buy milk" already exists.</option>
+<option>409 Conflict</option>
+<explain><p><code>APIConflictError</code> is a ready-made API error with status 409. The handler's own API error comes through unchanged, with its status and message.</p></explain>
+</question>
+
+<question id="typo-caught" type="choice">
+<q>You call <code>executor.execute(createTask, { titel: "Buy milk" }, context)</code> in a <code>.ts</code> file. What happens?</q>
+<option>The call returns a 422 at runtime, and that is the first you hear of it</option>
+<option correct>TypeScript reports an error before the program runs, because <code>titel</code> is not in the input type</option>
+<option>The executor fixes the typo</option>
+<option>The handler receives <code>undefined</code> for the title and no one notices</option>
+<explain><p><code>createTask</code> is typed as <code>APIOperation&lt;NewTask, Task&gt;</code>, so TypeScript checks the input you pass. Inside transports the input is <code>unknown</code>, and the schema checks it at runtime.</p></explain>
+</question>
+
+<question id="internal-error-hidden" type="output">
+<q>What does this print?</q>
+<code file="internal.js" browser="no">
+import { APIExecutor, createAPIContext, defineOperation } from "@zudojs/api";
+
+const exportTasks = defineOperation({
+  name: "tasks.export",
+  handler: async () => { throw new Error('relation "tasks" does not exist (host 10.0.0.5)'); },
+});
+const result = await new APIExecutor().execute(exportTasks, {}, createAPIContext("req-7", {}));
+console.log(result.error.statusCode, result.error.expose);
+console.log(result.error.message);
+</code>
+<option correct>500 false
+An unexpected internal error occurred in operation "tasks.export".</option>
+<option>500 true
+relation "tasks" does not exist (host 10.0.0.5)</option>
+<option>500 false
+relation "tasks" does not exist (host 10.0.0.5)</option>
+<option>422 false
+An unexpected internal error occurred in operation "tasks.export".</option>
+<explain><p>An error that is not an API error becomes an <code>APIInternalError</code> with a fixed message and <code>expose: false</code>. The database message, with its table and host, stays on <code>cause</code> for your logs.</p></explain>
+</question>
+
+<question id="cause-for-logs" type="output">
+<q>Continuing from the internal error: what does this print?</q>
+<code file="cause.js" browser="no">
+import { APIExecutor, createAPIContext, defineOperation } from "@zudojs/api";
+
+const exportTasks = defineOperation({
+  name: "tasks.export",
+  handler: async () => { throw new Error("host 10.0.0.5 refused"); },
+});
+const result = await new APIExecutor().execute(exportTasks, {}, createAPIContext("req-7", {}));
+console.log(result.error.cause.message);
+console.log(JSON.stringify(result.error).includes("10.0.0.5"));
+</code>
+<option correct>host 10.0.0.5 refused
+true</option>
+<option>host 10.0.0.5 refused
+false</option>
+<option>undefined
+false</option>
+<option>An unexpected internal error occurred in operation "tasks.export".
+false</option>
+<explain><p>The original error is kept on <code>cause</code>, which is good for logs. But turning the whole error into JSON includes that cause, so <code>res.json(result.error)</code> would leak it. Always pick the fields a caller may see.</p></explain>
+</question>
+
+<question id="expose-meaning" type="choice">
+<q>What does <code>expose: false</code> on an API error mean?</q>
+<option>The error is not logged</option>
+<option correct>Its message is not safe to show: log it, and send the caller a generic message</option>
+<option>The error is retried</option>
+<option>The error is thrown instead of returned</option>
+<explain><p><code>expose</code> is the flag that matters when you build a response. <code>true</code> means "safe to show to the caller"; <code>false</code> means "log it, send something generic".</p></explain>
+</question>
+
+<question id="public-error-fields" type="choice">
+<q>Which fields does the lesson's <code>publicError</code> send to a caller?</q>
+<option>The whole error object, including <code>cause</code> and <code>stack</code></option>
+<option correct><code>code</code>, <code>issues</code> for validation errors, and <code>message</code> only when <code>expose</code> is true</option>
+<option>Only <code>stack</code>, so developers can debug</option>
+<option>Only <code>statusCode</code></option>
+<explain><p>Pick fields on purpose. <code>code</code> and <code>issues</code> are safe; the message only when the error says it is safe. Never the cause or the stack.</p></explain>
+</question>
+
+<question id="context-contents" type="choice">
+<q>What does an API context carry through one call?</q>
+<option>The database connection and the HTTP response</option>
+<option correct>A request id, an optional cancel signal, a state object you choose, and typed slots</option>
+<option>The user's password</option>
+<option>Only the operation's name</option>
+<explain><p><code>createAPIContext(requestId, state, signal)</code> makes it. Typed slots are read and written with keys made by <code>createContextKey</code>, such as the built-in <code>UserIdContextKey</code>.</p></explain>
+</question>
+
+<question id="context-keys" type="output">
+<q>What does this print?</q>
+<code file="context.js" browser="no">
+import { createAPIContext, createContextKey, UserIdContextKey } from "@zudojs/api";
+
+const PlanKey = createContextKey("plan");
+const context = createAPIContext("web-42", { locale: "en" });
+context.set(PlanKey, "pro");
+console.log(context.requestId, context.get(PlanKey), context.state.locale, context.get(UserIdContextKey));
+</code>
+<option correct>web-42 pro en undefined</option>
+<option>web-42 pro en ada</option>
+<option>web-42 undefined en undefined</option>
+<option>undefined pro en undefined</option>
+<explain><p>The request id and state come from <code>createAPIContext</code>. The plan was set with its key. Nobody set <code>UserIdContextKey</code>, so it is <code>undefined</code>: an anonymous call.</p></explain>
+</question>
+
+<question id="normalize-request-id" type="output">
+<q>What does this print?</q>
+<code file="request-id.js" browser="no">
+import { normalizeRequestId } from "@zudojs/api";
+
+const safe = normalizeRequestId("web-42");
+const attack = normalizeRequestId("x\nFAKE LOG LINE: admin signed in");
+console.log(safe, attack.includes("FAKE"), attack.length);
+</code>
+<option correct>web-42 false 36</option>
+<option>web-42 true 31</option>
+<option>web-42 false 0</option>
+<option>web-42 true 36</option>
+<explain><p>A safe id is kept. The id with a line break is replaced by a fresh UUID (36 characters), so the fake log line never reaches your logs.</p></explain>
+</question>
+
+<question id="log-injection" type="choice">
+<q>What is <strong>log injection</strong>, and how does the lesson prevent it?</q>
+<option>Too many log lines; prevented by a log level</option>
+<option correct>A caller puts a line break in a value such as <code>x-request-id</code> to add fake lines to your logs; <code>normalizeRequestId</code> replaces unsafe ids</option>
+<option>Logging passwords; prevented by <code>expose: false</code></option>
+<option>Logs written in the wrong order; prevented by interceptors</option>
+<explain><p>The <code>x-request-id</code> header is written by the client. Passed through <code>normalizeRequestId</code>, a safe id is kept and anything else becomes a fresh UUID.</p></explain>
+</question>
+
+<question id="unsafe-id-throws" type="output">
+<q>What does this print?</q>
+<code file="unsafe-id.js" browser="no">
+import { createAPIContext } from "@zudojs/api";
+
+try {
+  createAPIContext("x\nFAKE LOG LINE", {});
+  console.log("created");
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option correct>TypeError</option>
+<option>created</option>
+<option>APIValidationError</option>
+<explain><p><code>createAPIContext</code> refuses an unsafe id with a <code>TypeError</code>. That is why a transport passes header values through <code>normalizeRequestId</code> first.</p></explain>
+</question>
+
+<question id="interceptor-shape" type="choice">
+<q>What is an interceptor in <code>@zudojs/api</code>?</q>
+<option>A function that replaces the executor</option>
+<option correct>An object with <code>intercept(call, next)</code>: do something, <code>await next()</code>, do something after</option>
+<option>A schema that runs after the handler</option>
+<option>A transport for WebSockets</option>
+<explain><p>It works like middleware. <code>call</code> holds the operation, the input and the context. It can also answer early without calling <code>next()</code>, by returning <code>apiFailure(error)</code>.</p></explain>
+</question>
+
+<question id="interceptor-order" type="output">
+<q>What does this print?</q>
+<code file="interceptors.js" browser="no">
+import { APIExecutor, createAPIContext, defineOperation } from "@zudojs/api";
+
+const steps = [];
+const log = {
+  async intercept(call, next) {
+    steps.push("log in");
+    const result = await next();
+    steps.push("log out");
+    return result;
+  },
+};
+const auth = {
+  async intercept(call, next) {
+    steps.push("auth");
+    return next();
+  },
+};
+const op = defineOperation({ name: "tasks.list", handler: async () => { steps.push("handler"); return []; } });
+await new APIExecutor({ interceptors: [log, auth] }).execute(op, {}, createAPIContext("r1", {}));
+console.log(steps.join(" > "));
+</code>
+<option correct>log in > auth > handler > log out</option>
+<option>auth > log in > handler > log out</option>
+<option>log in > log out > auth > handler</option>
+<option>handler > auth > log in > log out</option>
+<explain><p>The first interceptor in the list is the outermost. That is why a logging interceptor placed first also sees the answers of the interceptors after it.</p></explain>
+</question>
+
+<question id="require-user-early" type="output">
+<q>What does this print?</q>
+<code file="require-user.js" browser="no">
+import { APIAuthenticationError, APIExecutor, apiFailure, createAPIContext, defineOperation, UserIdContextKey } from "@zudojs/api";
+
+let handlerRuns = 0;
+const requireUser = {
+  async intercept(call, next) {
+    if (call.context.get(UserIdContextKey) === undefined) {
+      return apiFailure(new APIAuthenticationError("Sign in first."));
+    }
+    return next();
+  },
+};
+const op = defineOperation({ name: "tasks.list", handler: async () => { handlerRuns += 1; return []; } });
+const executor = new APIExecutor({ interceptors: [requireUser] });
+const anonymous = await executor.execute(op, {}, createAPIContext("r1", {}));
+const signedIn = createAPIContext("r2", {});
+signedIn.set(UserIdContextKey, "ada");
+const ada = await executor.execute(op, {}, signedIn);
+console.log(anonymous.error.statusCode, ada.ok, handlerRuns);
+</code>
+<option correct>401 true 1</option>
+<option>401 true 2</option>
+<option>403 true 1</option>
+<option>200 true 2</option>
+<explain><p>The anonymous call is answered early with <code>apiFailure</code>, without <code>next()</code>, so the handler does not run. Ada has a user id in the context, so her call goes through: one handler run.</p></explain>
+</question>
+
+<question id="freeze-registry" type="output">
+<q>What does this print?</q>
+<code file="freeze.js" browser="no">
+import { APIOperationRegistry, defineOperation } from "@zudojs/api";
+
+const registry = new APIOperationRegistry();
+registry.register(defineOperation({ name: "tasks.create", metadata: { tags: ["Tasks"] }, handler: async () => null }));
+registry.freeze();
+try {
+  registry.register(defineOperation({ name: "tasks.evil", handler: async () => null }));
+} catch (error) {
+  console.log("refused");
+}
+console.log(registry.get("tasks.evil"), registry.findByTag("Tasks").map((op) => op.name));
+</code>
+<option correct>refused
+undefined [ 'tasks.create' ]</option>
+<option>{ name: 'tasks.evil' } [ 'tasks.create' ]</option>
+<option>refused
+undefined []</option>
+<option>refused
+undefined [ 'tasks.create', 'tasks.evil' ]</option>
+<explain><p><code>freeze()</code> locks the registry, so nobody can add or replace an operation while requests run. <code>get</code> returns <code>undefined</code> for an unknown name, and <code>findByTag</code> finds operations by their metadata tags.</p></explain>
+</question>
+
+<question id="http-identity" type="choice">
+<q>In the HTTP transport, where does the user id in the context come from?</q>
+<option>From a <code>userId</code> field in the JSON body</option>
+<option>From the <code>x-request-id</code> header</option>
+<option correct>From the bearer token, after the transport checked it (here with a users map standing in for sessions or JWT)</option>
+<option>From the operation's metadata</option>
+<explain><p>Only identity the transport verified goes into the context. A user id in the body is written by the caller and proves nothing.</p></explain>
+</question>
+
+<question id="refuse-unknown-early" type="choice">
+<q>You don't want unknown callers to learn anything about your input shapes from validation errors. What does the lesson suggest?</q>
+<option>Turn off the input schema</option>
+<option correct>Refuse unknown callers in the transport, before you call the executor</option>
+<option>Return 200 for every error</option>
+<option>Put the schema in the client</option>
+<explain><p>A transport that answers 401 to callers with no valid token before calling the executor gives them nothing, not even a validation message.</p></explain>
+</question>
+
+<question id="rpc-identity" type="choice">
+<q>In the RPC transport, where must the user id come from?</q>
+<option>From the frame's metadata</option>
+<option correct>From <code>call.auth</code>, the identity your RPC server verified</option>
+<option>From the frame's id</option>
+<option>From the payload</option>
+<explain><p>Metadata and the frame's id are written by the caller. The frame id still goes through <code>normalizeRequestId</code>, and the user comes only from verified <code>auth</code>.</p></explain>
+</question>
+
+<question id="queue-attempts-one" type="choice">
+<q>The queue transport adds jobs with <code>{ attempts: 1 }</code>. Why?</q>
+<option>The queue cannot retry API operations</option>
+<option correct>A validation error fails the same way every time, so retrying it only wastes work</option>
+<option>It makes the job run faster</option>
+<option>So a job runs once per user</option>
+<explain><p>Retries help with errors that can go away, like a restarting service. An invalid input stays invalid. After the failure, the queue's dead-letter rules take over.</p></explain>
+</question>
+
+<question id="queue-user-id" type="choice">
+<q>A background job has no HTTP request and no token. Why may the queue transport take the user id from <code>job.data.userId</code>?</q>
+<option>Queue data is always encrypted</option>
+<option correct>Only your own code adds jobs, after it has checked who the user is</option>
+<option>The queue verifies tokens itself</option>
+<option>User ids in jobs are never used</option>
+<explain><p>The trust comes from who writes the data. Jobs are added by your code after it verified the user, so the id in them is as trusted as that check.</p></explain>
+</question>
+
+<question id="timeout-not-stop" type="choice">
+<q>An operation's timeout runs out. What does the lesson say about the handler?</q>
+<option>The executor kills the handler immediately</option>
+<option correct>The executor stops waiting, but the handler may keep working; give long handlers their own deadline signal</option>
+<option>The handler is restarted</option>
+<option>The timeout is ignored if the handler is async</option>
+<explain><p>JavaScript cannot stop a running function from outside. The lesson combines a deadline signal with the caller's signal using <code>AbortSignal.any</code>, so the handler stops by itself.</p></explain>
+</question>
+
+<question id="abort-signal-any" type="output">
+<q>What does this print?</q>
+<code file="any.js">
+const caller = new AbortController();
+const deadline = new AbortController();
+const both = AbortSignal.any([deadline.signal, caller.signal]);
+console.log(both.aborted);
+caller.abort();
+console.log(both.aborted, deadline.signal.aborted);
+</code>
+<option correct>false
+true false</option>
+<option>false
+true true</option>
+<option>false
+false false</option>
+<option>true
+true false</option>
+<explain><p><code>AbortSignal.any</code> makes a signal that aborts as soon as <em>any</em> of its signals aborts. The deadline itself did not abort. A handler that listens to <code>both</code> stops for either reason.</p></explain>
+</question>
+
+<question id="cancelled-code" type="choice">
+<q>A caller aborts the call, like a browser tab that was closed. Which should your code check?</q>
+<option>The status code 499</option>
+<option correct>The error code <code>ERR_OPERATION_CANCELLED</code></option>
+<option>Whether <code>result.data</code> is <code>null</code></option>
+<option>The error message text</option>
+<explain><p>The lesson advises checking the code, not the unusual status 499. Codes are meant for programs; messages are meant for people and can change.</p></explain>
+</question>
+
+<question id="role-from-context" type="choice">
+<q>An admin-only interceptor receives an input that says <code>role: "admin"</code>, and the context says the verified role is <code>user</code>. What must happen?</q>
+<option>Allow it, because the input says admin</option>
+<option correct>Refuse it with 403: the role comes only from the context, never from the input</option>
+<option>Ask the handler to decide</option>
+<option>Allow it but log a warning</option>
+<explain><p>The input is written by the caller. The context is filled by the transport after it verified the caller. Decisions about who may do what use the context only.</p></explain>
+</question>
+
+<question id="exit-codes" type="output">
+<q>What does this print?</q>
+<code file="exit-codes.js" browser="no">
+import { APIAuthenticationError, APIConflictError, APIValidationError, apiFailure, apiSuccess } from "@zudojs/api";
+
+function exitCode(result) {
+  if (result.ok) return 0;
+  const status = result.error.statusCode;
+  if (status === 401 || status === 403) return 77;
+  if (status === 422) return 65;
+  return 1;
+}
+
+console.log([
+  apiSuccess({ id: 1 }),
+  apiFailure(new APIAuthenticationError("Sign in first.")),
+  apiFailure(new APIValidationError("Invalid input.", ["title: invalid"])),
+  apiFailure(new APIConflictError("Already exists.")),
+].map(exitCode));
+</code>
+<option correct>[ 0, 77, 65, 1 ]</option>
+<option>[ 0, 77, 65, 65 ]</option>
+<option>[ 1, 77, 65, 1 ]</option>
+<option>[ 0, 1, 1, 1 ]</option>
+<explain><p>Success is 0. Authentication (401) gives 77, validation (422) gives 65, and the conflict (409) falls through to 1. A script can now tell "fix your input" from "sign in" without reading text.</p></explain>
+</question>
+
+<question id="code-result-helpers" type="code" file="result.js">
+<q><p>Write the result pattern the executor uses. Finish <code>safeDivide(a, b)</code>: return <code>{ ok: true, data: a / b }</code>, or <code>{ ok: false, error: "division by zero" }</code> when <code>b</code> is 0. Never throw. The program should print the two lines in the comments.</p></q>
+<starter>
+function safeDivide(a, b) {
+  // your code here
+}
+
+console.log(safeDivide(10, 4)); // { ok: true, data: 2.5 }
+console.log(safeDivide(1, 0)); // { ok: false, error: 'division by zero' }
+</starter>
+<solution>
+function safeDivide(a, b) {
+  if (b === 0) return { ok: false, error: "division by zero" };
+  return { ok: true, data: a / b };
+}
+
+console.log(safeDivide(10, 4)); // { ok: true, data: 2.5 }
+console.log(safeDivide(1, 0)); // { ok: false, error: 'division by zero' }
+</solution>
+<expected>
+{ ok: true, data: 2.5 }
+{ ok: false, error: 'division by zero' }
+</expected>
+<explain><p>A result object makes failure a normal value. The caller checks <code>ok</code> instead of wrapping every call in <code>try/catch</code>, and cannot forget the failure case.</p></explain>
+</question>
+
+<question id="code-public-error" type="code" file="public-error.js">
+<q><p>Finish <code>publicError(error)</code>. Return an object with <code>code</code>; add <code>message</code> as the error's message when <code>expose</code> is true, or <code>"An internal error occurred."</code> otherwise; add <code>issues</code> only when the error has an <code>issues</code> array. Never copy <code>cause</code>. The program should print the two lines in the comments.</p></q>
+<starter>
+function publicError(error) {
+  // your code here
+}
+
+const invalid = { code: "ERR_API_VALIDATION", message: "Invalid input.", expose: true, issues: ["title: invalid"] };
+const internal = { code: "ERR_API_INTERNAL", message: "Unexpected.", expose: false, cause: new Error("host 10.0.0.5") };
+console.log(JSON.stringify(publicError(invalid))); // {"code":"ERR_API_VALIDATION","message":"Invalid input.","issues":["title: invalid"]}
+console.log(JSON.stringify(publicError(internal))); // {"code":"ERR_API_INTERNAL","message":"An internal error occurred."}
+</starter>
+<solution>
+function publicError(error) {
+  const out = {
+    code: error.code,
+    message: error.expose ? error.message : "An internal error occurred.",
+  };
+  if (Array.isArray(error.issues)) out.issues = error.issues;
+  return out;
+}
+
+const invalid = { code: "ERR_API_VALIDATION", message: "Invalid input.", expose: true, issues: ["title: invalid"] };
+const internal = { code: "ERR_API_INTERNAL", message: "Unexpected.", expose: false, cause: new Error("host 10.0.0.5") };
+console.log(JSON.stringify(publicError(invalid))); // {"code":"ERR_API_VALIDATION","message":"Invalid input.","issues":["title: invalid"]}
+console.log(JSON.stringify(publicError(internal))); // {"code":"ERR_API_INTERNAL","message":"An internal error occurred."}
+</solution>
+<expected>
+{"code":"ERR_API_VALIDATION","message":"Invalid input.","issues":["title: invalid"]}
+{"code":"ERR_API_INTERNAL","message":"An internal error occurred."}
+</expected>
+<explain><p>Build a new object with only the safe fields. Sending the error itself would carry its <code>cause</code>, with the host inside, to the caller.</p></explain>
+</question>
+
+<question id="code-exit-code" type="code" file="exit-code.js">
+<q><p>Finish <code>exitCode(result)</code> for a command-line tool: 0 for success, 77 for status 401 or 403, 65 for 422, and 1 for anything else. The program should print <code>[ 0, 77, 77, 65, 1 ]</code>.</p></q>
+<starter>
+function exitCode(result) {
+  // your code here
+}
+
+const results = [
+  { ok: true, data: { id: 1 } },
+  { ok: false, error: { statusCode: 401 } },
+  { ok: false, error: { statusCode: 403 } },
+  { ok: false, error: { statusCode: 422 } },
+  { ok: false, error: { statusCode: 500 } },
+];
+console.log(results.map(exitCode));
+</starter>
+<solution>
+function exitCode(result) {
+  if (result.ok) return 0;
+  const status = result.error.statusCode;
+  if (status === 401 || status === 403) return 77;
+  if (status === 422) return 65;
+  return 1;
+}
+
+const results = [
+  { ok: true, data: { id: 1 } },
+  { ok: false, error: { statusCode: 401 } },
+  { ok: false, error: { statusCode: 403 } },
+  { ok: false, error: { statusCode: 422 } },
+  { ok: false, error: { statusCode: 500 } },
+];
+console.log(results.map(exitCode));
+</solution>
+<expected>[ 0, 77, 77, 65, 1 ]</expected>
+<explain><p>Check <code>ok</code> first, then map status codes to exit codes. A script that runs the tool can react to the number without reading any text. This is the CLI transport's translation step.</p></explain>
+</question>
+
+<question id="code-normalize-id" type="code" file="normalize-id.js">
+<q><p>Write your own <code>normalizeId(value, fallback)</code>: keep <code>value</code> when it is a string of 1 to 64 characters that only contains letters, digits, <code>-</code>, <code>_</code> or <code>.</code>; otherwise return <code>fallback</code>. The program should print <code>web-42 fresh-id fresh-id</code>.</p></q>
+<starter>
+function normalizeId(value, fallback) {
+  // your code here
+}
+
+console.log(
+  normalizeId("web-42", "fresh-id"),
+  normalizeId("x\nFAKE LOG LINE", "fresh-id"),
+  normalizeId(undefined, "fresh-id"),
+);
+</starter>
+<solution>
+function normalizeId(value, fallback) {
+  if (typeof value === "string" && /^[A-Za-z0-9._-]{1,64}$/.test(value)) return value;
+  return fallback;
+}
+
+console.log(
+  normalizeId("web-42", "fresh-id"),
+  normalizeId("x\nFAKE LOG LINE", "fresh-id"),
+  normalizeId(undefined, "fresh-id"),
+);
+</solution>
+<expected>web-42 fresh-id fresh-id</expected>
+<explain><p>An allow-list with <code>^</code> and <code>$</code> checks the whole string, so a line break or a space anywhere fails. A missing header (<code>undefined</code>) gets the fallback too. The real <code>normalizeRequestId</code> uses a fresh UUID as the fallback.</p></explain>
+</question>
+
+<question id="code-interceptor-chain" type="code" file="chain.js">
+<q><p>Build an interceptor chain by hand. Finish <code>run(interceptors, handler)</code>: call the first interceptor with a <code>next</code> function that runs the rest of the chain, and at the end calls <code>handler()</code>. Each interceptor is a function <code>(next) =&gt; result</code>. The program should print <code>[ 'log in', 'auth', 'handler', 'log out' ]</code> and then <code>done</code>.</p></q>
+<starter>
+async function run(interceptors, handler) {
+  // your code here
+}
+
+const steps = [];
+const log = async (next) => { steps.push("log in"); const r = await next(); steps.push("log out"); return r; };
+const auth = async (next) => { steps.push("auth"); return next(); };
+const result = await run([log, auth], async () => { steps.push("handler"); return "done"; });
+console.log(steps);
+console.log(result);
+</starter>
+<solution>
+async function run(interceptors, handler) {
+  const step = (index) => {
+    if (index === interceptors.length) return handler();
+    return interceptors[index](() => step(index + 1));
+  };
+  return step(0);
+}
+
+const steps = [];
+const log = async (next) => { steps.push("log in"); const r = await next(); steps.push("log out"); return r; };
+const auth = async (next) => { steps.push("auth"); return next(); };
+const result = await run([log, auth], async () => { steps.push("handler"); return "done"; });
+console.log(steps);
+console.log(result);
+</solution>
+<expected>
+[ 'log in', 'auth', 'handler', 'log out' ]
+done
+</expected>
+<explain><p>Each step gives its interceptor a <code>next</code> that runs the following step; after the last interceptor comes the handler. That is why the first interceptor in the list is the outermost.</p></explain>
+</question>
+
+<question id="code-admin-only" type="code" file="admin-only.js">
+<q><p>Finish the admin check. <code>adminOnly(operation, context, input)</code> returns <code>{ ok: false, status: 403 }</code> when the operation's <code>tags</code> include <code>"Admin"</code> and <code>context.role</code> is not <code>"admin"</code>. Otherwise it returns <code>{ ok: true }</code>. Never look at <code>input</code>. The program should print <code>403 true true</code>.</p></q>
+<starter>
+function adminOnly(operation, context, input) {
+  // your code here
+}
+
+const deleteAll = { name: "tasks.deleteAll", tags: ["Admin"] };
+const list = { name: "tasks.list", tags: ["Tasks"] };
+const bo = adminOnly(deleteAll, { role: "user" }, { role: "admin" });
+const ada = adminOnly(deleteAll, { role: "admin" }, {});
+const boList = adminOnly(list, { role: "user" }, {});
+console.log(bo.status, ada.ok, boList.ok);
+</starter>
+<solution>
+function adminOnly(operation, context, input) {
+  if (operation.tags.includes("Admin") && context.role !== "admin") {
+    return { ok: false, status: 403 };
+  }
+  return { ok: true };
+}
+
+const deleteAll = { name: "tasks.deleteAll", tags: ["Admin"] };
+const list = { name: "tasks.list", tags: ["Tasks"] };
+const bo = adminOnly(deleteAll, { role: "user" }, { role: "admin" });
+const ada = adminOnly(deleteAll, { role: "admin" }, {});
+const boList = adminOnly(list, { role: "user" }, {});
+console.log(bo.status, ada.ok, boList.ok);
+</solution>
+<expected>403 true true</expected>
+<explain><p>Bo's input claims admin, but the verified context says user, so he gets 403. The rule only applies to operations tagged <code>Admin</code>, so Bo can still list tasks.</p></explain>
+</question>
+
+<question id="code-registry" type="code" file="registry.js">
+<q><p>Write a tiny operation registry. Finish <code>register</code> (throw an <code>Error</code> with the message <code>frozen</code> once <code>frozen</code> is true, otherwise store the operation by its <code>name</code>) and <code>freeze</code>. The program should print <code>frozen</code> and then <code>true false</code>.</p></q>
+<starter>
+const operations = new Map();
+let frozen = false;
+
+function register(operation) {
+  // your code here
+}
+
+function freeze() {
+  // your code here
+}
+
+register({ name: "tasks.create" });
+freeze();
+try {
+  register({ name: "tasks.evil" });
+} catch (error) {
+  console.log(error.message);
+}
+console.log(operations.has("tasks.create"), operations.has("tasks.evil"));
+</starter>
+<solution>
+const operations = new Map();
+let frozen = false;
+
+function register(operation) {
+  if (frozen) throw new Error("frozen");
+  operations.set(operation.name, operation);
+}
+
+function freeze() {
+  frozen = true;
+}
+
+register({ name: "tasks.create" });
+freeze();
+try {
+  register({ name: "tasks.evil" });
+} catch (error) {
+  console.log(error.message);
+}
+console.log(operations.has("tasks.create"), operations.has("tasks.evil"));
+</solution>
+<expected>
+frozen
+true false
+</expected>
+<explain><p>Freezing after startup means no code can add or replace an operation while requests are running. Register everything first, then freeze.</p></explain>
+</question>
+
+<question id="require-unknown" type="output">
+<q>What does this print?</q>
+<code file="require.js" browser="no">
+import { APIOperationRegistry } from "@zudojs/api";
+
+const registry = new APIOperationRegistry();
+console.log(registry.get("tasks.delete"));
+try {
+  registry.require("tasks.delete");
+} catch (error) {
+  console.log(error.statusCode);
+}
+</code>
+<option correct>undefined
+404</option>
+<option>undefined
+undefined</option>
+<option>404
+404</option>
+<option>null
+500</option>
+<explain><p><code>get(name)</code> returns <code>undefined</code> when the name is unknown, so the transport can answer 404 itself. <code>require(name)</code> throws an API error with status 404 instead.</p></explain>
+</question>

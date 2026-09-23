@@ -1,0 +1,804 @@
+<question id="what-is-rpc" type="choice">
+<q>What is RPC, a remote procedure call?</q>
+<option>A way to send HTML pages from one server to another</option>
+<option correct>Calling a function by name that runs in another process, and getting its result back</option>
+<option>A database query that runs in parallel</option>
+<option>A browser API for calling JavaScript from HTML</option>
+<explain><p>With RPC you think in functions, not URLs: <code>tasks.call("tasks.count", { userId })</code> runs code in the task service and returns its result. It is most useful between your own services.</p></explain>
+</question>
+
+<question id="three-pieces" type="choice">
+<q>In <code>@zudojs/rpc</code>, what does the <strong>transport</strong> do?</q>
+<option>It holds the procedures and runs the right one</option>
+<option>It checks each payload against the schema</option>
+<option correct>It carries the request frame to the server and the answer back</option>
+<option>It creates unique request ids</option>
+<explain><p>A procedure is the function on the far side, the server holds the procedures, the client builds requests, and the transport carries them, for example over HTTP.</p></explain>
+</question>
+
+<question id="procedure-name" type="output">
+<q>What does this print?</q>
+<code file="procedure-name.js" browser="no">
+import { createRPCProcedure } from "@zudojs/rpc";
+
+for (const name of ["tasks.create", "Tasks Create"]) {
+  try {
+    createRPCProcedure(name, async () => null);
+    console.log(name, "ok");
+  } catch (error) {
+    console.log(name, "refused");
+  }
+}
+</code>
+<option correct>tasks.create ok
+Tasks Create refused</option>
+<option>tasks.create ok
+Tasks Create ok</option>
+<option>tasks.create refused
+Tasks Create refused</option>
+<option>tasks.create refused
+Tasks Create ok</option>
+<explain><p>A procedure name is dot-separated words, like <code>tasks.create</code>. A name with a space is refused when you create the procedure, long before anyone calls it.</p></explain>
+</question>
+
+<question id="duplicate-procedure" type="output">
+<q>What does this print?</q>
+<code file="duplicate.js" browser="no">
+import { createRPCProcedure, RPCServer } from "@zudojs/rpc";
+
+const server = new RPCServer();
+server.register(createRPCProcedure("tasks.list", async () => []));
+try {
+  server.register(createRPCProcedure("tasks.list", async () => ["other"]));
+  console.log("replaced");
+} catch (error) {
+  console.log(error.message);
+}
+</code>
+<option correct>RPC procedure "tasks.list" is already registered.</option>
+<option>replaced</option>
+<option>RPC procedure "tasks.list" is not registered.</option>
+<explain><p>Two procedures with the same name would make calls ambiguous, so the second <code>register</code> throws. Nothing is silently replaced.</p></explain>
+</question>
+
+<question id="schema-before-handler" type="choice">
+<q>A procedure is created with <code>{ input: NewTask }</code>, a schema. When does the schema run?</q>
+<option>After the handler, on the result</option>
+<option correct>On every payload, before the handler runs; the handler receives the value the schema produced</option>
+<option>Only when the client asks for validation</option>
+<option>Only in development</option>
+<explain><p>The server checks every payload against the input schema first. A payload that fails never reaches your handler, and a payload that passes arrives cleaned, for example with the title trimmed.</p></explain>
+</question>
+
+<question id="handle-trims" type="output">
+<q>What does this print?</q>
+<code file="handle-trim.js" browser="no">
+import { createRPCProcedure, createRPCRequest, RPCServer } from "@zudojs/rpc";
+import { schema } from "@zudojs/schema";
+
+const server = new RPCServer();
+server.register(createRPCProcedure("tasks.create", async (input) => ({ title: input.title }), {
+  input: schema.object({ title: schema.string().trim().min(3) }),
+}));
+const response = await server.handle(createRPCRequest({
+  id: "req-1",
+  procedure: "tasks.create",
+  payload: { title: "  Buy milk  " },
+}));
+console.log(response.id, response.success, response.result);
+</code>
+<option correct>req-1 true { title: 'Buy milk' }</option>
+<option>req-1 true { title: '  Buy milk  ' }</option>
+<option>undefined true { title: 'Buy milk' }</option>
+<option>req-1 false undefined</option>
+<explain><p>The response carries the same id as the request, so the caller knows which answer belongs to which question. The handler received the value the schema produced, so the title was trimmed.</p></explain>
+</question>
+
+<question id="handle-never-throws" type="output">
+<q>What does this print?</q>
+<code file="not-found.js" browser="no">
+import { createRPCRequest, RPCServer } from "@zudojs/rpc";
+
+const server = new RPCServer();
+try {
+  const response = await server.handle(createRPCRequest({
+    id: "req-2",
+    procedure: "tasks.delete",
+    payload: { id: 1 },
+  }));
+  console.log("answered:", response.success);
+} catch (error) {
+  console.log("threw");
+}
+</code>
+<option correct>answered: false</option>
+<option>threw</option>
+<option>answered: true</option>
+<option>answered: undefined</option>
+<explain><p><code>handle</code> never throws for a bad request. An unknown procedure comes back as a response with <code>success: false</code> and an error, so one bad call cannot crash the server.</p></explain>
+</question>
+
+<question id="transport-shape" type="choice">
+<q>What is the smallest thing that works as an <code>RPCTransport</code>?</q>
+<option>A class that extends <code>RPCServer</code></option>
+<option correct>An object with a <code>send(request)</code> method that returns the response</option>
+<option>A URL string</option>
+<option>A function that returns <code>true</code></option>
+<explain><p>Any object with <code>send(request)</code> works. The lesson's smallest one calls <code>server.handle(request)</code> in the same process; the HTTP one sends the frame with <code>fetch</code>.</p></explain>
+</question>
+
+<question id="in-process-client" type="output">
+<q>What does this print?</q>
+<code file="in-process.js" browser="no">
+import { createRPCProcedure, RPCClient, RPCServer } from "@zudojs/rpc";
+
+const tasks = [];
+const server = new RPCServer();
+server.register(createRPCProcedure("tasks.create", async (input) => {
+  tasks.push(input.title);
+  return { id: tasks.length, title: input.title };
+}));
+server.register(createRPCProcedure("tasks.list", async () => tasks));
+const client = new RPCClient({ send: (request) => server.handle(request) });
+
+const task = await client.call("tasks.create", { title: "Buy milk" });
+await client.call("tasks.create", { title: "Walk the dog" });
+console.log(task.id, await client.call("tasks.list", {}));
+</code>
+<option correct>1 [ 'Buy milk', 'Walk the dog' ]</option>
+<option>2 [ 'Buy milk', 'Walk the dog' ]</option>
+<option>1 [ 'Walk the dog' ]</option>
+<option>undefined [ 'Buy milk', 'Walk the dog' ]</option>
+<explain><p>The client turns each response into a normal return value. The first task got id 1, and the list holds both titles. The transport here is just an object with <code>send</code> that calls the server in the same process.</p></explain>
+</question>
+
+<question id="call-type-not-checked" type="choice">
+<q>You write <code>client.call&lt;{ id: number }, Task&gt;("tasks.get", { id: 1 })</code>. What does the <code>Task</code> type guarantee at runtime?</q>
+<option>The client checks that the answer is a Task</option>
+<option correct>Nothing: it only tells TypeScript what you expect; validate the answer with a schema if it matters</option>
+<option>The server refuses to answer anything else</option>
+<option>The transport converts the answer into a Task</option>
+<explain><p>Types disappear when the code runs. The other service could send anything. Treat its answer like any other outside data.</p></explain>
+</question>
+
+<question id="payload-untrusted" type="choice">
+<q>The billing service calling your task service is also yours. Should the task service validate its payloads?</q>
+<option>No, your own services can be trusted</option>
+<option correct>Yes: a payload comes from another program, so it is untrusted, even when that program is yours</option>
+<option>Only for procedures that write data</option>
+<option>Only when the call goes over HTTP</option>
+<explain><p>The other service can have bugs, old versions or be compromised. An input schema stops a payload like <code>{ id: "1; DROP TABLE tasks" }</code> before it reaches the handler.</p></explain>
+</question>
+
+<question id="validation-details" type="output">
+<q>What does this print?</q>
+<code file="details.js" browser="no">
+import { createRPCProcedure, RPCClient, RPCServer } from "@zudojs/rpc";
+import { schema } from "@zudojs/schema";
+
+const server = new RPCServer();
+server.register(createRPCProcedure("tasks.create", async (input) => input, {
+  input: schema.object({ title: schema.string().trim().min(3) }),
+}));
+const client = new RPCClient({ send: (request) => server.handle(request) });
+let handlerRan = false;
+try {
+  await client.call("tasks.create", { title: "no" });
+  handlerRan = true;
+} catch (error) {
+  console.log(error.details.map((issue) => issue.path).join(","), handlerRan);
+}
+</code>
+<option correct>title false</option>
+<option>title true</option>
+<option>tasks.create false</option>
+<option>, false</option>
+<explain><p>The title is too short, so the schema rejected the payload and the handler never ran. The client throws, and <code>details</code> lists every problem with its path so the caller can fix the request.</p></explain>
+</question>
+
+<question id="expose-message" type="output">
+<q>What does this print?</q>
+<code file="expose.js" browser="no">
+import { createRPCProcedure, RPCClient, RPCError, RPCServer } from "@zudojs/rpc";
+
+const server = new RPCServer();
+server.register(createRPCProcedure("tasks.get", async (input) => {
+  throw new RPCError(`Task ${input.id} not found`, {
+    code: "TASK_NOT_FOUND", statusCode: 404, expose: true,
+  });
+}));
+const client = new RPCClient({ send: (request) => server.handle(request) });
+try {
+  await client.call("tasks.get", { id: 7 });
+} catch (error) {
+  console.log(error.code, "-", error.message);
+}
+</code>
+<option correct>TASK_NOT_FOUND - Task 7 not found</option>
+<option>RPC_INTERNAL_ERROR - Task 7 not found</option>
+<option>TASK_NOT_FOUND - The server encountered an internal error while handling this request.</option>
+<option>404 - Task 7 not found</option>
+<explain><p>The handler threw an <code>RPCError</code> with <code>expose: true</code>, so its code and message reach the caller unchanged. That is how you send a deliberate, safe error message.</p></explain>
+</question>
+
+<question id="internal-error-hidden" type="output">
+<q>A handler crashes with an ordinary error. What does this print?</q>
+<code file="hidden.js" browser="no">
+import { createRPCProcedure, RPCClient, RPCServer } from "@zudojs/rpc";
+
+const server = new RPCServer(undefined, undefined, {
+  onInternalError: (error) => console.log("[server log]", error.message),
+});
+server.register(createRPCProcedure("tasks.export", async () => {
+  throw new Error("connect ECONNREFUSED 10.0.0.5:5432");
+}));
+const client = new RPCClient({ send: (request) => server.handle(request) });
+try {
+  await client.call("tasks.export", {});
+} catch (error) {
+  console.log("[caller]", error.message);
+}
+</code>
+<option correct>[server log] connect ECONNREFUSED 10.0.0.5:5432
+[caller] The server encountered an internal error while handling this request.</option>
+<option>[caller] connect ECONNREFUSED 10.0.0.5:5432</option>
+<option>[server log] connect ECONNREFUSED 10.0.0.5:5432
+[caller] connect ECONNREFUSED 10.0.0.5:5432</option>
+<option>[caller] The server encountered an internal error while handling this request.</option>
+<explain><p>The real message contains a host and a port that an outsider must never see. The caller gets a fixed message, and the real error goes to <code>onInternalError</code>, where you log it.</p></explain>
+</question>
+
+<question id="expose-rule" type="choice">
+<q>A handler throws a <code>NotFoundError</code> from <code>@zudojs/errors</code>. What does the caller see?</q>
+<option>The NotFoundError's message, because it is a known error class</option>
+<option correct>A generic internal error; only an <code>RPCError</code> with <code>expose: true</code> shows its message</option>
+<option>A 404 HTTP status</option>
+<option>Nothing; the call hangs</option>
+<explain><p>The rule is simple and safe: only errors that you explicitly mark with <code>expose: true</code> show their message. Everything else is hidden from the caller and sent to <code>onInternalError</code>.</p></explain>
+</question>
+
+<question id="json-loss" type="output">
+<q>The transport copies each frame through JSON, as a network would. What does this print?</q>
+<code file="json-loss.js" browser="no">
+import { createRPCProcedure, RPCClient, RPCServer } from "@zudojs/rpc";
+
+const server = new RPCServer();
+server.register(createRPCProcedure("tasks.summary", async () => ({
+  dueAt: new Date(Date.UTC(2026, 9, 1, 9, 0)),
+  tags: new Set(["home", "shopping"]),
+  note: undefined,
+  count: 2,
+})));
+const client = new RPCClient({
+  send: async (request) => JSON.parse(JSON.stringify(await server.handle(request))),
+});
+console.log(await client.call("tasks.summary", {}));
+</code>
+<option correct>{ dueAt: '2026-10-01T09:00:00.000Z', tags: {}, count: 2 }</option>
+<option>{ dueAt: 2026-10-01T09:00:00.000Z, tags: Set(2) { 'home', 'shopping' }, note: undefined, count: 2 }</option>
+<option>{ dueAt: '2026-10-01T09:00:00.000Z', tags: [ 'home', 'shopping' ], note: null, count: 2 }</option>
+<option>{ dueAt: '2026-10-01T09:00:00.000Z', tags: {}, note: undefined, count: 2 }</option>
+<explain><p>The Date became a string, the Set became an empty object, and the <code>undefined</code> field disappeared, all without an error. Design results as plain JSON: ISO strings, arrays and <code>null</code>.</p></explain>
+</question>
+
+<question id="plain-json-results" type="choice">
+<q>A procedure returns a due date and a set of tags. What is the safest result shape?</q>
+<option><code>{ dueAt: new Date(...), tags: new Set([...]) }</code></option>
+<option correct><code>{ dueAt: "2026-10-01T09:00:00.000Z", tags: ["home", "shopping"] }</code></option>
+<option><code>{ dueAt: undefined, tags: {} }</code></option>
+<option><code>{ dueAt: Date.now, tags: Set }</code></option>
+<explain><p>Results travel as JSON. Dates as ISO strings and sets as arrays arrive exactly as sent. For richer types, both sides must use the same serializer from <code>@zudojs/serialization</code>.</p></explain>
+</question>
+
+<question id="metadata-untrusted" type="choice">
+<q>A frame's metadata says <code>{ userId: "admin" }</code>. Can the handler trust it?</q>
+<option>Yes, metadata is signed by the client</option>
+<option>Yes, if the call came over HTTPS</option>
+<option correct>No: the caller writes metadata, so it can put anything there; use verified identity from <code>context.auth</code></option>
+<option>Only when the id is a UUID</option>
+<explain><p>Metadata is useful for request ids and trace ids, but never for deciding who the caller is. Identity that your code verified (for example after checking a token) goes in <code>handle(frame, { auth })</code>.</p></explain>
+</question>
+
+<question id="auth-vs-metadata" type="output">
+<q>What does this print?</q>
+<code file="auth.js" browser="no">
+import { createRPCProcedure, createRPCRequest, RPCAuthenticationError, RPCMiddlewareStack, RPCServer } from "@zudojs/rpc";
+
+const requireUser = async (context, next) => {
+  const userId = context.auth?.userId;
+  if (typeof userId !== "string") throw new RPCAuthenticationError("Sign in first.");
+  context.set("userId", userId);
+  return next();
+};
+const server = new RPCServer(undefined, new RPCMiddlewareStack([requireUser]));
+server.register(createRPCProcedure("tasks.mine", async (_input, context) => context.get("userId")));
+const frame = createRPCRequest({
+  id: "req-1", procedure: "tasks.mine", payload: {}, metadata: { userId: "admin" },
+});
+const anonymous = await server.handle(frame);
+const verified = await server.handle(frame, { auth: { userId: "ada" } });
+console.log(anonymous.success, verified.success, verified.result);
+</code>
+<option correct>false true ada</option>
+<option>true true admin</option>
+<option>true true ada</option>
+<option>false true admin</option>
+<explain><p>The first call only <em>claimed</em> to be admin in its metadata, and nothing verified that, so the middleware refused it. The second call had a verified identity, and the handler used <code>ada</code>.</p></explain>
+</question>
+
+<question id="forbidden-middleware" type="output">
+<q>What does this print?</q>
+<code file="admin-only.js" browser="no">
+import { createRPCProcedure, createRPCRequest, RPCForbiddenError, RPCMiddlewareStack, RPCServer } from "@zudojs/rpc";
+
+const adminOnly = async (context, next) => {
+  if (context.auth?.role !== "admin") throw new RPCForbiddenError("Admins only.");
+  return next();
+};
+const server = new RPCServer(undefined, new RPCMiddlewareStack([adminOnly]));
+server.register(createRPCProcedure("tasks.deleteAll", async () => "deleted"));
+const frame = createRPCRequest({
+  id: "r1", procedure: "tasks.deleteAll", payload: {}, metadata: { role: "admin" },
+});
+const user = await server.handle(frame, { auth: { userId: "bo", role: "user" } });
+const admin = await server.handle(frame, { auth: { userId: "ada", role: "admin" } });
+console.log(user.error.message, admin.result);
+</code>
+<option correct>Admins only. deleted</option>
+<option>deleted deleted</option>
+<option>Admins only. Admins only.</option>
+<option>undefined deleted</option>
+<explain><p>The middleware only reads <code>context.auth</code>. Bo's metadata claims <code>role: "admin"</code>, but his verified role is <code>user</code>, so he is refused. Ada's verified role is admin.</p></explain>
+</question>
+
+<question id="middleware-order" type="output">
+<q>RPC middleware works like HTTP middleware. What does this print?</q>
+<code file="order.js" browser="no">
+import { createRPCProcedure, createRPCRequest, RPCMiddlewareStack, RPCServer } from "@zudojs/rpc";
+
+const log = [];
+const outer = async (context, next) => {
+  log.push("outer before");
+  const result = await next();
+  log.push("outer after");
+  return result;
+};
+const inner = async (context, next) => {
+  log.push("inner");
+  return next();
+};
+const server = new RPCServer(undefined, new RPCMiddlewareStack([outer, inner]));
+server.register(createRPCProcedure("tasks.list", async () => {
+  log.push("handler");
+  return [];
+}));
+await server.handle(createRPCRequest({ id: "r1", procedure: "tasks.list", payload: {} }));
+console.log(log.join(" > "));
+</code>
+<option correct>outer before > inner > handler > outer after</option>
+<option>outer before > outer after > inner > handler</option>
+<option>handler > inner > outer before > outer after</option>
+<option>inner > outer before > handler > outer after</option>
+<explain><p>Each middleware gets <code>next()</code>. Code before <code>await next()</code> runs on the way in, in order. Code after it runs on the way out, once the handler and the inner middleware are done.</p></explain>
+</question>
+
+<question id="timing-safe" type="choice">
+<q>Why does the HTTP route compare the token with <code>timingSafeEqualString</code> instead of <code>===</code>?</q>
+<option><code>===</code> does not work on long strings</option>
+<option correct><code>===</code> stops at the first different character, and an attacker can measure that time to guess the token one character at a time</option>
+<option><code>timingSafeEqualString</code> also decrypts the token</option>
+<option>It is faster than <code>===</code></option>
+<explain><p>A constant-time comparison takes the same time whether the first or the last character is wrong, so the timing reveals nothing about the secret.</p></explain>
+</question>
+
+<question id="token-from-env" type="choice">
+<q>Two real services must share the RPC token. How should they get it?</q>
+<option>Write it in the source code of both services</option>
+<option>Create a random token at startup on each side</option>
+<option correct>Both read it from an environment variable, and the service refuses to start without a strong one</option>
+<option>Send it in the first RPC call's metadata</option>
+<explain><p>Secrets never go in source code. Each side reads <code>TASKS_RPC_TOKEN</code> from the environment, and a service that finds it missing or shorter than 32 characters stops at startup instead of running unprotected.</p></explain>
+</question>
+
+<question id="wrong-token-status" type="choice">
+<q>A client calls the HTTP <code>/rpc</code> route with a guessed token. What does the route do?</q>
+<option>Runs the procedure but hides the result</option>
+<option correct>Answers <code>401</code> before it reads the frame, so no procedure runs</option>
+<option>Answers <code>200</code> with <code>success: false</code></option>
+<option>Answers <code>404</code> to hide that the route exists</option>
+<explain><p>The token check comes first. Without the right token the request never reaches <code>handle</code>. The lesson's transport then throws an <code>RPCTransportError</code> for the non-OK status.</p></explain>
+</question>
+
+<question id="cast-safe" type="choice">
+<q>The route does <code>rpc.handle(frame as RPCRequest)</code> on parsed JSON. Why is that cast safe here?</q>
+<option>Casts check the value at runtime</option>
+<option correct><code>handle</code> checks the frame's shape itself and answers with an invalid-request error for anything malformed</option>
+<option>The token check already validated the body</option>
+<option>JSON.parse always returns an RPCRequest</option>
+<explain><p>A cast is only a note for TypeScript. It is safe here only because <code>handle</code> validates the frame's shape. Without that, you would need to validate the body yourself.</p></explain>
+</question>
+
+<question id="signal-to-fetch" type="choice">
+<q>Why does the HTTP transport pass <code>options.signal</code> to <code>fetch</code>?</q>
+<option>So the server knows who is calling</option>
+<option correct>When the client gives up on a call, the HTTP request is aborted too, instead of staying open</option>
+<option>It makes the request faster</option>
+<option>fetch requires a signal</option>
+<explain><p>A client that stopped waiting has no use for the answer. Passing the signal on means the open request is cancelled, which frees the connection.</p></explain>
+</question>
+
+<question id="timeout-signal" type="choice">
+<q>A procedure has a timeout and its handler loops through slow steps. What must the handler do so it really stops?</q>
+<option>Nothing; the server kills the handler when time runs out</option>
+<option correct>Check <code>context.signal.aborted</code> between steps and return early</option>
+<option>Catch the timeout error and rethrow it</option>
+<option>Call <code>client.close()</code></option>
+<explain><p>A timeout does not stop a handler by force. The server aborts <code>context.signal</code>, and the handler must look at it, or pass it on to <code>fetch</code> and database calls.</p></explain>
+</question>
+
+<question id="deadline-why" type="choice">
+<q>Why should a caller with a time limit send a <strong>deadline</strong> in <code>metadata.deadline</code>?</q>
+<option>So the server can wait longer than the caller</option>
+<option correct>So the server stops working for a caller that has already left</option>
+<option>So the result is cached until the deadline</option>
+<option>So the call is retried at the deadline</option>
+<explain><p>Without a deadline, the server may keep working after the caller gave up. The server uses the deadline to stop earlier, never later.</p></explain>
+</question>
+
+<question id="retry-which-errors" type="choice">
+<q>Which error is worth retrying?</q>
+<option>A validation error for a title that is too short</option>
+<option correct>An <code>RPCUnavailableError</code> while the service restarts</option>
+<option>A forbidden error for a user who is not an admin</option>
+<option>An unknown procedure name</option>
+<explain><p>Only retry errors that can go away. A validation or permission error fails the same way every time, so retrying only adds load.</p></explain>
+</question>
+
+<question id="retry-idempotent" type="choice">
+<q>A <code>tasks.create</code> call timed out. Is it safe to retry it automatically?</q>
+<option>Yes, retries are always safe</option>
+<option correct>Not by default: the first call may have worked on the server, and a retry could create a second task</option>
+<option>Yes, because the package removes duplicates</option>
+<option>No, timed-out calls can never be retried</option>
+<explain><p>Only retry calls that are safe to repeat, like reading a list. <code>idempotent: true</code> on a procedure documents that; the package does not retry anything by itself.</p></explain>
+</question>
+
+<question id="retry-backoff" type="output">
+<q>What does this print?</q>
+<code file="retry.js" browser="no">
+import { retry, RPCUnavailableError } from "@zudojs/rpc";
+
+let calls = 0;
+const result = await retry(async () => {
+  calls += 1;
+  if (calls < 3) throw new RPCUnavailableError("restarting");
+  return "tasks";
+}, {
+  attempts: 4,
+  delay: 10,
+  backoff: "exponential",
+  jitter: "none",
+  onRetry: (error, attempt, wait) => console.log(`attempt ${attempt}: wait ${wait} ms`),
+});
+console.log(result, calls);
+</code>
+<option correct>attempt 1: wait 10 ms
+attempt 2: wait 20 ms
+tasks 3</option>
+<option>attempt 1: wait 10 ms
+attempt 2: wait 10 ms
+tasks 3</option>
+<option>attempt 1: wait 10 ms
+attempt 2: wait 20 ms
+attempt 3: wait 40 ms
+tasks 4</option>
+<option>tasks 1</option>
+<explain><p>With exponential backoff the wait doubles after each failure: 10 ms, then 20 ms. The third attempt worked, so <code>retry</code> returned its result and did not use the fourth.</p></explain>
+</question>
+
+<question id="retry-if-stops" type="output">
+<q>What does this print?</q>
+<code file="retry-if.js" browser="no">
+import { retry, RPCError, RPCUnavailableError } from "@zudojs/rpc";
+
+let calls = 0;
+try {
+  await retry(async () => {
+    calls += 1;
+    throw new RPCError("Title is too short", { code: "BAD_TITLE" });
+  }, {
+    attempts: 4,
+    delay: 10,
+    jitter: "none",
+    retryIf: (error) => error instanceof RPCUnavailableError,
+  });
+} catch (error) {
+  console.log(`gave up after ${calls} call(s): ${error.message}`);
+}
+</code>
+<option correct>gave up after 1 call(s): Title is too short</option>
+<option>gave up after 4 call(s): Title is too short</option>
+<option>gave up after 3 call(s): Title is too short</option>
+<option>gave up after 1 call(s): retry failed</option>
+<explain><p><code>retryIf</code> says only unavailable errors are worth another try. This error is not one, so <code>retry</code> gives up at once and throws the original error.</p></explain>
+</question>
+
+<question id="jitter-production" type="choice">
+<q>The lesson uses <code>jitter: "none"</code>. What should you use in production, and why?</q>
+<option><code>"none"</code>, so retries are predictable</option>
+<option correct>The default random jitter, so many clients do not all hit a recovering service at the same moment</option>
+<option>No retries at all</option>
+<option>A fixed 1 ms delay</option>
+<explain><p>If a thousand clients all retry after exactly 100 ms, they hit the service together and knock it down again. Random jitter spreads them out. The example only turns it off so its output is the same every run.</p></explain>
+</question>
+
+<question id="code-mini-server" type="code" file="mini-server.js">
+<q><p>Build a tiny RPC server by hand. Finish <code>handle(frame)</code>: look up <code>frame.procedure</code> in <code>procedures</code>. If it exists, return <code>{ id, success: true, result }</code> with the handler's result. If not, return <code>{ id, success: false, error: "not found" }</code>. Never throw. The program should print the two lines in the comments.</p></q>
+<starter>
+const procedures = new Map([
+  ["tasks.count", async (input) => input.titles.length],
+]);
+
+async function handle(frame) {
+  // your code here
+}
+
+console.log(await handle({ id: "r1", procedure: "tasks.count", payload: { titles: ["a", "b"] } })); // { id: 'r1', success: true, result: 2 }
+console.log(await handle({ id: "r2", procedure: "tasks.delete", payload: {} })); // { id: 'r2', success: false, error: 'not found' }
+</starter>
+<solution>
+const procedures = new Map([
+  ["tasks.count", async (input) => input.titles.length],
+]);
+
+async function handle(frame) {
+  const procedure = procedures.get(frame.procedure);
+  if (!procedure) return { id: frame.id, success: false, error: "not found" };
+  const result = await procedure(frame.payload);
+  return { id: frame.id, success: true, result };
+}
+
+console.log(await handle({ id: "r1", procedure: "tasks.count", payload: { titles: ["a", "b"] } })); // { id: 'r1', success: true, result: 2 }
+console.log(await handle({ id: "r2", procedure: "tasks.delete", payload: {} })); // { id: 'r2', success: false, error: 'not found' }
+</solution>
+<expected>
+{ id: 'r1', success: true, result: 2 }
+{ id: 'r2', success: false, error: 'not found' }
+</expected>
+<explain><p>This is the core of an RPC server: find the procedure by name, run it, and answer with the request's id. An unknown name becomes an answer with <code>success: false</code>, never a crash.</p></explain>
+</question>
+
+<question id="code-safe-error" type="code" file="safe-error.js">
+<q><p>Finish <code>toWire(error)</code>, which turns a thrown error into what the caller may see. If <code>error.expose</code> is <code>true</code>, return <code>{ code: error.code, message: error.message }</code>. Otherwise return <code>{ code: "INTERNAL", message: "Something went wrong." }</code> and never the real message. The program should print the two lines in the comments.</p></q>
+<starter>
+function toWire(error) {
+  // your code here
+}
+
+const notFound = Object.assign(new Error("Task 7 not found"), { code: "TASK_NOT_FOUND", expose: true });
+const crash = new Error("connect ECONNREFUSED 10.0.0.5:5432");
+console.log(toWire(notFound)); // { code: 'TASK_NOT_FOUND', message: 'Task 7 not found' }
+console.log(toWire(crash)); // { code: 'INTERNAL', message: 'Something went wrong.' }
+</starter>
+<solution>
+function toWire(error) {
+  if (error.expose === true) return { code: error.code, message: error.message };
+  return { code: "INTERNAL", message: "Something went wrong." };
+}
+
+const notFound = Object.assign(new Error("Task 7 not found"), { code: "TASK_NOT_FOUND", expose: true });
+const crash = new Error("connect ECONNREFUSED 10.0.0.5:5432");
+console.log(toWire(notFound)); // { code: 'TASK_NOT_FOUND', message: 'Task 7 not found' }
+console.log(toWire(crash)); // { code: 'INTERNAL', message: 'Something went wrong.' }
+</solution>
+<expected>
+{ code: 'TASK_NOT_FOUND', message: 'Task 7 not found' }
+{ code: 'INTERNAL', message: 'Something went wrong.' }
+</expected>
+<explain><p>Hiding is the default; showing is the exception you opt into. The crash's message names a host and a port, so it must stay on the server, in the logs.</p></explain>
+</question>
+
+<question id="code-plain-json" type="code" file="plain-json.js">
+<q><p>Make a result safe for the wire. Finish <code>toPlain(summary)</code>: return an object where <code>dueAt</code> is an ISO string, <code>tags</code> is an array, and <code>note</code> is <code>null</code> when it is <code>undefined</code>. The program should print the line in the comment.</p></q>
+<starter>
+function toPlain(summary) {
+  // your code here
+}
+
+const summary = { dueAt: new Date(Date.UTC(2026, 9, 1, 9, 0)), tags: new Set(["home", "shopping"]), note: undefined };
+console.log(JSON.stringify(toPlain(summary)));
+// {"dueAt":"2026-10-01T09:00:00.000Z","tags":["home","shopping"],"note":null}
+</starter>
+<solution>
+function toPlain(summary) {
+  return {
+    dueAt: summary.dueAt.toISOString(),
+    tags: [...summary.tags],
+    note: summary.note ?? null,
+  };
+}
+
+const summary = { dueAt: new Date(Date.UTC(2026, 9, 1, 9, 0)), tags: new Set(["home", "shopping"]), note: undefined };
+console.log(JSON.stringify(toPlain(summary)));
+// {"dueAt":"2026-10-01T09:00:00.000Z","tags":["home","shopping"],"note":null}
+</solution>
+<expected>{"dueAt":"2026-10-01T09:00:00.000Z","tags":["home","shopping"],"note":null}</expected>
+<explain><p>ISO strings, arrays and <code>null</code> are plain JSON, so they arrive exactly as sent. Without this, the date would become a string anyway, the Set an empty object, and <code>note</code> would vanish.</p></explain>
+</question>
+
+<question id="code-require-user" type="code" file="require-user.js">
+<q><p>Write the check a <code>requireUser</code> middleware makes. Finish <code>callerId(context)</code>: return <code>context.auth.userId</code> when it is a string, and throw an <code>Error</code> with the message <code>Sign in first.</code> otherwise. Never read <code>context.metadata</code>. The program should print the two lines in the comments.</p></q>
+<starter>
+function callerId(context) {
+  // your code here
+}
+
+const claims = { metadata: { userId: "admin" } };
+const verified = { metadata: { userId: "admin" }, auth: { userId: "ada" } };
+try {
+  console.log(callerId(claims));
+} catch (error) {
+  console.log(error.message); // Sign in first.
+}
+console.log(callerId(verified)); // ada
+</starter>
+<solution>
+function callerId(context) {
+  const userId = context.auth?.userId;
+  if (typeof userId !== "string") throw new Error("Sign in first.");
+  return userId;
+}
+
+const claims = { metadata: { userId: "admin" } };
+const verified = { metadata: { userId: "admin" }, auth: { userId: "ada" } };
+try {
+  console.log(callerId(claims));
+} catch (error) {
+  console.log(error.message); // Sign in first.
+}
+console.log(callerId(verified)); // ada
+</solution>
+<expected>
+Sign in first.
+ada
+</expected>
+<explain><p>Use optional chaining, <code>context.auth?.userId</code>, because an anonymous call has no <code>auth</code>. Metadata is written by the caller, so a claim of <code>admin</code> there changes nothing.</p></explain>
+</question>
+
+<question id="code-should-retry" type="code" file="should-retry.js">
+<q><p>Finish <code>shouldRetry(error, idempotent)</code> for a retry helper. Return <code>true</code> only when the error's <code>name</code> is <code>"Unavailable"</code> or <code>"Timeout"</code> <strong>and</strong> the call is idempotent. The program should print <code>true false false</code>.</p></q>
+<starter>
+function shouldRetry(error, idempotent) {
+  // your code here
+}
+
+const unavailable = { name: "Unavailable" };
+const timeout = { name: "Timeout" };
+const invalid = { name: "Validation" };
+console.log(shouldRetry(unavailable, true), shouldRetry(timeout, false), shouldRetry(invalid, true));
+</starter>
+<solution>
+function shouldRetry(error, idempotent) {
+  const temporary = error.name === "Unavailable" || error.name === "Timeout";
+  return temporary && idempotent;
+}
+
+const unavailable = { name: "Unavailable" };
+const timeout = { name: "Timeout" };
+const invalid = { name: "Validation" };
+console.log(shouldRetry(unavailable, true), shouldRetry(timeout, false), shouldRetry(invalid, true));
+</solution>
+<expected>true false false</expected>
+<explain><p>Both rules must hold: the error can go away, and repeating the call is safe. A timed-out <code>tasks.create</code> may already have created the task, so it is not retried. A validation error fails the same way every time.</p></explain>
+</question>
+
+<question id="code-backoff" type="code" file="backoff.js">
+<q><p>Finish <code>waits(delay, failures, backoff)</code>: return the list of waits before each retry. With <code>"exponential"</code> the wait doubles each time; with <code>"linear"</code> it grows by <code>delay</code> each time. The program should print <code>[ 100, 200, 400 ]</code> and then <code>[ 100, 200, 300 ]</code>.</p></q>
+<starter>
+function waits(delay, failures, backoff) {
+  // your code here
+}
+
+console.log(waits(100, 3, "exponential"));
+console.log(waits(100, 3, "linear"));
+</starter>
+<solution>
+function waits(delay, failures, backoff) {
+  const out = [];
+  for (let attempt = 1; attempt <= failures; attempt++) {
+    out.push(backoff === "exponential" ? delay * 2 ** (attempt - 1) : delay * attempt);
+  }
+  return out;
+}
+
+console.log(waits(100, 3, "exponential"));
+console.log(waits(100, 3, "linear"));
+</solution>
+<expected>
+[ 100, 200, 400 ]
+[ 100, 200, 300 ]
+</expected>
+<explain><p>Exponential backoff is <code>delay * 2 ** (attempt - 1)</code>: 100, 200, 400. Linear is <code>delay * attempt</code>: 100, 200, 300. Growing waits give a struggling service time to recover.</p></explain>
+</question>
+
+<question id="code-constant-time" type="code" file="constant-time.js">
+<q><p>Finish <code>sameToken(a, b)</code>, a comparison that does not stop at the first difference. If the lengths differ, return <code>false</code>. Otherwise look at <strong>every</strong> character: combine the differences of <code>charCodeAt</code> with <code>|=</code> and <code>^</code>, and return whether the total is 0. The program should print <code>true false false</code>.</p></q>
+<starter>
+function sameToken(a, b) {
+  // your code here
+}
+
+console.log(sameToken("s3cret-token", "s3cret-token"), sameToken("s3cret-token", "x3cret-token"), sameToken("short", "longer"));
+</starter>
+<solution>
+function sameToken(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+console.log(sameToken("s3cret-token", "s3cret-token"), sameToken("s3cret-token", "x3cret-token"), sameToken("short", "longer"));
+</solution>
+<expected>true false false</expected>
+<explain><p><code>^</code> is 0 only for equal characters, and <code>|=</code> keeps any difference. The loop always runs to the end, so the time does not reveal where the first wrong character is. In real code, use <code>timingSafeEqualString</code> from <code>@zudojs/crypto</code>.</p></explain>
+</question>
+
+<question id="malformed-frame" type="output">
+<q>A body that is valid JSON but not a frame reaches <code>handle</code>. What does this print?</q>
+<code file="malformed.js" browser="no">
+import { RPCServer } from "@zudojs/rpc";
+
+const server = new RPCServer();
+try {
+  const response = await server.handle({ hello: "world" });
+  console.log("answered:", response.success);
+} catch {
+  console.log("threw");
+}
+</code>
+<option correct>answered: false</option>
+<option>threw</option>
+<option>answered: true</option>
+<explain><p><code>handle</code> checks the frame's shape itself and answers with <code>success: false</code> for anything malformed. That is why the HTTP route may pass it the parsed body.</p></explain>
+</question>
+
+<question id="token-check-startup" type="output">
+<q>The service starts without the variable set. What does this print?</q>
+<code file="token-check.js" browser="no">
+const token = process.env.TASKS_RPC_TOKEN_MISSING_IN_THIS_TEST;
+if (!token || token.length < 32) {
+  console.log("TASKS_RPC_TOKEN is missing or too short. Refusing to start.");
+} else {
+  console.log("Token loaded.");
+}
+</code>
+<option correct>TASKS_RPC_TOKEN is missing or too short. Refusing to start.</option>
+<option>Token loaded.</option>
+<option>undefined</option>
+<explain><p>A missing variable is <code>undefined</code>, so <code>!token</code> is true. Refusing to start is better than running an RPC endpoint with no protection or a weak token.</p></explain>
+</question>
+
+<question id="retry-gives-up" type="output">
+<q>The service never comes back. What does this print?</q>
+<code file="retry-gives-up.js" browser="no">
+import { retry, RPCUnavailableError } from "@zudojs/rpc";
+
+let calls = 0;
+try {
+  await retry(async () => {
+    calls += 1;
+    throw new RPCUnavailableError("down");
+  }, { attempts: 3, delay: 5, backoff: "linear", jitter: "none" });
+} catch (error) {
+  console.log(`gave up after ${calls} calls`, error instanceof RPCUnavailableError);
+}
+</code>
+<option correct>gave up after 3 calls true</option>
+<option>gave up after 4 calls true</option>
+<option>gave up after 3 calls false</option>
+<option>gave up after 1 calls true</option>
+<explain><p><code>attempts: 3</code> means three calls in total. When the last one fails too, <code>retry</code> throws the last error, so the caller can still tell what went wrong.</p></explain>
+</question>

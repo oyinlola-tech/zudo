@@ -1,0 +1,854 @@
+<question id="protocol-meaning" type="choice">
+<q>What is a <strong>protocol</strong>, such as HTTP?</q>
+<option correct>An agreement about who says what, and in which format</option>
+<option>A program that must be installed on every server</option>
+<option>A kind of encryption for web traffic</option>
+<option>The name of the cable between two computers</option>
+<explain><p>HTTP is a set of rules for the text a client and a server send each other over a connection. Under the neat <code>req</code> object there is only that text.</p></explain>
+</question>
+
+<question id="request-parts" type="choice">
+<q>In which order do the parts of an HTTP request arrive?</q>
+<option correct>Request line, headers, an empty line, then the body</option>
+<option>Headers, body, then the request line</option>
+<option>Body, an empty line, then the headers</option>
+<option>Request line, body, then the headers</option>
+<explain><p>First <code>POST /tasks?done=false HTTP/1.1</code>, then one <code>name: value</code> header per line, then an empty line meaning "headers finished", then the body.</p></explain>
+</question>
+
+<question id="request-line" type="choice">
+<q>What are the three pieces of the request line <code>POST /tasks?done=false HTTP/1.1</code>?</q>
+<option correct>The method, the path with its query string, and the HTTP version</option>
+<option>The host, the port and the body</option>
+<option>The method, the host name and the status code</option>
+<option>The path, the content type and the body length</option>
+<explain><p>The request line says what to do (<code>POST</code>), to what (<code>/tasks?done=false</code>) and which version of the rules is used (<code>HTTP/1.1</code>). The host goes in the <code>host</code> header.</p></explain>
+</question>
+
+<question id="crlf" type="choice">
+<q>How does HTTP end each line of the request line and the headers?</q>
+<option correct>With two characters: carriage return and line feed, <code>\r\n</code></option>
+<option>With a single <code>\n</code>, like a Linux text file</option>
+<option>With a semicolon</option>
+<option>It does not use lines; everything is JSON</option>
+<explain><p>Every line ends with <code>\r\n</code>, and an empty line (<code>\r\n</code> on its own) ends the headers. The lesson prints them as text so you can see them.</p></explain>
+</question>
+
+<question id="raw-parse" type="output">
+<q>This splits a raw request the way the rules describe. What does it print?</q>
+<code file="raw.js">
+const raw =
+  "POST /tasks?done=false HTTP/1.1\r\n" +
+  "Host: localhost:3000\r\n" +
+  "Content-Type: application/json\r\n" +
+  "Content-Length: 20\r\n" +
+  "\r\n" +
+  '{"title":"Buy milk"}';
+
+const [head, body] = raw.split("\r\n\r\n");
+const [requestLine, ...headerLines] = head.split("\r\n");
+const [method, target, version] = requestLine.split(" ");
+
+console.log(method, target, version);
+console.log(headerLines.length, body.length);
+</code>
+<option correct>POST /tasks?done=false HTTP/1.1
+3 20</option>
+<option>POST /tasks HTTP/1.1
+3 20</option>
+<option>POST /tasks?done=false HTTP/1.1
+4 20</option>
+<option>POST /tasks?done=false HTTP/1.1
+3 0</option>
+<explain><p>The empty line (<code>\r\n\r\n</code>) separates the head from the body. The first line of the head is the request line; the other three are headers. The body is the 20 bytes of JSON that <code>Content-Length</code> promised.</p></explain>
+</question>
+
+<question id="raw-response-line" type="output">
+<q>A raw connection asks a <code>node:http</code> server for <code>/tasks</code>. What does this print?</q>
+<code file="raw-response.js" browser="no">
+import http from "node:http";
+import net from "node:net";
+
+const server = http.createServer((req, res) => {
+  res.sendDate = false;
+  const body = JSON.stringify({ title: "Café" });
+  res.writeHead(201, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) });
+  res.end(body);
+});
+
+server.listen(0, () => {
+  const socket = net.connect(server.address().port, "localhost");
+  socket.write("GET /tasks HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+  let raw = "";
+  socket.on("data", (bytes) => (raw += bytes));
+  socket.on("end", () => {
+    const lines = raw.split("\r\n");
+    console.log(lines[0]);
+    console.log(lines[2]);
+    console.log(lines.at(-1));
+    server.close();
+  });
+});
+</code>
+<option correct>HTTP/1.1 201 Created
+Content-Length: 17
+{"title":"Café"}</option>
+<option>HTTP/1.1 201 Created
+Content-Length: 16
+{"title":"Café"}</option>
+<option>201 Created
+Content-Length: 17
+{"title":"Café"}</option>
+<option>HTTP/1.1 200 OK
+Content-Length: 17
+{"title":"Café"}</option>
+<explain><p>The status line is version, code and reason phrase. The body has 16 characters but 17 bytes, because <code>é</code> takes two bytes in UTF-8, and <code>Content-Length</code> counts bytes.</p></explain>
+</question>
+
+<question id="content-length-bytes" type="output">
+<q>What does this print?</q>
+<code file="byte-length.js" browser="no">
+const body = "Crème brûlée";
+console.log(body.length, Buffer.byteLength(body));
+</code>
+<option correct>12 15</option>
+<option>12 12</option>
+<option>15 15</option>
+<option>12 24</option>
+<explain><p><code>è</code>, <code>û</code> and <code>é</code> each take two bytes in UTF-8, so 12 characters are 15 bytes. <code>Content-Length</code> must be the byte count, which <code>Buffer.byteLength</code> gives you.</p></explain>
+</question>
+
+<question id="content-length-wrong" type="choice">
+<q>A server sets <code>Content-Length</code> to <code>body.length</code> for a body that contains <code>é</code>. What is wrong?</q>
+<option correct><code>body.length</code> counts characters, but <code>Content-Length</code> must count bytes, so the number is too small</option>
+<option>Nothing: characters and bytes are always the same</option>
+<option><code>Content-Length</code> must count lines, not characters</option>
+<option>The header must be written in lower case</option>
+<explain><p>With a length that is too small, the client stops reading early and the body is cut. Use <code>Buffer.byteLength(body)</code>, or leave the header out and let Node send the body in chunks.</p></explain>
+</question>
+
+<question id="curl-arrows" type="choice">
+<q>In the output of <code>curl -v</code>, what do lines starting with <code>&gt;</code> and <code>&lt;</code> show?</q>
+<option correct><code>&gt;</code> is the request curl sent; <code>&lt;</code> is the response it got</option>
+<option><code>&gt;</code> is the response; <code>&lt;</code> is the request</option>
+<option><code>&gt;</code> are errors; <code>&lt;</code> are warnings</option>
+<option>Both show curl's own notes about the connection</option>
+<explain><p>Lines with <code>*</code> are curl's notes, <code>&gt;</code> lines go out, <code>&lt;</code> lines come back. That makes <code>curl -v</code> the first tool to reach for when an API surprises you.</p></explain>
+</question>
+
+<question id="keep-alive" type="choice">
+<q>What does <code>Connection: keep-alive</code> mean in a response?</q>
+<option correct>The connection stays open for the next request instead of being rebuilt each time</option>
+<option>The server will restart if it crashes</option>
+<option>The client must send a request every 5 seconds</option>
+<option>The response is cached for later</option>
+<explain><p>Opening a connection takes time. Keep-alive reuses it, which is faster. Node adds this header by itself.</p></explain>
+</question>
+
+<question id="header-case" type="output">
+<q>What does this print?</q>
+<code file="header-case.js">
+const headers = new Headers({ "Content-Type": "application/json", "X-Task-Owner": "ada" });
+console.log(headers.get("content-type"), headers.get("x-task-owner"), headers.get("X-TASK-OWNER"));
+
+const nodeStyle = { "content-type": "application/json" };
+console.log(nodeStyle["Content-Type"]);
+</code>
+<option correct>application/json ada ada
+undefined</option>
+<option>null ada null
+undefined</option>
+<option>application/json ada ada
+application/json</option>
+<option>application/json null null
+undefined</option>
+<explain><p>Header names are not case sensitive, and <code>Headers.get</code> ignores case. But <code>req.headers</code> in <code>node:http</code> is a plain object with lower-case keys, so reading it with capitals gives <code>undefined</code>. Always read lower case.</p></explain>
+</question>
+
+<question id="media-types" type="choice">
+<q>Which <code>Content-Type</code> does a classic HTML form send by default?</q>
+<option correct><code>application/x-www-form-urlencoded</code></option>
+<option><code>application/json</code></option>
+<option><code>text/html</code></option>
+<option><code>text/plain</code></option>
+<explain><p>A media type names the body's format: <code>application/json</code> for JSON, <code>text/html</code> for a page, <code>text/plain</code> for plain text, and <code>application/x-www-form-urlencoded</code> for a classic form.</p></explain>
+</question>
+
+<question id="media-type-split" type="output">
+<q>The server compares only the part before the semicolon. What does this print?</q>
+<code file="media-type.js">
+function mediaType(header) {
+  return (header ?? "").split(";")[0].trim();
+}
+
+for (const header of ["application/json", "application/json; charset=utf-8", "text/plain", undefined]) {
+  console.log(JSON.stringify(mediaType(header)), mediaType(header) === "application/json");
+}
+</code>
+<option correct>"application/json" true
+"application/json" true
+"text/plain" false
+"" false</option>
+<option>"application/json" true
+"application/json; charset=utf-8" false
+"text/plain" false
+"" false</option>
+<option>"application/json" true
+"application/json" true
+"text/plain" false
+undefined false</option>
+<option>"application/json" true
+"application/json" true
+"text/plain" true
+"" false</option>
+<explain><p>A media type can carry parameters after <code>;</code>, like <code>charset=utf-8</code>. Split them off and trim. <code>?? ""</code> turns a missing header into an empty string instead of crashing.</p></explain>
+</question>
+
+<question id="status-415-400" type="choice">
+<q>A client sends <code>Content-Type: text/plain</code> to an endpoint that only accepts JSON. Which status fits?</q>
+<option correct>415 Unsupported Media Type</option>
+<option>400 Bad Request</option>
+<option>404 Not Found</option>
+<option>500 Internal Server Error</option>
+<explain><p>415 means "I do not accept this format". 400 is for a body in the right format that the server cannot use, such as broken JSON or a missing title.</p></explain>
+</question>
+
+<question id="json-vs-js" type="output">
+<q>What does this print?</q>
+<code file="json-parse.js">
+for (const text of ['{"title": "Buy milk"}', "{title: 'Buy milk'}", '{"title": 42}']) {
+  try {
+    const body = JSON.parse(text);
+    console.log(typeof body?.title === "string" ? 201 : 400, "title check");
+  } catch (error) {
+    console.log(400, error.name);
+  }
+}
+</code>
+<option correct>201 title check
+400 SyntaxError
+400 title check</option>
+<option>201 title check
+201 title check
+400 title check</option>
+<option>201 title check
+400 SyntaxError
+201 title check</option>
+<option>201 title check
+400 TypeError
+400 title check</option>
+<explain><p><code>{title: 'Buy milk'}</code> is valid JavaScript but not JSON, which needs double quotes around names and strings, so <code>JSON.parse</code> throws a <code>SyntaxError</code>. <code>{"title": 42}</code> parses, but a title must be text.</p></explain>
+</question>
+
+<question id="body-server-statuses" type="output">
+<q>This is the lesson's JSON-body server, called four times. What does it print?</q>
+<code file="json-body.js" browser="no">
+import http from "node:http";
+
+function send(res, status, data) {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(data));
+}
+
+const server = http.createServer(async (req, res) => {
+  const type = (req.headers["content-type"] ?? "").split(";")[0].trim();
+  if (type !== "application/json") return send(res, 415, {});
+  let text = "";
+  for await (const chunk of req) text += chunk;
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return send(res, 400, {});
+  }
+  if (typeof body?.title !== "string" || body.title.trim() === "") return send(res, 400, {});
+  send(res, 201, { title: body.title.trim() });
+});
+
+server.listen(0, async () => {
+  const url = `http://localhost:${server.address().port}/tasks`;
+  const tries = [
+    ["application/json; charset=utf-8", '{"title": "  Call Ada "}'],
+    ["application/json", "null"],
+    ["text/html", '{"title": "Call Ada"}'],
+    ["application/json", '{"title": "   "}'],
+  ];
+  const statuses = [];
+  for (const [type, body] of tries) {
+    const res = await fetch(url, { method: "POST", headers: { "Content-Type": type }, body });
+    statuses.push(res.status);
+  }
+  console.log(statuses.join(" "));
+  server.close();
+});
+</code>
+<option correct>201 400 415 400</option>
+<option>415 400 415 400</option>
+<option>201 500 415 201</option>
+<option>201 400 400 400</option>
+<explain><p>The charset parameter is fine, because only the part before <code>;</code> is compared. <code>null</code> is valid JSON but has no title, and <code>body?.title</code> copes with it: 400. <code>text/html</code> is refused with 415. A title of only spaces is empty after trimming: 400.</p></explain>
+</question>
+
+<question id="body-limit" type="choice">
+<q>The lesson's JSON server reads the whole body with <code>for await</code>. What does a real server add?</q>
+<option correct>A limit on how many bytes it reads, so nobody can send a gigabyte of "JSON"</option>
+<option>A second <code>JSON.parse</code>, to be sure</option>
+<option>A check that the body is shorter than the URL</option>
+<option>Nothing: <code>for await</code> stops at 1 MB by itself</option>
+<explain><p>A body is outside input. Count the bytes as they arrive and stop with 413 once the limit is passed.</p></explain>
+</question>
+
+<question id="stateless" type="choice">
+<q>HTTP does not remember anything between two requests. How does "you are still logged in" work?</q>
+<option correct>The server sets a cookie, and the browser sends it back on every later request</option>
+<option>The server remembers the client's IP address forever</option>
+<option>The connection stays open for as long as you are logged in</option>
+<option>The browser sends the password with every request</option>
+<explain><p>A cookie is a small piece of text the browser remembers for the server. <code>Set-Cookie</code> sets it; the browser returns it in the <code>Cookie</code> header.</p></explain>
+</question>
+
+<question id="httponly" type="choice">
+<q>What does the <code>HttpOnly</code> cookie attribute protect against?</q>
+<option correct>JavaScript on the page cannot read the cookie, so an injected script cannot steal the session</option>
+<option>The cookie cannot be sent over plain HTTP</option>
+<option>Other websites cannot send the cookie with their requests</option>
+<option>The cookie cannot be changed by the server</option>
+<explain><p><code>HttpOnly</code> hides the cookie from <code>document.cookie</code>. Sending only over HTTPS is <code>Secure</code>; blocking most cross-site requests is <code>SameSite</code>.</p></explain>
+</question>
+
+<question id="secure-attr" type="choice">
+<q>What does the <code>Secure</code> cookie attribute do?</q>
+<option correct>The browser sends the cookie only over HTTPS, never over plain HTTP where others on the network could read it</option>
+<option>It encrypts the cookie's value</option>
+<option>It stops JavaScript from reading the cookie</option>
+<option>It makes the cookie last forever</option>
+<explain><p><code>Secure</code> is about the connection, not the value: over HTTPS, the whole request is encrypted. It does not hide the value from the user, who can still see and edit it.</p></explain>
+</question>
+
+<question id="samesite" type="choice">
+<q>Which cookie attribute blocks many cross-site request forgery (CSRF) attacks?</q>
+<option correct><code>SameSite=Lax</code></option>
+<option><code>Path=/</code></option>
+<option><code>Max-Age=3600</code></option>
+<option><code>SameSite=None</code></option>
+<explain><p>With <code>SameSite=Lax</code>, the browser does not send the cookie with most requests started by other sites. <code>None</code> turns that protection off (and needs <code>Secure</code>).</p></explain>
+</question>
+
+<question id="max-age" type="choice">
+<q>A cookie is set without <code>Max-Age</code>. When does it disappear?</q>
+<option correct>When the browser closes</option>
+<option>After exactly one hour</option>
+<option>Never</option>
+<option>After the next request</option>
+<explain><p>Without <code>Max-Age</code>, it is a session cookie that lasts until the browser closes. <code>Max-Age=3600</code> keeps it for 3600 seconds, and <code>Max-Age=0</code> deletes it at once.</p></explain>
+</question>
+
+<question id="cookie-data" type="choice">
+<q>After login, what should the server put in the cookie?</q>
+<option correct>A long random session id, and keep the user's data on the server</option>
+<option><code>user=ada; role=admin</code>, so the server does not need to look anything up</option>
+<option>The user's id number, such as <code>uid=42</code></option>
+<option>The user's password, so the next login is automatic</option>
+<explain><p>The user can edit their own cookies, so a role or id in a cookie can be changed to anyone else's. A random id that only means something in the server's session store gives nothing away and cannot be guessed.</p></explain>
+</question>
+
+<question id="serialize-cookie" type="output">
+<q>What does this print?</q>
+<code file="serialize.js">
+function serializeCookie(name, value, maxAgeSeconds) {
+  return [
+    `${name}=${encodeURIComponent(value)}`,
+    "Path=/",
+    `Max-Age=${maxAgeSeconds}`,
+    "HttpOnly",
+    "Secure",
+    "SameSite=Lax",
+  ].join("; ");
+}
+
+console.log(serializeCookie("lang", "en; admin=1", 7 * 24 * 60 * 60));
+</code>
+<option correct>lang=en%3B%20admin%3D1; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Lax</option>
+<option>lang=en; admin=1; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Lax</option>
+<option>lang=en%3B%20admin%3D1; Path=/; Max-Age=7; HttpOnly; Secure; SameSite=Lax</option>
+<option>lang=en%3B admin%3D1; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Lax</option>
+<explain><p><code>encodeURIComponent</code> turns <code>;</code>, the space and <code>=</code> into <code>%3B</code>, <code>%20</code> and <code>%3D</code>. Without it, the value would sneak in an extra <code>admin=1</code> part. Seven days is 604,800 seconds.</p></explain>
+</question>
+
+<question id="parse-cookies-equals" type="output">
+<q>What does this print?</q>
+<code file="parse-cookies.js">
+function parseCookies(header = "") {
+  const cookies = {};
+  for (const part of header.split(";")) {
+    const i = part.indexOf("=");
+    if (i === -1) continue;
+    cookies[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return cookies;
+}
+
+console.log(JSON.stringify(parseCookies("token=a=b==; theme=dark%20mode; broken")));
+console.log(JSON.stringify(parseCookies()));
+</code>
+<option correct>{"token":"a=b==","theme":"dark mode"}
+{}</option>
+<option>{"token":"a","theme":"dark mode"}
+{}</option>
+<option>{"token":"a=b==","theme":"dark%20mode","broken":""}
+{}</option>
+<option>{"token":"a=b==","theme":"dark mode"}
+undefined</option>
+<explain><p>The parser splits on the <em>first</em> <code>=</code> only, because a value (like base64) may contain more. A part with no <code>=</code> is skipped, and a missing header gives an empty object.</p></explain>
+</question>
+
+<question id="sid-regex" type="output">
+<q>The session server finds the <code>sid</code> cookie with a regular expression. What does this print?</q>
+<code file="sid.js">
+const findSid = (header) => (header ?? "").match(/(?:^|;\s*)sid=([^;]+)/)?.[1];
+
+console.log(findSid("theme=dark; sid=abc123; lang=en"));
+console.log(findSid("xsid=evil; theme=dark"));
+console.log(findSid(undefined));
+</code>
+<option correct>abc123
+undefined
+undefined</option>
+<option>abc123
+evil
+undefined</option>
+<option>abc123; lang=en
+undefined
+undefined</option>
+<option>abc123
+undefined
+null</option>
+<explain><p><code>(?:^|;\s*)</code> makes <code>sid</code> start a cookie, so <code>xsid</code> does not count. <code>[^;]+</code> stops at the next <code>;</code>. When nothing matches, <code>?.[1]</code> gives <code>undefined</code>.</p></explain>
+</question>
+
+<question id="session-flow" type="output">
+<q>What does this print?</q>
+<code file="session.js" browser="no">
+import http from "node:http";
+import { randomUUID } from "node:crypto";
+
+const sessions = new Map();
+
+const server = http.createServer((req, res) => {
+  if (req.method === "POST" && req.url === "/login") {
+    const id = randomUUID();
+    sessions.set(id, { user: "ada" });
+    res.setHeader("Set-Cookie", `sid=${id}; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax`);
+    res.writeHead(204).end();
+    return;
+  }
+  const sid = (req.headers.cookie ?? "").match(/(?:^|;\s*)sid=([^;]+)/)?.[1];
+  res.writeHead(sessions.has(sid) ? 200 : 401).end();
+});
+
+server.listen(0, async () => {
+  const base = `http://localhost:${server.address().port}`;
+  const login = await fetch(`${base}/login`, { method: "POST" });
+  const cookie = login.headers.get("set-cookie").split(";")[0];
+
+  const me = await fetch(`${base}/me`, { headers: { Cookie: cookie } });
+  const guess = await fetch(`${base}/me`, { headers: { Cookie: "sid=1" } });
+  const none = await fetch(`${base}/me`);
+  console.log(login.status, me.status, guess.status, none.status);
+  server.close();
+});
+</code>
+<option correct>204 200 401 401</option>
+<option>200 200 401 401</option>
+<option>204 200 200 401</option>
+<option>204 401 401 401</option>
+<explain><p>Login answers 204 with a cookie holding a random id. Sending that cookie back finds the session. A guessed id such as <code>sid=1</code> is not in the store, and no cookie at all is not either: both get 401.</p></explain>
+</question>
+
+<question id="safe-methods" type="choice">
+<q>Which HTTP methods are <strong>safe</strong> (they only read)?</q>
+<option correct><code>GET</code>, <code>HEAD</code> and <code>OPTIONS</code></option>
+<option><code>GET</code>, <code>PUT</code> and <code>DELETE</code></option>
+<option><code>POST</code> and <code>PATCH</code></option>
+<option>Every method is safe over HTTPS</option>
+<explain><p>Safe methods never change anything on the server, so browsers, caches and search engines may call them freely.</p></explain>
+</question>
+
+<question id="get-no-changes" type="choice">
+<q>A developer adds <code>GET /tasks/7/delete</code> to delete a task from a link. Why is that a bad idea?</q>
+<option correct><code>GET</code> must be safe: a link preview, a prefetch or a search engine could follow the link and delete the task</option>
+<option>A <code>GET</code> URL cannot contain a number</option>
+<option><code>GET</code> requests cannot be answered with 204</option>
+<option>It is fine, as long as the link is hidden</option>
+<explain><p>Tools follow <code>GET</code> links on their own because GET is supposed to only read. Changes belong in <code>POST</code>, <code>PUT</code>, <code>PATCH</code> or <code>DELETE</code>.</p></explain>
+</question>
+
+<question id="idempotent-meaning" type="choice">
+<q>A mobile app sends <code>PUT /tasks/1</code> and the network drops before the answer arrives. Why is it safe to send it again?</q>
+<option correct><code>PUT</code> is idempotent: sending it twice has the same effect as sending it once</option>
+<option><code>PUT</code> is safe: it never changes anything</option>
+<option>The server ignores the second request automatically</option>
+<option>It is not safe; <code>PUT</code> must never be retried</option>
+<explain><p><code>PUT</code> replaces the task with the same data each time. Retrying a <code>POST</code> is different: it could create a second task.</p></explain>
+</question>
+
+<question id="post-vs-put" type="output">
+<q>What does this print?</q>
+<code file="idempotent.js">
+const tasks = [];
+
+function post(body) {
+  tasks.push({ id: tasks.length + 1, ...body });
+}
+
+function put(id, body) {
+  const i = tasks.findIndex((t) => t.id === id);
+  tasks[i] = { id, ...body };
+}
+
+function remove(id) {
+  const i = tasks.findIndex((t) => t.id === id);
+  if (i === -1) return 404;
+  tasks.splice(i, 1);
+  return 204;
+}
+
+post({ title: "Buy milk" });
+post({ title: "Buy milk" });
+put(2, { title: "Call Ada" });
+put(2, { title: "Call Ada" });
+console.log(tasks.length, tasks[1].title);
+console.log(remove(1), remove(1), tasks.length);
+</code>
+<option correct>2 Call Ada
+204 404 1</option>
+<option>1 Call Ada
+204 404 0</option>
+<option>2 Call Ada
+204 204 0</option>
+<option>4 Call Ada
+204 404 3</option>
+<explain><p>Two POSTs made two tasks; two PUTs left one task in the same state. DELETE is idempotent too: the second call answers 404, but the <em>state</em> is the same, one task left.</p></explain>
+</question>
+
+<question id="post-retry" type="choice">
+<q>Why does a browser warn you before it resends a form, but reloads a normal page without asking?</q>
+<option correct>A form is usually a <code>POST</code>, which is not idempotent; a page is a <code>GET</code>, which is safe</option>
+<option>Forms are larger than pages</option>
+<option>Pages are cached, forms are not</option>
+<option>Forms use HTTPS and pages do not</option>
+<explain><p>Resending a <code>POST</code> could buy something twice or create a duplicate. Repeating a <code>GET</code> only reads again.</p></explain>
+</question>
+
+<question id="status-classes" type="output">
+<q>What does this print?</q>
+<code file="classes.js">
+const classes = { 1: "informational", 2: "success", 3: "redirection", 4: "client error", 5: "server error" };
+const kind = (code) => classes[Math.floor(code / 100)];
+
+console.log([204, 304, 409, 429, 503].map(kind).join(", "));
+</code>
+<option correct>success, redirection, client error, client error, server error</option>
+<option>success, success, client error, server error, server error</option>
+<option>success, redirection, server error, client error, server error</option>
+<option>informational, redirection, client error, client error, server error</option>
+<explain><p>The first digit gives the class, so a client knows roughly what happened even for a code it has never seen. 429 (too many requests) is the client's side: it must slow down.</p></explain>
+</question>
+
+<question id="status-phrases" type="output">
+<q>What does this print?</q>
+<code file="phrases.js" browser="no">
+import { STATUS_CODES } from "node:http";
+
+for (const code of [409, 422, 429, 503]) {
+  console.log(code, STATUS_CODES[code]);
+}
+</code>
+<option correct>409 Conflict
+422 Unprocessable Entity
+429 Too Many Requests
+503 Service Unavailable</option>
+<option>409 Conflict
+422 Bad Request
+429 Too Many Requests
+503 Internal Server Error</option>
+<option>409 Duplicate
+422 Unprocessable Entity
+429 Rate Limited
+503 Service Unavailable</option>
+<option>409 Conflict
+422 Unprocessable Content
+429 Too Many Requests
+503 Service Unavailable</option>
+<explain><p>Node still prints the older name for 422, "Unprocessable Entity"; the current standard says "Unprocessable Content". The number is what clients check.</p></explain>
+</question>
+
+<question id="retry-4xx-5xx" type="choice">
+<q>A client gets an error and wonders whether to try again unchanged. Which is right?</q>
+<option correct>After a 5xx, trying again later can work; after a 4xx, the same request will fail again</option>
+<option>After a 4xx, trying again later can work; after a 5xx, it never will</option>
+<option>Both should be retried at once, many times</option>
+<option>Neither should ever be retried</option>
+<explain><p>A 4xx means the request itself was wrong: fix it first. A 5xx means the server failed, which may be temporary, such as a database that is restarting.</p></explain>
+</question>
+
+<question id="status-3xx" type="choice">
+<q>A response has status 301 Moved Permanently. Where should the client look?</q>
+<option correct>In the <code>Location</code> header, which says where the thing is now</option>
+<option>In the body, which contains the new page</option>
+<option>In the <code>Content-Type</code> header</option>
+<option>Nowhere: 301 means the resource was deleted</option>
+<explain><p>3xx codes mean "it is somewhere else", and <code>Location</code> gives the address. A deleted resource is 404 (or 410).</p></explain>
+</question>
+
+<question id="status-409-429" type="choice">
+<q>A client tries to create a task with a title that must be unique and is already used. Which status fits best?</q>
+<option correct>409 Conflict</option>
+<option>429 Too Many Requests</option>
+<option>415 Unsupported Media Type</option>
+<option>503 Service Unavailable</option>
+<explain><p>409 means the request clashes with the current state. 429 is what a rate limiter sends when a client sends too many requests.</p></explain>
+</question>
+
+<question id="status-500-trace" type="choice">
+<q>Your code throws an unexpected error while handling a request. What should the client receive?</q>
+<option correct>500 with a short generic message; the stack trace goes to the server log only</option>
+<option>500 with the stack trace, so the client can report the bug</option>
+<option>400, because the request caused the error</option>
+<option>200 with an empty body, so nothing looks broken</option>
+<explain><p>A 500 is your bug, not the client's. Stack traces can reveal file paths and internals, so log them on the server and never send them.</p></explain>
+</question>
+
+<question id="code-parse-raw" type="code" file="parse-raw.js">
+<q><p>Finish <code>parseRequest(raw)</code>. Split the head from the body at the empty line (<code>\r\n\r\n</code>). The first head line is <code>METHOD TARGET VERSION</code>. Each other head line is <code>Name: value</code>; store it with the name in <strong>lower case</strong> and the value trimmed. Return <code>{ method, target, headers, body }</code>.</p></q>
+<starter>
+function parseRequest(raw) {
+  // your code here
+}
+
+const raw = "POST /tasks HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 20\r\n\r\n" + '{"title":"Buy milk"}';
+const req = parseRequest(raw);
+console.log(req.method, req.target);
+console.log(req.headers["content-type"], req.headers["content-length"]);
+console.log(JSON.parse(req.body).title);
+</starter>
+<solution>
+function parseRequest(raw) {
+  const split = raw.indexOf("\r\n\r\n");
+  const head = raw.slice(0, split);
+  const body = raw.slice(split + 4);
+  const [requestLine, ...lines] = head.split("\r\n");
+  const [method, target] = requestLine.split(" ");
+  const headers = {};
+  for (const line of lines) {
+    const i = line.indexOf(":");
+    headers[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
+  }
+  return { method, target, headers, body };
+}
+
+const raw = "POST /tasks HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 20\r\n\r\n" + '{"title":"Buy milk"}';
+const req = parseRequest(raw);
+console.log(req.method, req.target);
+console.log(req.headers["content-type"], req.headers["content-length"]);
+console.log(JSON.parse(req.body).title);
+</solution>
+<expected>
+POST /tasks
+application/json 20
+Buy milk
+</expected>
+<explain><p>Find the empty line first. Split the head on <code>\r\n</code>; the first line is the request line. For headers, split on the <em>first</em> <code>:</code> only (a value such as <code>localhost:3000</code> contains another), and lower-case the name, like <code>node:http</code> does.</p></explain>
+</question>
+
+<question id="code-accepts-json" type="code" file="accepts-json.js">
+<q><p>Finish <code>isJson(contentType)</code>. Return <code>true</code> when the media type, the part before any <code>;</code>, trimmed and in lower case, is exactly <code>application/json</code>. A missing header gives <code>false</code>.</p></q>
+<starter>
+function isJson(contentType) {
+  // your code here
+}
+
+const headers = ["application/json", "Application/JSON; charset=utf-8", "text/plain", "application/jsonp", undefined];
+console.log(headers.map(isJson).join(" "));
+</starter>
+<solution>
+function isJson(contentType) {
+  return (contentType ?? "").split(";")[0].trim().toLowerCase() === "application/json";
+}
+
+const headers = ["application/json", "Application/JSON; charset=utf-8", "text/plain", "application/jsonp", undefined];
+console.log(headers.map(isJson).join(" "));
+</solution>
+<expected>true true false false false</expected>
+<explain><p>Use <code>?? ""</code> for a missing header, cut off the parameters at <code>;</code>, then compare exactly. <code>startsWith("application/json")</code> would wrongly accept <code>application/jsonp</code>.</p></explain>
+</question>
+
+<question id="code-create-status" type="code" file="create-status.js">
+<q><p>Finish <code>createStatus(contentType, text)</code> like the lesson's server. Return 415 when the media type is not <code>application/json</code>, 400 when <code>JSON.parse</code> fails, 400 when <code>title</code> is not a string that is non-empty after trimming, and 201 otherwise.</p></q>
+<starter>
+function createStatus(contentType, text) {
+  // your code here
+}
+
+console.log(
+  createStatus("text/plain", "Buy milk"),
+  createStatus("application/json", "{title: 'Buy milk'}"),
+  createStatus("application/json; charset=utf-8", '{"title": 42}'),
+  createStatus("application/json", "null"),
+  createStatus("application/json", '{"title": "  Buy milk  "}'),
+);
+</starter>
+<solution>
+function createStatus(contentType, text) {
+  const type = (contentType ?? "").split(";")[0].trim();
+  if (type !== "application/json") return 415;
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return 400;
+  }
+  if (typeof body?.title !== "string" || body.title.trim() === "") return 400;
+  return 201;
+}
+
+console.log(
+  createStatus("text/plain", "Buy milk"),
+  createStatus("application/json", "{title: 'Buy milk'}"),
+  createStatus("application/json; charset=utf-8", '{"title": 42}'),
+  createStatus("application/json", "null"),
+  createStatus("application/json", '{"title": "  Buy milk  "}'),
+);
+</solution>
+<expected>415 400 400 400 201</expected>
+<explain><p>Check the format first, then parse inside <code>try</code>/<code>catch</code>, then validate the field. <code>body?.title</code> handles a body of <code>null</code>.</p></explain>
+</question>
+
+<question id="code-session-cookie" type="code" file="session-cookie.js">
+<q><p>Finish <code>sessionCookie(id, days)</code> and <code>clearSessionCookie()</code>. The first returns a <code>Set-Cookie</code> value for <code>sid</code> (encoded with <code>encodeURIComponent</code>) with <code>Path=/</code>, <code>Max-Age</code> in seconds, <code>HttpOnly</code>, <code>Secure</code> and <code>SameSite=Lax</code>, in that order and joined with <code>"; "</code>. The second deletes it: an empty value and <code>Max-Age=0</code>, with the same other attributes.</p></q>
+<starter>
+function sessionCookie(id, days) {
+  // your code here
+}
+
+function clearSessionCookie() {
+  // your code here
+}
+
+console.log(sessionCookie("3f9c 2a", 7));
+console.log(clearSessionCookie());
+</starter>
+<solution>
+function sessionCookie(id, days) {
+  const maxAge = days * 24 * 60 * 60;
+  return `sid=${encodeURIComponent(id)}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax`;
+}
+
+function clearSessionCookie() {
+  return "sid=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax";
+}
+
+console.log(sessionCookie("3f9c 2a", 7));
+console.log(clearSessionCookie());
+</solution>
+<expected>
+sid=3f9c%202a; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Lax
+sid=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax
+</expected>
+<explain><p><code>Max-Age</code> is in seconds: 7 × 24 × 60 × 60 = 604,800. The clearing cookie must have the same name and <code>Path</code>, or the browser treats it as a different cookie.</p></explain>
+</question>
+
+<question id="code-parse-cookies" type="code" file="parse-cookies.js">
+<q><p>Finish <code>parseCookies(header)</code>. Split the header on <code>;</code>. For each part, split on the <strong>first</strong> <code>=</code> only, trim the name and value, and decode the value with <code>decodeURIComponent</code>. Skip parts without <code>=</code>. A missing header gives <code>{}</code>.</p></q>
+<starter>
+function parseCookies(header) {
+  // your code here
+}
+
+console.log(JSON.stringify(parseCookies("sid=abc; theme=dark%20mode; token=x=y=; junk")));
+console.log(JSON.stringify(parseCookies(undefined)));
+</starter>
+<solution>
+function parseCookies(header) {
+  const cookies = {};
+  for (const part of (header ?? "").split(";")) {
+    const i = part.indexOf("=");
+    if (i === -1) continue;
+    cookies[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return cookies;
+}
+
+console.log(JSON.stringify(parseCookies("sid=abc; theme=dark%20mode; token=x=y=; junk")));
+console.log(JSON.stringify(parseCookies(undefined)));
+</solution>
+<expected>
+{"sid":"abc","theme":"dark mode","token":"x=y="}
+{}
+</expected>
+<explain><p><code>indexOf("=")</code> finds the first <code>=</code>; <code>slice</code> before and after it keeps any further <code>=</code> in the value. <code>header ?? ""</code> handles a request with no cookies.</p></explain>
+</question>
+
+<question id="code-method-props" type="code" file="method-props.js">
+<q><p>Finish <code>describe(method)</code>. Return <code>"safe"</code> for <code>GET</code>, <code>HEAD</code> and <code>OPTIONS</code>; <code>"idempotent"</code> for <code>PUT</code> and <code>DELETE</code>; and <code>"neither"</code> for anything else, such as <code>POST</code> and <code>PATCH</code>.</p></q>
+<starter>
+function describe(method) {
+  // your code here
+}
+
+for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]) {
+  console.log(method, describe(method));
+}
+</starter>
+<solution>
+function describe(method) {
+  if (["GET", "HEAD", "OPTIONS"].includes(method)) return "safe";
+  if (["PUT", "DELETE"].includes(method)) return "idempotent";
+  return "neither";
+}
+
+for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]) {
+  console.log(method, describe(method));
+}
+</solution>
+<expected>
+GET safe
+POST neither
+PUT idempotent
+PATCH neither
+DELETE idempotent
+HEAD safe
+</expected>
+<explain><p>Safe methods only read (and are idempotent too). PUT and DELETE change data but can be repeated with the same effect. POST is neither, and PATCH is not guaranteed to be idempotent.</p></explain>
+</question>
+
+<question id="code-allow-header" type="code" file="allow-header.js">
+<q><p>Finish <code>answer(method)</code> for <code>/tasks</code>, which supports <code>GET</code> and <code>POST</code>. Return <code>{ status: 200 }</code> for GET, <code>{ status: 201 }</code> for POST, and for any other method <code>{ status: 405, allow: "GET, POST" }</code>.</p></q>
+<starter>
+function answer(method) {
+  // your code here
+}
+
+for (const method of ["GET", "POST", "DELETE", "PUT"]) {
+  console.log(method, JSON.stringify(answer(method)));
+}
+</starter>
+<solution>
+function answer(method) {
+  if (method === "GET") return { status: 200 };
+  if (method === "POST") return { status: 201 };
+  return { status: 405, allow: "GET, POST" };
+}
+
+for (const method of ["GET", "POST", "DELETE", "PUT"]) {
+  console.log(method, JSON.stringify(answer(method)));
+}
+</solution>
+<expected>
+GET {"status":200}
+POST {"status":201}
+DELETE {"status":405,"allow":"GET, POST"}
+PUT {"status":405,"allow":"GET, POST"}
+</expected>
+<explain><p>A known path with an unsupported method gets 405, and the <code>Allow</code> header tells the client which methods would work.</p></explain>
+</question>

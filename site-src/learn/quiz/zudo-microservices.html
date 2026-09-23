@@ -1,0 +1,1017 @@
+<question id="what-is-microservice" type="choice">
+<q>What is a microservice?</q>
+<option>A folder inside one application that holds one feature</option>
+<option correct>A small application that owns one business area and runs as its own process, usually with its own database</option>
+<option>A function that is called over the network instead of directly</option>
+<option>A shared database that several applications read and write</option>
+<explain><p>A microservice runs as its own process, is deployed on its own, and owns its own data. A folder with one feature inside one app is a <strong>module</strong> of a modular monolith, not a service.</p></explain>
+</question>
+
+<question id="benefit-scaling" type="choice">
+<q>On a sale day the catalog gets a hundred times more reads than payments. Which microservice benefit helps here?</q>
+<option>Independent deployment</option>
+<option correct>Independent scaling</option>
+<option>Fault isolation</option>
+<option>One shared database transaction</option>
+<explain><p>With separate services you can run twenty catalog servers and only two payment servers. Independent deployment is about releasing on your own schedule, which is a different benefit.</p></explain>
+</question>
+
+<question id="cost-network-call" type="choice">
+<q>In the modular monolith, <code>catalog.reserve()</code> was a function call. After you extract catalog into a service, what new problem does that call have?</q>
+<option>It can no longer return a value</option>
+<option>It must be written in a different language</option>
+<option correct>It becomes a network call that is much slower and can fail, hang or arrive twice</option>
+<option>It can only be called once per day</option>
+<explain><p>A function call in one process cannot time out. A network call can be slow, fail, never answer, or be delivered twice. Most of the lesson is about making that call as reliable as the function call was.</p></explain>
+</question>
+
+<question id="when-to-start" type="choice">
+<q>You are starting a new online shop and do not yet know where the business boundaries are. What does the lesson recommend?</q>
+<option>Start with microservices so you never have to split later</option>
+<option correct>Build a modular monolith first, and extract a module into a service when a reason is real and measured</option>
+<option>Build one big file and split it when it gets slow</option>
+<option>Start with one service per database table</option>
+<explain><p>Moving a boundary between two services is far harder than moving it between two folders. A modular monolith lets you find the right boundaries first; you extract a service when independent deployment or scaling is a measured need, not a guess.</p></explain>
+</question>
+
+<question id="owns-data" type="choice">
+<q>The orders service needs a product's price. The catalog service owns the products table. What should orders do?</q>
+<option>Connect to the catalog database and read the products table directly</option>
+<option>Copy the catalog database password into its own config</option>
+<option correct>Ask the catalog service through its API, or keep its own copy updated from catalog's events</option>
+<option>Ask the user to type the price in the order form</option>
+<explain><p>A service owns its data: no other service reads its tables. Reading them directly ties both services to one table layout and bypasses catalog's rules. Ask through the API, or keep a copy fed by events.</p></explain>
+</question>
+
+<question id="discovery-dns" type="choice">
+<q>In Docker Compose, why does <code>http://catalog:3000</code> reach the catalog service?</q>
+<option>Because <code>catalog</code> is a special word in HTTP</option>
+<option correct>The platform's DNS answers the name <code>catalog</code> with the right address, even when containers move</option>
+<option>Because every service listens on the same IP address</option>
+<option>Because a service registry like Consul is always included</option>
+<explain><p>Docker Compose and Kubernetes give every service a DNS name. You need a registry such as Consul only at a scale where configuration plus DNS names stop working.</p></explain>
+</question>
+
+<question id="service-url-host" type="output">
+<q>What does this print?</q>
+<code file="service-url.js">
+function serviceUrl(env, name) {
+  const raw = env[name];
+  if (!raw) throw new Error(`${name} is not set`);
+  const url = new URL(raw);
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`${name} must be an http(s) URL`);
+  return url;
+}
+
+console.log(serviceUrl({ CATALOG_URL: "http://catalog:3000" }, "CATALOG_URL").host);
+try {
+  serviceUrl({ PAYMENTS_URL: "ftp://payments" }, "PAYMENTS_URL");
+} catch (error) {
+  console.log(error.message);
+}
+</code>
+<option correct>catalog:3000
+PAYMENTS_URL must be an http(s) URL</option>
+<option>catalog
+PAYMENTS_URL must be an http(s) URL</option>
+<option>catalog:3000
+PAYMENTS_URL is not set</option>
+<option>http://catalog:3000
+ftp://payments</option>
+<explain><p><code>url.host</code> includes the port, so it is <code>catalog:3000</code> (<code>hostname</code> would be just <code>catalog</code>). The payments value is set, but its protocol is <code>ftp:</code>, so the second check throws.</p></explain>
+</question>
+
+<question id="service-url-missing" type="output">
+<q>The environment variable is set to an empty string. What does this print?</q>
+<code file="service-url-empty.js">
+function serviceUrl(env, name) {
+  const raw = env[name];
+  if (!raw) throw new Error(`${name} is not set`);
+  return new URL(raw);
+}
+
+try {
+  console.log(serviceUrl({ CATALOG_URL: "" }, "CATALOG_URL").href);
+} catch (error) {
+  console.log(error.message);
+}
+</code>
+<option>http://localhost/</option>
+<option correct>CATALOG_URL is not set</option>
+<option>Invalid URL</option>
+<option>undefined</option>
+<explain><p>An empty string is falsy, so <code>!raw</code> is true and the function throws its own clear message before <code>new URL</code> ever runs. Treating empty the same as missing is what you want for required config.</p></explain>
+</question>
+
+<question id="sync-or-async" type="choice">
+<q>After checkout, ShopFlow sends a receipt e-mail. The customer does not wait for it. Which way of talking fits best?</q>
+<option>A synchronous HTTP call from orders to the e-mail service</option>
+<option>A synchronous RPC call with a long timeout</option>
+<option correct>A job on a queue, processed later with retries</option>
+<option>Writing into the e-mail service's database directly</option>
+<explain><p>Use synchronous calls only when a user is waiting for the answer. A queue lets orders hand the work over and finish, and a slow mail provider cannot slow down or fail the checkout.</p></explain>
+</question>
+
+<question id="why-timeout" type="choice">
+<q>In the example, inventory takes 2 seconds to answer for a lamp, and the client has <code>timeout: 1000</code>. Why is the timeout important?</q>
+<option>It makes inventory answer faster</option>
+<option correct>Orders stops waiting after one second and answers its caller with a clear 503</option>
+<option>It retries the lamp request forever until it works</option>
+<option>It cancels the order in the database</option>
+<explain><p>Without a timeout, every waiting request keeps memory and a connection busy in orders. A slow dependency can then make orders itself fall over. Give every remote call a timeout.</p></explain>
+</question>
+
+<question id="no-retry-after-timeout" type="choice">
+<q>A <code>POST /charges</code> request timed out. Why is it dangerous to simply send it again?</q>
+<option>Timeouts never happen twice</option>
+<option correct>The caller cannot know whether the server did the work, so a retry could charge the card twice</option>
+<option>A timeout always means the server is down forever</option>
+<option>The server rejects every second request</option>
+<explain><p>The server may have finished the work and only the answer was lost. Retrying a read is harmless, but retrying "charge this card" could charge twice, unless you use an idempotency key.</p></explain>
+</question>
+
+<question id="correlation-id" type="choice">
+<q>The client sent <code>x-request-id: req-mug</code>, orders passed it on, and inventory logged it. Why is this useful?</q>
+<option>It makes the request faster</option>
+<option>It encrypts the request between services</option>
+<option correct>It is a correlation id: you can search every service's logs for one id and see the whole story of one request</option>
+<option>It proves the request came from a logged-in user</option>
+<explain><p>A correlation id ties together log lines from different services. It is not a security token: it proves nothing about who sent the request.</p></explain>
+</question>
+
+<question id="check-incoming-id" type="output">
+<q>The lesson checks an id from an incoming header before copying it into logs. What does this print?</q>
+<code file="check-id.js">
+function correlationId(incoming, fallback) {
+  return incoming && /^[\w-]{1,64}$/.test(incoming) ? incoming : fallback;
+}
+
+console.log(correlationId("req-mug", "gen-1"));
+console.log(correlationId("bad\nFAKE LOG LINE", "gen-2"));
+console.log(correlationId(undefined, "gen-3"));
+</code>
+<option correct>req-mug
+gen-2
+gen-3</option>
+<option>req-mug
+bad
+gen-3</option>
+<option>req-mug
+gen-2
+undefined</option>
+<option>gen-1
+gen-2
+gen-3</option>
+<explain><p>Only letters, digits, <code>_</code> and <code>-</code> up to 64 characters pass. The second value contains a newline and spaces, so it is replaced; otherwise an attacker could write a fake line into your logs.</p></explain>
+</question>
+
+<question id="jitter" type="choice">
+<q>Why does <code>HttpClient</code> add a random <strong>jitter</strong> to each backoff wait?</q>
+<option>To make tests less predictable</option>
+<option correct>So a thousand clients that failed at the same moment do not all retry at the same moment too</option>
+<option>To hide the real delay from attackers</option>
+<option>Because timers in Node.js are not exact</option>
+<explain><p>Without jitter, every client retries on the same schedule and hits the recovering service in waves. A little randomness spreads the retries out.</p></explain>
+</question>
+
+<question id="backoff-output" type="output">
+<q>What does this exponential backoff schedule print?</q>
+<code file="backoff.js">
+function delays(base, retries, max) {
+  const out = [];
+  for (let i = 0; i < retries; i++) out.push(Math.min(base * 2 ** i, max));
+  return out;
+}
+
+console.log(delays(100, 4, 300));
+</code>
+<option correct>[ 100, 200, 300, 300 ]</option>
+<option>[ 100, 200, 400, 800 ]</option>
+<option>[ 100, 100, 100, 100 ]</option>
+<option>[ 200, 400, 300, 300 ]</option>
+<explain><p>Each wait doubles: 100, 200, 400, 800. <code>Math.min(…, max)</code> caps them at 300, like <code>maxRetryDelay</code> in the lesson's client.</p></explain>
+</question>
+
+<question id="idempotency-key-how" type="choice">
+<q>How does an idempotency key make "charge this card" safe to retry?</q>
+<option>The server charges again but refunds the first charge</option>
+<option correct>The caller sends the same unique key with every attempt; the server saves the answer per key and returns the saved answer when the key comes again</option>
+<option>The server rejects every second request from the same IP</option>
+<option>The caller waits longer before retrying</option>
+<explain><p>The key names the operation, not the attempt. The first attempt did the work; the retry with the same key gets the saved answer, so the card is charged once.</p></explain>
+</question>
+
+<question id="idempotency-output" type="output">
+<q>The first attempt charged the card but its answer was lost. What does this print?</q>
+<code file="idempotency.js">
+const answers = new Map();
+let charges = 0;
+
+function charge(key) {
+  const saved = answers.get(key);
+  if (saved) return { ...saved, replayed: true };
+  charges += 1;
+  const answer = { chargeId: charges };
+  answers.set(key, answer);
+  return { ...answer, replayed: false };
+}
+
+charge("key-1");
+console.log(charge("key-1"));
+console.log("cards charged:", charges);
+</code>
+<option correct>{ chargeId: 1, replayed: true }
+cards charged: 1</option>
+<option>{ chargeId: 2, replayed: false }
+cards charged: 2</option>
+<option>{ chargeId: 1, replayed: false }
+cards charged: 1</option>
+<option>{ chargeId: 2, replayed: true }
+cards charged: 2</option>
+<explain><p>The second call finds the saved answer for <code>key-1</code> and replays it with <code>replayed: true</code>. The charge counter is not increased again.</p></explain>
+</question>
+
+<question id="idempotency-production" type="choice">
+<q>In production, where should the payments service keep the saved answers for idempotency keys?</q>
+<option>In a <code>Map</code> in memory, forever</option>
+<option>In the caller's browser</option>
+<option correct>In the database (or Redis) with an expiry, saved in the same transaction as the charge</option>
+<option>In a log file that is read on every request</option>
+<explain><p>A <code>Map</code> is lost on restart and is not shared between instances. Saving the answer in the same transaction as the charge means you can never have a charge without its saved answer.</p></explain>
+</question>
+
+<question id="breaker-states" type="choice">
+<q>A circuit breaker is <strong>open</strong>. What happens to a call?</q>
+<option>It is sent to the service and retried three times</option>
+<option correct>It fails at once without touching the network, until the pause is over and one trial call is allowed</option>
+<option>It waits in a queue until the service is back</option>
+<option>It is sent to a different random service</option>
+<explain><p>Open means "fail fast": no more load on a service that is already struggling, and no caller waits for a timeout. After the pause the breaker goes half-open and lets one trial call through.</p></explain>
+</question>
+
+<question id="breaker-output" type="output">
+<q>A breaker opens after 2 failures in a row. What does this print?</q>
+<code file="breaker.js">
+let state = "closed";
+let failures = 0;
+
+function call(up) {
+  if (state === "open") return "failing fast";
+  if (!up) {
+    failures += 1;
+    if (failures >= 2) state = "open";
+    return "503";
+  }
+  failures = 0;
+  return "ok";
+}
+
+const results = [call(false), call(false), call(true)];
+console.log(results.join(", "), "|", state);
+</code>
+<option correct>503, 503, failing fast | open</option>
+<option>503, 503, ok | closed</option>
+<option>503, failing fast, failing fast | open</option>
+<option>503, 503, ok | open</option>
+<explain><p>The second failure opens the breaker. The third call fails fast even though the service is up, because the breaker does not touch the network while it is open.</p></explain>
+</question>
+
+<question id="breaker-fallback" type="choice">
+<q>The breaker around inventory is open. Which page can safely show "stock unknown" as a fallback?</q>
+<option>Checkout, because the order can be fixed later</option>
+<option correct>The product page, which can still show the product and sell it</option>
+<option>The payment page, which can charge now and check stock later</option>
+<option>No page, fallbacks are never safe</option>
+<explain><p>A product page can live without the stock count. Checkout cannot accept an order it cannot reserve, so there the right answer is a clear "please try again in a minute".</p></explain>
+</question>
+
+<question id="queue-dead-letter" type="choice">
+<q>A receipt job fails on all of its attempts. What happens to it in the queue?</q>
+<option>It is deleted silently</option>
+<option>It is retried forever</option>
+<option correct>It moves to the dead-letter list, where a person can look at it</option>
+<option>The checkout that created it is rolled back</option>
+<explain><p>The dead-letter list keeps failed jobs visible instead of losing them. Because a job may run more than once, its handler should be idempotent too.</p></explain>
+</question>
+
+<question id="two-phase-commit" type="choice">
+<q>Why does the lesson tell you to avoid two-phase commit (2PC) between services?</q>
+<option>It is not allowed by the HTTP standard</option>
+<option correct>It is slow, needs every service up at the same time, and most modern databases and brokers do not support it across systems</option>
+<option>It only works with MongoDB</option>
+<option>It sends every event twice</option>
+<explain><p>2PC tries to lock both databases and commit them together. The outbox and saga patterns give you consistency without that coupling.</p></explain>
+</question>
+
+<question id="outbox-bug" type="choice">
+<q>The orders service saves the order, then publishes <code>order.placed</code>, and crashes between the two. How does the outbox pattern fix this?</q>
+<option>It publishes the event before saving the order</option>
+<option correct>It writes the event into an outbox table in the same transaction as the order; a relay publishes it later and marks it published</option>
+<option>It retries the crash until it succeeds</option>
+<option>It stores the event in memory until the next restart</option>
+<explain><p>Both rows are saved or neither is, so an order can never exist without its event. The relay then reads unpublished rows, publishes them and sets <code>published_at</code>.</p></explain>
+</question>
+
+<question id="outbox-at-least-once" type="choice">
+<q>The relay crashes after publishing an event but before marking it published. What does the receiving service need?</q>
+<option>Nothing, the event will never arrive twice</option>
+<option>A distributed transaction with the relay</option>
+<option correct>An idempotent handler that ignores duplicates, for example by remembering handled <code>orderId</code>s</option>
+<option>A longer timeout</option>
+<explain><p>The outbox gives <strong>at-least-once</strong> delivery: the unmarked event is sent again on the next run. At-least-once plus idempotent handlers is the normal, reliable combination.</p></explain>
+</question>
+
+<question id="outbox-relay-output" type="output">
+<q>This simulates the outbox relay. What does it print?</q>
+<code file="outbox.js">
+const outbox = [
+  { id: 1, type: "order.placed", published: false },
+  { id: 2, type: "order.placed", published: false },
+];
+
+function relay() {
+  const rows = outbox.filter((row) => !row.published);
+  for (const row of rows) row.published = true;
+  return rows.length;
+}
+
+console.log("relayed:", relay());
+outbox.push({ id: 3, type: "order.placed", published: false });
+console.log("relayed:", relay());
+console.log("relayed:", relay());
+</code>
+<option correct>relayed: 2
+relayed: 1
+relayed: 0</option>
+<option>relayed: 2
+relayed: 3
+relayed: 3</option>
+<option>relayed: 2
+relayed: 0
+relayed: 0</option>
+<option>relayed: 2
+relayed: 1
+relayed: 1</option>
+<explain><p>Each run publishes only rows that are not yet published, then marks them. The new row is sent on the second run, and the third run finds nothing left.</p></explain>
+</question>
+
+<question id="dedupe-events-output" type="output">
+<q>The same event is delivered twice. What does this print?</q>
+<code file="dedupe.js">
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+const handled = new Set();
+let stock = 10;
+
+bus.on("order.placed", (event) => {
+  if (handled.has(event.payload.orderId)) return;
+  handled.add(event.payload.orderId);
+  stock -= event.payload.quantity;
+});
+
+await bus.publishEvent({ type: "order.placed", payload: { orderId: 7, quantity: 2 } });
+await bus.publishEvent({ type: "order.placed", payload: { orderId: 7, quantity: 2 } });
+await bus.publishEvent({ type: "order.placed", payload: { orderId: 8, quantity: 1 } });
+console.log("stock:", stock);
+</code>
+<option correct>stock: 7</option>
+<option>stock: 5</option>
+<option>stock: 8</option>
+<option>stock: 10</option>
+<explain><p>Order 7 is handled once (10 − 2 = 8), its duplicate is skipped, and order 8 takes one more: 7. Without the <code>handled</code> set the stock would wrongly drop to 5.</p></explain>
+</question>
+
+<question id="saga-compensation" type="choice">
+<q>In a saga, what is a <strong>compensation</strong>?</q>
+<option>A database rollback across two services</option>
+<option correct>An action that undoes a finished step, such as releasing reserved stock</option>
+<option>A retry of the failed step</option>
+<option>A payment to the customer for waiting</option>
+<explain><p>A saga does not roll back like a database. When a step fails, it runs the compensations of the steps that already succeeded, moving forward to a consistent state like "order cancelled, stock released".</p></explain>
+</question>
+
+<question id="saga-output" type="output">
+<q>The third step fails. What does this saga print?</q>
+<code file="saga.js">
+async function runSaga(steps) {
+  const done = [];
+  for (const step of steps) {
+    try {
+      await step.run();
+      done.push(step);
+    } catch {
+      for (const finished of done.reverse()) console.log(`undone: ${finished.name}`);
+      return false;
+    }
+  }
+  return true;
+}
+
+const ok = await runSaga([
+  { name: "create order", run: async () => {} },
+  { name: "reserve stock", run: async () => {} },
+  { name: "charge card", run: async () => { throw new Error("declined"); } },
+  { name: "confirm order", run: async () => {} },
+]);
+console.log("confirmed:", ok);
+</code>
+<option correct>undone: reserve stock
+undone: create order
+confirmed: false</option>
+<option>undone: create order
+undone: reserve stock
+confirmed: false</option>
+<option>undone: charge card
+undone: reserve stock
+undone: create order
+confirmed: false</option>
+<option>undone: reserve stock
+undone: create order
+confirmed: true</option>
+<explain><p>Only finished steps are undone, and in reverse order: the stock was reserved last, so it is released first. The failed step did nothing, so it has nothing to undo.</p></explain>
+</question>
+
+<question id="saga-styles" type="choice">
+<q>What is the difference between an orchestrated and a choreographed saga?</q>
+<option>Orchestrated sagas use HTTP, choreographed sagas use SQL</option>
+<option correct>In an orchestrated saga one service tells the others what to do; in a choreographed saga each service reacts to the previous service's event</option>
+<option>Choreographed sagas cannot undo steps</option>
+<option>Orchestrated sagas run all steps at the same time</option>
+<explain><p>Orchestration has a conductor, which is easier to follow when you start. Choreography has none: <code>order.created</code> → inventory reserves → <code>stock.reserved</code> → payments charges, and so on.</p></explain>
+</question>
+
+<question id="traceparent" type="choice">
+<q>What does the W3C <code>traceparent</code> header carry from one service to the next?</q>
+<option>The user's password hash</option>
+<option>The full log output of the caller</option>
+<option correct>The trace id and the id of the span that made the call</option>
+<option>The response body of the previous request</option>
+<explain><p>With those two ids, the receiving service starts its span as a child of the caller's span in the same trace, so a tracing tool can draw one timeline across both services.</p></explain>
+</question>
+
+<question id="traceparent-parse-output" type="output">
+<q>This is a simple check of the traceparent shape. What does it print?</q>
+<code file="traceparent.js">
+function parse(header) {
+  const m = /^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/.exec(header);
+  return m ? { traceId: m[1], parentSpanId: m[2] } : undefined;
+}
+
+const good = parse("00-cb48117a31190094f0093378c0bcab43-097763d1485c4cd3-01");
+console.log(good.parentSpanId);
+console.log(parse("00-not-a-trace"));
+</code>
+<option correct>097763d1485c4cd3
+undefined</option>
+<option>cb48117a31190094f0093378c0bcab43
+undefined</option>
+<option>097763d1485c4cd3
+null</option>
+<option>01
+undefined</option>
+<explain><p>The parts are version, trace id (32 hex), parent span id (16 hex) and flags. The second group is the span id. A header that does not match gives <code>undefined</code>.</p></explain>
+</question>
+
+<question id="code-should-retry" type="code" file="should-retry.js">
+<q><p>Finish <code>shouldRetry(method, status)</code>. It returns <code>true</code> only for <code>GET</code>, <code>HEAD</code> and <code>PUT</code> requests that failed with 429, 502, 503 or 504. The program should print <code>true false true false</code>.</p></q>
+<starter>
+function shouldRetry(method, status) {
+  // your code here
+}
+
+console.log(shouldRetry("GET", 503), shouldRetry("GET", 404), shouldRetry("PUT", 502), shouldRetry("POST", 503));
+</starter>
+<solution>
+const SAFE = new Set(["GET", "HEAD", "PUT"]);
+const TRANSIENT = new Set([429, 502, 503, 504]);
+
+function shouldRetry(method, status) {
+  return SAFE.has(method) && TRANSIENT.has(status);
+}
+
+console.log(shouldRetry("GET", 503), shouldRetry("GET", 404), shouldRetry("PUT", 502), shouldRetry("POST", 503));
+</solution>
+<expected>true false true false</expected>
+<explain><p>Two sets make the rule clear: the method must be idempotent and the status must be one that may go away. A 404 never changes, and a POST could create something twice.</p></explain>
+</question>
+
+<question id="code-backoff" type="code" file="backoff-schedule.js">
+<q><p>Finish <code>backoff(base, retries, max)</code>. It returns an array of waits that double each time, starting at <code>base</code>, capped at <code>max</code>. The program should print <code>[ 100, 200, 400, 500, 500 ]</code>.</p></q>
+<starter>
+function backoff(base, retries, max) {
+  // your code here
+}
+
+console.log(backoff(100, 5, 500));
+</starter>
+<solution>
+function backoff(base, retries, max) {
+  const waits = [];
+  for (let i = 0; i < retries; i++) waits.push(Math.min(base * 2 ** i, max));
+  return waits;
+}
+
+console.log(backoff(100, 5, 500));
+</solution>
+<expected>[ 100, 200, 400, 500, 500 ]</expected>
+<explain><p>Attempt <code>i</code> waits <code>base * 2 ** i</code>. <code>Math.min</code> stops the wait from growing past the cap, so a long outage does not make clients wait minutes.</p></explain>
+</question>
+
+<question id="code-idempotent-charge" type="code" file="idempotent-charge.js">
+<q><p>Finish <code>charge(key, amount)</code> so a retry with the same key does not charge again. Save each answer in <code>answers</code>; when the key was seen before, return the saved answer. The program should print <code>1 1 2</code> and then <code>charges: 2</code>.</p></q>
+<starter>
+const answers = new Map();
+let charges = 0;
+
+function charge(key, amount) {
+  // your code here: return { chargeId }
+}
+
+const a = charge("k1", 3200);
+const b = charge("k1", 3200);
+const c = charge("k2", 1500);
+console.log(a.chargeId, b.chargeId, c.chargeId);
+console.log("charges:", charges);
+</starter>
+<solution>
+const answers = new Map();
+let charges = 0;
+
+function charge(key, amount) {
+  const saved = answers.get(key);
+  if (saved) return saved;
+  charges += 1;
+  const answer = { chargeId: charges, amount };
+  answers.set(key, answer);
+  return answer;
+}
+
+const a = charge("k1", 3200);
+const b = charge("k1", 3200);
+const c = charge("k2", 1500);
+console.log(a.chargeId, b.chargeId, c.chargeId);
+console.log("charges:", charges);
+</solution>
+<expected>
+1 1 2
+charges: 2
+</expected>
+<explain><p>Look up the key first. Only a new key does the work and saves its answer. The retry with <code>k1</code> gets the same <code>chargeId</code>, so the card is charged once.</p></explain>
+</question>
+
+<question id="code-dedupe-handler" type="code" file="dedupe-handler.js">
+<q><p>The outbox delivers at least once. Finish the <code>order.placed</code> handler so it reduces <code>stock</code> only the first time it sees an <code>orderId</code>. The program should print <code>stock: 8</code>.</p></q>
+<starter>
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+const handled = new Set();
+let stock = 10;
+
+bus.on("order.placed", (event) => {
+  // your code here
+});
+
+await bus.publishEvent({ type: "order.placed", payload: { orderId: 7, quantity: 2 } });
+await bus.publishEvent({ type: "order.placed", payload: { orderId: 7, quantity: 2 } });
+console.log("stock:", stock);
+</starter>
+<solution>
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+const handled = new Set();
+let stock = 10;
+
+bus.on("order.placed", (event) => {
+  if (handled.has(event.payload.orderId)) return;
+  handled.add(event.payload.orderId);
+  stock -= event.payload.quantity;
+});
+
+await bus.publishEvent({ type: "order.placed", payload: { orderId: 7, quantity: 2 } });
+await bus.publishEvent({ type: "order.placed", payload: { orderId: 7, quantity: 2 } });
+console.log("stock:", stock);
+</solution>
+<expected>stock: 8</expected>
+<explain><p>Check the set before doing the work, and add the id when you do it. In a real service the set is a table with a unique <code>order_id</code>, written in the same transaction as the stock change.</p></explain>
+</question>
+
+<question id="code-circuit-breaker" type="code" file="circuit-breaker.js">
+<q><p>Finish <code>call(work)</code> for a tiny circuit breaker. When <code>open</code> is true, return <code>"stock unknown"</code> without running <code>work</code>. Otherwise run <code>work()</code>: on success reset <code>failures</code> to 0 and return its result; on an error add 1 to <code>failures</code>, set <code>open = true</code> once there are 2 failures, and return <code>"stock unknown"</code>. The program should print <code>stock unknown, stock unknown, stock unknown</code> and <code>work ran: 2</code>.</p></q>
+<starter>
+let open = false;
+let failures = 0;
+let ran = 0;
+
+function work() {
+  ran += 1;
+  throw new Error("503 from inventory");
+}
+
+function call(work) {
+  // your code here
+}
+
+console.log([call(work), call(work), call(work)].join(", "));
+console.log("work ran:", ran);
+</starter>
+<solution>
+let open = false;
+let failures = 0;
+let ran = 0;
+
+function work() {
+  ran += 1;
+  throw new Error("503 from inventory");
+}
+
+function call(work) {
+  if (open) return "stock unknown";
+  try {
+    const result = work();
+    failures = 0;
+    return result;
+  } catch {
+    failures += 1;
+    if (failures >= 2) open = true;
+    return "stock unknown";
+  }
+}
+
+console.log([call(work), call(work), call(work)].join(", "));
+console.log("work ran:", ran);
+</solution>
+<expected>
+stock unknown, stock unknown, stock unknown
+work ran: 2
+</expected>
+<explain><p>The third call never touches inventory, because the breaker opened after two failures. That is the point: fail fast, and show a fallback where the page can live with it.</p></explain>
+</question>
+
+<question id="code-saga" type="code" file="saga-run.js">
+<q><p>Finish <code>runSaga(steps)</code>. Run each step's <code>run()</code> in order. If one throws, call <code>compensate()</code> on the steps that already finished, in reverse order, and return <code>false</code>. Return <code>true</code> if all steps worked. The program should print <code>release stock</code>, <code>cancel order</code>, <code>result: false</code>.</p></q>
+<starter>
+async function runSaga(steps) {
+  // your code here
+}
+
+const result = await runSaga([
+  { run: async () => {}, compensate: async () => console.log("cancel order") },
+  { run: async () => {}, compensate: async () => console.log("release stock") },
+  { run: async () => { throw new Error("card declined"); }, compensate: async () => console.log("refund") },
+]);
+console.log("result:", result);
+</starter>
+<solution>
+async function runSaga(steps) {
+  const done = [];
+  for (const step of steps) {
+    try {
+      await step.run();
+      done.push(step);
+    } catch {
+      for (const finished of done.reverse()) await finished.compensate();
+      return false;
+    }
+  }
+  return true;
+}
+
+const result = await runSaga([
+  { run: async () => {}, compensate: async () => console.log("cancel order") },
+  { run: async () => {}, compensate: async () => console.log("release stock") },
+  { run: async () => { throw new Error("card declined"); }, compensate: async () => console.log("refund") },
+]);
+console.log("result:", result);
+</solution>
+<expected>
+release stock
+cancel order
+result: false
+</expected>
+<explain><p>Remember only the steps that finished. The failed charge did nothing, so there is no refund; the others are undone newest first.</p></explain>
+</question>
+
+<question id="code-correlation-id" type="code" file="correlation.js">
+<q><p>Finish <code>correlationId(incoming, fallback)</code>. Return <code>incoming</code> only when it is 1 to 64 characters of letters, digits, <code>_</code> or <code>-</code>; otherwise return <code>fallback</code>. The program should print <code>req-42 gen-1 gen-2</code>.</p></q>
+<starter>
+function correlationId(incoming, fallback) {
+  // your code here
+}
+
+console.log(correlationId("req-42", "gen-0"), correlationId("x\ny", "gen-1"), correlationId(undefined, "gen-2"));
+</starter>
+<solution>
+function correlationId(incoming, fallback) {
+  return typeof incoming === "string" && /^[\w-]{1,64}$/.test(incoming) ? incoming : fallback;
+}
+
+console.log(correlationId("req-42", "gen-0"), correlationId("x\ny", "gen-1"), correlationId(undefined, "gen-2"));
+</solution>
+<expected>req-42 gen-1 gen-2</expected>
+<explain><p>A header comes from outside, so check its format before you copy it into logs. <code>\w</code> matches letters, digits and <code>_</code>; the anchors <code>^</code> and <code>$</code> make the whole value match.</p></explain>
+</question>
+
+<question id="code-service-url" type="code" file="service-url-check.js">
+<q><p>Finish <code>serviceUrl(env, name)</code>. Throw <code>`${name} is not set`</code> when the value is missing or empty. Parse it with <code>new URL</code>, and throw <code>`${name} must be an http(s) URL`</code> unless the protocol is <code>http:</code> or <code>https:</code>. Return the URL. The program should print the three lines shown in the starter's comment.</p></q>
+<starter>
+function serviceUrl(env, name) {
+  // your code here
+}
+
+// Should print: catalog:3000 / PAYMENTS_URL is not set / MAIL_URL must be an http(s) URL
+const env = { CATALOG_URL: "http://catalog:3000", MAIL_URL: "smtp://mail" };
+for (const name of ["CATALOG_URL", "PAYMENTS_URL", "MAIL_URL"]) {
+  try {
+    console.log(serviceUrl(env, name).host);
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</starter>
+<solution>
+function serviceUrl(env, name) {
+  const raw = env[name];
+  if (!raw) throw new Error(`${name} is not set`);
+  const url = new URL(raw);
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`${name} must be an http(s) URL`);
+  return url;
+}
+
+// Should print: catalog:3000 / PAYMENTS_URL is not set / MAIL_URL must be an http(s) URL
+const env = { CATALOG_URL: "http://catalog:3000", MAIL_URL: "smtp://mail" };
+for (const name of ["CATALOG_URL", "PAYMENTS_URL", "MAIL_URL"]) {
+  try {
+    console.log(serviceUrl(env, name).host);
+  } catch (error) {
+    console.log(error.message);
+  }
+}
+</solution>
+<expected>
+catalog:3000
+PAYMENTS_URL is not set
+MAIL_URL must be an http(s) URL
+</expected>
+<explain><p>Check configuration at startup, so a missing or wrong address stops the service with a clear message instead of failing on the first customer request.</p></explain>
+</question>
+
+<question id="code-outbox-relay" type="code" file="outbox-relay.js">
+<q><p>Finish <code>relay()</code>. Publish every outbox row whose <code>publishedAt</code> is <code>null</code>, in order, by calling <code>publish(row)</code>, then set its <code>publishedAt</code> to <code>"now"</code>. Return how many rows you published. The program should print <code>sent order.placed 1</code>, <code>sent order.placed 3</code>, <code>relayed: 2</code>, <code>relayed: 0</code>.</p></q>
+<starter>
+const outbox = [
+  { id: 1, type: "order.placed", publishedAt: null },
+  { id: 2, type: "order.placed", publishedAt: "earlier" },
+  { id: 3, type: "order.placed", publishedAt: null },
+];
+
+function publish(row) {
+  console.log("sent", row.type, row.id);
+}
+
+function relay() {
+  // your code here
+}
+
+console.log("relayed:", relay());
+console.log("relayed:", relay());
+</starter>
+<solution>
+const outbox = [
+  { id: 1, type: "order.placed", publishedAt: null },
+  { id: 2, type: "order.placed", publishedAt: "earlier" },
+  { id: 3, type: "order.placed", publishedAt: null },
+];
+
+function publish(row) {
+  console.log("sent", row.type, row.id);
+}
+
+function relay() {
+  const rows = outbox.filter((row) => row.publishedAt === null);
+  for (const row of rows) {
+    publish(row);
+    row.publishedAt = "now";
+  }
+  return rows.length;
+}
+
+console.log("relayed:", relay());
+console.log("relayed:", relay());
+</solution>
+<expected>
+sent order.placed 1
+sent order.placed 3
+relayed: 2
+relayed: 0
+</expected>
+<explain><p>Publish first, then mark. If the relay crashed between the two, the row would be sent again next time: that is at-least-once delivery, which is why receivers must ignore duplicates.</p></explain>
+</question>
+
+
+<question id="breaker-half-open-output" type="output">
+<q>The breaker opens after 2 failures and pauses for 5000 ms. What does this print?</q>
+<code file="half-open.js">
+let state = "closed";
+let failures = 0;
+let openedAt = 0;
+
+function call(now, up) {
+  if (state === "open") {
+    if (now - openedAt < 5000) return "fast fail";
+    state = "half-open";
+  }
+  if (up) {
+    state = "closed";
+    failures = 0;
+    return "ok";
+  }
+  failures += 1;
+  if (state === "half-open" || failures >= 2) {
+    state = "open";
+    openedAt = now;
+  }
+  return "503";
+}
+
+console.log(call(0, false), call(1, false), call(2, true), call(6000, false), call(6001, true));
+</code>
+<option correct>503 503 fast fail 503 fast fail</option>
+<option>503 503 ok 503 ok</option>
+<option>503 503 fast fail ok ok</option>
+<option>503 503 fast fail 503 ok</option>
+<explain><p>At t=2 the breaker is open, so it fails fast even though inventory is up. At t=6000 the pause is over and one trial call goes through, but it fails, so the breaker opens again at once. At t=6001 it is still inside the new pause.</p></explain>
+</question>
+
+<question id="timeout-race-output" type="output">
+<q>This gives a slow call a timeout with <code>Promise.race</code>. What does it print?</q>
+<code file="timeout-race.js">
+function wait(ms, value) {
+  return new Promise((resolve) => setTimeout(() => resolve(value), ms));
+}
+
+function withTimeout(promise, ms) {
+  const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("timed out")), ms));
+  return Promise.race([promise, timeout]);
+}
+
+for (const [name, ms] of [["mug", 5], ["lamp", 80]]) {
+  try {
+    console.log(name, await withTimeout(wait(ms, "7 in stock"), 30));
+  } catch (error) {
+    console.log(name, error.message);
+  }
+}
+</code>
+<option correct>mug 7 in stock
+lamp timed out</option>
+<option>mug 7 in stock
+lamp 7 in stock</option>
+<option>mug timed out
+lamp timed out</option>
+<option>mug timed out
+lamp 7 in stock</option>
+<explain><p><code>Promise.race</code> settles with whichever promise finishes first. The mug answers in 5 ms, before the 30 ms timeout; the lamp needs 80 ms, so the timeout wins and the caller stops waiting.</p></explain>
+</question>
+
+<question id="retry-with-key-output" type="output">
+<q>A POST may be retried only when it carries an idempotency key. What does this print?</q>
+<code file="retry-post.js">
+function shouldRetry(request, status) {
+  const transient = [429, 502, 503, 504].includes(status);
+  const safe = ["GET", "HEAD", "PUT"].includes(request.method) || Boolean(request.idempotencyKey);
+  return transient && safe;
+}
+
+console.log(shouldRetry({ method: "POST" }, 503));
+console.log(shouldRetry({ method: "POST", idempotencyKey: "k1" }, 503));
+console.log(shouldRetry({ method: "GET" }, 404));
+</code>
+<option correct>false
+true
+false</option>
+<option>true
+true
+false</option>
+<option>false
+true
+true</option>
+<option>false
+false
+false</option>
+<explain><p>A plain POST could create something twice, so it is not retried. With a key the server replays the saved answer, so a retry is safe. A 404 is never retried: the answer will not change.</p></explain>
+</question>
+
+<question id="dead-letter-output" type="output">
+<q>A tiny job runner retries a job up to <code>attempts</code> times. What does this print?</q>
+<code file="dead-letter.js">
+const deadLetter = [];
+
+async function runJob(job, handler) {
+  for (let attempt = 1; attempt <= job.attempts; attempt++) {
+    try {
+      await handler(job, attempt);
+      return `done on attempt ${attempt}`;
+    } catch {}
+  }
+  deadLetter.push(job.name);
+  return "failed";
+}
+
+const flaky = async (job, attempt) => { if (attempt < 3) throw new Error("mail down"); };
+console.log(await runJob({ name: "receipt-1", attempts: 5 }, flaky));
+console.log(await runJob({ name: "receipt-2", attempts: 2 }, flaky));
+console.log(deadLetter);
+</code>
+<option correct>done on attempt 3
+failed
+[ 'receipt-2' ]</option>
+<option>done on attempt 3
+done on attempt 3
+[]</option>
+<option>failed
+failed
+[ 'receipt-1', 'receipt-2' ]</option>
+<option>done on attempt 2
+failed
+[ 'receipt-2' ]</option>
+<explain><p>The first job gets 5 attempts and works on the third. The second job gets only 2, so it fails both and lands in the dead-letter list, where a person can look at it instead of it disappearing.</p></explain>
+</question>
+
+<question id="saga-all-ok-output" type="output">
+<q>This time every step works. What does the saga print?</q>
+<code file="saga-ok.js">
+async function runSaga(steps) {
+  const done = [];
+  for (const step of steps) {
+    try {
+      await step.run();
+      done.push(step.name);
+    } catch {
+      for (const name of done.reverse()) console.log(`undone: ${name}`);
+      return false;
+    }
+  }
+  console.log("done:", done.join(", "));
+  return true;
+}
+
+const ok = await runSaga([
+  { name: "reserve", run: async () => {} },
+  { name: "charge", run: async () => {} },
+  { name: "confirm", run: async () => {} },
+]);
+console.log("confirmed:", ok);
+</code>
+<option correct>done: reserve, charge, confirm
+confirmed: true</option>
+<option>done: confirm, charge, reserve
+confirmed: true</option>
+<option>undone: charge
+undone: reserve
+confirmed: false</option>
+<option>done: reserve, charge, confirm
+confirmed: false</option>
+<explain><p>Compensations run only when a step fails. When all steps succeed, nothing is undone and the saga returns <code>true</code>.</p></explain>
+</question>
+
+<question id="correlation-forward-output" type="output">
+<q>Orders forwards the correlation id to inventory. What does this print?</q>
+<code file="forward-id.js">
+const logs = [];
+
+function inventory(headers) {
+  logs.push(`inventory [${headers["x-request-id"]}]`);
+  return { stock: 7 };
+}
+
+function orders(headers) {
+  const id = headers["x-request-id"] ?? "gen-1";
+  logs.push(`orders [${id}]`);
+  return inventory({ "x-request-id": id });
+}
+
+orders({ "x-request-id": "req-mug" });
+orders({});
+console.log(logs.join("\n"));
+</code>
+<option correct>orders [req-mug]
+inventory [req-mug]
+orders [gen-1]
+inventory [gen-1]</option>
+<option>orders [req-mug]
+inventory [undefined]
+orders [gen-1]
+inventory [undefined]</option>
+<option>orders [req-mug]
+inventory [gen-1]
+orders [gen-1]
+inventory [gen-1]</option>
+<option>orders [req-mug]
+inventory [req-mug]
+orders [undefined]
+inventory [undefined]</option>
+<explain><p>Orders uses the incoming id, or makes one when there is none, and passes it on with every call. Both services log the same id, so one search finds the whole request.</p></explain>
+</question>
