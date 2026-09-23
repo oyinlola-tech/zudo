@@ -1,0 +1,1400 @@
+<question id="why-runtime" type="choice">
+<q>Why does an application need a <strong>runtime</strong> like <code>@zudojs/runtime</code>?</q>
+<option>To compile TypeScript to JavaScript before the app starts</option>
+<option correct>To start the parts in dependency order, notice failures, and shut everything down in reverse</option>
+<option>To answer HTTP requests faster than Node.js can alone</option>
+<option>To store the application's data between restarts</option>
+<explain><p>With two parts, ordering by hand works; at ten it becomes fragile. You describe each part and what it needs, and the runtime works out the order, starts everything, and stops it cleanly.</p></explain>
+</question>
+
+<question id="what-is-module" type="choice">
+<q>What does a runtime <strong>module</strong> consist of?</q>
+<option>A folder of TypeScript files with an <code>index.ts</code></option>
+<option>An npm package that the runtime installs on start</option>
+<option correct>An object with an <code>id</code>, a <code>name</code>, optional <code>dependencies</code>, and up to four hooks</option>
+<option>A class that must extend <code>Error</code></option>
+<explain><p>The runtime manages modules. Each one says who it is, which other modules it needs (by id), and which hooks the runtime should call at fixed moments.</p></explain>
+</question>
+
+<question id="hook-open-connection" type="choice">
+<q>Your store module must open a database connection when the app starts. Which hook is for that?</q>
+<option correct><code>onInitialize</code></option>
+<option><code>onReady</code></option>
+<option><code>onShutdown</code></option>
+<option><code>onDestroy</code></option>
+<explain><p><code>onInitialize</code> runs during <code>start()</code>, dependencies first: the place to open connections and load data. <code>onReady</code> is for starting to accept work, once every module has initialized.</p></explain>
+</question>
+
+<question id="on-ready-when" type="choice">
+<q>When does the runtime call <code>onReady</code>?</q>
+<option>Right after the same module's <code>onInitialize</code>, before the next module initializes</option>
+<option correct>During <code>start()</code>, after every module has initialized</option>
+<option>Only when the first HTTP request arrives</option>
+<option>During <code>stop()</code>, before <code>onShutdown</code></option>
+<explain><p>Startup has two rounds: every module is initialized before any becomes ready. So when <code>http</code> becomes ready, every other module has at least been initialized.</p></explain>
+</question>
+
+<question id="shutdown-vs-destroy" type="choice">
+<q>What is the difference between <code>onShutdown</code> and <code>onDestroy</code>?</q>
+<option><code>onShutdown</code> runs on errors only; <code>onDestroy</code> runs on a normal stop</option>
+<option correct><code>onShutdown</code> stops accepting work and finishes what runs; <code>onDestroy</code> runs last and releases everything</option>
+<option><code>onShutdown</code> runs in start order; <code>onDestroy</code> runs in reverse order</option>
+<option>They are two names for the same hook</option>
+<explain><p>Stopping also has two rounds, both in reverse order: first every <code>onShutdown</code>, then every <code>onDestroy</code>, which releases what the module still holds.</p></explain>
+</question>
+
+<question id="list-order" type="choice">
+<q>You register <code>http</code>, then <code>tasks</code>, then <code>store</code>, but <code>store</code> initializes first. Why?</q>
+<option>The runtime sorts modules by name</option>
+<option>The runtime always starts the last module in the list first</option>
+<option correct>The runtime follows the <code>dependencies</code>, not the order of the list</option>
+<option>Modules named <code>store</code> are always special</option>
+<explain><p><code>tasks</code> needs <code>store</code>, and <code>http</code> needs <code>tasks</code>. The runtime sorts that dependency graph (a topological sort), so the list order does not matter.</p></explain>
+</question>
+
+<question id="graph-checked-first" type="choice">
+<q>A module lists a dependency that is not registered. When does the runtime notice?</q>
+<option>When that module's <code>onReady</code> runs</option>
+<option>Never; the missing module is skipped</option>
+<option correct>On <code>start()</code>, before any hook runs, because it checks the whole graph first</option>
+<option>Only when the first request needs the missing module</option>
+<explain><p>The runtime refuses a cycle or a missing dependency before it touches any module. A wiring mistake shows up the first time you start the app, not hours later.</p></explain>
+</question>
+
+<question id="missing-cause" type="choice">
+<q>The runtime says <code>Module "tasks" depends on "databse" which is not registered.</code> What is the most likely cause?</q>
+<option>The database server is down</option>
+<option correct>A typo in the <code>dependencies</code> list, or a module you forgot to register</option>
+<option>The modules are listed in the wrong order</option>
+<option>The <code>tasks</code> module has no <code>onDestroy</code> hook</option>
+<explain><p>A missing dependency is usually a typo (here <code>databse</code>) or a forgotten registration. It is about the wiring, not about a server being reachable.</p></explain>
+</question>
+
+<question id="rollback-why" type="choice">
+<q>The <code>http</code> module fails to start because its port is in use, while <code>store</code> and <code>tasks</code> are already up. Why does the runtime <strong>roll back</strong>?</q>
+<option>To try starting <code>http</code> again on another port</option>
+<option correct>So what already started, such as the store's connection, is undone in reverse and not left open</option>
+<option>To delete the modules that did start</option>
+<option>So the app can keep running without <code>http</code></option>
+<explain><p>If the runtime simply gave up, open connections would leak. Rolling back undoes what already happened, in reverse order, before <code>start()</code> rejects.</p></explain>
+</question>
+
+<question id="rollback-which-shutdown" type="choice">
+<q>During that rollback, <code>onShutdown</code> ran for <code>tasks</code> and <code>store</code>, but not for <code>http</code>. Why?</q>
+<option>Because <code>http</code> has no <code>onShutdown</code> hook</option>
+<option>Because the runtime forgot it; it is a bug</option>
+<option correct>Only modules that became ready are shut down; <code>http</code> failed in <code>onReady</code>, so it never started</option>
+<option>Because <code>http</code> is stopped last, after the process exits</option>
+<explain><p>Shutdown undoes "ready", so it only runs where ready succeeded. <code>onDestroy</code> ran for all three, because all three had initialized and may hold resources.</p></explain>
+</question>
+
+<question id="destroy-half-initialized" type="choice">
+<q>A module's <code>onInitialize</code> throws halfway through. The runtime still calls its <code>onDestroy</code>. What does that mean for your code?</q>
+<option>Nothing; <code>onDestroy</code> can assume everything was set up</option>
+<option correct><code>onDestroy</code> must cope with a half-initialized module, releasing only what really exists</option>
+<option>You must never throw inside <code>onInitialize</code></option>
+<option>You must call <code>onDestroy</code> yourself inside the <code>catch</code></option>
+<explain><p>The module may have opened something before it threw. So <code>onDestroy</code> runs, and it must check what is actually open instead of assuming a full setup.</p></explain>
+</question>
+
+<question id="start-error-info" type="choice">
+<q>A failed <code>start()</code> rejects with a <code>RuntimeStartError</code>. Where do you find what went wrong?</q>
+<option>Only in the runtime's log file</option>
+<option correct><code>error.phase</code> says <code>initialize</code> or <code>start</code>, and <code>error.cause</code> holds the original error</option>
+<option><code>error.message</code> holds the original error's stack trace</option>
+<option>In <code>runtime.context.lastError</code></option>
+<explain><p>The <code>RuntimeStartError</code> names the module and the phase. The original error, such as "Port 3000 is already in use", is kept as its <code>cause</code>.</p></explain>
+</question>
+
+<question id="exit-code-one" type="choice">
+<q>In <code>src/server.ts</code>, a failed start should log the error, call <code>runtime.stop()</code>, and exit with code 1. Why code 1?</q>
+<option>Because code 1 restarts the app automatically</option>
+<option>Because Node.js cannot exit with code 0 after an error</option>
+<option correct>A non-zero code tells Docker, systemd or the platform that the app did not start</option>
+<option>Because code 1 hides the error from the logs</option>
+<explain><p>Exiting with 0 would report success, and nobody would be alerted. Calling <code>stop()</code> first releases anything the rollback did not reach; it is safe to call even when nothing is left.</p></explain>
+</question>
+
+<question id="ready-vs-healthy" type="choice">
+<q>A readiness check for the store starts returning <code>false</code> while the app keeps running. What does the runtime report?</q>
+<option>It stops the app at once</option>
+<option correct>Not ready, and health <strong>degraded</strong>: still alive, not fully working</option>
+<option>Ready, because the app is still running</option>
+<option>Healthy, because only the store is affected</option>
+<explain><p><code>runtime.ready</code> and <code>runtime.health</code> are worked out from all the readiness checks. A platform then sends traffic elsewhere until the app is ready again.</p></explain>
+</question>
+
+<question id="sigterm-meaning" type="choice">
+<q>What is <code>SIGTERM</code>?</q>
+<option>An error that Node.js throws when memory runs out</option>
+<option>A log level more serious than <code>ERROR</code></option>
+<option correct>A signal a hosting platform sends to ask your process to stop, for example before a deploy</option>
+<option>A network packet that ends an HTTP request</option>
+<explain><p>Platforms send <code>SIGTERM</code>; pressing <kbd>Ctrl</kbd> + <kbd>C</kbd> sends <code>SIGINT</code>. By default Node.js ends the process at once, cutting off requests in progress.</p></explain>
+</question>
+
+<question id="graceful-steps" type="choice">
+<q>What does a <strong>graceful shutdown</strong> do?</q>
+<option>Kills the process at once, so the new version starts sooner</option>
+<option correct>Stops accepting new work, finishes work in progress, closes connections, then exits</option>
+<option>Ignores the signal until all users have logged out</option>
+<option>Restarts the app with the same code</option>
+<explain><p>With <code>handleSignals: true</code> the runtime catches the signal and runs <code>stop()</code>. A second signal exits at once, and <code>shutdownTimeout</code> puts an upper limit on the whole thing.</p></explain>
+</question>
+
+<question id="handle-signals-false" type="choice">
+<q>Why does the generated <code>src/app.ts</code> pass <code>handleSignals: false</code>?</q>
+<option>Because signals do not exist on Linux servers</option>
+<option>Because graceful shutdown is not needed in development</option>
+<option correct><code>server.ts</code> handles the signals itself, to stop the HTTP server first and then the runtime; two listeners would race</option>
+<option>Because the runtime can only handle <code>SIGINT</code>, not <code>SIGTERM</code></option>
+<explain><p>The HTTP server is not a module. <code>server.ts</code> calls <code>server.stop()</code> (no new requests), then <code>runtime.stop()</code> (close what the requests used). One owner of the signals keeps the order right.</p></explain>
+</question>
+
+<question id="runtime-id" type="choice">
+<q>What is <code>runtime.context.runtimeId</code> for?</q>
+<option>It is the process id that the operating system gave Node.js</option>
+<option>It is a secret that authenticates the app to the database</option>
+<option correct>It is new on every run, so you can tell apart two copies of the same app in logs</option>
+<option>It is the version number of <code>@zudojs/runtime</code></option>
+<explain><p>Two copies of <code>task-api</code> may run at once. The id, like <code>rt_…</code>, lets you see which copy wrote which log line.</p></explain>
+</question>
+
+<question id="lifecycle-components" type="choice">
+<q>What does <code>@zudojs/lifecycle</code> add, next to the runtime?</q>
+<option>A replacement for the runtime that works only in the browser</option>
+<option correct>The same idea one level down: smaller components inside a module, with <code>dependsOn</code> and optional <code>critical: false</code></option>
+<option>A way to write modules without any hooks</option>
+<option>A database migration tool</option>
+<explain><p>A module may own a pool, a cache and a mailer. Lifecycle starts and stops such components in order, rolls back on failure, and lets a non-critical one fail without stopping startup.</p></explain>
+</question>
+
+<question id="dependencies-guarantee" type="choice">
+<q><code>TasksModule</code> passes <code>dependencies: ["store"]</code> to <code>BaseModule</code>. What does that guarantee?</q>
+<option>That the store module is created by the tasks module</option>
+<option correct>That the store's <code>onInitialize</code> has run before the tasks module's <code>onInitialize</code></option>
+<option>That the store and tasks modules run in parallel</option>
+<option>That the tasks module can never fail</option>
+<explain><p>Because of the dependency, the store is connected before <code>TasksModule.onInitialize</code> adds its example task. Both modules receive the same <code>TaskStore</code> object.</p></explain>
+</question>
+
+<question id="start-order-output" type="output">
+<q>What does this print?</q>
+<code file="start-order.js" browser="no">
+import { createContainer } from "@zudojs/container";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+
+function trace(id, dependencies = []) {
+  return {
+    id,
+    name: id,
+    dependencies,
+    onInitialize: () => console.log(`initialize ${id}`),
+    onReady: () => console.log(`ready ${id}`),
+    onShutdown: () => console.log(`shutdown ${id}`),
+    onDestroy: () => console.log(`destroy ${id}`),
+  };
+}
+
+function buildRuntime(modules) {
+  return createRuntime(
+    {
+      modules: new Map(modules.map((m) => [m.id, m])),
+      logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+      container: createContainer(),
+      eventBus: createEventBus(),
+    },
+    { applicationName: "task-api", environment: "development", handleSignals: false },
+  );
+}
+
+const runtime = buildRuntime([trace("http", ["tasks"]), trace("tasks", ["store"]), trace("store")]);
+await runtime.start();
+</code>
+<option>initialize http
+initialize tasks
+initialize store
+ready http
+ready tasks
+ready store</option>
+<option>initialize store
+ready store
+initialize tasks
+ready tasks
+initialize http
+ready http</option>
+<option correct>initialize store
+initialize tasks
+initialize http
+ready store
+ready tasks
+ready http</option>
+<option>initialize store
+initialize tasks
+initialize http</option>
+<explain><p>The runtime follows the dependencies, not the list. And startup runs in two rounds: every <code>onInitialize</code> first, then every <code>onReady</code>, in the same order.</p></explain>
+</question>
+
+<question id="stop-order-output" type="output">
+<q>The runtime has started <code>store</code>, <code>tasks</code> and <code>http</code> (in that order). What does <code>stop()</code> print?</q>
+<code file="stop-order.js" browser="no">
+import { createContainer } from "@zudojs/container";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+
+function trace(id, dependencies = []) {
+  return {
+    id,
+    name: id,
+    dependencies,
+    onInitialize: () => console.log(`initialize ${id}`),
+    onReady: () => console.log(`ready ${id}`),
+    onShutdown: () => console.log(`shutdown ${id}`),
+    onDestroy: () => console.log(`destroy ${id}`),
+  };
+}
+
+function buildRuntime(modules) {
+  return createRuntime(
+    {
+      modules: new Map(modules.map((m) => [m.id, m])),
+      logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+      container: createContainer(),
+      eventBus: createEventBus(),
+    },
+    { applicationName: "task-api", environment: "development", handleSignals: false },
+  );
+}
+
+const quiet = (id, dependencies = []) => ({ id, name: id, dependencies,
+  onShutdown: () => console.log(`shutdown ${id}`), onDestroy: () => console.log(`destroy ${id}`) });
+
+const runtime = buildRuntime([quiet("store"), quiet("tasks", ["store"]), quiet("http", ["tasks"])]);
+await runtime.start();
+await runtime.stop();
+</code>
+<option>shutdown store
+shutdown tasks
+shutdown http
+destroy store
+destroy tasks
+destroy http</option>
+<option>shutdown http
+destroy http
+shutdown tasks
+destroy tasks
+shutdown store
+destroy store</option>
+<option correct>shutdown http
+shutdown tasks
+shutdown store
+destroy http
+destroy tasks
+destroy store</option>
+<option>destroy http
+destroy tasks
+destroy store
+shutdown http
+shutdown tasks
+shutdown store</option>
+<explain><p>Stopping is the start order backwards, again in two rounds: all <code>onShutdown</code> hooks, then all <code>onDestroy</code> hooks. <code>http</code> stops taking requests before anything it uses goes away.</p></explain>
+</question>
+
+<question id="cycle-output" type="output">
+<q>What does this print?</q>
+<code file="cycle.js" browser="no">
+import { createContainer } from "@zudojs/container";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+
+function trace(id, dependencies = []) {
+  return {
+    id,
+    name: id,
+    dependencies,
+    onInitialize: () => console.log(`initialize ${id}`),
+    onReady: () => console.log(`ready ${id}`),
+    onShutdown: () => console.log(`shutdown ${id}`),
+    onDestroy: () => console.log(`destroy ${id}`),
+  };
+}
+
+function buildRuntime(modules) {
+  return createRuntime(
+    {
+      modules: new Map(modules.map((m) => [m.id, m])),
+      logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+      container: createContainer(),
+      eventBus: createEventBus(),
+    },
+    { applicationName: "task-api", environment: "development", handleSignals: false },
+  );
+}
+
+const runtime = buildRuntime([trace("tasks", ["store"]), trace("store", ["tasks"])]);
+try {
+  await runtime.start();
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option>initialize store
+initialize tasks
+RuntimeCircularDependencyError</option>
+<option correct>RuntimeCircularDependencyError</option>
+<option>RuntimeDependencyError</option>
+<option>initialize tasks
+RuntimeCircularDependencyError</option>
+<explain><p>A cycle has no valid first module, so the runtime refuses to start. It checks the whole graph first, so no hook runs at all.</p></explain>
+</question>
+
+<question id="cycle-message-output" type="output">
+<q>What does this print?</q>
+<code file="cycle-message.js" browser="no">
+import { createContainer } from "@zudojs/container";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+
+function trace(id, dependencies = []) {
+  return {
+    id,
+    name: id,
+    dependencies,
+    onInitialize: () => console.log(`initialize ${id}`),
+    onReady: () => console.log(`ready ${id}`),
+    onShutdown: () => console.log(`shutdown ${id}`),
+    onDestroy: () => console.log(`destroy ${id}`),
+  };
+}
+
+function buildRuntime(modules) {
+  return createRuntime(
+    {
+      modules: new Map(modules.map((m) => [m.id, m])),
+      logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+      container: createContainer(),
+      eventBus: createEventBus(),
+    },
+    { applicationName: "task-api", environment: "development", handleSignals: false },
+  );
+}
+
+const runtime = buildRuntime([trace("tasks", ["store"]), trace("store", ["tasks"])]);
+try {
+  await runtime.start();
+} catch (error) {
+  console.log(error.message);
+}
+</code>
+<option>Module "tasks" depends on "store" which is not registered.</option>
+<option correct>Circular module dependency detected: tasks -&gt; store -&gt; tasks.</option>
+<option>Circular module dependency detected: store.</option>
+<option>Cannot start: tasks and store are listed in the wrong order.</option>
+<explain><p>The error shows the whole loop, so you can see which link to remove. Both modules are registered; the problem is that each needs the other.</p></explain>
+</question>
+
+<question id="missing-output" type="output">
+<q>What does this print?</q>
+<code file="missing.js" browser="no">
+import { createContainer } from "@zudojs/container";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+
+function trace(id, dependencies = []) {
+  return {
+    id,
+    name: id,
+    dependencies,
+    onInitialize: () => console.log(`initialize ${id}`),
+    onReady: () => console.log(`ready ${id}`),
+    onShutdown: () => console.log(`shutdown ${id}`),
+    onDestroy: () => console.log(`destroy ${id}`),
+  };
+}
+
+function buildRuntime(modules) {
+  return createRuntime(
+    {
+      modules: new Map(modules.map((m) => [m.id, m])),
+      logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+      container: createContainer(),
+      eventBus: createEventBus(),
+    },
+    { applicationName: "task-api", environment: "development", handleSignals: false },
+  );
+}
+
+const runtime = buildRuntime([trace("store"), trace("tasks", ["database"])]);
+try {
+  await runtime.start();
+} catch (error) {
+  console.log(error.name);
+  console.log(error.message);
+}
+</code>
+<option>initialize store
+RuntimeDependencyError
+Module "tasks" depends on "database" which is not registered.</option>
+<option correct>RuntimeDependencyError
+Module "tasks" depends on "database" which is not registered.</option>
+<option>RuntimeCircularDependencyError
+Module "tasks" depends on "database" which is not registered.</option>
+<option>RuntimeDependencyError
+Module "database" is not registered.</option>
+<explain><p>Even <code>store</code>, which is fine, does not initialize: the runtime checks the graph before touching any module. The message names both the module and the missing dependency.</p></explain>
+</question>
+
+<question id="rollback-output" type="output">
+<q><code>http</code> fails in <code>onReady</code>. What does this print?</q>
+<code file="rollback.js" browser="no">
+import { createContainer } from "@zudojs/container";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+
+function trace(id, dependencies = []) {
+  return {
+    id,
+    name: id,
+    dependencies,
+    onInitialize: () => console.log(`initialize ${id}`),
+    onReady: () => console.log(`ready ${id}`),
+    onShutdown: () => console.log(`shutdown ${id}`),
+    onDestroy: () => console.log(`destroy ${id}`),
+  };
+}
+
+function buildRuntime(modules) {
+  return createRuntime(
+    {
+      modules: new Map(modules.map((m) => [m.id, m])),
+      logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+      container: createContainer(),
+      eventBus: createEventBus(),
+    },
+    { applicationName: "task-api", environment: "development", handleSignals: false },
+  );
+}
+
+const http = {
+  ...trace("http", ["tasks"]),
+  onReady: () => {
+    throw new Error("Port 3000 is already in use");
+  },
+};
+
+const runtime = buildRuntime([trace("store"), trace("tasks", ["store"]), http]);
+try {
+  await runtime.start();
+} catch (error) {
+  console.log("failed:", error.cause.message);
+}
+</code>
+<option>initialize store
+initialize tasks
+initialize http
+ready store
+ready tasks
+failed: Port 3000 is already in use</option>
+<option>initialize store
+initialize tasks
+initialize http
+ready store
+ready tasks
+shutdown http
+shutdown tasks
+shutdown store
+destroy http
+destroy tasks
+destroy store
+failed: Port 3000 is already in use</option>
+<option correct>initialize store
+initialize tasks
+initialize http
+ready store
+ready tasks
+shutdown tasks
+shutdown store
+destroy http
+destroy tasks
+destroy store
+failed: Port 3000 is already in use</option>
+<option>initialize store
+initialize tasks
+initialize http
+ready store
+ready tasks
+shutdown tasks
+shutdown store
+failed: Port 3000 is already in use</option>
+<explain><p>Rollback shuts down only the modules that became ready (<code>tasks</code>, <code>store</code>), then destroys all three, because all three initialized. Then <code>start()</code> rejects with the original error as <code>cause</code>.</p></explain>
+</question>
+
+<question id="init-fail-output" type="output">
+<q><code>tasks</code> fails in <code>onInitialize</code>. What does this print?</q>
+<code file="init-fail.js" browser="no">
+import { createContainer } from "@zudojs/container";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+
+function trace(id, dependencies = []) {
+  return {
+    id,
+    name: id,
+    dependencies,
+    onInitialize: () => console.log(`initialize ${id}`),
+    onReady: () => console.log(`ready ${id}`),
+    onShutdown: () => console.log(`shutdown ${id}`),
+    onDestroy: () => console.log(`destroy ${id}`),
+  };
+}
+
+function buildRuntime(modules) {
+  return createRuntime(
+    {
+      modules: new Map(modules.map((m) => [m.id, m])),
+      logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+      container: createContainer(),
+      eventBus: createEventBus(),
+    },
+    { applicationName: "task-api", environment: "development", handleSignals: false },
+  );
+}
+
+const tasks = {
+  ...trace("tasks", ["store"]),
+  onInitialize: () => {
+    console.log("initialize tasks");
+    throw new Error("Schema is out of date");
+  },
+};
+
+const runtime = buildRuntime([trace("store"), tasks, trace("http", ["tasks"])]);
+try {
+  await runtime.start();
+} catch (error) {
+  console.log(error.phase, "-", error.cause.message);
+}
+</code>
+<option>initialize store
+initialize tasks
+shutdown store
+destroy tasks
+destroy store
+initialize - Schema is out of date</option>
+<option correct>initialize store
+initialize tasks
+destroy tasks
+destroy store
+initialize - Schema is out of date</option>
+<option>initialize store
+initialize tasks
+destroy store
+initialize - Schema is out of date</option>
+<option>initialize store
+initialize tasks
+destroy http
+destroy tasks
+destroy store
+start - Schema is out of date</option>
+<explain><p>The failure came in the first round, so no module was ever ready: nothing to shut down. <code>http</code> never initialized, so it is not destroyed. <code>tasks</code> is destroyed, because it may have opened something before throwing.</p></explain>
+</question>
+
+<question id="start-error-output" type="output">
+<q>What does this print?</q>
+<code file="start-error.js" browser="no">
+import { createContainer } from "@zudojs/container";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { RuntimeStartError, createRuntime } from "@zudojs/runtime";
+
+function trace(id, dependencies = []) {
+  return {
+    id,
+    name: id,
+    dependencies,
+    onInitialize: () => console.log(`initialize ${id}`),
+    onReady: () => console.log(`ready ${id}`),
+    onShutdown: () => console.log(`shutdown ${id}`),
+    onDestroy: () => console.log(`destroy ${id}`),
+  };
+}
+
+function buildRuntime(modules) {
+  return createRuntime(
+    {
+      modules: new Map(modules.map((m) => [m.id, m])),
+      logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+      container: createContainer(),
+      eventBus: createEventBus(),
+    },
+    { applicationName: "task-api", environment: "development", handleSignals: false },
+  );
+}
+
+const http = { id: "http", name: "http", onReady: () => { throw new Error("Port 3000 is already in use"); } };
+const runtime = buildRuntime([http]);
+
+try {
+  await runtime.start();
+} catch (error) {
+  console.log(error instanceof RuntimeStartError);
+  console.log(error.message);
+  console.log(error.phase);
+}
+</code>
+<option>false
+Port 3000 is already in use
+start</option>
+<option>true
+Port 3000 is already in use
+ready</option>
+<option correct>true
+Module "http" failed during startup.
+start</option>
+<option>true
+Module "http" failed during startup.
+initialize</option>
+<explain><p><code>start()</code> rejects with a <code>RuntimeStartError</code> that names the module. The failure was in <code>onReady</code>, which belongs to the <code>start</code> phase; the original message is in <code>cause</code>.</p></explain>
+</question>
+
+<question id="readiness-output" type="output">
+<q>What does this print?</q>
+<code file="readiness.js" browser="no">
+import { createContainer } from "@zudojs/container";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+
+function trace(id, dependencies = []) {
+  return {
+    id,
+    name: id,
+    dependencies,
+    onInitialize: () => console.log(`initialize ${id}`),
+    onReady: () => console.log(`ready ${id}`),
+    onShutdown: () => console.log(`shutdown ${id}`),
+    onDestroy: () => console.log(`destroy ${id}`),
+  };
+}
+
+function buildRuntime(modules) {
+  return createRuntime(
+    {
+      modules: new Map(modules.map((m) => [m.id, m])),
+      logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+      container: createContainer(),
+      eventBus: createEventBus(),
+    },
+    { applicationName: "task-api", environment: "development", handleSignals: false },
+  );
+}
+
+let storeConnected = true;
+const runtime = buildRuntime([{ id: "store", name: "store" }]);
+runtime.registerReadinessCheck("store", () => storeConnected);
+
+await runtime.start();
+await runtime.runReadinessChecks();
+console.log(runtime.ready, runtime.health.state);
+
+storeConnected = false;
+await runtime.runReadinessChecks();
+console.log(runtime.ready, runtime.health.state);
+await runtime.stop();
+</code>
+<option>true healthy
+true healthy</option>
+<option correct>true healthy
+false degraded</option>
+<option>true healthy
+false failed</option>
+<option>false degraded
+false degraded</option>
+<explain><p>The check is run again by <code>runReadinessChecks()</code>. When the store loses its connection, the app is still alive but not fully working: not ready, health <code>degraded</code>.</p></explain>
+</question>
+
+<question id="two-checks-output" type="output">
+<q>Two readiness checks, one of them failing. What does this print?</q>
+<code file="two-checks.js" browser="no">
+import { createContainer } from "@zudojs/container";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+
+function trace(id, dependencies = []) {
+  return {
+    id,
+    name: id,
+    dependencies,
+    onInitialize: () => console.log(`initialize ${id}`),
+    onReady: () => console.log(`ready ${id}`),
+    onShutdown: () => console.log(`shutdown ${id}`),
+    onDestroy: () => console.log(`destroy ${id}`),
+  };
+}
+
+function buildRuntime(modules) {
+  return createRuntime(
+    {
+      modules: new Map(modules.map((m) => [m.id, m])),
+      logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+      container: createContainer(),
+      eventBus: createEventBus(),
+    },
+    { applicationName: "task-api", environment: "development", handleSignals: false },
+  );
+}
+
+const runtime = buildRuntime([]);
+runtime.registerReadinessCheck("store", () => true);
+runtime.registerReadinessCheck("mailer", async () => false);
+
+await runtime.start();
+await runtime.runReadinessChecks();
+console.log(runtime.ready, runtime.health.state);
+await runtime.stop();
+</code>
+<option>true healthy</option>
+<option>true degraded</option>
+<option correct>false degraded</option>
+<option>false healthy</option>
+<explain><p>Readiness is worked out from <em>all</em> checks: one failing check is enough to make the app not ready. A check may be <code>async</code>; the runtime waits for it.</p></explain>
+</question>
+
+<question id="listing-order-output" type="output">
+<q><code>mailer</code> and <code>http</code> both need <code>tasks</code>, and not each other. What does this print?</q>
+<code file="mailer.js" browser="no">
+import { createContainer } from "@zudojs/container";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+
+function trace(id, dependencies = []) {
+  return {
+    id,
+    name: id,
+    dependencies,
+    onInitialize: () => console.log(`initialize ${id}`),
+    onReady: () => console.log(`ready ${id}`),
+    onShutdown: () => console.log(`shutdown ${id}`),
+    onDestroy: () => console.log(`destroy ${id}`),
+  };
+}
+
+function buildRuntime(modules) {
+  return createRuntime(
+    {
+      modules: new Map(modules.map((m) => [m.id, m])),
+      logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+      container: createContainer(),
+      eventBus: createEventBus(),
+    },
+    { applicationName: "task-api", environment: "development", handleSignals: false },
+  );
+}
+
+const runtime = buildRuntime([
+  { id: "mailer", name: "mailer", dependencies: ["tasks"], onReady: () => console.log("ready mailer"), onShutdown: () => console.log("shutdown mailer") },
+  { id: "http", name: "http", dependencies: ["tasks"], onReady: () => console.log("ready http"), onShutdown: () => console.log("shutdown http") },
+  { id: "tasks", name: "tasks" },
+]);
+await runtime.start();
+await runtime.stop();
+</code>
+<option>ready http
+ready mailer
+shutdown http
+shutdown mailer</option>
+<option correct>ready mailer
+ready http
+shutdown http
+shutdown mailer</option>
+<option>ready mailer
+ready http
+shutdown mailer
+shutdown http</option>
+<option>ready http
+ready mailer
+shutdown mailer
+shutdown http</option>
+<explain><p>When two modules do not depend on each other, the runtime keeps the order you listed them in. It stops them in exactly the reverse order.</p></explain>
+</question>
+
+<question id="no-restart-output" type="output">
+<q>What does this print?</q>
+<code file="restart.js" browser="no">
+import { createContainer } from "@zudojs/container";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+
+function trace(id, dependencies = []) {
+  return {
+    id,
+    name: id,
+    dependencies,
+    onInitialize: () => console.log(`initialize ${id}`),
+    onReady: () => console.log(`ready ${id}`),
+    onShutdown: () => console.log(`shutdown ${id}`),
+    onDestroy: () => console.log(`destroy ${id}`),
+  };
+}
+
+function buildRuntime(modules) {
+  return createRuntime(
+    {
+      modules: new Map(modules.map((m) => [m.id, m])),
+      logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+      container: createContainer(),
+      eventBus: createEventBus(),
+    },
+    { applicationName: "task-api", environment: "development", handleSignals: false },
+  );
+}
+
+const runtime = buildRuntime([{ id: "store", name: "store" }]);
+await runtime.start();
+await runtime.stop();
+
+try {
+  await runtime.start();
+  console.log("started again");
+} catch (error) {
+  console.log(error.name);
+}
+</code>
+<option>started again</option>
+<option correct>RuntimeStateError</option>
+<option>RuntimeStartError</option>
+<option>RuntimeDependencyError</option>
+<option>RuntimeCircularDependencyError</option>
+<explain><p>A stopped runtime cannot be started again. To run the app again, create a new runtime.</p></explain>
+</question>
+
+<question id="context-options-output" type="output">
+<q>What does this print?</q>
+<code file="context.js" browser="no">
+import { createContainer } from "@zudojs/container";
+import { BaseModule } from "@zudojs/core";
+import { createEventBus } from "@zudojs/events";
+import { createLogger, LoggerLevel } from "@zudojs/logger";
+import { createRuntime } from "@zudojs/runtime";
+
+function trace(id, dependencies = []) {
+  return {
+    id,
+    name: id,
+    dependencies,
+    onInitialize: () => console.log(`initialize ${id}`),
+    onReady: () => console.log(`ready ${id}`),
+    onShutdown: () => console.log(`shutdown ${id}`),
+    onDestroy: () => console.log(`destroy ${id}`),
+  };
+}
+
+function buildRuntime(modules) {
+  return createRuntime(
+    {
+      modules: new Map(modules.map((m) => [m.id, m])),
+      logger: createLogger({ name: "task-api", level: LoggerLevel.FATAL }),
+      container: createContainer(),
+      eventBus: createEventBus(),
+    },
+    { applicationName: "task-api", environment: "development", handleSignals: false },
+  );
+}
+
+class StoreModule extends BaseModule {
+  id = "store";
+  name = "Task store";
+
+  constructor() {
+    super({ version: "0.1.0", options: { maxTasks: 500 } });
+  }
+
+  async onInitialize(context) {
+    console.log(context.name, context.version, JSON.stringify(context.options));
+  }
+}
+
+const runtime = buildRuntime([new StoreModule()]);
+await runtime.start();
+console.log(runtime.context.applicationName, runtime.context.environment);
+await runtime.stop();
+</code>
+<option>store 0.1.0 {"maxTasks":500}
+task-api development</option>
+<option correct>Task store 0.1.0 {"maxTasks":500}
+task-api development</option>
+<option>Task store 0.1.0 {}
+task-api development</option>
+<option>Task store 0.1.0 {"maxTasks":500}
+task-api production</option>
+<explain><p>Each hook gets a module context with the module's own <code>name</code>, <code>version</code> and the <code>options</code> you gave <code>BaseModule</code>. <code>runtime.context</code> holds the application's name and environment from <code>createRuntime</code>.</p></explain>
+</question>
+
+<question id="lifecycle-critical-output" type="output">
+<q>With <code>@zudojs/lifecycle</code>, the mailer is marked <code>critical: false</code> and fails. What does this print?</q>
+<code file="components.js" browser="no">
+import { createLifecycleManager } from "@zudojs/lifecycle";
+
+function component(name, failOnStart = false) {
+  return {
+    name,
+    start: async () => {
+      if (failOnStart) throw new Error(`${name} is unreachable`);
+    },
+  };
+}
+
+const manager = createLifecycleManager({ handleSignals: false });
+manager.register(component("pool"), { id: "pool" });
+manager.register(component("cache"), { id: "cache", dependsOn: ["pool"] });
+manager.register(component("mailer", true), { id: "mailer", critical: false });
+
+await manager.start();
+for (const [id, status] of manager.getStatus()) console.log(id, status.state);
+await manager.shutdown();
+</code>
+<option>pool ready
+cache ready
+mailer ready</option>
+<option correct>pool ready
+cache ready
+mailer failed</option>
+<option>pool stopped
+cache stopped
+mailer failed</option>
+<option>LifecycleStartError</option>
+<explain><p>Because the mailer is not critical, startup carries on and the mailer is simply marked <code>failed</code>. Had the pool failed, <code>start()</code> would have rolled back and rejected.</p></explain>
+</question>
+
+<question id="code-start-order" type="code" file="start-order.js">
+<q><p>Write the heart of the runtime: <code>startOrder(modules)</code> returns the module ids so that every module comes after the modules in its <code>dependencies</code>. Keep the listed order when nothing forces a change.</p></q>
+<starter>
+function startOrder(modules) {
+  const byId = new Map(modules.map((m) => [m.id, m]));
+  const ordered = [];
+  // your code here
+  return ordered;
+}
+
+console.log(startOrder([
+  { id: "http", dependencies: ["tasks"] },
+  { id: "mailer", dependencies: ["tasks"] },
+  { id: "tasks", dependencies: ["store"] },
+  { id: "store", dependencies: [] },
+]).join(" "));
+</starter>
+<solution>
+function startOrder(modules) {
+  const byId = new Map(modules.map((m) => [m.id, m]));
+  const ordered = [];
+  const visit = (m) => {
+    if (ordered.includes(m.id)) return;
+    for (const dep of m.dependencies ?? []) visit(byId.get(dep));
+    ordered.push(m.id);
+  };
+  modules.forEach(visit);
+  return ordered;
+}
+
+console.log(startOrder([
+  { id: "http", dependencies: ["tasks"] },
+  { id: "mailer", dependencies: ["tasks"] },
+  { id: "tasks", dependencies: ["store"] },
+  { id: "store", dependencies: [] },
+]).join(" "));
+</solution>
+<expected>store tasks http mailer</expected>
+<explain><p>A topological sort: visit a module's dependencies before adding the module itself, and skip modules already added. <code>http</code> comes before <code>mailer</code> because it was listed first.</p></explain>
+</question>
+
+<question id="code-missing-deps" type="code" file="missing.js">
+<q><p>Finish <code>checkGraph(modules)</code>: before starting anything, throw an <code>Error</code> for the first dependency that is not registered, with the message <code>Module "ID" depends on "DEP" which is not registered.</code> Return <code>"ok"</code> when the graph is complete.</p></q>
+<starter>
+function checkGraph(modules) {
+  // your code here
+}
+
+console.log(checkGraph([{ id: "store", dependencies: [] }, { id: "tasks", dependencies: ["store"] }]));
+try {
+  checkGraph([{ id: "store", dependencies: [] }, { id: "tasks", dependencies: ["store", "database"] }]);
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+function checkGraph(modules) {
+  const ids = new Set(modules.map((m) => m.id));
+  for (const m of modules) {
+    for (const dep of m.dependencies) {
+      if (!ids.has(dep)) throw new Error(`Module "${m.id}" depends on "${dep}" which is not registered.`);
+    }
+  }
+  return "ok";
+}
+
+console.log(checkGraph([{ id: "store", dependencies: [] }, { id: "tasks", dependencies: ["store"] }]));
+try {
+  checkGraph([{ id: "store", dependencies: [] }, { id: "tasks", dependencies: ["store", "database"] }]);
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>
+ok
+Module "tasks" depends on "database" which is not registered.
+</expected>
+<explain><p>Collect the registered ids in a <code>Set</code>, then check every dependency. Doing this before any hook runs is why a wiring mistake never leaves half an app running.</p></explain>
+</question>
+
+<question id="code-cycle-path" type="code" file="cycle-path.js">
+<q><p>Finish <code>findCycle(modules)</code>. Follow the dependencies from each module; when you meet a module that is already on the current path, return the loop as text, like <code>tasks -&gt; store -&gt; tasks</code>. Return <code>null</code> if there is no cycle.</p></q>
+<starter>
+function findCycle(modules) {
+  const byId = new Map(modules.map((m) => [m.id, m]));
+  // your code here
+}
+
+console.log(findCycle([{ id: "tasks", dependencies: ["store"] }, { id: "store", dependencies: ["tasks"] }]));
+console.log(findCycle([
+  { id: "a", dependencies: ["b"] },
+  { id: "b", dependencies: ["c"] },
+  { id: "c", dependencies: ["a"] },
+]));
+console.log(findCycle([{ id: "tasks", dependencies: ["store"] }, { id: "store", dependencies: [] }]));
+</starter>
+<solution>
+function findCycle(modules) {
+  const byId = new Map(modules.map((m) => [m.id, m]));
+  const visit = (id, path) => {
+    if (path.includes(id)) return [...path.slice(path.indexOf(id)), id].join(" -> ");
+    for (const dep of byId.get(id).dependencies) {
+      const found = visit(dep, [...path, id]);
+      if (found) return found;
+    }
+    return null;
+  };
+  for (const m of modules) {
+    const found = visit(m.id, []);
+    if (found) return found;
+  }
+  return null;
+}
+
+console.log(findCycle([{ id: "tasks", dependencies: ["store"] }, { id: "store", dependencies: ["tasks"] }]));
+console.log(findCycle([
+  { id: "a", dependencies: ["b"] },
+  { id: "b", dependencies: ["c"] },
+  { id: "c", dependencies: ["a"] },
+]));
+console.log(findCycle([{ id: "tasks", dependencies: ["store"] }, { id: "store", dependencies: [] }]));
+</solution>
+<expected>
+tasks -> store -> tasks
+a -> b -> c -> a
+null
+</expected>
+<explain><p>Carry the current path along. Meeting an id that is already on the path means a loop; slicing from its first appearance gives exactly the loop, which is what the runtime's error message shows.</p></explain>
+</question>
+
+<question id="code-two-rounds" type="code" file="two-rounds.js">
+<q><p>Finish <code>start(ordered)</code>: modules are already sorted. Run every <code>onInitialize</code> first, then every <code>onReady</code>, awaiting each one. Hooks are optional.</p></q>
+<starter>
+async function start(ordered) {
+  // your code here
+}
+
+const mod = (id) => ({
+  id,
+  onInitialize: async () => console.log(`initialize ${id}`),
+  onReady: async () => console.log(`ready ${id}`),
+});
+
+await start([mod("store"), { id: "config" }, mod("tasks")]);
+</starter>
+<solution>
+async function start(ordered) {
+  for (const m of ordered) await m.onInitialize?.();
+  for (const m of ordered) await m.onReady?.();
+}
+
+const mod = (id) => ({
+  id,
+  onInitialize: async () => console.log(`initialize ${id}`),
+  onReady: async () => console.log(`ready ${id}`),
+});
+
+await start([mod("store"), { id: "config" }, mod("tasks")]);
+</solution>
+<expected>
+initialize store
+initialize tasks
+ready store
+ready tasks
+</expected>
+<explain><p>Two loops give two rounds: when any module becomes ready, every module has already initialized. <code>?.()</code> skips modules without the hook.</p></explain>
+</question>
+
+<question id="code-stop-rounds" type="code" file="stop-rounds.js">
+<q><p>Finish <code>stop(started)</code>: <code>started</code> is in start order. Run every <code>onShutdown</code> in reverse order, then every <code>onDestroy</code> in reverse order. Do not change the <code>started</code> array.</p></q>
+<starter>
+async function stop(started) {
+  // your code here
+}
+
+const mod = (id) => ({
+  id,
+  onShutdown: async () => console.log(`shutdown ${id}`),
+  onDestroy: async () => console.log(`destroy ${id}`),
+});
+
+const started = [mod("store"), mod("tasks"), mod("http")];
+await stop(started);
+console.log(started.map((m) => m.id).join(","));
+</starter>
+<solution>
+async function stop(started) {
+  const reversed = [...started].reverse();
+  for (const m of reversed) await m.onShutdown?.();
+  for (const m of reversed) await m.onDestroy?.();
+}
+
+const mod = (id) => ({
+  id,
+  onShutdown: async () => console.log(`shutdown ${id}`),
+  onDestroy: async () => console.log(`destroy ${id}`),
+});
+
+const started = [mod("store"), mod("tasks"), mod("http")];
+await stop(started);
+console.log(started.map((m) => m.id).join(","));
+</solution>
+<expected>
+shutdown http
+shutdown tasks
+shutdown store
+destroy http
+destroy tasks
+destroy store
+store,tasks,http
+</expected>
+<explain><p>Copy before reversing, because <code>reverse()</code> changes the array in place. Then two loops: all shutdowns, then all destroys, both in reverse start order.</p></explain>
+</question>
+
+<question id="code-rollback" type="code" file="rollback.js">
+<q><p>Finish <code>start(ordered)</code> with rollback. Round 1: <code>onInitialize</code> each module and remember it. Round 2: <code>onReady</code> each module and remember it. If any hook throws: run <code>onShutdown</code> for the <strong>ready</strong> modules in reverse, then <code>onDestroy</code> for the <strong>initialized</strong> modules in reverse, then rethrow.</p></q>
+<starter>
+async function start(ordered) {
+  const initialized = [];
+  const ready = [];
+  // your code here
+}
+
+const mod = (id, failOn) => ({
+  id,
+  onInitialize: () => {
+    if (failOn === "init") throw new Error(`${id} failed to initialize`);
+  },
+  onReady: () => {
+    if (failOn === "ready") throw new Error(`${id} failed to start`);
+  },
+  onShutdown: () => console.log(`shutdown ${id}`),
+  onDestroy: () => console.log(`destroy ${id}`),
+});
+
+try {
+  await start([mod("store"), mod("tasks"), mod("http", "ready")]);
+} catch (error) {
+  console.log(error.message);
+}
+</starter>
+<solution>
+async function start(ordered) {
+  const initialized = [];
+  const ready = [];
+  try {
+    for (const m of ordered) {
+      initialized.push(m);
+      await m.onInitialize?.();
+    }
+    for (const m of ordered) {
+      await m.onReady?.();
+      ready.push(m);
+    }
+  } catch (error) {
+    for (const m of [...ready].reverse()) await m.onShutdown?.();
+    for (const m of [...initialized].reverse()) await m.onDestroy?.();
+    throw error;
+  }
+}
+
+const mod = (id, failOn) => ({
+  id,
+  onInitialize: () => {
+    if (failOn === "init") throw new Error(`${id} failed to initialize`);
+  },
+  onReady: () => {
+    if (failOn === "ready") throw new Error(`${id} failed to start`);
+  },
+  onShutdown: () => console.log(`shutdown ${id}`),
+  onDestroy: () => console.log(`destroy ${id}`),
+});
+
+try {
+  await start([mod("store"), mod("tasks"), mod("http", "ready")]);
+} catch (error) {
+  console.log(error.message);
+}
+</solution>
+<expected>
+shutdown tasks
+shutdown store
+destroy http
+destroy tasks
+destroy store
+http failed to start
+</expected>
+<explain><p>A module counts as initialized as soon as its <code>onInitialize</code> begins, because it may open something before it throws. It counts as ready only after <code>onReady</code> succeeds. That is exactly the runtime's rollback.</p></explain>
+</question>
+
+<question id="code-readiness" type="code" file="readiness.js">
+<q><p>Finish <code>runChecks(checks)</code>. <code>checks</code> is a <code>Map</code> of name to function (maybe <code>async</code>). Return <code>{ ready, health }</code>: <code>ready</code> is true only if every check returns true, and <code>health</code> is <code>"healthy"</code> when ready, otherwise <code>"degraded"</code>.</p></q>
+<starter>
+async function runChecks(checks) {
+  // your code here
+}
+
+let storeConnected = true;
+const checks = new Map([
+  ["store", () => storeConnected],
+  ["modules", async () => true],
+]);
+
+console.log(JSON.stringify(await runChecks(checks)));
+storeConnected = false;
+console.log(JSON.stringify(await runChecks(checks)));
+</starter>
+<solution>
+async function runChecks(checks) {
+  let ready = true;
+  for (const check of checks.values()) {
+    if ((await check()) !== true) ready = false;
+  }
+  return { ready, health: ready ? "healthy" : "degraded" };
+}
+
+let storeConnected = true;
+const checks = new Map([
+  ["store", () => storeConnected],
+  ["modules", async () => true],
+]);
+
+console.log(JSON.stringify(await runChecks(checks)));
+storeConnected = false;
+console.log(JSON.stringify(await runChecks(checks)));
+</solution>
+<expected>
+{"ready":true,"health":"healthy"}
+{"ready":false,"health":"degraded"}
+</expected>
+<explain><p><code>await</code> works on plain values too, so the same loop handles sync and async checks. One failing check makes the app not ready: still alive, but degraded.</p></explain>
+</question>
+
+<question id="code-start-or-exit" type="code" file="start-or-exit.js">
+<q><p>Finish <code>boot(runtime)</code>, like <code>src/server.ts</code> should do: try <code>await runtime.start()</code>. If it throws, print <code>Startup failed: MESSAGE</code>, <code>await runtime.stop()</code>, and return <code>1</code>. On success return <code>0</code>. The number is the exit code.</p></q>
+<starter>
+async function boot(runtime) {
+  // your code here
+}
+
+const good = { start: async () => {}, stop: async () => console.log("stopped") };
+const bad = {
+  start: async () => {
+    throw new Error("Port 3000 is already in use");
+  },
+  stop: async () => console.log("stopped"),
+};
+
+console.log("exit code", await boot(good));
+console.log("exit code", await boot(bad));
+</starter>
+<solution>
+async function boot(runtime) {
+  try {
+    await runtime.start();
+    return 0;
+  } catch (error) {
+    console.log(`Startup failed: ${error.message}`);
+    await runtime.stop();
+    return 1;
+  }
+}
+
+const good = { start: async () => {}, stop: async () => console.log("stopped") };
+const bad = {
+  start: async () => {
+    throw new Error("Port 3000 is already in use");
+  },
+  stop: async () => console.log("stopped"),
+};
+
+console.log("exit code", await boot(good));
+console.log("exit code", await boot(bad));
+</solution>
+<expected>
+exit code 0
+Startup failed: Port 3000 is already in use
+stopped
+exit code 1
+</expected>
+<explain><p>Stop after a failed start to release anything the rollback did not reach, then exit non-zero. Exit code 1 tells the platform the app did not start, so it can restart it or alert you.</p></explain>
+</question>
+
+<question id="code-shutdown-timeout" type="code" file="shutdown-timeout.js">
+<q><p>Finish <code>stopWithin(stop, ms)</code>: wait for <code>stop()</code>, but give up after <code>ms</code> milliseconds. Return <code>"stopped"</code> if it finished in time, else <code>"timed out"</code>. Clear the timer either way.</p></q>
+<starter>
+async function stopWithin(stop, ms) {
+  // your code here
+}
+
+const quick = () => new Promise((resolve) => setTimeout(resolve, 5));
+const hanging = () => new Promise(() => {});
+
+console.log(await stopWithin(quick, 50));
+console.log(await stopWithin(hanging, 20));
+</starter>
+<solution>
+async function stopWithin(stop, ms) {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve("timed out"), ms);
+  });
+  try {
+    return await Promise.race([stop().then(() => "stopped"), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const quick = () => new Promise((resolve) => setTimeout(resolve, 5));
+const hanging = () => new Promise(() => {});
+
+console.log(await stopWithin(quick, 50));
+console.log(await stopWithin(hanging, 20));
+</solution>
+<expected>
+stopped
+timed out
+</expected>
+<explain><p><code>Promise.race</code> settles with whichever finishes first. This is what <code>shutdownTimeout</code> does for you (30 seconds by default): a hanging hook cannot block shutdown forever.</p></explain>
+</question>
