@@ -100,7 +100,7 @@ Three things happened without you asking:
 
 A *route* here is a method, a path, and some metadata. The metadata lives under `metadata.openapi` and holds the fields OpenAPI calls an *operation*: what this endpoint is called, what it takes, and what it returns.
 
-Every field is optional. This is the full set:
+Every field is optional. The main ones:
 
 | Field | What it does |
 | --- | --- |
@@ -108,9 +108,11 @@ Every field is optional. This is the full set:
 | `summary` / `description` | Short and long human text. |
 | `tags` | Groups endpoints together in the rendered page. |
 | `parameters` | Path, query, header or cookie inputs. Each has `name`, `in`, and optionally `schema`, `required`, `example`. |
+| `params` / `query` / `headers` / `cookies` | Shorthand: one object schema each, and every property becomes a parameter. |
 | `requestBody` | The body the endpoint accepts, keyed by media type. |
-| `responses` | Keyed by status code, a `4XX`-style range, or `default`. Each needs a `description`. |
-| `security` / `servers` / `externalDocs` | Per-operation overrides of the document-level values. |
+| `body` | Shorthand: a schema sent as `application/json`, or `{ schema, contentType?, required? }`. |
+| `responses` | Keyed by status code, a `4XX`-style range, or `default`. Each is a Response Object with a `description`, or the shorthand `{ schema }`, whose description defaults to the reason phrase. |
+| `security` / `servers` / `externalDocs` | Per-operation overrides of the document-level values. `security: []` marks the operation public. |
 | `deprecated` | Marks the endpoint as going away. |
 | `hidden` | Leaves the route out of the generated document entirely. |
 
@@ -150,7 +152,82 @@ Use `addRoute` for a route you are adding once; it throws if the same route is a
 
 Since v1.4.0 “the same route” means the same method and the same *OpenAPI path template*, not the same source string. `GET /users/:id` and `GET /users/{id}` both become the path item `/users/{id}`, so the second one is now rejected with an `OpenAPIRouteError`. Before v1.4.0 both registered and generation silently kept only the last one: an operation disappeared from the published document and `validate()` reported nothing wrong. `hasRoute`, `setRoute` and `removeRoute` accept either spelling for the same route.
 
-> **Watch out:** OpenAPI has no optional or wildcard path segments. `/files/*` and `/users/:id?` both throw an `OpenAPIRouteError` instead of quietly producing a path template no tool understands.
+> **Watch out:** OpenAPI has no optional or wildcard path segments. `/files/*` and `/users/:id?` both throw an `OpenAPIRouteError` instead of quietly producing a path template no tool understands. Generating from an `@zudojs/http` router avoids this: the router resolves those patterns first (an optional segment becomes two paths, a wildcard a `{rest}` slot).
+
+## GENERATING FROM A ROUTE TABLE
+
+Most of the time you do not want to call `addRoute` once per endpoint. Your routes already exist somewhere — in a router, or in a list of operations — and the document should come from that list, so it can never describe an endpoint that is not there.
+
+`createOpenAPIDocumentFromRoutes(routes, { info })` does that. `routes` is a plain array of *route descriptors*: one object per endpoint, holding its method, its path, and the same documentation fields as `metadata.openapi`, all flattened into one object. Schemas can be `@zudojs/schema` schemas, which are converted for you.
+
+```ts
+import { createOpenAPIDocumentFromRoutes } from "@zudojs/openapi";
+import { objectSchema, stringSchema } from "@zudojs/schema";
+
+const user = objectSchema({ id: stringSchema().uuid(), name: stringSchema() });
+
+const document = createOpenAPIDocumentFromRoutes(
+  [
+    {
+      method: "GET",
+      path: "/users/:id",
+      summary: "Get a user",
+      tags: ["users"],
+      responses: { "200": { schema: user }, "404": { description: "No such user" } },
+    },
+    {
+      method: "POST",
+      path: "/users",
+      operationId: "users.create",
+      body: objectSchema({ name: stringSchema() }),
+      responses: { "201": { schema: user } },
+    },
+    { method: "GET", path: "/health", security: [] }, // public
+  ],
+  {
+    info: { title: "Users API", version: "1.0.0" },
+    securitySchemes: { bearer: { type: "http", scheme: "bearer" } },
+    security: [{ bearer: [] }], // every route needs a bearer token...
+    validate: true,
+  },
+);
+
+console.log(Object.keys(document.paths));
+// [ '/users/{id}', '/users', '/health' ]
+```
+
+**What happened:** `/users/:id` became `/users/{id}` with a required `id` parameter, the body schema became a required `application/json` request body, the `404` kept its description, and the `200` and `201` got theirs from the reason phrase. `validate: true` throws an `OpenAPIValidationError` if the result is invalid.
+
+> **In plain words:** `security: []` on a route means "this one is public". It overrides the document-wide `security`, so `/health` needs no token while every other route does. Leaving `security` out means "use the document's setting".
+
+### The route descriptor
+
+An `OpenAPIRouteDescriptor` is `RouteOpenAPIMetadata` plus `method` and `path`. Only those two are required.
+
+| Field | What it does |
+| --- | --- |
+| `method` | Any case. It must be one an OpenAPI path item can hold: `get put post delete options head patch trace`. |
+| `path` | `/users/:id` or `/users/{id}`. Optional, regex-constrained and wildcard segments have no OpenAPI spelling; the route source resolves them before handing the path over. |
+| `summary`, `description`, `operationId`, `tags`, `deprecated`, `servers`, `externalDocs` | Copied to the operation. |
+| `security` | Operation security. `[]` marks it public and overrides the document's security. |
+| `params`, `query`, `headers`, `cookies` | One object schema each; every property becomes a parameter. `required` comes from the schema, and path parameters are always required. |
+| `body` | A schema (sent as `application/json`, required), or `{ schema, contentType?, required?, description?, example? }`. A raw `requestBody` wins over it. |
+| `responses` | Keyed by status, `NXX` range or `default`: a Response Object, or `{ schema, description?, contentType?, headers?, example? }`. The description defaults to the reason phrase, e.g. "Not Found". |
+| `parameters` | Explicit parameters. Highest precedence. |
+| `inferredParameters` | Parameters the source worked out itself, such as a regex constraint. Lowest precedence. |
+| `hidden` | `true` leaves the operation out. |
+
+Every path template slot is documented as a required string parameter even when nothing declares it. A declared path parameter the template does not contain is dropped with a warning, rather than producing an invalid document. Warnings reach `onSchemaWarning` under the name `"routes"` and `manager.routeWarnings()`.
+
+### Where descriptors come from
+
+- [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) builds them from a router's registered routes: `generateOpenAPIDocument(router, { info })` and `mountOpenAPI(router, { info })` call this function for you.
+- [@zudojs/api](https://zudojs.oyinlola.site/docs/packages-api.md) builds them from operations: `toOpenAPIRouteDescriptors(registry, { basePath })`.
+- Or write the array yourself, as above.
+
+### Keeping a manager instead
+
+`createOpenAPIManagerFromRoutes(routes, options)` takes the same arguments but returns the `OpenAPIManager`, so you can serve it with `toResponse()` and `toUIResponse()`. When your routes change, `manager.setRoutes(routes.map(routeDescriptorToRouteInfo))` replaces the whole route set at once, rejecting duplicates before anything changes. `routeDescriptorToRouteInfo` converts one descriptor into the `{ method, path, metadata }` shape `addRoute` takes.
 
 ## SCHEMAS
 
@@ -395,6 +472,8 @@ app.get("/openapi.json", () => manager.toResponse());
 app.get("/docs", () => manager.toUIResponse({ specUrl: "/openapi.json" }));
 ```
 
+On [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) you do not write these two handlers: `mountOpenAPI(router, { info })` registers both, generated from the router's own routes.
+
 Open `/docs` and you get a browsable page: every endpoint listed by tag, expandable request and response shapes, and a "try it out" button that sends a real request.
 
 ### Swagger UI or ReDoc
@@ -563,6 +642,8 @@ Serialize any document with `toOpenAPIJSON` or `toOpenAPIYAML`. The YAML is real
 | `addRoute(route)` | Registers a route. | Throws on a duplicate method + OpenAPI path template. |
 | `setRoute(route)` | Registers a route, replacing any existing one. | — |
 | `removeRoute(method, path)` | Removes a route. | Returns whether one was removed. |
+| `setRoutes(routes)` | Replaces the whole route set. | Rejects duplicates before anything changes. Chainable. |
+| `routeWarnings()` | Warnings from the last route conversion. | For example a declared path parameter the path lacks. |
 | `addSchema(name, schema)` | Converts a `@zudojs/schema` schema and registers it. | Conversion warnings land in `schemaWarnings()`. |
 | `addRawSchema(name, schema)` | Registers an already-converted OpenAPI schema. | No conversion. |
 | `setInfo`, `addServer`, `addTag` | Set document metadata. | Chainable. |
@@ -583,6 +664,9 @@ Serialize any document with `toOpenAPIJSON` or `toOpenAPIYAML`. The YAML is real
 
 | Name | What it does | Notes |
 | --- | --- | --- |
+| `createOpenAPIDocumentFromRoutes(routes, options)` | Generates a document from route descriptors. | See [Generating from a route table](#from-routes). |
+| `createOpenAPIManagerFromRoutes(routes, options)` | The same, returning the manager. | For `toResponse` / `toUIResponse`. |
+| `routeDescriptorToRouteInfo(descriptor)` | Descriptor to `{ method, path, metadata }`. | Throws `OpenAPIRouteError` on an unsupported method. |
 | `renderOpenAPIUI(options)` | Returns a complete HTML documentation page. | Swagger UI or ReDoc. |
 | `zudoLogo(overrides?)` | The default logo object. | Frozen; pass overrides for a variant. |
 | `svgToDataUri(svg)` | Encodes an SVG string as a compact data URI. | No network request needed to show it. |
@@ -610,6 +694,7 @@ Serialize any document with `toOpenAPIJSON` or `toOpenAPIYAML`. The YAML is real
 | `OpenAPIDocumentResponse` | `{ status, headers, body }` for the spec. | Returned by `toResponse`. |
 | `OpenAPILogo` | `{ url, href?, altText?, backgroundColor? }`. | The shape of `info["x-logo"]`. |
 | `RouteInfo` / `RouteMetadata` / `RouteOpenAPIMetadata` / `RouteParameterMetadata` | What `addRoute` accepts. | — |
+| `OpenAPIRouteDescriptor` / `OpenAPIDocumentFromRoutesOptions` | Input to `createOpenAPIDocumentFromRoutes`. | Options: `info` (required), `validate`, `securitySchemes`, `schemas`, plus the manager options. |
 | `OpenAPIValidationResult` / `OpenAPIValidationIssue` | Validator output. | An issue is `{ path, message, severity }`. |
 | `SchemaConversionResult` / `SchemaConversionOptions` | Converter input and output. | — |
 | `OpenAPIDocument`, `OpenAPIOperation`, `OpenAPISchema`, … | The specification object types. | Mirror the OpenAPI standard; all exported from the package root. |
@@ -661,32 +746,32 @@ All extend `OpenAPIError`, the [@zudojs/errors](https://zudojs.oyinlola.site/doc
 ## RELATED
 
 - [@zudojs/schema](https://zudojs.oyinlola.site/docs/packages-schema.md) — defines the schemas `addSchema` converts. Start here if you have no schemas yet.
-- [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) — the server that turns `{ status, headers, body }` into a real response.
-- [@zudojs/api](https://zudojs.oyinlola.site/docs/packages-api.md) — defines the operations whose metadata feeds `addRoute`.
+- [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) — `generateOpenAPIDocument(router)` and `mountOpenAPI(router)` document a router's own routes with this package.
+- [@zudojs/api](https://zudojs.oyinlola.site/docs/packages-api.md) — `toOpenAPIRouteDescriptors(registry)` turns operations into route descriptors.
 - [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) — the `BaseError` every OpenAPI error extends.
 - [@zudojs/validation](https://zudojs.oyinlola.site/docs/packages-validation.md) — checks incoming requests at runtime, which OpenAPI only describes.
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/openapi` exports from its package root at v1.4.0 — **121** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/openapi` exports from its package root at v1.4.0 — **137** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 121 exports**
+**Show all 137 exports**
 
 Classes (17)
 
 `OpenAPIComponentConflictError` `OpenAPIComponentError` `OpenAPIDocumentBuilder` `OpenAPIDocumentError` `OpenAPIError` `OpenAPIManager` `OpenAPIOperationError` `OpenAPIReferenceError` `OpenAPIRegistryImpl` `OpenAPIRouteError` `OpenAPIRouteScannerImpl` `OpenAPISchemaError` `OpenAPISerializationError` `OpenAPIValidationError` `OpenAPIValidatorImpl` `OpenAPIVersionError` `SchemaRegistryImpl`
 
-Functions (23)
+Functions (32)
 
-`buildOpenAPIUIContentSecurityPolicy` `buildResponses` `convertRouteToOpenAPI` `convertSchema` `createComponentReference` `createOpenAPIDocumentBuilder` `createOpenAPIError` `createOpenAPIManager` `createOpenAPIValidator` `createSchemaConverter` `escapeJsonPointerSegment` `extractPathParameters` `formatIssuePath` `isOpenAPIError` `isOpenAPIMethod` `isVersion31` `renderOpenAPIUI` `svgToDataUri` `toOpenAPIJSON` `toOpenAPIPath` `toOpenAPIYAML` `unescapeJsonPointerSegment` `zudoLogo`
+`buildOpenAPIUIContentSecurityPolicy` `buildOperationParameters` `buildOperationRequestBody` `buildOperationResponses` `buildResponses` `convertRouteToOpenAPI` `convertSchema` `createComponentReference` `createOpenAPIDocumentBuilder` `createOpenAPIDocumentFromRoutes` `createOpenAPIError` `createOpenAPIManager` `createOpenAPIManagerFromRoutes` `createOpenAPIValidator` `createSchemaConverter` `describeResponseKey` `escapeJsonPointerSegment` `extractPathParameters` `formatIssuePath` `isOpenAPIError` `isOpenAPIMethod` `isSchemaDefinition` `isVersion31` `renderOpenAPIUI` `resolveSchemaInput` `routeDescriptorToRouteInfo` `svgToDataUri` `toOpenAPIJSON` `toOpenAPIPath` `toOpenAPIYAML` `unescapeJsonPointerSegment` `zudoLogo`
 
-Interfaces (50)
+Interfaces (55)
 
-`OpenAPIComponentRegistration` `OpenAPIComponents` `OpenAPIContact` `OpenAPIDiscriminator` `OpenAPIDocument` `OpenAPIDocumentOptions` `OpenAPIDocumentResponse` `OpenAPIEncoding` `OpenAPIErrorOptions` `OpenAPIExample` `OpenAPIExternalDocumentation` `OpenAPIHeader` `OpenAPIInfo` `OpenAPILicense` `OpenAPILink` `OpenAPILogo` `OpenAPIManagerOptions` `OpenAPIMediaType` `OpenAPIOAuthFlow` `OpenAPIOAuthFlows` `OpenAPIOperation` `OpenAPIParameter` `OpenAPIPathItem` `OpenAPIReference` `OpenAPIRegistry` `OpenAPIRequestBody` `OpenAPIResponse` `OpenAPIRoute` `OpenAPISchema` `OpenAPISecurityRequirement` `OpenAPISecurityScheme` `OpenAPIServer` `OpenAPIServerVariable` `OpenAPITag` `OpenAPIUIAssetIntegrity` `OpenAPIUIOptions` `OpenAPIUIResponse` `OpenAPIValidationIssue` `OpenAPIValidationResult` `OpenAPIValidator` `OpenAPIXml` `RouteInfo` `RouteMetadata` `RouteOpenAPIMetadata` `RouteParameterMetadata` `SchemaConversionOptions` `SchemaConversionResult` `SchemaConverter` `SchemaRegistry` `SchemaRegistryOptions`
+`OpenAPIComponentRegistration` `OpenAPIComponents` `OpenAPIContact` `OpenAPIDiscriminator` `OpenAPIDocument` `OpenAPIDocumentFromRoutesOptions` `OpenAPIDocumentOptions` `OpenAPIDocumentResponse` `OpenAPIEncoding` `OpenAPIErrorOptions` `OpenAPIExample` `OpenAPIExternalDocumentation` `OpenAPIHeader` `OpenAPIInfo` `OpenAPILicense` `OpenAPILink` `OpenAPILogo` `OpenAPIManagerOptions` `OpenAPIMediaType` `OpenAPIOAuthFlow` `OpenAPIOAuthFlows` `OpenAPIOperation` `OpenAPIParameter` `OpenAPIPathItem` `OpenAPIReference` `OpenAPIRegistry` `OpenAPIRequestBody` `OpenAPIResponse` `OpenAPIRoute` `OpenAPIRouteBody` `OpenAPIRouteDescriptor` `OpenAPIRouteResponse` `OpenAPISchema` `OpenAPISecurityRequirement` `OpenAPISecurityScheme` `OpenAPIServer` `OpenAPIServerVariable` `OpenAPITag` `OpenAPIUIAssetIntegrity` `OpenAPIUIOptions` `OpenAPIUIResponse` `OpenAPIValidationIssue` `OpenAPIValidationResult` `OpenAPIValidator` `OpenAPIXml` `RouteInfo` `RouteMetadata` `RouteOpenAPIMetadata` `RouteParameterMetadata` `SchemaConversionOptions` `SchemaConversionResult` `SchemaConverter` `SchemaInputOptions` `SchemaRegistry` `SchemaRegistryOptions`
 
-Type aliases (7)
+Type aliases (9)
 
-`ComponentSection` `OpenAPIHttpMethod` `OpenAPIParameterLocation` `OpenAPIPaths` `OpenAPIResponses` `OpenAPIUIRenderer` `OpenAPIVersion`
+`ComponentSection` `OpenAPIHttpMethod` `OpenAPIParameterLocation` `OpenAPIPaths` `OpenAPIResponses` `OpenAPISchemaInput` `OpenAPIUIRenderer` `OpenAPIVersion` `RouteConversionOptions`
 
 Constants (24)
 

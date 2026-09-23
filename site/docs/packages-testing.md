@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/testing — Testing Utilities Documentation"
-description: "Complete documentation for @zudojs/testing — mock functions, spies, fixtures, assertions, test clock, and test utilities for the Zudojs ecosystem."
+description: "@zudojs/testing docs for ZudoJS: mocks, spies, fixtures, assertions, a test clock, and a supertest-style HTTP test client for your app."
 source: https://zudojs.oyinlola.site/docs/packages-testing
 ---
 
@@ -39,11 +39,12 @@ WHEN YOU NEED IT
 - Your code calls a service you do not want to run for real (payments, email, a database).
 - You want to assert on the events, messages, jobs or log lines your code produced.
 - A test opens connections or timers that must be closed afterwards, in a fixed order.
+- You want to send real HTTP requests to your app and check status, headers, body and cookies.
 
 WHEN YOU DON'T
 
 - Pure functions with no dependencies — plain `expect()` from your test runner is enough.
-- End-to-end tests where the whole point is to hit the real database and the real HTTP server.
+- End-to-end tests where the whole point is to hit the real database. (For requests against your real HTTP server, the [HTTP test client](#http-test-client) is the part you do want.)
 - Production code. Nothing here belongs in a shipped bundle; install it as a dev dependency.
 
 ## INSTALLATION
@@ -55,7 +56,7 @@ $ npm install --save-dev @zudojs/testing
 $ npm install --save-dev vitest
 ```
 
-You do not need to install anything else. `@zudojs/testing` depends on the Zudojs packages it wraps — `@zudojs/container`, `@zudojs/logger`, `@zudojs/events`, `@zudojs/messaging`, `@zudojs/queue`, `@zudojs/config`, `@zudojs/serialization` and others — so your package manager pulls them in for you.
+You do not need to install anything else. `@zudojs/testing` depends on the Zudojs packages it wraps — `@zudojs/container`, `@zudojs/logger`, `@zudojs/events`, `@zudojs/messaging`, `@zudojs/queue`, `@zudojs/config`, `@zudojs/serialization`, `@zudojs/http` and others — so your package manager pulls them in for you.
 
 > **Source of truth:** These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest @zudojs release.
 
@@ -366,9 +367,96 @@ it("keeps a Date a Date", () => {
 
 > **Good to know:** `assertSerializesCorrectly` and `assertDeserializesTo` compare structurally with `findDifference`, so `Map` and `Set` contents are checked. `assertSerializesTo` compares the JSON string by design, and `assertTypePreservesRoundTrip` uses your own checker; failures are rendered with `describeValue`, so a `BigInt` or circular value produces a readable assertion error rather than a serialisation exception.
 
+## TESTING AN HTTP APP
+
+`createHttpTestClient(target)` sends *real* HTTP requests to your app and checks the answers, in the style of supertest. You hand it your router (or server, or handler); it starts it on a free port when it needs one, and you write one chain per request: build it, send it, check it.
+
+Because the request really travels through the server, the parts you would otherwise skip — the request guard, body size limits, error mapping, headers and cookies — behave exactly as they do in production.
+
+```ts
+import { it, beforeEach, afterEach } from "vitest";
+import { createRouter, createResponseContext } from "@zudojs/http";
+import { createCleanupManager, createHttpTestClient } from "@zudojs/testing";
+import type { CleanupManager } from "@zudojs/testing";
+
+const router = createRouter();
+router.get("/users/:id", (ctx) => createResponseContext().json({ id: ctx.params.id }));
+
+let cleanup: CleanupManager;
+beforeEach(() => { cleanup = createCleanupManager(); }); // a fresh one per test
+afterEach(() => cleanup.dispose()); // closes the server the client started
+
+it("returns one user", async () => {
+  const client = createHttpTestClient(router, { cleanup });
+
+  const response = await client
+    .get("/users/7")
+    .query({ expand: "roles" })
+    .auth("token-123")               // Authorization: Bearer token-123
+    .expect(200)
+    .expect("content-type", /json/)
+    .expectJson({ id: "7" });
+
+  response.json<{ id: string }>(); // typed body: { id: "7" }
+});
+```
+
+**What you should see:** a pass. Change `.expect(200)` to `.expect(404)` and the test fails with `Expected status 404, got 200.` Nothing is sent until the chain is awaited, and it is sent once.
+
+### What you can point it at
+
+| Target | How it is reached |
+| --- | --- |
+| An `@zudojs/http` `HttpRouter`, `HttpServer`, `NodeHttpAdapter` or `HttpMiddlewarePipeline` | Served through a real `NodeHttpAdapter` on a free port. A running `HttpServer` is used where it already listens. |
+| An `@zudojs/http` `HttpHandler` function | The same, but pass `{ kind: "zudo" }`: a one-argument function is otherwise taken to be a fetch handler. |
+| A Node `http.Server` | Started on `127.0.0.1:0` if it is not listening, and closed by `close()`. A server that is already listening is used where it is and left running. |
+| A Node listener, `(req, res) => void` | Wrapped in a Node server on a free port. |
+| A fetch handler, `(request: Request) => Response`, or an object with a `fetch` method | Called in-process, no port at all. The request's `signal` aborts on timeout. Handy for `createApiFetchHandler` and `createRPCFetchHandler`. |
+| A base URL, `"http://127.0.0.1:3000/api"` | Over the network. A path prefix in the URL applies to every request. |
+
+### Building a request and checking the answer
+
+| Call | What it does | Notes |
+| --- | --- | --- |
+| `.get / .post / .put / .patch / .delete / .head / .options(path)` | Starts a request. | Or `client.request(method, path)`. A built `createTestHTTPRequest()` request works too, with `:params` filled in. |
+| `.set(name, value)` or `.set({ … })` | Sets headers. | — |
+| `.query({ … })` | Adds query parameters. | — |
+| `.send(body)` | Sets the body. | Objects as JSON, strings as text, bytes as octet-stream, `URLSearchParams` as a form. |
+| `.auth(token)` or `.auth(user, password)` | Bearer or Basic authorization. | — |
+| `.timeout(ms)` | Per-request time limit. | Default 5 s, or `{ timeout }` on the client. Rejects with a `TimeoutError`. |
+| `.expect(status)` | Checks the status code. | — |
+| `.expect(header, "value" \| /re/)` | Checks a header. | — |
+| `.expect((response) => …)` | Runs your own check. | — |
+| `.expectJson(partial)` | Checks the JSON body. | Extra object keys are allowed; arrays must match in length. |
+| `.expectText("…" \| /re/)` | Checks the body as text. | — |
+
+The awaited response has `status`, `headers`, `header(name)`, `text`, `body` (parsed for JSON types), `json<T>()`, `bytes`, `cookies` and `setCookies`. It is a test response, so `assertResponseStatus`, `assertResponseBody` and the other assertions below accept it. Redirects are not followed.
+
+> **When a check fails:** it throws an `AssertionError` from `node:assert`. The message names the request and previews the body, and the stack points at the `.expect…()` line that failed, so Vitest shows you exactly which check broke. A connection failure is a `NetworkError` and a timeout a `TimeoutError`, both from `@zudojs/errors`.
+
+### Cookies
+
+The client keeps a *cookie jar*, like a browser: cookies from `Set-Cookie` are stored in `client.cookies` and sent back on later requests, honouring `Path`, `Max-Age` and `Expires`. A login flow therefore just works:
+
+```ts
+// router.post("/login", ...) answers with .cookie("session", "abc")
+await client.post("/login").send({ user: "ada" }).expect(200);
+
+client.cookies.get("session"); // "abc"
+
+// Sent with Cookie: session=abc automatically.
+await client.get("/me").expect(200);
+```
+
+An explicit `Cookie` header replaces the jar for that one request, and `createHttpTestClient(target, { cookies: false })` turns the jar off. The jar also has `set`, `delete`, `clear` and `toJSON`.
+
+### Closing
+
+`client.close()` closes only what the client started itself. Pass `{ cleanup }` and it registers `close()` with your [cleanup manager](#cleanup-manager), as in the first example. Servers it starts are unref'd, so a forgotten `close()` cannot keep the test process alive — but close anyway, so each test starts clean. Other client options: `timeout`, `headers` (sent on every request), `kind`, `origin` and `adapter`.
+
 ## HTTP TESTING
 
-These builders make plain request and response objects in memory. Nothing listens on a port and nothing is sent over a network — you hand the request to your handler and assert on what comes back.
+These builders make plain request and response objects in memory. Nothing listens on a port and nothing is sent over a network — you hand the request to your handler and assert on what comes back. To send real requests to a running app instead, use `createHttpTestClient` (see [Testing an HTTP app](#http-test-client)); the assertions below accept its responses too.
 
 Build a request with the fluent `createTestHTTPRequest()`, or in one call with `createHTTPRequest(method, path, options)`.
 
@@ -594,6 +682,8 @@ Everything below is exported from the package root: `import { … } from "@zudoj
 | `createTestEventBus(options?)` | Started event bus that records publications. | Call `dispose()`. |
 | `createTestMessageBus(options?)` | Message bus that records dispatches. | Call `dispose()`. |
 | `createTestQueue(name, options?)` | In-memory queue that records added jobs. | Call `close()`. |
+| `createHttpTestClient(target, options?)` | Sends real HTTP requests to your app, supertest style. | Options: `cleanup`, `timeout`, `headers`, `cookies`, `kind`, `origin`, `adapter`. See [Testing an HTTP app](#http-test-client). |
+| `createHttpTestCookieJar()` | A standalone cookie jar, the one the client uses. | `get`, `set`, `delete`, `clear`, `toJSON`, `size`. |
 | `createTestHTTPRequest()` | Fluent request builder. | Finish with `build()`. |
 | `createHTTPRequest(method, path, options?)` | Request in one call. | Options: `headers`, `query`, `body`, `params`. |
 | `createTestHTTPResponse()` | Fluent response builder. | `json` / `text` / `html` set the content type. |
@@ -633,6 +723,8 @@ Everything below is exported from the package root: `import { … } from "@zudoj
 
 ### Types
 
+HTTP test client: `HttpTestClient`, `HttpTestClientOptions`, `HttpTestTarget`, `HttpTestTargetKind`, `HttpTestRequest`, `HttpTestResponse`, `HttpTestExpectation`, `HttpTestCookieJar`, `FetchHandler`, `FetchApplication` and `NodeRequestListener`.
+
 All of these are exported as types only. Mocking: `MockFn`, `SpyFn`, `SpyMethod`. Clock and cleanup: `TestClock`, `CleanupManager`, `CleanupEntry`, `CleanupManagerOptions`. Context: `TestContext`, `TestContextOptions`, `LogRecorder`, `EventRecorder`, `MessageRecorder`, `CapturedLogEntry`, `CapturedEvent`, `CapturedMessage`. Services: `TestContainer`, `TestContainerOptions`, `DependencyOverride`, `TestApplication`, `TestApplicationOptions`, `TestConfigManager`, `TestEventBus`, `RecordedEvent`, `TestMessageBus`, `RecordedMessage`, `TestQueue`, `RecordedJob`. HTTP: `TestHTTPRequest`, `HTTPRequestBuilder`, `TestHTTPResponse`, `HTTPResponseBuilder`. Logger: `SpyLogger`, `LogCall`, `Recorder`, `DerivedOptions`. Fixtures and comparison: `CreateEventOptions`, `CreateMessageOptions`, `Difference`.
 
 ## COMMON MISTAKES
@@ -643,6 +735,7 @@ All of these are exported as types only. Mocking: `MockFn`, `SpyFn`, `SpyMethod`
 - **Expecting `clock.reset()` to return to the time you started with.** It jumps to the real current time, so later expiry checks silently pass. *Fix:* call `clock.set(startTime)` with your fixed time instead.
 - **Passing the bus itself to an event assertion.** `assertEventPublished(bus, "user.created")` is a type error, and at runtime nothing matches. *Fix:* pass the recorded array — `assertEventPublished(bus.published, "user.created")`.
 - **Trusting `assertSerializesCorrectly` with a `Map` or `Set`.** It compares JSON strings, and those types stringify to `{}`, so the assertion cannot fail. *Fix:* use `assertTypePreservesRoundTrip` with your own checker, or compare with `deepEqual`.
+- **Not awaiting an HTTP test request.** `client.get("/users/7").expect(200)` on its own sends nothing and checks nothing, so the test passes whatever the app does. *Fix:* `await` every chain.
 - **Forgetting `spy.restore()` after `createSpyMethod`.** The object keeps the wrapper for the rest of the file, and later tests count calls they did not make. *Fix:* restore in `afterEach`, or register it with the cleanup manager.
 
 ## RELATED PACKAGES
@@ -651,25 +744,30 @@ All of these are exported as types only. Mocking: `MockFn`, `SpyFn`, `SpyMethod`
 - [@zudojs/logger](https://zudojs.oyinlola.site/docs/packages-logger.md) — the `Logger` interface that `createSpyLogger` implements, including levels and child loggers.
 - [@zudojs/events](https://zudojs.oyinlola.site/docs/packages-events.md) — the real event bus behind `createTestEventBus`, and the `Event` shape the fixtures build.
 - [@zudojs/queue](https://zudojs.oyinlola.site/docs/packages-queue.md) — jobs, retries and queue options for `createTestQueue`.
+- [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) — the router, server and adapter that `createHttpTestClient` serves on a free port.
 - [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) — the error classes whose `code` and `metadata` the error assertions read.
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/testing` exports from its package root at v1.1.2 — **105** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/testing` exports from its package root at v1.1.2 — **124** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 105 exports**
+**Show all 124 exports**
 
 Classes (1)
 
 `InMemoryTestStorage`
 
-Functions (67)
+Functions (70)
 
-`assertBadRequest` `assertCreated` `assertDeserializesTo` `assertErrorCode` `assertErrorMetadata` `assertErrorType` `assertEventNotPublished` `assertEventPayload` `assertEventPublished` `assertEventType` `assertMessageDispatched` `assertMessageNotDispatched` `assertNoContent` `assertNotFound` `assertOK` `assertRecordedEventType` `assertRejects` `assertResponseBody` `assertResponseBodyContains` `assertResponseHeader` `assertResponseStatus` `assertSerializesCorrectly` `assertSerializesTo` `assertServerError` `assertThrows` `assertTypePreservesRoundTrip` `badRequestResponse` `createCleanupManager` `createdResponse` `createEvent` `createEventInput` `createEventRecorder` `createEvents` `createHTTPRequest` `createHTTPResponse` `createLogRecorder` `createMessage` `createMessageInput` `createMessageRecorder` `createMessages` `createMockFn` `createRecordingLogger` `createSpyFn` `createSpyLogger` `createSpyMethod` `createStub` `createStubClass` `createTestApplication` `createTestClock` `createTestConfigManager` `createTestContainer` `createTestContext` `createTestEventBus` `createTestHTTPRequest` `createTestHTTPResponse` `createTestMessageBus` `createTestQueue` `deepEqual` `deepMatches` `describeValue` `findDifference` `jsonResponse` `mergeContext` `mergeLoggerContext` `noContentResponse` `notFoundResponse` `serverErrorResponse`
+`assertBadRequest` `assertCreated` `assertDeserializesTo` `assertErrorCode` `assertErrorMetadata` `assertErrorType` `assertEventNotPublished` `assertEventPayload` `assertEventPublished` `assertEventType` `assertMessageDispatched` `assertMessageNotDispatched` `assertNoContent` `assertNotFound` `assertOK` `assertRecordedEventType` `assertRejects` `assertResponseBody` `assertResponseBodyContains` `assertResponseHeader` `assertResponseStatus` `assertSerializesCorrectly` `assertSerializesTo` `assertServerError` `assertThrows` `assertTypePreservesRoundTrip` `badRequestResponse` `createCleanupManager` `createdResponse` `createEvent` `createEventInput` `createEventRecorder` `createEvents` `createHTTPRequest` `createHTTPResponse` `createHttpTestClient` `createHttpTestCookieJar` `createLogRecorder` `createMessage` `createMessageInput` `createMessageRecorder` `createMessages` `createMockFn` `createRecordingLogger` `createSpyFn` `createSpyLogger` `createSpyMethod` `createStub` `createStubClass` `createTestApplication` `createTestClock` `createTestConfigManager` `createTestContainer` `createTestContext` `createTestEventBus` `createTestHTTPRequest` `createTestHTTPResponse` `createTestMessageBus` `createTestQueue` `deepEqual` `deepMatches` `describeValue` `findDifference` `findPartialDifference` `jsonResponse` `mergeContext` `mergeLoggerContext` `noContentResponse` `notFoundResponse` `serverErrorResponse`
 
-Interfaces (36)
+Interfaces (43)
 
-`CapturedEvent` `CapturedLogEntry` `CapturedMessage` `CleanupEntry` `CleanupManager` `CleanupManagerOptions` `CreateEventOptions` `CreateMessageOptions` `DependencyOverride` `DerivedOptions` `Difference` `EventRecorder` `HTTPRequestBuilder` `HTTPResponseBuilder` `LogRecorder` `MessageRecorder` `MockFn` `RecordedEvent` `RecordedJob` `RecordedMessage` `Recorder` `SpyFn` `SpyMethod` `TestApplication` `TestApplicationOptions` `TestClock` `TestConfigManager` `TestContainer` `TestContainerOptions` `TestContext` `TestContextOptions` `TestEventBus` `TestHTTPRequest` `TestHTTPResponse` `TestMessageBus` `TestQueue`
+`CapturedEvent` `CapturedLogEntry` `CapturedMessage` `CleanupEntry` `CleanupManager` `CleanupManagerOptions` `CreateEventOptions` `CreateMessageOptions` `DependencyOverride` `DerivedOptions` `Difference` `EventRecorder` `FetchApplication` `HTTPRequestBuilder` `HTTPResponseBuilder` `HttpTestClient` `HttpTestClientOptions` `HttpTestCookieJar` `HttpTestRequest` `HttpTestRequestSummary` `HttpTestResponse` `LogRecorder` `MessageRecorder` `MockFn` `RecordedEvent` `RecordedJob` `RecordedMessage` `Recorder` `SpyFn` `SpyMethod` `TestApplication` `TestApplicationOptions` `TestClock` `TestConfigManager` `TestContainer` `TestContainerOptions` `TestContext` `TestContextOptions` `TestEventBus` `TestHTTPRequest` `TestHTTPResponse` `TestMessageBus` `TestQueue`
+
+Type aliases (9)
+
+`FetchHandler` `HttpTestAdapterOptions` `HttpTestBody` `HttpTestExpectation` `HttpTestQuery` `HttpTestQueryValue` `HttpTestTarget` `HttpTestTargetKind` `NodeRequestListener`
 
 Constants (1)
 

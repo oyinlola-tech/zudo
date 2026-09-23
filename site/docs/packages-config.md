@@ -1070,7 +1070,7 @@ Re-exports from @zudojs/errors
 
 ConfigurationError, createConfigurationError, isConfigurationError, missingConfigurationError, invalidConfigurationError
 
-[← @zudojs/cli](https://zudojs.oyinlola.site/docs/packages-cli.md) [@zudojs/constants →](https://zudojs.oyinlola.site/docs/packages-constants.md)
+[← zudojs-cli](https://zudojs.oyinlola.site/docs/packages-cli.md) [@zudojs/constants →](https://zudojs.oyinlola.site/docs/packages-constants.md)
 
 ## COMPLETE EXPORT INDEX
 

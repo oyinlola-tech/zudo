@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/api — Transport-agnostic API layer"
-description: "@zudojs/api reference: transport-agnostic operations, interceptors, result types and execution contexts for ZudoJS apps."
+description: "@zudojs/api for ZudoJS: define an operation once and serve it over HTTP, RPC, queues and the CLI with shared validation and interceptors."
 source: https://zudojs.oyinlola.site/docs/packages-api
 ---
 
@@ -8,7 +8,7 @@ v1.1.0
 
 # @zudojs/api
 
-Define your application's operations once, then run them from HTTP, a CLI, a queue, or a test with the same validation, timeouts, and interceptors.
+Define your application's operations once, then run them over HTTP, RPC, a queue, the CLI, or a test with the same validation, timeouts, and interceptors.
 
 OPERATIONS INTERCEPTORS TRANSPORT-AGNOSTIC
 
@@ -18,7 +18,7 @@ Most apps end up with business logic buried inside HTTP route handlers. When you
 
 `@zudojs/api` fixes this by giving you an *operation*: a named function with a declared input, a declared output, and a handler. An *executor* runs operations for you and always returns a result object instead of throwing. A *registry* stores operations by name so a transport can look them up.
 
-The package knows nothing about HTTP. It never sends a response or reads a header. Whatever calls it (a Zudo HTTP adapter, a CLI command, your test) gets back a plain `{ ok, data }` or `{ ok, error }` object and decides what to do with it.
+The executor itself knows nothing about HTTP. It never sends a response or reads a header; whatever calls it gets back a plain `{ ok, data }` or `{ ok, error }` object. *Bindings* connect that core to real transports: one operation can be served over HTTP (`createApiFetchHandler`), RPC (`registerApiRpcProcedures`), a queue (`bindApiQueue`) and the command line (`runApiCli`), with the same errors everywhere. See [Bindings](#bindings).
 
 When you need it
 
@@ -34,7 +34,7 @@ When you don't
 
 ## INSTALLATION
 
-Install the package. Its error classes come from `@zudojs/errors`, which is pulled in automatically as a regular dependency.
+Install the package. Its error classes come from `@zudojs/errors`, and the bindings use `@zudojs/rpc`, `@zudojs/queue`, `@zudojs/openapi` and `@zudojs/serialization`; all are pulled in automatically as regular dependencies. `@zudojs/http` is not one of them: it mounts this package, not the other way round.
 
 ```bash
 $ npm install @zudojs/api
@@ -97,7 +97,7 @@ An *operation* is one thing your app can do, such as "get a user" or "create an 
 | input | Schema used to validate input before the handler runs. | Optional. Must be a @zudojs/schema schema (or any safeParse schema) or a Standard Schema; anything else throws in defineOperation. See [Validation](#validation). |
 | output | Schema used to validate what the handler returns. | Optional. Same rule as input. |
 | timeout | Deadline in milliseconds. | Optional. Default 30 000. Must be a positive integer up to 3 600 000. |
-| metadata | Descriptive extras: description, tags, version, deprecated, idempotent, timeout. | Optional. Frozen once registered. tags powers registry.findByTag(). |
+| metadata | Descriptive extras: description, tags, version, deprecated, idempotent, timeout, and http. | Optional. Frozen once registered. tags powers registry.findByTag(). http: { method, path } sets the HTTP route, e.g. { method: "GET", path: "/users/:id" }; the default is POST /<name>. It is checked by defineOperation. |
 
 This operation uses a short timeout and tags. It is the shape used by the package's own README test.
 
@@ -261,7 +261,7 @@ if (!result.ok) {
 
 To send a specific error to the client, throw an `APIError` instead. Those pass through untouched. `createAPIError(message, { statusCode, expose })` builds one quickly, and classes such as `APIAuthenticationError` (401) and `APIAuthorizationError` (403) take just a message.
 
-The transport then maps the result onto its protocol. This is the pattern from the README:
+The transport then maps the result onto its protocol. The [bindings](#bindings) do this for you; if you call the executor from your own code, this is the pattern:
 
 ```ts
 if (result.ok) {
@@ -386,6 +386,187 @@ try {
 | unregister(name) | Removes one; returns true if it existed. | Throws if frozen. |
 | freeze() / isFrozen() | Locks the registry / reports the lock. | Cannot be undone. |
 
+## BINDINGS: ONE OPERATION, MANY TRANSPORTS
+
+A *binding* connects your operations to one way of calling them. The package ships four, and you can use any mix of them on the same registry:
+
+| Transport | Function | What the caller does |
+| --- | --- | --- |
+| HTTP | createApiFetchHandler(registry, options) | Sends POST /users.create (or the route you chose) with a JSON body. |
+| RPC | registerApiRpcProcedures(server, registry, options) | Calls client.call("users.create", input) through [@zudojs/rpc](https://zudojs.oyinlola.site/docs/packages-rpc.md). |
+| Queue | bindApiQueue(queue, registry, options) | Adds a job named after the operation to a [@zudojs/queue](https://zudojs.oyinlola.site/docs/packages-queue.md) queue. |
+| CLI | runApiCli(registry, argv, options) | Runs app users.create --name Ann in a terminal. |
+
+Every binding behaves the same way. It runs the call through the `APIExecutor` you pass as `executor`, so your interceptors apply on every transport. It validates input with the operation's schema. It sets `TransportContextKey` on the context to `"http"`, `"rpc"`, `"queue"` or `"cli"`, so a handler can tell where a call came from. And it hands every failure the caller was not allowed to see to `onInternalError(error, requestId)`, which is where you log it.
+
+The `state` option builds `context.state` from whatever the transport hands over: the `Request` for HTTP, the `RPCContext` for RPC, the `Job` for a queue, the parsed invocation for the CLI. Throw an `APIError` there, such as `APIAuthenticationError`, to refuse the call.
+
+The examples below share this setup. `metadata.http` is optional: it picks the HTTP method and path. Without it, an operation is served at `POST /<operation name>`.
+
+```ts
+import { objectSchema, stringSchema } from "@zudojs/schema";
+import { defineOperation, APIOperationRegistry, APIExecutor } from "@zudojs/api";
+
+const getUser = defineOperation({
+  name: "users.get",
+  input: objectSchema({ id: stringSchema() }),
+  metadata: { http: { method: "GET", path: "/users/:id" } }, // default: POST /users.get
+  handler: async (input) => ({ id: input.id, name: "Alice" }),
+});
+
+const registry = new APIOperationRegistry();
+registry.register(getUser);
+registry.freeze();
+
+const executor = new APIExecutor({ interceptors: [] }); // your interceptors go here
+```
+
+### HTTP
+
+`createApiFetchHandler` returns a *fetch handler*: a function that takes a web-standard `Request` and returns a `Response`. Any server that speaks the Fetch API can run it, including [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md), `Bun.serve` and `Deno.serve`. This package never imports `@zudojs/http`; `@zudojs/http` mounts it.
+
+```ts
+import { createApiFetchHandler } from "@zudojs/api";
+import { createRouter, mountFetchHandler } from "@zudojs/http";
+
+const router = createRouter();
+
+// Serves GET /api/users/:id. No basePath: mountFetchHandler strips "/api" first.
+mountFetchHandler(router, "/api", createApiFetchHandler(registry, { executor }));
+```
+
+```bash
+$ curl http://127.0.0.1:3000/api/users/u1
+{"ok":true,"data":{"id":"u1","name":"Alice"}}
+```
+
+> **Watch out**
+>
+> Do not set basePath when you mount on @zudojs/http. mountFetchHandler already removes the mount path from the URL, so a basePath: "/api" as well would make the handler look for /api/api/users/u1 and answer 404. Use basePath only when the server hands the handler the full URL, as Bun.serve({ fetch: handle }) does.
+
+Where input comes from: `GET` and `DELETE` routes read the query string, so every value arrives as a string (use a coercing schema such as `coerceNumberSchema()` for numbers). `POST`, `PUT` and `PATCH` read a JSON body of at most `maxBodyBytes` (1 MiB by default). Path parameters are merged over either one and win. The request id comes from a safe `x-request-id` header and is echoed back, and the call runs under `request.signal`, so a client that disconnects cancels it.
+
+### What a failure looks like
+
+Every binding reports a failure in the same client-safe shape, `APIWireError`: `{ code, message, statusCode, requestId, issues? }`. Over HTTP it is the body `{ "ok": false, "error": { … } }`, sent with the error's status. The message is the error's own only when the error is `expose: true`; otherwise it is the fixed `"An internal error occurred."`. Stack traces, causes and metadata never leave the process.
+
+| What went wrong | HTTP status | error.code and message |
+| --- | --- | --- |
+| Input failed the schema | 422 | ERR_API_VALIDATION, with issues such as ["a: invalid"]. |
+| The handler threw a domain error, e.g. APIConflictError("Seat already taken.") | Its own, e.g. 409 | Its own code and message: ERR_API_CONFLICT, "Seat already taken." |
+| The handler threw anything else | 500 | ERR_API_INTERNAL, "An internal error occurred." The real error goes to onInternalError. |
+| No operation at that method and path | 404 | ERR_API_NOT_FOUND. A known path with the wrong method gets 405 and an Allow header. |
+| The handler ran past its timeout | 504 | ERR_API_TIMEOUT, "An internal error occurred." |
+
+A body that is too large, not JSON, or unreadable gets 413, 415 or 400. The same failures reach the other transports as their own kind of error: an RPC caller gets a typed RPC error, a queue job fails, and the CLI exits with a non-zero code.
+
+### RPC
+
+`registerApiRpcProcedures` turns each operation into an [@zudojs/rpc](https://zudojs.oyinlola.site/docs/packages-rpc.md) procedure on a server (or procedure registry). Build `state` from `rpc.auth`, the identity the transport verified, never from frame metadata, which the caller writes.
+
+```ts
+import { RPCServer, RPCClient, createRPCMemoryTransport } from "@zudojs/rpc";
+import { registerApiRpcProcedures } from "@zudojs/api";
+
+const server = new RPCServer();
+registerApiRpcProcedures(server, registry, {
+  executor,
+  state: (rpc) => ({ user: rpc.auth?.userId }),
+});
+
+const client = new RPCClient(createRPCMemoryTransport(server));
+console.log(await client.call("users.get", { id: "u1" })); // { id: "u1", name: "Alice" }
+```
+
+Procedure names default to the operation name, which must then be a valid RPC name such as `"users.get"`; pass `procedureName` to map other names. API errors become their RPC equivalents (`RPC_VALIDATION_ERROR` with issues, `RPC_UNAUTHENTICATED`, `RPC_FORBIDDEN`, `RPC_TIMEOUT`, …), and a domain error keeps its own code, such as `ERR_API_CONFLICT`. To serve the same server over HTTP, mount `createRPCFetchHandler(server)` with `mountFetchHandler(router, "/rpc", …)`.
+
+### Queues
+
+`bindApiQueue` makes a [@zudojs/queue](https://zudojs.oyinlola.site/docs/packages-queue.md) queue run operations as background jobs. The job name is the operation name and `job.data` is the input.
+
+```ts
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+import { bindApiQueue } from "@zudojs/api";
+
+const queue = createInMemoryQueue(createQueueName("operations"));
+bindApiQueue(queue, registry, { executor });
+
+await queue.add("users.get", { id: "u1" }, { attempts: 1 });
+```
+
+Success completes the job with the operation's output. A failure throws an `APIError` carrying the client-safe message, so the queue retries and dead-letters the job as usual. Validation failures are retried too, which cannot help, so enqueue input you have not checked with `attempts: 1`.
+
+### CLI
+
+`runApiCli` turns a command line into an operation call, prints the output as JSON, and returns an exit code. Put it in a small executable file:
+
+```ts
+#!/usr/bin/env node
+import { runApiCli } from "@zudojs/api";
+
+const controller = new AbortController();
+process.once("SIGINT", () => controller.abort());
+
+process.exitCode = await runApiCli(registry, process.argv.slice(2), {
+  executor,
+  programName: "app",
+  signal: controller.signal,
+});
+```
+
+```bash
+$ app users.get --id u1
+{
+  "id": "u1",
+  "name": "Alice"
+}
+$ app users.create --json '{"name":"Ann"}' --address.city Paris --admin
+$ app --help   # lists the operations
+```
+
+The operation name comes first (or pass `operation` for a single-purpose program). `--field value` and `--field=value` set fields; kebab-case becomes camelCase, dots nest, repeated flags collect into an array, `--flag` is `true` and `--no-flag` is `false`. Values that look like JSON (numbers, `true`, `null`, `{…}`, `[…]`) are parsed; anything else stays a string. On failure the `{ ok: false, error }` body goes to stderr and the exit code tells a script what kind of failure it was:
+
+| Exit code | APICliExitCode | When |
+| --- | --- | --- |
+| 0 | OK | The operation succeeded. |
+| 65 | INVALID_INPUT | Input failed validation (a 400 or 422). |
+| 64 | USAGE | Bad command line: unknown operation or malformed option. |
+| 75 | TIMEOUT | The operation timed out. |
+| 1 | FAILURE | Any other client error, such as a 409 conflict. |
+| 77 | PERMISSION | Not signed in or not allowed (401, 403). |
+| 69 | UNAVAILABLE | Rate limited or unavailable (429, 503); try again later. |
+| 70 | INTERNAL | Internal error. |
+| 130 | CANCELLED | Cancelled through the abort signal (Ctrl+C). |
+
+## ROUTES AND OPENAPI
+
+The HTTP binding works out a route for every operation. You can read that route table yourself, for logging, for tests, or to document the API.
+
+`describeApiRoutes(operations, { basePath })` returns one frozen `APIOperationRoute` per operation: `operationId`, `method`, `path`, `pathParams`, `inputSource` (`"query"` or `"body"`), the input and output schemas, and the description, tags, deprecation and version from `metadata`. It throws on an invalid route or two operations that claim the same one, which is the check `createApiFetchHandler` runs at startup too.
+
+```ts
+import { describeApiRoutes } from "@zudojs/api";
+
+for (const route of describeApiRoutes(registry, { basePath: "/api" })) {
+  console.log(route.method, route.path, route.inputSource);
+}
+// GET /api/users/:id query
+```
+
+`toOpenAPIRouteDescriptors(operations, { basePath })` turns the same routes into [@zudojs/openapi](https://zudojs.oyinlola.site/docs/packages-openapi.md) route descriptors, so one call documents exactly what the fetch handler serves:
+
+```ts
+import { createOpenAPIDocumentFromRoutes } from "@zudojs/openapi";
+import { toOpenAPIRouteDescriptors } from "@zudojs/api";
+
+const document = createOpenAPIDocumentFromRoutes(
+  toOpenAPIRouteDescriptors(registry, { basePath: "/api" }),
+  { info: { title: "Users", version: "1.0.0" } },
+);
+```
+
+Here `basePath` is right even when you mount with `mountFetchHandler`: the document should show the full public path. The input schema becomes `query` (for `GET` and `DELETE`) or `body`, with path fields moved to `params`. The responses document 200 with the `{ ok: true, data }` envelope around the output schema, and 422, 404, 409, 500 and 504 with the `{ ok: false, error }` body. Only `@zudojs/schema` schemas are converted; with another schema library the input stays undocumented and `data` is `unknown`.
+
 ## API REFERENCE
 
 Everything below is importable from `"@zudojs/api"`.
@@ -405,6 +586,13 @@ Everything below is importable from `"@zudojs/api"`.
 | createNoopInterceptor() | Interceptor that only calls next(). |  |
 | normalizeAPIError(error, operationName?) | Turns any thrown value into an APIError. | Non-API errors become APIInternalError with the original on cause. toJSON() includes cause (message and stack), so serialise selected fields for clients. |
 | createAPIError(message, options?) / isAPIError(value) | Build or detect a generic APIError. | Re-exported from @zudojs/errors. |
+| createApiFetchHandler(operations, options?) | Serves operations as (request: Request) => Promise<Response>. | Options: executor, state, onInternalError, basePath, maxBodyBytes, serializer. Throws at creation on invalid or conflicting routes. |
+| registerApiRpcProcedures(target, operations, options?) / createApiRpcProcedure(op, options?) | Expose operations as @zudojs/rpc procedures. | Returns the registered names. Extra option: procedureName. apiErrorToRPCError(error, procedure) is the error mapping. |
+| bindApiQueue(queue, operations, options?) / createApiQueueProcessor(op, options?) | Run operations as @zudojs/queue jobs. | Job name = operation name; job.data = input. |
+| runApiCli(operations, argv, options?) / parseApiCliArgs(argv, expectOperation) | Run an operation from a command line; resolves to an exit code. | Options add io, signal, operation, programName. |
+| describeApiRoutes(operations, { basePath? }) / resolveApiRoute(op, basePath?) | The HTTP route of every operation / of one. | Throws on invalid or conflicting routes. |
+| toOpenAPIRouteDescriptors(operations, { basePath? }) / toOpenAPIRouteDescriptor(route) | Routes as @zudojs/openapi descriptors. | Feed to createOpenAPIDocumentFromRoutes. apiSuccessBodySchema / apiWireErrorBodySchema build the envelope schemas. |
+| toApiWireResult(result, requestId) / toApiWireError(error, requestId) | Client-safe form of a result or error. | What every binding sends. Use them when you call the executor yourself. |
 
 ### Classes
 
@@ -424,6 +612,9 @@ Everything below is importable from `"@zudojs/api"`.
 | APIInterceptor / APIExecutionContext | Interceptor contract and the object it receives. | input is writable; result is set after next(). |
 | APIExecutorOptions | Options object for new APIExecutor(). |  |
 | APIResult<T> / APISuccess<T> / APIFailure | Result union and its two halves. |  |
+| APIWireResult<T> / APIWireError | The client-safe result every binding sends. | { code, message, statusCode, requestId, issues? }. |
+| APIOperationRoute / APIOperationHttpOptions | One operation's HTTP route / the metadata.http field. | Also APIHttpMethod, APIRouteInputSource, DescribeApiRoutesOptions. |
+| APIBindingOptions and each binding's options | APIFetchHandlerOptions, APIRpcBindingOptions, APIQueueBindingOptions, APICliOptions. | All share executor, state, onInternalError. |
 | APIErrorOptions | Options for createAPIError. | statusCode, code, expose, cause, endpoint, method. |
 
 ### Errors
@@ -453,6 +644,11 @@ All are re-exported from `@zudojs/errors` and extend `APIError`. Status codes ar
 | MAX_VALIDATION_ISSUES / MAX_VALIDATION_ISSUE_LENGTH | 20 issues / 200 characters each. | Caps on client-facing validation errors. |
 | MAX_OPERATION_NAME_LENGTH / MAX_REQUEST_ID_LENGTH | 128 characters each. |  |
 | RequestIdContextKey, CorrelationIdContextKey, TenantIdContextKey, UserIdContextKey, StartTimeContextKey | Built-in context keys. | All strings except StartTimeContextKey (number). |
+| TransportContextKey | Which binding ran the call. | "http" \| "rpc" \| "queue" \| "cli"; unset when you call the executor yourself. |
+| APICliExitCode | Exit codes from runApiCli. | See the table in [CLI](#bindings-cli). |
+| API_INTERNAL_ERROR_MESSAGE | "An internal error occurred." | Sent in place of any non-exposed message. |
+| DEFAULT_API_MAX_BODY_BYTES | 1 048 576 (1 MiB). | Default maxBodyBytes for the fetch handler. |
+| API_RPC_TIMEOUT_MARGIN_MS | 1 000 ms. | Extra time the RPC procedure allows, so the operation's own timeout is what a slow call reports. |
 
 ## COMMON MISTAKES
 
@@ -461,12 +657,17 @@ All are re-exported from `@zudojs/errors` and extend `APIError`. Status codes ar
 - **Sending `result.error.message` to every client.** Internal errors carry a generic message, but only if you honour `expose`. Send the message when `expose` is true, otherwise a fixed string.
 - **Using `timeout: 0` to "disable" the deadline.** `defineOperation` throws a `RangeError`. Pick a real number up to one hour.
 - **Building a context key as a plain object.** `{ name: "x", type: undefined }` does not satisfy `APIContextKey`; it lacks the `id` symbol. Use `createContextKey<T>("x")`.
+- **Setting `basePath` and also mounting under a prefix.** `mountFetchHandler(router, "/api", …)` already strips `/api`, so a `basePath: "/api"` on `createApiFetchHandler` makes every route 404. Set one or the other.
+- **Enqueueing unchecked input with retries.** A job whose input fails validation is retried like any failure and can never succeed. Add it with `attempts: 1`, or validate before enqueueing.
 - **Registering the same name twice.** Usually a module imported from two paths. The registry throws `APIDuplicateOperationError`; register once at startup, then `freeze()`.
 
 ## RELATED PACKAGES
 
 - [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) — the source of every `APIError` class, `ErrorCode`, and `BaseError.toJSON()`.
-- [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) — the HTTP server. Reach for it when you need routes; call the executor from inside a route handler.
+- [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) — the HTTP server. Mount `createApiFetchHandler` on a router with `mountFetchHandler`.
+- [@zudojs/rpc](https://zudojs.oyinlola.site/docs/packages-rpc.md) — serves operations to other services through `registerApiRpcProcedures`.
+- [@zudojs/queue](https://zudojs.oyinlola.site/docs/packages-queue.md) — runs operations as background jobs through `bindApiQueue`.
+- [@zudojs/openapi](https://zudojs.oyinlola.site/docs/packages-openapi.md) — turns `toOpenAPIRouteDescriptors` into an OpenAPI document.
 - [@zudojs/schema](https://zudojs.oyinlola.site/docs/packages-schema.md) — Zudo's own schema library; its schemas are validated natively as `input` / `output`.
 - [@zudojs/cqrs](https://zudojs.oyinlola.site/docs/packages-cqrs.md) — when you want commands and queries split into separate buses on top of operations.
 - [@zudojs/permissions](https://zudojs.oyinlola.site/docs/packages-permissions.md) — authorization rules you can call from an interceptor. This package has no policy system of its own.
@@ -481,26 +682,26 @@ All are re-exported from `@zudojs/errors` and extend `APIError`. Status codes ar
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/api` exports from its package root at v1.1.1 — **60** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/api` exports from its package root at v1.1.1 — **102** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 60 exports**
+**Show all 102 exports**
 
 Classes (16)
 
 `APIAuthenticationError` `APIAuthorizationError` `APIConflictError` `APIDuplicateOperationError` `APIError` `APIExecutor` `APIIdempotencyError` `APIInternalError` `APINotFoundError` `APIOperationNotFoundError` `APIOperationRegistry` `APIRateLimitError` `APITimeoutError` `APIUnavailableError` `APIValidationError` `APIVersionError`
 
-Functions (15)
+Functions (30)
 
-`apiFailure` `apiSuccess` `createAPIContext` `createAPIError` `createContextKey` `createNoopInterceptor` `defineOperation` `isAPIError` `isApiFailure` `isAPISchema` `isApiSuccess` `isValidRequestId` `normalizeAPIError` `normalizeRequestId` `resolveOperationTimeout`
+`apiErrorToRPCError` `apiFailure` `apiSuccess` `apiSuccessBodySchema` `bindApiQueue` `createAPIContext` `createAPIError` `createApiFetchHandler` `createApiQueueProcessor` `createApiRpcProcedure` `createContextKey` `createNoopInterceptor` `defineOperation` `describeApiRoutes` `isAPIError` `isApiFailure` `isAPISchema` `isApiSuccess` `isValidRequestId` `normalizeAPIError` `normalizeRequestId` `parseApiCliArgs` `registerApiRpcProcedures` `resolveApiRoute` `resolveOperationTimeout` `runApiCli` `toApiWireError` `toApiWireResult` `toOpenAPIRouteDescriptor` `toOpenAPIRouteDescriptors`
 
-Interfaces (12)
+Interfaces (24)
 
-`APIContext` `APIContextKey` `APIErrorOptions` `APIExecutionContext` `APIExecutorOptions` `APIFailure` `APIInterceptor` `APIOperation` `APIOperationMetadata` `APISchemaIssue` `APISuccess` `DefineOperationOptions`
+`APIBindingOptions` `APICliInvocation` `APICliIO` `APICliOptions` `APIContext` `APIContextKey` `APIErrorOptions` `APIExecutionContext` `APIExecutorOptions` `APIFailure` `APIFetchHandlerOptions` `APIInterceptor` `APIOperation` `APIOperationHttpOptions` `APIOperationMetadata` `APIOperationRoute` `APIQueueTarget` `APIRpcBindingOptions` `APIRpcProcedureTarget` `APISchemaIssue` `APISuccess` `APIWireError` `DefineOperationOptions` `DescribeApiRoutesOptions`
 
-Type aliases (4)
+Type aliases (13)
 
-`AnyAPIOperation` `APIHandler` `APIResult` `APISchemaResult`
+`AnyAPIOperation` `APICliExitCodeValue` `APICliParseResult` `APIHandler` `APIHttpMethod` `APIOperationSource` `APIQueueBindingOptions` `APIResult` `APIRouteInputSource` `APISchemaResult` `APITransportKind` `APIWireResult` `ToOpenAPIRouteDescriptorsOptions`
 
-Constants (13)
+Constants (19)
 
-`CorrelationIdContextKey` `DEFAULT_OPERATION_TIMEOUT` `ErrorCode` `MAX_INTERCEPTORS` `MAX_OPERATION_NAME_LENGTH` `MAX_OPERATION_TIMEOUT` `MAX_REQUEST_ID_LENGTH` `MAX_VALIDATION_ISSUE_LENGTH` `MAX_VALIDATION_ISSUES` `RequestIdContextKey` `StartTimeContextKey` `TenantIdContextKey` `UserIdContextKey`
+`API_INTERNAL_ERROR_MESSAGE` `API_RPC_TIMEOUT_MARGIN_MS` `APICliExitCode` `apiWireErrorBodySchema` `CorrelationIdContextKey` `DEFAULT_API_MAX_BODY_BYTES` `DEFAULT_OPERATION_TIMEOUT` `ErrorCode` `MAX_INTERCEPTORS` `MAX_OPERATION_NAME_LENGTH` `MAX_OPERATION_TIMEOUT` `MAX_REQUEST_ID_LENGTH` `MAX_VALIDATION_ISSUE_LENGTH` `MAX_VALIDATION_ISSUES` `RequestIdContextKey` `StartTimeContextKey` `TenantIdContextKey` `TransportContextKey` `UserIdContextKey`

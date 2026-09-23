@@ -1,6 +1,6 @@
 ---
 title: "@zudojs/rpc — Remote Procedure Call Documentation"
-description: "Complete documentation for @zudojs/rpc — transport-agnostic RPC infrastructure with typed procedures, middleware, and reliability utilities."
+description: "@zudojs/rpc docs for ZudoJS: typed procedures, middleware, retries, typed errors, and built-in in-memory and HTTP (Fetch API) transports."
 source: https://zudojs.oyinlola.site/docs/packages-rpc
 ---
 
@@ -18,12 +18,12 @@ A **remote procedure call** (RPC) is a function call that runs somewhere else. Y
 
 Two things make that work. A **procedure** is the function on the far side: a name, a handler, and some options. A **transport** is the pipe that carries a request over and a response back.
 
-This package gives you both halves plus everything in between — validation, middleware, timeouts, retries, typed errors. It never opens a socket itself. You supply the transport, so the same procedures can be served over HTTP today and a WebSocket tomorrow without touching a handler.
+This package gives you both halves plus everything in between — validation, middleware, timeouts, retries, typed errors. Two transports ship with it: an **in-memory** one that hands the request to a server in the same process, and an **HTTP** one built on the web-standard Fetch API (a client transport plus a server handler). The server does not care which one carried a call, so the same procedures run in memory in your tests and over HTTP in production without touching a handler. Anything else — a message broker, a socket — is a transport you write yourself. There is no WebSocket transport.
 
 When you need it
 
 - One service calls another service's functions.
-- The same call must work over HTTP, a socket, or in tests.
+- The same call must work over HTTP in production and in memory in tests.
 - Auth, tracing or rate limits belong on every call, in one place.
 - Failures must arrive as typed errors, not strings.
 
@@ -40,7 +40,7 @@ When you don't
 $ npm install @zudojs/rpc
 ```
 
-It pulls in `@zudojs/errors`, `@zudojs/schema`, `@zudojs/constants` and `@zudojs/types` on its own. Install `@zudojs/schema` yourself only if you write schemas in your own code.
+It pulls in `@zudojs/errors`, `@zudojs/schema`, `@zudojs/constants`, `@zudojs/types` and `@zudojs/serialization` (the frame codec) on its own. Install `@zudojs/schema` yourself only if you write schemas in your own code.
 
 > These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest @zudojs release.
 
@@ -48,11 +48,15 @@ It pulls in `@zudojs/errors`, `@zudojs/schema`, `@zudojs/constants` and `@zudojs
 
 ## QUICK START
 
-The smallest complete setup is a server holding one procedure, a transport, and a client. This transport hands the request straight to the server in the same process, which is how the package's own tests run.
+The smallest complete setup is a server holding one procedure, a transport, and a client. `createRPCMemoryTransport` hands the request straight to the server in the same process, which is how the package's own tests run.
 
 ```ts
-import { RPCServer, RPCClient, createRPCProcedure } from "@zudojs/rpc";
-import type { RPCTransport } from "@zudojs/rpc";
+import {
+  RPCServer,
+  RPCClient,
+  createRPCProcedure,
+  createRPCMemoryTransport,
+} from "@zudojs/rpc";
 
 // 1. The far side: a server holding one named procedure.
 const server = new RPCServer();
@@ -66,12 +70,8 @@ server.register(
   ),
 );
 
-// 2. The pipe. A real one would send bytes over a network.
-const transport: RPCTransport = {
-  async send(request) {
-    return server.handle(request);
-  },
-};
+// 2. The pipe. This one stays in the process; the HTTP one crosses a network.
+const transport = createRPCMemoryTransport(server);
 
 // 3. The near side: call it like a local function.
 const client = new RPCClient(transport);
@@ -87,7 +87,7 @@ console.log(user);
 
 **What you should see:** `{ id: "123", name: "Alice" }`. The client built a request with a fresh id, the transport carried it, the server found the procedure, ran the handler, and the client unwrapped the result.
 
-> **Tip:** swap step 2 for a transport that does a `fetch()` and nothing else changes.
+> **Tip:** swap step 2 for `createRPCHttpTransport({ url })` and the same call goes over HTTP. Nothing else changes. See [Over HTTP](#http-transport).
 
 ## PROCEDURES
 
@@ -128,38 +128,129 @@ The five options, in plain terms:
 
 ## TRANSPORTS
 
-A **transport** is an object with one required method: `send(request, options?)`. It takes an `RPCRequest`, gets it to the server however it likes, and resolves with the `RPCResponse` that comes back. An optional `close()` releases the connection.
+A **transport** is an object with one required method: `send(request, options?)`. It takes an `RPCRequest`, gets it to the server however it likes, and resolves with the `RPCResponse` that comes back. `options.signal` aborts the call and `options.timeout` is the deadline in milliseconds. An optional `close()` releases the connection.
 
-The package ships no transport implementations, deliberately: writing one is a dozen lines, and it keeps the RPC layer free of any network dependency. This one posts each request as JSON.
+You rarely write one. The package ships three pieces, and the client and server never know which one is in use:
+
+| Function | Side | Use it for |
+| --- | --- | --- |
+| createRPCMemoryTransport(server, options?) | Client | Tests, and modular monoliths where caller and server share a process. |
+| createRPCHttpTransport({ url, … }) | Client | Calling a server in another process over HTTP, with the global `fetch`. |
+| createRPCFetchHandler(server, options?) | Server | Answering those HTTP calls. It is a web-standard `(request: Request) => Promise<Response>`. |
+
+### In memory
+
+The memory transport calls `server.handle()` directly. It still behaves like a network in one important way: by default every request and response is **round-tripped through JSON**. The server never shares objects with the caller, and a value that could not cross a real network (a `BigInt` result, a circular object) fails here too, so your tests catch it before production does.
 
 ```ts
-import type {
-  RPCTransport,
-  RPCRequest,
-  RPCResponse,
-} from "@zudojs/rpc";
+import { RPCClient, createRPCMemoryTransport } from "@zudojs/rpc";
 
-function createHttpTransport(url: string): RPCTransport {
-  return {
-    async send(request: RPCRequest, options): Promise<RPCResponse> {
-      const httpResponse = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(request),
-        // Honouring the signal is what frees the socket when
-        // the caller cancels or the call times out.
-        signal: options?.signal,
-      });
+const client = new RPCClient(
+  createRPCMemoryTransport(server, {
+    // Handed to the server as the trusted context.auth.
+    auth: { userId: "u1" },
+  }),
+  { timeout: 5_000 },
+);
 
-      return (await httpResponse.json()) as RPCResponse;
-    },
-  };
-}
+const user = await client.call("users.getUser", { id: "123" });
 ```
 
-**What you should see:** nothing yet — this only builds the pipe. Pass it to `new RPCClient(createHttpTransport("https://example.com/rpc"))` and every call goes over HTTP.
+- `auth` — the identity the server sees as `context.auth`: a fixed value, or a function of the request. In memory, your own code is the one vouching for it.
+- `serializer` — how frames are copied. Pass another serializer to match a remote transport, or `false` to hand frames over by reference.
+- After `client.close()` every send fails with `RPCUnavailableError`.
 
-> **In plain words:** the client still protects itself if your transport ignores `options.signal` — it races the signal on its own. But the connection stays open until the transport lets it go.
+### Writing your own
+
+For any other carrier, implement `send` yourself. This one hands each frame to a message broker (the `broker` object stands in for your client library). On the far side, pass the frame to `server.handle(frame)` and send its response back.
+
+```ts
+import type { RPCTransport, RPCResponse } from "@zudojs/rpc";
+
+const transport: RPCTransport = {
+  async send(request, options): Promise<RPCResponse> {
+    // Honouring the signal is what frees the connection when
+    // the caller cancels or the call times out.
+    return broker.request("rpc", request, { signal: options?.signal });
+  },
+};
+```
+
+> **In plain words:** the client still protects itself if your transport ignores `options.signal` — it races the signal on its own. But the connection stays open until the transport lets it go. `mapRPCError(error)` is the mapping the server uses to turn a thrown error into a wire payload, if your transport needs to answer one itself.
+
+## OVER HTTP
+
+Serving procedures over HTTP takes two pieces. On the server, `createRPCFetchHandler(server)` turns your `RPCServer` into a **fetch handler**: a function that takes a web-standard `Request` and returns a `Response`. On the caller, `createRPCHttpTransport({ url })` POSTs each call to it as JSON.
+
+Because the handler speaks the Fetch API, anything that serves `Request` → `Response` can host it: [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md), `Bun.serve`, `Deno.serve`, or an edge runtime. On `@zudojs/http`, mount it with `mountFetchHandler` and no glue code:
+
+```ts
+// server.ts
+import { RPCServer, createRPCProcedure, createRPCFetchHandler } from "@zudojs/rpc";
+import { createRouter, mountFetchHandler } from "@zudojs/http";
+
+const server = new RPCServer();
+server.register(
+  createRPCProcedure("math.sum", async (input: { a: number; b: number }) => input.a + input.b),
+);
+
+const handle = createRPCFetchHandler(server, {
+  // Verify the caller here; the result becomes context.auth.
+  auth: async (request) => verifyBearer(request.headers.get("authorization")),
+  onInternalError: (error, requestId) => console.error(requestId, error),
+});
+
+const router = createRouter();
+mountFetchHandler(router, "/rpc", handle);
+// Or elsewhere: Bun.serve({ port: 3000, fetch: handle });
+```
+
+```ts
+// client.ts
+import { RPCClient, createRPCHttpTransport } from "@zudojs/rpc";
+
+const client = new RPCClient(
+  createRPCHttpTransport({
+    url: "http://127.0.0.1:3000/rpc",
+    // A function runs per call, so a refreshed token is always used.
+    headers: () => ({ authorization: `Bearer ${currentToken()}` }),
+  }),
+  { timeout: 5_000 },
+);
+
+const total = await client.call<{ a: number; b: number }, number>("math.sum", { a: 1, b: 2 });
+console.log(total);
+// 3
+```
+
+**What you should see:** `3`. `verifyBearer` and `currentToken` are yours to write. The handler answers every path it is mounted on, so the prefix `mountFetchHandler` strips does not matter.
+
+### What the handler does for you
+
+- It accepts only `POST` with a JSON content type, and reads at most `maxBodyBytes` (default `DEFAULT_RPC_HTTP_MAX_BODY_BYTES`, 1 MiB plus 64 KiB for the envelope) without buffering more.
+- Every reply is an RPC frame, even for a bad HTTP request (wrong method, wrong content type, oversized or invalid body). A caller never gets an HTML error page.
+- An `auth` hook that throws `RPCAuthenticationError` refuses the call. Anything else it throws is answered as an internal error.
+- The HTTP status follows the wire code, as below. The status is advisory, for proxies and dashboards; `error.code` in the body is what counts.
+
+| Wire code | HTTP status |
+| --- | --- |
+| success | 200 |
+| RPC_INVALID_REQUEST, RPC_DESERIALIZATION_ERROR | 400 |
+| RPC_UNAUTHENTICATED | 401 |
+| RPC_FORBIDDEN | 403 |
+| RPC_PROCEDURE_NOT_FOUND | 404 |
+| RPC_VALIDATION_ERROR | 422 |
+| RPC_RATE_LIMITED | 429 |
+| RPC_CANCELLED | 499 |
+| RPC_UNAVAILABLE | 503 |
+| RPC_TIMEOUT, RPC_DEADLINE_EXCEEDED | 504 |
+| RPC_INTERNAL_ERROR, RPC_SERIALIZATION_ERROR, any custom code | 500 |
+
+### What the client transport does for you
+
+It aborts the underlying `fetch` when the call's signal or deadline fires, so a timed-out call frees its connection. Its failures are typed: a network failure, or a reply that is not an RPC frame for this request (a proxy's HTML page, a truncated or oversized body), is an `RPCTransportError`; an expired deadline is an `RPCTimeoutError`; a caller abort is an `RPCCancelledError`. Other options: `fetch` (your own fetch function), `serializer` and `maxResponseBytes`.
+
+> **Watch out:** use the same serializer on both ends. The default is plain JSON. `createRPCJsonSerializer({ preserveTypes: true })` also carries `Date`, `BigInt`, `Map` and `Set`, but only if the server and the client both use it.
 
 ## CONTEXT
 
@@ -319,17 +410,16 @@ The code is the contract. It is why a caller can tell a rejected session from a 
 
 > **Danger:** an unrecognised error never sends its own message. Exception text can name hosts, paths, credentials or queries, and the caller is a stranger. They get one fixed sentence plus the request id. The same applies to any `RPCError` thrown with `expose: false` — `RPCInternalError`, `RPCSerializationError`, or a plain `new RPCError(...)` — its `code` is sent but its message is replaced. Pass the server's `onInternalError` hook if you want the real error — that hook is the only place it is recorded.
 
-On the caller's side, catch and branch on the type. `RPC_TIMEOUT`, `RPC_CANCELLED` and `RPC_UNAVAILABLE` become their matching classes; every other code becomes an `RPCError` carrying the server's code.
+On the caller's side, `RPCClient` rebuilds a typed error from the wire code (the same mapping is exported as `rpcErrorFromWire`), so you can branch with `instanceof` instead of comparing strings. The codes above come back as `RPCProcedureNotFoundError`, `RPCValidationError` (with its `issues`), `RPCInvalidRequestError`, `RPCAuthenticationError`, `RPCForbiddenError`, `RPCRateLimitedError`, `RPCTimeoutError`, `RPCCancelledError` or `RPCUnavailableError`. Any other code becomes a plain `RPCError`. Either way, the server's wire `code` and `details` are kept on the error.
 
 ```ts
 import {
   RPCServer,
   RPCClient,
   createRPCProcedure,
-  isRPCError,
+  createRPCMemoryTransport,
   RPCForbiddenError,
 } from "@zudojs/rpc";
-import type { RPCTransport } from "@zudojs/rpc";
 
 const server = new RPCServer(undefined, undefined, {
   onInternalError(error, requestId) {
@@ -343,22 +433,18 @@ server.register(
   }),
 );
 
-const transport: RPCTransport = {
-  async send(request) {
-    return server.handle(request);
-  },
-};
+const client = new RPCClient(createRPCMemoryTransport(server));
 
 try {
-  await new RPCClient(transport).call("admin.purge", {});
+  await client.call("admin.purge", {});
 } catch (error) {
-  if (isRPCError(error)) {
+  if (error instanceof RPCForbiddenError) {
     console.log(error.code, "|", error.message);
   }
 }
 ```
 
-**What you should see:** `RPC_FORBIDDEN | Admins only.` The `RPCForbiddenError` class does not survive the trip — the code does.
+**What you should see:** `RPC_FORBIDDEN | Admins only.` The error object itself did not cross the boundary — only its code and message did — but the client rebuilt an `RPCForbiddenError` from that code, so the `instanceof` check passes. The same works over HTTP.
 
 ## TIMEOUTS, RETRIES & CANCELLATION
 
@@ -410,13 +496,13 @@ Three Zudo packages run "something the caller asked for". They differ in where t
 
 | Package | Caller is | You work with |
 | --- | --- | --- |
-| [@zudojs/api](https://zudojs.oyinlola.site/docs/packages-api.md) | In the same process | Operations run by `APIExecutor`. No wire, transport or serialization. |
-| @zudojs/rpc | Another process or machine | Procedures, a request/response envelope, and a transport you choose. |
+| [@zudojs/api](https://zudojs.oyinlola.site/docs/packages-api.md) | In the same process | Operations run by `APIExecutor`. Its bindings can also serve the same operations over HTTP, RPC, a queue or the CLI. |
+| @zudojs/rpc | Another process or machine | Procedures, a request/response envelope, and a transport: in memory, HTTP, or your own. |
 | [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) | Any HTTP client | Methods, paths, status codes, headers, CORS — the protocol itself. |
 
-They stack rather than compete. A typical service exposes one HTTP route with `@zudojs/http`, feeds the parsed body into `server.handle()` from this package, and lets the handler call in-process operations from `@zudojs/api`.
+They stack rather than compete. A typical service mounts `createRPCFetchHandler(server)` on an `@zudojs/http` router with `mountFetchHandler(router, "/rpc", handle)`, and fills the server with `@zudojs/api` operations through that package's `registerApiRpcProcedures(server, registry, { executor })`, so one operation definition becomes a procedure without a hand-written wrapper.
 
-> **In plain words:** pick `api` when nothing leaves the process, `rpc` when your own services talk to each other, and `http` when the caller is a browser or a third party expecting REST.
+> **In plain words:** define the work with `api`, use `rpc` when your own services call each other, and use `http` when the caller is a browser or a third party expecting REST.
 
 ## API REFERENCE
 
@@ -445,6 +531,12 @@ They stack rather than compete. A typical service exposes one HTTP route with `@
 | createCancellableSignal cancelSignal combineSignals throwIfCancelled | Make, trigger, merge and check abort signals. | The first returns `{ signal, cancel }`; `combineSignals` returns `{ signal, dispose }` and you must `dispose()`. |
 | getRemainingTime isDeadlineExceeded throwIfDeadlineExceeded readDeadline | Work with a `metadata.deadline`. | `readDeadline` returns `undefined` for a malformed value rather than treating it as expired. |
 | assertValidProcedureName assertValidRequest measurePayloadBytes parseInput parseOutput toValidationIssues | The validation the server and dispatcher already run for you. | Call them directly only in a custom pipeline. |
+| createRPCMemoryTransport | Client transport to a server in the same process. | `(server, { auth?, serializer? })`. Round-trips frames through JSON by default. |
+| createRPCHttpTransport | Client transport that POSTs frames with `fetch`. | `({ url, headers?, fetch?, serializer?, maxResponseBytes? })`. |
+| createRPCFetchHandler | Serves an `RPCServer` as `(request: Request) => Promise<Response>`. | `(server, { auth?, serializer?, maxBodyBytes?, onInternalError? })`. |
+| createRPCJsonSerializer | The default frame serializer, size- and depth-limited. | `{ preserveTypes: true }` carries `Date`, `BigInt`, `Map`, `Set`. Use the same one on both ends. |
+| rpcHttpStatus readBoundedBody isRPCResponseFrame | Building blocks of the HTTP transport. | Status for a response frame; read a body with a byte cap; check a decoded value is a response frame. |
+| mapRPCError rpcErrorFromWire | Error to wire payload, and wire payload back to a typed error. | What the server and `RPCClient` use. Call them only in a custom transport. |
 | isRPCError createRPCError | Type guard and factory for RPC errors. | Re-exported from [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md). |
 
 ### Types
@@ -454,7 +546,8 @@ They stack rather than compete. A typical service exposes one HTTP route with `@
 | RPCProcedure RPCHandler RPCProcedureOptions | A procedure and its handler. | Generic over input and output. |
 | RPCRequest RPCResponse RPCErrorPayload RPCMetadata | The messages on the wire. | Check `success` before reading `result`. Each has an Options variant for its factory. |
 | RPCContext | Per-call request, metadata, signal and state. | Second argument to every handler and middleware. |
-| RPCTransport RPCMiddleware RPCInterceptor | The pieces you implement yourself. | Middleware is a function; a transport and an interceptor are objects. |
+| RPCTransport RPCMiddleware RPCInterceptor | The pieces you plug in. | Middleware is a function; a transport and an interceptor are objects. Use a built-in transport or implement `RPCTransport` yourself. |
+| RPCMemoryTransportOptions RPCHttpTransportOptions RPCFetchHandlerOptions RPCFrameSerializer | Options for the built-in transports. | Memory: `auth`, `serializer` (`false` = by reference). HTTP client: `url`, `headers`, `fetch`, `serializer`, `maxResponseBytes`. Fetch handler: `auth`, `serializer`, `maxBodyBytes`, `onInternalError`. |
 | RPCServerOptions RPCDispatcherOptions RPCClientOptions RPCCallOptions RPCRequestLimits | Everything you can configure. | Server: `limits`, `dispatch`, `onInternalError`. Limits: `maxPayloadBytes` (1 MB), `maxRequestIdLength` (128), `enforceProcedureNamePattern` (true). Dispatch: `defaultTimeout`, `honourDeadline`, `interceptors`. Client and call: `timeout`, `maxPending`, `signal`, `metadata`. |
 | RPCSchema RPCRetryOptions RPCBackoff RPCJitter CancellableSignal | Validation and reliability settings. | `RPCSchema` needs only `safeParse`. Backoff: fixed, linear, exponential. Jitter: none, full, equal. |
 
@@ -469,6 +562,9 @@ They stack rather than compete. A typical service exposes one HTTP route with `@
 | MAX_MIDDLEWARE | 32 | Per stack. |
 | MAX_PROCEDURES | 4096 | Per registry. |
 | MAX_PROCEDURE_NAME_LENGTH | 256 | Checked before the pattern, so a huge name cannot stall the regex. |
+| DEFAULT_RPC_HTTP_MAX_BODY_BYTES | 1114112 | Largest body `createRPCFetchHandler` reads: `MAX_RPC_PAYLOAD_SIZE` plus 64 KiB for the envelope. |
+| MAX_RPC_FRAME_DEPTH | 128 | Nesting depth the default serializer decodes. |
+| RPC_HTTP_STATUS | Code → status map | The table in [Over HTTP](#http-transport). Unlisted codes are sent as 500. |
 | MAX_TIMER_DELAY | 2147483647 | Retry delays clamp to it, so a big backoff cannot overflow into an instant retry. |
 | PROCEDURE_NAME_PATTERN | /^[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*)+$/ | At least two dot-separated segments. |
 | INTERNAL_ERROR_MESSAGE | Fixed sentence | What a caller sees instead of an unexpected exception. |
@@ -486,38 +582,39 @@ Sixteen classes are defined in [@zudojs/errors](https://zudojs.oyinlola.site/doc
 - **Reading `response.result` without checking `response.success`.** On a failure it is absent, so you get `undefined` instead of an error. Branch on `success`, or use `RPCClient`, which throws for you.
 - **Running a server with no `onInternalError`.** Unexpected failures answer with a fixed sentence and are recorded nowhere else, so the bug is invisible. Pass the hook and log the error with its request id.
 - **Retrying everything.** Replaying a forbidden or invalid call burns attempts and can duplicate side effects. Use `retryIf`, and check `idempotent` from `registry.describe()`.
-- **Ignoring `options.signal` in a custom transport.** The client still rejects on time, but the socket stays open. Pass the signal to `fetch` or your socket library.
+- **Ignoring `options.signal` in a custom transport.** The client still rejects on time, but the socket stays open. Pass the signal to `fetch` or your socket library. The built-in transports already do this.
+- **Using different serializers on the two ends.** A server built with `createRPCJsonSerializer({ preserveTypes: true })` sends tagged values a plain-JSON client does not decode, so a `Date` arrives as something else. Pass the same serializer to `createRPCFetchHandler` and `createRPCHttpTransport`.
 
 ## RELATED PACKAGES
 
-- [@zudojs/api](https://zudojs.oyinlola.site/docs/packages-api.md) — the same shape for calls that never leave the process.
-- [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) — the HTTP layer you put in front of an RPC server.
+- [@zudojs/api](https://zudojs.oyinlola.site/docs/packages-api.md) — define operations once; `registerApiRpcProcedures` serves them as procedures.
+- [@zudojs/http](https://zudojs.oyinlola.site/docs/packages-http.md) — host `createRPCFetchHandler` on a router with `mountFetchHandler`.
 - [@zudojs/schema](https://zudojs.oyinlola.site/docs/packages-schema.md) — builds the `input` and `output` schemas.
 - [@zudojs/errors](https://zudojs.oyinlola.site/docs/packages-errors.md) — where every RPC error class is defined.
 - [@zudojs/queue](https://zudojs.oyinlola.site/docs/packages-queue.md) — for work the caller should not wait on.
 
 ## COMPLETE EXPORT INDEX
 
-Every name `@zudojs/rpc` exports from its package root at v1.3.0 — **92** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
+Every name `@zudojs/rpc` exports from its package root at v1.3.0 — **114** in total, generated from the package’s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.
 
-**Show all 92 exports**
+**Show all 114 exports**
 
 Classes (22)
 
 `RPCAuthenticationError` `RPCCancelledError` `RPCClient` `RPCDeadlineExceededError` `RPCDeserializationError` `RPCDispatcher` `RPCDuplicateProcedureError` `RPCError` `RPCForbiddenError` `RPCInternalError` `RPCInvalidRequestError` `RPCMiddlewareStack` `RPCProcedureNotFoundError` `RPCProcedureRegistry` `RPCProcedureRouter` `RPCRateLimitedError` `RPCSerializationError` `RPCServer` `RPCTimeoutError` `RPCTransportError` `RPCUnavailableError` `RPCValidationError`
 
-Functions (29)
+Functions (38)
 
-`assertValidProcedureName` `assertValidRequest` `calculateRetryDelay` `cancelSignal` `combineSignals` `createCancellableSignal` `createNoopRPCInterceptor` `createRPCContext` `createRPCError` `createRPCErrorResponse` `createRPCMetadata` `createRPCProcedure` `createRPCRequest` `createRPCResponse` `createRPCStreamingProcedure` `createTimeout` `getRemainingTime` `isDeadlineExceeded` `isRPCError` `measurePayloadBytes` `parseInput` `parseOutput` `readDeadline` `retry` `runWithTimeout` `throwIfCancelled` `throwIfDeadlineExceeded` `toValidationIssues` `withTimeout`
+`assertValidProcedureName` `assertValidRequest` `calculateRetryDelay` `cancelSignal` `combineSignals` `createCancellableSignal` `createNoopRPCInterceptor` `createRPCContext` `createRPCError` `createRPCErrorResponse` `createRPCFetchHandler` `createRPCHttpTransport` `createRPCJsonSerializer` `createRPCMemoryTransport` `createRPCMetadata` `createRPCProcedure` `createRPCRequest` `createRPCResponse` `createRPCStreamingProcedure` `createTimeout` `getRemainingTime` `isDeadlineExceeded` `isRPCError` `isRPCResponseFrame` `mapRPCError` `measurePayloadBytes` `parseInput` `parseOutput` `readBoundedBody` `readDeadline` `retry` `rpcErrorFromWire` `rpcHttpStatus` `runWithTimeout` `throwIfCancelled` `throwIfDeadlineExceeded` `toValidationIssues` `withTimeout`
 
-Interfaces (22)
+Interfaces (29)
 
-`CancellableSignal` `RPCCallOptions` `RPCClientOptions` `RPCContext` `RPCContextOptions` `RPCDispatcherOptions` `RPCErrorOptions` `RPCErrorPayload` `RPCInterceptor` `RPCMetadata` `RPCMetadataOptions` `RPCProcedure` `RPCProcedureOptions` `RPCRequest` `RPCRequestLimits` `RPCRequestOptions` `RPCResponse` `RPCRetryOptions` `RPCServerOptions` `RPCStreamingProcedure` `RPCTransport` `RPCTransportRequestOptions`
+`CancellableSignal` `RPCBodySource` `RPCCallOptions` `RPCClientOptions` `RPCContext` `RPCContextOptions` `RPCDispatcherOptions` `RPCErrorOptions` `RPCErrorPayload` `RPCFetchHandlerOptions` `RPCFrameHandler` `RPCHttpTransportOptions` `RPCInterceptor` `RPCJsonSerializerOptions` `RPCMappedError` `RPCMemoryTransportOptions` `RPCMetadata` `RPCMetadataOptions` `RPCProcedure` `RPCProcedureOptions` `RPCRequest` `RPCRequestLimits` `RPCRequestOptions` `RPCResponse` `RPCRetryOptions` `RPCServerOptions` `RPCStreamingProcedure` `RPCTransport` `RPCTransportRequestOptions`
 
-Type aliases (8)
+Type aliases (11)
 
-`RPCAuthContext` `RPCBackoff` `RPCHandler` `RPCJitter` `RPCMiddleware` `RPCProcedureName` `RPCSchema` `RPCStreamingHandler`
+`RPCAuthContext` `RPCBackoff` `RPCBodyReadResult` `RPCFrameSerializer` `RPCHandler` `RPCHttpHeaders` `RPCJitter` `RPCMiddleware` `RPCProcedureName` `RPCSchema` `RPCStreamingHandler`
 
-Constants (11)
+Constants (14)
 
-`DEFAULT_RETRY_OPTIONS` `DEFAULT_RPC_TIMEOUT` `INTERNAL_ERROR_MESSAGE` `MAX_MIDDLEWARE` `MAX_PENDING_REQUESTS` `MAX_PROCEDURE_NAME_LENGTH` `MAX_PROCEDURES` `MAX_RPC_PAYLOAD_SIZE` `MAX_RPC_REQUEST_ID_LENGTH` `MAX_TIMER_DELAY` `PROCEDURE_NAME_PATTERN`
+`DEFAULT_RETRY_OPTIONS` `DEFAULT_RPC_HTTP_MAX_BODY_BYTES` `DEFAULT_RPC_TIMEOUT` `INTERNAL_ERROR_MESSAGE` `MAX_MIDDLEWARE` `MAX_PENDING_REQUESTS` `MAX_PROCEDURE_NAME_LENGTH` `MAX_PROCEDURES` `MAX_RPC_FRAME_DEPTH` `MAX_RPC_PAYLOAD_SIZE` `MAX_RPC_REQUEST_ID_LENGTH` `MAX_TIMER_DELAY` `PROCEDURE_NAME_PATTERN` `RPC_HTTP_STATUS`

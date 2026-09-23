@@ -1,12 +1,12 @@
 ---
-title: "@zudojs/cli — Command-Line Interface Framework"
+title: "zudojs-cli — Command-Line Interface Framework"
 description: "zudojs-cli reference: create, scaffold and generate ZudoJS projects with 11 frontend adapters, 4 package managers, 13 schematics and 2.0 upgrade notes."
 source: https://zudojs.oyinlola.site/docs/packages-cli
 ---
 
 v2.0.1
 
-# @zudojs/cli
+# zudojs-cli
 
 Command-line interface infrastructure for Zudo — command registration, argument parsing, interactive prompts, output formatting, and progress display
 
