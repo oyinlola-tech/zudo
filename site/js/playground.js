@@ -657,7 +657,9 @@
   }
 
   function compile(src) {
-    var wrapped = 'async function __zudo_main__() {\n' + src + '\n}';
+    /* Strict, like the Node ES modules the examples are written as. Kept on
+       the wrapper's line so user line numbers do not move. */
+    var wrapped = 'async function __zudo_main__() { "use strict";\n' + src + '\n}';
     return loadBabel().then(function (Babel) {
       var out = Babel.transform(wrapped, {
         filename: 'playground.ts',
