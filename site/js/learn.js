@@ -66,6 +66,20 @@
     }
   }
 
+  /* components.js puts a floating copy button on every <pre>. In a lesson
+     block that button would cover the first line of code, so move it into
+     the block's title bar, before "Run in browser". */
+  function dockCopyButtons() {
+    document.querySelectorAll('.lx-example, .lx-shell').forEach(function (fig) {
+      var btn = fig.querySelector('.code-wrap > .copy-btn');
+      var bar = fig.querySelector('.lx-bar');
+      if (!btn || !bar) return;
+      var run = bar.querySelector('.lx-run, .lx-nodeonly');
+      bar.insertBefore(btn, run);
+      fig.classList.add('has-docked-copy');
+    });
+  }
+
   function init() {
     document.addEventListener('click', function (e) {
       var btn = e.target.closest && e.target.closest('.lx-run');
@@ -85,6 +99,8 @@
       }
     });
     paintDone();
+    dockCopyButtons();
+    requestAnimationFrame(dockCopyButtons);
     window.ZudoLearn = { run: run };
   }
 

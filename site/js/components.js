@@ -60,6 +60,7 @@
     { g: 'Learn', t: "7. Describing data with types", p: '/learn/ts-types', e: "Annotate variables and functions, describe a task with type aliases and interfaces, and use optional, readonly and literal types to make wrong data impossible to write." },
     { g: 'Learn', t: "8. Unions, narrowing and generics", p: '/learn/ts-generics', e: "Handle values that can be one of several types, write functions that work for any type with generics, and discover the one thing types cannot do for a backend." },
     { g: 'Learn', t: "9. Your first Zudo code", p: '/learn/zudo-first-code', e: "Install your first ZudoJS packages, check untrusted data at runtime with @zudojs/schema, and report failures with the ready-made errors in @zudojs/errors." },
+    { g: 'Learn', t: "10. Create the Task API project", p: '/learn/zudo-create-project', e: "Install the ZudoJS command-line tool, create the Task API project, start its server, and find your way around every file it generated." },
     /* learn-search:end */
     { g: 'Getting started', t: 'Installation', p: '/docs/getting-started', e: 'Install Zudo from npm. Node.js 24 or newer.' },
     { g: 'Getting started', t: 'Your first app', p: '/docs/getting-started-first-app', e: 'Scaffold a project with the CLI and start it.' },

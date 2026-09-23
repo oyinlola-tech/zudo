@@ -1405,6 +1405,7 @@
   }
 
   function load(code, name) {
+    examplesSel.selectedIndex = -1;
     setFile(name || 'snippet.ts');
     setCode(code, true);
     open();
