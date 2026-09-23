@@ -167,24 +167,32 @@ _csrf=<token>; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=3600
 <p>Whenever you do set a cookie, three attributes do most of the work: <code>Secure</code>, <code>HttpOnly</code> and <code>SameSite</code>. <code>createSecureCookie</code> turns all three on, and <code>serializeCookie</code> refuses combinations a browser would reject:</p>
 <example file="cookies.ts" browser="no">
 import { createSecureCookie, serializeCookie } from "@zudojs/security";
+import type { ParsedCookie } from "@zudojs/security";
 
 console.log(createSecureCookie("sid", "f3a9c1", { maxAge: 3600 }));
 
 const userInput = "x; Domain=evil.example";
 console.log(createSecureCookie("theme", userInput));
 
-try {
-  serializeCookie({ name: "sid", value: "f3a9c1", sameSite: "none", secure: false });
-} catch (error) {
-  if (error instanceof Error) console.log(error.name, "-", error.message);
+function attempt(cookie: ParsedCookie): void {
+  try {
+    console.log(serializeCookie(cookie));
+  } catch (error) {
+    if (error instanceof Error) console.log(error.name, "-", error.message);
+  }
 }
+attempt({ name: "sid", value: "f3a9c1", sameSite: "none", secure: false });
+attempt({ name: "sid", value: "f3a9c1", path: userInput });
+attempt({ name: "sid", value: "f3a9c1", domain: "https://tasks.example" });
 </example>
 <output>
 sid=f3a9c1; Max-Age=3600; Secure; HttpOnly; SameSite=Lax
 theme=x%3B%20Domain%3Devil.example; Secure; HttpOnly; SameSite=Lax
 ValidationError - Cannot serialize cookie "sid": SameSite=None requires the Secure attribute
+ValidationError - Cookie Path contains invalid characters (injection risk): control characters, ";" and "," are not allowed, got "x; Domain=evil.example"
+ValidationError - Cookie Domain contains invalid characters (injection risk): it must be a hostname (letters, digits, hyphens and dots, optionally with a leading dot), got "https://tasks.example"
 </output>
-<p>The second line is an attack: a value that tries to add its own <code>Domain</code> attribute. It was percent-encoded into harmless text. The third call wanted a cookie sent to every site (<code>SameSite=None</code>) over plain HTTP, which is refused.</p>
+<p>The second line is an attack: a value that tries to add its own <code>Domain</code> attribute. It was percent-encoded into harmless text. The third call wanted a cookie sent to every site (<code>SameSite=None</code>) over plain HTTP, which is refused. The last two put text where an attribute goes: a <code>Path</code> with a <code>;</code> would start a new attribute, and a <code>Domain</code> must be a plain host name. Both are refused instead of written.</p>
 </section>
 
 <section>
@@ -378,11 +386,38 @@ string-built: [
 parameterized: invalid input syntax for type integer: "1 or true"
 </output>
 <p>The string-built query turned the attacker's text into SQL, and Ada received every user's tasks. The parameterized query sent <code>1 or true</code> as a <em>value</em> for an integer column, and the database refused it. That is the whole defence: no detector needed.</p>
+<h3>Prototype pollution</h3>
+<p>One more attack hides in plain JSON. Every JavaScript object has a <strong>prototype</strong>, a hidden parent that it gets missing properties from. <code>JSON.parse</code> keeps a key named <code>__proto__</code> as an ordinary key. If your code then copies the keys into another object, that assignment replaces the new object's prototype, and properties the attacker chose appear out of nowhere. This is <strong>prototype pollution</strong>. <code>findUnsafeKey</code> looks through a parsed body, nested objects and arrays included, and returns the first <code>__proto__</code>, <code>constructor</code> or <code>prototype</code> key:</p>
+<example file="prototype.ts" browser="no">
+import { findUnsafeKey } from "@zudojs/security";
+
+const text = '{"title":"Buy milk","__proto__":{"isAdmin":true}}';
+const body: Record<string, unknown> = JSON.parse(text);
+console.log("keys:", Object.keys(body));
+
+// INSECURE: copy every key of the body into a new object.
+const task: Record<string, unknown> = {};
+for (const key of Object.keys(body)) task[key] = body[key];
+console.log("BAD task.isAdmin:", task.isAdmin);
+
+// SECURE: refuse the body before you use it.
+const unsafe = findUnsafeKey(body);
+if (unsafe !== undefined) console.log(`400 Bad Request: key "${unsafe}" is not allowed`);
+console.log(findUnsafeKey({ title: "Buy milk", tags: [{ name: "home" }] }));
+</example>
+<output>
+keys: [ 'title', '__proto__' ]
+BAD task.isAdmin: true
+400 Bad Request: key "__proto__" is not allowed
+undefined
+</output>
+<p>The copy never wrote <code>isAdmin</code>, yet <code>task.isAdmin</code> is <code>true</code>: it comes from the new prototype. Code that later checks <code>if (task.isAdmin)</code> is fooled. A schema that lists the allowed keys protects you too, because it drops unknown keys. When you must handle free-form JSON, call <code>findUnsafeKey</code> first and answer 400.</p>
 <p>So use each tool for what it is good at:</p>
 <ul>
 <li><strong>SQL injection</strong>: parameterized queries, always. Nothing else.</li>
 <li><strong>XSS</strong>: encode output for where it goes. <code>escapeHtml</code> turns <code>&lt;</code> into <code>&amp;lt;</code>, so text shows as text in HTML. Add a strict CSP as the second layer.</li>
 <li><strong>Bad input</strong>: validate with a schema that says what <em>is</em> allowed (<a href="/learn/zudo-validation">the validation lesson</a>). An allow-list beats any block-list.</li>
+<li><strong>Prototype pollution</strong>: a schema with known keys, or <code>findUnsafeKey</code> before you merge free-form JSON.</li>
 <li><strong>Detectors</strong>: log and alert on what <code>detectThreats</code> finds, to spot someone probing your API. Never block a request only because of it, and never treat "no threats found" as "safe".</li>
 </ul>
 </section>
