@@ -651,15 +651,20 @@ for (const code of [200, 201, 204, 400, 401, 403, 404, 405, 413, 415, 500]) {
 <span class="t-pn">}</span>
 
 <span class="t-kw">async</span> <span class="t-kw">function</span> <span class="t-fn">readJson</span><span class="t-pn">(</span>req<span class="t-pn">,</span> limit <span class="t-op">=</span> <span class="t-num">10_000</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-  <span class="t-kw">let</span> text <span class="t-op">=</span> <span class="t-str">""</span><span class="t-pn">;</span>
-  <span class="t-kw">for</span> <span class="t-kw">await</span> <span class="t-pn">(</span><span class="t-kw">const</span> chunk <span class="t-kw">of</span> req<span class="t-pn">.</span><span class="t-fn">setEncoding</span><span class="t-pn">(</span><span class="t-str">"utf8"</span><span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-    text <span class="t-op">+=</span> chunk<span class="t-pn">;</span>
-    <span class="t-kw">if</span> <span class="t-pn">(</span>text<span class="t-pn">.</span><span class="t-prop">length</span> <span class="t-op">&gt;</span> limit<span class="t-pn">)</span> <span class="t-kw">return</span> <span class="t-pn">{</span> error<span class="t-op">:</span> <span class="t-str">"Body too large"</span> <span class="t-pn">}</span><span class="t-pn">;</span>
+  <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span>req<span class="t-pn">.</span><span class="t-prop">headers</span><span class="t-pn">[</span><span class="t-str">"content-type"</span><span class="t-pn">]</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-fn">startsWith</span><span class="t-pn">(</span><span class="t-str">"application/json"</span><span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+    <span class="t-kw">return</span> <span class="t-pn">{</span> status<span class="t-op">:</span> <span class="t-num">415</span><span class="t-pn">,</span> error<span class="t-op">:</span> <span class="t-str">"Send JSON with Content-Type: application/json"</span> <span class="t-pn">}</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span>
+  <span class="t-kw">const</span> chunks <span class="t-op">=</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">;</span>
+  <span class="t-kw">let</span> size <span class="t-op">=</span> <span class="t-num">0</span><span class="t-pn">;</span>
+  <span class="t-kw">for</span> <span class="t-kw">await</span> <span class="t-pn">(</span><span class="t-kw">const</span> chunk <span class="t-kw">of</span> req<span class="t-pn">)</span> <span class="t-pn">{</span>
+    size <span class="t-op">+=</span> chunk<span class="t-pn">.</span><span class="t-prop">length</span><span class="t-pn">;</span>
+    <span class="t-kw">if</span> <span class="t-pn">(</span>size <span class="t-op">&gt;</span> limit<span class="t-pn">)</span> <span class="t-kw">return</span> <span class="t-pn">{</span> status<span class="t-op">:</span> <span class="t-num">413</span><span class="t-pn">,</span> error<span class="t-op">:</span> <span class="t-tpl">`Body larger than <span class="t-op">${</span><span class="t-prop">limit</span><span class="t-op">}</span> bytes`</span> <span class="t-pn">}</span><span class="t-pn">;</span>
+    chunks<span class="t-pn">.</span><span class="t-fn">push</span><span class="t-pn">(</span>chunk<span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span>
   <span class="t-kw">try</span> <span class="t-pn">{</span>
-    <span class="t-kw">return</span> <span class="t-pn">{</span> body<span class="t-op">:</span> <span class="t-cn">JSON</span><span class="t-pn">.</span><span class="t-fn">parse</span><span class="t-pn">(</span>text<span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">;</span>
+    <span class="t-kw">return</span> <span class="t-pn">{</span> body<span class="t-op">:</span> <span class="t-cn">JSON</span><span class="t-pn">.</span><span class="t-fn">parse</span><span class="t-pn">(</span><span class="t-ty">Buffer</span><span class="t-pn">.</span><span class="t-fn">concat</span><span class="t-pn">(</span>chunks<span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">toString</span><span class="t-pn">(</span><span class="t-str">"utf8"</span><span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">;</span>
   <span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">{</span>
-    <span class="t-kw">return</span> <span class="t-pn">{</span> error<span class="t-op">:</span> <span class="t-str">"Body is not valid JSON"</span> <span class="t-pn">}</span><span class="t-pn">;</span>
+    <span class="t-kw">return</span> <span class="t-pn">{</span> status<span class="t-op">:</span> <span class="t-num">400</span><span class="t-pn">,</span> error<span class="t-op">:</span> <span class="t-str">"Body is not valid JSON"</span> <span class="t-pn">}</span><span class="t-pn">;</span>
   <span class="t-pn">}</span>
 <span class="t-pn">}</span>
 
@@ -673,8 +678,8 @@ for (const code of [200, 201, 204, 400, 401, 403, 404, 405, 413, 415, 500]) {
     <span class="t-kw">return</span> <span class="t-fn">sendJson</span><span class="t-pn">(</span>res<span class="t-pn">,</span> <span class="t-num">200</span><span class="t-pn">,</span> list<span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span>
   <span class="t-kw">if</span> <span class="t-pn">(</span>url<span class="t-pn">.</span><span class="t-prop">pathname</span> <span class="t-op">===</span> <span class="t-str">"/tasks"</span> <span class="t-op">&amp;&amp;</span> req<span class="t-pn">.</span><span class="t-prop">method</span> <span class="t-op">===</span> <span class="t-str">"POST"</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-    <span class="t-kw">const</span> <span class="t-pn">{</span> body<span class="t-pn">,</span> error <span class="t-pn">}</span> <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">readJson</span><span class="t-pn">(</span>req<span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">if</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-kw">return</span> <span class="t-fn">sendJson</span><span class="t-pn">(</span>res<span class="t-pn">,</span> <span class="t-num">400</span><span class="t-pn">,</span> <span class="t-pn">{</span> error <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">const</span> <span class="t-pn">{</span> body<span class="t-pn">,</span> status<span class="t-pn">,</span> error <span class="t-pn">}</span> <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">readJson</span><span class="t-pn">(</span>req<span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">if</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-kw">return</span> <span class="t-fn">sendJson</span><span class="t-pn">(</span>res<span class="t-pn">,</span> status<span class="t-pn">,</span> <span class="t-pn">{</span> error <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-kw">typeof</span> body<span class="t-op">?</span><span class="t-pn">.</span><span class="t-prop">title</span> <span class="t-op">!==</span> <span class="t-str">"string"</span> <span class="t-op">||</span> body<span class="t-pn">.</span><span class="t-prop">title</span><span class="t-pn">.</span><span class="t-fn">trim</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">===</span> <span class="t-str">""</span> <span class="t-op">||</span> body<span class="t-pn">.</span><span class="t-prop">title</span><span class="t-pn">.</span><span class="t-prop">length</span> <span class="t-op">&gt;</span> <span class="t-num">200</span><span class="t-pn">)</span> <span class="t-pn">{</span>
       <span class="t-kw">return</span> <span class="t-fn">sendJson</span><span class="t-pn">(</span>res<span class="t-pn">,</span> <span class="t-num">400</span><span class="t-pn">,</span> <span class="t-pn">{</span> error<span class="t-op">:</span> <span class="t-str">"title must be a non-empty string of at most 200 characters"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-pn">}</span>
@@ -711,15 +716,20 @@ function sendJson(res, status, body) {
 }
 
 async function readJson(req, limit = 10_000) {
-  let text = "";
-  for await (const chunk of req.setEncoding("utf8")) {
-    text += chunk;
-    if (text.length > limit) return { error: "Body too large" };
+  if (!req.headers["content-type"]?.startsWith("application/json")) {
+    return { status: 415, error: "Send JSON with Content-Type: application/json" };
+  }
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > limit) return { status: 413, error: `Body larger than ${limit} bytes` };
+    chunks.push(chunk);
   }
   try {
-    return { body: JSON.parse(text) };
+    return { body: JSON.parse(Buffer.concat(chunks).toString("utf8")) };
   } catch {
-    return { error: "Body is not valid JSON" };
+    return { status: 400, error: "Body is not valid JSON" };
   }
 }
 
@@ -733,8 +743,8 @@ async function handle(req, res) {
     return sendJson(res, 200, list);
   }
   if (url.pathname === "/tasks" && req.method === "POST") {
-    const { body, error } = await readJson(req);
-    if (error) return sendJson(res, 400, { error });
+    const { body, status, error } = await readJson(req);
+    if (error) return sendJson(res, status, { error });
     if (typeof body?.title !== "string" || body.title.trim() === "" || body.title.length > 200) {
       return sendJson(res, 400, { error: "title must be a non-empty string of at most 200 characters" });
     }

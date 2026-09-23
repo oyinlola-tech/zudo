@@ -286,11 +286,26 @@ readFile(import.meta.filename, () => {
 <p><code>import.meta.filename</code> is the full path of the current file, so the program simply reads itself. Here is the order, and why:</p>
 <ol>
 <li><strong>Synchronous code</strong> always finishes first. Nothing can interrupt it.</li>
-<li><strong><code>process.nextTick</code></strong> callbacks run as soon as the current code finishes, before anything else.</li>
+<li><strong><code>process.nextTick</code></strong> callbacks run as soon as the current callback finishes, before anything else.</li>
 <li><strong>Promise callbacks</strong> (<code>.then</code>, and the code after an <code>await</code>) run next. Together with <code>nextTick</code>, these are called <strong>microtasks</strong>: small jobs that run before the event loop moves on.</li>
 <li><strong><code>setImmediate</code></strong> runs right after the event loop finishes handling I/O (input and output, such as the file read).</li>
 <li><strong><code>setTimeout</code></strong> runs when the loop comes back round to check its timers, even with a delay of 0.</li>
 </ol>
+<p>That order holds inside a callback, like the file read above. There is one exception at the very top of an ES module file (and every file in this course is one): Node is still finishing a promise of its own while it loads the module, so promise callbacks run <em>before</em> <code>nextTick</code> there:</p>
+<figure class="lx-example" data-index="3" data-file="top-level.js">
+<figcaption class="lx-bar"><span class="lx-file">top-level.js</span><button type="button" class="lx-edit" data-index="3" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<pre class="lx-code"><code><span class="t-ty">Promise</span><span class="t-pn">.</span><span class="t-fn">resolve</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">then</span><span class="t-pn">(</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"promise"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+process<span class="t-pn">.</span><span class="t-fn">nextTick</span><span class="t-pn">(</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"nextTick"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"sync"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">Promise.resolve().then(() => console.log("promise"));
+process.nextTick(() => console.log("nextTick"));
+console.log("sync");</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>node top-level.js</code></div><pre class="lx-no-copy">sync
+promise
+nextTick</pre></div>
+</figure>
+<p>You rarely need to care which microtask runs first. What matters is the big picture: synchronous code, then microtasks, then the event loop's I/O, <code>setImmediate</code> and timers.</p>
 <p>At the top level of a file, outside any I/O callback, the order of <code>setTimeout(…, 0)</code> and <code>setImmediate</code> is not fixed. It depends on how fast your computer started the program. Here is a two-line file, <code>order.js</code>, run four times:</p>
 <figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
 <pre class="lx-shell-body" data-copy="node order.js
@@ -314,8 +329,8 @@ node order.js"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$
 <section>
 <h2 id="blocking">Do not block the loop</h2>
 <p>Because there is only one thread, a long piece of synchronous code stops <em>everything</em>: timers, requests, all of it. This example asks for a timer in 10 ms, then keeps the thread busy for 200 ms:</p>
-<figure class="lx-example" data-index="3" data-file="blocking.js">
-<figcaption class="lx-bar"><span class="lx-file">blocking.js</span><button type="button" class="lx-edit" data-index="3" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="4" data-file="blocking.js">
+<figcaption class="lx-bar"><span class="lx-file">blocking.js</span><button type="button" class="lx-edit" data-index="4" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">const</span> start <span class="t-op">=</span> <span class="t-ty">Date</span><span class="t-pn">.</span><span class="t-fn">now</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 <span class="t-fn">setTimeout</span><span class="t-pn">(</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
@@ -357,8 +372,8 @@ The timer asked for 10 ms and ran after 218 ms</pre></div>
 <li><code>node:test</code>: a built-in test runner.</li>
 </ul>
 <p>A few things are <strong>global</strong>, so you use them with no import at all: <code>process</code>, <code>console</code>, timers, <code>fetch</code>, <code>URL</code> and <code>Buffer</code>. Older tutorials use <code>require(…)</code> to load modules. That is the CommonJS system, and it does not exist in an ES module:</p>
-<figure class="lx-example" data-index="4" data-file="globals.js">
-<figcaption class="lx-bar"><span class="lx-file">globals.js</span><button type="button" class="lx-edit" data-index="4" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="5" data-file="globals.js">
+<figcaption class="lx-bar"><span class="lx-file">globals.js</span><button type="button" class="lx-edit" data-index="5" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code>console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"fetch:"</span><span class="t-pn">,</span> <span class="t-kw">typeof</span> fetch<span class="t-pn">)</span><span class="t-pn">;</span>
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"URL:"</span><span class="t-pn">,</span> <span class="t-kw">typeof</span> <span class="t-cn">URL</span><span class="t-pn">)</span><span class="t-pn">;</span>
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"Buffer:"</span><span class="t-pn">,</span> <span class="t-kw">typeof</span> <span class="t-ty">Buffer</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -381,8 +396,8 @@ require: undefined</pre></div>
 <p>A running program is called a <strong>process</strong>. The global <code>process</code> object is how your code talks to the operating system about it.</p>
 <h3>Command-line arguments</h3>
 <p><code>process.argv</code> is an array of everything typed on the command line. The first two items are the path of <code>node</code> and the path of your file, so the words you typed start at index 2:</p>
-<figure class="lx-example" data-index="5" data-file="args.js">
-<figcaption class="lx-bar"><span class="lx-file">args.js</span><button type="button" class="lx-edit" data-index="5" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="6" data-file="args.js">
+<figcaption class="lx-bar"><span class="lx-file">args.js</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code>console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"arguments:"</span><span class="t-pn">,</span> process<span class="t-pn">.</span><span class="t-prop">argv</span><span class="t-pn">.</span><span class="t-fn">slice</span><span class="t-pn">(</span><span class="t-num">2</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">console.log("arguments:", process.argv.slice(2));</script>
@@ -394,8 +409,8 @@ require: undefined</pre></div>
 <span class="lx-res">arguments: [ 'add', 'Buy milk' ]</span></pre></figure>
 <h3>Exit codes</h3>
 <p>When a program ends, it hands the operating system a number, the <strong>exit code</strong>. <code>0</code> means success. Anything else means failure. Scripts, test runners and servers such as Docker read this number to know whether your program worked.</p>
-<figure class="lx-example" data-index="6" data-file="add.js">
-<figcaption class="lx-bar"><span class="lx-file">add.js</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="7" data-file="add.js">
+<figcaption class="lx-bar"><span class="lx-file">add.js</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">const</span> title <span class="t-op">=</span> process<span class="t-pn">.</span><span class="t-prop">argv</span><span class="t-pn">[</span><span class="t-num">2</span><span class="t-pn">]</span><span class="t-pn">;</span>
 
 <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span>title<span class="t-pn">)</span> <span class="t-pn">{</span>
@@ -443,8 +458,8 @@ node learn-node/where.js"><span class="lx-cmd"><span class="lx-prompt" aria-hidd
 <span class="lx-res">folder of this file:       ~/learn-node</span></pre></figure>
 <p>Remember this when you read files: a path like <code>"tasks.json"</code> is looked up from the working directory. The next lesson shows how to build paths that don't depend on it.</p>
 <p><code>process.memoryUsage()</code> reports how much memory the process uses, in bytes, and <code>process.pid</code> is the id the operating system gave it:</p>
-<figure class="lx-example" data-index="7" data-file="memory.js">
-<figcaption class="lx-bar"><span class="lx-file">memory.js</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="8" data-file="memory.js">
+<figcaption class="lx-bar"><span class="lx-file">memory.js</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">const</span> toMb <span class="t-op">=</span> <span class="t-pn">(</span>bytes<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span>bytes <span class="t-op">/</span> <span class="t-num">1024</span> <span class="t-op">/</span> <span class="t-num">1024</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">toFixed</span><span class="t-pn">(</span><span class="t-num">1</span><span class="t-pn">)</span> <span class="t-op">+</span> <span class="t-str">" MB"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> <span class="t-pn">{</span> rss<span class="t-pn">,</span> heapUsed <span class="t-pn">}</span> <span class="t-op">=</span> process<span class="t-pn">.</span><span class="t-fn">memoryUsage</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -469,8 +484,8 @@ used by JavaScript objects: 3.8 MB</pre></div>
 <h2 id="env">Environment variables</h2>
 <p>A program needs settings that change between your computer and the server: the port to listen on, the database address, secret keys. These must not be written in the code. Code is shared, copied and pushed to GitHub. Secrets must never be.</p>
 <p>The standard answer is <strong>environment variables</strong>: named text values the operating system hands to every process it starts. Node.js puts them in <code>process.env</code>. Every value is a string, or <code>undefined</code> when it is not set.</p>
-<figure class="lx-example" data-index="8" data-file="config.js">
-<figcaption class="lx-bar"><span class="lx-file">config.js</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="9" data-file="config.js">
+<figcaption class="lx-bar"><span class="lx-file">config.js</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">const</span> port <span class="t-op">=</span> <span class="t-ty">Number</span><span class="t-pn">(</span>process<span class="t-pn">.</span><span class="t-prop">env</span><span class="t-pn">.</span><span class="t-cn">PORT</span> <span class="t-op">??</span> <span class="t-num">3000</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> apiKey <span class="t-op">=</span> process<span class="t-pn">.</span><span class="t-prop">env</span><span class="t-pn">.</span><span class="t-cn">TASKS_API_KEY</span><span class="t-pn">;</span>
 
@@ -535,8 +550,8 @@ TASKS_API_KEY=</pre>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Greet from the command line</h3><p>Write <code>greet.js</code> that prints <code>Hello, Ada!</code> when you run <code>node greet.js Ada</code>, and <code>Hello, world!</code> when you give no name.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="9" data-file="greet.js">
-<figcaption class="lx-bar"><span class="lx-file">greet.js</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Greet from the command line</h3><p>Write <code>greet.js</code> that prints <code>Hello, Ada!</code> when you run <code>node greet.js Ada</code>, and <code>Hello, world!</code> when you give no name.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="10" data-file="greet.js">
+<figcaption class="lx-bar"><span class="lx-file">greet.js</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">const</span> name <span class="t-op">=</span> process<span class="t-pn">.</span><span class="t-prop">argv</span><span class="t-pn">[</span><span class="t-num">2</span><span class="t-pn">]</span> <span class="t-op">??</span> <span class="t-str">"world"</span><span class="t-pn">;</span>
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`Hello, <span class="t-op">${</span><span class="t-prop">name</span><span class="t-op">}</span>!`</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
@@ -546,8 +561,8 @@ console.log(`Hello, ${name}!`);</script>
 </figure>
 <p><code>process.argv[2]</code> is <code>undefined</code> when there is no argument, and <code>??</code> replaces <code>undefined</code> with the default.</p></details></div>
 <div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Predict the order</h3><p>Without running it, write down the order this program prints its letters in. Then run it and check.</p>
-<figure class="lx-example" data-index="10" data-file="predict.js">
-<figcaption class="lx-bar"><span class="lx-file">predict.js</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="11" data-file="predict.js">
+<figcaption class="lx-bar"><span class="lx-file">predict.js</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> readFile <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:fs"</span><span class="t-pn">;</span>
 
 <span class="t-fn">readFile</span><span class="t-pn">(</span><span class="t-kw">import</span><span class="t-pn">.</span><span class="t-prop">meta</span><span class="t-pn">.</span><span class="t-prop">filename</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
@@ -575,8 +590,8 @@ readFile(import.meta.filename, () => {
 <span class="lx-res">D</span>
 <span class="lx-res">A</span></pre></figure>
 <p>Synchronous <code>C</code> first, then the microtasks (<code>nextTick</code> <code>E</code>, then the promise <code>B</code>), then <code>setImmediate</code> <code>D</code> after the I/O, and the timer <code>A</code> last.</p></details></div>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Check a setting properly</h3><p>Change <code>config.js</code> so that <code>PORT=abc</code> stops the program with the message <code>PORT must be a whole number between 1 and 65535, got "abc"</code>, instead of starting on port <code>NaN</code>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="11" data-file="port.js">
-<figcaption class="lx-bar"><span class="lx-file">port.js</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Check a setting properly</h3><p>Change <code>config.js</code> so that <code>PORT=abc</code> stops the program with the message <code>PORT must be a whole number between 1 and 65535, got "abc"</code>, instead of starting on port <code>NaN</code>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="12" data-file="port.js">
+<figcaption class="lx-bar"><span class="lx-file">port.js</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">const</span> raw <span class="t-op">=</span> process<span class="t-pn">.</span><span class="t-prop">env</span><span class="t-pn">.</span><span class="t-cn">PORT</span> <span class="t-op">??</span> <span class="t-str">"3000"</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> port <span class="t-op">=</span> <span class="t-ty">Number</span><span class="t-pn">(</span>raw<span class="t-pn">)</span><span class="t-pn">;</span>
 
@@ -608,7 +623,7 @@ console.log(`Port: ${port}`);</script>
 <h2 id="recap">Recap</h2>
 <ul>
 <li>Node.js is a JavaScript runtime: V8 runs the code, libuv does the waiting, and built-in modules such as <code>node:fs</code> and <code>node:http</code> reach the computer.</li>
-<li>One thread runs your code. The event loop runs callbacks in order: sync code, <code>nextTick</code>, promises, then I/O, <code>setImmediate</code> and timers. Long synchronous work blocks everyone.</li>
+<li>One thread runs your code. The event loop runs callbacks in order: sync code, microtasks (<code>nextTick</code> and promises; at the top of an ES module, promises come first), then I/O, <code>setImmediate</code> and timers. Long synchronous work blocks everyone.</li>
 <li><code>process.argv</code> holds the command-line arguments, <code>process.exitCode</code> reports success (0) or failure, and <code>process.cwd()</code> is where the program was started.</li>
 <li>Settings and secrets come from <code>process.env</code>. Load a <code>.env</code> file with <code>node --env-file=.env</code>, fail loudly when a secret is missing, and never commit <code>.env</code>.</li>
 </ul>
