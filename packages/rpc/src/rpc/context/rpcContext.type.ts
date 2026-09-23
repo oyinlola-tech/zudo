@@ -18,6 +18,13 @@ export type RPCAuthContext = Readonly<Record<string, unknown>>;
 export interface RPCContextOptions {
   /** Trusted, transport-derived identity. See {@link RPCAuthContext}. */
   readonly auth?: RPCAuthContext;
+  /**
+   * Aborts when the caller is gone — the HTTP client disconnected, the
+   * in-process caller cancelled. The dispatch then fails with
+   * `RPC_CANCELLED` and the handler's `context.signal` aborts, so the
+   * server stops work nobody will read.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**

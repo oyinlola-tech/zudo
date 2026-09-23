@@ -8,6 +8,7 @@
  */
 
 import type { Schema, SchemaIssue } from "@zudojs/schema";
+import { findUnsafeKey } from "@zudojs/security";
 
 import type { RPCRequest } from "../types/rpcRequest.type.js";
 
@@ -23,6 +24,7 @@ import {
   MAX_RPC_REQUEST_ID_LENGTH,
   PROCEDURE_NAME_PATTERN,
 } from "../constants/rpcConstants.core.js";
+
 
 /**
  * Limits applied to an incoming request.
@@ -49,6 +51,13 @@ export interface RPCRequestLimits {
    * Defaults to `true`.
    */
   readonly enforceProcedureNamePattern?: boolean;
+  /**
+   * Accept `__proto__`, `constructor` and `prototype` as keys inside
+   * `payload` and `metadata`. Defaults to `false`: a frame carrying one is
+   * refused, because a handler that merges its input into another object
+   * would have that object's prototype replaced.
+   */
+  readonly allowUnsafeKeys?: boolean;
 }
 
 /**
@@ -106,10 +115,12 @@ export function measurePayloadBytes(payload: unknown): number | undefined {
  *
  * Every caller-controlled part of the frame is bounded: the id by
  * length, the procedure name by length and pattern, and `payload` plus
- * `metadata` by their combined encoded size.
+ * `metadata` by their combined encoded size. Neither may carry a
+ * prototype-polluting key unless `limits.allowUnsafeKeys` is set.
  *
  * @throws {RPCInvalidRequestError} when the frame is malformed, the id is
- * over-long, or payload and metadata together exceed the configured limit.
+ * over-long, payload and metadata together exceed the configured limit, or
+ * either carries a `__proto__`, `constructor` or `prototype` key.
  */
 export function assertValidRequest(
   request: unknown,
@@ -176,6 +187,18 @@ export function assertValidRequest(
     if (size > maxBytes) {
       throw new RPCInvalidRequestError(
         `Request payload of ${size} bytes exceeds the ${maxBytes} byte limit.`,
+        candidate.procedure,
+      );
+    }
+  }
+
+  if (limits.allowUnsafeKeys !== true) {
+    const unsafe =
+      findUnsafeKey(candidate.payload) ?? findUnsafeKey(candidate.metadata);
+
+    if (unsafe !== undefined) {
+      throw new RPCInvalidRequestError(
+        `Request contains the forbidden key "${unsafe}".`,
         candidate.procedure,
       );
     }

@@ -9,10 +9,12 @@ import { createRPCRequest } from "../types/rpcRequest.type.js";
 import {
   isRPCError,
   RPCCancelledError,
-  RPCError,
-  RPCTimeoutError,
   RPCUnavailableError,
 } from "../errors/rpc.errors.js";
+
+import { rpcErrorFromWire } from "./rpcWireError.helper.js";
+
+import { rpcWireCodeOf } from "../server/rpcErrorMapping.helper.js";
 
 import {
   DEFAULT_RPC_TIMEOUT,
@@ -88,11 +90,28 @@ export class RPCClient {
 
   /**
    * Calls a remote procedure.
+   *
+   * Rejects with a typed RPC error whose `code` is the wire code
+   * (`"RPC_TIMEOUT"`, `"RPC_CANCELLED"`, `"RPC_VALIDATION_ERROR"` …)
+   * whether the server reported the failure or the client raised it (its
+   * own deadline, a cancelled signal, a closed client).
    */
   async call<TInput = unknown, TOutput = unknown>(
     procedure: string,
     input: TInput,
     options: RPCCallOptions = {},
+  ): Promise<TOutput> {
+    try {
+      return await this.invoke<TInput, TOutput>(procedure, input, options);
+    } catch (error) {
+      throw withWireCode(error);
+    }
+  }
+
+  private async invoke<TInput, TOutput>(
+    procedure: string,
+    input: TInput,
+    options: RPCCallOptions,
   ): Promise<TOutput> {
     if (this.closed) {
       throw new RPCUnavailableError("RPC client has been closed.", procedure);
@@ -168,7 +187,7 @@ export class RPCClient {
       const response = await Promise.race(races);
 
       if (!response.success) {
-        throw this.toError(response, procedure);
+        throw rpcErrorFromWire(response.error, procedure);
       }
 
       return response.result as TOutput;
@@ -277,57 +296,22 @@ export class RPCClient {
 
     return error;
   }
+}
 
-  /**
-   * Reconstructs a typed error from an error response.
-   *
-   * The wire code drives the type, so a caller can tell an
-   * authentication failure from a timeout without string matching.
-   */
-  private toError(response: RPCResponse, procedure: string): Error {
-    const message = response.error?.message ?? "RPC call failed.";
-    const code = response.error?.code;
-
-    switch (code) {
-      case "RPC_TIMEOUT": {
-        // The constructor derives its message from a duration the wire
-        // does not carry; keep the type and restore the server's message
-        // rather than reporting "timed out after 0ms".
-        const timeout = new RPCTimeoutError(0, procedure);
-        Object.defineProperty(timeout, "message", {
-          value: message,
-          enumerable: false,
-          configurable: true,
-          writable: true,
-        });
-        return timeout;
-      }
-      case "RPC_CANCELLED":
-        return new RPCCancelledError(message, procedure);
-      case "RPC_UNAVAILABLE":
-        return new RPCUnavailableError(message, procedure);
-      default:
-        break;
+/**
+ * Gives a typed RPC error its wire code. An error rebuilt from a response
+ * already has it; one raised locally still carries its class code
+ * (`ERR_RPC_TIMEOUT`), which a caller comparing against `"RPC_TIMEOUT"`
+ * would never match.
+ */
+function withWireCode(error: unknown): unknown {
+  const code = isRPCError(error) ? rpcWireCodeOf(error) : undefined;
+  if (code !== undefined && error instanceof Error && (error as { code?: unknown }).code !== code) {
+    try {
+      Object.defineProperty(error, "code", { value: code, enumerable: true, configurable: true });
+    } catch {
+      // A frozen error keeps the code it has.
     }
-
-    const error = new RPCError(message, { procedureName: procedure });
-
-    // Preserve the server's code and any details for callers that
-    // branch on them.
-    Object.defineProperty(error, "code", {
-      value: code ?? error.code,
-      enumerable: true,
-      configurable: true,
-    });
-
-    if (response.error?.details !== undefined) {
-      Object.defineProperty(error, "details", {
-        value: response.error.details,
-        enumerable: true,
-        configurable: true,
-      });
-    }
-
-    return error;
   }
+  return error;
 }

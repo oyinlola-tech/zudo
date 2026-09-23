@@ -109,6 +109,9 @@ export function calculateRetryDelay(
 
 /**
  * Sleeps for a duration, rejecting early if the signal aborts.
+ *
+ * The timer stays ref'd: a pending retry is work the caller is awaiting,
+ * and an unref'd backoff let a script exit before the next attempt.
  */
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (ms <= 0) {
@@ -120,8 +123,6 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
       signal?.removeEventListener("abort", onAbort);
       resolve();
     }, ms);
-
-    timer.unref?.();
 
     function onAbort(): void {
       clearTimeout(timer);

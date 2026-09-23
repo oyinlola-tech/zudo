@@ -66,3 +66,16 @@ export const MAX_TIMER_DELAY = 2_147_483_647;
  */
 export const INTERNAL_ERROR_MESSAGE =
   "The server encountered an internal error while handling this request.";
+
+/**
+ * Default limit, in bytes, on an HTTP request or response body carrying
+ * one RPC frame: the payload limit plus headroom for the frame envelope
+ * (`id`, `procedure`, `metadata`, `timestamp`).
+ */
+export const DEFAULT_RPC_HTTP_MAX_BODY_BYTES = MAX_RPC_PAYLOAD_SIZE + 64 * 1024;
+
+/**
+ * Maximum nesting depth accepted when decoding a frame from the wire.
+ * Bounds the work a hostile peer can force with deeply nested JSON.
+ */
+export const MAX_RPC_FRAME_DEPTH = 128;

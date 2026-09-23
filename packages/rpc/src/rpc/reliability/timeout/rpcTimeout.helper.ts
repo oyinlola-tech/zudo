@@ -11,9 +11,11 @@ import { MAX_TIMER_DELAY } from "../../constants/rpcConstants.core.js";
 /**
  * Creates a timeout promise that rejects after the given duration.
  *
- * The returned `cancel` clears the underlying timer. A timeout promise
- * whose timer is never cleared keeps the event loop alive for its full
- * duration even after the work it guarded has finished.
+ * The returned `cancel` clears the underlying timer, and every caller in
+ * this package cancels it as soon as the guarded work settles. The timer
+ * is deliberately *not* unref'd: it guards pending work, and in a script
+ * with no other handle an unref'd deadline let Node exit (code 13,
+ * "unsettled top-level await") before the timeout could reject.
  */
 export function createTimeout(
   duration: number,
@@ -27,8 +29,6 @@ export function createTimeout(
     timer = setTimeout(() => {
       reject(new RPCTimeoutError(duration, procedureName));
     }, delay);
-
-    timer.unref?.();
   });
 
   return {

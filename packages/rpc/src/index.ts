@@ -8,14 +8,20 @@
  *
  * @example
  * ```ts
- * import { RPCServer, RPCClient, createRPCProcedure, RPCMiddlewareStack } from "@zudojs/rpc";
+ * import {
+ *   RPCServer,
+ *   RPCClient,
+ *   createRPCProcedure,
+ *   createRPCMemoryTransport,
+ * } from "@zudojs/rpc";
  *
  * const server = new RPCServer();
  * server.register(createRPCProcedure("users.getUser", async (input) => {
  *   return userService.findById(input.id);
  * }));
  *
- * const client = new RPCClient(memoryTransport);
+ * // In-process; swap for createRPCHttpTransport({ url }) across the network.
+ * const client = new RPCClient(createRPCMemoryTransport(server));
  * const user = await client.call("users.getUser", { id: "123" });
  * ```
  */
@@ -50,6 +56,8 @@ export {
   MAX_TIMER_DELAY,
   PROCEDURE_NAME_PATTERN,
   INTERNAL_ERROR_MESSAGE,
+  DEFAULT_RPC_HTTP_MAX_BODY_BYTES,
+  MAX_RPC_FRAME_DEPTH,
 } from "./rpc/constants/index.js";
 
 // Validation
@@ -121,21 +129,13 @@ export type { RPCDispatcherOptions } from "./rpc/dispatcher/index.js";
 
 export { RPCDispatcher } from "./rpc/dispatcher/index.js";
 
-// Server
-export type { RPCServerOptions } from "./rpc/server/index.js";
+// Server, transports (in-memory and HTTP) and client — every export of
+// these barrels is public.
+export * from "./rpc/server/index.js";
 
-export { RPCServer } from "./rpc/server/index.js";
+export * from "./rpc/transport/index.js";
 
-// Transport
-export type {
-  RPCTransport,
-  RPCTransportRequestOptions,
-} from "./rpc/transport/index.js";
-
-// Client
-export type { RPCCallOptions, RPCClientOptions } from "./rpc/client/index.js";
-
-export { RPCClient } from "./rpc/client/index.js";
+export * from "./rpc/client/index.js";
 
 // Reliability
 export {

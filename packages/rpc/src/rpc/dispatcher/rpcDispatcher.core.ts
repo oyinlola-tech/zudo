@@ -33,6 +33,11 @@ import {
 
 import { createTimeout } from "../reliability/timeout/rpcTimeout.helper.js";
 
+import {
+  abortReasonToRPCError,
+  raceAbort,
+} from "../reliability/cancellation/rpcAbort.helper.js";
+
 /**
  * Options controlling dispatch.
  */
@@ -106,6 +111,11 @@ export class RPCDispatcher {
 
     const procedure = this.registry.require(request.procedure);
 
+    const caller = trusted.signal;
+    if (caller?.aborted) {
+      throw abortReasonToRPCError(caller, request.procedure);
+    }
+
     const controller = new AbortController();
     const context = createRPCContext(request, controller.signal, trusted);
 
@@ -121,6 +131,14 @@ export class RPCDispatcher {
 
     const timeout =
       timeoutMs > 0 ? createTimeout(timeoutMs, request.procedure) : undefined;
+
+    // The caller going away cancels the work, not just the wait for it.
+    const onCallerAbort = (): void => {
+      if (!controller.signal.aborted && caller !== undefined) {
+        controller.abort(abortReasonToRPCError(caller, request.procedure));
+      }
+    };
+    caller?.addEventListener("abort", onCallerAbort, { once: true });
 
     try {
       const run = async (): Promise<unknown> => {
@@ -144,7 +162,7 @@ export class RPCDispatcher {
       };
 
       const invoke = (): Promise<unknown> =>
-        this.applyInterceptors(context, run);
+        raceAbort(this.applyInterceptors(context, run), caller, request.procedure);
 
       const result =
         timeout === undefined
@@ -167,6 +185,7 @@ export class RPCDispatcher {
       // an auth failure or a rate limit into a generic internal fault;
       // the server owns the mapping from error type to response code.
       timeout?.cancel();
+      caller?.removeEventListener("abort", onCallerAbort);
 
       if (!controller.signal.aborted) {
         // Release anything still listening on the request signal.
