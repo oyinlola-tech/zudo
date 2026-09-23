@@ -117,6 +117,11 @@ function sleepSync(ms) {
 export function ensureDeps(lessons, log, root) {
   const deps = allDependencies(lessons, root);
   const pkg = { name: "zudo-learn-check", private: true, type: "module", dependencies: deps, devDependencies: TOOLING };
+  /* course.json check.refresh: change it to reinstall today (e.g. right after a release). */
+  if (root) {
+    const course = JSON.parse(readFileSync(join(root, "site-src", "learn", "course.json"), "utf8"));
+    if (course.check && course.check.refresh) pkg.zudoLearnRefresh = course.check.refresh;
+  }
   const day = new Date().toISOString().slice(0, 10);
   const key = createHash("sha256").update(JSON.stringify(pkg) + day).digest("hex").slice(0, 12);
   const dir = join(tmpdir(), "zudo-learn-deps-" + key);
