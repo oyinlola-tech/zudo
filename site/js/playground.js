@@ -656,6 +656,29 @@
     return babelPromise;
   }
 
+  /* TypeScript (useDefineForClassFields, the default for modern targets)
+     declares constructor parameter properties as the first class fields and
+     keeps fields that have no initializer. Babel assigns parameter properties
+     after the other fields, so declare them up front: objects then print with
+     their keys in the same order as under Node. */
+  function paramPropsFirst(babel) {
+    var t = babel.types;
+    return { visitor: { Class: function (path) {
+      var body = path.node.body.body;
+      var ctor = body.find(function (m) { return m.type === 'ClassMethod' && m.kind === 'constructor'; });
+      if (!ctor) return;
+      var declared = body
+        .filter(function (m) { return m.type === 'ClassProperty' && !m.static && m.key.type === 'Identifier'; })
+        .map(function (m) { return m.key.name; });
+      ctor.params
+        .filter(function (p) { return p.type === 'TSParameterProperty'; })
+        .map(function (p) { return (p.parameter.type === 'AssignmentPattern' ? p.parameter.left : p.parameter).name; })
+        .filter(function (n) { return declared.indexOf(n) === -1; })
+        .reverse()
+        .forEach(function (n) { body.unshift(t.classProperty(t.identifier(n))); });
+    } } };
+  }
+
   function compile(src) {
     /* Strict, like the Node ES modules the examples are written as. Kept on
        the wrapper's line so user line numbers do not move. */
@@ -663,7 +686,8 @@
     return loadBabel().then(function (Babel) {
       var out = Babel.transform(wrapped, {
         filename: 'playground.ts',
-        presets: [['typescript', { allExtensions: true, isTSX: false, onlyRemoveTypeImports: true }]],
+        plugins: [paramPropsFirst],
+        presets: [['typescript', { allExtensions: true, isTSX: false, onlyRemoveTypeImports: true, allowDeclareFields: true }]],
         sourceType: 'script',
         retainLines: true,
       });
@@ -710,12 +734,15 @@
     return text + new Array(n + 1).join('\n');
   }
 
-  function rewriteModules(src, exportsList) {
+  /* importer: the file doing the importing, so "./x.js" resolves from its folder. */
+  function rewriteModules(src, exportsList, importer) {
+    var from = JSON.stringify(importer || '');
+    var reN = 0;
     var out = src
       .replace(/^([ \t]*)import\s+type\s[\s\S]*?\sfrom\s*(['"])[^'"\n]+\2[ \t]*;?/gm, function (m) { return keepLines(m, ''); })
       .replace(/^([ \t]*)import\s+(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\*\s*as\s+([A-Za-z_$][\w$]*)|(\{[\s\S]*?\}))?\s*from\s*(['"])([^'"\n]+)\5[ \t]*;?/gm,
         function (m, indent, def, ns, named, q, spec) {
-          var target = '__zudo_import__(' + JSON.stringify(spec) + ')';
+          var target = '__zudo_import__(' + JSON.stringify(spec) + ', ' + from + ')';
           var bindings = [];
           var stmts = [];
           if (named) {
@@ -731,8 +758,25 @@
           return keepLines(m, stmts.length ? indent + stmts.join(' ') : '');
         })
       .replace(/^([ \t]*)import\s*(['"])([^'"\n]+)\2[ \t]*;?/gm, function (m, indent, q, spec) {
-        return indent + 'await __zudo_import__(' + JSON.stringify(spec) + ');';
+        return indent + 'await __zudo_import__(' + JSON.stringify(spec) + ', ' + from + ');';
       });
+    /* Re-exports (barrel files): export * from "./a.js", export { x, y as z } from "./b.js". */
+    out = out.replace(/^([ \t]*)export\s*\*\s*(?:as\s+([A-Za-z_$][\w$]*)\s*)?from\s*(['"])([^'"\n]+)\3[ \t]*;?/gm, function (m, indent, as, q, spec) {
+      var v = '__zudo_re' + (reN++) + '__';
+      if (exportsList) exportsList.push(as ? as + ': ' + v : '...__zudo_star__(' + v + ')');
+      return keepLines(m, indent + 'const ' + v + ' = await __zudo_import__(' + JSON.stringify(spec) + ', ' + from + ');');
+    });
+    out = out.replace(/^([ \t]*)export\s*(type\s*)?\{([^}]*)\}\s*from\s*(['"])([^'"\n]+)\4[ \t]*;?/gm, function (m, indent, typeOnly, names, q, spec) {
+      if (typeOnly) return keepLines(m, '');
+      var v = '__zudo_re' + (reN++) + '__';
+      names.split(',').forEach(function (p) {
+        p = p.trim();
+        if (!p || /^type\s/.test(p) || !exportsList) return;
+        var parts = p.split(/\s+as\s+/);
+        exportsList.push((parts[1] || parts[0]) + ': ' + v + '.' + parts[0]);
+      });
+      return keepLines(m, indent + 'const ' + v + ' = await __zudo_import__(' + JSON.stringify(spec) + ', ' + from + ');');
+    });
     out = out.replace(/^([ \t]*)export\s*(type\s*)?\{([^}]*)\}(\s*from\s*(['"])[^'"\n]+\5)?[ \t]*;?/gm, function (m, indent, typeOnly, names, from) {
       if (!from && !typeOnly && exportsList) {
         names.split(',').forEach(function (p) {
@@ -756,8 +800,25 @@
     return out;
   }
 
-  function importVirtual(spec) {
-    var name = spec.replace(/^\.\//, '');
+  /* "./b.js" imported from "src/a.ts" → "src/b.js" (and "../x.js" climbs up). */
+  function resolveVirtual(spec, importer) {
+    var parts = (importer || '').split('/').slice(0, -1);
+    spec.split('/').forEach(function (seg) {
+      if (seg === '..') parts.pop();
+      else if (seg !== '.' && seg !== '') parts.push(seg);
+    });
+    return parts.join('/');
+  }
+
+  /* export * leaves out the default export, as in real modules. */
+  window.__zudo_star__ = function (mod) {
+    var out = {};
+    Object.keys(mod).forEach(function (k) { if (k !== 'default') out[k] = mod[k]; });
+    return out;
+  };
+
+  function importVirtual(spec, importer) {
+    var name = resolveVirtual(spec, importer);
     if (virtualFiles[name] === undefined && /\.js$/.test(name) && virtualFiles[name.replace(/\.js$/, '.ts')] !== undefined) {
       name = name.replace(/\.js$/, '.ts');
     }
@@ -767,7 +828,7 @@
     }
     if (!moduleCache[name]) {
       var exportsList = [];
-      var body = rewriteModules(virtualFiles[name], exportsList);
+      var body = rewriteModules(virtualFiles[name], exportsList, name);
       moduleCache[name] = compile(body + '\nreturn { ' + exportsList.join(', ') + ' };').then(function (js) {
         var t = currentTimers || makeTimers();
         return Function.apply(null, TIMER_PARAMS.concat([js + '\nreturn __zudo_main__();'])).apply(null, timerArgs(t));
@@ -776,8 +837,8 @@
     return moduleCache[name];
   }
 
-  window.__zudo_import__ = function (spec) {
-    if (spec.charAt(0) === '.') return importVirtual(spec);
+  window.__zudo_import__ = function (spec, importer) {
+    if (spec.charAt(0) === '.') return importVirtual(spec, importer);
     if (NODE_BUILTINS.test(spec)) {
       return Promise.reject(hintError('"' + spec + '" is part of Node.js, so it does not exist in the browser.',
         'Run this example on your computer with Node.js. The lesson shows the command and the output you should see.'));
@@ -1298,7 +1359,7 @@
     var sysLine = window.Babel ? null : line('sys', 'Loading the TypeScript compiler (first run only)…');
 
     var t0 = performance.now();
-    runPromise = compile(rewriteModules(src, null)).then(function (js) {
+    runPromise = compile(rewriteModules(src, null, file)).then(function (js) {
       if (sysLine) sysLine.remove();
       setState('busy', 'Running');
       session = makeSession();
