@@ -1,5 +1,7 @@
 import type { Logger } from "@zudojs/logger";
 
+import { RuntimeSignalError } from "../runtimeError/runtimeError.base.js";
+
 /**
  * Options controlling signal and fatal-error handling.
  */
@@ -211,8 +213,11 @@ export class SignalHandler {
 
     if (this.shutdownHandler) {
       return Promise.resolve(this.shutdownHandler()).catch((error: unknown) => {
+        const signalError = new RuntimeSignalError(source, { cause: error });
+
         this.logger.error("Shutdown handler failed.", {
-          errorMessage: error instanceof Error ? error.message : String(error),
+          errorMessage: signalError.message,
+          error: signalError,
         });
       });
     }

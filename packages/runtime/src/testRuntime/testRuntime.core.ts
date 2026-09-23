@@ -16,6 +16,9 @@ import type { RuntimeOptions } from "../runtimeOptions/runtimeOptions.type.js";
 /**
  * Creates a test runtime with mock infrastructure.
  *
+ * The runtime owns the container it creates, so `stop()` disposes it
+ * (`disposeContainerOnStop: true`; pass `false` to keep it).
+ *
  * @param modules - Optional modules to register.
  * @param options - Optional runtime options overrides.
  * @returns A runtime instance ready for testing.
@@ -49,6 +52,8 @@ export function createTestRuntime(
     shutdownTimeout: 5000,
     startupTimeout: 10000,
     emitEvents: false,
+    // The test runtime created this container, so it owns and releases it.
+    disposeContainerOnStop: true,
     ...options,
   };
 

@@ -117,6 +117,21 @@ export interface RuntimeOptions {
   readonly parallelInitialization?: boolean;
 
   /**
+   * Whether `stop()` disposes the container passed in `dependencies`.
+   *
+   * The caller that created the container owns it, so by default the
+   * runtime leaves it alone: dispose it yourself after `stop()`, or set
+   * this to hand ownership to the runtime. It is disposed after every
+   * module has shut down and been destroyed (or on `stop()` of a runtime
+   * that never started). A disposal failure is recorded in
+   * `status.shutdownFailures` under `"(container)"` rather than failing
+   * the stop. `createTestRuntime` creates its own container and sets this.
+   *
+   * @default false
+   */
+  readonly disposeContainerOnStop?: boolean;
+
+  /**
    * Additional runtime metadata.
    */
   readonly metadata?: Readonly<Record<string, unknown>>;
@@ -142,6 +157,7 @@ export interface ResolvedRuntimeOptions {
   readonly trackHealth: boolean;
   readonly readinessCheckTimeout: number;
   readonly parallelInitialization: boolean;
+  readonly disposeContainerOnStop: boolean;
   readonly metadata: Readonly<Record<string, unknown>>;
 }
 
@@ -161,6 +177,7 @@ export const DEFAULT_RUNTIME_OPTIONS = Object.freeze({
   trackHealth: true,
   readinessCheckTimeout: 5_000,
   parallelInitialization: false,
+  disposeContainerOnStop: false,
   applicationVersion: "0.1.0",
   // `metadata` is required on ResolvedRuntimeOptions, so it needs a
   // default; without one the resolved options claimed a value the

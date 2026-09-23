@@ -65,20 +65,28 @@ export class RuntimeStopError extends RuntimeError {
 }
 
 /**
- * Error thrown when runtime initialization fails.
+ * Error thrown when startup fails during initialization: a module's
+ * `onInitialize` threw, or the configuration manager failed to load.
+ *
+ * A {@link RuntimeStartError} with `phase: "initialize"`, so handlers
+ * written against `RuntimeStartError` keep matching. `cause` is the
+ * original error and `failedModuleId` names the module (absent for a
+ * configuration failure).
  */
-export class RuntimeInitializationError extends RuntimeError {
+export class RuntimeInitializationError extends RuntimeStartError {
   public constructor(
     message: string,
     options: {
       readonly cause?: Error;
+      readonly failedModuleId?: string;
     } = {},
   ) {
     super(message, {
-      cause: options.cause,
-      metadata: {
-        phase: "initialization",
-      },
+      phase: "initialize",
+      ...(options.cause !== undefined && { cause: options.cause }),
+      ...(options.failedModuleId !== undefined && {
+        failedModuleId: options.failedModuleId,
+      }),
     });
   }
 }
@@ -104,20 +112,38 @@ export class RuntimeTimeoutError extends RuntimeError {
 }
 
 /**
- * Error thrown when runtime rollback fails.
+ * Error thrown when startup failed and the rollback that followed failed
+ * too, so some module may still hold resources.
+ *
+ * A {@link RuntimeStartError} describing the ORIGINAL failure: `phase`,
+ * `failedModuleId` and `cause` (what the module threw) match the error
+ * `start()` would otherwise have rejected with, which is kept whole as
+ * `originalError`. `rollbackError` is what failed during rollback (an
+ * `AggregateError` when several modules failed). Call `stop()` to retry
+ * releasing what rollback did not reach.
  */
-export class RuntimeRollbackError extends RuntimeError {
+export class RuntimeRollbackError extends RuntimeStartError {
   public readonly originalError: Error;
   public readonly rollbackError: Error;
 
   public constructor(originalError: Error, rollbackError: Error) {
-    super("Runtime rollback failed. Original error suppressed.", {
-      cause: rollbackError,
-      metadata: {
-        originalErrorMessage: originalError.message,
-        rollbackErrorMessage: rollbackError.message,
+    const start =
+      originalError instanceof RuntimeStartError ? originalError : undefined;
+    const cause =
+      start !== undefined && start.cause instanceof Error
+        ? start.cause
+        : originalError;
+
+    super(
+      `${originalError.message} Rollback also failed: ${rollbackError.message}`,
+      {
+        phase: start?.phase ?? "startup",
+        cause,
+        ...(start?.failedModuleId !== undefined && {
+          failedModuleId: start.failedModuleId,
+        }),
       },
-    });
+    );
 
     this.originalError = originalError;
     this.rollbackError = rollbackError;
@@ -168,17 +194,35 @@ export class RuntimeDependencyError extends RuntimeError {
 }
 
 /**
- * Error thrown when runtime receives multiple signals.
+ * Reports a shutdown triggered by a signal (`SIGTERM`, `SIGINT`, or
+ * `"fatal"` for an uncaught exception or unhandled rejection) that failed.
+ *
+ * Signal listeners have no caller to throw to, so the signal handler logs
+ * this error (as the `error` field of its "Shutdown handler failed." log
+ * entry) with the shutdown failure as `cause`.
  */
 export class RuntimeSignalError extends RuntimeError {
   public readonly signal: string;
 
-  public constructor(signal: string) {
-    super(`Runtime received unexpected signal "${signal}".`, {
-      metadata: {
-        signal,
+  public constructor(signal: string, options: { readonly cause?: unknown } = {}) {
+    const detail =
+      options.cause === undefined
+        ? undefined
+        : options.cause instanceof Error
+          ? options.cause.message
+          : String(options.cause);
+
+    super(
+      detail === undefined
+        ? `Runtime received unexpected signal "${signal}".`
+        : `Shutdown triggered by "${signal}" failed: ${detail}`,
+      {
+        ...(options.cause instanceof Error && { cause: options.cause }),
+        metadata: {
+          signal,
+        },
       },
-    });
+    );
 
     this.signal = signal;
   }

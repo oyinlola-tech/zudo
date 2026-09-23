@@ -13,6 +13,7 @@ import { LifecycleManager } from "../lifecycle/index.js";
 import type { LifecycleFailure } from "../lifecycle/lifecycle.type.js";
 
 import {
+  RuntimeInitializationError,
   RuntimeStartError,
   RuntimeTimeoutError,
 } from "../runtimeError/index.js";
@@ -65,6 +66,9 @@ async function withStartupTimeout<T>(
 
 /**
  * Executes the startup sequence.
+ *
+ * @param onInitialized - Called once every module has initialized and
+ *   before any `onReady` hook runs.
  */
 export async function executeStartup(
   lifecycle: LifecycleManager,
@@ -73,9 +77,17 @@ export async function executeStartup(
   logger: Logger,
   emitEvents: boolean,
   startupTimeout = 0,
+  onInitialized?: () => void,
 ): Promise<void> {
   return withStartupTimeout(
-    runStartup(lifecycle, runtimeId, eventBus, logger, emitEvents),
+    runStartup(
+      lifecycle,
+      runtimeId,
+      eventBus,
+      logger,
+      emitEvents,
+      onInitialized,
+    ),
     startupTimeout,
     () => lifecycle.cancel(),
   );
@@ -90,6 +102,7 @@ async function runStartup(
   eventBus: EventBus | undefined,
   logger: Logger,
   emitEvents: boolean,
+  onInitialized?: () => void,
 ): Promise<void> {
   // Per-module `runtime.module.*` events are emitted by the lifecycle
   // manager, which is the only layer that knows which module is running.
@@ -119,10 +132,9 @@ async function runStartup(
       );
     }
 
-    throw new RuntimeStartError(
+    throw new RuntimeInitializationError(
       `Module "${failure.moduleId}" failed during initialization.`,
       {
-        phase: "initialize",
         failedModuleId: failure.moduleId,
         cause: failure.error,
       },
@@ -133,6 +145,11 @@ async function runStartup(
     modules: initResult.succeeded,
     durationMs: initResult.durationMs,
   });
+
+  // Lets the runtime enter "initialized" and "starting" between the two
+  // phases, so onReady hooks observe "starting" rather than
+  // "initializing".
+  onInitialized?.();
 
   const startResult = await lifecycle.start();
 

@@ -22,6 +22,7 @@ import { LifecycleCancellation } from "./lifecycle.cancellation.js";
 
 import {
   RuntimeDependencyError,
+  RuntimeInitializationError,
   RuntimeStartError,
   RuntimeStateError,
 } from "../runtimeError/index.js";
@@ -124,8 +125,7 @@ export class LifecycleManager {
     try {
       await this.configuration.initialize();
     } catch (error) {
-      throw new RuntimeStartError("Configuration failed to load.", {
-        phase: "initialize",
+      throw new RuntimeInitializationError("Configuration failed to load.", {
         ...(error instanceof Error && { cause: error }),
       });
     }

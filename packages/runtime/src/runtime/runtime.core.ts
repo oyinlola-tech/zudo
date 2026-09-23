@@ -43,6 +43,8 @@ import { executeStartup, rollbackStartup } from "../startup/index.js";
 
 import { executeShutdown } from "../shutdown/index.js";
 
+import { disposeRuntimeContainer } from "../shutdown/shutdown.container.js";
+
 import type { LifecycleFailure } from "../lifecycle/lifecycle.type.js";
 
 import { SignalHandler } from "../signalHandler/index.js";
@@ -66,7 +68,11 @@ import {
 
 import { createEvent } from "@zudojs/events";
 
-import { RuntimeStateError, toRuntimeError } from "../runtimeError/index.js";
+import {
+  RuntimeRollbackError,
+  RuntimeStateError,
+  toRuntimeError,
+} from "../runtimeError/index.js";
 
 /**
  * Zudojs runtime interface.
@@ -397,6 +403,13 @@ export class DefaultRuntime implements Runtime {
       this._state = "stopped";
       this._stoppedAt = new Date();
       this.signalHandler.unregister();
+
+      const containerFailure = await this.releaseContainer();
+
+      if (containerFailure !== undefined) {
+        this._shutdownFailures = [containerFailure];
+      }
+
       return;
     }
 
@@ -441,6 +454,7 @@ export class DefaultRuntime implements Runtime {
         this.logger,
         this.options.emitEvents,
         this.options.startupTimeout,
+        () => this.enterStartingPhase(),
       );
 
       this.transitionTo("running");
@@ -502,6 +516,8 @@ export class DefaultRuntime implements Runtime {
         );
       }
 
+      let rollbackError: Error | undefined;
+
       try {
         const rollbackFailures = await rollbackStartup(
           this.lifecycle,
@@ -512,15 +528,35 @@ export class DefaultRuntime implements Runtime {
           this.logger.error("Rollback completed with failures.", {
             failedModules: rollbackFailures.map((failure) => failure.moduleId),
           });
+
+          rollbackError =
+            rollbackFailures.length === 1
+              ? rollbackFailures[0]!.error
+              : new AggregateError(
+                  rollbackFailures.map((failure) => failure.error),
+                  `${rollbackFailures.length} modules failed to roll back: ` +
+                    rollbackFailures.map((f) => f.moduleId).join(", ") +
+                    ".",
+                );
         }
-      } catch (rollbackError) {
+      } catch (caught) {
+        rollbackError =
+          caught instanceof Error ? caught : new Error(String(caught));
+
         this.logger.error("Rollback failed.", {
-          errorMessage:
-            rollbackError instanceof Error
-              ? rollbackError.message
-              : String(rollbackError),
+          errorMessage: rollbackError.message,
         });
       }
+
+      // A rollback that failed leaves resources behind; say so rather than
+      // reporting only the startup failure. The startup failure stays
+      // reachable as `originalError`, and `cause` is unchanged.
+      const thrown =
+        rollbackError === undefined
+          ? runtimeError
+          : new RuntimeRollbackError(runtimeError, rollbackError);
+
+      this._error = thrown;
 
       this.transitionTo("failed");
 
@@ -528,8 +564,38 @@ export class DefaultRuntime implements Runtime {
       // process's signals and fatal-error handlers either.
       this.signalHandler.unregister();
 
-      throw runtimeError;
+      throw thrown;
     }
+  }
+
+  /**
+   * Walks `initializing` -> `initialized` -> `starting` once every module
+   * has initialized, before the first `onReady` hook runs.
+   */
+  private enterStartingPhase(): void {
+    this.transitionTo("initialized");
+
+    if (this.options.emitEvents) {
+      this.emitEvent("runtime.initialized");
+    }
+
+    this.transitionTo("starting");
+
+    if (this.options.emitEvents) {
+      this.emitEvent("runtime.starting");
+    }
+  }
+
+  /**
+   * Disposes the container when the runtime owns it
+   * (`disposeContainerOnStop`). Returns the failure to record, if any.
+   */
+  private async releaseContainer(): Promise<LifecycleFailure | undefined> {
+    if (!this.options.disposeContainerOnStop) {
+      return undefined;
+    }
+
+    return disposeRuntimeContainer(this._contextBase.container, this.logger);
   }
 
   /**
@@ -556,7 +622,12 @@ export class DefaultRuntime implements Runtime {
         this.options.emitEvents,
       );
 
-      this._shutdownFailures = result.failures;
+      const containerFailure = await this.releaseContainer();
+
+      this._shutdownFailures =
+        containerFailure === undefined
+          ? result.failures
+          : [...result.failures, containerFailure];
 
       this.transitionTo("stopped");
       this._stoppedAt = new Date();
@@ -565,12 +636,14 @@ export class DefaultRuntime implements Runtime {
         this.emitEvent("runtime.stopped");
       }
 
-      if (result.failures.length > 0) {
+      if (this._shutdownFailures.length > 0) {
         // A teardown that dropped modules on the floor must not read as
         // a clean stop; `status.shutdownFailures` records what failed.
         this.logger.warn("Runtime stopped with module failures.", {
           runtimeId: this.options.runtimeId,
-          failedModules: result.failures.map((failure) => failure.moduleId),
+          failedModules: this._shutdownFailures.map(
+            (failure) => failure.moduleId,
+          ),
         });
       } else {
         this.logger.info("Runtime stopped.", {

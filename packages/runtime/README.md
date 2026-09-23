@@ -44,6 +44,68 @@ await runtime.stop();
 
 Modules start in dependency order and stop in reverse.
 
+## Lifecycle states
+
+`start()` walks the state machine in order:
+
+```
+created -> initializing -> initialized -> starting -> running -> stopping -> stopped
+```
+
+Every module's `onInitialize` runs while `runtime.state` is
+`initializing`; once all have initialized the runtime passes through
+`initialized` to `starting`, and every `onReady` runs under `starting`.
+`start()` resolves in `running`. A failure in any phase ends in `failed`,
+which is still stoppable. `created` may go straight to `stopped` (a
+`stop()` before `start()`).
+
+## Startup failures
+
+If any module throws, the runtime rolls back (modules that already started
+are stopped and destroyed in reverse) and the state becomes `failed`.
+`start()` then rejects with a `RuntimeStartError` that wraps the error your
+module threw rather than re-throwing it: the original is `error.cause`,
+`error.phase` is `"initialize"` (an `onInitialize` threw) or `"start"` (an
+`onReady` threw), and `error.failedModuleId` names the module.
+
+```typescript
+import { RuntimeStartError } from "@zudojs/runtime";
+
+try {
+  await runtime.start();
+} catch (error) {
+  if (error instanceof RuntimeStartError) {
+    const original = error.cause; // what the module threw
+    logger.error(`Module ${error.failedModuleId} failed in ${error.phase}`, {
+      original,
+    });
+  }
+  await runtime.stop(); // release anything rollback did not reach
+}
+```
+
+A startup that outlives `startupTimeout` rejects with `RuntimeTimeoutError`,
+which has no cause.
+
+## Container ownership
+
+The runtime does not create the container; you pass it in, so by default
+you own it and `stop()` leaves it alone. Dispose it yourself after
+`stop()`:
+
+```typescript
+await runtime.stop();
+await container.dispose();
+```
+
+or hand ownership to the runtime with `disposeContainerOnStop: true`, and
+`stop()` disposes it after every module has shut down and been destroyed.
+A disposal failure does not fail `stop()`; it is logged and recorded in
+`runtime.status.shutdownFailures` under the id `"(container)"`
+(exported as `CONTAINER_SHUTDOWN_ID`).
+`createTestRuntime` (from `@zudojs/runtime/testing`) creates its own
+container and sets `disposeContainerOnStop: true`.
+
 ## Readiness and health
 
 Readiness checks are registered on the runtime and re-evaluated on demand.
@@ -104,7 +166,7 @@ Subscribe with `bus.on(type, handler)`; the payload types are in
 
 | Event | Payload |
 | --- | --- |
-| `runtime.initializing`, `runtime.running`, `runtime.stopping`, `runtime.stopped` | `RuntimeEventPayload` |
+| `runtime.initializing`, `runtime.initialized`, `runtime.starting`, `runtime.running`, `runtime.stopping`, `runtime.stopped` | `RuntimeEventPayload` |
 | `runtime.failed` | `RuntimeFailureEventPayload` |
 | `runtime.module.initializing` / `initialized` / `starting` / `started` / `stopping` / `stopped` / `failed` | `RuntimeModuleEventPayload` |
 | `runtime.shutdown.drain`, `runtime.shutdown.complete` | `RuntimeEventPayload` |
@@ -142,6 +204,7 @@ createRuntime(dependencies, {
   trackHealth: true,
   readinessCheckTimeout: 5_000, // 0 removes the bound
   parallelInitialization: false, // initialize each depth group at once
+  disposeContainerOnStop: false, // true: stop() disposes the container
   metadata: { region: "eu-west-1" },
 });
 ```

@@ -98,13 +98,15 @@ export type RuntimeModuleEventType =
 /**
  * Maps event types to their payload types.
  *
- * Every entry here is emitted by the runtime. Entries for events nothing
- * ever published (`runtime.created`, `runtime.initialized`,
- * `runtime.starting`) were removed rather than left as names a consumer
- * could subscribe to and never hear from.
+ * Every entry here is emitted by the runtime. `runtime.created` is not:
+ * nothing is subscribed before construction. `runtime.initialized` and
+ * `runtime.starting` are published between module initialization and the
+ * first `onReady` hook.
  */
 export interface RuntimeEventMap {
   "runtime.initializing": RuntimeEventPayload;
+  "runtime.initialized": RuntimeEventPayload;
+  "runtime.starting": RuntimeEventPayload;
   "runtime.running": RuntimeEventPayload;
   "runtime.stopping": RuntimeEventPayload;
   "runtime.stopped": RuntimeEventPayload;

@@ -9,8 +9,12 @@ export const RUNTIME_STATE_TRANSITIONS: Readonly<
   Record<RuntimeState, readonly RuntimeState[]>
 > = Object.freeze({
   created: ["initializing", "stopped", "failed"],
-  initializing: ["initialized", "running", "failed"],
-  initialized: ["starting", "running", "failed"],
+  // Startup walks every state in order: modules initialize under
+  // "initializing", the runtime passes through "initialized", and modules'
+  // onReady hooks run under "starting". The shortcuts straight to
+  // "running" were never taken once the runtime entered these states.
+  initializing: ["initialized", "failed"],
+  initialized: ["starting", "failed"],
   starting: ["running", "failed"],
   running: ["stopping", "failed"],
   stopping: ["stopped", "failed"],
@@ -23,11 +27,16 @@ export const RUNTIME_STATE_TRANSITIONS: Readonly<
 });
 
 /**
- * Terminal runtime states.
+ * Terminal runtime states: no further transition is possible.
+ *
+ * Only `stopped`. `failed` is NOT terminal: `stop()` is allowed from it
+ * (`failed -> stopping -> stopped`) so an operator can release whatever
+ * startup rollback did not reach. It used to be listed here, so
+ * `isTerminalState("failed")` claimed a state was final while `stop()`
+ * still moved out of it.
  */
 export const TERMINAL_STATES: readonly RuntimeState[] = Object.freeze([
   "stopped",
-  "failed",
 ]);
 
 /**
@@ -74,7 +83,9 @@ export function assertTransition(from: RuntimeState, to: RuntimeState): void {
 }
 
 /**
- * Returns whether the runtime is in a terminal state.
+ * Returns whether the runtime is in a terminal state (`stopped`).
+ *
+ * `failed` is not terminal: call `stop()` to release it.
  */
 export function isTerminalState(state: RuntimeState): boolean {
   return TERMINAL_STATES.includes(state);
