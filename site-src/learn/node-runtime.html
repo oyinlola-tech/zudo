@@ -1,0 +1,387 @@
+---
+title: What Node.js is
+description: Learn what Node.js adds to JavaScript, how its event loop decides what runs next, and how a program talks to the computer through process, exit codes and environment variables.
+minutes: 35
+youNeed: The JavaScript lessons, especially Asynchronous JavaScript and Modules
+youBuild: A learn-node folder with small programs that read arguments, exit codes and a .env file
+keywords: what is node.js, node vs browser, v8, libuv, event loop, process.nextTick, setImmediate, microtasks, process.argv, exit code, process.env, env-file, dotenv
+---
+<section>
+<h2 id="node-vs-browser">JavaScript outside the browser</h2>
+<p>Until now, every example ran the same way in the browser terminal and on your computer. That was possible because they only used the JavaScript <strong>language</strong>: values, functions, arrays, promises. From this lesson on, you will use things that only exist on a computer: files, network ports, environment variables.</p>
+<p>JavaScript itself has no way to read a file or open a network connection. The program that runs your code adds those abilities. That program is called the <strong>runtime</strong>:</p>
+<ul>
+<li>In a <strong>browser</strong>, the runtime gives you <code>window</code>, <code>document</code> (the web page) and buttons to click. It keeps you away from the files on the computer, for safety.</li>
+<li><strong>Node.js</strong> is a runtime for servers and your own computer. It has no web page, but it can read and write files, start servers, and see the whole machine.</li>
+</ul>
+<p>Run this with Node.js on your computer:</p>
+<example file="where-am-i.js" browser="no">
+console.log("window:", typeof window);
+console.log("document:", typeof document);
+console.log("process:", typeof process);
+console.log("Node.js version:", process.version);
+</example>
+<output mask="num">
+window: undefined
+document: undefined
+process: object
+Node.js version: v24.19.0
+</output>
+<p>There is no <code>window</code> and no <code>document</code>, because there is no web page. Instead there is <code>process</code>, an object that describes the running program. You will use it a lot in this lesson. Your version number can be higher.</p>
+<note>From here on, most examples say <strong>Node.js only</strong> instead of showing a Run button. The browser terminal cannot open files or ports, so run those examples on your computer, as shown in the next section.</note>
+</section>
+
+<section>
+<h2 id="setup">A folder for this part of the course</h2>
+<p>Make one folder for the Node.js lessons and turn it into an ES module project, as you did in <a href="/learn/setup">Set up your computer</a>:</p>
+<shell>
+$ mkdir learn-node
+$ cd learn-node
+$ npm init -y
+Wrote to ~/learn-node/package.json:
+…
+$ npm pkg set type=module
+</shell>
+<p>Save each example in this folder with the file name shown above its code, then run it with <code>node</code> and the file name. For the example above:</p>
+<shell>
+$ node where-am-i.js
+window: undefined
+document: undefined
+process: object
+Node.js version: v24.19.0
+</shell>
+</section>
+
+<section>
+<h2 id="inside">What is inside Node.js</h2>
+<p>Node.js is built from a few large parts. You never call them directly, but knowing they exist explains how Node.js behaves:</p>
+<ul>
+<li><strong>V8</strong> is the JavaScript engine. It reads your code, turns it into machine code and runs it. Google wrote it for the Chrome browser, which is why Chrome and Node.js print the same error messages.</li>
+<li><strong>libuv</strong> is a library written in C. It talks to the operating system: files, network, timers. It is the part that waits for slow things, so your JavaScript does not have to.</li>
+<li><strong>The Node.js APIs</strong> are the JavaScript modules on top, such as <code>node:fs</code> for files and <code>node:http</code> for servers. They pass your requests to libuv and give you back the results.</li>
+</ul>
+<p><code>process.versions</code> lists the version of each part:</p>
+<example file="versions.js" browser="no">
+const { node, v8, uv } = process.versions;
+
+console.log("Node.js:", node);
+console.log("V8 engine:", v8);
+console.log("libuv:", uv);
+</example>
+<output mask="num">
+Node.js: 24.19.0
+V8 engine: 13.6.233.17-node.51
+libuv: 1.52.1
+</output>
+</section>
+
+<section>
+<h2 id="event-loop">The event loop</h2>
+<p>Your JavaScript runs on <strong>one thread</strong>: one line at a time, never two at once. Yet a Node.js server answers thousands of people. How?</p>
+<p>In <a href="/learn/js-async">Asynchronous JavaScript</a> you saw that code which has to wait says "call me back when the answer is ready" and moves on. In Node.js, libuv does the waiting. When a file has been read or a timer is due, libuv puts the callback in a queue. The <strong>event loop</strong> is the part of Node.js that takes the next callback from a queue and runs it, over and over, until there is nothing left to wait for. Then the program ends.</p>
+<p>There are several queues, and the order between them matters when you debug. This example schedules work five different ways. It does so inside the callback of a file read, which is where server code almost always runs: inside a callback for "a request arrived" or "the database answered".</p>
+<example file="event-loop.js" browser="no">
+import { readFile } from "node:fs";
+
+readFile(import.meta.filename, () => {
+  console.log("1. sync code in the callback");
+
+  setTimeout(() => console.log("6. setTimeout"), 0);
+  setImmediate(() => console.log("5. setImmediate"));
+  Promise.resolve().then(() => console.log("4. promise"));
+  process.nextTick(() => console.log("3. process.nextTick"));
+
+  console.log("2. more sync code");
+});
+</example>
+<output>
+1. sync code in the callback
+2. more sync code
+3. process.nextTick
+4. promise
+5. setImmediate
+6. setTimeout
+</output>
+<p><code>import.meta.filename</code> is the full path of the current file, so the program simply reads itself. Here is the order, and why:</p>
+<ol>
+<li><strong>Synchronous code</strong> always finishes first. Nothing can interrupt it.</li>
+<li><strong><code>process.nextTick</code></strong> callbacks run as soon as the current code finishes, before anything else.</li>
+<li><strong>Promise callbacks</strong> (<code>.then</code>, and the code after an <code>await</code>) run next. Together with <code>nextTick</code>, these are called <strong>microtasks</strong>: small jobs that run before the event loop moves on.</li>
+<li><strong><code>setImmediate</code></strong> runs right after the event loop finishes handling I/O (input and output, such as the file read).</li>
+<li><strong><code>setTimeout</code></strong> runs when the loop comes back round to check its timers, even with a delay of 0.</li>
+</ol>
+<p>At the top level of a file, outside any I/O callback, the order of <code>setTimeout(…, 0)</code> and <code>setImmediate</code> is not fixed. It depends on how fast your computer started the program. Here is a two-line file, <code>order.js</code>, run four times:</p>
+<shell>
+$ node order.js
+immediate
+timeout
+$ node order.js
+immediate
+timeout
+$ node order.js
+immediate
+timeout
+$ node order.js
+timeout
+immediate
+</shell>
+<p>The lesson: never write code that depends on which of two timers wins. If B must happen after A, call B from A, or <code>await</code> A.</p>
+</section>
+
+<section>
+<h2 id="blocking">Do not block the loop</h2>
+<p>Because there is only one thread, a long piece of synchronous code stops <em>everything</em>: timers, requests, all of it. This example asks for a timer in 10 ms, then keeps the thread busy for 200 ms:</p>
+<example file="blocking.js" browser="no">
+const start = Date.now();
+
+setTimeout(() => {
+  console.log(`The timer asked for 10 ms and ran after ${Date.now() - start} ms`);
+}, 10);
+
+while (Date.now() - start < 200) {
+  // busy: this loop does nothing useful, but it holds the thread
+}
+console.log("The busy loop finished");
+</example>
+<output mask="ms">
+The busy loop finished
+The timer asked for 10 ms and ran after 218 ms
+</output>
+<p>The timer was due after 10 ms, but it could not run until the loop let go of the thread. In a server, that means every other user waits. Heavy work (big calculations, reading huge files in one go) should be done in small pieces, with streams, or in a separate worker. You will meet streams in <a href="/learn/node-streams">Streams and buffers</a>.</p>
+</section>
+
+<section>
+<h2 id="apis">The Node.js APIs</h2>
+<p>Node.js comes with dozens of <strong>built-in modules</strong>. You import them like your own modules, with the <code>node:</code> prefix, and you don't install anything. These are the ones a backend developer uses most:</p>
+<ul>
+<li><code>node:fs/promises</code>: read and write files and folders.</li>
+<li><code>node:path</code>: build file paths that work on every operating system.</li>
+<li><code>node:http</code>: HTTP servers and clients.</li>
+<li><code>node:crypto</code>: random ids, hashes and encryption.</li>
+<li><code>node:events</code>: objects that announce "something happened".</li>
+<li><code>node:stream</code> and <code>node:readline</code>: handle data piece by piece.</li>
+<li><code>node:os</code>: facts about the computer.</li>
+<li><code>node:test</code>: a built-in test runner.</li>
+</ul>
+<p>A few things are <strong>global</strong>, so you use them with no import at all: <code>process</code>, <code>console</code>, timers, <code>fetch</code>, <code>URL</code> and <code>Buffer</code>. Older tutorials use <code>require(…)</code> to load modules. That is the CommonJS system, and it does not exist in an ES module:</p>
+<example file="globals.js" browser="no">
+console.log("fetch:", typeof fetch);
+console.log("URL:", typeof URL);
+console.log("Buffer:", typeof Buffer);
+console.log("require:", typeof require);
+</example>
+<output>
+fetch: function
+URL: function
+Buffer: function
+require: undefined
+</output>
+<p>If you copy code that uses <code>const fs = require("fs")</code>, write <code>import fs from "node:fs"</code> instead. The next lesson, <a href="/learn/node-apis">Files, paths and your computer</a>, covers <code>fs</code>, <code>path</code>, <code>os</code>, <code>crypto</code> and <code>events</code> in detail.</p>
+</section>
+
+<section>
+<h2 id="process">The process object</h2>
+<p>A running program is called a <strong>process</strong>. The global <code>process</code> object is how your code talks to the operating system about it.</p>
+<h3>Command-line arguments</h3>
+<p><code>process.argv</code> is an array of everything typed on the command line. The first two items are the path of <code>node</code> and the path of your file, so the words you typed start at index 2:</p>
+<example file="args.js" browser="no">
+console.log("arguments:", process.argv.slice(2));
+</example>
+<output>
+arguments: []
+</output>
+<p>Run without extra words, the list is empty. Now give it some. Quotes keep <code>Buy milk</code> together as one argument:</p>
+<shell>
+$ node args.js add "Buy milk"
+arguments: [ 'add', 'Buy milk' ]
+</shell>
+<h3>Exit codes</h3>
+<p>When a program ends, it hands the operating system a number, the <strong>exit code</strong>. <code>0</code> means success. Anything else means failure. Scripts, test runners and servers such as Docker read this number to know whether your program worked.</p>
+<example file="add.js" browser="no">
+const title = process.argv[2];
+
+if (!title) {
+  console.error("Usage: node add.js <title>");
+  process.exitCode = 1;
+} else {
+  console.log(`Added: ${title}`);
+}
+</example>
+<output>
+Usage: node add.js <title>
+</output>
+<p><code>console.error</code> writes to the <strong>error output</strong> (stderr) instead of the normal output (stdout). Both appear in your terminal, but a script can tell them apart. <code>process.exitCode = 1</code> sets the code the program ends with. In a terminal on macOS or Linux, <code>echo $?</code> prints the exit code of the last command. In PowerShell, use <code>echo $LASTEXITCODE</code>.</p>
+<shell>
+$ node add.js "Buy milk"
+Added: Buy milk
+$ echo $?
+0
+$ node add.js
+Usage: node add.js <title>
+$ echo $?
+1
+</shell>
+<p>There is also <code>process.exit(1)</code>, which stops the program at once. Setting <code>process.exitCode</code> is gentler: pending work, such as a file being written, still finishes first.</p>
+<h3>Where the program runs and how much memory it uses</h3>
+<p><code>process.cwd()</code> is the <strong>current working directory</strong>: the folder your terminal was in when you started the program. It is not always the folder the file is in. <code>import.meta.dirname</code> gives you that one:</p>
+<shell>
+$ node where.js
+current working directory: ~/learn-node
+folder of this file:       ~/learn-node
+$ cd ..
+$ node learn-node/where.js
+current working directory: ~
+folder of this file:       ~/learn-node
+</shell>
+<p>Remember this when you read files: a path like <code>"tasks.json"</code> is looked up from the working directory. The next lesson shows how to build paths that don't depend on it.</p>
+<p><code>process.memoryUsage()</code> reports how much memory the process uses, in bytes, and <code>process.pid</code> is the id the operating system gave it:</p>
+<example file="memory.js" browser="no">
+const toMb = (bytes) => (bytes / 1024 / 1024).toFixed(1) + " MB";
+
+const { rss, heapUsed } = process.memoryUsage();
+console.log("process id:", process.pid);
+console.log("total memory (rss):", toMb(rss));
+console.log("used by JavaScript objects:", toMb(heapUsed));
+</example>
+<output mask="num">
+process id: 186159
+total memory (rss): 51.0 MB
+used by JavaScript objects: 3.8 MB
+</output>
+<p>Your numbers will differ on every run. <strong>rss</strong> (resident set size) is all the memory the process holds; <strong>heapUsed</strong> is the part your JavaScript objects use. If a server's memory only ever grows, something keeps objects it no longer needs. That is called a memory leak.</p>
+</section>
+
+<section>
+<h2 id="env">Environment variables</h2>
+<p>A program needs settings that change between your computer and the server: the port to listen on, the database address, secret keys. These must not be written in the code. Code is shared, copied and pushed to GitHub. Secrets must never be.</p>
+<p>The standard answer is <strong>environment variables</strong>: named text values the operating system hands to every process it starts. Node.js puts them in <code>process.env</code>. Every value is a string, or <code>undefined</code> when it is not set.</p>
+<example file="config.js" browser="no">
+const port = Number(process.env.PORT ?? 3000);
+const apiKey = process.env.TASKS_API_KEY;
+
+if (!apiKey) {
+  console.error("TASKS_API_KEY is not set. Copy .env.example to .env and fill it in.");
+  process.exit(1);
+}
+
+console.log(`Port: ${port}`);
+console.log(`API key loaded (${apiKey.length} characters)`);
+</example>
+<output>
+TASKS_API_KEY is not set. Copy .env.example to .env and fill it in.
+</output>
+<p>Nothing set <code>TASKS_API_KEY</code>, so the program refused to start. That is the right behaviour. A server that starts without its secret key fails later, in a confusing way, or worse, runs without protection. Notice also that the program never prints the key itself, only its length. Secrets do not belong in logs either.</p>
+<p><code>PORT</code> has a safe default (<code>?? 3000</code>) because a port is not a secret. A secret never gets a default.</p>
+<h3>A .env file</h3>
+<p>Typing every variable before each command is tedious, so developers keep them in a file called <code>.env</code> and let Node.js load it with <code>--env-file</code>. Create <code>.env</code> in your folder:</p>
+<pre class="lx-json">PORT=4000
+TASKS_API_KEY=replace-me-with-a-long-random-value</pre>
+<p>To make a real random key, let Node.js generate one for you and paste it in:</p>
+<shell>
+$ node -p "crypto.randomBytes(32).toString('hex')"
+be4a80c451f09e6e13f07d6a63c35408c8ffadfc73bc7aa6cb222e402cb0aec7
+</shell>
+<p>Now run the program with the file:</p>
+<shell>
+$ node --env-file=.env config.js
+Port: 4000
+API key loaded (35 characters)
+$ PORT=5000 node --env-file=.env config.js
+Port: 5000
+API key loaded (35 characters)
+$ node --env-file=missing.env config.js
+node: missing.env: not found
+</shell>
+<p>Three things to notice:</p>
+<ul>
+<li>A variable that is already set in the terminal (<code>PORT=5000</code> in front of the command) wins over the file. On a server, the hosting platform sets the real values this way. In PowerShell, set it first with <code>$env:PORT=5000</code>.</li>
+<li>A missing file stops Node.js before your code runs. Use <code>--env-file-if-exists=.env</code> when the file is optional, for example on a server that sets real variables instead.</li>
+<li>Your code did not change at all. It only reads <code>process.env</code>, wherever the values came from.</li>
+</ul>
+<warn title="NEVER COMMIT .env">Your <code>.env</code> file holds real secrets, so it must never be committed to Git or shared. Add it to <code>.gitignore</code> before your first commit. Commit a <code>.env.example</code> instead, with the same names and empty or fake values, so other developers know which variables to set. If a secret is ever pushed by mistake, deleting the file is not enough: treat the secret as stolen and replace it.</warn>
+<p>The two files for this project look like this:</p>
+<pre class="lx-json"># .gitignore
+node_modules/
+.env
+
+# .env.example
+PORT=3000
+TASKS_API_KEY=</pre>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Greet from the command line">
+<p>Write <code>greet.js</code> that prints <code>Hello, Ada!</code> when you run <code>node greet.js Ada</code>, and <code>Hello, world!</code> when you give no name.</p>
+<solution>
+<example file="greet.js" browser="no">
+const name = process.argv[2] ?? "world";
+console.log(`Hello, ${name}!`);
+</example>
+<output>
+Hello, world!
+</output>
+<p><code>process.argv[2]</code> is <code>undefined</code> when there is no argument, and <code>??</code> replaces <code>undefined</code> with the default.</p>
+</solution>
+</exercise>
+<exercise title="Predict the order">
+<p>Without running it, write down the order this program prints its letters in. Then run it and check.</p>
+<example file="predict.js" browser="no">
+import { readFile } from "node:fs";
+
+readFile(import.meta.filename, () => {
+  setTimeout(() => console.log("A"), 0);
+  Promise.resolve().then(() => console.log("B"));
+  console.log("C");
+  setImmediate(() => console.log("D"));
+  process.nextTick(() => console.log("E"));
+});
+</example>
+<solution>
+<shell>
+$ node predict.js
+C
+E
+B
+D
+A
+</shell>
+<p>Synchronous <code>C</code> first, then the microtasks (<code>nextTick</code> <code>E</code>, then the promise <code>B</code>), then <code>setImmediate</code> <code>D</code> after the I/O, and the timer <code>A</code> last.</p>
+</solution>
+</exercise>
+<exercise title="Check a setting properly">
+<p>Change <code>config.js</code> so that <code>PORT=abc</code> stops the program with the message <code>PORT must be a whole number between 1 and 65535, got "abc"</code>, instead of starting on port <code>NaN</code>.</p>
+<solution>
+<example file="port.js" browser="no">
+const raw = process.env.PORT ?? "3000";
+const port = Number(raw);
+
+if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  console.error(`PORT must be a whole number between 1 and 65535, got "${raw}"`);
+  process.exit(1);
+}
+
+console.log(`Port: ${port}`);
+</example>
+<output>
+Port: 3000
+</output>
+<shell>
+$ PORT=abc node port.js
+PORT must be a whole number between 1 and 65535, got "abc"
+</shell>
+<p>Every value in <code>process.env</code> is text that someone typed. Check it before you trust it, exactly like input from a user.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Node.js is a JavaScript runtime: V8 runs the code, libuv does the waiting, and built-in modules such as <code>node:fs</code> and <code>node:http</code> reach the computer.</li>
+<li>One thread runs your code. The event loop runs callbacks in order: sync code, <code>nextTick</code>, promises, then I/O, <code>setImmediate</code> and timers. Long synchronous work blocks everyone.</li>
+<li><code>process.argv</code> holds the command-line arguments, <code>process.exitCode</code> reports success (0) or failure, and <code>process.cwd()</code> is where the program was started.</li>
+<li>Settings and secrets come from <code>process.env</code>. Load a <code>.env</code> file with <code>node --env-file=.env</code>, fail loudly when a secret is missing, and never commit <code>.env</code>.</li>
+</ul>
+<p>Next, you will use the built-in modules to work with files, paths and the computer itself.</p>
+</section>

@@ -35,7 +35,22 @@ server.listen(0, async () => {
 });
 </example>
 <output mask="port">
-x
+--- the exact bytes fetch sent ---
+POST /tasks?done=false HTTP/1.1\r\n
+host: localhost:41855\r\n
+connection: keep-alive\r\n
+Content-Type: application/json\r\n
+accept: */*\r\n
+accept-language: *\r\n
+sec-fetch-mode: cors\r\n
+user-agent: node\r\n
+accept-encoding: gzip, deflate\r\n
+content-length: 20\r\n
+\r\n
+{"title":"Buy milk"}
+--- what fetch understood ---
+200 OK text/plain
+hello
 </output>
 <p><code>listen(0)</code> asks the operating system for any free port, so the example never clashes with another program. We print <code>\r\n</code> where the real text has a line break, because HTTP ends every line with two invisible characters: carriage return (<code>\r</code>) and line feed (<code>\n</code>).</p>
 <p>A request has four parts:</p>
@@ -77,7 +92,12 @@ server.listen(0, () => {
 });
 </example>
 <output>
-x
+HTTP/1.1 200 OK\r\n
+Content-Type: application/json\r\n
+Content-Length: 42\r\n
+Connection: close\r\n
+\r\n
+[{"id":1,"title":"Buy milk","done":false}]
 </output>
 <p><code>res.sendDate = false</code> only stops Node from adding a <code>Date</code> header, so the output is the same every time you run it. A response has the same shape as a request:</p>
 <ol>
@@ -169,6 +189,8 @@ Transfer-Encoding: chunked
 <example file="json-body.js" browser="no">
 import http from "node:http";
 
+const tasks = [];
+
 function send(res, status, data) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
@@ -190,7 +212,9 @@ const server = http.createServer(async (req, res) => {
   if (typeof body?.title !== "string" || body.title.trim() === "") {
     return send(res, 400, { error: "title must be a non-empty string" });
   }
-  send(res, 201, { id: 2, title: body.title.trim(), done: false });
+  const task = { id: tasks.length + 1, title: body.title.trim(), done: false };
+  tasks.push(task);
+  send(res, 201, task);
 });
 
 server.listen(0, async () => {
@@ -209,7 +233,10 @@ server.listen(0, async () => {
 });
 </example>
 <output>
-x
+415 { error: 'Send the body as application/json' }
+400 { error: 'The body is not valid JSON' }
+400 { error: 'title must be a non-empty string' }
+201 { id: 1, title: 'Buy milk', done: false }
 </output>
 <p>Read the four answers:</p>
 <ul>
@@ -263,10 +290,12 @@ console.log(parseCookies("theme=dark%20mode; lang=en"));
 console.log(parseCookies(undefined));
 </example>
 <output>
-x
+theme=dark%20mode; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax
+{ theme: 'dark mode', lang: 'en' }
+{}
 </output>
 <p><code>encodeURIComponent</code> turns characters that are not allowed in a cookie, like the space, into <code>%20</code>. <code>parseCookies</code> splits on the first <code>=</code> only, because a value may contain one.</p>
-<p>Now a login flow. The server stores sessions in a <code>Map</code>, gives each one a random id nobody can guess, and sends only that id in the cookie. The user's data never leaves the server. The browser would send the cookie back by itself; here <code>fetch</code> plays the browser, so the example copies it by hand:</p>
+<p>Now a login flow. The server stores sessions in a <code>Map</code>, gives each one a random id nobody can guess, and sends only that id in the cookie. The user's data never leaves the server. A real login checks a password first; this one skips that step to keep the focus on cookies. The browser would send the cookie back by itself; here <code>fetch</code> plays the browser, so the example copies it by hand:</p>
 <example file="session.js" browser="no">
 import http from "node:http";
 import { randomUUID } from "node:crypto";
@@ -303,7 +332,9 @@ server.listen(0, async () => {
 });
 </example>
 <output mask="uuid">
-x
+204 sid=560ddd14-acff-481e-ab70-e68c4f621a66; Path=/; Max-Age=3600; HttpOnly; Secure; SameSite=Lax
+200 { user: 'ada' }
+401 { error: 'Log in first' }
 </output>
 <p>The id is different on every run. <strong>204 No Content</strong> means "it worked and there is no body". The request without the cookie got <strong>401 Unauthorized</strong>. The <code>Secure</code> attribute did not stop this example, because only browsers enforce the attributes; <code>fetch</code> in Node ignores them.</p>
 <warn title="A cookie is not a place for data">Never put a user id, a role or anything you trust into a cookie as plain text: the user can edit their own cookies. Send a long random id and look it up on the server, as above. The <a href="/learn/zudo-auth">authentication lesson</a> does this with a real session store and signed tokens.</warn>
@@ -350,7 +381,11 @@ put(1, { title: "Buy oat milk", done: true });
 console.log("after two PUTs:", tasks);
 </example>
 <output>
-x
+after two POSTs: 2 tasks
+after two PUTs: [
+  { id: 1, title: 'Buy oat milk', done: true },
+  { id: 2, title: 'Buy milk', done: false }
+]
 </output>
 <p>That is why a browser warns you before it resends a form (a <code>POST</code>), but reloads a normal page (a <code>GET</code>) without asking. Never change data in a <code>GET</code> handler: a link preview or a search engine could trigger it.</p>
 </section>
@@ -374,16 +409,31 @@ const common = [200, 201, 204, 301, 304, 400, 401, 403, 404, 405, 409, 415, 422,
 
 for (const code of common) {
   const kind = classes[Math.floor(code / 100)];
-  console.log(code, STATUS_CODES[code].padEnd(22), kind);
+  console.log(code, STATUS_CODES[code].padEnd(24), kind);
 }
 </example>
 <output>
-x
+200 OK                       success
+201 Created                  success
+204 No Content               success
+301 Moved Permanently        redirection
+304 Not Modified             redirection
+400 Bad Request              client error
+401 Unauthorized             client error
+403 Forbidden                client error
+404 Not Found                client error
+405 Method Not Allowed       client error
+409 Conflict                 client error
+415 Unsupported Media Type   client error
+422 Unprocessable Entity     client error
+429 Too Many Requests        client error
+500 Internal Server Error    server error
+503 Service Unavailable      server error
 </output>
 <p>A few that beginners often mix up:</p>
 <ul>
 <li><strong>401 Unauthorized</strong> means "I do not know who you are": log in. <strong>403 Forbidden</strong> means "I know who you are, and you may not do this".</li>
-<li><strong>400 Bad Request</strong> is for a request the server cannot read. <strong>422 Unprocessable Content</strong> is sometimes used when it can read it but the values break a rule. Pick one style and use it everywhere.</li>
+<li><strong>400 Bad Request</strong> is for a request the server cannot read. <strong>422 Unprocessable Content</strong> (Node still prints its older name, Unprocessable Entity) is sometimes used when the server can read the request but the values break a rule. Pick one style and use it everywhere.</li>
 <li><strong>404 Not Found</strong>: no such resource. <strong>405 Method Not Allowed</strong>: the resource exists, but not with this method. Send an <code>Allow</code> header listing the methods that work.</li>
 <li><strong>409 Conflict</strong>: the request clashes with the current state, like a duplicate title.</li>
 <li><strong>429 Too Many Requests</strong>: slow down. It is what a rate limiter sends.</li>
@@ -421,7 +471,8 @@ server.listen(0, async () => {
 });
 </example>
 <output>
-x
+GET 200 null []
+DELETE 405 GET, POST { error: 'DELETE is not allowed here' }
 </output>
 </solution>
 </exercise>
@@ -444,7 +495,8 @@ console.log(sessionCookie("3f9c2a"));
 console.log(clearSessionCookie());
 </example>
 <output>
-x
+sid=3f9c2a; Path=/; Max-Age=604800; HttpOnly; Secure; SameSite=Lax
+sid=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax
 </output>
 <p>The cookie that clears must have the same name and <code>Path</code> as the one that set it, or the browser treats it as a different cookie.</p>
 </solution>

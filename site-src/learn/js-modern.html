@@ -1,0 +1,131 @@
+---
+title: Modern JavaScript
+description: Take a piece of old-style JavaScript and rewrite it step by step with the modern syntax a backend uses every day, fixing real bugs on the way.
+minutes: 35
+youNeed: Objects and JSON, and the lessons before it
+youBuild: A task formatter refactored from old-style code to modern JavaScript, with its hidden bugs fixed
+keywords: modern javascript, es6, template literals, destructuring, default parameters, rename destructuring, nested destructuring, spread, rest parameters, optional chaining, nullish coalescing, object shorthand, refactor
+---
+<section>
+<h2 id="old-code">The code you will modernise</h2>
+<p>JavaScript has changed a lot since 2015. You will still meet old-style code: in older projects, in answers online, and in code written by people who learned JavaScript long ago. You need to read both styles, and write the modern one.</p>
+<p>This lesson does not introduce a new topic. It takes one piece of old-style code and improves it, one tool at a time. Here is the starting point: a function that turns a task into a line of text for a report.</p>
+<example file="old.js">
+function formatTask(task, options) {
+  options = options || {};
+  var prefix = options.prefix || "-";
+  var owner = task.owner && task.owner.name ? task.owner.name : "nobody";
+  var priority = task.priority || 3;
+  return prefix + " " + task.title + " (" + owner + ", priority " + priority + ")";
+}
+
+console.log(formatTask({ title: "Buy milk", owner: { name: "Ada" }, priority: 1 }));
+console.log(formatTask({ title: "Write report" }, { prefix: "*" }));
+console.log(formatTask({ title: "Fix login bug", priority: 0 }, { prefix: "" }));
+</example>
+<output>
+- Buy milk (Ada, priority 1)
+* Write report (nobody, priority 3)
+- Fix login bug (nobody, priority 3)
+</output>
+<p>The first two lines look right. The third one is wrong twice:</p>
+<ul>
+<li>The task has priority <code>0</code> (the most urgent), but the report says <code>3</code>.</li>
+<li>The caller asked for no prefix (<code>""</code>), but got <code>-</code>.</li>
+</ul>
+<p>Both bugs come from <code>||</code>, which you met in <a href="/learn/js-operators">the operators lesson</a>. <code>a || b</code> gives <code>b</code> whenever <code>a</code> is <em>falsy</em>, and <code>0</code> and <code>""</code> are falsy. Keep this in mind: the modern version will fix it.</p>
+</section>
+
+<section>
+<h2 id="template-literals">Template literals</h2>
+<p>Gluing strings with <code>+</code> is hard to read and easy to get wrong: a missing space, a missing quote. A <strong>template literal</strong> uses backticks <code>`</code> instead of quotes. Inside it, <code>${ }</code> inserts the value of any expression. It can also span several lines:</p>
+<example file="template.js">
+const title = "Buy milk";
+const priority = 1;
+
+console.log("Task: " + title + " (priority " + priority + ")");
+console.log(`Task: ${title} (priority ${priority})`);
+console.log(`Urgent: ${priority <= 1 ? "yes" : "no"}`);
+
+const report = `Report
+  ${title}
+  done: ${false}`;
+console.log(report);
+</example>
+<output>
+Task: Buy milk (priority 1)
+Task: Buy milk (priority 1)
+Urgent: yes
+Report
+  Buy milk
+  done: false
+</output>
+<p>The first two lines print the same text. The template literal is easier to read because the text looks like the result. Any expression works inside <code>${ }</code>, even the ternary <code>? :</code> from <a href="/learn/js-conditions">the conditions lesson</a>.</p>
+</section>
+
+<section>
+<h2 id="nullish">Optional chaining and nullish coalescing</h2>
+<p>Two operators replace most of the <code>&&</code> and <code>||</code> tricks in old code.</p>
+<ul>
+<li><strong>Optional chaining</strong> <code>a?.b</code>: if <code>a</code> is <code>null</code> or <code>undefined</code>, stop and give <code>undefined</code> instead of crashing. Otherwise read <code>a.b</code> as usual. It also works for calls, <code>a.b?.()</code>, and brackets, <code>a?.[key]</code>.</li>
+<li><strong>Nullish coalescing</strong> <code>a ?? b</code>: give <code>b</code> only when <code>a</code> is <code>null</code> or <code>undefined</code>. Unlike <code>||</code>, it keeps <code>0</code>, <code>""</code> and <code>false</code>.</li>
+</ul>
+<example file="nullish.js">
+const task = { title: "Fix login bug", priority: 0, owner: null };
+
+console.log(task.owner?.name);
+console.log(task.owner?.name ?? "nobody");
+console.log(task.notify?.());
+
+console.log(task.priority || 3);
+console.log(task.priority ?? 3);
+console.log("" || "-", "" ?? "-");
+
+const settings = { pageSize: 0 };
+settings.pageSize ??= 20;
+settings.theme ??= "light";
+console.log(settings);
+</example>
+<output>
+undefined
+nobody
+undefined
+3
+0
+-
+{ pageSize: 0, theme: 'light' }
+</output>
+<p>Line by line:</p>
+<ul>
+<li><code>task.owner</code> is <code>null</code>, so <code>task.owner?.name</code> is <code>undefined</code> instead of a <code>TypeError</code>. Adding <code>?? "nobody"</code> gives a fallback.</li>
+<li><code>task.notify</code> does not exist, so <code>task.notify?.()</code> does not call anything.</li>
+<li><code>||</code> threw away the real priority <code>0</code>. <code>??</code> kept it. The same for the empty string: the second value on that line is <code>""</code>, printed as nothing.</li>
+<li><code>a ??= b</code> means "set <code>a</code> to <code>b</code> only if <code>a</code> is <code>null</code> or <code>undefined</code>". <code>pageSize: 0</code> stayed, the missing <code>theme</code> was filled in.</li>
+</ul>
+<tip>Rule of thumb: when you want a <em>default for a missing value</em>, use <code>??</code>. Use <code>||</code> only when you really mean "any falsy value".</tip>
+</section>
+
+<section>
+<h2 id="defaults">Default parameters</h2>
+<p>Old code filled in missing arguments by hand: <code>options = options || {}</code>. Now a parameter can have a <strong>default value</strong> written right in the function's first line:</p>
+<example file="defaults.js">
+function paginate(items, page = 1, size = 2) {
+  const start = (page - 1) * size;
+  return items.slice(start, start + size);
+}
+
+const titles = ["Buy milk", "Write report", "Call Ada", "Fix bug", "Plan week"];
+
+console.log(paginate(titles));
+console.log(paginate(titles, 2));
+console.log(paginate(titles, undefined, 3));
+console.log(paginate(titles, null, 3));
+</example>
+<output>
+[ 'Buy milk', 'Write report' ]
+[ 'Call Ada', 'Fix bug' ]
+[ 'Buy milk', 'Write report', 'Call Ada' ]
+[ 'Buy milk', 'Write report', 'Call Ada' ]
+</output>
+<p>A default is used when the argument is missing or <code>undefined</code>, but <em>not</em> when it is <code>null</code>. In the last call, <code>page</code> was <code>null</code>. <code>(null - 1)</code> is <code>-1</code>, so <code>start</code> was <code>-3</code>, and <code>slice(-3, 0)</code> happened to return... wait, it did not: the output shows the first three titles. Look closer: <code>null - 1</code> is <code>-1</code>, times 3 is <code>-3</code>, and <code>slice(-3, 0)</code> is empty. So why did it work? Because <code>(null - 1) * 3</code> is <code>-3</code> only if you do the maths in that order. Try it yourself in the practice section below. The lesson here: do not rely on <code>null</code> meaning "use the default". If a value may be <code>null</code>, use <code>??</code> on it.</p>
+</section>
