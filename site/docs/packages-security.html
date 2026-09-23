@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/security</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Security primitives for input validation, header security, CORS, CSRF protection, rate limiting, and security headers with secure defaults.
@@ -427,52 +427,84 @@ console.<span class="fn">log</span>(setCookie);
   verifyDoubleSubmit,
 } <span class="kw">from</span> <span class="str">"@zudojs/security"</span>;
 
-<span class="kw">function</span> <span class="fn">checkCsrf</span>(method, headers, sessionId, secret) {
+<span class="kw">type</span> <span class="tp">Headers</span> = <span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">string</span> | <span class="tp">string</span>[] | <span class="kw">undefined</span>&gt;;
+
+<span class="kw">function</span> <span class="fn">checkCsrf</span>(method: <span class="tp">string</span>, headers: <span class="tp">Headers</span>, sessionId: <span class="tp">string</span>, secret: <span class="tp">string</span>): <span class="tp">boolean</span> {
   <span class="cmt">// GET, HEAD, OPTIONS and TRACE do not change state, so they are skipped.</span>
   <span class="kw">if</span> (!<span class="fn">requiresCsrfProtection</span>(method)) <span class="kw">return</span> <span class="kw">true</span>;
 
-  <span class="kw">const</span> fromCookie = <span class="fn">extractCsrfTokenFromCookies</span>(headers.cookie ?? <span class="str">""</span>);
+  <span class="kw">const</span> cookie = <span class="kw">typeof</span> headers.cookie === <span class="str">"string"</span> ? headers.cookie : <span class="str">""</span>;
+  <span class="kw">const</span> fromCookie = <span class="fn">extractCsrfTokenFromCookies</span>(cookie);
   <span class="kw">const</span> fromRequest = <span class="fn">extractCsrfTokenFromHeaders</span>(headers);
 
   <span class="kw">return</span> <span class="fn">verifyDoubleSubmit</span>(fromCookie, fromRequest, secret, { sessionId });
 }
 
-<span class="cmt">// secret is the CSRF_SECRET read above (32+ characters).</span>
+<span class="kw">const</span> secret = process.env.<span class="const">CSRF_SECRET</span>;
+<span class="kw">if</span> (!secret) <span class="kw">throw</span> <span class="kw">new</span> <span class="fn">Error</span>(<span class="str">"CSRF_SECRET is not set"</span>);
+
 console.<span class="fn">log</span>(<span class="fn">checkCsrf</span>(<span class="str">"GET"</span>, {}, <span class="str">"user-42"</span>, secret));  <span class="cmt">// true — nothing to check</span>
 console.<span class="fn">log</span>(<span class="fn">checkCsrf</span>(<span class="str">"POST"</span>, {}, <span class="str">"user-42"</span>, secret)); <span class="cmt">// false — no token present</span>
 console.<span class="fn">log</span>(<span class="fn">checkCsrf</span>(<span class="str">"POST"</span>, { cookie: <span class="str">"_csrf=abc"</span>, <span class="str">"x-csrf-token"</span>: <span class="str">"abc"</span> }, <span class="str">"user-42"</span>, secret)); <span class="cmt">// false — forged token</span>
-<span class="fn">checkCsrf</span>(<span class="str">"POST"</span>, {}, <span class="str">"user-42"</span>, <span class="str">"s3cret"</span>); <span class="cmt">// throws ConfigurationError — secret under 32 characters</span></div>
+
+<span class="kw">try</span> {
+  <span class="fn">checkCsrf</span>(<span class="str">"POST"</span>, {}, <span class="str">"user-42"</span>, <span class="str">"s3cret"</span>);
+} <span class="kw">catch</span> (error) {
+  console.<span class="fn">log</span>((error <span class="kw">as</span> <span class="tp">Error</span>).name); <span class="cmt">// ConfigurationError — secret under 32 characters</span>
+}</div>
 
         <div class="callout callout-warning">
-          <strong>Two different failures:</strong> a missing, forged, expired or wrong-session token makes <code>verifyDoubleSubmit</code>, <code>validateCsrfToken</code> and <code>csrf.verify</code> return <code>false</code> &mdash; answer that with a 403. A bad <em>secret</em> (missing, empty, or under 32 characters) is a configuration error: every call throws <code>ConfigurationError</code> (<code>ERR_CONFIGURATION_INVALID</code>), even on a request that carries no token at all, and <code>generateCsrfToken</code> throws too. Validate the secret once at startup so this surfaces at boot and not as a 500 on the first POST.
+          <strong>Two different failures:</strong> a missing, forged, expired or wrong-session token makes <code>verifyDoubleSubmit</code>, <code>validateCsrfToken</code> and <code>csrf.verify</code> return <code>false</code> &mdash; answer that with a 403. So does a token that is not a string at all, a request with no <code>method</code>, and a malformed <code>headers</code> or cookie bag. A bad <em>secret</em> (missing, empty, or under 32 characters) is a configuration error: every call throws <code>ConfigurationError</code> (<code>ERR_CONFIGURATION_INVALID</code>), even on a request that carries no token at all, and <code>generateCsrfToken</code> throws too. Validate the secret once at startup so this surfaces at boot and not as a 500 on the first POST.
         </div>
 
         <p class="mb-4">
           <code class="bg-black/5 px-1">verifyDoubleSubmit</code> passes only when both tokens are present, byte-for-byte equal (compared in constant time), correctly signed, unexpired, and bound to the session id you pass. Comparing the two alone would not be enough. <code class="bg-black/5 px-1">validateCsrfToken</code> and <code class="bg-black/5 px-1">verifyDoubleSubmit</code> throw on a secret shorter than 32 characters (<code class="bg-black/5 px-1">MIN_CSRF_SECRET_LENGTH</code>), and the protected <code class="bg-black/5 px-1">methods</code> list is matched case-insensitively.
         </p>
 
+        <div class="callout callout-note">
+          <strong>Changed in 1.3.0:</strong> the checks throw only for misconfiguration. Up to 1.2.x a non-string token, a request with no method, or a malformed header or cookie bag made them throw a <code>TypeError</code>, which a server turned into a 500 rather than a 403. They now return <code>false</code>. A secret under 32 characters and a bad <code>methods</code> list still throw <code>ConfigurationError</code>.
+        </div>
+
         <p class="mb-4">
           <code class="bg-black/5 px-1">createCsrfProtection</code> binds all of that to one configuration, so the cookie name, header name, lifetime and secret are read from the same place at every call site:
         </p>
 
-        <div class="code-block mb-4"><span class="kw">import</span> { createCsrfProtection } <span class="kw">from</span> <span class="str">"@zudojs/security"</span>;
+        <div class="code-block mb-4"><span class="kw">import type</span> { <span class="tp">IncomingHttpHeaders</span> } <span class="kw">from</span> <span class="str">"node:http"</span>;
+<span class="kw">import</span> { createCsrfProtection, <span class="const">MIN_CSRF_SECRET_LENGTH</span> } <span class="kw">from</span> <span class="str">"@zudojs/security"</span>;
+
+<span class="kw">const</span> secret = process.env.<span class="const">CSRF_SECRET</span>;
+<span class="kw">if</span> (!secret || secret.length &lt; <span class="const">MIN_CSRF_SECRET_LENGTH</span>) {
+  <span class="kw">throw</span> <span class="kw">new</span> <span class="fn">Error</span>(<span class="str">`CSRF_SECRET must be set to at least ${MIN_CSRF_SECRET_LENGTH} characters`</span>);
+}
 
 <span class="kw">const</span> csrf = <span class="fn">createCsrfProtection</span>({
-  secret: process.env.<span class="const">CSRF_SECRET</span>, <span class="cmt">// at least 32 characters</span>
-  cookieName: <span class="str">"app_csrf"</span>,            <span class="cmt">// default "_csrf"</span>
-  headerName: <span class="str">"x-app-csrf"</span>,          <span class="cmt">// default "x-csrf-token"</span>
-  expiration: <span class="num">3600</span>,                <span class="cmt">// seconds</span>
+  secret,
+  cookieName: <span class="str">"app_csrf"</span>,   <span class="cmt">// default "_csrf"</span>
+  headerName: <span class="str">"x-app-csrf"</span>, <span class="cmt">// default "x-csrf-token"</span>
+  expiration: <span class="num">3600</span>,         <span class="cmt">// seconds</span>
   <span class="cmt">// methods: omit for the defaults — POST, PUT, PATCH, DELETE.</span>
 });
 
-<span class="kw">const</span> { token, setCookie } = csrf.<span class="fn">issue</span>({ sessionId });
-<span class="fn">setHeader</span>(<span class="str">"Set-Cookie"</span>, setCookie);
+<span class="kw">const</span> sessionId = <span class="str">"user-42"</span>; <span class="cmt">// the logged-in user's session id</span>
 
-<span class="cmt">// Safe to call on every request: safe methods return true.</span>
-<span class="kw">const</span> ok = csrf.<span class="fn">verify</span>(
-  { method: request.method, headers: request.headers, cookieHeader: request.headers.cookie },
-  { sessionId },
-);</div>
+<span class="cmt">// Issue: render `token` into the page and send `setCookie` as Set-Cookie.</span>
+<span class="kw">const</span> { token, setCookie } = csrf.<span class="fn">issue</span>({ sessionId });
+console.<span class="fn">log</span>(setCookie.<span class="fn">startsWith</span>(<span class="str">"app_csrf="</span>)); <span class="cmt">// true</span>
+
+<span class="cmt">// Verify: safe to call on every request. Safe methods return true; a missing,</span>
+<span class="cmt">// forged or malformed token returns false and never throws.</span>
+<span class="kw">function</span> <span class="fn">verify</span>(method: <span class="tp">string</span>, headers: <span class="tp">IncomingHttpHeaders</span>): <span class="tp">boolean</span> {
+  <span class="kw">return</span> csrf.<span class="fn">verify</span>({ method, headers, cookieHeader: headers.cookie }, { sessionId });
+}
+
+console.<span class="fn">log</span>(<span class="fn">verify</span>(<span class="str">"POST"</span>, { cookie: <span class="str">`app_csrf=${token}`</span>, <span class="str">"x-app-csrf"</span>: token })); <span class="cmt">// true</span>
+console.<span class="fn">log</span>(<span class="fn">verify</span>(<span class="str">"POST"</span>, { cookie: <span class="str">`app_csrf=${token}`</span> }));                      <span class="cmt">// false — no header</span>
+console.<span class="fn">log</span>(<span class="fn">verify</span>(<span class="str">"POST"</span>, { cookie: <span class="str">"app_csrf=junk"</span>, <span class="str">"x-app-csrf"</span>: <span class="str">"junk"</span> }));   <span class="cmt">// false — malformed</span>
+console.<span class="fn">log</span>(<span class="fn">verify</span>(<span class="str">"GET"</span>, {}));                                                    <span class="cmt">// true — safe method</span></div>
+
+        <p class="mb-4">
+          <code class="bg-black/5 px-1">verify</code> protects only the methods in the <code class="bg-black/5 px-1">methods</code> list. Any other method string, including an unknown one or an empty string, counts as safe and returns <code class="bg-black/5 px-1">true</code>, so pass the real request method and make sure your router never runs a state-changing handler for a method outside the list.
+        </p>
 
         <div class="callout callout-danger">
           <strong>Changed in 1.2.0:</strong> <code>createCsrfProtection</code> and <code>requiresCsrfProtection</code> now throw a <code>ConfigurationError</code> when <code>methods</code> is present but empty, is not an array, or contains a blank entry. Until 1.1.0, <code>methods: []</code> turned CSRF off for every request in silence &mdash; and that is exactly what <code>process.env.CSRF_METHODS?.split(",").filter(Boolean) ?? []</code> produces when the variable is unset. Omit <code>methods</code> to get the defaults; pass a list only when you mean to change them.
@@ -799,18 +831,35 @@ console.<span class="fn">log</span>(parsed.cookies); <span class="cmt">// [ { na
 console.<span class="fn">log</span>(parsed.errors); <span class="cmt">// []</span></div>
 
         <p class="mb-4">
-          <code class="bg-black/5 px-1">serializeCookie</code> takes the same attributes as one object instead of separate arguments, and both functions <strong>throw</strong> rather than write something dangerous.
+          <code class="bg-black/5 px-1">serializeCookie</code> takes the same attributes as one object instead of separate arguments, and both functions <strong>throw</strong> a <code class="bg-black/5 px-1">ValidationError</code> rather than write something dangerous. <code class="bg-black/5 px-1">Domain</code> must be a hostname: labels of letters, digits and hyphens separated by dots, with an optional leading dot, at most 253 characters. <code class="bg-black/5 px-1">Path</code> may not contain control characters, DEL, <code class="bg-black/5 px-1">;</code> or <code class="bg-black/5 px-1">,</code>.
         </p>
 
-        <div class="code-block mb-4"><span class="kw">import</span> { serializeCookie } <span class="kw">from</span> <span class="str">"@zudojs/security"</span>;
+        <div class="code-block mb-4"><span class="kw">import</span> { serializeCookie, createSecureCookie } <span class="kw">from</span> <span class="str">"@zudojs/security"</span>;
+<span class="kw">import</span> { <span class="tp">ValidationError</span> } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
 
-<span class="cmt">// A newline in an attribute would let the caller add headers of their own.</span>
+<span class="cmt">// Domain must be a hostname. This one has literal backslashes, a space and a colon.</span>
 <span class="kw">try</span> {
-  <span class="fn">serializeCookie</span>({ name: <span class="str">"sid"</span>, value: <span class="str">"v"</span>, domain: <span class="str">"a\r\nX-Evil: 1"</span> });
+  <span class="fn">serializeCookie</span>({ name: <span class="str">"sid"</span>, value: <span class="str">"v"</span>, domain: <span class="str">"a\\r\\nX-Evil: 1"</span> });
 } <span class="kw">catch</span> (error) {
-  console.<span class="fn">log</span>(error.message); <span class="cmt">// 'Cookie Domain contains invalid characters (injection risk): …'</span>
+  console.<span class="fn">log</span>(error <span class="kw">instanceof</span> <span class="tp">ValidationError</span>); <span class="cmt">// true</span>
+  console.<span class="fn">log</span>((error <span class="kw">as</span> <span class="tp">Error</span>).message);
+  <span class="cmt">// 'Cookie Domain contains invalid characters (injection risk): it must be a hostname …'</span>
 }
-</div>
+
+console.<span class="fn">log</span>(<span class="fn">createSecureCookie</span>(<span class="str">"sid"</span>, <span class="str">"v"</span>, { domain: <span class="str">".example.com"</span>, path: <span class="str">"/app"</span> }));
+<span class="cmt">// "sid=v; Path=/app; Domain=.example.com; Secure; HttpOnly; SameSite=Lax"</span>
+
+<span class="cmt">// A ";" in Path would start a new attribute.</span>
+<span class="kw">try</span> {
+  <span class="fn">createSecureCookie</span>(<span class="str">"sid"</span>, <span class="str">"v"</span>, { path: <span class="str">"/app;Domain=evil.example"</span> });
+} <span class="kw">catch</span> (error) {
+  console.<span class="fn">log</span>((error <span class="kw">as</span> <span class="tp">Error</span>).message);
+  <span class="cmt">// 'Cookie Path contains invalid characters (injection risk): control characters, ";" and "," are not allowed, …'</span>
+}</div>
+
+        <div class="callout callout-warning">
+          <strong>Changed in 1.3.0 (behaviour change):</strong> up to 1.2.x only a real CR, LF, NUL, <code>;</code> or <code>,</code> was refused, so a <code>Domain</code> of <code>a\r\nX-Evil: 1</code> written with literal backslashes, or one with spaces or a colon, went into the header unchanged. If you pass a <code>Domain</code> with a port or anything other than a hostname, it now throws.
+        </div>
 
         <div class="callout callout-warning">
           <strong>Watch out:</strong> <code>parseCookieHeader</code> splits and trims; it does <em>not</em> percent-decode. If you wrote a value with <code>createSecureCookie</code> and it contained anything outside the plain cookie character set, call <code>decodeURIComponent</code> on the value yourself after parsing.
@@ -949,8 +998,8 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
           <tbody>
             <tr><td><code>generateCsrfToken(secret, options?)</code></td><td>Mints a signed token.</td><td><code>options</code> is <code>{ expiration?, sessionId? }</code> or a plain number of seconds. Throws <code>ConfigurationError</code> on an empty secret or one under 32 characters.</td></tr>
             <tr><td><code>validateCsrfToken(token, secret, options?)</code></td><td>Checks signature, expiry and session binding.</td><td>Returns <code>boolean</code> (<code>false</code> for a malformed or forged token). <code>expiration</code> is the maximum lifetime you accept. Throws on a short secret.</td></tr>
-            <tr><td><code>verifyDoubleSubmit(cookieToken, requestToken, secret, options?)</code></td><td>Checks that both copies match and are valid.</td><td>Constant-time comparison. The usual entry point.</td></tr>
-            <tr><td><code>createCsrfProtection(config)</code></td><td>Binds a secret, lifetime, cookie/header names and methods to the primitives.</td><td>Returns <code>{ issue, verify, requiresProtection }</code>. Throws <code>ConfigurationError</code> on a short secret or an unusable <code>methods</code> list.</td></tr>
+            <tr><td><code>verifyDoubleSubmit(cookieToken, requestToken, secret, options?)</code></td><td>Checks that both copies match and are valid.</td><td>Constant-time comparison. The usual entry point. <code>false</code> for a missing or non-string token; throws only on a short secret.</td></tr>
+            <tr><td><code>createCsrfProtection(config)</code></td><td>Binds a secret, lifetime, cookie/header names and methods to the primitives.</td><td>Returns <code>{ issue, verify, requiresProtection }</code>. Throws <code>ConfigurationError</code> on a short secret or an unusable <code>methods</code> list. <code>verify</code> returns <code>false</code>, never throws, for a bad token or a malformed request.</td></tr>
             <tr><td><code>requiresCsrfProtection(method, config?)</code></td><td>Does this method change state?</td><td><code>false</code> for GET, HEAD, OPTIONS, TRACE. Throws <code>ConfigurationError</code> when <code>config.methods</code> is present but empty, not an array, or holds a blank entry.</td></tr>
             <tr><td><code>extractCsrfTokenFromHeaders(headers, headerName?)</code></td><td>Reads the token from headers.</td><td>Default <code>x-csrf-token</code>; lookup is case-insensitive.</td></tr>
             <tr><td><code>extractCsrfTokenFromCookies(cookieHeader, cookieName?)</code></td><td>Reads the token from a raw Cookie header.</td><td>Default cookie name <code>_csrf</code>.</td></tr>
@@ -1017,7 +1066,7 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
           <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
             <tr><td><code>createSecureCookie(name, value, options?, config?)</code></td><td>Builds a <code>Set-Cookie</code> value.</td><td>Secure, HttpOnly, SameSite=Lax by default. Throws on unsafe input.</td></tr>
-            <tr><td><code>serializeCookie(cookie, config?)</code></td><td>Same, taking a <code>ParsedCookie</code>.</td><td>Percent-encodes the value; validates every attribute.</td></tr>
+            <tr><td><code>serializeCookie(cookie, config?)</code></td><td>Same, taking a <code>ParsedCookie</code>.</td><td>Percent-encodes the value; validates every attribute. <code>Domain</code> must be a hostname; <code>Path</code> may not hold control characters, <code>;</code> or <code>,</code>.</td></tr>
             <tr><td><code>parseCookieHeader(header, config?)</code></td><td>Splits a Cookie header.</td><td>Returns <code>{ cookies, errors }</code>. Does not percent-decode.</td></tr>
             <tr><td><code>validateCookieName(name)</code> / <code>validateCookieValue(value)</code></td><td>Check one part.</td><td>Error message, or <code>undefined</code> when fine.</td></tr>
             <tr><td><code>stripSensitiveCookies(header, names?)</code></td><td>Removes session-like cookies.</td><td>Defaults to <code>DEFAULT_SENSITIVE_COOKIE_NAMES</code>, matched as whole words anywhere in the name (<code>isSensitiveCookieName</code>).</td></tr>

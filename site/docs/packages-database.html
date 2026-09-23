@@ -124,7 +124,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/database</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           PostgreSQL data-access layer for Zudo applications, built on Prisma 7 — a lifecycle-aware client, generic repositories with soft delete, a query builder that translates to Prisma <code>where</code> clauses, managed transactions, keyset pagination with signed cursors, migration and seed runners guarded by advisory locks, health checks with reconnect, and a bounded in-memory cache.
@@ -174,7 +174,7 @@ $ npx prisma generate</div>
 <p class="mb-4 leading-relaxed">This example assumes your Prisma schema has a <code>User</code> model with <code>id</code>, <code>email</code>, <code>name</code> and a nullable <code>deletedAt</code> column. It builds the Prisma client, wraps it, defines one repository and creates a row.</p>
 <div class="code-block"><span class="kw">import</span> { PrismaClient } <span class="kw">from</span> <span class="str">"./generated/prisma/client.js"</span>;
 <span class="kw">import</span> { PrismaPg } <span class="kw">from</span> <span class="str">"@prisma/adapter-pg"</span>;
-<span class="kw">import</span> { BaseRepository, createDatabaseClient } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
+<span class="kw">import</span> { BaseRepository, createDatabaseClient, <span class="kw">type</span> RepositoryDelegate } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
 
 <span class="kw">interface</span> <span class="tp">User</span> {
   id: <span class="tp">string</span>;
@@ -185,7 +185,7 @@ $ npx prisma generate</div>
 
 <span class="cmt">// One repository per model. The delegate is the Prisma model (prisma.user).</span>
 <span class="kw">class</span> <span class="tp">UserRepository</span> <span class="kw">extends</span> <span class="tp">BaseRepository</span>&lt;<span class="tp">User</span>&gt; {
-  <span class="kw">constructor</span>(delegate: <span class="tp">ConstructorParameters</span>&lt;<span class="kw">typeof</span> <span class="tp">BaseRepository</span>&lt;<span class="tp">User</span>&gt;&gt;[<span class="num">0</span>]) {
+  <span class="kw">constructor</span>(delegate: <span class="tp">RepositoryDelegate</span>&lt;<span class="tp">User</span>&gt;) {
     <span class="kw">super</span>(delegate, { modelName: <span class="str">"User"</span>, softDelete: <span class="kw">true</span> });
   }
 }
@@ -196,14 +196,16 @@ $ npx prisma generate</div>
 <span class="kw">const</span> client = <span class="fn">createDatabaseClient</span>({ prisma });
 <span class="kw">await</span> client.<span class="fn">connect</span>();
 
-<span class="kw">const</span> users = <span class="kw">new</span> <span class="tp">UserRepository</span>(prisma.user);
+<span class="cmt">// The cast is needed under strict mode: see the note below.</span>
+<span class="kw">const</span> users = <span class="kw">new</span> <span class="tp">UserRepository</span>(prisma.user <span class="kw">as unknown as</span> <span class="tp">RepositoryDelegate</span>&lt;<span class="tp">User</span>&gt;);
 <span class="kw">const</span> alice = <span class="kw">await</span> users.<span class="fn">create</span>({ email: <span class="str">"alice@example.com"</span>, name: <span class="str">"Alice"</span> });
 console.<span class="fn">log</span>(alice.name, <span class="kw">await</span> users.<span class="fn">count</span>());
 <span class="cmt">// Alice 1</span>
 
 <span class="kw">await</span> client.<span class="fn">disconnect</span>();</div>
 <p class="mb-4 leading-relaxed">Run it with <code>DATABASE_URL</code> set. The console prints <code>Alice 1</code>: the created row's name and the number of live rows in the table. The client also logs <code>Database connected.</code> and <code>Database disconnected.</code> through its default logger, a <code>@zudojs/logger</code> console logger named <code>@zudojs/database</code>.</p>
-<div class="callout callout-tip mb-4"><strong>Tip:</strong> the long <code>ConstructorParameters&lt;...&gt;[0]</code> type just means "whatever the base class accepts as its first argument". It keeps your repository independent from Prisma's generated types.</div>
+<div class="callout callout-tip mb-4"><strong>Tip:</strong> <code>RepositoryDelegate&lt;User&gt;</code> is the structural shape <code>BaseRepository</code> needs from a model (<code>findUnique</code>, <code>findFirst</code>, <code>findMany</code>, <code>create</code>, <code>update</code>, <code>delete</code>, <code>count</code>). Typing the constructor with it keeps your repository independent from Prisma's generated types.</div>
+<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">Watch out (types, v1.3.0):</strong> the client itself needs no cast (<code>createDatabaseClient({ prisma })</code> compiles), but a <em>model delegate</em> from a generated Prisma 7 client still does not. Under <code>strict</code>, <code>new UserRepository(prisma.user)</code> fails with TS2345: Prisma's generic <code>findFirst&lt;T extends UserFindFirstArgs&gt;(...)</code> cannot be assigned to <code>RepositoryDelegate</code>'s <code>findFirst(args: { where?; orderBy?; select?: unknown })</code>. Checked against Prisma 7.10.0. Until the package loosens <code>RepositoryDelegate</code>, pass the delegate as <code>prisma.user as unknown as RepositoryDelegate&lt;User&gt;</code>, as the examples on this page do. The cast changes nothing at run time.</div>
 </section>
 
 <section id="database-client" class="mb-12">
@@ -252,12 +254,12 @@ console.<span class="fn">log</span>(<span class="kw">await</span> client.<span c
 <p class="mb-4 leading-relaxed">This example continues from the Quick Start and shows the soft-delete cycle.</p>
 <div class="code-block"><span class="kw">import</span> { PrismaClient } <span class="kw">from</span> <span class="str">"./generated/prisma/client.js"</span>;
 <span class="kw">import</span> { PrismaPg } <span class="kw">from</span> <span class="str">"@prisma/adapter-pg"</span>;
-<span class="kw">import</span> { BaseRepository, createDatabaseClient } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
+<span class="kw">import</span> { BaseRepository, createDatabaseClient, <span class="kw">type</span> RepositoryDelegate } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
 
 <span class="kw">interface</span> <span class="tp">User</span> { id: <span class="tp">string</span>; email: <span class="tp">string</span>; name: <span class="tp">string</span>; deletedAt: <span class="tp">Date</span> | <span class="kw">null</span> }
 
 <span class="kw">class</span> <span class="tp">UserRepository</span> <span class="kw">extends</span> <span class="tp">BaseRepository</span>&lt;<span class="tp">User</span>&gt; {
-  <span class="kw">constructor</span>(delegate: <span class="tp">ConstructorParameters</span>&lt;<span class="kw">typeof</span> <span class="tp">BaseRepository</span>&lt;<span class="tp">User</span>&gt;&gt;[<span class="num">0</span>]) {
+  <span class="kw">constructor</span>(delegate: <span class="tp">RepositoryDelegate</span>&lt;<span class="tp">User</span>&gt;) {
     <span class="kw">super</span>(delegate, { modelName: <span class="str">"User"</span>, softDelete: <span class="kw">true</span> });
   }
 
@@ -272,7 +274,8 @@ console.<span class="fn">log</span>(<span class="kw">await</span> client.<span c
 <span class="kw">const</span> client = <span class="fn">createDatabaseClient</span>({ prisma });
 <span class="kw">await</span> client.<span class="fn">connect</span>();
 
-<span class="kw">const</span> users = <span class="kw">new</span> <span class="tp">UserRepository</span>(prisma.user);
+<span class="cmt">// The cast is needed under strict mode: see the note below.</span>
+<span class="kw">const</span> users = <span class="kw">new</span> <span class="tp">UserRepository</span>(prisma.user <span class="kw">as unknown as</span> <span class="tp">RepositoryDelegate</span>&lt;<span class="tp">User</span>&gt;);
 <span class="kw">const</span> alice = <span class="kw">await</span> users.<span class="fn">create</span>({ email: <span class="str">"alice@example.com"</span>, name: <span class="str">"Alice"</span> });
 
 <span class="kw">await</span> users.<span class="fn">softDelete</span>(alice.id);
@@ -298,12 +301,12 @@ console.<span class="fn">log</span>(<span class="kw">await</span> users.<span cl
 <p class="mb-4 leading-relaxed"><code>withTransaction(client, callback)</code> opens a Prisma interactive transaction and passes you <code>tx</code>, a transaction-bound Prisma client. Repositories created from the root <code>prisma</code> object do <em>not</em> know about <code>tx</code>. Call <code>repo.withTransaction(tx)</code> to get a copy that does.</p>
 <div class="code-block"><span class="kw">import</span> { PrismaClient } <span class="kw">from</span> <span class="str">"./generated/prisma/client.js"</span>;
 <span class="kw">import</span> { PrismaPg } <span class="kw">from</span> <span class="str">"@prisma/adapter-pg"</span>;
-<span class="kw">import</span> { BaseRepository, createDatabaseClient, withTransaction } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
+<span class="kw">import</span> { BaseRepository, createDatabaseClient, withTransaction, <span class="kw">type</span> RepositoryDelegate } <span class="kw">from</span> <span class="str">"@zudojs/database"</span>;
 
 <span class="kw">interface</span> <span class="tp">User</span> { id: <span class="tp">string</span>; email: <span class="tp">string</span>; name: <span class="tp">string</span>; deletedAt: <span class="tp">Date</span> | <span class="kw">null</span> }
 
 <span class="kw">class</span> <span class="tp">UserRepository</span> <span class="kw">extends</span> <span class="tp">BaseRepository</span>&lt;<span class="tp">User</span>&gt; {
-  <span class="kw">constructor</span>(delegate: <span class="tp">ConstructorParameters</span>&lt;<span class="kw">typeof</span> <span class="tp">BaseRepository</span>&lt;<span class="tp">User</span>&gt;&gt;[<span class="num">0</span>]) {
+  <span class="kw">constructor</span>(delegate: <span class="tp">RepositoryDelegate</span>&lt;<span class="tp">User</span>&gt;) {
     <span class="kw">super</span>(delegate, { modelName: <span class="str">"User"</span>, softDelete: <span class="kw">true</span> });
   }
 }
@@ -314,7 +317,8 @@ console.<span class="fn">log</span>(<span class="kw">await</span> users.<span cl
 <span class="kw">const</span> client = <span class="fn">createDatabaseClient</span>({ prisma });
 <span class="kw">await</span> client.<span class="fn">connect</span>();
 
-<span class="kw">const</span> users = <span class="kw">new</span> <span class="tp">UserRepository</span>(prisma.user);
+<span class="cmt">// The cast is needed under strict mode: see the note below.</span>
+<span class="kw">const</span> users = <span class="kw">new</span> <span class="tp">UserRepository</span>(prisma.user <span class="kw">as unknown as</span> <span class="tp">RepositoryDelegate</span>&lt;<span class="tp">User</span>&gt;);
 <span class="kw">const</span> alice = <span class="kw">await</span> users.<span class="fn">create</span>({ email: <span class="str">"alice@example.com"</span>, name: <span class="str">"Alice"</span> });
 
 <span class="kw">const</span> renamed = <span class="kw">await</span> <span class="fn">withTransaction</span>(client, <span class="kw">async</span> (tx, context) =&gt; {
@@ -327,30 +331,20 @@ console.<span class="fn">log</span>(renamed);
 <span class="cmt">// { name: "Alice Doe", id: "6b1f0c2e-9a41-4f5b-b0c3-7e2d1a3f8b90" }  (a UUID per transaction)</span>
 
 <span class="kw">await</span> client.<span class="fn">disconnect</span>();</div>
-<p class="mb-4 leading-relaxed">If the callback throws, Prisma rolls the transaction back and <code>withTransaction</code> rethrows a <code>DatabaseError</code> that carries <code>transactionId</code> and <code>transactionStatus: "failed"</code>. <code>getTransactionContextFromError(error)</code> recovers that context.</p>
-<div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
-<p class="font-bold mb-2">Whatever you throw inside the callback comes out as a 500.</p>
-<p class="text-sm mb-2"><code class="bg-black/5 px-1">withTransaction</code>, <code class="bg-black/5 px-1">withTransactionRetry</code> and <code class="bg-black/5 px-1">client.transaction</code> wrap <em>every</em> error from the callback in a <code class="bg-black/5 px-1">DatabaseError</code> with <code class="bg-black/5 px-1">statusCode: 500</code>, <code class="bg-black/5 px-1">code: "ERR_DATABASE"</code> and <code class="bg-black/5 px-1">expose: false</code>. The error you threw is kept in <code class="bg-black/5 px-1">.cause</code>. So a <code class="bg-black/5 px-1">NotFoundError</code> (404) or <code class="bg-black/5 px-1">ValidationError</code> (400) raised inside a transaction reaches your HTTP layer as an internal server error with a generic message. Unwrap your own errors after the transaction:</p>
-</div>
-<div class="code-block"><span class="kw">import</span> { BaseError, DatabaseError, NotFoundError } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+<p class="mb-4 leading-relaxed">If the callback throws, the transaction is rolled back and the error comes out in one of two ways. Since v1.3.0 a <code>@zudojs/errors</code> <code>BaseError</code> that is <em>not</em> a <code>DatabaseError</code> (a <code>NotFoundError</code>, <code>ValidationError</code>, <code>DomainError</code>, ...) is rethrown as the <strong>same instance</strong>, so its status code and message reach your HTTP layer unchanged; it is logged at debug level only. Anything else (a driver or database failure, a plain <code>Error</code>, any other thrown value) is normalised into a <code>DatabaseError</code> that carries <code>transactionId</code> and <code>transactionStatus: "failed"</code>, and <code>getTransactionContextFromError(error)</code> recovers that context. The same rule applies to <code>withTransactionRetry</code>, <code>client.transaction()</code>, <code>TransactionManager.run()</code> / <code>execute()</code> and a unit of work. <code>isNonDatabaseBaseError(error)</code> is the guard the package uses to tell the two apart.</p>
+<div class="code-block"><span class="kw">import</span> { NotFoundError } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
 
 <span class="kw">try</span> {
   <span class="kw">await</span> <span class="fn">withTransaction</span>(client, <span class="kw">async</span> (tx) =&gt; {
-    <span class="kw">const</span> user = <span class="kw">await</span> users.<span class="fn">withTransaction</span>(tx).<span class="fn">findById</span>(id);
+    <span class="kw">const</span> user = <span class="kw">await</span> users.<span class="fn">withTransaction</span>(tx).<span class="fn">findById</span>(<span class="str">"missing-id"</span>);
     <span class="kw">if</span> (!user) <span class="kw">throw new</span> <span class="tp">NotFoundError</span>(<span class="str">"User not found"</span>);
-    <span class="cmt">// ...more writes</span>
+    <span class="cmt">// ...more writes, all rolled back by the throw</span>
   });
 } <span class="kw">catch</span> (error) {
-  <span class="cmt">// Give your own errors their status back; keep real database failures as they are.</span>
-  <span class="kw">if</span> (
-    error <span class="kw">instanceof</span> <span class="tp">DatabaseError</span> &amp;&amp;
-    error.cause <span class="kw">instanceof</span> <span class="tp">BaseError</span> &amp;&amp;
-    !(error.cause <span class="kw">instanceof</span> <span class="tp">DatabaseError</span>)
-  ) {
-    <span class="kw">throw</span> error.cause; <span class="cmt">// NotFoundError, 404</span>
-  }
-  <span class="kw">throw</span> error;
+  console.<span class="fn">log</span>(error <span class="kw">instanceof</span> <span class="tp">NotFoundError</span>, (error <span class="kw">as</span> <span class="tp">NotFoundError</span>).statusCode);
+  <span class="cmt">// true 404</span>
 }</div>
+<div class="callout callout-note mb-4"><strong class="text-zudo-blue">Changed in v1.3.0:</strong> before this release every error from the callback, your own included, was wrapped in a 500 <code>DatabaseError</code> (<code>code: "ERR_DATABASE"</code>, <code>expose: false</code>) with the original in <code>.cause</code>, so a <code>NotFoundError</code> thrown in a transaction surfaced as an internal server error. If you added an unwrap step for that, it is now dead code and can go.</div>
 <table class="doc-table mb-4"><thead><tr><th>Option</th><th>What it does</th></tr></thead><tbody><tr><td><code>isolationLevel</code></td><td><code>"ReadUncommitted"</code>, <code>"ReadCommitted"</code>, <code>"RepeatableRead"</code> or <code>"Serializable"</code>.</td></tr><tr><td><code>timeoutMs</code>, <code>maxWaitMs</code></td><td>Forwarded to Prisma: how long the transaction may run, and how long to wait for a connection.</td></tr><tr><td><code>transactionId</code>, <code>metadata</code></td><td>Attached to the context and to any error thrown.</td></tr><tr><td><code>signal</code></td><td>Abort the transaction from outside. The abort is raised inside the Prisma callback, so the transaction is rolled back and the caller rejects with <code>DatabaseAbortError</code>.</td></tr></tbody></table>
 <p class="mb-4 leading-relaxed">PostgreSQL sometimes aborts a <code>Serializable</code> transaction because another one touched the same rows. <code>withTransactionRetry</code> has the same signature and re-runs the callback (default 3 retries, doubling delay from 100 ms, each delay capped at <code>maxRetryDelayMs</code>, 30 s by default; pass <code>jitter: "full"</code> to spread contending retries) when <code>isRetryableTransactionError</code> says the failure is temporary.</p>
 <div class="callout callout-danger mb-4"><strong>Danger:</strong> retries re-run the <em>whole</em> callback. Anything you do inside it that is not a database write, such as sending an email, can happen more than once.</div>
@@ -405,20 +399,12 @@ console.<span class="fn">log</span>(page.meta);
 console.<span class="fn">log</span>(first.data.length, first.meta.hasNextPage, second.data.length);
 <span class="cmt">// 25 true 25</span></div>
 <p class="mb-4 leading-relaxed">Page and limit are normalised for you: <code>NaN</code>, negative or missing values fall back to page 1 and limit 20, and the limit is capped at 100 (<code>MAX_LIMIT</code>). The repository always adds the id column as a tiebreaker to cursor sorts so the order is stable.</p>
-<p class="mb-4 leading-relaxed">Cursor pagination only goes forward. <code>meta.previousCursor</code> is declared in the type but <code>paginateCursor</code> never sets it: on the second page <code>hasPreviousPage</code> is <code>true</code> and <code>previousCursor</code> is <code>undefined</code>. To offer a "Back" button, keep the cursors you have already used (for example in the client's history) and request the earlier one again.</p>
-<div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">Validate the cursor.</strong> A cursor that is not base64 JSON, names an unexpected field, or fails the signature check makes <code>paginateCursor</code> throw a plain <code>TypeError</code> (<em>Invalid pagination cursor</em>, <em>…unexpected field…</em>, <em>…signature</em>), not a <code>@zudojs/errors</code> error. Your HTTP layer then answers a mistyped or edited <code>?cursor=</code> with a 500. Turn it into a 400:</div>
-<div class="code-block"><span class="kw">import</span> { ValidationError } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
-
-<span class="kw">async function</span> <span class="fn">listUsers</span>(cursor: <span class="tp">string</span> | <span class="tp">undefined</span>) {
-  <span class="kw">try</span> {
-    <span class="kw">return await</span> users.<span class="fn">paginateCursor</span>(<span class="kw">undefined</span>, { cursor, limit: <span class="num">25</span>, sort });
-  } <span class="kw">catch</span> (error) {
-    <span class="kw">if</span> (cursor !== <span class="kw">undefined</span> &amp;&amp; error <span class="kw">instanceof</span> <span class="tp">TypeError</span> &amp;&amp; <span class="str">/cursor/i</span>.<span class="fn">test</span>(error.message)) {
-      <span class="kw">throw new</span> <span class="tp">ValidationError</span>(<span class="str">"Invalid cursor"</span>); <span class="cmt">// 400</span>
-    }
-    <span class="kw">throw</span> error;
-  }
-}</div>
+<p class="mb-4 leading-relaxed">Cursor pagination goes both ways. Since v1.3.0 any non-empty page requested <em>with</em> a cursor sets <code>meta.previousCursor</code>; pass it back as <code>cursor</code> to fetch the page before. Rows still come back in the requested sort order. Backward cursors carry a reserved <code>$before: true</code> marker (<code>KEYSET_BACKWARD_KEY</code>). The first page has no <code>previousCursor</code>, and a page reached by going back reports <code>hasPreviousPage: false</code> when it is the first one.</p>
+<div class="code-block"><span class="cmt">// ...continuing from above: step back from the second page</span>
+<span class="kw">const</span> back = <span class="kw">await</span> users.<span class="fn">paginateCursor</span>(<span class="kw">undefined</span>, { cursor: second.meta.previousCursor, limit: <span class="num">25</span>, sort });
+console.<span class="fn">log</span>(back.data[<span class="num">0</span>]?.id === first.data[<span class="num">0</span>]?.id, back.meta.hasPreviousPage);
+<span class="cmt">// true false</span></div>
+<p class="mb-4 leading-relaxed">A bad cursor is a client error. A missing, forged, tampered or malformed cursor makes <code>paginateCursor</code> (and <code>decodeCursor</code>, <code>validateCursorPayload</code>, <code>decodeKeysetCursor</code>) throw a <code>ValidationError</code> from <code>@zudojs/errors</code>: status 400, <code>expose: true</code>, with one issue on <code>cursor</code> whose <code>code</code> is <code>cursor_required</code>, <code>cursor_signature</code>, <code>cursor_malformed</code>, <code>cursor_payload</code> or <code>cursor_field</code>. Your HTTP layer can pass it straight through; no wrapping is needed. Messages never quote the offending field name. An invalid <code>cursorSecret</code> or sort definition is a programming error and still throws <code>TypeError</code>. (Before v1.3.0 a bad cursor was a plain <code>TypeError</code> that surfaced as a 500, and <code>previousCursor</code> was never set.)</p>
 <div class="callout callout-warning mb-4"><strong class="text-zudo-yellow">Watch out:</strong> a cursor is a base64 string the browser sends back. Without a <code>cursorSecret</code> on the repository anyone can forge one. Set the secret on any repository whose cursors leave your server; they are then HMAC-signed and rejected if edited.</div>
 </section>
 
@@ -502,7 +488,7 @@ console.<span class="fn">log</span>(<span class="kw">await</span> <span class="f
 }, { timeoutMs: <span class="num">10_000</span> });
 
 <span class="kw">await</span> client.<span class="fn">disconnect</span>();</div>
-<p class="mb-4 leading-relaxed">Other health helpers: <code>isDatabaseHealthy(client)</code> returns a boolean and <code>checkDatabaseReadiness(client)</code> returns <code>{ ready, latencyMs, checkedAt }</code> for a readiness route. For scheduled checks with automatic reconnect, wrap the client in <code>createConnectionManager({ client, healthCheckIntervalMs: 15_000 })</code> and call <code>manager.connect()</code>; it emits <code>error</code> and <code>reconnecting</code> events through <code>manager.on(listener)</code>.</p>
+<p class="mb-4 leading-relaxed">Other health helpers: <code>isDatabaseHealthy(client)</code> returns a boolean and <code>checkDatabaseReadiness(client)</code> returns <code>{ ready, latencyMs, checkedAt }</code> for a readiness route. For scheduled checks with automatic reconnect, wrap the client in <code>createConnectionManager({ client, healthCheckIntervalMs: 15_000 })</code> and call <code>manager.connect()</code>; it emits <code>error</code> and <code>reconnecting</code> events through <code>manager.on(listener)</code>. The reconnect policy (<code>reconnect: { failureThreshold, maxAttempts, baseDelayMs, maxDelayMs }</code>, defaults 1, 5, 500&nbsp;ms, 30&nbsp;s; <code>false</code> turns it off) backs off between attempts. Since v1.3.0 that back-off wait is not <code>unref</code>'d, so a script whose only pending work is a reconnect stays alive until it finishes, and <code>disconnect()</code> / <code>destroy()</code> cancel a reconnect in progress, wait included. The scheduled health-check timer itself is still unreferenced.</p>
 <p class="mb-4 leading-relaxed">A <em>lock</em> stops two processes from doing the same work at once. <code>withAdvisoryLock(key, callback)</code> holds a named PostgreSQL lock for the length of a transaction. <code>withRowLock(table, id, callback)</code> locks one row with <code>SELECT ... FOR UPDATE</code> instead. <code>timeoutMs</code> becomes <code>SET LOCAL lock_timeout</code> and must be at least 1 ms &mdash; PostgreSQL treats <code>lock_timeout = 0</code> as <em>disabled</em>, so <code>0</code> throws a <code>TypeError</code>; use <code>noWait</code> to fail immediately. <code>skipLocked</code> / <code>noWait</code> control what happens when someone else holds the lock.</p>
 </section>
 
@@ -545,14 +531,14 @@ console.<span class="fn">log</span>(<span class="kw">await</span> <span class="f
 <tr><td><code>toPrismaWhere(filter)</code>, <code>toPrismaArgs(state)</code>, <code>toPrismaOrderBy</code>, <code>toPrismaSelect</code>, <code>toPrismaSkipTake</code></td><td>Translate filters and builder state into Prisma arguments.</td><td></td></tr>
 <tr><td>Filter helpers (<code>equals</code>, <code>and</code>, <code>or</code>, ...)</td><td>Build <code>QueryFilter</code> values.</td><td>Full list in Query Builder.</td></tr>
 <tr><td><code>normalizePagination</code>, <code>createPaginationMeta</code>, <code>createPaginatedResult</code>, <code>paginateCollection</code></td><td>Offset pagination helpers for data you already have in memory.</td><td></td></tr>
-<tr><td><code>encodeCursor</code>, <code>decodeCursor</code>, <code>createKeysetPage</code>, <code>buildKeysetWhere</code></td><td>Cursor pagination building blocks used by <code>paginateCursor</code>.</td><td>Pass <code>allowedFields</code> to <code>decodeCursor</code> for untrusted input.</td></tr>
+<tr><td><code>encodeCursor</code>, <code>decodeCursor</code>, <code>createKeysetPage</code>, <code>buildKeysetWhere</code>, <code>getKeysetDirection</code>, <code>keysetFetchSort</code>, <code>reverseKeysetSort</code>, <code>createInvalidCursorError</code></td><td>Cursor pagination building blocks used by <code>paginateCursor</code>.</td><td>Pass <code>allowedFields</code> to <code>decodeCursor</code> for untrusted input. <code>createKeysetCursor</code> takes an optional <code>direction</code> and <code>createKeysetPage</code> a <code>direction</code> option; <code>buildKeysetWhere</code> honours backward cursors. <code>createInvalidCursorError</code> builds the 400 <code>ValidationError</code>.</td></tr>
 <tr><td><code>createMigrationRunner(client, migrations, options?)</code></td><td>Builds a <code>MigrationRunner</code>.</td><td>PostgreSQL only.</td></tr>
 <tr><td><code>createSeedRunner(client, seeds, options?)</code></td><td>Builds a <code>SeedRunner</code>.</td><td>PostgreSQL only.</td></tr>
 <tr><td><code>createLockManager(client)</code>, <code>acquireAdvisoryLock(tx, key)</code>, <code>lockRow(tx, table, id)</code></td><td>Advisory and row locks.</td><td>PostgreSQL only.</td></tr>
 <tr><td><code>checkDatabaseHealth</code>, <code>checkDatabaseReadiness</code>, <code>assertDatabaseHealth</code>, <code>isDatabaseHealthy</code></td><td>Health probes with a timeout.</td><td>Default 5000 ms.</td></tr>
 <tr><td><code>createDatabaseCache(options?)</code>, <code>createCacheKey(ns, ...parts)</code>, <code>getOrSet(cache, key, loader)</code>, <code>invalidateByPrefix(cache, prefix)</code></td><td>Process-local LRU cache with TTL.</td><td>Not transaction-aware.</td></tr>
 <tr><td><code>oneToOne</code>, <code>oneToMany</code>, <code>manyToOne</code>, <code>manyToMany</code>, <code>createRelationRegistry</code>, <code>includeRelation</code>, <code>toPrismaInclude</code></td><td>Describe relations and validate <code>include</code> trees.</td><td>Depth-limited (default 5).</td></tr>
-<tr><td><code>isConflictError</code>, <code>isNotFoundError</code>, <code>isRetryableTransactionError</code>, <code>getDatabaseErrorKind</code>, <code>getDatabaseErrorCode</code>, <code>toDatabaseErrorInfo</code>, <code>normalizeDatabaseError</code></td><td>Inspect and convert errors.</td><td></td></tr>
+<tr><td><code>isConflictError</code>, <code>isNotFoundError</code>, <code>isRetryableTransactionError</code>, <code>isNonDatabaseBaseError</code>, <code>getDatabaseErrorKind</code>, <code>getDatabaseErrorCode</code>, <code>toDatabaseErrorInfo</code>, <code>normalizeDatabaseError</code></td><td>Inspect and convert errors.</td><td></td></tr>
 </tbody></table>
 <h3 class="text-lg font-bold mb-3 mt-6">Classes</h3>
 <table class="doc-table mb-4"><thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead><tbody>
