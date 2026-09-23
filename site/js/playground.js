@@ -646,11 +646,16 @@
     if (window.Babel) return Promise.resolve(window.Babel);
     if (babelPromise) return babelPromise;
     babelPromise = new Promise(function (resolve, reject) {
+      /* An AMD loader on the page (the Learn editor's Monaco) would make Babel's
+         UMD build register as a module instead of setting window.Babel. */
+      var amd = typeof window.define === 'function' ? window.define.amd : undefined;
+      if (amd) window.define.amd = undefined;
+      var restore = function () { if (amd) window.define.amd = amd; };
       var s = document.createElement('script');
       s.src = BABEL_URL;
       s.async = true;
-      s.onload = function () { window.Babel ? resolve(window.Babel) : reject(new Error('Babel did not initialise')); };
-      s.onerror = function () { babelPromise = null; reject(new Error('Could not load the TypeScript compiler')); };
+      s.onload = function () { restore(); window.Babel ? resolve(window.Babel) : reject(new Error('Babel did not initialise')); };
+      s.onerror = function () { restore(); babelPromise = null; reject(new Error('Could not load the TypeScript compiler')); };
       document.head.appendChild(s);
     });
     return babelPromise;
