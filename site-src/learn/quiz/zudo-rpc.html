@@ -124,7 +124,7 @@ try {
 <option correct>An object with a <code>send(request)</code> method that returns the response</option>
 <option>A URL string</option>
 <option>A function that returns <code>true</code></option>
-<explain><p>Any object with <code>send(request)</code> works. The lesson's smallest one calls <code>server.handle(request)</code> in the same process; the HTTP one sends the frame with <code>fetch</code>.</p></explain>
+<explain><p>Any object with <code>send(request)</code> works. The package ships ready-made ones, <code>createRPCMemoryTransport(server)</code> and <code>createRPCHttpTransport({ url })</code>, and the retry example wraps one in a small object of its own.</p></explain>
 </question>
 
 <question id="in-process-client" type="output">
@@ -248,19 +248,34 @@ try {
 <explain><p>The real message contains a host and a port that an outsider must never see. The caller gets a fixed message, and the real error goes to <code>onInternalError</code>, where you log it.</p></explain>
 </question>
 
-<question id="expose-rule" type="choice">
-<q>A handler throws a <code>NotFoundError</code> from <code>@zudojs/errors</code>. What does the caller see?</q>
-<option>The NotFoundError's message, because it is a known error class</option>
-<option correct>A generic internal error; only an <code>RPCError</code> with <code>expose: true</code> shows its message</option>
-<option>A 404 HTTP status</option>
-<option>Nothing; the call hangs</option>
-<explain><p>The rule is simple and safe: only errors that you explicitly mark with <code>expose: true</code> show their message. Everything else is hidden from the caller and sent to <code>onInternalError</code>.</p></explain>
+<question id="expose-rule" type="output">
+<q>A handler throws a <code>NotFoundError</code> from <code>@zudojs/errors</code>. What does this print?</q>
+<code file="expose-rule.js" browser="no">
+import { NotFoundError } from "@zudojs/errors";
+import { createRPCMemoryTransport, createRPCProcedure, RPCClient, RPCServer } from "@zudojs/rpc";
+
+const server = new RPCServer();
+server.register(createRPCProcedure("tasks.get", async (input) => {
+  throw new NotFoundError(`Task ${input.id} not found`);
+}));
+const client = new RPCClient(createRPCMemoryTransport(server));
+try {
+  await client.call("tasks.get", { id: 7 });
+} catch (error) {
+  console.log(error.code, "-", error.message);
+}
+</code>
+<option correct>RPC_NOT_FOUND - Task 7 not found</option>
+<option>RPC_INTERNAL_ERROR - The server encountered an internal error while handling this request.</option>
+<option>NOT_FOUND - The server encountered an internal error while handling this request.</option>
+<option>404 - Task 7 not found</option>
+<explain><p>A <code>NotFoundError</code> is meant for the caller (its <code>expose</code> flag is <code>true</code>), so its message arrives under the matching code, <code>RPC_NOT_FOUND</code>. An ordinary error, with no <code>expose</code>, would become <code>RPC_INTERNAL_ERROR</code> with the fixed message.</p></explain>
 </question>
 
 <question id="json-loss" type="output">
-<q>The transport copies each frame through JSON, as a network would. What does this print?</q>
+<q>The memory transport copies each frame through JSON, as a network would. What does this print?</q>
 <code file="json-loss.js" browser="no">
-import { createRPCProcedure, RPCClient, RPCServer } from "@zudojs/rpc";
+import { createRPCMemoryTransport, createRPCProcedure, RPCClient, RPCServer } from "@zudojs/rpc";
 
 const server = new RPCServer();
 server.register(createRPCProcedure("tasks.summary", async () => ({
@@ -269,16 +284,14 @@ server.register(createRPCProcedure("tasks.summary", async () => ({
   note: undefined,
   count: 2,
 })));
-const client = new RPCClient({
-  send: async (request) => JSON.parse(JSON.stringify(await server.handle(request))),
-});
+const client = new RPCClient(createRPCMemoryTransport(server));
 console.log(await client.call("tasks.summary", {}));
 </code>
 <option correct>{ dueAt: '2026-10-01T09:00:00.000Z', tags: {}, count: 2 }</option>
 <option>{ dueAt: 2026-10-01T09:00:00.000Z, tags: Set(2) { 'home', 'shopping' }, note: undefined, count: 2 }</option>
 <option>{ dueAt: '2026-10-01T09:00:00.000Z', tags: [ 'home', 'shopping' ], note: null, count: 2 }</option>
 <option>{ dueAt: '2026-10-01T09:00:00.000Z', tags: {}, note: undefined, count: 2 }</option>
-<explain><p>The Date became a string, the Set became an empty object, and the <code>undefined</code> field disappeared, all without an error. Design results as plain JSON: ISO strings, arrays and <code>null</code>.</p></explain>
+<explain><p>With plain JSON, the default, the Date became a string, the Set became an empty object, and the <code>undefined</code> field disappeared, all without an error. Design results as plain JSON: ISO strings, arrays and <code>null</code>.</p></explain>
 </question>
 
 <question id="plain-json-results" type="choice">
@@ -287,7 +300,7 @@ console.log(await client.call("tasks.summary", {}));
 <option correct><code>{ dueAt: "2026-10-01T09:00:00.000Z", tags: ["home", "shopping"] }</code></option>
 <option><code>{ dueAt: undefined, tags: {} }</code></option>
 <option><code>{ dueAt: Date.now, tags: Set }</code></option>
-<explain><p>Results travel as JSON. Dates as ISO strings and sets as arrays arrive exactly as sent. For richer types, both sides must use the same serializer from <code>@zudojs/serialization</code>.</p></explain>
+<explain><p>Results travel as JSON. Dates as ISO strings and sets as arrays arrive exactly as sent, and even programs not written in JavaScript can read them. When both sides are your own TypeScript code, <code>createRPCJsonSerializer({ preserveTypes: true })</code> on both ends keeps richer types.</p></explain>
 </question>
 
 <question id="metadata-untrusted" type="choice">
@@ -383,7 +396,7 @@ console.log(log.join(" > "));
 </question>
 
 <question id="timing-safe" type="choice">
-<q>Why does the HTTP route compare the token with <code>timingSafeEqualString</code> instead of <code>===</code>?</q>
+<q>Why does the fetch handler's <code>auth</code> option compare the token with <code>timingSafeEqualString</code> instead of <code>===</code>?</q>
 <option><code>===</code> does not work on long strings</option>
 <option correct><code>===</code> stops at the first different character, and an attacker can measure that time to guess the token one character at a time</option>
 <option><code>timingSafeEqualString</code> also decrypts the token</option>
@@ -400,31 +413,68 @@ console.log(log.join(" > "));
 <explain><p>Secrets never go in source code. Each side reads <code>TASKS_RPC_TOKEN</code> from the environment, and a service that finds it missing or shorter than 32 characters stops at startup instead of running unprotected.</p></explain>
 </question>
 
-<question id="wrong-token-status" type="choice">
-<q>A client calls the HTTP <code>/rpc</code> route with a guessed token. What does the route do?</q>
-<option>Runs the procedure but hides the result</option>
-<option correct>Answers <code>401</code> before it reads the frame, so no procedure runs</option>
-<option>Answers <code>200</code> with <code>success: false</code></option>
-<option>Answers <code>404</code> to hide that the route exists</option>
-<explain><p>The token check comes first. Without the right token the request never reaches <code>handle</code>. The lesson's transport then throws an <code>RPCTransportError</code> for the non-OK status.</p></explain>
+<question id="wrong-token-status" type="output">
+<q>The HTTP transport's <code>fetch</code> option hands each request straight to the fetch handler, so no real server is needed. A caller sends a guessed token. What does this print?</q>
+<code file="wrong-token.js" browser="no">
+import { createRPCFetchHandler, createRPCHttpTransport, createRPCProcedure, RPCAuthenticationError, RPCClient, RPCServer } from "@zudojs/rpc";
+
+let runs = 0;
+const server = new RPCServer();
+server.register(createRPCProcedure("tasks.list", async () => { runs += 1; return []; }));
+const handler = createRPCFetchHandler(server, {
+  auth: (request) => {
+    if (request.headers.get("authorization") !== "Bearer right-token") {
+      throw new RPCAuthenticationError("A valid service token is required.");
+    }
+    return { caller: "web-app" };
+  },
+});
+const intruder = new RPCClient(createRPCHttpTransport({
+  url: "http://tasks.local/rpc",
+  headers: { authorization: "Bearer guessed-token" },
+  fetch: (input, init) => handler(new Request(input, init)),
+}));
+try {
+  await intruder.call("tasks.list", {});
+} catch (error) {
+  console.log(error.name, error.code, "runs:", runs);
+}
+</code>
+<option correct>RPCAuthenticationError RPC_UNAUTHENTICATED runs: 0</option>
+<option>RPCAuthenticationError RPC_UNAUTHENTICATED runs: 1</option>
+<option>RPCError RPC_INTERNAL_ERROR runs: 0</option>
+<option>RPCTransportError RPC_TRANSPORT_ERROR runs: 0</option>
+<explain><p>Throwing <code>RPCAuthenticationError</code> in <code>auth</code> refuses the call before any procedure runs. The handler answers with an RPC error frame, and the client rebuilds it as a typed <code>RPCAuthenticationError</code>. Any other error thrown in <code>auth</code> would be answered as an internal error.</p></explain>
 </question>
 
-<question id="cast-safe" type="choice">
-<q>The route does <code>rpc.handle(frame as RPCRequest)</code> on parsed JSON. Why is that cast safe here?</q>
-<option>Casts check the value at runtime</option>
-<option correct><code>handle</code> checks the frame's shape itself and answers with an invalid-request error for anything malformed</option>
-<option>The token check already validated the body</option>
-<option>JSON.parse always returns an RPCRequest</option>
-<explain><p>A cast is only a note for TypeScript. It is safe here only because <code>handle</code> validates the frame's shape. Without that, you would need to validate the body yourself.</p></explain>
+<question id="fetch-handler-plain-text" type="output">
+<q>Someone posts a plain-text body to the RPC endpoint, as an HTML form or a curious visitor might. What does this print?</q>
+<code file="plain-text.js" browser="no">
+import { createRPCFetchHandler, RPCServer } from "@zudojs/rpc";
+
+const handler = createRPCFetchHandler(new RPCServer());
+const response = await handler(new Request("http://tasks.local/rpc", {
+  method: "POST",
+  headers: { "content-type": "text/plain" },
+  body: "hello",
+}));
+const body = await response.json();
+console.log(response.status, body.success, body.error.code);
+</code>
+<option correct>400 false RPC_INVALID_REQUEST</option>
+<option>200 false RPC_INVALID_REQUEST</option>
+<option>500 false RPC_INTERNAL_ERROR</option>
+<option>415 false RPC_PROCEDURE_NOT_FOUND</option>
+<explain><p>The fetch handler refuses anything that is not a JSON <code>POST</code>, limits the body size (1 MiB by default), and answers every failure with an RPC error frame, never an HTML page or a stack trace.</p></explain>
 </question>
 
 <question id="signal-to-fetch" type="choice">
-<q>Why does the HTTP transport pass <code>options.signal</code> to <code>fetch</code>?</q>
-<option>So the server knows who is calling</option>
-<option correct>When the client gives up on a call, the HTTP request is aborted too, instead of staying open</option>
-<option>It makes the request faster</option>
-<option>fetch requires a signal</option>
-<explain><p>A client that stopped waiting has no use for the answer. Passing the signal on means the open request is cancelled, which frees the connection.</p></explain>
+<q>A call through <code>createRPCHttpTransport</code> times out on the client. What happens on the server?</q>
+<option>Nothing: the procedure always runs to the end</option>
+<option correct>The transport aborts the fetch, and the fetch handler aborts the procedure's <code>context.signal</code>, so a handler that checks it can stop</option>
+<option>The server kills the handler by force</option>
+<option>The server retries the procedure</option>
+<explain><p>The HTTP transport passes cancellation along. The server stops working for a caller that has left, as long as the handler looks at <code>context.signal</code> or passes it on.</p></explain>
 </question>
 
 <question id="timeout-signal" type="choice">
@@ -437,12 +487,12 @@ console.log(log.join(" > "));
 </question>
 
 <question id="deadline-why" type="choice">
-<q>Why should a caller with a time limit send a <strong>deadline</strong> in <code>metadata.deadline</code>?</q>
-<option>So the server can wait longer than the caller</option>
-<option correct>So the server stops working for a caller that has already left</option>
-<option>So the result is cached until the deadline</option>
-<option>So the call is retried at the deadline</option>
-<explain><p>Without a deadline, the server may keep working after the caller gave up. The server uses the deadline to stop earlier, never later.</p></explain>
+<q>When does a caller need to send a <strong>deadline</strong> in <code>metadata.deadline</code>?</q>
+<option>Always, or the built-in transports never cancel the server</option>
+<option correct>Only with a transport you wrote yourself that cannot cancel the far side; the built-in transports already cancel the server when the caller gives up</option>
+<option>Only to cache the result until the deadline</option>
+<option>Only to retry the call at the deadline</option>
+<explain><p><code>createRPCMemoryTransport</code> and <code>createRPCHttpTransport</code> carry a timeout or an abort to the server, which aborts <code>context.signal</code>. A hand-written transport may not, so the caller sends a point in time instead, and the server stops by then, never later.</p></explain>
 </question>
 
 <question id="retry-which-errors" type="choice">
@@ -762,7 +812,7 @@ try {
 <option correct>answered: false</option>
 <option>threw</option>
 <option>answered: true</option>
-<explain><p><code>handle</code> checks the frame's shape itself and answers with <code>success: false</code> for anything malformed. That is why the HTTP route may pass it the parsed body.</p></explain>
+<explain><p><code>handle</code> checks the frame's shape itself and answers with <code>success: false</code> for anything malformed. That is why the fetch handler can pass it whatever JSON arrives.</p></explain>
 </question>
 
 <question id="token-check-startup" type="output">
@@ -801,4 +851,47 @@ try {
 <option>gave up after 3 calls false</option>
 <option>gave up after 1 calls true</option>
 <explain><p><code>attempts: 3</code> means three calls in total. When the last one fails too, <code>retry</code> throws the last error, so the caller can still tell what went wrong.</p></explain>
+</question>
+
+<question id="cancel-memory-vs-hand" type="output">
+<q>Each step takes 50 ms and the client gives up after 75 ms, first through the memory transport, then through a hand-written one. What does this print?</q>
+<code file="cancel.js" browser="no">
+import { createRPCMemoryTransport, createRPCProcedure, RPCClient, RPCServer } from "@zudojs/rpc";
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const server = new RPCServer();
+server.register(createRPCProcedure("tasks.report", async (_input, context) => {
+  for (let step = 1; step <= 5; step += 1) {
+    await sleep(50);
+    if (context.signal.aborted) return console.log(`stopped at step ${step}`);
+  }
+  console.log("ran all 5 steps");
+}));
+
+for (const transport of [createRPCMemoryTransport(server), { send: (request) => server.handle(request) }]) {
+  try {
+    await new RPCClient(transport).call("tasks.report", {}, { timeout: 75 });
+  } catch (error) {
+    console.log(error.code);
+  }
+  await sleep(300);
+}
+</code>
+<option correct>RPC_TIMEOUT
+stopped at step 2
+RPC_TIMEOUT
+ran all 5 steps</option>
+<option>RPC_TIMEOUT
+stopped at step 2
+RPC_TIMEOUT
+stopped at step 2</option>
+<option>RPC_TIMEOUT
+ran all 5 steps
+RPC_TIMEOUT
+ran all 5 steps</option>
+<option>stopped at step 2
+RPC_TIMEOUT
+ran all 5 steps
+RPC_TIMEOUT</option>
+<explain><p>Both callers got <code>RPC_TIMEOUT</code> at 75 ms. The memory transport carried the cancel to the server, so the handler stopped after step 2. The hand-written transport only calls <code>server.handle(request)</code>, so the server never heard about it and worked for nobody. That is the case <code>metadata.deadline</code> is for.</p></explain>
 </question>
