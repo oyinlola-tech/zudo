@@ -8,6 +8,10 @@
  * - "fail": signals itself after start; `onShutdown` throws.
  * - "external": holds a server open until signalled by the parent, and
  *   closes it first thing in `onShutdown`, before its async work.
+ * - "hang": signals itself after start; `onShutdown` never settles, so the
+ *   100 ms `shutdownTimeout` fails the stop.
+ *
+ * The report counts the `runtime.failed` events published on the bus.
  */
 
 import { createServer } from "node:net";
@@ -20,6 +24,7 @@ import { createRuntime } from "../../dist/index.js";
 
 const mode = process.argv[2] ?? "clean";
 const events = [];
+const failures = [];
 
 const pause = (ms) =>
   new Promise((resolve) => {
@@ -39,6 +44,10 @@ const module = {
     }
   },
   onShutdown: async () => {
+    if (mode === "hang") {
+      events.push("onShutdown");
+      return new Promise(() => undefined);
+    }
     if (server.listening) server.close();
     await pause(50);
     events.push("onShutdown");
@@ -47,24 +56,31 @@ const module = {
   onDestroy: async () => undefined,
 };
 
+const eventBus = createEventBus();
+
+eventBus.on("runtime.failed", (event) => {
+  failures.push(event.payload.phase);
+});
+
 const runtime = createRuntime(
   {
     modules: new Map([["worker", module]]),
     logger: createLogger({ name: "fixture", level: "fatal" }),
     container: createContainer(),
-    eventBus: createEventBus(),
+    eventBus,
   },
   {
     environment: "test",
     applicationName: "fixture",
     handleSignals: true,
     handleFatalErrors: false,
+    ...(mode === "hang" ? { shutdownTimeout: 100 } : {}),
   },
 );
 
 process.on("exit", (code) => {
   process.stdout.write(
-    JSON.stringify({ code, state: runtime.state, events }) + "\n",
+    JSON.stringify({ code, state: runtime.state, events, failures }) + "\n",
   );
 });
 
