@@ -27,8 +27,13 @@ import { SerializerRegistry } from "./serializerRegistry.core.js";
  */
 export interface CreateSerializerOptions
   extends SerializeOptions, DeserializeOptions {
-  /** Transformer registry to use instead of the built-in one. */
+  /**
+   * Your transformers, consulted before the built-in ones (which still
+   * handle every other type unless `builtins` is `false`).
+   */
   readonly transformers?: TransformerRegistry;
+  /** Include the built-in transformers (default `true`). */
+  readonly builtins?: boolean;
   /** Pretty-print by default. Overridable per call. */
   readonly pretty?: boolean;
   /** Preserve special JS types by default. Overridable per call. */
@@ -64,11 +69,15 @@ export function createSerializer(
     case Format.JSON: {
       // Only `pretty` and `preserveTypes` used to be forwarded, so instance
       // limits such as `maxDepth`/`maxSize`/`strict` were silently dropped.
-      const { transformers, ...rest } = options ?? {};
+      const { transformers, builtins, ...rest } = options ?? {};
       const defaults = Object.fromEntries(
         Object.entries(rest).filter(([, value]) => value !== undefined),
       ) as SerializeOptions & DeserializeOptions;
-      return new JSONSerializer({ transformers, defaults });
+      return new JSONSerializer({
+        ...(transformers !== undefined ? { transformers } : {}),
+        ...(builtins !== undefined ? { builtins } : {}),
+        defaults,
+      });
     }
     default:
       throw new UnsupportedSerializationFormatError(format);

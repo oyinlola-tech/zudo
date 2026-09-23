@@ -95,14 +95,33 @@ export interface Serializer<TValue = unknown, TSerialized = SerializedValue> {
   deserialize<T = TValue>(value: TSerialized, options?: DeserializeOptions): T;
 }
 
-/** Transforms a specific JS type during serialization. */
+/**
+ * Transforms a specific JS type during serialization.
+ *
+ * On the wire a transformed value is always the tagged object
+ * `{ "$type": type, "$value": ... }`.
+ */
 export interface TypeTransformer<TValue = unknown> {
   /** Tag name used in tagged representations (e.g., "Date"). */
   readonly type: string;
   /** Returns true when this transformer handles the given value. */
   canSerialize(value: unknown): value is TValue;
-  /** Convert the value into a JSON-safe representation. */
+  /**
+   * Convert the value into a JSON-safe representation.
+   *
+   * Return either just the value to store (for example
+   * `v.toString()`), which the serializer wraps as
+   * `{ $type: type, $value: <returned> }`, or the full tagged object
+   * `{ $type: type, $value: ... }` yourself (as the built-ins do). A plain
+   * object with its own string `$type` is taken to be the full tagged
+   * object; anything else is wrapped. Nested special values inside the
+   * returned value are transformed too.
+   */
   serialize(value: TValue, options?: SerializeOptions): unknown;
-  /** Reconstruct the original value from the serialized form. */
+  /**
+   * Reconstruct the original value. Always receives the full tagged object
+   * `{ $type, $value }` (with nested values already restored), whichever
+   * form `serialize` returned, so read `$value` from it.
+   */
   deserialize(value: unknown, options?: DeserializeOptions): TValue;
 }

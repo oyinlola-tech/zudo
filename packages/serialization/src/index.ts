@@ -39,6 +39,7 @@ export type {
 
 // ─── JSON Serializer ──────────────────────────────────────────
 export { JSONSerializer, ESCAPED_OBJECT_TAG } from "./serializerJson/index.js";
+export type { JSONSerializerOptions } from "./serializerJson/index.js";
 
 // ─── Transformer Registry ─────────────────────────────────────
 export { TransformerRegistry } from "./serializerTransforms/index.js";
@@ -46,6 +47,7 @@ export { DateTransformer } from "./serializerTransforms/index.js";
 export { BigIntTransformer } from "./serializerTransforms/index.js";
 export { MapTransformer } from "./serializerTransforms/index.js";
 export { SetTransformer } from "./serializerTransforms/index.js";
+export { createBuiltinTransformers } from "./serializerTransformPolicy/index.js";
 
 // ─── Extended Transformers ────────────────────────────────────
 export { BufferTransformer } from "./serializerTransformsExt/index.js";

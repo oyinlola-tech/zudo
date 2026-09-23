@@ -11,17 +11,12 @@ import type {
   SerializeOptions,
   DeserializeOptions,
 } from "../serializerTypes/index.js";
+import { TransformerRegistry } from "../serializerTransforms/index.js";
 import {
-  TransformerRegistry,
-  DateTransformer,
-  BigIntTransformer,
-  MapTransformer,
-  SetTransformer,
-} from "../serializerTransforms/index.js";
-import {
-  BufferTransformer,
-  ErrorTransformer,
-} from "../serializerTransformsExt/index.js";
+  createBuiltinTransformers,
+  layerTransformers,
+  type TransformerLookup,
+} from "../serializerTransformPolicy/index.js";
 import { SerializationLimits } from "@zudojs/constants";
 import { InvalidSerializedDataError, TransformerError } from "@zudojs/errors";
 import {
@@ -33,16 +28,24 @@ import { assertByteSize } from "./jsonSerializer.keys.js";
 import { transformValue } from "./jsonSerializer.transform.js";
 import { restoreValue } from "./jsonSerializer.restore.js";
 
-/** Default transformer registry with all built-in transformers. */
-function createDefaultTransformers(): TransformerRegistry {
-  const registry = new TransformerRegistry();
-  registry.register(DateTransformer);
-  registry.register(BigIntTransformer);
-  registry.register(MapTransformer);
-  registry.register(SetTransformer);
-  registry.register(BufferTransformer);
-  registry.register(ErrorTransformer);
-  return registry;
+/** Options accepted by the {@link JSONSerializer} constructor. */
+export interface JSONSerializerOptions {
+  /**
+   * Your transformers. They are consulted first; the built-in transformers
+   * (`Date`, `BigInt`, `Map`, `Set`, `Uint8Array`/`Buffer`, `Error`) still
+   * handle every type your registry does not, unless `builtins` is `false`.
+   * Transformers registered on it later are picked up.
+   */
+  readonly transformers?: TransformerRegistry;
+  /**
+   * Include the built-in transformers behind `transformers` (default
+   * `true`). With `false` only your registry is used, and a value no
+   * transformer handles that JSON would write as `{}` (a `Map`, `Set`,
+   * `Error`, ...) throws `SerializeError` under `preserveTypes`.
+   */
+  readonly builtins?: boolean;
+  /** Default options merged into every call. */
+  readonly defaults?: SerializeOptions & DeserializeOptions;
 }
 
 /**
@@ -55,15 +58,19 @@ export class JSONSerializer implements Serializer<unknown, string> {
   public readonly name = "json";
   public readonly contentType = "application/json";
 
-  private readonly transformers: TransformerRegistry;
+  private readonly registry: TransformerRegistry;
+  private readonly transformers: TransformerLookup;
   private readonly defaults: SerializeOptions & DeserializeOptions;
 
-  constructor(options?: {
-    readonly transformers?: TransformerRegistry;
-    /** Default options merged into every call. */
-    readonly defaults?: SerializeOptions & DeserializeOptions;
-  }) {
-    this.transformers = options?.transformers ?? createDefaultTransformers();
+  constructor(options?: JSONSerializerOptions) {
+    const builtins = options?.builtins !== false;
+    const custom = options?.transformers;
+    this.registry =
+      custom ?? (builtins ? createBuiltinTransformers() : new TransformerRegistry());
+    this.transformers =
+      custom && builtins
+        ? layerTransformers(custom, createBuiltinTransformers())
+        : this.registry;
     this.defaults = options?.defaults ?? {};
   }
 
@@ -81,7 +88,7 @@ export class JSONSerializer implements Serializer<unknown, string> {
         `"${ESCAPED_OBJECT_TAG}" is reserved for escaped plain objects.`,
       );
     }
-    this.transformers.register(transformer);
+    this.registry.register(transformer);
   }
 
   serialize(value: unknown, options?: SerializeOptions): string {

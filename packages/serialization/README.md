@@ -70,12 +70,36 @@ const registry = new TransformerRegistry();
 registry.register({
   type: "Money",
   canSerialize: (v): v is Money => v instanceof Money,
-  serialize: (v) => ({ $type: "Money", $value: v.toString() }),
+  serialize: (v) => (v as Money).toString(), // wrapped as { $type: "Money", $value: "..." }
   deserialize: (v) => Money.parse((v as { $value: string }).$value),
 });
 
 const serializer = new JSONSerializer({ transformers: registry });
+// Money uses your transformer; Date, BigInt, Map, Set, Buffer and Error still
+// use the built-ins.
 ```
+
+Your registry is consulted first, so registering a tag the built-ins use (say
+`"Date"`) replaces that built-in. Transformers you add to the registry later are
+picked up.
+
+**The transformer contract.** On the wire a transformed value is always
+`{ "$type": <type>, "$value": ... }`.
+
+- `serialize` returns either just the value to store, which the serializer
+  wraps as `{ $type: type, $value: <returned> }`, or that full tagged object
+  itself (as the built-ins do). A plain object with its own string `$type` is
+  taken as the full tagged object; anything else is wrapped. Special values
+  nested inside what you return (a `Date`, a `BigInt`) are transformed too.
+- `deserialize` always receives the full tagged object, with nested values
+  already restored, whichever form `serialize` returned. Read `$value` from it.
+
+**Opting out of the built-ins.** Pass `builtins: false` (to `JSONSerializer`
+or `createSerializer`) to use only your registry. A value that no transformer
+handles and that JSON would write as `{}` (a `Map`, `Set`, `WeakMap`, `Error`,
+`RegExp`, `ArrayBuffer`, ...) then throws `SerializeError` under
+`preserveTypes` instead of being silently emptied. To compose a registry by
+hand, start from `createBuiltinTransformers()`.
 
 ## Untrusted input
 

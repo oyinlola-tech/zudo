@@ -8,13 +8,17 @@
 import { SerializationDepthError } from "@zudojs/errors";
 import { isPlainObject } from "@zudojs/types";
 import type { SerializeOptions } from "../serializerTypes/index.js";
-import type { TransformerRegistry } from "../serializerTransforms/index.js";
+import {
+  assertNotLossy,
+  toTaggedOutput,
+  type TransformerLookup,
+} from "../serializerTransformPolicy/index.js";
 import { escapeObject, needsEscape } from "./jsonSerializer.escape.js";
 import { defineKey } from "./jsonSerializer.keys.js";
 
 /** What the walker needs besides the value. */
 export interface TransformWalk {
-  readonly transformers: TransformerRegistry;
+  readonly transformers: TransformerLookup;
   readonly maxDepth: number;
   readonly options: SerializeOptions;
 }
@@ -29,7 +33,11 @@ export function transformValue(
   if (typeof value === "bigint") {
     const transformer = walk.transformers.findForValue(value);
     return transformer
-      ? transformer.serialize(value, walk.options)
+      ? transformEntries(
+          walk,
+          toTaggedOutput(transformer, transformer.serialize(value, walk.options)),
+          depth + 1,
+        )
       : value.toString();
   }
   if (typeof value !== "object") return value;
@@ -50,12 +58,11 @@ export function transformValue(
 
   const transformer = walk.transformers.findForValue(value);
   if (transformer) {
-    const raw = transformer.serialize(value, walk.options);
     // The transformer's own tag object is not user data: its children are
-    // walked, but it is never escaped.
-    return isPlainObject(raw)
-      ? transformEntries(walk, raw, depth + 1)
-      : transformValue(walk, raw, depth + 1);
+    // walked, but it is never escaped. A bare return value is wrapped in
+    // `{ $type, $value }` for the transformer author.
+    const raw = transformer.serialize(value, walk.options);
+    return transformEntries(walk, toTaggedOutput(transformer, raw), depth + 1);
   }
 
   if (isPlainObject(value)) {
@@ -63,6 +70,7 @@ export function transformValue(
     return needsEscape(value) ? escapeObject(body) : body;
   }
 
+  assertNotLossy(value);
   return value;
 }
 

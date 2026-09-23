@@ -14,13 +14,13 @@ import {
 import { SerializationLimits, SerializationTags } from "@zudojs/constants";
 import { isPlainObject } from "@zudojs/types";
 import type { DeserializeOptions } from "../serializerTypes/index.js";
-import type { TransformerRegistry } from "../serializerTransforms/index.js";
+import type { TransformerLookup } from "../serializerTransformPolicy/index.js";
 import { escapedBody } from "./jsonSerializer.escape.js";
 import { defineKey } from "./jsonSerializer.keys.js";
 
 /** What the walker needs besides the value. */
 export interface RestoreWalk {
-  readonly transformers: TransformerRegistry;
+  readonly transformers: TransformerLookup;
   readonly maxDepth: number;
   readonly options: DeserializeOptions;
 }

@@ -5,5 +5,8 @@
  * with type preservation via transformer registry.
  */
 
-export { JSONSerializer } from "./jsonSerializer.core.js";
+export {
+  JSONSerializer,
+  type JSONSerializerOptions,
+} from "./jsonSerializer.core.js";
 export { ESCAPED_OBJECT_TAG } from "./jsonSerializer.escape.js";
