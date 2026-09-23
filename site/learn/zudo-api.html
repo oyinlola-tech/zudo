@@ -9,7 +9,7 @@
   <meta name="description" content="Write your business logic once as an operation with @zudojs/api, then run it from HTTP, RPC and a queue with the same validation, errors, interceptors and timeouts.">
   <!-- seo:start -->
   <!-- seo:end -->
-  <meta name="keywords" content="zudojs api, defineOperation, APIExecutor, APIOperationRegistry, APIInterceptor, createAPIContext, transport agnostic, operation, interceptor, api result">
+  <meta name="keywords" content="zudojs api, defineOperation, APIExecutor, APIOperationRegistry, APIInterceptor, createAPIContext, createApiFetchHandler, registerApiRpcProcedures, bindApiQueue, runApiCli, transport agnostic, operation, interceptor, api result">
   <meta name="author" content="Oluwayemi Oyinlola Michael">
 
   <link rel="icon" type="image/svg+xml" href="/assets/zudo-favicon.svg">
@@ -156,7 +156,7 @@
         <ul class="lx-hero-meta">
           <li><strong>45 min</strong> to read and try</li>
           <li><strong>You need:</strong> The Task API project, and the lessons on validation, HTTP routing, queues and RPC</li>
-          <li><strong>You build:</strong> A tasks.create operation that the Task API serves over HTTP, over RPC and from a background queue, with one set of rules</li>
+          <li><strong>You build:</strong> Task operations that the Task API serves over HTTP, over RPC, from a background queue and from the command line, with one set of rules</li>
         </ul>
         <div class="lx-hero-actions">
           <button type="button" class="lx-open-ide">Open the editor</button>
@@ -169,12 +169,12 @@
 <h2 id="why">One piece of logic, many doors</h2>
 <p>In the Task API, "create a task" lives inside an HTTP route. In <a href="/learn/zudo-rpc">the RPC lesson</a> you wrote it a second time as an RPC procedure. A nightly import job would need it a third time. Three copies drift apart: one of them forgets the title check, another returns a different error.</p>
 <p><code>@zudojs/api</code> fixes that with an <strong>operation</strong>: one named piece of logic with a declared input, a declared output and a handler. An <strong>executor</strong> runs operations, a <strong>registry</strong> finds them by name, and <strong>interceptors</strong> wrap every call with shared rules such as logging or sign-in checks.</p>
-<p>A <strong>transport</strong> is the door a call comes through: an HTTP request, an RPC frame, a queue job. Each transport only translates. The rules live in the operation.</p>
+<p>A <strong>transport</strong> is the door a call comes through: an HTTP request, an RPC frame, a queue job, a command in a terminal. Each transport only translates. The rules live in the operation. The package ships a ready-made <strong>binding</strong> for each of these four transports.</p>
 <p>In your Task API folder, add the package. This lesson also uses <code>@zudojs/queue</code>; the other packages come from the RPC lesson. Every example is a <code>.ts</code> file that you run with <code>npx tsx file.ts</code>.</p>
 <figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
 <pre class="lx-shell-body" data-copy="npm install @zudojs/api @zudojs/queue"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npm install @zudojs/api @zudojs/queue</span>
 <span class="lx-res"></span>
-<span class="lx-res">added 5 packages, and audited 15 packages in 10s</span>
+<span class="lx-res">added 2 packages, and audited 17 packages in 2s</span>
 <span class="lx-res"></span>
 <span class="lx-res">1 package is looking for funding</span>
 <span class="lx-res">  run `npm fund` for details</span>
@@ -184,27 +184,27 @@
 
 <section>
 <h2 id="operations">Define an operation</h2>
-<p><code>defineOperation(options)</code> takes a <code>name</code>, an optional <code>input</code> and <code>output</code> schema from <code>@zudojs/schema</code>, and a <code>handler(input, context)</code>. It checks the definition at once, so a bad name or timeout fails when the program starts, not on the first request.</p>
+<p><code>defineOperation(options)</code> takes a <code>name</code>, an optional <code>input</code> and <code>output</code> schema from <code>@zudojs/schema</code>, and a <code>handler(input, context)</code>. It checks the definition at once, so a bad name or timeout fails when the program starts, not on the first request. This file defines two operations:</p>
 <figure class="lx-example" data-index="0" data-file="tasks.ts" data-project="api">
 <figcaption class="lx-bar"><span class="lx-file">tasks.ts</span><button type="button" class="lx-edit" data-index="0" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">APIConflictError</span><span class="t-pn">,</span> defineOperation <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">APIConflictError</span><span class="t-pn">,</span> <span class="t-ty">APINotFoundError</span><span class="t-pn">,</span> defineOperation <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> schema <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Infer</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/schema"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> <span class="t-ty">NewTaskSchema</span> <span class="t-op">=</span> schema<span class="t-pn">.</span><span class="t-ty">object</span><span class="t-pn">(</span><span class="t-pn">{</span> title<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-ty">string</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">trim</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">min</span><span class="t-pn">(</span><span class="t-num">3</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">max</span><span class="t-pn">(</span><span class="t-num">100</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> <span class="t-ty">TaskIdSchema</span> <span class="t-op">=</span> schema<span class="t-pn">.</span><span class="t-ty">object</span><span class="t-pn">(</span><span class="t-pn">{</span> id<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-prop">coerce</span><span class="t-pn">.</span><span class="t-ty">number</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">int</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">min</span><span class="t-pn">(</span><span class="t-num">1</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> <span class="t-ty">TaskSchema</span> <span class="t-op">=</span> schema<span class="t-pn">.</span><span class="t-ty">object</span><span class="t-pn">(</span><span class="t-pn">{</span> id<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-ty">number</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> title<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-ty">string</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> done<span class="t-op">:</span> schema<span class="t-pn">.</span><span class="t-ty">boolean</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
-<span class="t-kw">export</span> <span class="t-kw">type</span> <span class="t-ty">NewTask</span> <span class="t-op">=</span> <span class="t-ty">Infer</span><span class="t-op">&lt;</span><span class="t-kw">typeof</span> <span class="t-ty">NewTaskSchema</span><span class="t-op">&gt;</span><span class="t-pn">;</span>
 <span class="t-kw">export</span> <span class="t-kw">type</span> <span class="t-ty">Task</span> <span class="t-op">=</span> <span class="t-ty">Infer</span><span class="t-op">&lt;</span><span class="t-kw">typeof</span> <span class="t-ty">TaskSchema</span><span class="t-op">&gt;</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> tasks <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">Map</span><span class="t-op">&lt;</span><span class="t-ty">number</span><span class="t-pn">,</span> <span class="t-ty">Task</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
-<span class="t-kw">export</span> <span class="t-kw">const</span> createTask <span class="t-op">=</span> defineOperation<span class="t-op">&lt;</span><span class="t-ty">NewTask</span><span class="t-pn">,</span> <span class="t-ty">Task</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-pn">{</span>
+<span class="t-kw">export</span> <span class="t-kw">const</span> createTask <span class="t-op">=</span> <span class="t-fn">defineOperation</span><span class="t-pn">(</span><span class="t-pn">{</span>
   name<span class="t-op">:</span> <span class="t-str">"tasks.create"</span><span class="t-pn">,</span>
   input<span class="t-op">:</span> <span class="t-ty">NewTaskSchema</span><span class="t-pn">,</span>
   output<span class="t-op">:</span> <span class="t-ty">TaskSchema</span><span class="t-pn">,</span>
-  metadata<span class="t-op">:</span> <span class="t-pn">{</span> description<span class="t-op">:</span> <span class="t-str">"Create a task"</span><span class="t-pn">,</span> tags<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"Tasks"</span><span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">,</span>
-  handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>input<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+  metadata<span class="t-op">:</span> <span class="t-pn">{</span> description<span class="t-op">:</span> <span class="t-str">"Create a task"</span><span class="t-pn">,</span> tags<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"Tasks"</span><span class="t-pn">]</span><span class="t-pn">,</span> http<span class="t-op">:</span> <span class="t-pn">{</span> method<span class="t-op">:</span> <span class="t-str">"POST"</span><span class="t-pn">,</span> path<span class="t-op">:</span> <span class="t-str">"/tasks"</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">,</span>
+  handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>input<span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Promise</span><span class="t-op">&lt;</span><span class="t-ty">Task</span><span class="t-op">&gt;</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
     <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-pn">[</span><span class="t-op">...</span><span class="t-prop">tasks</span><span class="t-pn">.</span><span class="t-fn">values</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">]</span><span class="t-pn">.</span><span class="t-fn">some</span><span class="t-pn">(</span><span class="t-pn">(</span>task<span class="t-pn">)</span> <span class="t-op">=&gt;</span> task<span class="t-pn">.</span><span class="t-prop">title</span> <span class="t-op">===</span> input<span class="t-pn">.</span><span class="t-prop">title</span><span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-pn">{</span>
       <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">APIConflictError</span><span class="t-pn">(</span><span class="t-tpl">`A task called "<span class="t-op">${</span><span class="t-prop">input.title</span><span class="t-op">}</span>" already exists.`</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-pn">}</span>
@@ -213,25 +213,37 @@
     <span class="t-kw">return</span> task<span class="t-pn">;</span>
   <span class="t-pn">}</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">export</span> <span class="t-kw">const</span> getTask <span class="t-op">=</span> <span class="t-fn">defineOperation</span><span class="t-pn">(</span><span class="t-pn">{</span>
+  name<span class="t-op">:</span> <span class="t-str">"tasks.get"</span><span class="t-pn">,</span>
+  input<span class="t-op">:</span> <span class="t-ty">TaskIdSchema</span><span class="t-pn">,</span>
+  output<span class="t-op">:</span> <span class="t-ty">TaskSchema</span><span class="t-pn">,</span>
+  metadata<span class="t-op">:</span> <span class="t-pn">{</span> description<span class="t-op">:</span> <span class="t-str">"Get one task"</span><span class="t-pn">,</span> tags<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"Tasks"</span><span class="t-pn">]</span><span class="t-pn">,</span> http<span class="t-op">:</span> <span class="t-pn">{</span> method<span class="t-op">:</span> <span class="t-str">"GET"</span><span class="t-pn">,</span> path<span class="t-op">:</span> <span class="t-str">"/tasks/:id"</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">,</span>
+  handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>input<span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Promise</span><span class="t-op">&lt;</span><span class="t-ty">Task</span><span class="t-op">&gt;</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+    <span class="t-kw">const</span> task <span class="t-op">=</span> tasks<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>input<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span>task<span class="t-pn">)</span> <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">APINotFoundError</span><span class="t-pn">(</span><span class="t-tpl">`Task <span class="t-op">${</span><span class="t-prop">input.id</span><span class="t-op">}</span> not found.`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">return</span> task<span class="t-pn">;</span>
+  <span class="t-pn">}</span><span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
-<script type="text/plain" class="lx-src">import { APIConflictError, defineOperation } from "@zudojs/api";
+<script type="text/plain" class="lx-src">import { APIConflictError, APINotFoundError, defineOperation } from "@zudojs/api";
 import { schema } from "@zudojs/schema";
 import type { Infer } from "@zudojs/schema";
 
 const NewTaskSchema = schema.object({ title: schema.string().trim().min(3).max(100) });
+const TaskIdSchema = schema.object({ id: schema.coerce.number().int().min(1) });
 const TaskSchema = schema.object({ id: schema.number(), title: schema.string(), done: schema.boolean() });
 
-export type NewTask = Infer<typeof NewTaskSchema>;
 export type Task = Infer<typeof TaskSchema>;
 
 const tasks = new Map<number, Task>();
 
-export const createTask = defineOperation<NewTask, Task>({
+export const createTask = defineOperation({
   name: "tasks.create",
   input: NewTaskSchema,
   output: TaskSchema,
-  metadata: { description: "Create a task", tags: ["Tasks"] },
-  handler: async (input) => {
+  metadata: { description: "Create a task", tags: ["Tasks"], http: { method: "POST", path: "/tasks" } },
+  handler: async (input): Promise<Task> => {
     if ([...tasks.values()].some((task) => task.title === input.title)) {
       throw new APIConflictError(`A task called "${input.title}" already exists.`);
     }
@@ -239,9 +251,26 @@ export const createTask = defineOperation<NewTask, Task>({
     tasks.set(task.id, task);
     return task;
   },
+});
+
+export const getTask = defineOperation({
+  name: "tasks.get",
+  input: TaskIdSchema,
+  output: TaskSchema,
+  metadata: { description: "Get one task", tags: ["Tasks"], http: { method: "GET", path: "/tasks/:id" } },
+  handler: async (input): Promise<Task> => {
+    const task = tasks.get(input.id);
+    if (!task) throw new APINotFoundError(`Task ${input.id} not found.`);
+    return task;
+  },
 });</script>
 </figure>
-<p>The two type parameters, <code>&lt;NewTask, Task&gt;</code>, come from the schemas with <code>Infer</code>, which you met in <a href="/learn/zudo-first-code">your first Zudo code</a>. So the types and the runtime checks describe the same data. <code>APIConflictError</code> is a ready-made error with status 409.</p>
+<ul>
+<li>TypeScript <strong>infers</strong> the type of <code>input</code> from the input schema, so <code>input.title</code> is a <code>string</code> and <code>input.id</code> a <code>number</code> without any type parameters. <code>Infer</code>, which you met in <a href="/learn/zudo-first-code">your first Zudo code</a>, names the output type. The types and the runtime checks describe the same data.</li>
+<li><code>schema.coerce.number()</code> turns the text <code>"1"</code> into the number 1. The id will arrive in a URL, where every value is text.</li>
+<li><code>metadata.http</code> says which HTTP route the operation gets. It only matters for the HTTP binding, later in this lesson. Without it, the route is <code>POST /tasks.create</code>.</li>
+<li><code>APIConflictError</code> (409) and <code>APINotFoundError</code> (404) are ready-made errors.</li>
+</ul>
 <p>Now run it with an executor. <code>createAPIContext(requestId, state)</code> makes the <strong>context</strong>: the small object that travels with one call. You will look at it closely soon.</p>
 <figure class="lx-example" data-index="1" data-file="run.ts" data-project="api">
 <figcaption class="lx-bar"><span class="lx-file">run.ts</span><button type="button" class="lx-edit" data-index="1" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
@@ -281,7 +310,7 @@ if (!twice.ok) console.log(twice.error.statusCode, twice.error.code, "-", twice.
 <li>The handler's own <code>APIConflictError</code> came through unchanged, with its status and message.</li>
 </ul>
 <h3>Typed operations</h3>
-<p>Because <code>createTask</code> is an <code>APIOperation&lt;NewTask, Task&gt;</code>, TypeScript checks the input you pass to <code>execute</code>, and <code>result.data</code> has the type <code>Task</code>.</p>
+<p>Because <code>createTask</code> knows its input and output types, TypeScript checks the input you pass to <code>execute</code>, and <code>result.data</code> has the type <code>Task</code>.</p>
 <figure class="lx-example" data-index="2" data-file="typed.ts" data-project="api">
 <figcaption class="lx-bar"><span class="lx-file">typed.ts</span><button type="button" class="lx-edit" data-index="2" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">APIExecutor</span><span class="t-pn">,</span> createAPIContext <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
@@ -310,7 +339,7 @@ Found 1 error in typed.ts:4</pre></div>
 <figcaption class="lx-bar"><span class="lx-file">internal.ts</span><button type="button" class="lx-edit" data-index="3" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">APIExecutor</span><span class="t-pn">,</span> createAPIContext<span class="t-pn">,</span> defineOperation <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
 
-<span class="t-kw">const</span> exportTasks <span class="t-op">=</span> defineOperation<span class="t-op">&lt;</span><span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-ty">string</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-pn">{</span>
+<span class="t-kw">const</span> exportTasks <span class="t-op">=</span> <span class="t-fn">defineOperation</span><span class="t-pn">(</span><span class="t-pn">{</span>
   name<span class="t-op">:</span> <span class="t-str">"tasks.export"</span><span class="t-pn">,</span>
   handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span> <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">Error</span><span class="t-pn">(</span><span class="t-str">'relation "tasks" does not exist (host 10.0.0.5)'</span><span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-pn">}</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -323,7 +352,7 @@ Found 1 error in typed.ts:4</pre></div>
 </code></pre>
 <script type="text/plain" class="lx-src">import { APIExecutor, createAPIContext, defineOperation } from "@zudojs/api";
 
-const exportTasks = defineOperation<{}, string>({
+const exportTasks = defineOperation({
   name: "tasks.export",
   handler: async () => { throw new Error('relation "tasks" does not exist (host 10.0.0.5)'); },
 });
@@ -338,12 +367,12 @@ message: An unexpected internal error occurred in operation "tasks.export".
 for the log only: relation "tasks" does not exist (host 10.0.0.5)</pre></div>
 </figure>
 <p><code>expose</code> is the flag that matters. <code>true</code> means "safe to show to the caller". <code>false</code> means "log it, send a generic message".</p>
-<div class="callout callout-warning"><p class="lx-callout-label">NEVER SEND THE ERROR OBJECT AS IT IS</p>An <code>APIError</code> turns into JSON with its <code>cause</code>, and that includes the original message and stack. <code>res.json(result.error)</code> would leak the database message after all. Always pick the fields a caller may see. The <code>publicError</code> function below does that for every transport.</div>
+<div class="callout callout-warning"><p class="lx-callout-label">NEVER SEND THE ERROR OBJECT AS IT IS</p>An <code>APIError</code> turns into JSON with its <code>cause</code>, and that includes the original message and stack. <code>res.json(result.error)</code> would leak the database message after all. If you call the executor yourself, pick the fields a caller may see. The bindings later in this lesson already do that for you.</div>
 </section>
 
 <section>
 <h2 id="context">The API context</h2>
-<p>The context carries four things through one call: a <strong>request id</strong>, an optional <code>AbortSignal</code> for cancelling, a <code>state</code> object you choose, and typed <strong>slots</strong>. A slot is read and written through a <strong>key</strong> made with <code>createContextKey&lt;T&gt;(name)</code>, so TypeScript knows the type of each value. Five keys are built in, such as <code>UserIdContextKey</code>. A request id often comes from an <code>x-request-id</code> header, which the client writes. <code>createAPIContext</code> throws a <code>TypeError</code> on an unsafe id. <code>normalizeRequestId</code> keeps a safe id and replaces anything else with a fresh UUID:</p>
+<p>The context carries four things through one call: a <strong>request id</strong>, an optional <code>AbortSignal</code> for cancelling, a <code>state</code> object you choose, and typed <strong>slots</strong>. A slot is read and written through a <strong>key</strong> made with <code>createContextKey&lt;T&gt;(name)</code>, so TypeScript knows the type of each value. Six keys are built in, such as <code>UserIdContextKey</code>, and <code>TransportContextKey</code>, which the bindings set to <code>"http"</code>, <code>"rpc"</code>, <code>"queue"</code> or <code>"cli"</code>. A request id often comes from an <code>x-request-id</code> header, which the client writes. <code>createAPIContext</code> throws a <code>TypeError</code> on an unsafe id. <code>normalizeRequestId</code> keeps a safe id and replaces anything else with a fresh UUID:</p>
 <figure class="lx-example" data-index="4" data-file="context.ts" data-project="api">
 <figcaption class="lx-bar"><span class="lx-file">context.ts</span><button type="button" class="lx-edit" data-index="4" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createAPIContext<span class="t-pn">,</span> createContextKey<span class="t-pn">,</span> normalizeRequestId<span class="t-pn">,</span> <span class="t-ty">UserIdContextKey</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
@@ -374,319 +403,404 @@ ada pro en</pre></div>
 
 <section>
 <h2 id="interceptors">Interceptors: rules for every transport</h2>
-<p>An <strong>interceptor</strong> is an object with an <code>intercept(call, next)</code> method. It works like the middleware you know: do something, <code>await next()</code>, do something after. <code>call</code> holds the <code>operation</code>, the <code>input</code> and the <code>context</code>. An interceptor may also answer early, without calling <code>next()</code>, by returning <code>apiFailure(error)</code>. This file is the heart of the Task API. It registers the operation, builds one executor with two interceptors, and has the <code>publicError</code> function that every transport uses:</p>
+<p>An <strong>interceptor</strong> is an object with an <code>intercept(call, next)</code> method. It works like the middleware you know: do something, <code>await next()</code>, do something after. <code>call</code> holds the <code>operation</code>, the <code>input</code> and the <code>context</code>. An interceptor may also answer early, without calling <code>next()</code>, by returning <code>apiFailure(error)</code>. This file is the heart of the Task API. It registers the operations and builds one executor with two interceptors, which every transport below uses:</p>
 <figure class="lx-example" data-index="5" data-file="app.ts" data-project="api">
 <figcaption class="lx-bar"><span class="lx-file">app.ts</span><button type="button" class="lx-edit" data-index="5" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">APIAuthenticationError</span><span class="t-pn">,</span> <span class="t-ty">APIExecutor</span><span class="t-pn">,</span> <span class="t-ty">APIOperationRegistry</span><span class="t-pn">,</span> <span class="t-ty">APIValidationError</span><span class="t-pn">,</span> apiFailure<span class="t-pn">,</span> <span class="t-ty">UserIdContextKey</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">APIError</span><span class="t-pn">,</span> <span class="t-ty">APIInterceptor</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> createTask <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./tasks.js"</span><span class="t-pn">;</span>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">APIAuthenticationError</span><span class="t-pn">,</span> <span class="t-ty">APIExecutor</span><span class="t-pn">,</span> <span class="t-ty">APIOperationRegistry</span><span class="t-pn">,</span> apiFailure<span class="t-pn">,</span> <span class="t-ty">TransportContextKey</span><span class="t-pn">,</span> <span class="t-ty">UserIdContextKey</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">APIInterceptor</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createTask<span class="t-pn">,</span> getTask <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./tasks.js"</span><span class="t-pn">;</span>
+
+<span class="t-kw">export</span> <span class="t-kw">interface</span> <span class="t-ty">Caller</span> <span class="t-pn">{</span>
+  <span class="t-kw">readonly</span> userId<span class="t-op">?:</span> <span class="t-ty">string</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
 
 <span class="t-kw">const</span> log<span class="t-op">:</span> <span class="t-ty">APIInterceptor</span> <span class="t-op">=</span> <span class="t-pn">{</span>
   <span class="t-kw">async</span> <span class="t-fn">intercept</span><span class="t-pn">(</span>call<span class="t-pn">,</span> next<span class="t-pn">)</span> <span class="t-pn">{</span>
     <span class="t-kw">const</span> result <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">next</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`[log] <span class="t-op">${</span><span class="t-prop">call.context.requestId</span><span class="t-op">}</span> <span class="t-op">${</span><span class="t-prop">call.operation.name</span><span class="t-op">}</span> -&gt; <span class="t-op">${</span><span class="t-prop">result.ok ? "ok" : result.error.code</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">const</span> outcome <span class="t-op">=</span> result<span class="t-pn">.</span><span class="t-prop">ok</span> <span class="t-op">?</span> <span class="t-str">"ok"</span> <span class="t-op">:</span> result<span class="t-pn">.</span><span class="t-prop">error</span><span class="t-pn">.</span><span class="t-prop">code</span><span class="t-pn">;</span>
+    console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`[log] <span class="t-op">${</span><span class="t-prop">call.context.get(TransportContextKey)</span><span class="t-op">}</span> <span class="t-op">${</span><span class="t-prop">call.operation.name</span><span class="t-op">}</span> -&gt; <span class="t-op">${</span><span class="t-prop">outcome</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-kw">return</span> result<span class="t-pn">;</span>
   <span class="t-pn">}</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> requireUser<span class="t-op">:</span> <span class="t-ty">APIInterceptor</span> <span class="t-op">=</span> <span class="t-pn">{</span>
   <span class="t-kw">async</span> <span class="t-fn">intercept</span><span class="t-pn">(</span>call<span class="t-pn">,</span> next<span class="t-pn">)</span> <span class="t-pn">{</span>
-    <span class="t-kw">if</span> <span class="t-pn">(</span>call<span class="t-pn">.</span><span class="t-prop">context</span><span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-ty">UserIdContextKey</span><span class="t-pn">)</span> <span class="t-op">===</span> <span class="t-cn">undefined</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+    <span class="t-kw">const</span> <span class="t-pn">{</span> userId <span class="t-pn">}</span> <span class="t-op">=</span> call<span class="t-pn">.</span><span class="t-prop">context</span><span class="t-pn">.</span><span class="t-prop">state</span> <span class="t-kw">as</span> <span class="t-ty">Caller</span><span class="t-pn">;</span>
+    <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-kw">typeof</span> userId <span class="t-op">!==</span> <span class="t-str">"string"</span><span class="t-pn">)</span> <span class="t-pn">{</span>
       <span class="t-kw">return</span> <span class="t-fn">apiFailure</span><span class="t-pn">(</span><span class="t-kw">new</span> <span class="t-ty">APIAuthenticationError</span><span class="t-pn">(</span><span class="t-str">"Sign in first."</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-pn">}</span>
+    call<span class="t-pn">.</span><span class="t-prop">context</span><span class="t-pn">.</span><span class="t-kw">set</span><span class="t-pn">(</span><span class="t-ty">UserIdContextKey</span><span class="t-pn">,</span> userId<span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-kw">return</span> <span class="t-fn">next</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">;</span>
 
 <span class="t-kw">export</span> <span class="t-kw">const</span> registry <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">APIOperationRegistry</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 registry<span class="t-pn">.</span><span class="t-fn">register</span><span class="t-pn">(</span>createTask<span class="t-pn">)</span><span class="t-pn">;</span>
+registry<span class="t-pn">.</span><span class="t-fn">register</span><span class="t-pn">(</span>getTask<span class="t-pn">)</span><span class="t-pn">;</span>
 registry<span class="t-pn">.</span><span class="t-fn">freeze</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">export</span> <span class="t-kw">const</span> executor <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">APIExecutor</span><span class="t-pn">(</span><span class="t-pn">{</span> interceptors<span class="t-op">:</span> <span class="t-pn">[</span>log<span class="t-pn">,</span> requireUser<span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">publicError</span><span class="t-pn">(</span>error<span class="t-op">:</span> <span class="t-ty">APIError</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-pn">{</span> code<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span> message<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span> issues<span class="t-op">?:</span> <span class="t-kw">readonly</span> <span class="t-ty">string</span><span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-pn">}</span> <span class="t-pn">{</span>
-  <span class="t-kw">const</span> issues <span class="t-op">=</span> error <span class="t-kw">instanceof</span> <span class="t-ty">APIValidationError</span> <span class="t-op">?</span> <span class="t-pn">{</span> issues<span class="t-op">:</span> error<span class="t-pn">.</span><span class="t-prop">issues</span> <span class="t-pn">}</span> <span class="t-op">:</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">;</span>
-  <span class="t-kw">return</span> <span class="t-pn">{</span> code<span class="t-op">:</span> error<span class="t-pn">.</span><span class="t-prop">code</span><span class="t-pn">,</span> message<span class="t-op">:</span> error<span class="t-pn">.</span><span class="t-prop">expose</span> <span class="t-op">?</span> error<span class="t-pn">.</span><span class="t-prop">message</span> <span class="t-op">:</span> <span class="t-str">"An internal error occurred."</span><span class="t-pn">,</span> <span class="t-op">...</span><span class="t-prop">issues</span> <span class="t-pn">}</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
 </code></pre>
-<script type="text/plain" class="lx-src">import { APIAuthenticationError, APIExecutor, APIOperationRegistry, APIValidationError, apiFailure, UserIdContextKey } from "@zudojs/api";
-import type { APIError, APIInterceptor } from "@zudojs/api";
-import { createTask } from "./tasks.js";
+<script type="text/plain" class="lx-src">import { APIAuthenticationError, APIExecutor, APIOperationRegistry, apiFailure, TransportContextKey, UserIdContextKey } from "@zudojs/api";
+import type { APIInterceptor } from "@zudojs/api";
+import { createTask, getTask } from "./tasks.js";
+
+export interface Caller {
+  readonly userId?: string;
+}
 
 const log: APIInterceptor = {
   async intercept(call, next) {
     const result = await next();
-    console.log(`[log] ${call.context.requestId} ${call.operation.name} -> ${result.ok ? "ok" : result.error.code}`);
+    const outcome = result.ok ? "ok" : result.error.code;
+    console.log(`[log] ${call.context.get(TransportContextKey)} ${call.operation.name} -> ${outcome}`);
     return result;
   },
 };
 
 const requireUser: APIInterceptor = {
   async intercept(call, next) {
-    if (call.context.get(UserIdContextKey) === undefined) {
+    const { userId } = call.context.state as Caller;
+    if (typeof userId !== "string") {
       return apiFailure(new APIAuthenticationError("Sign in first."));
     }
+    call.context.set(UserIdContextKey, userId);
     return next();
   },
 };
 
 export const registry = new APIOperationRegistry();
 registry.register(createTask);
+registry.register(getTask);
 registry.freeze();
-export const executor = new APIExecutor({ interceptors: [log, requireUser] });
-export function publicError(error: APIError): { code: string; message: string; issues?: readonly string[] } {
-  const issues = error instanceof APIValidationError ? { issues: error.issues } : {};
-  return { code: error.code, message: error.expose ? error.message : "An internal error occurred.", ...issues };
-}</script>
+export const executor = new APIExecutor({ interceptors: [log, requireUser] });</script>
 </figure>
 <ul>
 <li>The first interceptor in the list is the outermost, so <code>log</code> also sees the answers of <code>requireUser</code>.</li>
+<li><code>call.context.state</code> is what the transport verified about the caller. Each binding below fills it with a <code>Caller</code> object, which is why the <code>as Caller</code> is safe here. <code>requireUser</code> refuses a call without a user, and copies the user id into the typed <code>UserIdContextKey</code> slot for the handlers.</li>
 <li><code>registry.freeze()</code> locks the registry, so nobody can add or replace an operation while requests run. <code>get(name)</code>, <code>require(name)</code>, <code>getAll()</code> and <code>findByTag(tag)</code> read it.</li>
-<li><code>publicError</code> keeps only <code>code</code>, <code>issues</code> and, when <code>expose</code> is true, <code>message</code>.</li>
 </ul>
-<div class="callout callout-warning"><p class="lx-callout-label">A REPLACED INPUT IS NOT CHECKED AGAIN</p>In <code>@zudojs/api</code> 1.1.1 the executor checks the input <em>before</em> the interceptors run. An interceptor may replace <code>call.input</code> before <code>next()</code>, and the handler then gets the new value without any schema check. If an interceptor changes the input, it must produce valid data itself.</div>
+<p>The interceptors run <em>before</em> the input is checked against the schema. So an unknown caller is refused with 401 before anything tells it what a valid input looks like, and the <code>log</code> interceptor sees invalid calls too. <code>call.input</code> is the input as the caller sent it. If an interceptor replaces it, the new value is checked by the schema before the handler runs, so no interceptor can slip bad data past it.</p>
 </section>
 
 <section>
-<h2 id="transports">One operation, three transports</h2>
-<p>Now the payoff. Each transport below does the same four steps: find the operation, build a context from what <em>it</em> verified, call the executor, and turn the result into its own kind of answer.</p>
+<h2 id="transports">One operation, four transports</h2>
+<p>Now the payoff. Each binding below does the same work for you: find the operation, build a context, run the executor with its interceptors, and turn the result into its own kind of answer. You only tell it one thing, in its <code>state</code> option: who the caller is, from what <em>that</em> transport verified. Every binding sends failures in the same safe shape, <code>{ code, message, statusCode, requestId, issues? }</code>, with the message hidden unless the error is exposed.</p>
 <h3>HTTP</h3>
-<p>One route, <code>POST /api/:operation</code>, serves every operation in the registry. The user comes from a bearer token. The <code>users</code> map stands in for the session or JWT check from <a href="/learn/zudo-auth">the authentication lesson</a>. At the end, the file calls its own server four times:</p>
+<p><code>createApiFetchHandler(registry, options)</code> returns a web-standard handler, a function from a <code>Request</code> to a <code>Response</code>, like the RPC fetch handler in the last lesson. Each operation gets the route from its <code>metadata.http</code>. <code>mountFetchHandler</code> serves it under <code>/api</code> on your <code>@zudojs/http</code> router. The user comes from a bearer token. The <code>users</code> map stands in for the session or JWT check from <a href="/learn/zudo-auth">the authentication lesson</a>. At the end, the file calls its own server six times:</p>
 <figure class="lx-example" data-index="6" data-file="http-transport.ts" data-project="api">
 <figcaption class="lx-bar"><span class="lx-file">http-transport.ts</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> randomBytes <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"node:crypto"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> createAPIContext<span class="t-pn">,</span> normalizeRequestId<span class="t-pn">,</span> <span class="t-ty">UserIdContextKey</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> createHttpServer<span class="t-pn">,</span> createNodeHttpAdapter<span class="t-pn">,</span> createResponseContext<span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpRequestContext</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> executor<span class="t-pn">,</span> publicError<span class="t-pn">,</span> registry <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./app.js"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createApiFetchHandler <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createHttpServer<span class="t-pn">,</span> createNodeHttpAdapter<span class="t-pn">,</span> createRouter<span class="t-pn">,</span> mountFetchHandler <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> executor<span class="t-pn">,</span> registry <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./app.js"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Caller</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./app.js"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> token <span class="t-op">=</span> <span class="t-fn">randomBytes</span><span class="t-pn">(</span><span class="t-num">32</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">toString</span><span class="t-pn">(</span><span class="t-str">"hex"</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> users <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">Map</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-pn">[</span>token<span class="t-pn">,</span> <span class="t-str">"ada"</span><span class="t-pn">]</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> router <span class="t-op">=</span> <span class="t-fn">createRouter</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-router<span class="t-pn">.</span><span class="t-fn">post</span><span class="t-pn">(</span><span class="t-str">"/api/:operation"</span><span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span>ctx<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-  <span class="t-kw">const</span> operation <span class="t-op">=</span> registry<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>ctx<span class="t-pn">.</span><span class="t-prop">params</span><span class="t-pn">.</span><span class="t-prop">operation</span> <span class="t-op">??</span> <span class="t-str">""</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span>operation<span class="t-pn">)</span> <span class="t-kw">return</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">setStatus</span><span class="t-pn">(</span><span class="t-num">404</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">{</span> ok<span class="t-op">:</span> <span class="t-cn">false</span><span class="t-pn">,</span> error<span class="t-op">:</span> <span class="t-pn">{</span> code<span class="t-op">:</span> <span class="t-str">"NOT_FOUND"</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">let</span> input<span class="t-op">:</span> <span class="t-ty">unknown</span><span class="t-pn">;</span>
-  <span class="t-kw">try</span> <span class="t-pn">{</span>
-    input <span class="t-op">=</span> <span class="t-cn">JSON</span><span class="t-pn">.</span><span class="t-fn">parse</span><span class="t-pn">(</span><span class="t-kw">new</span> <span class="t-ty">TextDecoder</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">decode</span><span class="t-pn">(</span>ctx<span class="t-pn">.</span><span class="t-prop">request</span><span class="t-pn">.</span><span class="t-prop">body</span> <span class="t-kw">as</span> <span class="t-ty">Uint8Array</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">{</span>
-    <span class="t-kw">return</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">setStatus</span><span class="t-pn">(</span><span class="t-num">400</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">{</span> ok<span class="t-op">:</span> <span class="t-cn">false</span><span class="t-pn">,</span> error<span class="t-op">:</span> <span class="t-pn">{</span> code<span class="t-op">:</span> <span class="t-str">"BAD_JSON"</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-pn">}</span>
-  <span class="t-kw">const</span> context <span class="t-op">=</span> <span class="t-fn">createAPIContext</span><span class="t-pn">(</span><span class="t-fn">normalizeRequestId</span><span class="t-pn">(</span>ctx<span class="t-pn">.</span><span class="t-prop">request</span><span class="t-pn">.</span><span class="t-fn">getHeader</span><span class="t-pn">(</span><span class="t-str">"x-request-id"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">,</span> ctx<span class="t-pn">.</span><span class="t-prop">signal</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">const</span> userId <span class="t-op">=</span> users<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>ctx<span class="t-pn">.</span><span class="t-prop">request</span><span class="t-pn">.</span><span class="t-fn">getHeader</span><span class="t-pn">(</span><span class="t-str">"authorization"</span><span class="t-pn">)</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-fn">replace</span><span class="t-pn">(</span><span class="t-op">/^</span><span class="t-ty">Bearer</span> <span class="t-op">/</span><span class="t-pn">,</span> <span class="t-str">""</span><span class="t-pn">)</span> <span class="t-op">??</span> <span class="t-str">""</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">if</span> <span class="t-pn">(</span>userId<span class="t-pn">)</span> context<span class="t-pn">.</span><span class="t-kw">set</span><span class="t-pn">(</span><span class="t-ty">UserIdContextKey</span><span class="t-pn">,</span> userId<span class="t-pn">)</span><span class="t-pn">;</span>
 
-  <span class="t-kw">const</span> result <span class="t-op">=</span> <span class="t-kw">await</span> executor<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>operation<span class="t-pn">,</span> input<span class="t-pn">,</span> context<span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">if</span> <span class="t-pn">(</span>result<span class="t-pn">.</span><span class="t-prop">ok</span><span class="t-pn">)</span> <span class="t-kw">return</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">{</span> ok<span class="t-op">:</span> <span class="t-cn">true</span><span class="t-pn">,</span> data<span class="t-op">:</span> result<span class="t-pn">.</span><span class="t-prop">data</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">return</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">setStatus</span><span class="t-pn">(</span>result<span class="t-pn">.</span><span class="t-prop">error</span><span class="t-pn">.</span><span class="t-prop">statusCode</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">{</span> ok<span class="t-op">:</span> <span class="t-cn">false</span><span class="t-pn">,</span> error<span class="t-op">:</span> <span class="t-fn">publicError</span><span class="t-pn">(</span>result<span class="t-pn">.</span><span class="t-prop">error</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> router <span class="t-op">=</span> <span class="t-fn">createRouter</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-fn">mountFetchHandler</span><span class="t-pn">(</span>router<span class="t-pn">,</span> <span class="t-str">"/api"</span><span class="t-pn">,</span> <span class="t-fn">createApiFetchHandler</span><span class="t-pn">(</span>registry<span class="t-pn">,</span> <span class="t-pn">{</span>
+  executor<span class="t-pn">,</span>
+  state<span class="t-op">:</span> <span class="t-pn">(</span>request<span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Caller</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+    <span class="t-kw">const</span> bearer <span class="t-op">=</span> request<span class="t-pn">.</span><span class="t-prop">headers</span><span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"authorization"</span><span class="t-pn">)</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-fn">replace</span><span class="t-pn">(</span><span class="t-op">/^</span><span class="t-ty">Bearer</span> <span class="t-op">/</span><span class="t-pn">,</span> <span class="t-str">""</span><span class="t-pn">)</span> <span class="t-op">??</span> <span class="t-str">""</span><span class="t-pn">;</span>
+    <span class="t-kw">return</span> <span class="t-pn">{</span> userId<span class="t-op">:</span> users<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>bearer<span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span><span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> server <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">createHttpServer</span><span class="t-pn">(</span><span class="t-pn">{</span>
   adapter<span class="t-op">:</span> <span class="t-fn">createNodeHttpAdapter</span><span class="t-pn">(</span><span class="t-pn">{</span> host<span class="t-op">:</span> <span class="t-str">"127.0.0.1"</span><span class="t-pn">,</span> port<span class="t-op">:</span> <span class="t-num">0</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>request<span class="t-op">:</span> <span class="t-ty">HttpRequestContext</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-kw">await</span> router<span class="t-pn">.</span><span class="t-fn">dispatch</span><span class="t-pn">(</span>request<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">response</span><span class="t-pn">,</span>
+  handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>request<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-kw">await</span> router<span class="t-pn">.</span><span class="t-fn">dispatch</span><span class="t-pn">(</span>request<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">response</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">start</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
-<span class="t-kw">const</span> calls<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">unknown</span><span class="t-pn">]</span><span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-op">=</span> <span class="t-pn">[</span>
-  <span class="t-pn">[</span><span class="t-str">"/tasks.create"</span><span class="t-pn">,</span> token<span class="t-pn">,</span> <span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Buy milk"</span> <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">,</span>
-  <span class="t-pn">[</span><span class="t-str">"/tasks.create"</span><span class="t-pn">,</span> <span class="t-str">"guessed-token"</span><span class="t-pn">,</span> <span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Buy milk"</span> <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">,</span>
-  <span class="t-pn">[</span><span class="t-str">"/tasks.create"</span><span class="t-pn">,</span> <span class="t-str">"guessed-token"</span><span class="t-pn">,</span> <span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-num">42</span> <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">,</span>
-  <span class="t-pn">[</span><span class="t-str">"/tasks.delete"</span><span class="t-pn">,</span> token<span class="t-pn">,</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">,</span>
+<span class="t-kw">const</span> calls<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">unknown</span><span class="t-pn">]</span><span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-op">=</span> <span class="t-pn">[</span>
+  <span class="t-pn">[</span><span class="t-str">"POST"</span><span class="t-pn">,</span> <span class="t-str">"/tasks"</span><span class="t-pn">,</span> token<span class="t-pn">,</span> <span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Buy milk"</span> <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">,</span>
+  <span class="t-pn">[</span><span class="t-str">"GET"</span><span class="t-pn">,</span> <span class="t-str">"/tasks/1"</span><span class="t-pn">,</span> token<span class="t-pn">,</span> <span class="t-cn">undefined</span><span class="t-pn">]</span><span class="t-pn">,</span>
+  <span class="t-pn">[</span><span class="t-str">"POST"</span><span class="t-pn">,</span> <span class="t-str">"/tasks"</span><span class="t-pn">,</span> <span class="t-str">"guessed-token"</span><span class="t-pn">,</span> <span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Buy milk"</span> <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">,</span>
+  <span class="t-pn">[</span><span class="t-str">"POST"</span><span class="t-pn">,</span> <span class="t-str">"/tasks"</span><span class="t-pn">,</span> <span class="t-str">"guessed-token"</span><span class="t-pn">,</span> <span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-num">42</span> <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">,</span>
+  <span class="t-pn">[</span><span class="t-str">"POST"</span><span class="t-pn">,</span> <span class="t-str">"/tasks"</span><span class="t-pn">,</span> token<span class="t-pn">,</span> <span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-num">42</span> <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">,</span>
+  <span class="t-pn">[</span><span class="t-str">"DELETE"</span><span class="t-pn">,</span> <span class="t-str">"/tasks/1"</span><span class="t-pn">,</span> token<span class="t-pn">,</span> <span class="t-cn">undefined</span><span class="t-pn">]</span><span class="t-pn">,</span>
 <span class="t-pn">]</span><span class="t-pn">;</span>
-<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> <span class="t-pn">[</span>path<span class="t-pn">,</span> bearer<span class="t-pn">,</span> body<span class="t-pn">]</span> <span class="t-kw">of</span> calls<span class="t-pn">)</span> <span class="t-pn">{</span>
+<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> <span class="t-pn">[</span>method<span class="t-pn">,</span> path<span class="t-pn">,</span> bearer<span class="t-pn">,</span> body<span class="t-pn">]</span> <span class="t-kw">of</span> calls<span class="t-pn">)</span> <span class="t-pn">{</span>
   <span class="t-kw">const</span> response <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">fetch</span><span class="t-pn">(</span><span class="t-tpl">`http://127.0.0.1:<span class="t-op">${</span><span class="t-prop">server.address?.port</span><span class="t-op">}</span>/api<span class="t-op">${</span><span class="t-prop">path</span><span class="t-op">}</span>`</span><span class="t-pn">,</span> <span class="t-pn">{</span>
-    method<span class="t-op">:</span> <span class="t-str">"POST"</span><span class="t-pn">,</span>
+    method<span class="t-pn">,</span>
     headers<span class="t-op">:</span> <span class="t-pn">{</span> <span class="t-str">"content-type"</span><span class="t-op">:</span> <span class="t-str">"application/json"</span><span class="t-pn">,</span> <span class="t-str">"x-request-id"</span><span class="t-op">:</span> <span class="t-str">"web-1"</span><span class="t-pn">,</span> authorization<span class="t-op">:</span> <span class="t-tpl">`Bearer <span class="t-op">${</span><span class="t-prop">bearer</span><span class="t-op">}</span>`</span> <span class="t-pn">}</span><span class="t-pn">,</span>
-    body<span class="t-op">:</span> <span class="t-cn">JSON</span><span class="t-pn">.</span><span class="t-fn">stringify</span><span class="t-pn">(</span>body<span class="t-pn">)</span><span class="t-pn">,</span>
+    body<span class="t-op">:</span> body <span class="t-op">===</span> <span class="t-cn">undefined</span> <span class="t-op">?</span> <span class="t-cn">undefined</span> <span class="t-op">:</span> <span class="t-cn">JSON</span><span class="t-pn">.</span><span class="t-fn">stringify</span><span class="t-pn">(</span>body<span class="t-pn">)</span><span class="t-pn">,</span>
   <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>response<span class="t-pn">.</span><span class="t-prop">status</span><span class="t-pn">,</span> <span class="t-cn">JSON</span><span class="t-pn">.</span><span class="t-fn">stringify</span><span class="t-pn">(</span><span class="t-kw">await</span> response<span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>method<span class="t-pn">,</span> path<span class="t-pn">,</span> response<span class="t-pn">.</span><span class="t-prop">status</span><span class="t-pn">,</span> <span class="t-cn">JSON</span><span class="t-pn">.</span><span class="t-fn">stringify</span><span class="t-pn">(</span><span class="t-kw">await</span> response<span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-pn">}</span>
 <span class="t-kw">await</span> server<span class="t-pn">.</span><span class="t-fn">stop</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { randomBytes } from "node:crypto";
-import { createAPIContext, normalizeRequestId, UserIdContextKey } from "@zudojs/api";
-import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
-import type { HttpRequestContext } from "@zudojs/http";
-import { executor, publicError, registry } from "./app.js";
+import { createApiFetchHandler } from "@zudojs/api";
+import { createHttpServer, createNodeHttpAdapter, createRouter, mountFetchHandler } from "@zudojs/http";
+import { executor, registry } from "./app.js";
+import type { Caller } from "./app.js";
 
 const token = randomBytes(32).toString("hex");
 const users = new Map([[token, "ada"]]);
-const router = createRouter();
-router.post("/api/:operation", async (ctx) => {
-  const operation = registry.get(ctx.params.operation ?? "");
-  if (!operation) return createResponseContext().setStatus(404).json({ ok: false, error: { code: "NOT_FOUND" } });
-  let input: unknown;
-  try {
-    input = JSON.parse(new TextDecoder().decode(ctx.request.body as Uint8Array));
-  } catch {
-    return createResponseContext().setStatus(400).json({ ok: false, error: { code: "BAD_JSON" } });
-  }
-  const context = createAPIContext(normalizeRequestId(ctx.request.getHeader("x-request-id")), {}, ctx.signal);
-  const userId = users.get(ctx.request.getHeader("authorization")?.replace(/^Bearer /, "") ?? "");
-  if (userId) context.set(UserIdContextKey, userId);
 
-  const result = await executor.execute(operation, input, context);
-  if (result.ok) return createResponseContext().json({ ok: true, data: result.data });
-  return createResponseContext().setStatus(result.error.statusCode).json({ ok: false, error: publicError(result.error) });
-});
+const router = createRouter();
+mountFetchHandler(router, "/api", createApiFetchHandler(registry, {
+  executor,
+  state: (request): Caller => {
+    const bearer = request.headers.get("authorization")?.replace(/^Bearer /, "") ?? "";
+    return { userId: users.get(bearer) };
+  },
+}));
 const server = await createHttpServer({
   adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
-  handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+  handler: async (request) => (await router.dispatch(request)).response,
 }).start();
 
-const calls: [string, string, unknown][] = [
-  ["/tasks.create", token, { title: "Buy milk" }],
-  ["/tasks.create", "guessed-token", { title: "Buy milk" }],
-  ["/tasks.create", "guessed-token", { title: 42 }],
-  ["/tasks.delete", token, {}],
+const calls: [string, string, string, unknown][] = [
+  ["POST", "/tasks", token, { title: "Buy milk" }],
+  ["GET", "/tasks/1", token, undefined],
+  ["POST", "/tasks", "guessed-token", { title: "Buy milk" }],
+  ["POST", "/tasks", "guessed-token", { title: 42 }],
+  ["POST", "/tasks", token, { title: 42 }],
+  ["DELETE", "/tasks/1", token, undefined],
 ];
-for (const [path, bearer, body] of calls) {
+for (const [method, path, bearer, body] of calls) {
   const response = await fetch(`http://127.0.0.1:${server.address?.port}/api${path}`, {
-    method: "POST",
+    method,
     headers: { "content-type": "application/json", "x-request-id": "web-1", authorization: `Bearer ${bearer}` },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
-  console.log(response.status, JSON.stringify(await response.json()));
+  console.log(method, path, response.status, JSON.stringify(await response.json()));
 }
 await server.stop();</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx http-transport.ts</code></div><pre class="lx-no-copy">[log] web-1 tasks.create -&gt; ok
-200 {"ok":true,"data":{"id":1,"title":"Buy milk","done":false}}
-[log] web-1 tasks.create -&gt; ERR_API_AUTHENTICATION
-401 {"ok":false,"error":{"code":"ERR_API_AUTHENTICATION","message":"Sign in first."}}
-422 {"ok":false,"error":{"code":"ERR_API_VALIDATION","message":"Invalid input for operation \"tasks.create\".","issues":["title: invalid"]}}
-404 {"ok":false,"error":{"code":"NOT_FOUND"}}</pre></div>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx http-transport.ts</code></div><pre class="lx-no-copy">[log] http tasks.create -&gt; ok
+POST /tasks 200 {"ok":true,"data":{"id":1,"title":"Buy milk","done":false}}
+[log] http tasks.get -&gt; ok
+GET /tasks/1 200 {"ok":true,"data":{"id":1,"title":"Buy milk","done":false}}
+[log] http tasks.create -&gt; ERR_API_AUTHENTICATION
+POST /tasks 401 {"ok":false,"error":{"code":"ERR_API_AUTHENTICATION","message":"Sign in first.","statusCode":401,"requestId":"web-1"}}
+[log] http tasks.create -&gt; ERR_API_AUTHENTICATION
+POST /tasks 401 {"ok":false,"error":{"code":"ERR_API_AUTHENTICATION","message":"Sign in first.","statusCode":401,"requestId":"web-1"}}
+[log] http tasks.create -&gt; ERR_API_VALIDATION
+POST /tasks 422 {"ok":false,"error":{"code":"ERR_API_VALIDATION","message":"Invalid input for operation \"tasks.create\".","statusCode":422,"requestId":"web-1","issues":["title: invalid"]}}
+DELETE /tasks/1 405 {"ok":false,"error":{"code":"ERR_API_ERROR","message":"Method not allowed; use GET.","statusCode":405,"requestId":"web-1"}}</pre></div>
 </figure>
-<p>The route has no task logic at all, and <code>ctx.signal</code> goes into the context, so a client that hangs up cancels the call. The guessed token got 401 from the <code>requireUser</code> interceptor. The third call also had a guessed token, yet it got 422, and <code>[log]</code> printed nothing. Validation ran first and the interceptors never ran. So a logging interceptor never sees invalid calls, and an unknown caller learns the shape of your input. When that matters, refuse unknown callers in the transport, before you call the executor.</p>
+<ul>
+<li>There is no task logic in the HTTP code at all. <code>GET /tasks/1</code> took the <code>id</code> from the path, and the schema turned <code>"1"</code> into a number.</li>
+<li>Both calls with a guessed token got 401, even the one with an invalid title. The interceptors run first, so an unknown caller never learns what your input should look like. Only the signed-in user's invalid call got the 422 with its <code>issues</code>.</li>
+<li>The request id came from the <code>x-request-id</code> header (a safe one is kept, anything else replaced), and the handler sends it back in the error, so a user can quote it to support.</li>
+<li><code>DELETE</code> has no route, so the answer is 405. The handler also refuses bodies that are too big or not JSON, and runs every call under the request's signal, so a client that hangs up cancels it.</li>
+</ul>
 <h3>RPC</h3>
-<p>The RPC transport registers one procedure per operation. The user comes from <code>call.auth</code>, the identity your RPC server verified, never from frame metadata, which the caller writes. The frame's id is written by the caller too, so it goes through <code>normalizeRequestId</code>. A failure becomes an <code>RPCError</code> with the same code:</p>
+<p><code>registerApiRpcProcedures(server, registry, options)</code> registers one RPC procedure per operation, named like the operation. The user comes from <code>call.auth</code>, the identity the RPC transport verified, never from frame metadata, which the caller writes:</p>
 <figure class="lx-example" data-index="7" data-file="rpc-transport.ts" data-project="api">
 <figcaption class="lx-bar"><span class="lx-file">rpc-transport.ts</span><button type="button" class="lx-edit" data-index="7" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createAPIContext<span class="t-pn">,</span> normalizeRequestId<span class="t-pn">,</span> <span class="t-ty">UserIdContextKey</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> createRPCProcedure<span class="t-pn">,</span> <span class="t-ty">RPCClient</span><span class="t-pn">,</span> <span class="t-ty">RPCError</span><span class="t-pn">,</span> <span class="t-ty">RPCServer</span><span class="t-pn">,</span> isRPCError <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/rpc"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> executor<span class="t-pn">,</span> publicError<span class="t-pn">,</span> registry <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./app.js"</span><span class="t-pn">;</span>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> registerApiRpcProcedures <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createRPCMemoryTransport<span class="t-pn">,</span> <span class="t-ty">RPCClient</span><span class="t-pn">,</span> <span class="t-ty">RPCServer</span><span class="t-pn">,</span> isRPCError <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/rpc"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> executor<span class="t-pn">,</span> registry <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./app.js"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Caller</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./app.js"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> rpc <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">RPCServer</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> operation <span class="t-kw">of</span> registry<span class="t-pn">.</span><span class="t-fn">getAll</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-  rpc<span class="t-pn">.</span><span class="t-fn">register</span><span class="t-pn">(</span><span class="t-fn">createRPCProcedure</span><span class="t-pn">(</span>operation<span class="t-pn">.</span><span class="t-prop">name</span><span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span>input<span class="t-op">:</span> <span class="t-ty">unknown</span><span class="t-pn">,</span> call<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-    <span class="t-kw">const</span> context <span class="t-op">=</span> <span class="t-fn">createAPIContext</span><span class="t-pn">(</span><span class="t-fn">normalizeRequestId</span><span class="t-pn">(</span>call<span class="t-pn">.</span><span class="t-prop">request</span><span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">,</span> call<span class="t-pn">.</span><span class="t-prop">signal</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-kw">typeof</span> call<span class="t-pn">.</span><span class="t-prop">auth</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-prop">userId</span> <span class="t-op">===</span> <span class="t-str">"string"</span><span class="t-pn">)</span> context<span class="t-pn">.</span><span class="t-kw">set</span><span class="t-pn">(</span><span class="t-ty">UserIdContextKey</span><span class="t-pn">,</span> call<span class="t-pn">.</span><span class="t-prop">auth</span><span class="t-pn">.</span><span class="t-prop">userId</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">const</span> result <span class="t-op">=</span> <span class="t-kw">await</span> executor<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>operation<span class="t-pn">,</span> input<span class="t-pn">,</span> context<span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">if</span> <span class="t-pn">(</span>result<span class="t-pn">.</span><span class="t-prop">ok</span><span class="t-pn">)</span> <span class="t-kw">return</span> result<span class="t-pn">.</span><span class="t-prop">data</span><span class="t-pn">;</span>
-    <span class="t-kw">const</span> <span class="t-pn">{</span> code<span class="t-pn">,</span> message <span class="t-pn">}</span> <span class="t-op">=</span> <span class="t-fn">publicError</span><span class="t-pn">(</span>result<span class="t-pn">.</span><span class="t-prop">error</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">RPCError</span><span class="t-pn">(</span>message<span class="t-pn">,</span> <span class="t-pn">{</span> code<span class="t-pn">,</span> statusCode<span class="t-op">:</span> result<span class="t-pn">.</span><span class="t-prop">error</span><span class="t-pn">.</span><span class="t-prop">statusCode</span><span class="t-pn">,</span> expose<span class="t-op">:</span> <span class="t-cn">true</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
-<span class="t-kw">const</span> client <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">RPCClient</span><span class="t-pn">(</span><span class="t-pn">{</span> send<span class="t-op">:</span> <span class="t-pn">(</span>request<span class="t-pn">)</span> <span class="t-op">=&gt;</span> rpc<span class="t-pn">.</span><span class="t-fn">handle</span><span class="t-pn">(</span>request<span class="t-pn">,</span> <span class="t-pn">{</span> auth<span class="t-op">:</span> <span class="t-pn">{</span> userId<span class="t-op">:</span> <span class="t-str">"ada"</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-fn">registerApiRpcProcedures</span><span class="t-pn">(</span>rpc<span class="t-pn">,</span> registry<span class="t-pn">,</span> <span class="t-pn">{</span>
+  executor<span class="t-pn">,</span>
+  state<span class="t-op">:</span> <span class="t-pn">(</span>call<span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Caller</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-pn">{</span> userId<span class="t-op">:</span> <span class="t-kw">typeof</span> call<span class="t-pn">.</span><span class="t-prop">auth</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-prop">userId</span> <span class="t-op">===</span> <span class="t-str">"string"</span> <span class="t-op">?</span> call<span class="t-pn">.</span><span class="t-prop">auth</span><span class="t-pn">.</span><span class="t-prop">userId</span> <span class="t-op">:</span> <span class="t-cn">undefined</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> client <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">RPCClient</span><span class="t-pn">(</span><span class="t-fn">createRPCMemoryTransport</span><span class="t-pn">(</span>rpc<span class="t-pn">,</span> <span class="t-pn">{</span> auth<span class="t-op">:</span> <span class="t-pn">{</span> userId<span class="t-op">:</span> <span class="t-str">"ada"</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-fn">call</span><span class="t-pn">(</span><span class="t-str">"tasks.create"</span><span class="t-pn">,</span> <span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Walk the dog"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">try</span> <span class="t-pn">{</span>
-  <span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-fn">call</span><span class="t-pn">(</span><span class="t-str">"tasks.create"</span><span class="t-pn">,</span> <span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Walk the dog"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">{</span>
-  <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-fn">isRPCError</span><span class="t-pn">(</span>error<span class="t-pn">)</span><span class="t-pn">)</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>error<span class="t-pn">.</span><span class="t-prop">code</span><span class="t-pn">,</span> <span class="t-str">"-"</span><span class="t-pn">,</span> error<span class="t-pn">.</span><span class="t-prop">message</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> input <span class="t-kw">of</span> <span class="t-pn">[</span><span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Walk the dog"</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">""</span> <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-kw">try</span> <span class="t-pn">{</span>
+    <span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-fn">call</span><span class="t-pn">(</span><span class="t-str">"tasks.create"</span><span class="t-pn">,</span> input<span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">{</span>
+    <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-fn">isRPCError</span><span class="t-pn">(</span>error<span class="t-pn">)</span><span class="t-pn">)</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>error<span class="t-pn">.</span><span class="t-prop">name</span><span class="t-pn">,</span> error<span class="t-pn">.</span><span class="t-prop">code</span><span class="t-pn">,</span> <span class="t-str">"-"</span><span class="t-pn">,</span> error<span class="t-pn">.</span><span class="t-prop">message</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span>
 <span class="t-pn">}</span>
 </code></pre>
-<script type="text/plain" class="lx-src">import { createAPIContext, normalizeRequestId, UserIdContextKey } from "@zudojs/api";
-import { createRPCProcedure, RPCClient, RPCError, RPCServer, isRPCError } from "@zudojs/rpc";
-import { executor, publicError, registry } from "./app.js";
+<script type="text/plain" class="lx-src">import { registerApiRpcProcedures } from "@zudojs/api";
+import { createRPCMemoryTransport, RPCClient, RPCServer, isRPCError } from "@zudojs/rpc";
+import { executor, registry } from "./app.js";
+import type { Caller } from "./app.js";
 
 const rpc = new RPCServer();
-for (const operation of registry.getAll()) {
-  rpc.register(createRPCProcedure(operation.name, async (input: unknown, call) => {
-    const context = createAPIContext(normalizeRequestId(call.request.id), {}, call.signal);
-    if (typeof call.auth?.userId === "string") context.set(UserIdContextKey, call.auth.userId);
-    const result = await executor.execute(operation, input, context);
-    if (result.ok) return result.data;
-    const { code, message } = publicError(result.error);
-    throw new RPCError(message, { code, statusCode: result.error.statusCode, expose: true });
-  }));
-}
-const client = new RPCClient({ send: (request) => rpc.handle(request, { auth: { userId: "ada" } }) });
+registerApiRpcProcedures(rpc, registry, {
+  executor,
+  state: (call): Caller => ({ userId: typeof call.auth?.userId === "string" ? call.auth.userId : undefined }),
+});
+
+const client = new RPCClient(createRPCMemoryTransport(rpc, { auth: { userId: "ada" } }));
 console.log(await client.call("tasks.create", { title: "Walk the dog" }));
-try {
-  await client.call("tasks.create", { title: "Walk the dog" });
-} catch (error) {
-  if (isRPCError(error)) console.log(error.code, "-", error.message);
+for (const input of [{ title: "Walk the dog" }, { title: "" }]) {
+  try {
+    await client.call("tasks.create", input);
+  } catch (error) {
+    if (isRPCError(error)) console.log(error.name, error.code, "-", error.message);
+  }
 }</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx rpc-transport.ts</code></div><pre class="lx-no-copy">[log] a7dd43d5-ef69-4e92-ae1d-c33864d7c8af tasks.create -&gt; ok
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx rpc-transport.ts</code></div><pre class="lx-no-copy">[log] rpc tasks.create -&gt; ok
 { id: 1, title: 'Walk the dog', done: false }
-[log] 4a790a2b-1ab8-4d8d-8c8b-d961451f44de tasks.create -&gt; ERR_API_CONFLICT
-ERR_API_CONFLICT - A task called "Walk the dog" already exists.</pre></div>
+[log] rpc tasks.create -&gt; ERR_API_CONFLICT
+RPCError ERR_API_CONFLICT - A task called "Walk the dog" already exists.
+[log] rpc tasks.create -&gt; ERR_API_VALIDATION
+RPCValidationError RPC_VALIDATION_ERROR - Invalid input for operation "tasks.create".</pre></div>
 </figure>
+<p>API errors become their RPC equivalents: a validation failure is an <code>RPCValidationError</code>, as in the RPC lesson. An error with no RPC equivalent, such as the conflict, keeps its own code. To serve this over HTTP, mount <code>createRPCFetchHandler(rpc)</code> exactly as in the last lesson.</p>
 <h3>Queue</h3>
-<p>A background job has no HTTP request and no token. Only your own code adds jobs, after it has checked who the user is, so the job carries that user id. The job fails when the operation fails, and the queue's retry and dead-letter rules take over:</p>
+<p>A background job has no HTTP request and no token. Only your own code adds jobs, after it has checked who the user is, so the job carries that user id in its <code>metadata</code>. <code>bindApiQueue(queue, registry, options)</code> makes each operation a job name, and the job data is the input. The job fails when the operation fails, and the queue's retry and dead-letter rules take over:</p>
 <figure class="lx-example" data-index="8" data-file="queue-transport.ts" data-project="api">
 <figcaption class="lx-bar"><span class="lx-file">queue-transport.ts</span><button type="button" class="lx-edit" data-index="8" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createAPIContext<span class="t-pn">,</span> <span class="t-ty">UserIdContextKey</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> createInMemoryQueue<span class="t-pn">,</span> createInMemoryQueueEventEmitter<span class="t-pn">,</span> createQueueName <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/queue"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> executor<span class="t-pn">,</span> publicError<span class="t-pn">,</span> registry <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./app.js"</span><span class="t-pn">;</span>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> bindApiQueue <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createInMemoryQueue<span class="t-pn">,</span> createQueueName <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/queue"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> executor<span class="t-pn">,</span> registry <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./app.js"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Caller</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./app.js"</span><span class="t-pn">;</span>
 
-<span class="t-kw">const</span> queue <span class="t-op">=</span> createInMemoryQueue<span class="t-op">&lt;</span><span class="t-pn">{</span> input<span class="t-op">:</span> <span class="t-ty">unknown</span><span class="t-pn">;</span> userId<span class="t-op">:</span> <span class="t-ty">string</span> <span class="t-pn">}</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-fn">createQueueName</span><span class="t-pn">(</span><span class="t-str">"operations"</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">{</span>
-  eventEmitter<span class="t-op">:</span> <span class="t-fn">createInMemoryQueueEventEmitter</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span>
+<span class="t-kw">const</span> queue <span class="t-op">=</span> <span class="t-fn">createInMemoryQueue</span><span class="t-pn">(</span><span class="t-fn">createQueueName</span><span class="t-pn">(</span><span class="t-str">"operations"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-fn">bindApiQueue</span><span class="t-pn">(</span>queue<span class="t-pn">,</span> registry<span class="t-pn">,</span> <span class="t-pn">{</span>
+  executor<span class="t-pn">,</span>
+  state<span class="t-op">:</span> <span class="t-pn">(</span>job<span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Caller</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-pn">{</span> userId<span class="t-op">:</span> <span class="t-kw">typeof</span> job<span class="t-pn">.</span><span class="t-prop">metadata</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-prop">userId</span> <span class="t-op">===</span> <span class="t-str">"string"</span> <span class="t-op">?</span> job<span class="t-pn">.</span><span class="t-prop">metadata</span><span class="t-pn">.</span><span class="t-prop">userId</span> <span class="t-op">:</span> <span class="t-cn">undefined</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">let</span> jobs <span class="t-op">=</span> <span class="t-num">0</span><span class="t-pn">;</span>
-<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> operation <span class="t-kw">of</span> registry<span class="t-pn">.</span><span class="t-fn">getAll</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-  queue<span class="t-pn">.</span><span class="t-fn">process</span><span class="t-pn">(</span>operation<span class="t-pn">.</span><span class="t-prop">name</span><span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span>job<span class="t-pn">,</span> jobContext<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-    <span class="t-kw">const</span> context <span class="t-op">=</span> <span class="t-fn">createAPIContext</span><span class="t-pn">(</span><span class="t-tpl">`job-<span class="t-op">${</span><span class="t-prop">++jobs</span><span class="t-op">}</span>`</span><span class="t-pn">,</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">,</span> jobContext<span class="t-pn">.</span><span class="t-prop">signal</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    context<span class="t-pn">.</span><span class="t-kw">set</span><span class="t-pn">(</span><span class="t-ty">UserIdContextKey</span><span class="t-pn">,</span> job<span class="t-pn">.</span><span class="t-prop">data</span><span class="t-pn">.</span><span class="t-prop">userId</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">const</span> result <span class="t-op">=</span> <span class="t-kw">await</span> executor<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>operation<span class="t-pn">,</span> job<span class="t-pn">.</span><span class="t-prop">data</span><span class="t-pn">.</span><span class="t-prop">input</span><span class="t-pn">,</span> context<span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span>result<span class="t-pn">.</span><span class="t-prop">ok</span><span class="t-pn">)</span> <span class="t-kw">throw</span> <span class="t-kw">new</span> <span class="t-ty">Error</span><span class="t-pn">(</span><span class="t-tpl">`<span class="t-op">${</span><span class="t-prop">result.error.code</span><span class="t-op">}</span>: <span class="t-op">${</span><span class="t-prop">publicError(result.error).message</span><span class="t-op">}</span>`</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"[queue] completed"</span><span class="t-pn">,</span> job<span class="t-pn">.</span><span class="t-prop">name</span><span class="t-pn">,</span> result<span class="t-pn">.</span><span class="t-prop">data</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">return</span> result<span class="t-pn">.</span><span class="t-prop">data</span><span class="t-pn">;</span>
-  <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
+queue<span class="t-pn">.</span><span class="t-prop">events</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-fn">on</span><span class="t-pn">(</span><span class="t-str">"job:completed"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">{</span> job<span class="t-pn">,</span> result <span class="t-pn">}</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"[queue] completed"</span><span class="t-pn">,</span> job<span class="t-pn">.</span><span class="t-prop">name</span><span class="t-pn">,</span> result<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 queue<span class="t-pn">.</span><span class="t-prop">events</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-fn">on</span><span class="t-pn">(</span><span class="t-str">"job:failed"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">{</span> job<span class="t-pn">,</span> error <span class="t-pn">}</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"[queue] failed"</span><span class="t-pn">,</span> job<span class="t-pn">.</span><span class="t-prop">name</span><span class="t-pn">,</span> error<span class="t-pn">.</span><span class="t-prop">message</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">await</span> queue<span class="t-pn">.</span><span class="t-fn">add</span><span class="t-pn">(</span><span class="t-str">"tasks.create"</span><span class="t-pn">,</span> <span class="t-pn">{</span> input<span class="t-op">:</span> <span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Water plants"</span> <span class="t-pn">}</span><span class="t-pn">,</span> userId<span class="t-op">:</span> <span class="t-str">"ada"</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> attempts<span class="t-op">:</span> <span class="t-num">1</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">await</span> queue<span class="t-pn">.</span><span class="t-fn">add</span><span class="t-pn">(</span><span class="t-str">"tasks.create"</span><span class="t-pn">,</span> <span class="t-pn">{</span> input<span class="t-op">:</span> <span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">""</span> <span class="t-pn">}</span><span class="t-pn">,</span> userId<span class="t-op">:</span> <span class="t-str">"ada"</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> attempts<span class="t-op">:</span> <span class="t-num">1</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">await</span> queue<span class="t-pn">.</span><span class="t-fn">add</span><span class="t-pn">(</span><span class="t-str">"tasks.create"</span><span class="t-pn">,</span> <span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Water plants"</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> attempts<span class="t-op">:</span> <span class="t-num">1</span><span class="t-pn">,</span> metadata<span class="t-op">:</span> <span class="t-pn">{</span> userId<span class="t-op">:</span> <span class="t-str">"ada"</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">await</span> queue<span class="t-pn">.</span><span class="t-fn">add</span><span class="t-pn">(</span><span class="t-str">"tasks.create"</span><span class="t-pn">,</span> <span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">""</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> attempts<span class="t-op">:</span> <span class="t-num">1</span><span class="t-pn">,</span> metadata<span class="t-op">:</span> <span class="t-pn">{</span> userId<span class="t-op">:</span> <span class="t-str">"ada"</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">await</span> <span class="t-kw">new</span> <span class="t-ty">Promise</span><span class="t-pn">(</span><span class="t-pn">(</span>resolve<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-fn">setTimeout</span><span class="t-pn">(</span>resolve<span class="t-pn">,</span> <span class="t-num">200</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">await</span> queue<span class="t-pn">.</span><span class="t-fn">close</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
-<script type="text/plain" class="lx-src">import { createAPIContext, UserIdContextKey } from "@zudojs/api";
-import { createInMemoryQueue, createInMemoryQueueEventEmitter, createQueueName } from "@zudojs/queue";
-import { executor, publicError, registry } from "./app.js";
+<script type="text/plain" class="lx-src">import { bindApiQueue } from "@zudojs/api";
+import { createInMemoryQueue, createQueueName } from "@zudojs/queue";
+import { executor, registry } from "./app.js";
+import type { Caller } from "./app.js";
 
-const queue = createInMemoryQueue<{ input: unknown; userId: string }>(createQueueName("operations"), {
-  eventEmitter: createInMemoryQueueEventEmitter(),
+const queue = createInMemoryQueue(createQueueName("operations"));
+bindApiQueue(queue, registry, {
+  executor,
+  state: (job): Caller => ({ userId: typeof job.metadata?.userId === "string" ? job.metadata.userId : undefined }),
 });
-let jobs = 0;
-for (const operation of registry.getAll()) {
-  queue.process(operation.name, async (job, jobContext) => {
-    const context = createAPIContext(`job-${++jobs}`, {}, jobContext.signal);
-    context.set(UserIdContextKey, job.data.userId);
-    const result = await executor.execute(operation, job.data.input, context);
-    if (!result.ok) throw new Error(`${result.error.code}: ${publicError(result.error).message}`);
-    console.log("[queue] completed", job.name, result.data);
-    return result.data;
-  });
-}
+queue.events?.on("job:completed", ({ job, result }) => console.log("[queue] completed", job.name, result));
 queue.events?.on("job:failed", ({ job, error }) => console.log("[queue] failed", job.name, error.message));
-await queue.add("tasks.create", { input: { title: "Water plants" }, userId: "ada" }, { attempts: 1 });
-await queue.add("tasks.create", { input: { title: "" }, userId: "ada" }, { attempts: 1 });
+
+await queue.add("tasks.create", { title: "Water plants" }, { attempts: 1, metadata: { userId: "ada" } });
+await queue.add("tasks.create", { title: "" }, { attempts: 1, metadata: { userId: "ada" } });
 await new Promise((resolve) => setTimeout(resolve, 200));
 await queue.close();</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx queue-transport.ts</code></div><pre class="lx-no-copy">[log] job-1 tasks.create -&gt; ok
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx queue-transport.ts</code></div><pre class="lx-no-copy">[log] queue tasks.create -&gt; ok
 [queue] completed tasks.create { id: 1, title: 'Water plants', done: false }
-[queue] failed tasks.create ERR_API_VALIDATION: Invalid input for operation "tasks.create".</pre></div>
+[log] queue tasks.create -&gt; ERR_API_VALIDATION
+[queue] failed tasks.create Invalid input for operation "tasks.create".</pre></div>
 </figure>
-<p><code>attempts: 1</code> matters here: a validation error fails the same way every time, so retrying it only wastes work. Without the <code>eventEmitter</code> option, <code>queue.events</code> is a silent emitter and your listeners never run.</p>
-<div class="callout callout-note"><p class="lx-callout-label">NOTE</p>Ready-made bindings are coming to <code>@zudojs/api</code>: a fetch handler for HTTP, an RPC binding, a queue binding and a command-line runner, with the operation's HTTP route set in its metadata. The docs page already describes them, but they are not in version 1.1.1 on npm. Until then, the small transports above do the same job.</div>
+<p><code>attempts: 1</code> matters here: a validation error fails the same way every time, so retrying it only wastes work. Never let a client choose the job's <code>metadata</code>: whoever writes <code>userId</code> there acts as that user.</p>
+<h3>Command line</h3>
+<p><code>runApiCli(registry, argv, options)</code> runs an operation from command-line arguments: the operation name first, then <code>--field value</code> pairs (or <code>--json '{…}'</code>). It prints the result as JSON and returns an <strong>exit code</strong>, the number a program reports to the shell: 0 for success, 65 for invalid input, 77 for a permission problem, and so on. It is handy for admin tasks run on the server. Here it runs three commands in a row, as if typed in a terminal:</p>
+<figure class="lx-example" data-index="9" data-file="cli-transport.ts" data-project="api">
+<figcaption class="lx-bar"><span class="lx-file">cli-transport.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> runApiCli <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> executor<span class="t-pn">,</span> registry <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./app.js"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Caller</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./app.js"</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> options <span class="t-op">=</span> <span class="t-pn">{</span>
+  executor<span class="t-pn">,</span>
+  programName<span class="t-op">:</span> <span class="t-str">"tasks"</span><span class="t-pn">,</span>
+  state<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Caller</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-pn">{</span> userId<span class="t-op">:</span> <span class="t-str">"cli-operator"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">;</span>
+
+<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> argv <span class="t-kw">of</span> <span class="t-pn">[</span><span class="t-pn">[</span><span class="t-str">"tasks.create"</span><span class="t-pn">,</span> <span class="t-str">"--title"</span><span class="t-pn">,</span> <span class="t-str">"Read a book"</span><span class="t-pn">]</span><span class="t-pn">,</span> <span class="t-pn">[</span><span class="t-str">"tasks.get"</span><span class="t-pn">,</span> <span class="t-str">"--id"</span><span class="t-pn">,</span> <span class="t-str">"1"</span><span class="t-pn">]</span><span class="t-pn">,</span> <span class="t-pn">[</span><span class="t-str">"tasks.create"</span><span class="t-pn">,</span> <span class="t-str">"--title"</span><span class="t-pn">,</span> <span class="t-str">"no"</span><span class="t-pn">]</span><span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-kw">const</span> code <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">runApiCli</span><span class="t-pn">(</span>registry<span class="t-pn">,</span> argv<span class="t-pn">,</span> options<span class="t-pn">)</span><span class="t-pn">;</span>
+  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"exit code:"</span><span class="t-pn">,</span> code<span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { runApiCli } from "@zudojs/api";
+import { executor, registry } from "./app.js";
+import type { Caller } from "./app.js";
+
+const options = {
+  executor,
+  programName: "tasks",
+  state: (): Caller => ({ userId: "cli-operator" }),
+};
+
+for (const argv of [["tasks.create", "--title", "Read a book"], ["tasks.get", "--id", "1"], ["tasks.create", "--title", "no"]]) {
+  const code = await runApiCli(registry, argv, options);
+  console.log("exit code:", code);
+}</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx cli-transport.ts</code></div><pre class="lx-no-copy">[log] cli tasks.create -&gt; ok
+{
+  "id": 1,
+  "title": "Read a book",
+  "done": false
+}
+exit code: 0
+[log] cli tasks.get -&gt; ok
+{
+  "id": 1,
+  "title": "Read a book",
+  "done": false
+}
+exit code: 0
+[log] cli tasks.create -&gt; ERR_API_VALIDATION
+{
+  "ok": false,
+  "error": {
+    "code": "ERR_API_VALIDATION",
+    "message": "Invalid input for operation \"tasks.create\".",
+    "statusCode": 422,
+    "requestId": "bd48d927-8e87-44b5-94d7-955bf7ae57d5",
+    "issues": [
+      "title: invalid"
+    ]
+  }
+}
+exit code: 65</pre></div>
+</figure>
+<p>In a real script you would write <code>process.exitCode = await runApiCli(registry, process.argv.slice(2), options)</code>, so <code>npx tsx src/cli.ts tasks.get --id 1</code> works from your terminal. Whoever can run commands on the server is trusted here, which is why <code>state</code> names a fixed operator. Do not expose such a tool to users.</p>
+<h3>Routes and documentation</h3>
+<p>Because every route comes from the operations, the package can also describe them. <code>describeApiRoutes</code> lists what the HTTP binding serves, and <code>toOpenAPIRouteDescriptors</code> hands the same routes to <code>@zudojs/openapi</code>, the subject of <a href="/learn/zudo-openapi">the next lesson</a>:</p>
+<figure class="lx-example" data-index="10" data-file="routes.ts" data-project="api">
+<figcaption class="lx-bar"><span class="lx-file">routes.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> describeApiRoutes<span class="t-pn">,</span> toOpenAPIRouteDescriptors <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createOpenAPIDocumentFromRoutes <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/openapi"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> registry <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./app.js"</span><span class="t-pn">;</span>
+
+<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> route <span class="t-kw">of</span> <span class="t-fn">describeApiRoutes</span><span class="t-pn">(</span>registry<span class="t-pn">,</span> <span class="t-pn">{</span> basePath<span class="t-op">:</span> <span class="t-str">"/api"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>route<span class="t-pn">.</span><span class="t-prop">method</span><span class="t-pn">.</span><span class="t-fn">padEnd</span><span class="t-pn">(</span><span class="t-num">4</span><span class="t-pn">)</span><span class="t-pn">,</span> route<span class="t-pn">.</span><span class="t-prop">path</span><span class="t-pn">.</span><span class="t-fn">padEnd</span><span class="t-pn">(</span><span class="t-num">14</span><span class="t-pn">)</span><span class="t-pn">,</span> route<span class="t-pn">.</span><span class="t-prop">operationId</span><span class="t-pn">,</span> <span class="t-tpl">`(input from <span class="t-op">${</span><span class="t-prop">route.inputSource</span><span class="t-op">}</span>)`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
+
+<span class="t-kw">const</span> document <span class="t-op">=</span> <span class="t-fn">createOpenAPIDocumentFromRoutes</span><span class="t-pn">(</span><span class="t-fn">toOpenAPIRouteDescriptors</span><span class="t-pn">(</span>registry<span class="t-pn">,</span> <span class="t-pn">{</span> basePath<span class="t-op">:</span> <span class="t-str">"/api"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">{</span>
+  info<span class="t-op">:</span> <span class="t-pn">{</span> title<span class="t-op">:</span> <span class="t-str">"Task API"</span><span class="t-pn">,</span> version<span class="t-op">:</span> <span class="t-str">"1.0.0"</span> <span class="t-pn">}</span><span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-ty">Object</span><span class="t-pn">.</span><span class="t-fn">keys</span><span class="t-pn">(</span>document<span class="t-pn">.</span><span class="t-prop">paths</span> <span class="t-op">??</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { describeApiRoutes, toOpenAPIRouteDescriptors } from "@zudojs/api";
+import { createOpenAPIDocumentFromRoutes } from "@zudojs/openapi";
+import { registry } from "./app.js";
+
+for (const route of describeApiRoutes(registry, { basePath: "/api" })) {
+  console.log(route.method.padEnd(4), route.path.padEnd(14), route.operationId, `(input from ${route.inputSource})`);
+}
+
+const document = createOpenAPIDocumentFromRoutes(toOpenAPIRouteDescriptors(registry, { basePath: "/api" }), {
+  info: { title: "Task API", version: "1.0.0" },
+});
+console.log(Object.keys(document.paths ?? {}));</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx routes.ts</code></div><pre class="lx-no-copy">POST /api/tasks     tasks.create (input from body)
+GET  /api/tasks/:id tasks.get (input from query)
+[ '/api/tasks', '/api/tasks/{id}' ]</pre></div>
+</figure>
+<p>The document stays in step with the code: add an operation to the registry, and it is served and documented at once.</p>
 </section>
 
 <section>
 <h2 id="timeouts">Timeouts and cancelling</h2>
-<p>Every operation has a <strong>timeout</strong>: 30 seconds by default, or the <code>timeout</code> you set in milliseconds. When time runs out, the caller gets <code>ERR_API_TIMEOUT</code> (504). But the executor only stops <em>waiting</em>. It does not stop the handler. The only signal a handler gets is <code>context.signal</code>, the caller's cancel signal, and in version 1.1.1 the timeout does not abort it. So a slow handler keeps working for a caller who already got an error. That can write a report twice, or keep the database busy for nobody.</p>
-<p>The fix: give the handler its own deadline signal, and combine it with the caller's signal with <code>AbortSignal.any</code>:</p>
-<figure class="lx-example" data-index="9" data-file="deadline.ts" data-project="api">
-<figcaption class="lx-bar"><span class="lx-file">deadline.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<p>Every operation has a <strong>timeout</strong>: 30 seconds by default, or the <code>timeout</code> you set in milliseconds. When time runs out, the caller gets <code>ERR_API_TIMEOUT</code> (504). JavaScript cannot stop a running handler from outside, so the executor also <em>aborts</em> the handler's <code>context.signal</code>. The same signal aborts when the caller cancels, for example when an HTTP client hangs up. Pass it to <code>fetch</code>, to database calls, or check it in a loop, and a slow handler stops instead of working for a caller who already left:</p>
+<figure class="lx-example" data-index="11" data-file="deadline.ts" data-project="api">
+<figcaption class="lx-bar"><span class="lx-file">deadline.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">APIExecutor</span><span class="t-pn">,</span> createAPIContext<span class="t-pn">,</span> defineOperation <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
 
-<span class="t-kw">const</span> <span class="t-cn">REPORT_TIMEOUT</span> <span class="t-op">=</span> <span class="t-num">100</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> sleep <span class="t-op">=</span> <span class="t-pn">(</span>ms<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">,</span> signal<span class="t-op">:</span> <span class="t-ty">AbortSignal</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">new</span> <span class="t-ty">Promise</span><span class="t-pn">(</span><span class="t-pn">(</span>resolve<span class="t-pn">,</span> reject<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+<span class="t-kw">const</span> sleep <span class="t-op">=</span> <span class="t-pn">(</span>ms<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">,</span> signal<span class="t-op">?:</span> <span class="t-ty">AbortSignal</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">new</span> <span class="t-ty">Promise</span><span class="t-pn">(</span><span class="t-pn">(</span>resolve<span class="t-pn">,</span> reject<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
   <span class="t-kw">const</span> timer <span class="t-op">=</span> <span class="t-fn">setTimeout</span><span class="t-pn">(</span>resolve<span class="t-pn">,</span> ms<span class="t-pn">)</span><span class="t-pn">;</span>
-  signal<span class="t-pn">.</span><span class="t-fn">addEventListener</span><span class="t-pn">(</span><span class="t-str">"abort"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span> <span class="t-fn">clearTimeout</span><span class="t-pn">(</span>timer<span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-fn">reject</span><span class="t-pn">(</span>signal<span class="t-pn">.</span><span class="t-prop">reason</span><span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> once<span class="t-op">:</span> <span class="t-cn">true</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  signal<span class="t-op">?</span><span class="t-pn">.</span><span class="t-fn">addEventListener</span><span class="t-pn">(</span><span class="t-str">"abort"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span> <span class="t-fn">clearTimeout</span><span class="t-pn">(</span>timer<span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-fn">reject</span><span class="t-pn">(</span>signal<span class="t-pn">.</span><span class="t-prop">reason</span><span class="t-pn">)</span><span class="t-pn">;</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> once<span class="t-op">:</span> <span class="t-cn">true</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> report <span class="t-op">=</span> defineOperation<span class="t-op">&lt;</span><span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-ty">string</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-pn">{</span>
+
+<span class="t-kw">const</span> report <span class="t-op">=</span> <span class="t-fn">defineOperation</span><span class="t-pn">(</span><span class="t-pn">{</span>
   name<span class="t-op">:</span> <span class="t-str">"tasks.report"</span><span class="t-pn">,</span>
-  timeout<span class="t-op">:</span> <span class="t-cn">REPORT_TIMEOUT</span><span class="t-pn">,</span>
-  handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>_input<span class="t-pn">,</span> context<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-    <span class="t-kw">const</span> deadline <span class="t-op">=</span> <span class="t-ty">AbortSignal</span><span class="t-pn">.</span><span class="t-fn">timeout</span><span class="t-pn">(</span><span class="t-cn">REPORT_TIMEOUT</span> <span class="t-op">+</span> <span class="t-num">10</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-kw">const</span> signals <span class="t-op">=</span> context<span class="t-pn">.</span><span class="t-prop">signal</span> <span class="t-op">?</span> <span class="t-pn">[</span>deadline<span class="t-pn">,</span> context<span class="t-pn">.</span><span class="t-prop">signal</span><span class="t-pn">]</span> <span class="t-op">:</span> <span class="t-pn">[</span>deadline<span class="t-pn">]</span><span class="t-pn">;</span>
+  timeout<span class="t-op">:</span> <span class="t-num">100</span><span class="t-pn">,</span>
+  handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>_input<span class="t-op">:</span> <span class="t-ty">unknown</span><span class="t-pn">,</span> context<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
     <span class="t-kw">try</span> <span class="t-pn">{</span>
-      <span class="t-kw">await</span> <span class="t-fn">sleep</span><span class="t-pn">(</span><span class="t-num">300</span><span class="t-pn">,</span> <span class="t-ty">AbortSignal</span><span class="t-pn">.</span><span class="t-ty">any</span><span class="t-pn">(</span>signals<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+      <span class="t-kw">await</span> <span class="t-fn">sleep</span><span class="t-pn">(</span><span class="t-num">300</span><span class="t-pn">,</span> context<span class="t-pn">.</span><span class="t-prop">signal</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>reason<span class="t-pn">)</span> <span class="t-pn">{</span>
       console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"[handler] stopped:"</span><span class="t-pn">,</span> <span class="t-pn">(</span>reason <span class="t-kw">as</span> <span class="t-ty">Error</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">name</span><span class="t-pn">)</span><span class="t-pn">;</span>
       <span class="t-kw">throw</span> reason<span class="t-pn">;</span>
@@ -697,7 +811,7 @@ await queue.close();</script>
 
 <span class="t-kw">const</span> executor <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">APIExecutor</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> late <span class="t-op">=</span> <span class="t-kw">await</span> executor<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>report<span class="t-pn">,</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-fn">createAPIContext</span><span class="t-pn">(</span><span class="t-str">"req-1"</span><span class="t-pn">,</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span>late<span class="t-pn">.</span><span class="t-prop">ok</span><span class="t-pn">)</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"[caller]"</span><span class="t-pn">,</span> late<span class="t-pn">.</span><span class="t-prop">error</span><span class="t-pn">.</span><span class="t-prop">code</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">if</span> <span class="t-pn">(</span><span class="t-op">!</span>late<span class="t-pn">.</span><span class="t-prop">ok</span><span class="t-pn">)</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"[caller]"</span><span class="t-pn">,</span> late<span class="t-pn">.</span><span class="t-prop">error</span><span class="t-pn">.</span><span class="t-prop">code</span><span class="t-pn">,</span> late<span class="t-pn">.</span><span class="t-prop">error</span><span class="t-pn">.</span><span class="t-prop">statusCode</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> controller <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">AbortController</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-fn">setTimeout</span><span class="t-pn">(</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> controller<span class="t-pn">.</span><span class="t-fn">abort</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-num">50</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> cancelled <span class="t-op">=</span> <span class="t-kw">await</span> executor<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>report<span class="t-pn">,</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-fn">createAPIContext</span><span class="t-pn">(</span><span class="t-str">"req-2"</span><span class="t-pn">,</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">,</span> controller<span class="t-pn">.</span><span class="t-prop">signal</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -705,19 +819,17 @@ await queue.close();</script>
 </code></pre>
 <script type="text/plain" class="lx-src">import { APIExecutor, createAPIContext, defineOperation } from "@zudojs/api";
 
-const REPORT_TIMEOUT = 100;
-const sleep = (ms: number, signal: AbortSignal) => new Promise((resolve, reject) => {
+const sleep = (ms: number, signal?: AbortSignal) => new Promise((resolve, reject) => {
   const timer = setTimeout(resolve, ms);
-  signal.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+  signal?.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
 });
-const report = defineOperation<{}, string>({
+
+const report = defineOperation({
   name: "tasks.report",
-  timeout: REPORT_TIMEOUT,
-  handler: async (_input, context) => {
-    const deadline = AbortSignal.timeout(REPORT_TIMEOUT + 10);
-    const signals = context.signal ? [deadline, context.signal] : [deadline];
+  timeout: 100,
+  handler: async (_input: unknown, context) => {
     try {
-      await sleep(300, AbortSignal.any(signals));
+      await sleep(300, context.signal);
     } catch (reason) {
       console.log("[handler] stopped:", (reason as Error).name);
       throw reason;
@@ -728,23 +840,23 @@ const report = defineOperation<{}, string>({
 
 const executor = new APIExecutor();
 const late = await executor.execute(report, {}, createAPIContext("req-1", {}));
-if (!late.ok) console.log("[caller]", late.error.code);
+if (!late.ok) console.log("[caller]", late.error.code, late.error.statusCode);
 const controller = new AbortController();
 setTimeout(() => controller.abort(), 50);
 const cancelled = await executor.execute(report, {}, createAPIContext("req-2", {}, controller.signal));
 if (!cancelled.ok) console.log("[caller]", cancelled.error.code, cancelled.error.statusCode);</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx deadline.ts</code></div><pre class="lx-no-copy">[caller] ERR_API_TIMEOUT
-[handler] stopped: TimeoutError
-[handler] stopped: AbortError
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx deadline.ts</code></div><pre class="lx-no-copy">[handler] stopped: APITimeoutError
+[caller] ERR_API_TIMEOUT 504
+[handler] stopped: APIError
 [caller] ERR_OPERATION_CANCELLED 499</pre></div>
 </figure>
-<p>First call: the caller got <code>ERR_API_TIMEOUT</code> at 100 ms. The handler's own deadline fired 10 ms later and it stopped, instead of working for nobody. The 10 ms gap makes sure the executor answers first, so the caller always sees a clean timeout. Second call: the caller aborted after 50 ms, like a browser tab that was closed. The result code is <code>ERR_OPERATION_CANCELLED</code>. Check that code, not the unusual status 499.</p>
+<p>First call: after 100 ms the executor aborted the signal with the same <code>APITimeoutError</code> the caller got, so the handler stopped at once. Second call: the caller aborted after 50 ms, like a browser tab that was closed, and the handler stopped too. The result code is <code>ERR_OPERATION_CANCELLED</code>. Check that code, not the unusual status 499. The handler gets a signal even when the caller passed none, so every handler can rely on it.</p>
 </section>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Admins only</h3><p>Write an interceptor that refuses every operation tagged <code>"Admin"</code> unless the <strong>verified</strong> role in the context is <code>"admin"</code>. Store the role with your own context key. The input must never decide the role: test it with an input that claims <code>role: "admin"</code>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="10" data-file="admin.ts" data-project="api-admin">
-<figcaption class="lx-bar"><span class="lx-file">admin.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Admins only</h3><p>Write an interceptor that refuses every operation tagged <code>"Admin"</code> unless the <strong>verified</strong> role in the context is <code>"admin"</code>. Store the role with your own context key. The input must never decide the role: test it with an input that claims <code>role: "admin"</code>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="12" data-file="admin.ts" data-project="api-admin">
+<figcaption class="lx-bar"><span class="lx-file">admin.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">APIAuthorizationError</span><span class="t-pn">,</span> <span class="t-ty">APIExecutor</span><span class="t-pn">,</span> apiFailure<span class="t-pn">,</span> createAPIContext<span class="t-pn">,</span> createContextKey<span class="t-pn">,</span> defineOperation <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">APIInterceptor</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
 
@@ -757,7 +869,7 @@ if (!cancelled.ok) console.log("[caller]", cancelled.error.code, cancelled.error
     <span class="t-kw">return</span> <span class="t-fn">next</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-pn">}</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> deleteAll <span class="t-op">=</span> defineOperation<span class="t-op">&lt;</span><span class="t-pn">{</span> role<span class="t-op">?:</span> <span class="t-ty">string</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-ty">string</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-pn">{</span>
+<span class="t-kw">const</span> deleteAll <span class="t-op">=</span> <span class="t-fn">defineOperation</span><span class="t-pn">(</span><span class="t-pn">{</span>
   name<span class="t-op">:</span> <span class="t-str">"tasks.deleteAll"</span><span class="t-pn">,</span>
   metadata<span class="t-op">:</span> <span class="t-pn">{</span> tags<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"Admin"</span><span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">,</span>
   handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-str">"all tasks deleted"</span><span class="t-pn">,</span>
@@ -784,7 +896,7 @@ const adminOnly: APIInterceptor = {
     return next();
   },
 };
-const deleteAll = defineOperation<{ role?: string }, string>({
+const deleteAll = defineOperation({
   name: "tasks.deleteAll",
   metadata: { tags: ["Admin"] },
   handler: async () => "all tasks deleted",
@@ -802,8 +914,8 @@ console.log(await executor.execute(deleteAll, {}, ada));</script>
 { ok: true, data: 'all tasks deleted' }</pre></div>
 </figure>
 <p>The role comes only from the context, which the transport fills after it verified the caller. The <code>role</code> in the input is ignored.</p></details></div>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Exit codes for a command-line transport</h3><p>A command-line tool reports failure with an <strong>exit code</strong>. Write <code>exitCode(result)</code>: 0 for success, 77 for status 401 or 403, 65 for 422, and 1 for anything else. Test it with results made by <code>apiSuccess</code> and <code>apiFailure</code>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="11" data-file="exit-code.ts" data-project="api-exit">
-<figcaption class="lx-bar"><span class="lx-file">exit-code.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Exit codes for a command-line transport</h3><p><code>runApiCli</code> turns results into exit codes for you. To see how, write your own <code>exitCode(result)</code>: 0 for success, 77 for status 401 or 403, 65 for 422, and 1 for anything else. Test it with results made by <code>apiSuccess</code> and <code>apiFailure</code>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="13" data-file="exit-code.ts" data-project="api-exit">
+<figcaption class="lx-bar"><span class="lx-file">exit-code.ts</span><button type="button" class="lx-edit" data-index="13" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">APIAuthenticationError</span><span class="t-pn">,</span> <span class="t-ty">APIConflictError</span><span class="t-pn">,</span> <span class="t-ty">APIValidationError</span><span class="t-pn">,</span> apiFailure<span class="t-pn">,</span> apiSuccess <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">APIResult</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/api"</span><span class="t-pn">;</span>
 
@@ -843,17 +955,18 @@ const results: APIResult<unknown>[] = [
 console.log(results.map(exitCode));</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx exit-code.ts</code></div><pre class="lx-no-copy">[ 0, 77, 65, 1 ]</pre></div>
 </figure>
-<p>A script that runs your tool can now tell "fix your input" (65) from "sign in" (77) without reading any text.</p></details></div>
+<p>A script that runs your tool can now tell "fix your input" (65) from "sign in" (77) without reading any text. These are the same numbers <code>runApiCli</code> uses; its <code>APICliExitCode</code> lists them all.</p></details></div>
 </section>
 
 <section>
 <h2 id="recap">Recap</h2>
 <ul>
 <li>An <strong>operation</strong> is your logic with a name, an input schema, an output schema and a handler. Define it once with <code>defineOperation</code>.</li>
-<li><code>APIExecutor.execute</code> never throws. It returns <code>{ ok: true, data }</code> or <code>{ ok: false, error }</code>, and hides the message of every error with <code>expose: false</code>. Send callers only <code>code</code>, <code>issues</code> and exposed messages.</li>
+<li><code>APIExecutor.execute</code> never throws. It returns <code>{ ok: true, data }</code> or <code>{ ok: false, error }</code>, and hides the message of every error with <code>expose: false</code>.</li>
 <li>The context carries a safe request id, a cancel signal and typed slots. Pass header values through <code>normalizeRequestId</code>.</li>
-<li>Interceptors apply the same rules on every transport. In 1.1.1 they run after input validation. A transport only finds the operation, builds the context from identity <em>it</em> verified, and translates the result.</li>
-<li>A timeout stops the waiting, not the handler. Give long handlers their own deadline signal.</li>
+<li>Interceptors apply the same rules on every transport, and run before input validation, so a sign-in check always comes first.</li>
+<li><code>createApiFetchHandler</code>, <code>registerApiRpcProcedures</code>, <code>bindApiQueue</code> and <code>runApiCli</code> serve the same operations over HTTP, RPC, a queue and the command line. Each one only needs <code>state</code>: the caller's identity, from what that transport verified.</li>
+<li>A timeout or a cancelled caller aborts the handler's <code>context.signal</code>. Pass it on so slow work stops.</li>
 </ul>
 <p>In the next lesson you describe the Task API in an OpenAPI document, so other people and tools can see exactly what it accepts and returns.</p>
 </section>
@@ -880,7 +993,7 @@ console.log(results.map(exitCode));</script>
       <a href="#operations" class="toc-link">Define an operation</a>
       <a href="#context" class="toc-link">The API context</a>
       <a href="#interceptors" class="toc-link">Interceptors: rules for every transport</a>
-      <a href="#transports" class="toc-link">One operation, three transports</a>
+      <a href="#transports" class="toc-link">One operation, four transports</a>
       <a href="#timeouts" class="toc-link">Timeouts and cancelling</a>
       <a href="#practice" class="toc-link">Practice</a>
       <a href="#recap" class="toc-link">Recap</a>

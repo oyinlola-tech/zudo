@@ -269,16 +269,11 @@ CATALOG_URL is not set</pre></div>
 <p>The inventory service has two problems on purpose: its first answer is a <code>503 Service Unavailable</code>, and it takes 2 seconds to answer for a lamp. The orders service protects itself with the <code>HttpClient</code> from <a href="/learn/zudo-http">the HTTP lesson</a>:</p>
 <ul>
 <li><code>timeout: 1000</code>: give up on any single request after one second.</li>
-<li><code>retry</code>: try a failed <code>GET</code> up to 2 more times when the answer is 429, 502, 503 or 504, waiting a little longer each time.</li>
+<li><code>retry</code>: try a failed <code>GET</code> up to 2 more times when the answer is 429, 502, 503 or 504, or when it timed out, waiting a little longer each time.</li>
 </ul>
 <figure class="lx-example" data-index="1" data-file="two-services.ts">
 <figcaption class="lx-bar"><span class="lx-file">two-services.ts</span><button type="button" class="lx-edit" data-index="1" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">HttpClient</span><span class="t-pn">,</span> createNodeHttpAdapter<span class="t-pn">,</span> createResponseContext<span class="t-pn">,</span> <span class="t-kw">type</span> <span class="t-ty">HttpRequestContext</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
-
-<span class="t-kw">function</span> <span class="t-fn">correlationId</span><span class="t-pn">(</span>request<span class="t-op">:</span> <span class="t-ty">HttpRequestContext</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">string</span> <span class="t-pn">{</span>
-  <span class="t-kw">const</span> incoming <span class="t-op">=</span> request<span class="t-pn">.</span><span class="t-fn">getHeader</span><span class="t-pn">(</span><span class="t-str">"x-request-id"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">return</span> incoming <span class="t-op">&amp;&amp;</span> <span class="t-op">/^</span><span class="t-pn">[</span>\w<span class="t-op">-</span><span class="t-pn">]</span><span class="t-pn">{</span><span class="t-num">1</span><span class="t-pn">,</span><span class="t-num">64</span><span class="t-pn">}</span>$<span class="t-op">/</span><span class="t-pn">.</span><span class="t-fn">test</span><span class="t-pn">(</span>incoming<span class="t-pn">)</span> <span class="t-op">?</span> incoming <span class="t-op">:</span> request<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> <span class="t-ty">HttpClient</span><span class="t-pn">,</span> createNodeHttpAdapter<span class="t-pn">,</span> createResponseContext <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 
 <span class="t-kw">let</span> calls <span class="t-op">=</span> <span class="t-num">0</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> inventory <span class="t-op">=</span> <span class="t-fn">createNodeHttpAdapter</span><span class="t-pn">(</span><span class="t-pn">{</span>
@@ -286,7 +281,7 @@ CATALOG_URL is not set</pre></div>
   port<span class="t-op">:</span> <span class="t-num">0</span><span class="t-pn">,</span>
   handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>request<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
     calls <span class="t-op">+=</span> <span class="t-num">1</span><span class="t-pn">;</span>
-    console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`inventory [<span class="t-op">${</span><span class="t-prop">correlationId(request)</span><span class="t-op">}</span>] <span class="t-op">${</span><span class="t-prop">request.path</span><span class="t-op">}</span> (call <span class="t-op">${</span><span class="t-prop">calls</span><span class="t-op">}</span>)`</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-tpl">`inventory [<span class="t-op">${</span><span class="t-prop">request.id</span><span class="t-op">}</span>] <span class="t-op">${</span><span class="t-prop">request.path</span><span class="t-op">}</span> (call <span class="t-op">${</span><span class="t-prop">calls</span><span class="t-op">}</span>)`</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-kw">if</span> <span class="t-pn">(</span>calls <span class="t-op">===</span> <span class="t-num">1</span><span class="t-pn">)</span> <span class="t-kw">return</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">{</span> status<span class="t-op">:</span> <span class="t-num">503</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">{</span> error<span class="t-op">:</span> <span class="t-str">"warming up"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-kw">if</span> <span class="t-pn">(</span>request<span class="t-pn">.</span><span class="t-prop">path</span> <span class="t-op">===</span> <span class="t-str">"/stock/lamp"</span><span class="t-pn">)</span> <span class="t-kw">await</span> <span class="t-kw">new</span> <span class="t-ty">Promise</span><span class="t-pn">(</span><span class="t-pn">(</span>resolve<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-fn">setTimeout</span><span class="t-pn">(</span>resolve<span class="t-pn">,</span> <span class="t-num">2000</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-kw">return</span> <span class="t-pn">{</span> stock<span class="t-op">:</span> <span class="t-num">7</span> <span class="t-pn">}</span><span class="t-pn">;</span>
@@ -304,7 +299,7 @@ CATALOG_URL is not set</pre></div>
   host<span class="t-op">:</span> <span class="t-str">"127.0.0.1"</span><span class="t-pn">,</span>
   port<span class="t-op">:</span> <span class="t-num">0</span><span class="t-pn">,</span>
   handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>request<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-    <span class="t-kw">const</span> id <span class="t-op">=</span> <span class="t-fn">correlationId</span><span class="t-pn">(</span>request<span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">const</span> id <span class="t-op">=</span> request<span class="t-pn">.</span><span class="t-prop">id</span><span class="t-pn">;</span>
     <span class="t-kw">const</span> sku <span class="t-op">=</span> request<span class="t-pn">.</span><span class="t-fn">getQuery</span><span class="t-pn">(</span><span class="t-str">"sku"</span><span class="t-pn">)</span><span class="t-pn">;</span>
     <span class="t-kw">try</span> <span class="t-pn">{</span>
       <span class="t-kw">const</span> answer <span class="t-op">=</span> <span class="t-kw">await</span> stock<span class="t-pn">.</span><span class="t-prop">request</span><span class="t-op">&lt;</span><span class="t-pn">{</span> stock<span class="t-op">:</span> <span class="t-ty">number</span> <span class="t-pn">}</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-tpl">`/stock/<span class="t-op">${</span><span class="t-prop">sku</span><span class="t-op">}</span>`</span><span class="t-pn">,</span> <span class="t-pn">{</span> headers<span class="t-op">:</span> <span class="t-pn">{</span> <span class="t-str">"x-request-id"</span><span class="t-op">:</span> id <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -326,12 +321,7 @@ CATALOG_URL is not set</pre></div>
 <span class="t-kw">await</span> orders<span class="t-pn">.</span><span class="t-fn">stop</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">await</span> inventory<span class="t-pn">.</span><span class="t-fn">stop</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
-<script type="text/plain" class="lx-src">import { HttpClient, createNodeHttpAdapter, createResponseContext, type HttpRequestContext } from "@zudojs/http";
-
-function correlationId(request: HttpRequestContext): string {
-  const incoming = request.getHeader("x-request-id");
-  return incoming && /^[\w-]{1,64}$/.test(incoming) ? incoming : request.id;
-}
+<script type="text/plain" class="lx-src">import { HttpClient, createNodeHttpAdapter, createResponseContext } from "@zudojs/http";
 
 let calls = 0;
 const inventory = createNodeHttpAdapter({
@@ -339,7 +329,7 @@ const inventory = createNodeHttpAdapter({
   port: 0,
   handler: async (request) => {
     calls += 1;
-    console.log(`inventory [${correlationId(request)}] ${request.path} (call ${calls})`);
+    console.log(`inventory [${request.id}] ${request.path} (call ${calls})`);
     if (calls === 1) return createResponseContext({ status: 503 }).json({ error: "warming up" });
     if (request.path === "/stock/lamp") await new Promise((resolve) => setTimeout(resolve, 2000));
     return { stock: 7 };
@@ -357,7 +347,7 @@ const orders = createNodeHttpAdapter({
   host: "127.0.0.1",
   port: 0,
   handler: async (request) => {
-    const id = correlationId(request);
+    const id = request.id;
     const sku = request.getQuery("sku");
     try {
       const answer = await stock.request<{ stock: number }>(`/stock/${sku}`, { headers: { "x-request-id": id } });
@@ -382,17 +372,19 @@ await inventory.stop();</script>
 inventory [req-mug] /stock/mug (call 2)
 client    [req-mug] 200 { sku: 'mug', available: true }
 inventory [req-lamp] /stock/lamp (call 3)
+inventory [req-lamp] /stock/lamp (call 4)
+inventory [req-lamp] /stock/lamp (call 5)
 orders    [req-lamp] inventory failed: HttpClientTimeoutError
 client    [req-lamp] 503 { error: 'inventory unavailable, try again' }</pre></div>
 </figure>
 <p>Follow the two requests:</p>
 <ul>
 <li><strong>The mug.</strong> The first call got a 503. The client waited briefly and tried again, and the second call worked. The customer never saw the hiccup.</li>
-<li><strong>The lamp.</strong> Inventory was too slow. After one second the client gave up with <code>HttpClientTimeoutError</code>, and orders answered its own caller with a clear 503 at once. Without the timeout, the customer would have waited as long as inventory wanted, and every waiting request would hold memory and a connection in the orders service.</li>
-<li><strong>The id in brackets</strong> is a <strong>correlation id</strong>. The client sent <code>x-request-id: req-mug</code>, orders passed it on, and inventory logged it. When a customer reports a failed order, you search every service's logs for one id and see the whole story.</li>
+<li><strong>The lamp.</strong> Inventory was too slow. After one second the client gave up on the call, waited briefly and tried again, three calls in all. When the last one timed out too, it threw <code>HttpClientTimeoutError</code>, and orders answered its own caller with a clear 503. Without the timeout, the customer would have waited as long as inventory wanted, and every waiting request would hold memory and a connection in the orders service.</li>
+<li><strong>The id in brackets</strong> is a <strong>correlation id</strong>. The client sent <code>x-request-id: req-mug</code>. <code>request.id</code> reused it, orders passed it on, and inventory logged it. When a customer reports a failed order, you search every service's logs for one id and see the whole story.</li>
 </ul>
-<p>The client did not retry the timeout. That is on purpose: after a timeout, the caller cannot know whether the server did the work or not. Retrying a read is harmless, but retrying "charge this card" could charge twice. The next section shows how to make that safe.</p>
-<div class="callout callout-note"><p class="lx-callout-label">NOTE</p>The docs for <code>@zudojs/http</code> say <code>request.id</code> is taken from an incoming <code>x-request-id</code> header. In version 1.3.0 the Node adapter always generates a new one, so the example reads the header itself, checks its format, and falls back to <code>request.id</code>. Always check an id that comes from outside before you copy it into your logs.</div>
+<p>The client retried the timeout because the request was a <code>GET</code>. By default it retries only <code>GET</code>, <code>HEAD</code> and <code>OPTIONS</code>, which read and change nothing. After a timeout, the caller cannot know whether the server did the work or not. Retrying a read is harmless, but retrying "charge this card" could charge twice, so a <code>POST</code> is never retried unless you ask for it. The next section shows how to make that safe.</p>
+<div class="callout callout-note"><p class="lx-callout-label">NOTE</p><code>request.id</code> reuses an incoming <code>x-request-id</code> only when it is 1 to 128 letters, digits or <code>. _ : -</code>. Anything else, such as spaces, quotes or line breaks, is ignored and a new random id is used instead. That matters, because an id from outside ends up in your logs. Pass <code>trustRequestId: false</code> to <code>createNodeHttpAdapter</code> to always generate a new id, for example on a public edge service where you do not want callers to choose it.</div>
 </section>
 
 <section>
@@ -401,7 +393,7 @@ client    [req-lamp] 503 { error: 'inventory unavailable, try again' }</pre></di
 <h3>1. Timeouts everywhere</h3>
 <p>Every call to another service, database or API gets a timeout. A good starting point is a little above the slowest normal answer you measured. You saw it above.</p>
 <h3>2. Retries with backoff</h3>
-<p>Retry only errors that may go away (503, 429, a dropped connection), only a few times, and wait longer each time. This is called <strong>exponential backoff</strong>: 100 ms, 200 ms, 400 ms. <code>HttpClient</code> also adds a random <strong>jitter</strong> to each wait, so a thousand clients that failed at the same moment do not all retry at the same moment too. Never retry a 400 or a 404: the answer will not change.</p>
+<p>Retry only errors that may go away (503, 429, a dropped connection, a timed-out read), only a few times, and wait longer each time. This is called <strong>exponential backoff</strong>: 100 ms, 200 ms, 400 ms. <code>HttpClient</code> also uses <strong>full jitter</strong>: it picks each wait at random between zero and that delay, so a thousand clients that failed at the same moment do not all retry at the same moment too. Never retry a 400 or a 404: the answer will not change.</p>
 <h3>3. Idempotency keys</h3>
 <p>An operation is <strong>idempotent</strong> when doing it twice has the same effect as doing it once. Reading is idempotent. Charging a card is not. To make it safe to retry, the caller creates a unique <strong>idempotency key</strong> for the operation and sends it with every attempt. The server remembers the answer for each key and, when the same key comes again, returns the saved answer instead of doing the work again.</p>
 <p>Here the payments service charges the card, but is too slow to answer the first time, so the caller times out. The caller retries with the same key, which is safe now:</p>
