@@ -219,6 +219,14 @@ if (requiresCsrfProtection(request.method)) {
 }
 ```
 
+**Which methods skip the check.** Only GET, HEAD, OPTIONS and TRACE, matched
+exactly after upper-casing (no trimming). Every other method is verified —
+including an empty, padded or unknown one (`""`, `" "`, `"POST "`, `"FOO"`),
+and CONNECT. A configured `methods` list can exempt a *standard* method it
+leaves out (`methods: ["DELETE"]` exempts POST), never an unknown or malformed
+one. Before 1.3.1 any method not in the list skipped the check, so
+`csrf.verify({ method: "FOO" })` returned `true` with no token at all.
+
 **What returns `false` and what throws.** `csrf.verify`, `verifyDoubleSubmit`
 and `validateCsrfToken` return `false` for anything wrong with the request: a
 missing, malformed, non-string, forged, expired or mismatched token, a token
@@ -228,7 +236,8 @@ a secret shorter than 32 characters — the same minimum `generateCsrfToken`
 enforces, so a verifier given `process.env.CSRF_SECRET ?? ""` cannot accept
 tokens signed with an empty key — or an empty or invalid `methods` list. A
 throw from a CSRF check therefore means "fix your configuration", never "this
-request is bad".
+request is bad". `createCsrfProtection` and `generateCsrfCookie` also throw
+`ValidationError` for a cookie `path` that breaks the `Path` rules below.
 
 The cookie is `Secure` and `HttpOnly` by default, which suits the synchroniser
 token pattern where the server renders the token into the page. For the
@@ -287,7 +296,12 @@ an unsafe name, attribute, `Max-Age` or `Expires` throws. `SameSite=None` and
 `Domain` must be a hostname — labels of letters, digits and hyphens separated
 by dots, with an optional leading dot (`example.com`, `.example.com`) — and
 anything else (spaces, colons, backslashes, empty labels) throws
-`ValidationError`. `Path` may not contain a control character, `;` or `,`.
+`ValidationError`. `Path` must be printable ASCII (0x20–0x7E) with no `;` or
+`,`: a control character or any non-ASCII character (`"/ä"`) throws —
+percent-encode it instead (`"/%C3%A4"`). This is RFC 6265's `path-value`
+(any US-ASCII character except controls and `;`) plus the `,` this package has
+always refused; space is inside that grammar, so `"/a b"` is accepted.
+Before 1.3.1 non-ASCII was accepted.
 Previously only a real CR, LF, NUL, `;` or `,` was refused, so the literal text
 `a\r\nX-Evil: 1` was written into `Domain=` unchanged.
 

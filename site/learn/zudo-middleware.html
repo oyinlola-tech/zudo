@@ -308,6 +308,7 @@ has x-response-time: true
 has x-response-time: true</pre></div>
 </figure>
 <p>With maintenance on, the route never ran, yet the response still got its <code>x-response-time</code> header. <code>responseTime</code> has the lowest priority, so it wraps everything, including middleware that answers early. That is the rule for ordering: middleware that must see <em>every</em> response goes first.</p>
+<p>One thing <code>responseTime</code> does not handle: if the route throws an error, <code>await next()</code> throws that same error, and the code after it never runs. The error travels out through every middleware to whoever called the pipeline. <a href="/learn/zudo-errors">The ZudoJS error system</a> writes a middleware that catches it and turns it into a response.</p>
 <p>To run a pipeline for real requests, its last step dispatches the router, and the server hands every request to the pipeline:</p>
 <figure class="lx-example" data-index="2" data-file="wiring.ts (part)">
 <figcaption class="lx-bar"><span class="lx-file">wiring.ts (part)</span><button type="button" class="lx-edit" data-index="2" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
@@ -315,14 +316,14 @@ has x-response-time: true</pre></div>
 
 <span class="t-kw">const</span> server <span class="t-op">=</span> <span class="t-fn">createHttpServer</span><span class="t-pn">(</span><span class="t-pn">{</span>
   adapter<span class="t-op">:</span> <span class="t-fn">createNodeHttpAdapter</span><span class="t-pn">(</span><span class="t-pn">{</span> host<span class="t-op">:</span> <span class="t-str">"127.0.0.1"</span><span class="t-pn">,</span> port<span class="t-op">:</span> <span class="t-num">3000</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  handler<span class="t-op">:</span> <span class="t-pn">(</span>request<span class="t-op">:</span> <span class="t-ty">HttpRequestContext</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> pipeline<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>request<span class="t-pn">,</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span>
+  handler<span class="t-op">:</span> <span class="t-pn">(</span>request<span class="t-pn">)</span> <span class="t-op">=&gt;</span> pipeline<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>request<span class="t-pn">,</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">pipeline.use(async (context) => (await router.dispatch(context.request)).response);
 
 const server = createHttpServer({
   adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 3000 }),
-  handler: (request: HttpRequestContext) => pipeline.execute(request, createResponseContext()),
+  handler: (request) => pipeline.execute(request, createResponseContext()),
 });</script>
 </figure>
 </section>
@@ -333,12 +334,12 @@ const server = createHttpServer({
 <figure class="lx-example" data-index="3" data-file="serve.ts" data-project="mw">
 <figcaption class="lx-bar"><span class="lx-file">serve.ts</span><button type="button" class="lx-edit" data-index="3" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createHttpServer<span class="t-pn">,</span> createNodeHttpAdapter<span class="t-pn">,</span> createResponseContext <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddlewarePipeline</span><span class="t-pn">,</span> <span class="t-ty">HttpRequestContext</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpMiddlewarePipeline</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 
 <span class="t-kw">export</span> <span class="t-kw">async</span> <span class="t-kw">function</span> <span class="t-fn">withServer</span><span class="t-pn">(</span>pipeline<span class="t-op">:</span> <span class="t-ty">HttpMiddlewarePipeline</span><span class="t-pn">,</span> run<span class="t-op">:</span> <span class="t-pn">(</span>base<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-ty">Promise</span><span class="t-op">&lt;</span><span class="t-kw">void</span><span class="t-op">&gt;</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Promise</span><span class="t-op">&lt;</span><span class="t-kw">void</span><span class="t-op">&gt;</span> <span class="t-pn">{</span>
   <span class="t-kw">const</span> server <span class="t-op">=</span> <span class="t-fn">createHttpServer</span><span class="t-pn">(</span><span class="t-pn">{</span>
     adapter<span class="t-op">:</span> <span class="t-fn">createNodeHttpAdapter</span><span class="t-pn">(</span><span class="t-pn">{</span> host<span class="t-op">:</span> <span class="t-str">"127.0.0.1"</span><span class="t-pn">,</span> port<span class="t-op">:</span> <span class="t-num">0</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
-    handler<span class="t-op">:</span> <span class="t-pn">(</span>request<span class="t-op">:</span> <span class="t-ty">HttpRequestContext</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> pipeline<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>request<span class="t-pn">,</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span>
+    handler<span class="t-op">:</span> <span class="t-pn">(</span>request<span class="t-pn">)</span> <span class="t-op">=&gt;</span> pipeline<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>request<span class="t-pn">,</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span>
   <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-kw">await</span> server<span class="t-pn">.</span><span class="t-fn">start</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
   <span class="t-kw">try</span> <span class="t-pn">{</span>
@@ -349,12 +350,12 @@ const server = createHttpServer({
 <span class="t-pn">}</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { createHttpServer, createNodeHttpAdapter, createResponseContext } from "@zudojs/http";
-import type { HttpMiddlewarePipeline, HttpRequestContext } from "@zudojs/http";
+import type { HttpMiddlewarePipeline } from "@zudojs/http";
 
 export async function withServer(pipeline: HttpMiddlewarePipeline, run: (base: string) => Promise<void>): Promise<void> {
   const server = createHttpServer({
     adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
-    handler: (request: HttpRequestContext) => pipeline.execute(request, createResponseContext()),
+    handler: (request) => pipeline.execute(request, createResponseContext()),
   });
   await server.start();
   try {
@@ -590,12 +591,11 @@ POST 201 retry-after: null {"ok":true}
 POST 429 retry-after: 60 {"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}}
 GET 200 retry-after: null {"ok":true}</pre></div>
 </figure>
-<p>The third <code>POST</code> got 429 with a <code>Retry-After</code> header: the number of seconds to wait. Reading still works, because <code>GET</code> requests only count against the gentle limit.</p>
+<p>The third <code>POST</code> got 429, with a JSON body (sent as <code>application/json</code>) and a <code>Retry-After</code> header: the number of seconds to wait. Reading still works, because <code>GET</code> requests only count against the gentle limit.</p>
 <ul>
 <li>The client is identified by <code>request.remoteAddress</code>. Behind a <strong>proxy</strong> or load balancer, every request seems to come from the proxy, so all users would share one allowance. Tell the adapter how many proxies you run, for example <code>createNodeHttpAdapter({ trustProxy: 1 })</code>; only then does it believe the <code>X-Forwarded-For</code> header. Never trust that header without it: any client can send it and pick its own address.</li>
 <li>These counts live in the memory of one process. With several copies of the app, each counts separately; <a href="/learn/zudo-security#rate-limit">Security for every public API</a> covers that case and login limits.</li>
 </ul>
-<div class="callout callout-note"><p class="lx-callout-label">NOTE</p>In <code>@zudojs/http</code> 1.3.0 the 429 body is JSON but is sent with <code>Content-Type: text/plain</code>. Clients that check the content type before parsing should expect that.</div>
 </section>
 
 <section>
@@ -663,7 +663,6 @@ sent reminders for due-today [ 'announce', 'timeout' ]</pre></div>
 <figure class="lx-example" data-index="10" data-file="graceful.ts">
 <figcaption class="lx-bar"><span class="lx-file">graceful.ts</span><button type="button" class="lx-edit" data-index="10" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createHttpServer<span class="t-pn">,</span> createNodeHttpAdapter<span class="t-pn">,</span> createResponseContext<span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpRequestContext</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 
 <span class="t-kw">let</span> reportStarted<span class="t-op">!:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">void</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> started <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">Promise</span><span class="t-op">&lt;</span><span class="t-kw">void</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-pn">(</span>resolve<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span>reportStarted <span class="t-op">=</span> resolve<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -679,7 +678,7 @@ router<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn"
 
 <span class="t-kw">const</span> server <span class="t-op">=</span> <span class="t-fn">createHttpServer</span><span class="t-pn">(</span><span class="t-pn">{</span>
   adapter<span class="t-op">:</span> <span class="t-fn">createNodeHttpAdapter</span><span class="t-pn">(</span><span class="t-pn">{</span> host<span class="t-op">:</span> <span class="t-str">"127.0.0.1"</span><span class="t-pn">,</span> port<span class="t-op">:</span> <span class="t-num">0</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>request<span class="t-op">:</span> <span class="t-ty">HttpRequestContext</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-kw">await</span> router<span class="t-pn">.</span><span class="t-fn">dispatch</span><span class="t-pn">(</span>request<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">response</span><span class="t-pn">,</span>
+  handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>request<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-kw">await</span> router<span class="t-pn">.</span><span class="t-fn">dispatch</span><span class="t-pn">(</span>request<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">response</span><span class="t-pn">,</span>
   gracefulShutdownTimeout<span class="t-op">:</span> <span class="t-num">10_000</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 server<span class="t-pn">.</span><span class="t-fn">on</span><span class="t-pn">(</span><span class="t-str">"onStopping"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"server: stopping"</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -699,7 +698,6 @@ server<span class="t-pn">.</span><span class="t-fn">on</span><span class="t-pn">
 <span class="t-kw">await</span> <span class="t-ty">Promise</span><span class="t-pn">.</span><span class="t-fn">all</span><span class="t-pn">(</span><span class="t-pn">[</span>slow<span class="t-pn">,</span> stopping<span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
-import type { HttpRequestContext } from "@zudojs/http";
 
 let reportStarted!: () => void;
 const started = new Promise<void>((resolve) => (reportStarted = resolve));
@@ -715,7 +713,7 @@ router.get("/report", async () => {
 
 const server = createHttpServer({
   adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
-  handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+  handler: async (request) => (await router.dispatch(request)).response,
   gracefulShutdownTimeout: 10_000,
 });
 server.on("onStopping", () => console.log("server: stopping"));
@@ -816,16 +814,15 @@ export function buildPipeline(router: HttpRouter, options: PipelineOptions): Htt
 <figure class="lx-example" data-index="12" data-file="src/check-middleware.ts" data-project="task-api">
 <figcaption class="lx-bar"><span class="lx-file">src/check-middleware.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createHttpServer<span class="t-pn">,</span> createNodeHttpAdapter<span class="t-pn">,</span> createResponseContext<span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpRequestContext</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> buildPipeline <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./middlewares/pipeline.js"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> router <span class="t-op">=</span> <span class="t-fn">createRouter</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-router<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"/tasks"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+router<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"/tasks"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> pipeline <span class="t-op">=</span> <span class="t-fn">buildPipeline</span><span class="t-pn">(</span>router<span class="t-pn">,</span> <span class="t-pn">{</span> corsOrigins<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"http://localhost:5173"</span><span class="t-pn">]</span><span class="t-pn">,</span> production<span class="t-op">:</span> <span class="t-cn">false</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> server <span class="t-op">=</span> <span class="t-fn">createHttpServer</span><span class="t-pn">(</span><span class="t-pn">{</span>
   adapter<span class="t-op">:</span> <span class="t-fn">createNodeHttpAdapter</span><span class="t-pn">(</span><span class="t-pn">{</span> host<span class="t-op">:</span> <span class="t-str">"127.0.0.1"</span><span class="t-pn">,</span> port<span class="t-op">:</span> <span class="t-num">0</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  handler<span class="t-op">:</span> <span class="t-pn">(</span>request<span class="t-op">:</span> <span class="t-ty">HttpRequestContext</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> pipeline<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>request<span class="t-pn">,</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span>
+  handler<span class="t-op">:</span> <span class="t-pn">(</span>request<span class="t-pn">)</span> <span class="t-op">=&gt;</span> pipeline<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>request<span class="t-pn">,</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">await</span> server<span class="t-pn">.</span><span class="t-fn">start</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
@@ -839,16 +836,15 @@ console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn
 <span class="t-kw">await</span> server<span class="t-pn">.</span><span class="t-fn">stop</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
-import type { HttpRequestContext } from "@zudojs/http";
 import { buildPipeline } from "./middlewares/pipeline.js";
 
 const router = createRouter();
-router.get("/tasks", () => createResponseContext().json([]));
+router.get("/tasks", () => []);
 
 const pipeline = buildPipeline(router, { corsOrigins: ["http://localhost:5173"], production: false });
 const server = createHttpServer({
   adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
-  handler: (request: HttpRequestContext) => pipeline.execute(request, createResponseContext()),
+  handler: (request) => pipeline.execute(request, createResponseContext()),
 });
 await server.start();
 
@@ -877,7 +873,7 @@ strict-transport-security: max-age=0</pre></div>
 
 <span class="t-kw">const</span> server <span class="t-op">=</span> <span class="t-fn">createHttpServer</span><span class="t-pn">(</span><span class="t-pn">{</span>
   adapter<span class="t-op">:</span> <span class="t-fn">createNodeHttpAdapter</span><span class="t-pn">(</span><span class="t-pn">{</span> host<span class="t-op">:</span> process<span class="t-pn">.</span><span class="t-prop">env</span><span class="t-pn">[</span><span class="t-str">"HOST"</span><span class="t-pn">]</span> <span class="t-op">??</span> <span class="t-str">"0.0.0.0"</span><span class="t-pn">,</span> port<span class="t-op">:</span> <span class="t-fn">resolvePort</span><span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  handler<span class="t-op">:</span> <span class="t-pn">(</span>request<span class="t-op">:</span> <span class="t-ty">HttpRequestContext</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> pipeline<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>request<span class="t-pn">,</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span>
+  handler<span class="t-op">:</span> <span class="t-pn">(</span>request<span class="t-pn">)</span> <span class="t-op">=&gt;</span> pipeline<span class="t-pn">.</span><span class="t-fn">execute</span><span class="t-pn">(</span>request<span class="t-pn">,</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">,</span>
   gracefulShutdownTimeout<span class="t-op">:</span> <span class="t-num">20_000</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
@@ -901,7 +897,7 @@ const pipeline = buildPipeline(router, {
 
 const server = createHttpServer({
   adapter: createNodeHttpAdapter({ host: process.env["HOST"] ?? "0.0.0.0", port: resolvePort() }),
-  handler: (request: HttpRequestContext) => pipeline.execute(request, createResponseContext()),
+  handler: (request) => pipeline.execute(request, createResponseContext()),
   gracefulShutdownTimeout: 20_000,
 });
 
@@ -995,7 +991,7 @@ different ids: true
 9b1ccbf4-c024-4eab-873c-dd73f8f8da38</pre></div>
 </figure>
 <p>The id is a random <strong>UUID</strong>, different on every run. When a user reports an error, they can send you the id from the response, and you can find that exact request in your logs. The <a href="/learn/zudo-logging">logging lesson</a> builds on this.</p>
-<div class="callout callout-note"><p class="lx-callout-label">NOTE</p>The <code>@zudojs/http</code> documentation says <code>request.id</code> reuses an <code>X-Request-Id</code> header sent by the client. In version 1.3.0 it does not: the adapter checks the header's format (and answers 400 to a malformed one), but <code>request.id</code> is always newly generated.</div></details></div>
+<div class="callout callout-note"><p class="lx-callout-label">NOTE</p>When a real request arrives with an <code>X-Request-Id</code> header of 1 to 128 letters, digits, dots, dashes, underscores or colons, <code>request.id</code> reuses it. That way an id set by a proxy or another service in front of yours follows the request through your logs. The adapter refuses a malformed one with 400. Treat the id as a label, never as proof of anything, because any client can choose it. <code>createNodeHttpAdapter({ trustRequestId: false })</code> always generates a new one.</div></details></div>
 <div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Allow a second origin</h3><p>The Task API also gets a mobile web app at <code>https://m.tasks.example.com</code>. Change the CORS example so it is allowed too, and show that <code>https://tasks.example.com.evil.example</code>, which merely <em>starts</em> with an allowed origin, is still refused.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="15" data-file="cors-two.ts" data-project="mw">
 <figcaption class="lx-bar"><span class="lx-file">cors-two.ts</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createCorsMiddleware<span class="t-pn">,</span> <span class="t-ty">HttpMiddlewarePipeline</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>

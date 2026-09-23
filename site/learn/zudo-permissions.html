@@ -734,15 +734,94 @@ for (const raw of ['{"title":"x","roles":["admin"]}', '{"title":"x","id":"linus"
 
 <section>
 <h2 id="policies">Escalation 4: a policy that says yes</h2>
-<p>A <strong>policy</strong> is a named function that runs on every check for the permissions it lists. It returns a decision. It is tempting to use one for a restriction like "tasks can only be changed during office hours". This is how the package's own documentation has shown it:</p>
-<figure class="lx-example" data-index="11" data-file="policy-mistake.ts" data-project="perm">
-<figcaption class="lx-bar"><span class="lx-file">policy-mistake.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="11"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<p>A <strong>policy</strong> is a named function that runs on every check for the permissions it lists. It returns a decision. Policies are good for a restriction like "tasks can only be changed during office hours". By default a policy is a <strong>constraint</strong>: its "no" refuses the request, but its "yes" only means "no objection". The user's roles and rules must still grant the permission:</p>
+<figure class="lx-example" data-index="11" data-file="policy.ts" data-project="perm">
+<figcaption class="lx-bar"><span class="lx-file">policy.ts</span><button type="button" class="lx-edit" data-index="11" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="11"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createPermissionActor<span class="t-pn">,</span> createPermissionEngine<span class="t-pn">,</span> isOwner <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/permissions"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">PermissionPolicyDefinition</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/permissions"</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> officeHours<span class="t-op">:</span> <span class="t-ty">PermissionPolicyDefinition</span> <span class="t-op">=</span> <span class="t-pn">{</span>
+  name<span class="t-op">:</span> <span class="t-str">"office-hours"</span><span class="t-pn">,</span>
+  permissions<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"task:create"</span><span class="t-pn">,</span> <span class="t-str">"task:update"</span><span class="t-pn">,</span> <span class="t-str">"task:delete"</span><span class="t-pn">]</span><span class="t-pn">,</span>
+  cacheable<span class="t-op">:</span> <span class="t-cn">false</span><span class="t-pn">,</span>
+  evaluate<span class="t-op">:</span> <span class="t-pn">(</span>ctx<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+    <span class="t-kw">const</span> hour <span class="t-op">=</span> ctx<span class="t-pn">.</span><span class="t-prop">metadata</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"hour"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">return</span> <span class="t-kw">typeof</span> hour <span class="t-op">===</span> <span class="t-str">"number"</span> <span class="t-op">&amp;&amp;</span> hour <span class="t-op">&gt;=</span> <span class="t-num">9</span> <span class="t-op">&amp;&amp;</span> hour <span class="t-op">&lt;</span> <span class="t-num">17</span>
+      <span class="t-op">?</span> <span class="t-pn">{</span> allowed<span class="t-op">:</span> <span class="t-cn">true</span> <span class="t-pn">}</span>
+      <span class="t-op">:</span> <span class="t-pn">{</span> allowed<span class="t-op">:</span> <span class="t-cn">false</span><span class="t-pn">,</span> reason<span class="t-op">:</span> <span class="t-str">"outside_office_hours"</span> <span class="t-pn">}</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span><span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> engine <span class="t-op">=</span> <span class="t-fn">createPermissionEngine</span><span class="t-pn">(</span><span class="t-pn">{</span>
+  roles<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"member"</span><span class="t-pn">,</span> permissions<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"task:read"</span><span class="t-pn">]</span><span class="t-pn">,</span> rules<span class="t-op">:</span> <span class="t-pn">[</span>
+    <span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"own-tasks"</span><span class="t-pn">,</span> effect<span class="t-op">:</span> <span class="t-str">"allow"</span><span class="t-pn">,</span> resource<span class="t-op">:</span> <span class="t-str">"task"</span><span class="t-pn">,</span> action<span class="t-op">:</span> <span class="t-str">"delete"</span><span class="t-pn">,</span> condition<span class="t-op">:</span> <span class="t-fn">isOwner</span><span class="t-pn">(</span><span class="t-str">"userId"</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">,</span>
+  <span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">,</span>
+  policies<span class="t-op">:</span> <span class="t-pn">[</span>officeHours<span class="t-pn">]</span><span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> guest <span class="t-op">=</span> <span class="t-fn">createPermissionActor</span><span class="t-pn">(</span><span class="t-str">"guest-17"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> ada <span class="t-op">=</span> <span class="t-fn">createPermissionActor</span><span class="t-pn">(</span><span class="t-str">"ada"</span><span class="t-pn">,</span> <span class="t-pn">{</span> roles<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"member"</span><span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> adasTask <span class="t-op">=</span> <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-num">1</span><span class="t-pn">,</span> userId<span class="t-op">:</span> <span class="t-str">"ada"</span> <span class="t-pn">}</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"guest 10:00"</span><span class="t-pn">,</span> <span class="t-kw">await</span> engine<span class="t-pn">.</span><span class="t-fn">can</span><span class="t-pn">(</span>guest<span class="t-pn">,</span> <span class="t-str">"task:delete"</span><span class="t-pn">,</span> adasTask<span class="t-pn">,</span> <span class="t-pn">{</span> metadata<span class="t-op">:</span> <span class="t-pn">{</span> hour<span class="t-op">:</span> <span class="t-num">10</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"ada   10:00"</span><span class="t-pn">,</span> <span class="t-kw">await</span> engine<span class="t-pn">.</span><span class="t-fn">check</span><span class="t-pn">(</span>ada<span class="t-pn">,</span> <span class="t-str">"task:delete"</span><span class="t-pn">,</span> adasTask<span class="t-pn">,</span> <span class="t-pn">{</span> metadata<span class="t-op">:</span> <span class="t-pn">{</span> hour<span class="t-op">:</span> <span class="t-num">10</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"ada   20:00"</span><span class="t-pn">,</span> <span class="t-kw">await</span> engine<span class="t-pn">.</span><span class="t-fn">check</span><span class="t-pn">(</span>ada<span class="t-pn">,</span> <span class="t-str">"task:delete"</span><span class="t-pn">,</span> adasTask<span class="t-pn">,</span> <span class="t-pn">{</span> metadata<span class="t-op">:</span> <span class="t-pn">{</span> hour<span class="t-op">:</span> <span class="t-num">20</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"ada   no hour"</span><span class="t-pn">,</span> <span class="t-kw">await</span> engine<span class="t-pn">.</span><span class="t-fn">can</span><span class="t-pn">(</span>ada<span class="t-pn">,</span> <span class="t-str">"task:delete"</span><span class="t-pn">,</span> adasTask<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
+import type { PermissionPolicyDefinition } from "@zudojs/permissions";
+
+const officeHours: PermissionPolicyDefinition = {
+  name: "office-hours",
+  permissions: ["task:create", "task:update", "task:delete"],
+  cacheable: false,
+  evaluate: (ctx) => {
+    const hour = ctx.metadata?.get("hour");
+    return typeof hour === "number" && hour >= 9 && hour < 17
+      ? { allowed: true }
+      : { allowed: false, reason: "outside_office_hours" };
+  },
+};
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: ["task:read"], rules: [
+    { name: "own-tasks", effect: "allow", resource: "task", action: "delete", condition: isOwner("userId") },
+  ] }],
+  policies: [officeHours],
+});
+
+const guest = createPermissionActor("guest-17");
+const ada = createPermissionActor("ada", { roles: ["member"] });
+const adasTask = { id: 1, userId: "ada" };
+console.log("guest 10:00", await engine.can(guest, "task:delete", adasTask, { metadata: { hour: 10 } }));
+console.log("ada   10:00", await engine.check(ada, "task:delete", adasTask, { metadata: { hour: 10 } }));
+console.log("ada   20:00", await engine.check(ada, "task:delete", adasTask, { metadata: { hour: 20 } }));
+console.log("ada   no hour", await engine.can(ada, "task:delete", adasTask));</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx policy.ts</code> and of the browser terminal</div><pre class="lx-no-copy">guest 10:00 false
+ada   10:00 {
+  allowed: true,
+  reason: 'role_permission',
+  matchedPermission: 'task:delete',
+  policy: 'office-hours'
+}
+ada   20:00 {
+  allowed: false,
+  reason: 'outside_office_hours',
+  policy: 'office-hours',
+  publicReason: 'Access denied'
+}
+ada   no hour false</pre></div>
+</figure>
+<p>The guest has no role that grants <code>task:delete</code>, so office hours change nothing for them. Ada may delete her own task at 10:00, because her <code>own-tasks</code> rule grants it and the policy has no objection. At 20:00 the policy refuses, and the decision names it. With no hour at all the policy also says no: missing data means no. The hour comes from your server's clock, which you pass in as metadata. That also makes the rule easy to test, as you just saw.</p>
+<p>A policy can also <em>grant</em> access on its own, if you write <code>effect: "grant"</code>. That is where the escalation hides. Here is the same office-hours policy with that one extra line:</p>
+<figure class="lx-example" data-index="12" data-file="policy-grant.ts" data-project="perm">
+<figcaption class="lx-bar"><span class="lx-file">policy-grant.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="12"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createPermissionActor<span class="t-pn">,</span> createPermissionEngine <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/permissions"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> engine <span class="t-op">=</span> <span class="t-fn">createPermissionEngine</span><span class="t-pn">(</span><span class="t-pn">{</span>
   roles<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"member"</span><span class="t-pn">,</span> permissions<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"task:read"</span><span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">,</span>
   policies<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-pn">{</span>
     name<span class="t-op">:</span> <span class="t-str">"office-hours"</span><span class="t-pn">,</span>
+    effect<span class="t-op">:</span> <span class="t-str">"grant"</span><span class="t-pn">,</span>
     permissions<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"task:*"</span><span class="t-pn">]</span><span class="t-pn">,</span>
     cacheable<span class="t-op">:</span> <span class="t-cn">false</span><span class="t-pn">,</span>
     evaluate<span class="t-op">:</span> <span class="t-pn">(</span>ctx<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
@@ -755,8 +834,7 @@ for (const raw of ['{"title":"x","roles":["admin"]}', '{"title":"x","id":"linus"
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> guest <span class="t-op">=</span> <span class="t-fn">createPermissionActor</span><span class="t-pn">(</span><span class="t-str">"guest-17"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"10:00"</span><span class="t-pn">,</span> <span class="t-kw">await</span> engine<span class="t-pn">.</span><span class="t-fn">check</span><span class="t-pn">(</span>guest<span class="t-pn">,</span> <span class="t-str">"task:delete"</span><span class="t-pn">,</span> <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-num">3</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> metadata<span class="t-op">:</span> <span class="t-pn">{</span> hour<span class="t-op">:</span> <span class="t-num">10</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"20:00"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-kw">await</span> engine<span class="t-pn">.</span><span class="t-fn">check</span><span class="t-pn">(</span>guest<span class="t-pn">,</span> <span class="t-str">"task:delete"</span><span class="t-pn">,</span> <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-num">3</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> metadata<span class="t-op">:</span> <span class="t-pn">{</span> hour<span class="t-op">:</span> <span class="t-num">20</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">allowed</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"BAD 10:00"</span><span class="t-pn">,</span> <span class="t-kw">await</span> engine<span class="t-pn">.</span><span class="t-fn">check</span><span class="t-pn">(</span>guest<span class="t-pn">,</span> <span class="t-str">"task:delete"</span><span class="t-pn">,</span> <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-num">3</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> metadata<span class="t-op">:</span> <span class="t-pn">{</span> hour<span class="t-op">:</span> <span class="t-num">10</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
 <script type="text/plain" class="lx-src">import { createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
 
@@ -764,6 +842,7 @@ const engine = createPermissionEngine({
   roles: [{ name: "member", permissions: ["task:read"] }],
   policies: [{
     name: "office-hours",
+    effect: "grant",
     permissions: ["task:*"],
     cacheable: false,
     evaluate: (ctx) => {
@@ -776,72 +855,10 @@ const engine = createPermissionEngine({
 });
 
 const guest = createPermissionActor("guest-17");
-console.log("10:00", await engine.check(guest, "task:delete", { id: 3 }, { metadata: { hour: 10 } }));
-console.log("20:00", (await engine.check(guest, "task:delete", { id: 3 }, { metadata: { hour: 20 } })).allowed);</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx policy-mistake.ts</code> and of the browser terminal</div><pre class="lx-no-copy">10:00 { allowed: true, reason: 'policy_allow', policy: 'office-hours' }
-20:00 false</pre></div>
+console.log("BAD 10:00", await engine.check(guest, "task:delete", { id: 3 }, { metadata: { hour: 10 } }));</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx policy-grant.ts</code> and of the browser terminal</div><pre class="lx-no-copy">BAD 10:00 { allowed: true, reason: 'policy_allow', policy: 'office-hours' }</pre></div>
 </figure>
-<p>A guest with <strong>no roles at all</strong> may delete any task, as long as it is office hours. The reason is how the engine combines answers: a policy that returns <code>{ allowed: true }</code> <em>grants</em> access, even when no role did. A policy cannot say "I have no objection". It can only say yes or no.</p>
-<p>So use policies only for rules that should be able to grant access on their own. Write a <em>restriction</em> as a deny rule, which can only ever take access away:</p>
-<figure class="lx-example" data-index="12" data-file="policy-fixed.ts" data-project="perm">
-<figcaption class="lx-bar"><span class="lx-file">policy-fixed.ts</span><button type="button" class="lx-edit" data-index="12" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="12"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createPermissionActor<span class="t-pn">,</span> createPermissionEngine<span class="t-pn">,</span> isOwner <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/permissions"</span><span class="t-pn">;</span>
-
-<span class="t-kw">const</span> engine <span class="t-op">=</span> <span class="t-fn">createPermissionEngine</span><span class="t-pn">(</span><span class="t-pn">{</span>
-  roles<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"member"</span><span class="t-pn">,</span> permissions<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"task:read"</span><span class="t-pn">]</span><span class="t-pn">,</span> rules<span class="t-op">:</span> <span class="t-pn">[</span>
-    <span class="t-pn">{</span> effect<span class="t-op">:</span> <span class="t-str">"allow"</span><span class="t-pn">,</span> resource<span class="t-op">:</span> <span class="t-str">"task"</span><span class="t-pn">,</span> action<span class="t-op">:</span> <span class="t-str">"delete"</span><span class="t-pn">,</span> condition<span class="t-op">:</span> <span class="t-fn">isOwner</span><span class="t-pn">(</span><span class="t-str">"userId"</span><span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">,</span>
-  <span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">,</span>
-  rules<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-pn">{</span>
-    name<span class="t-op">:</span> <span class="t-str">"office-hours"</span><span class="t-pn">,</span>
-    effect<span class="t-op">:</span> <span class="t-str">"deny"</span><span class="t-pn">,</span>
-    resource<span class="t-op">:</span> <span class="t-str">"task"</span><span class="t-pn">,</span>
-    action<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"create"</span><span class="t-pn">,</span> <span class="t-str">"update"</span><span class="t-pn">,</span> <span class="t-str">"delete"</span><span class="t-pn">]</span><span class="t-pn">,</span>
-    condition<span class="t-op">:</span> <span class="t-pn">(</span>ctx<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-      <span class="t-kw">const</span> hour <span class="t-op">=</span> ctx<span class="t-pn">.</span><span class="t-prop">metadata</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"hour"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-      <span class="t-kw">return</span> <span class="t-kw">typeof</span> hour <span class="t-op">!==</span> <span class="t-str">"number"</span> <span class="t-op">||</span> hour <span class="t-op">&lt;</span> <span class="t-num">9</span> <span class="t-op">||</span> hour <span class="t-op">&gt;=</span> <span class="t-num">17</span><span class="t-pn">;</span>
-    <span class="t-pn">}</span><span class="t-pn">,</span>
-  <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">,</span>
-<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-
-<span class="t-kw">const</span> guest <span class="t-op">=</span> <span class="t-fn">createPermissionActor</span><span class="t-pn">(</span><span class="t-str">"guest-17"</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> ada <span class="t-op">=</span> <span class="t-fn">createPermissionActor</span><span class="t-pn">(</span><span class="t-str">"ada"</span><span class="t-pn">,</span> <span class="t-pn">{</span> roles<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"member"</span><span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> adasTask <span class="t-op">=</span> <span class="t-pn">{</span> id<span class="t-op">:</span> <span class="t-num">1</span><span class="t-pn">,</span> userId<span class="t-op">:</span> <span class="t-str">"ada"</span> <span class="t-pn">}</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"guest 10:00"</span><span class="t-pn">,</span> <span class="t-kw">await</span> engine<span class="t-pn">.</span><span class="t-fn">can</span><span class="t-pn">(</span>guest<span class="t-pn">,</span> <span class="t-str">"task:delete"</span><span class="t-pn">,</span> adasTask<span class="t-pn">,</span> <span class="t-pn">{</span> metadata<span class="t-op">:</span> <span class="t-pn">{</span> hour<span class="t-op">:</span> <span class="t-num">10</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"ada   10:00"</span><span class="t-pn">,</span> <span class="t-kw">await</span> engine<span class="t-pn">.</span><span class="t-fn">can</span><span class="t-pn">(</span>ada<span class="t-pn">,</span> <span class="t-str">"task:delete"</span><span class="t-pn">,</span> adasTask<span class="t-pn">,</span> <span class="t-pn">{</span> metadata<span class="t-op">:</span> <span class="t-pn">{</span> hour<span class="t-op">:</span> <span class="t-num">10</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"ada   20:00"</span><span class="t-pn">,</span> <span class="t-kw">await</span> engine<span class="t-pn">.</span><span class="t-fn">can</span><span class="t-pn">(</span>ada<span class="t-pn">,</span> <span class="t-str">"task:delete"</span><span class="t-pn">,</span> adasTask<span class="t-pn">,</span> <span class="t-pn">{</span> metadata<span class="t-op">:</span> <span class="t-pn">{</span> hour<span class="t-op">:</span> <span class="t-num">20</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"ada   no hour"</span><span class="t-pn">,</span> <span class="t-kw">await</span> engine<span class="t-pn">.</span><span class="t-fn">can</span><span class="t-pn">(</span>ada<span class="t-pn">,</span> <span class="t-str">"task:delete"</span><span class="t-pn">,</span> adasTask<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
-</code></pre>
-<script type="text/plain" class="lx-src">import { createPermissionActor, createPermissionEngine, isOwner } from "@zudojs/permissions";
-
-const engine = createPermissionEngine({
-  roles: [{ name: "member", permissions: ["task:read"], rules: [
-    { effect: "allow", resource: "task", action: "delete", condition: isOwner("userId") },
-  ] }],
-  rules: [{
-    name: "office-hours",
-    effect: "deny",
-    resource: "task",
-    action: ["create", "update", "delete"],
-    condition: (ctx) => {
-      const hour = ctx.metadata?.get("hour");
-      return typeof hour !== "number" || hour < 9 || hour >= 17;
-    },
-  }],
-});
-
-const guest = createPermissionActor("guest-17");
-const ada = createPermissionActor("ada", { roles: ["member"] });
-const adasTask = { id: 1, userId: "ada" };
-console.log("guest 10:00", await engine.can(guest, "task:delete", adasTask, { metadata: { hour: 10 } }));
-console.log("ada   10:00", await engine.can(ada, "task:delete", adasTask, { metadata: { hour: 10 } }));
-console.log("ada   20:00", await engine.can(ada, "task:delete", adasTask, { metadata: { hour: 20 } }));
-console.log("ada   no hour", await engine.can(ada, "task:delete", adasTask));</script>
-<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx policy-fixed.ts</code> and of the browser terminal</div><pre class="lx-no-copy">guest 10:00 false
-ada   10:00 true
-ada   20:00 false
-ada   no hour false</pre></div>
-</figure>
-<p>Now the guest gets nothing, Ada can delete her own task during office hours, and outside office hours nobody can. If the hour is missing, the condition says "deny": missing data means no. The hour comes from your server's clock, which you pass in as metadata. That also makes the rule easy to test, as you just saw.</p>
+<p>A guest with <strong>no roles at all</strong> may now delete any task, as long as it is office hours. A granting policy's "yes" is a real grant, even when no role gave the permission. So keep the default for restrictions, and use <code>effect: "grant"</code> only for a policy that proves the right by itself, such as "the actor owns this resource". (Before @zudojs/permissions 1.4.0 every policy granted like this, and the package's own README taught the office-hours example this way.)</p>
 </section>
 
 <section>
@@ -1052,13 +1069,88 @@ DELETE /tasks/3 200 {"deleted":3}</pre></div>
 <figure class="lx-shell"><figcaption class="lx-bar"><span class="lx-file">Terminal on your computer</span></figcaption>
 <pre class="lx-shell-body" data-copy="npx tsx server.ts"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="true">$ </span>npx tsx server.ts</span></pre></figure>
 <p>It prints the same six lines as above and exits.</p>
-<div class="callout callout-note"><p class="lx-callout-label">NOTE</p>@zudojs/permissions also exports a ready-made guard, <code>authorize(engine, permission, options)</code>. In the versions current when this lesson was written (@zudojs/permissions 1.3.0 with @zudojs/http 1.3.0) it does not fit the router's route middleware: its types do not match, and a refused request is answered <code>200</code> with an empty body instead of <code>401</code>/<code>403</code>. Until that is fixed, check permissions in the handler as shown here. It is only three lines, and you can see exactly what happens.</div>
+<h3>The ready-made guard</h3>
+<p>Many routes do not need a loaded resource: "only admins may list users" depends on the role alone. For those, @zudojs/permissions has a ready-made route guard, <code>authorize(engine, permission, options)</code>. You give it <code>extractActor</code>, which returns the actor or <code>undefined</code>, and put it in the route's <code>middleware</code> list:</p>
+<figure class="lx-example" data-index="15" data-file="guard.ts">
+<figcaption class="lx-bar"><span class="lx-file">guard.ts</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createHttpServer<span class="t-pn">,</span> createNodeHttpAdapter<span class="t-pn">,</span> createResponseContext<span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">HttpRequestContext</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> authorize<span class="t-pn">,</span> createPermissionActor<span class="t-pn">,</span> createPermissionEngine <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/permissions"</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> engine <span class="t-op">=</span> <span class="t-fn">createPermissionEngine</span><span class="t-pn">(</span><span class="t-pn">{</span>
+  roles<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"member"</span><span class="t-pn">,</span> permissions<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"task:read"</span><span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"admin"</span><span class="t-pn">,</span> permissions<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-str">"task:*"</span><span class="t-pn">,</span> <span class="t-str">"user:read"</span><span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> userRoles <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">Map</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-pn">[</span><span class="t-str">"ada"</span><span class="t-pn">,</span> <span class="t-pn">[</span><span class="t-str">"member"</span><span class="t-pn">]</span><span class="t-pn">]</span><span class="t-pn">,</span> <span class="t-pn">[</span><span class="t-str">"grace"</span><span class="t-pn">,</span> <span class="t-pn">[</span><span class="t-str">"admin"</span><span class="t-pn">]</span><span class="t-pn">]</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> sessions <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">Map</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-pn">[</span><span class="t-str">"token-ada"</span><span class="t-pn">,</span> <span class="t-str">"ada"</span><span class="t-pn">]</span><span class="t-pn">,</span> <span class="t-pn">[</span><span class="t-str">"token-grace"</span><span class="t-pn">,</span> <span class="t-str">"grace"</span><span class="t-pn">]</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> canReadUsers <span class="t-op">=</span> <span class="t-fn">authorize</span><span class="t-pn">(</span>engine<span class="t-pn">,</span> <span class="t-str">"user:read"</span><span class="t-pn">,</span> <span class="t-pn">{</span>
+  extractActor<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">{</span> request <span class="t-pn">}</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
+    <span class="t-kw">const</span> token <span class="t-op">=</span> request<span class="t-pn">.</span><span class="t-prop">getHeader</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-pn">(</span><span class="t-str">"authorization"</span><span class="t-pn">)</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-fn">replace</span><span class="t-pn">(</span><span class="t-op">/^</span><span class="t-ty">Bearer</span> <span class="t-op">/</span><span class="t-pn">,</span> <span class="t-str">""</span><span class="t-pn">)</span><span class="t-pn">;</span>
+    <span class="t-kw">const</span> userId <span class="t-op">=</span> token <span class="t-op">?</span> sessions<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>token<span class="t-pn">)</span> <span class="t-op">:</span> <span class="t-cn">undefined</span><span class="t-pn">;</span>
+    <span class="t-kw">return</span> userId <span class="t-op">?</span> <span class="t-fn">createPermissionActor</span><span class="t-pn">(</span>userId<span class="t-pn">,</span> <span class="t-pn">{</span> roles<span class="t-op">:</span> userRoles<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>userId<span class="t-pn">)</span> <span class="t-op">??</span> <span class="t-pn">[</span><span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">)</span> <span class="t-op">:</span> <span class="t-cn">undefined</span><span class="t-pn">;</span>
+  <span class="t-pn">}</span><span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> router <span class="t-op">=</span> <span class="t-fn">createRouter</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+router<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"/admin/users"</span><span class="t-pn">,</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">[</span><span class="t-str">"ada"</span><span class="t-pn">,</span> <span class="t-str">"grace"</span><span class="t-pn">]</span><span class="t-pn">)</span><span class="t-pn">,</span> <span class="t-pn">{</span> middleware<span class="t-op">:</span> <span class="t-pn">[</span>canReadUsers<span class="t-pn">]</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> server <span class="t-op">=</span> <span class="t-fn">createHttpServer</span><span class="t-pn">(</span><span class="t-pn">{</span>
+  adapter<span class="t-op">:</span> <span class="t-fn">createNodeHttpAdapter</span><span class="t-pn">(</span><span class="t-pn">{</span> port<span class="t-op">:</span> <span class="t-num">0</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
+  handler<span class="t-op">:</span> <span class="t-kw">async</span> <span class="t-pn">(</span>request<span class="t-op">:</span> <span class="t-ty">HttpRequestContext</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">(</span><span class="t-kw">await</span> router<span class="t-pn">.</span><span class="t-fn">dispatch</span><span class="t-pn">(</span>request<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">response</span><span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">await</span> server<span class="t-pn">.</span><span class="t-fn">start</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> token <span class="t-kw">of</span> <span class="t-pn">[</span><span class="t-cn">undefined</span><span class="t-pn">,</span> <span class="t-str">"token-ada"</span><span class="t-pn">,</span> <span class="t-str">"token-grace"</span><span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-kw">const</span> res <span class="t-op">=</span> <span class="t-kw">await</span> <span class="t-fn">fetch</span><span class="t-pn">(</span><span class="t-tpl">`http://127.0.0.1:<span class="t-op">${</span><span class="t-prop">server.address?.port</span><span class="t-op">}</span>/admin/users`</span><span class="t-pn">,</span> <span class="t-pn">{</span>
+    headers<span class="t-op">:</span> token <span class="t-op">?</span> <span class="t-pn">{</span> authorization<span class="t-op">:</span> <span class="t-tpl">`Bearer <span class="t-op">${</span><span class="t-prop">token</span><span class="t-op">}</span>`</span> <span class="t-pn">}</span> <span class="t-op">:</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">,</span>
+  <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+  console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>token <span class="t-op">??</span> <span class="t-str">"no token"</span><span class="t-pn">,</span> res<span class="t-pn">.</span><span class="t-prop">status</span><span class="t-pn">,</span> <span class="t-kw">await</span> res<span class="t-pn">.</span><span class="t-fn">text</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
+<span class="t-kw">await</span> server<span class="t-pn">.</span><span class="t-fn">stop</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
+import type { HttpRequestContext } from "@zudojs/http";
+import { authorize, createPermissionActor, createPermissionEngine } from "@zudojs/permissions";
+
+const engine = createPermissionEngine({
+  roles: [{ name: "member", permissions: ["task:read"] }, { name: "admin", permissions: ["task:*", "user:read"] }],
+});
+const userRoles = new Map([["ada", ["member"]], ["grace", ["admin"]]]);
+const sessions = new Map([["token-ada", "ada"], ["token-grace", "grace"]]);
+
+const canReadUsers = authorize(engine, "user:read", {
+  extractActor: ({ request }) => {
+    const token = request.getHeader?.("authorization")?.replace(/^Bearer /, "");
+    const userId = token ? sessions.get(token) : undefined;
+    return userId ? createPermissionActor(userId, { roles: userRoles.get(userId) ?? [] }) : undefined;
+  },
+});
+
+const router = createRouter();
+router.get("/admin/users", () => createResponseContext().json(["ada", "grace"]), { middleware: [canReadUsers] });
+
+const server = createHttpServer({
+  adapter: createNodeHttpAdapter({ port: 0 }),
+  handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+});
+await server.start();
+for (const token of [undefined, "token-ada", "token-grace"]) {
+  const res = await fetch(`http://127.0.0.1:${server.address?.port}/admin/users`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+  console.log(token ?? "no token", res.status, await res.text());
+}
+await server.stop();</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx guard.ts</code></div><pre class="lx-no-copy">no token 401 {"error":"Unauthorized","message":"Authentication required"}
+token-ada 403 {"error":"Forbidden","message":"Access denied"}
+token-grace 200 ["ada","grace"]</pre></div>
+</figure>
+<p>No actor means <code>401</code>, an actor without <code>user:read</code> means <code>403</code>, and only then does the handler run. (Since @zudojs/permissions 1.4.0 with @zudojs/http 1.4.0 the guard answers with these real status codes and fits the router's types without a cast.) The guard also takes an <code>extractResource</code> loader, but for a task route keep the three steps in the handler, as above: a guard would answer a missing task with <code>403</code>, not <code>404</code>.</p>
 </section>
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>An editor role</h3><p>Add an <code>editor</code> role to <code>roles.ts</code>. Editors can do everything a member can, and can update any task, but must not delete tasks. Print a small table of <code>task:update</code> and <code>task:delete</code> for a member, an editor and an admin.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="15" data-file="editor.ts" data-project="editor">
-<figcaption class="lx-bar"><span class="lx-file">editor.ts</span><button type="button" class="lx-edit" data-index="15" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="15"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>An editor role</h3><p>Add an <code>editor</code> role to <code>roles.ts</code>. Editors can do everything a member can, and can update any task, but must not delete tasks. Print a small table of <code>task:update</code> and <code>task:delete</code> for a member, an editor and an admin.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="16" data-file="editor.ts" data-project="editor">
+<figcaption class="lx-bar"><span class="lx-file">editor.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="16"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createPermissionActor<span class="t-pn">,</span> createPermissionEngine <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/permissions"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> engine <span class="t-op">=</span> <span class="t-fn">createPermissionEngine</span><span class="t-pn">(</span><span class="t-pn">{</span>
@@ -1101,8 +1193,8 @@ admin   update: true  delete: true</pre></div>
 <p>The editor gets the one exact permission it needs, <code>task:update</code>, not <code>task:*</code>, which would include delete.</p></details></div>
 
 <div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Find the escalation</h3><p>A teammate wrote this condition so that support staff can read any task: <code>(ctx) => ctx.metadata?.get("support") === true</code>, and filled the metadata with <code>{ support: request.getHeader("x-support") === "yes" }</code>. What can an attacker do, and how do you fix it?</p><details class="lx-solution"><summary>Show a solution</summary><p>Anyone can send the header <code>x-support: yes</code> and read every task. The fix is to make support a <strong>role</strong>, stored in your database, and grant it <code>task:read</code>. The client never gets to say which role it has:</p>
-<figure class="lx-example" data-index="16" data-file="support.ts" data-project="support">
-<figcaption class="lx-bar"><span class="lx-file">support.ts</span><button type="button" class="lx-edit" data-index="16" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="16"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<figure class="lx-example" data-index="17" data-file="support.ts" data-project="support">
+<figcaption class="lx-bar"><span class="lx-file">support.ts</span><button type="button" class="lx-edit" data-index="17" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="17"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createPermissionActor<span class="t-pn">,</span> createPermissionEngine <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/permissions"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> engine <span class="t-op">=</span> <span class="t-fn">createPermissionEngine</span><span class="t-pn">(</span><span class="t-pn">{</span>
@@ -1130,8 +1222,8 @@ for (const userId of ["ada", "sam"]) {
 sam true</pre></div>
 </figure></details></div>
 
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Locked tasks, but only for members</h3><p>Change the deny rule from the deny section so that a locked task stops members, but an admin can still update it. Use <code>allOf</code> and <code>not</code> from the package to combine conditions.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="17" data-file="locked.ts" data-project="locked">
-<figcaption class="lx-bar"><span class="lx-file">locked.ts</span><button type="button" class="lx-edit" data-index="17" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="17"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Locked tasks, but only for members</h3><p>Change the deny rule from the deny section so that a locked task stops members, but an admin can still update it. Use <code>allOf</code> and <code>not</code> from the package to combine conditions.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="18" data-file="locked.ts" data-project="locked">
+<figcaption class="lx-bar"><span class="lx-file">locked.ts</span><button type="button" class="lx-edit" data-index="18" title="Open in the editor: change it, save it in this browser and run it">Edit</button><button type="button" class="lx-run" data-index="18"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 4l14 8-14 8z"/></svg>Run in browser</button></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> allOf<span class="t-pn">,</span> createPermissionActor<span class="t-pn">,</span> createPermissionEngine<span class="t-pn">,</span> isOwner<span class="t-pn">,</span> not <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/permissions"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">PermissionConditionFn</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/permissions"</span><span class="t-pn">;</span>
 
@@ -1181,7 +1273,7 @@ grace: true</pre></div>
 <li>Wildcards like <code>*:read</code> grant more than you think, including permissions you add later. Malformed patterns are rejected at startup.</li>
 <li>Rules with conditions, such as <code>isOwner("userId")</code>, check the actual resource. Test that the owner passes <em>and</em> that someone else is refused.</li>
 <li>Missing data must mean no. Deny rules win over allows, and a condition that throws can only make the answer no.</li>
-<li>A policy that returns <code>allowed: true</code> grants access by itself. Write restrictions as deny rules.</li>
+<li>A policy is a constraint by default: it can refuse, but its "yes" grants nothing. <code>effect: "grant"</code> makes its "yes" a grant, so use it only for a policy that proves the right by itself.</li>
 <li>The actor's id and roles come from the verified token and your database, never from the request body, a header or the query string.</li>
 <li>Send <code>publicReason</code> to clients; keep <code>reason</code> and <code>explain</code> steps for your logs.</li>
 </ul>

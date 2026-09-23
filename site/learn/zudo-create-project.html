@@ -456,9 +456,51 @@ export function registerHealthRoutes(router: HttpRouter, check: HealthCheck): vo
 }</script>
 </figure>
 <p>It answers <strong>503 Service Unavailable</strong> while the app is starting or stopping, or when a connected service is down. A hosting platform reads that and sends no traffic until the app is ready. <code>{ openapi: false }</code> hides this route from the API documentation you will add below.</p>
+<p>You can try the same idea on its own, without starting a server. <code>createHttpTestClient</code> comes from <code>@zudojs/testing</code>, which the project already has for its tests. It sends a request straight to a router and gives you the answer:</p>
+<figure class="lx-example" data-index="1" data-file="health-check.ts">
+<figcaption class="lx-bar"><span class="lx-file">health-check.ts</span><button type="button" class="lx-edit" data-index="1" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createResponseContext<span class="t-pn">,</span> createRouter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/http"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createHttpTestClient <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/testing"</span><span class="t-pn">;</span>
+
+<span class="t-kw">let</span> ready <span class="t-op">=</span> <span class="t-cn">false</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> router <span class="t-op">=</span> <span class="t-fn">createRouter</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+router<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"/health"</span><span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span>
+  <span class="t-fn">createResponseContext</span><span class="t-pn">(</span><span class="t-pn">{</span> status<span class="t-op">:</span> ready <span class="t-op">?</span> <span class="t-num">200</span> <span class="t-op">:</span> <span class="t-num">503</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">{</span> status<span class="t-op">:</span> ready <span class="t-op">?</span> <span class="t-str">"ok"</span> <span class="t-op">:</span> <span class="t-str">"unavailable"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
+<span class="t-pn">)</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> client <span class="t-op">=</span> <span class="t-fn">createHttpTestClient</span><span class="t-pn">(</span>router<span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> starting <span class="t-op">=</span> <span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"/health"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>starting<span class="t-pn">.</span><span class="t-prop">status</span><span class="t-pn">,</span> starting<span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+
+ready <span class="t-op">=</span> <span class="t-cn">true</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> running <span class="t-op">=</span> <span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span><span class="t-str">"/health"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>running<span class="t-pn">.</span><span class="t-prop">status</span><span class="t-pn">,</span> running<span class="t-pn">.</span><span class="t-fn">json</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">await</span> client<span class="t-pn">.</span><span class="t-fn">close</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { createResponseContext, createRouter } from "@zudojs/http";
+import { createHttpTestClient } from "@zudojs/testing";
+
+let ready = false;
+const router = createRouter();
+router.get("/health", async () =>
+  createResponseContext({ status: ready ? 200 : 503 }).json({ status: ready ? "ok" : "unavailable" }),
+);
+
+const client = createHttpTestClient(router);
+const starting = await client.get("/health");
+console.log(starting.status, starting.json());
+
+ready = true;
+const running = await client.get("/health");
+console.log(running.status, running.json());
+await client.close();</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx health-check.ts</code></div><pre class="lx-no-copy">503 { status: 'unavailable' }
+200 { status: 'ok' }</pre></div>
+</figure>
+<p>Same route, two answers: 503 while the app is not ready, 200 once it is.</p>
 <p>And here is the part of <code>src/server.ts</code> that every request goes through. It is shortened; open the file to see all of it:</p>
-<figure class="lx-example" data-index="1" data-file="server.ts (part)">
-<figcaption class="lx-bar"><span class="lx-file">server.ts (part)</span><button type="button" class="lx-edit" data-index="1" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="2" data-file="server.ts (part)">
+<figcaption class="lx-bar"><span class="lx-file">server.ts (part)</span><button type="button" class="lx-edit" data-index="2" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">const</span> router <span class="t-op">=</span> <span class="t-fn">createRouter</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-fn">registerRoutes</span><span class="t-pn">(</span>router<span class="t-pn">,</span> <span class="t-fn">createDependencies</span><span class="t-pn">(</span><span class="t-pn">{</span> health<span class="t-op">:</span> <span class="t-cmt">/* … */</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
@@ -762,8 +804,8 @@ curl http://localhost:3001/api/v1/notes/123"><span class="lx-cmd"><span class="l
 
 <section>
 <h2 id="practice">Practice</h2>
-<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Change the health response</h3><p>With <code>npm run dev</code> running, open <code>src/routes/health.routes.ts</code> and add a <code>service: "task-api"</code> property to the object it sends. Save the file. Watch the terminal restart the server, then reload <a href="http://localhost:3000/health">http://localhost:3000/health</a>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="2" data-file="src/routes/health.routes.ts (part)">
-<figcaption class="lx-bar"><span class="lx-file">src/routes/health.routes.ts (part)</span><button type="button" class="lx-edit" data-index="2" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>Change the health response</h3><p>With <code>npm run dev</code> running, open <code>src/routes/health.routes.ts</code> and add a <code>service: "task-api"</code> property to the object it sends. Save the file. Watch the terminal restart the server, then reload <a href="http://localhost:3000/health">http://localhost:3000/health</a>.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="3" data-file="src/routes/health.routes.ts (part)">
+<figcaption class="lx-bar"><span class="lx-file">src/routes/health.routes.ts (part)</span><button type="button" class="lx-edit" data-index="3" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">return</span> <span class="t-fn">json</span><span class="t-pn">(</span>report<span class="t-pn">.</span><span class="t-prop">ready</span> <span class="t-op">?</span> <span class="t-num">200</span> <span class="t-op">:</span> <span class="t-num">503</span><span class="t-pn">,</span> <span class="t-pn">{</span>
   status<span class="t-op">:</span> report<span class="t-pn">.</span><span class="t-prop">ready</span> <span class="t-op">?</span> <span class="t-str">"ok"</span> <span class="t-op">:</span> <span class="t-str">"unavailable"</span><span class="t-pn">,</span>
   service<span class="t-op">:</span> <span class="t-str">"task-api"</span><span class="t-pn">,</span>
