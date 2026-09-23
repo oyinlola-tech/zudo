@@ -1,0 +1,507 @@
+---
+title: Scope and how code runs
+description: Learn where a name can be used, how closures remember values, why some names exist before their line runs, and how the call stack and the heap work, so you can read error messages and debug real programs.
+minutes: 40
+youNeed: Modern JavaScript, and the lessons before it
+youBuild: A task store with private state, and the skill to read a stack trace
+keywords: javascript scope, block scope, function scope, lexical scope, closure, hoisting, temporal dead zone, execution context, call stack, stack overflow, RangeError, heap, garbage collection, stack trace
+---
+<section>
+<h2 id="scope">What scope is</h2>
+<p>Every name you create, with <code>const</code>, <code>let</code>, <code>function</code> or a parameter, can only be used in part of your program. That part is the name's <strong>scope</strong>. Outside it, the name does not exist.</p>
+<p>To see what happens when you use a name outside its scope, this lesson needs one tool from a later lesson: <code>try</code>/<code>catch</code>. Read it as "try to run this block; if it fails, run the <code>catch</code> block with the error, instead of stopping the program". <a href="/learn/js-errors">Handling errors</a> explains it fully.</p>
+<example file="scope.js">
+function makeTitle() {
+  const prefix = "Task:";
+  return `${prefix} Buy milk`;
+}
+
+console.log(makeTitle());
+
+try {
+  console.log(prefix);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+</example>
+<output>
+Task: Buy milk
+ReferenceError: prefix is not defined
+</output>
+<p><code>prefix</code> lives inside <code>makeTitle</code>. Outside the function it does not exist, so reading it throws a <strong>ReferenceError</strong>: "I do not know this name". This is a good thing. Two functions can both use a variable called <code>prefix</code> without ever disturbing each other.</p>
+</section>
+
+<section>
+<h2 id="kinds">Module, function and block scope</h2>
+<p>JavaScript has three kinds of scope you meet every day:</p>
+<ul>
+<li><strong>Module scope</strong>: names declared at the top level of a file. Every function in that file can use them. Other files cannot, unless the file exports them (see <a href="/learn/js-modules">Modules</a>). This is what people often loosely call "global".</li>
+<li><strong>Function scope</strong>: names declared inside a function, including its parameters. They exist only while that function runs.</li>
+<li><strong>Block scope</strong>: names declared with <code>let</code> or <code>const</code> inside <code>{ }</code>, such as the body of an <code>if</code> or a loop. They exist only inside that block.</li>
+</ul>
+<p>The truly <strong>global</strong> scope holds what JavaScript itself provides, such as <code>console</code>, <code>Math</code> and <code>JSON</code>. You can reach it anywhere, and also through the object <code>globalThis</code>.</p>
+<example file="kinds.js">
+const appName = "Tasks";
+
+function report(tasks) {
+  let openCount = 0;
+  for (const task of tasks) {
+    if (!task.done) {
+      const note = `open: ${task.title}`;
+      console.log(note);
+      openCount += 1;
+    }
+  }
+  return `${appName}: ${openCount} open`;
+}
+
+console.log(report([{ title: "Buy milk", done: false }, { title: "Call Ada", done: true }]));
+console.log(typeof openCount, typeof note, typeof appName);
+console.log(globalThis.Math === Math);
+</example>
+<output>
+open: Buy milk
+Tasks: 1 open
+undefined undefined string
+true
+</output>
+<p><code>appName</code> is in module scope, so <code>report</code> can use it. <code>openCount</code> belongs to <code>report</code>, and <code>note</code> belongs to one run of the <code>if</code> block. Outside, <code>typeof</code> reports them as <code>undefined</code>. (<code>typeof</code> is the one place where an unknown name does not throw.)</p>
+<h3>var ignores blocks</h3>
+<p>The old keyword <code>var</code> has function scope only: it ignores blocks. The most famous bug this causes appears when a loop schedules work for later:</p>
+<example file="var-loop.js">
+for (var i = 0; i < 3; i++) {
+  setTimeout(() => console.log("var:", i), 0);
+}
+
+for (let j = 0; j < 3; j++) {
+  setTimeout(() => console.log("let:", j), 0);
+}
+</example>
+<output>
+var: 3
+var: 3
+var: 3
+let: 0
+let: 1
+let: 2
+</output>
+<p><code>setTimeout</code> runs the function later, after the loop has finished (<a href="/learn/js-async">Asynchronous JavaScript</a> explains when). With <code>var</code>, there is only <em>one</em> <code>i</code> for the whole loop, and by the time the functions run it is 3. With <code>let</code>, every turn of the loop gets its <em>own</em> <code>j</code>, and each function remembers its own. That "remembering" has a name: a closure. It comes right after the next section.</p>
+</section>
+
+<section>
+<h2 id="lexical">Lexical scope and shadowing</h2>
+<p>Scopes sit inside each other like boxes. When code uses a name, JavaScript looks in the current scope first, then in the one around it, and so on outwards until the module and global scope. The first match wins.</p>
+<p>Which boxes surround a function is decided by <em>where the function is written</em> in the file, not where it is called from. That is why it is called <strong>lexical scope</strong> ("lexical" means "about the written text"):</p>
+<example file="lexical.js">
+const label = "module";
+
+function show() {
+  return label;
+}
+
+function caller() {
+  const label = "caller";
+  return show();
+}
+
+function shadow() {
+  const label = "shadow";
+  return label;
+}
+
+console.log(caller());
+console.log(shadow());
+console.log(label);
+</example>
+<output>
+module
+shadow
+module
+</output>
+<ul>
+<li><code>show</code> is written at the top level, so it sees the module's <code>label</code>, even when <code>caller</code>, which has its own <code>label</code>, calls it.</li>
+<li>Inside <code>shadow</code>, the local <code>label</code> hides the outer one. This is called <strong>shadowing</strong>. The outer variable is not changed, as the last line shows.</li>
+</ul>
+<tip>Shadowing is legal but confusing. If you find yourself with two variables of the same name, one inside the other, rename one of them.</tip>
+</section>
+
+<section>
+<h2 id="closures">Closures</h2>
+<p>A function in JavaScript carries its surrounding scope with it. Even after the outer function has returned, the inner function can still use the outer function's variables. A function together with the variables it remembers is called a <strong>closure</strong>.</p>
+<example file="counter.js">
+function makeCounter() {
+  let count = 0;
+  return () => {
+    count += 1;
+    return count;
+  };
+}
+
+const nextTaskId = makeCounter();
+const nextUserId = makeCounter();
+
+console.log(nextTaskId(), nextTaskId(), nextTaskId());
+console.log(nextUserId());
+console.log(typeof count);
+</example>
+<output>
+1 2 3
+1
+undefined
+</output>
+<p>Each call to <code>makeCounter</code> creates a new <code>count</code>. The arrow function it returns keeps that <code>count</code> alive, and nobody else can reach it. <code>nextTaskId</code> and <code>nextUserId</code> each have their own.</p>
+<h3>Private state with closures</h3>
+<p>This is how you hide data in plain JavaScript. Here is a task store where the list and the id counter are private. The only way in is through the functions it returns:</p>
+<example file="store.js">
+function createTaskStore() {
+  const tasks = [];
+  let nextId = 1;
+
+  return {
+    add(title) {
+      const task = { id: nextId, title, done: false };
+      nextId += 1;
+      tasks.push(task);
+      return task;
+    },
+    complete(id) {
+      const task = tasks.find((t) => t.id === id);
+      if (task) task.done = true;
+      return task;
+    },
+    list() {
+      return tasks.map((t) => ({ ...t }));
+    },
+  };
+}
+
+const store = createTaskStore();
+store.add("Buy milk");
+store.add("Call Ada");
+store.complete(1);
+
+const copy = store.list();
+copy[0].title = "HACKED";
+
+console.log(store.list());
+console.log(store.tasks, store.nextId);
+</example>
+<output>
+[
+  { id: 1, title: 'Buy milk', done: true },
+  { id: 2, title: 'Call Ada', done: false }
+]
+undefined undefined
+</output>
+<p><code>list</code> returns copies, so changing the copy did not change the store. And <code>store.tasks</code> does not exist: the array is only reachable through the closure. Nobody can set <code>nextId</code> back to 1 and create duplicate ids.</p>
+<h3>A closure remembers the variable, not the value</h3>
+<p>A closure does not take a snapshot. It keeps a link to the variable itself, so it always sees the current value:</p>
+<example file="live.js">
+let mode = "normal";
+const describe = () => `mode is ${mode}`;
+
+console.log(describe());
+mode = "maintenance";
+console.log(describe());
+</example>
+<output>
+mode is normal
+mode is maintenance
+</output>
+<p>That explains the <code>var</code> loop from earlier: all three functions linked to the same single <code>i</code>, and read it when it was already 3.</p>
+</section>
+
+<section>
+<h2 id="hoisting">Hoisting and the temporal dead zone</h2>
+<p>Before JavaScript runs any code in a scope, it first scans the scope for declarations and creates all the names. This is called <strong>hoisting</strong>, because it looks as if the declarations were lifted to the top. What each name holds before its own line runs depends on how it was declared:</p>
+<ul>
+<li>A <code>function</code> declaration is ready to call. You can call it above the line where it is written.</li>
+<li>A <code>var</code> exists and holds <code>undefined</code>.</li>
+<li>A <code>let</code>, <code>const</code> or <code>class</code> exists but may not be touched. The time between the start of the scope and the declaration line is called the <strong>temporal dead zone</strong> (TDZ). Using the name there throws a <code>ReferenceError</code>.</li>
+</ul>
+<example file="hoisting.js">
+console.log(double(4));
+function double(n) {
+  return n * 2;
+}
+
+console.log(oldStyle);
+var oldStyle = "set";
+
+try {
+  console.log(limit);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+const limit = 10;
+
+try {
+  triple(2);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
+const triple = (n) => n * 3;
+</example>
+<output>
+8
+undefined
+ReferenceError: Cannot access 'limit' before initialization
+ReferenceError: Cannot access 'triple' before initialization
+</output>
+<p>Compare the two <code>ReferenceError</code> messages with the one at the start of the lesson. "<code>prefix is not defined</code>" means the name does not exist in any surrounding scope. "<code>Cannot access 'limit' before initialization</code>" means the name exists, but its line has not run yet. The TDZ is helpful: <code>var</code> quietly gives <code>undefined</code>, which hides the mistake, while <code>let</code> and <code>const</code> fail loudly at the exact spot.</p>
+<p>An arrow function stored in a <code>const</code> follows the <code>const</code> rule, which is why <code>triple</code> failed. In practice: declare things before you use them, and the only hoisting you rely on is calling a <code>function</code> declaration from higher up in the file.</p>
+</section>
+
+<section>
+<h2 id="call-stack">Execution context and the call stack</h2>
+<p>Each time a function is called, JavaScript creates an <strong>execution context</strong> for that call: a record of which function is running, its own local variables and parameters, and where to go back to when it returns. That is why two calls of the same function never share their local variables.</p>
+<p>These contexts are kept on the <strong>call stack</strong>. Calling a function puts (<em>pushes</em>) a new context on top. Returning removes (<em>pops</em>) it, and the function below carries on. Only the context on top is running. This example prints the stack as it grows and shrinks:</p>
+<example file="stack.js">
+const stack = [];
+
+function enter(name) {
+  stack.push(name);
+  console.log(stack.join(" > "));
+}
+
+function leave() {
+  stack.pop();
+}
+
+function validate(task) {
+  enter("validate");
+  const ok = task.title !== "";
+  leave();
+  return ok;
+}
+
+function save(task) {
+  enter("save");
+  const valid = validate(task);
+  leave();
+  return valid ? "saved" : "rejected";
+}
+
+function handleRequest(task) {
+  enter("handleRequest");
+  const result = save(task);
+  leave();
+  return result;
+}
+
+console.log(handleRequest({ title: "Buy milk" }));
+</example>
+<output>
+handleRequest
+handleRequest > save
+handleRequest > save > validate
+saved
+</output>
+<p>JavaScript keeps this stack for you automatically: the example only makes it visible. When <code>validate</code> runs, <code>save</code> and <code>handleRequest</code> are still waiting underneath it for their answers.</p>
+<h3>When the stack overflows</h3>
+<p>The stack has a size limit. A function that calls itself is called <strong>recursive</strong>. If it never stops calling itself, the stack fills up, and JavaScript throws a <code>RangeError</code>. This is a <strong>stack overflow</strong>:</p>
+<example file="overflow.js">
+let depth = 0;
+
+function countDown(n) {
+  depth += 1;
+  return countDown(n - 1);
+}
+
+try {
+  countDown(3);
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+  console.log("calls before the crash:", depth > 1000 ? "thousands" : depth);
+}
+
+function countDownFixed(n) {
+  if (n === 0) return "lift off";
+  return countDownFixed(n - 1);
+}
+
+console.log(countDownFixed(3));
+</example>
+<output>
+RangeError: Maximum call stack size exceeded
+calls before the crash: thousands
+lift off
+</output>
+<p><code>countDown</code> has no <strong>base case</strong>: a condition where it stops calling itself. It went on past zero into negative numbers, thousands of calls deep, until the stack was full. (The exact number depends on your computer, so the example only checks that it was large.) <code>countDownFixed</code> stops at 0, so its stack never grows past four calls.</p>
+</section>
+
+<section>
+<h2 id="heap">The heap</h2>
+<p>Local variables live in their execution context on the stack, and disappear when the function returns. Objects, arrays and functions are different. They live in a large area of memory called the <strong>heap</strong>, and a variable only holds a reference to them. You saw this in <a href="/learn/js-data">Objects and JSON</a>: two variables can point at one object.</p>
+<p>This explains a common surprise. A function can change the object it receives, but assigning a new value to its parameter changes nothing outside:</p>
+<example file="heap.js">
+function markDone(task) {
+  task.done = true;
+}
+
+function replace(task) {
+  task = { title: "Something else", done: false };
+}
+
+const task = { title: "Buy milk", done: false };
+
+markDone(task);
+console.log(task);
+
+replace(task);
+console.log(task);
+</example>
+<output>
+{ title: 'Buy milk', done: true }
+{ title: 'Buy milk', done: true }
+</output>
+<p><code>markDone</code> followed the reference to the object on the heap and changed it. <code>replace</code> pointed its own local parameter at a new object, which only changed <code>replace</code>'s copy of the reference.</p>
+<p>You never free heap memory yourself. When no variable, closure or other object can reach an object any more, the <strong>garbage collector</strong> removes it. This is also how a backend leaks memory: a closure or a module-level array that keeps growing (say, a cache that never removes old entries) keeps every object in it reachable forever. Later in the course, <code>@zudojs/cache</code> gives you caches with a size limit and expiry times for this reason.</p>
+</section>
+
+<section>
+<h2 id="stack-trace">Reading a stack trace</h2>
+<p>When an error is not caught, Node.js stops the program and prints the error with a <strong>stack trace</strong>: a copy of the call stack at the moment of the error. This is the most useful debugging information you will get. Create a file <code>trace.js</code> in a folder with <code>"type": "module"</code> in its <code>package.json</code> (as in <a href="/learn/setup">Your first program</a>):</p>
+<example file="trace.js" browser="no" check="skip">
+const users = [
+  { id: 1, name: "Ada", address: { city: "London" } },
+  { id: 2, name: "Grace" },
+];
+
+function cityOf(id) {
+  const user = users.find((u) => u.id === id);
+  return user.address.city;
+}
+
+function handleRequest(id) {
+  return `User ${id} lives in ${cityOf(id)}`;
+}
+
+console.log(handleRequest(1));
+console.log(handleRequest(2));
+</example>
+<p>Run it:</p>
+<shell title="Terminal on your computer">
+$ node trace.js
+User 1 lives in London
+file://~/scope-demo/trace.js:8
+  return user.address.city;
+                      ^
+
+TypeError: Cannot read properties of undefined (reading 'city')
+    at cityOf (file://~/scope-demo/trace.js:8:23)
+    at handleRequest (file://~/scope-demo/trace.js:12:33)
+    at file://~/scope-demo/trace.js:16:13
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+Node.js v24.19.0
+</shell>
+<p>Read it from the top:</p>
+<ol>
+<li>The first lines show the file, line 8, and a <code>^</code> under the exact spot that failed.</li>
+<li>Then the error: a <code>TypeError</code>, because the code read <code>city</code> from something that was <code>undefined</code>.</li>
+<li>Then the stack, top first. <code>cityOf</code> failed at line 8, column 23. It was called by <code>handleRequest</code> at line 12, which was called from the top level of the file at line 16. Lines that start with <code>node:internal</code> are Node.js itself: skip them.</li>
+</ol>
+<p>The error happened at line 8, but the <em>cause</em> is one step earlier: user 2 has no <code>address</code>, so <code>user.address</code> is <code>undefined</code>. This is the usual pattern. Find the top line that is in your own code, look at the values there, then walk down the stack until you find where the bad value came from. The fix here is <code>user?.address?.city ?? "unknown"</code>, or better, deciding what the API should answer when data is missing.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Predict the output">
+<p>Without running it, write down what this code prints: <code>fn()</code> first, then <code>level</code>. Then open the solution and compare.</p>
+<solution>
+<example file="predict.js">
+const level = "module";
+
+function outer() {
+  const level = "outer";
+  function inner() {
+    return level;
+  }
+  return inner;
+}
+
+const fn = outer();
+console.log(fn());
+console.log(level);
+</example>
+<output>
+outer
+module
+</output>
+<p><code>inner</code> is written inside <code>outer</code>, so it looks up <code>level</code> in <code>outer</code>'s scope first and finds <code>"outer"</code>. It keeps that scope through its closure, even though <code>outer</code> has already returned when <code>fn()</code> is called. The module's <code>level</code> was never changed.</p>
+</solution>
+</exercise>
+<exercise title="A call limiter">
+<p>Write <code>limit(fn, max)</code> that returns a new function. The new function calls <code>fn</code> at most <code>max</code> times, and after that returns <code>"limit reached"</code>. Use a closure to count the calls. (This is the idea behind rate limiting, which you will use on login routes later.)</p>
+<solution>
+<example file="limit.js">
+function limit(fn, max) {
+  let calls = 0;
+  return (...args) => {
+    if (calls >= max) return "limit reached";
+    calls += 1;
+    return fn(...args);
+  };
+}
+
+const login = limit((user) => `welcome ${user}`, 2);
+
+console.log(login("ada"));
+console.log(login("ada"));
+console.log(login("ada"));
+</example>
+<output>
+welcome ada
+welcome ada
+limit reached
+</output>
+</solution>
+</exercise>
+<exercise title="Fix the recursion">
+<p>This function should add up the numbers from <code>n</code> down to 1, but it overflows the stack. Find the missing base case and fix it.</p>
+<example file="sum-bug.js">
+function sumTo(n) {
+  return n + sumTo(n - 1);
+}
+
+try {
+  console.log(sumTo(4));
+} catch (error) {
+  console.log(error.name);
+}
+</example>
+<output>
+RangeError
+</output>
+<solution>
+<example file="sum-fix.js">
+function sumTo(n) {
+  if (n <= 0) return 0;
+  return n + sumTo(n - 1);
+}
+
+console.log(sumTo(4));
+</example>
+<output>
+10
+</output>
+<p>Using <code>n &lt;= 0</code> rather than <code>n === 0</code> also stops the recursion if someone passes a negative number or a fraction.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Scope is where a name exists. Names live in module, function or block scope. <code>var</code> ignores blocks, so use <code>let</code> and <code>const</code>.</li>
+<li>Lexical scope: a function sees the variables around where it is <em>written</em>. An inner name with the same spelling shadows the outer one.</li>
+<li>A closure is a function plus the variables it remembers. Use it for private state, such as a counter or a store.</li>
+<li>Declarations are hoisted. Function declarations can be called early, <code>var</code> starts as <code>undefined</code>, and <code>let</code>/<code>const</code> throw in the temporal dead zone.</li>
+<li>Each call gets an execution context on the call stack. Endless recursion overflows it with <code>RangeError: Maximum call stack size exceeded</code>.</li>
+<li>Objects live on the heap and variables hold references. Unreachable objects are garbage collected, and anything reachable forever is a memory leak.</li>
+<li>Read a stack trace from the top, find the first line in your code, then walk down to where the bad value came from.</li>
+</ul>
+</section>

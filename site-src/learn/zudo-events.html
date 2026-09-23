@@ -1,0 +1,524 @@
+---
+title: Events
+description: Announce that something happened and let other parts of the Task API react, without the code that announces it knowing who listens. Handlers, wildcards, priorities, dispatch modes, middleware and handler errors with @zudojs/events.
+minutes: 40
+youNeed: The Task API project and the caching lesson
+youBuild: A task service that publishes "task.completed", with email, statistics and cache handlers
+keywords: zudojs events, event bus, publish subscribe, event handler, wildcard, priority, sequential, parallel, event middleware, EventHandlerError, task.completed
+---
+<section>
+<h2 id="why">Why events</h2>
+<p>When a user marks a task as done, the Task API should do more than update one row. It should also send a "well done" email, update the user's statistics, and clear the cached task list from <a href="/learn/zudo-cache">the caching lesson</a>. The first version of that code usually looks like this:</p>
+<example file="coupled.ts">
+const mailer = { send: (to: string, text: string) => console.log(`email to ${to}: ${text}`) };
+const stats = { completed: 0 };
+const cache = { clear: (userId: string) => console.log(`cache cleared for ${userId}`) };
+
+function completeTask(userId: string, title: string): void {
+  console.log(`saved: "${title}" is done`);
+  mailer.send(userId, `Well done on "${title}"!`);
+  stats.completed += 1;
+  cache.clear(userId);
+}
+
+completeTask("ada", "Buy milk");
+console.log("completed so far:", stats.completed);
+</example>
+<output>
+saved: "Buy milk" is done
+email to ada: Well done on "Buy milk"!
+cache cleared for ada
+completed so far: 1
+</output>
+<p>It works, but <code>completeTask</code> now knows about emails, statistics and caching. Every new feature that cares about finished tasks means editing this function again. If the mailer throws, the task looks like it failed, even though it was saved. The parts are <strong>coupled</strong>: tied together so that a change in one forces changes in the others.</p>
+<p>An <strong>event</strong> is a message that says "this happened", in the past tense: <code>task.completed</code>, <code>user.registered</code>, <code>order.paid</code>. The code that did the work <strong>publishes</strong> the event and moves on. Other code <strong>subscribes</strong> to it with a <strong>handler</strong>, a function that runs whenever the event is published. The publisher does not know who is listening, or whether anyone is.</p>
+<p>The object in the middle, which keeps the list of handlers and delivers each event to them, is the <strong>event bus</strong>.</p>
+</section>
+
+<section>
+<h2 id="setup">It is already in your project</h2>
+<p>You don't need to install anything: the CLI added <code>@zudojs/events</code> when it created the Task API, and <code>src/app.ts</code> already creates an event bus and hands it to the runtime. Check it:</p>
+<shell>
+$ npm ls @zudojs/events
+task-api@0.1.0 ~/task-api
++-- @zudojs/events@1.2.0
+`-- @zudojs/runtime@1.2.1
+  `-- @zudojs/events@1.2.0 deduped
+</shell>
+<p>The runtime uses the same package, and npm keeps a single copy ("deduped"). Your terminal may draw the tree with <code>├──</code> and <code>└──</code> instead. In a new project you would run <code>npm install @zudojs/events</code>. The examples on this page run in the browser terminal, and on your computer with <code>npx tsx src/&lt;file&gt;.ts</code>.</p>
+</section>
+
+<section>
+<h2 id="first-event">Your first event</h2>
+<example file="first.ts">
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+
+bus.on("task.completed", (event) => {
+  console.log("handler got:", event.type, event.payload);
+});
+
+const result = await bus.publishEvent({
+  type: "task.completed",
+  payload: { taskId: 1, userId: "ada", title: "Buy milk" },
+});
+
+console.log("handled:", result.handled, "handlers:", result.handlerCount);
+</example>
+<output>
+handler got: task.completed { taskId: 1, userId: 'ada', title: 'Buy milk' }
+handled: true handlers: 1
+</output>
+<ul>
+<li><code>bus.on(type, handler)</code> subscribes a handler to an event type.</li>
+<li><code>bus.publishEvent({ type, payload })</code> builds the event and calls every matching handler. The <strong>payload</strong> is the data that describes what happened.</li>
+<li>It returns a promise. When it resolves, every handler has finished, and the result tells you how many ran.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="define">What an event looks like</h2>
+<p>Typing <code>{ type: "task.completed", payload }</code> by hand in many files invites typos, and the payload is <code>unknown</code> to TypeScript. <code>defineEvent</code> creates a reusable definition that knows the name and the payload type:</p>
+<example file="task.events.ts" project="events">
+import { defineEvent } from "@zudojs/events";
+
+export interface TaskCompleted {
+  readonly taskId: number;
+  readonly userId: string;
+  readonly title: string;
+}
+
+export const TaskCompletedEvent = defineEvent<"task.completed", TaskCompleted>("task.completed");
+</example>
+<example file="define.ts" project="events">
+import { TaskCompletedEvent } from "./task.events.js";
+
+const event = TaskCompletedEvent.create({ taskId: 1, userId: "ada", title: "Buy milk" });
+
+console.log(event.type);
+console.log(event.payload.title);
+console.log(event.id.startsWith("event:"), event.timestamp instanceof Date);
+console.log(Object.isFrozen(event));
+</example>
+<output>
+task.completed
+Buy milk
+true true
+true
+</output>
+<p>Every event gets a unique <code>id</code> and a <code>timestamp</code>, and it is <strong>frozen</strong>: nobody can change it after it was created. That matters because many handlers see the same event. If one of them could change the payload, the next handler would see different data depending on the order they ran in.</p>
+<p>Event names are made of lowercase words joined by dots, <code>namespace.action</code>. The bus lower-cases them for you, and rejects names with spaces or other symbols.</p>
+</section>
+
+<section>
+<h2 id="handlers">Handlers and subscriptions</h2>
+<p><code>bus.on</code> returns a <strong>subscription</strong>. Call its <code>unsubscribe()</code> to detach the handler again. <code>bus.once</code> subscribes a handler that runs only for the first event. The type argument tells TypeScript the shape of <code>event.payload</code>:</p>
+<example file="subscriptions.ts" project="events">
+import { createEventBus } from "@zudojs/events";
+import type { Event } from "@zudojs/events";
+import { TaskCompletedEvent } from "./task.events.js";
+import type { TaskCompleted } from "./task.events.js";
+
+const bus = createEventBus();
+
+const email = bus.on<Event<TaskCompleted>>("task.completed", (event) => {
+  console.log(`email: well done on "${event.payload.title}"`);
+});
+bus.once("task.completed", () => console.log("badge: your first finished task!"));
+
+await bus.publish(TaskCompletedEvent.create({ taskId: 1, userId: "ada", title: "Buy milk" }));
+await bus.publish(TaskCompletedEvent.create({ taskId: 2, userId: "ada", title: "Write report" }));
+
+email.unsubscribe();
+console.log("email active:", email.active, "handlers left:", bus.handlerCount);
+await bus.publish(TaskCompletedEvent.create({ taskId: 3, userId: "ada", title: "Call the bank" }));
+</example>
+<output>
+email: well done on "Buy milk"
+badge: your first finished task!
+email: well done on "Write report"
+email active: false handlers left: 0
+</output>
+<p><code>bus.publish(event)</code> publishes an event you built with <code>create</code>. After the unsubscribe, no handler is left, so the third event reaches nobody. That is not an error: the publisher does not care who listens.</p>
+<warn title="COMMON MISTAKE: SUBSCRIBING PER REQUEST">Subscribe your handlers once, when the app starts. If you call <code>bus.on</code> inside a request handler, every request adds another copy, each event runs it more and more times, and memory grows forever. This is called a <strong>listener leak</strong>. The bus warns you when one event type collects more than 100 handlers.</warn>
+</section>
+
+<section>
+<h2 id="wildcards">Wildcards and priorities</h2>
+<p>A handler can subscribe to a pattern instead of one type:</p>
+<ul>
+<li><code>"task.*"</code> matches every event in the <code>task</code> namespace: <code>task.created</code>, <code>task.completed</code>, <code>task.deleted</code>.</li>
+<li><code>"*"</code> matches every event. That is handy for an audit log.</li>
+</ul>
+<p>When several handlers match, they run in <strong>priority</strong> order: higher numbers first, and the default is 0. Handlers with the same priority run in the order they subscribed:</p>
+<example file="wildcards.ts">
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+
+bus.on("*", (event) => console.log("audit log:", event.type), { priority: -10 });
+bus.on("task.*", (event) => console.log("task activity:", event.type));
+bus.on("task.completed", () => console.log("update statistics"), { priority: 10 });
+
+await bus.publishEvent({ type: "task.created", payload: { taskId: 4 } });
+console.log("---");
+await bus.publishEvent({ type: "task.completed", payload: { taskId: 4 } });
+console.log("---");
+await bus.publishEvent({ type: "user.registered", payload: { userId: "grace" } });
+</example>
+<output>
+task activity: task.created
+audit log: task.created
+---
+update statistics
+task activity: task.completed
+audit log: task.completed
+---
+audit log: user.registered
+</output>
+<p>The audit log has priority -10, so it always runs last, after the other handlers did their work. Use priorities sparingly. If handler B only works when A ran first, they are not really independent. Consider doing both in one handler instead.</p>
+</section>
+
+<section>
+<h2 id="dispatch">Sequential or parallel</h2>
+<p>By default the bus runs handlers <strong>sequentially</strong>: it waits for one to finish before it starts the next, in priority order. In <strong>parallel</strong> mode it starts all of them at once and waits for all of them. Watch the order of the lines:</p>
+<example file="dispatch.ts">
+import { createEventBus, EventEmitterMode } from "@zudojs/events";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const bus = createEventBus();
+
+bus.on("task.completed", async () => {
+  console.log("  email starts");
+  await wait(40);
+  console.log("  email done");
+});
+bus.on("task.completed", async () => {
+  console.log("  stats starts");
+  await wait(10);
+  console.log("  stats done");
+});
+
+console.log("sequential:");
+await bus.publishEvent({ type: "task.completed", payload: null });
+console.log("parallel:");
+await bus.publishEvent({ type: "task.completed", payload: null }, { mode: EventEmitterMode.PARALLEL });
+</example>
+<output>
+sequential:
+  email starts
+  email done
+  stats starts
+  stats done
+parallel:
+  email starts
+  stats starts
+  stats done
+  email done
+</output>
+<p>Sequential took about 50 ms (40 + 10), parallel about 40 ms (the slowest handler). Choose like this:</p>
+<ul>
+<li><strong>Sequential</strong> (the default) when order matters or handlers share something, like one database connection.</li>
+<li><strong>Parallel</strong> when handlers are independent and slow, such as calls to different outside services.</li>
+</ul>
+<p>You can set the mode for the whole bus with <code>createEventBus({ emitter: { mode } })</code> or, as here, for one publish.</p>
+</section>
+
+<section>
+<h2 id="errors">When a handler throws</h2>
+<p>The mail server is down and the email handler throws. What should happen to the request that completed the task? The task <em>was</em> saved. Failing the request would be wrong, and so would silently forgetting the error. By default the bus runs the other handlers anyway and reports the failure in the result:</p>
+<example file="handler-errors.ts">
+import { createEventBus, EventHandlerError } from "@zudojs/events";
+
+const bus = createEventBus({
+  onError: (error, context) => {
+    console.log("onError:", context.source, error instanceof Error ? error.message : error);
+  },
+});
+
+bus.on("task.completed", () => {
+  throw new Error("mail server is down");
+}, { id: "send-email" });
+bus.on("task.completed", () => console.log("statistics updated"), { id: "update-stats" });
+
+const result = await bus.publishEvent({ type: "task.completed", payload: { taskId: 1 } });
+console.log("handled:", result.handled, "succeeded:", result.succeeded, "failed:", result.failed);
+
+for (const error of result.errors) {
+  if (error instanceof EventHandlerError && error.cause instanceof Error) {
+    console.log(error.handlerId, "->", error.cause.message);
+  }
+}
+</example>
+<output>
+onError: handler Event handler "send-email" failed while processing "task.completed".
+statistics updated
+handled: true succeeded: 1 failed: 1
+send-email -> mail server is down
+</output>
+<ul>
+<li>The failure did not stop <code>update-stats</code>. This is the <code>CONTINUE</code> error mode, the bus default.</li>
+<li>Each failure is wrapped in an <code>EventHandlerError</code>. Its <code>handlerId</code> says which handler failed (give your handlers an <code>id</code>), and its <code>cause</code> is what the handler threw.</li>
+<li>The <code>onError</code> hook sees every failure, even when nobody reads the result. In the Task API, log it there with the logger. An error that is only in an unread result is an error nobody will ever see.</li>
+</ul>
+<p>Two more ways a handler can fail:</p>
+<example file="handler-limits.ts">
+import { createEventBus, EventErrorMode, EventHandlerError } from "@zudojs/events";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const bus = createEventBus();
+
+bus.on("task.completed", (event) => {
+  const payload = event.payload as { title: string };
+  payload.title = "changed";
+}, { id: "sneaky" });
+bus.on("task.completed", async () => {
+  await wait(100);
+}, { id: "slow-report", timeoutMs: 20 });
+
+const result = await bus.publishEvent({ type: "task.completed", payload: { title: "Buy milk" } });
+for (const error of result.errors) {
+  if (error instanceof EventHandlerError && error.cause instanceof Error) {
+    console.log(error.handlerId, "->", error.cause.message);
+  }
+}
+
+try {
+  await bus.publishEvent({ type: "task.completed", payload: { title: "B" } }, { errorMode: EventErrorMode.THROW });
+} catch (error) {
+  if (error instanceof EventHandlerError) console.log("publish rejected:", error.message);
+}
+</example>
+<output>
+sneaky -> Cannot assign to read only property 'title' of object '#<Object>'
+slow-report -> Event processing exceeded the timeout of 20ms.
+publish rejected: Event handler "sneaky" failed while processing "task.completed".
+</output>
+<ul>
+<li>A handler that changes the payload fails, because the payload it receives is frozen.</li>
+<li><code>timeoutMs</code> fails a handler that takes too long, so one hanging handler cannot hold up the whole publish. Note that the slow code itself keeps running in the background. Only its result is ignored.</li>
+<li>In the <code>THROW</code> error mode, the first failing handler rejects the publish, and the handlers after it do not run. Use it when every handler must succeed, for example in a test.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="middleware">Event middleware</h2>
+<p>You met middleware for HTTP requests in <a href="/learn/zudo-middleware">the middleware lesson</a>. Event middleware is the same idea: a function that wraps the delivery of every event. It gets a <code>context</code> holding the event and a <code>next</code> function that runs the rest (other middleware, then the handlers). It is the place for logging, timing and checks that apply to all events:</p>
+<example file="middleware.ts">
+import { createEventBus, EventMiddlewareError, validateEventMiddleware } from "@zudojs/events";
+
+const hasTaskId = (payload: unknown) =>
+  typeof payload === "object" && payload !== null && "taskId" in payload;
+
+const bus = createEventBus({
+  middleware: [validateEventMiddleware((event) => hasTaskId(event.payload), { priority: 100 })],
+});
+
+bus.use(async (context, next) => {
+  console.log("->", context.event.type);
+  const result = await next();
+  console.log("<-", context.event.type);
+  return result;
+});
+
+bus.on("task.completed", (event) => console.log("   handler:", event.payload));
+
+await bus.publishEvent({ type: "task.completed", payload: { taskId: 1 } });
+
+try {
+  await bus.publishEvent({ type: "task.completed", payload: { title: "no id" } });
+} catch (error) {
+  if (error instanceof EventMiddlewareError) console.log("rejected:", error.message);
+}
+</example>
+<output>
+-> task.completed
+   handler: { taskId: 1 }
+<- task.completed
+rejected: Event "task.completed" failed middleware validation.
+</output>
+<ul>
+<li><code>bus.use(fn)</code> adds a hand-written middleware. Always <code>return</code> the result of <code>next()</code>, or the bus cannot see what the handlers did.</li>
+<li><code>validateEventMiddleware(check)</code> is a ready-made middleware that rejects events whose check returns <code>false</code>. Ready-made middleware goes in the <code>middleware</code> option, and its priority of 100 makes it the outermost layer, so a bad event never reaches the logging or the handlers.</li>
+<li>A middleware that returns without calling <code>next()</code> stops the event: no handler runs, and the result says <code>shortCircuited: true</code>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="task-api">Put it together: task.completed in the Task API</h2>
+<p>The task service now does its own job, saving the task, and then announces it. Each reaction lives in its own handler, registered once at start-up:</p>
+<example file="task.service.ts" project="events">
+import type { EventBus } from "@zudojs/events";
+import { NotFoundError } from "@zudojs/errors";
+import { TaskCompletedEvent } from "./task.events.js";
+
+interface Task {
+  readonly id: number;
+  readonly userId: string;
+  readonly title: string;
+  done: boolean;
+}
+
+export class TaskService {
+  private readonly tasks = new Map<number, Task>([
+    [1, { id: 1, userId: "ada", title: "Buy milk", done: false }],
+  ]);
+
+  constructor(private readonly bus: EventBus) {}
+
+  async complete(userId: string, id: number): Promise<Task> {
+    const task = this.tasks.get(id);
+    if (!task || task.userId !== userId) {
+      throw new NotFoundError(`Task ${id} not found`);
+    }
+    task.done = true;
+    await this.bus.publish(TaskCompletedEvent.create({ taskId: id, userId, title: task.title }));
+    return task;
+  }
+}
+</example>
+<example file="task.handlers.ts" project="events">
+import type { Event, EventBus } from "@zudojs/events";
+import type { TaskCompleted } from "./task.events.js";
+
+type Completed = Event<TaskCompleted>;
+
+export function registerTaskHandlers(bus: EventBus, stats: Map<string, number>): void {
+  bus.on<Completed>("task.completed", (event) => {
+    console.log(`[email] to ${event.payload.userId}: well done on "${event.payload.title}"`);
+  }, { id: "task-completed-email" });
+
+  bus.on<Completed>("task.completed", (event) => {
+    const { userId } = event.payload;
+    stats.set(userId, (stats.get(userId) ?? 0) + 1);
+  }, { id: "task-completed-stats" });
+
+  bus.on<Completed>("task.completed", (event) => {
+    console.log(`[cache] invalidate tag "tasks" for ${event.payload.userId}`);
+  }, { id: "task-completed-cache" });
+}
+</example>
+<example file="main.ts" project="events">
+import { createEventBus } from "@zudojs/events";
+import { registerTaskHandlers } from "./task.handlers.js";
+import { TaskService } from "./task.service.js";
+
+const bus = createEventBus({
+  onError: (error, context) => console.log("event handler failed:", context.event?.type, error),
+});
+const stats = new Map<string, number>();
+registerTaskHandlers(bus, stats);
+
+const service = new TaskService(bus);
+const task = await service.complete("ada", 1);
+console.log("response:", task);
+console.log("stats:", stats);
+
+try {
+  await service.complete("linus", 1);
+} catch (error) {
+  console.log("linus:", error instanceof Error ? error.message : error);
+}
+</example>
+<output>
+[email] to ada: well done on "Buy milk"
+[cache] invalidate tag "tasks" for ada
+response: { id: 1, userId: 'ada', title: 'Buy milk', done: true }
+stats: Map(1) { 'ada' => 1 }
+linus: Task 1 not found
+</output>
+<p>Adding a fourth reaction, say a push notification, is now one new handler. <code>TaskService</code> does not change. And notice the ownership check: Linus cannot complete Ada's task, so no event is published for him. Check permissions <em>before</em> you publish: once an event is out, every handler trusts it.</p>
+<p>In the real Task API, pass the bus that <code>src/app.ts</code> already creates, and call <code>registerTaskHandlers</code> from your task module when it starts, so the handlers are registered exactly once.</p>
+</section>
+
+<section>
+<h2 id="limits">What events do not give you</h2>
+<p>This event bus lives in the memory of one process. Keep three limits in mind:</p>
+<ul>
+<li><strong>Events can be lost.</strong> If the process crashes after the task was saved but before the email handler ran, the email is never sent. Nothing retries it. For work that must happen, put a job on a queue, which <a href="/learn/zudo-queue">the background jobs lesson</a> teaches.</li>
+<li><strong>Publish after the data is saved.</strong> If you publish inside a database transaction that later rolls back, the handlers have already reacted to something that never happened. Publish after the commit, as you saw in <a href="/learn/zudo-transactions">the transactions lesson</a>.</li>
+<li><strong>Other servers do not hear it.</strong> A second copy of the Task API has its own bus. Events between services need a message broker, covered in <a href="/learn/zudo-microservices">the microservices lesson</a>.</li>
+</ul>
+<p>Within those limits, events are the simplest way to keep features apart inside one application.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Count all task activity">
+<p>Subscribe one handler to <code>task.*</code> that counts events per type in a <code>Map</code>. Publish <code>task.created</code> twice and <code>task.completed</code> once, then print the map. Unsubscribe the handler and publish once more to show that the count stops.</p>
+<solution>
+<example file="count.ts">
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+const counts = new Map<string, number>();
+
+const counter = bus.on("task.*", (event) => {
+  counts.set(event.type, (counts.get(event.type) ?? 0) + 1);
+});
+
+await bus.publishEvent({ type: "task.created", payload: { taskId: 1 } });
+await bus.publishEvent({ type: "task.created", payload: { taskId: 2 } });
+await bus.publishEvent({ type: "task.completed", payload: { taskId: 1 } });
+console.log(counts);
+
+counter.unsubscribe();
+await bus.publishEvent({ type: "task.deleted", payload: { taskId: 2 } });
+console.log(counts);
+</example>
+<output>
+Map(2) { 'task.created' => 2, 'task.completed' => 1 }
+Map(2) { 'task.created' => 2, 'task.completed' => 1 }
+</output>
+</solution>
+</exercise>
+<exercise title="A timing middleware">
+<p>Write a middleware with <code>bus.use</code> that prints how many handlers ran for each event, using the result that <code>next()</code> returns. Hint: the result has a <code>results</code> array.</p>
+<solution>
+<example file="timing.ts">
+import { createEventBus } from "@zudojs/events";
+
+const bus = createEventBus();
+
+bus.use(async (context, next) => {
+  const result = await next();
+  const ran = (result as { results: readonly unknown[] }).results.length;
+  console.log(`${context.event.type}: ${ran} handler(s)`);
+  return result;
+});
+
+bus.on("task.completed", () => {});
+bus.on("task.*", () => {});
+
+await bus.publishEvent({ type: "task.completed", payload: null });
+await bus.publishEvent({ type: "task.created", payload: null });
+</example>
+<output>
+task.completed: 2 handler(s)
+task.created: 1 handler(s)
+</output>
+<p><code>next()</code> is typed as <code>Promise&lt;unknown&gt;</code>, because a middleware cannot know what the inner layers return. The cast says what you expect. It is safe here because the innermost layer is always the handler dispatch.</p>
+</solution>
+</exercise>
+<exercise title="Which mode?">
+<p>For each case, choose sequential or parallel: (a) three handlers that each call a different outside API and take 300 ms; (b) a handler that writes a row and another that reads that row to build a report.</p>
+<solution>
+<p>(a) Parallel: they are independent, so the publish takes about 300 ms instead of 900 ms. (b) Sequential, with the writer at a higher priority: the reader depends on the writer having finished. Better still, make it one handler, because two handlers that depend on each other's order are really one job.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>An event says "this happened". The publisher does not know the handlers, so features stay apart.</li>
+<li><code>bus.on</code> subscribes and returns a subscription with <code>unsubscribe()</code>. Subscribe once at start-up, never per request.</li>
+<li><code>defineEvent</code> gives typed, frozen events with an id and a timestamp.</li>
+<li>Patterns like <code>task.*</code> and <code>*</code> match many types. Higher priority runs first.</li>
+<li>Handlers run sequentially by default. Parallel mode runs independent handlers at once.</li>
+<li>A failing handler does not stop the others. Read <code>result.errors</code> and always log failures in <code>onError</code>.</li>
+<li>Middleware wraps every delivery for logging, timing and validation.</li>
+<li>In-memory events can be lost and stay in one process. Publish after saving, and use a queue for work that must happen.</li>
+</ul>
+</section>

@@ -1,0 +1,391 @@
+---
+title: Designing a REST API
+description: Turn the Task API into a well-designed REST API: resources and URLs, a written contract, filtering, sorting, offset and cursor pagination, versioning and one consistent error format.
+minutes: 40
+youNeed: The HTTP in depth lesson
+youBuild: A versioned Task API list endpoint with filtering, sorting, pagination and problem-details errors
+keywords: rest api design, resources, crud, url design, nested resources, pagination, offset pagination, cursor pagination, filtering, sorting, api versioning, rfc 9457, problem details
+---
+<section>
+<h2 id="rest">Resources, not actions</h2>
+<p><strong>REST</strong> (REpresentational State Transfer) is a style for designing HTTP APIs. It is not a library or a standard you install. It is a set of habits that make an API predictable, so a developer who has used one REST API can guess how yours works.</p>
+<p>The central idea is the <strong>resource</strong>: a thing your API knows about, like a task, a user or a project. Each resource has a URL. The URL is a <strong>noun</strong>, and the HTTP method from <a href="/learn/http-deep">the previous lesson</a> is the <strong>verb</strong>. What travels in the body, usually JSON, is a <strong>representation</strong> of the resource.</p>
+<p>The four basic operations on stored data are called <strong>CRUD</strong>: create, read, update, delete. They map onto methods like this:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Operation</th><th>Request</th><th>Success</th></tr></thead>
+<tbody>
+<tr><td>List tasks</td><td><code>GET /tasks</code></td><td>200 with an array</td></tr>
+<tr><td>Create a task</td><td><code>POST /tasks</code></td><td>201 with the new task and a <code>Location</code> header</td></tr>
+<tr><td>Read one task</td><td><code>GET /tasks/7</code></td><td>200 with the task</td></tr>
+<tr><td>Replace a task</td><td><code>PUT /tasks/7</code></td><td>200 with the task</td></tr>
+<tr><td>Change part of a task</td><td><code>PATCH /tasks/7</code></td><td>200 with the task</td></tr>
+<tr><td>Delete a task</td><td><code>DELETE /tasks/7</code></td><td>204 with no body</td></tr>
+</tbody>
+</table></div>
+<p><code>/tasks</code> is a <strong>collection</strong>, and <code>/tasks/7</code> is one <strong>item</strong> in it. Use plural nouns, lower case, and hyphens between words (<code>/task-lists</code>). Compare:</p>
+<ul>
+<li>Not REST: <code>POST /createTask</code>, <code>GET /getTask?id=7</code>, <code>POST /tasks/7/delete</code>. The verb hides in the URL, so every endpoint has to be learned one by one.</li>
+<li>REST: <code>POST /tasks</code>, <code>GET /tasks/7</code>, <code>DELETE /tasks/7</code>. Learn the pattern once and you know them all.</li>
+</ul>
+<h3>Nesting</h3>
+<p>When one resource belongs to another, the URL can show it: <code>GET /projects/3/tasks</code> lists the tasks of project 3, and <code>POST /projects/3/tasks</code> creates a task inside it. Keep it to one level. Once a task has its own id, address it directly as <code>/tasks/7</code>, not <code>/projects/3/tasks/7/comments/2</code>. A filter such as <code>GET /tasks?projectId=3</code> is an equally good answer; pick one and use it everywhere.</p>
+</section>
+
+<section>
+<h2 id="contract">Write the contract first</h2>
+<p>An API's <strong>contract</strong> is the promise it makes to its clients: which URLs exist, what they accept, what they return and which status codes they use. Write it down before you write code. Clients (a web app, a mobile app, another team) build against the contract, so changing it later breaks them. Here is the Task API's contract:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Request</th><th>Body</th><th>Responses</th></tr></thead>
+<tbody>
+<tr><td><code>GET /v1/tasks</code></td><td>none; query: <code>done</code>, <code>q</code>, <code>sort</code>, <code>limit</code>, <code>offset</code></td><td>200 list, 400 bad query</td></tr>
+<tr><td><code>POST /v1/tasks</code></td><td><code>{"title": "Buy milk"}</code></td><td>201 task, 400 invalid, 415 not JSON</td></tr>
+<tr><td><code>GET /v1/tasks/{id}</code></td><td>none</td><td>200 task, 404</td></tr>
+<tr><td><code>PATCH /v1/tasks/{id}</code></td><td><code>{"done": true}</code> or <code>{"title": "…"}</code></td><td>200 task, 400, 404</td></tr>
+<tr><td><code>DELETE /v1/tasks/{id}</code></td><td>none</td><td>204, 404</td></tr>
+</tbody>
+</table></div>
+<p>A task looks like <code>{"id": 7, "title": "Buy milk", "done": false, "createdAt": "2026-09-07"}</code>. A list comes wrapped in an object, <code>{"data": [...], "meta": {...}}</code>, rather than as a bare array. That leaves room to add information such as the total count later without breaking anyone. Every error has the same shape, which you will build in the <a href="#errors">errors section</a>.</p>
+<tip>Later in the course you will describe this contract in a machine-readable format called OpenAPI, and generate it from your code in the <a href="/learn/zudo-openapi">OpenAPI lesson</a>.</tip>
+</section>
+
+<section>
+<h2 id="query">Filtering and sorting with query parameters</h2>
+<p>A list endpoint gets its options from the <strong>query string</strong>, the part of the URL after <code>?</code>. <code>URLSearchParams</code> reads it for you. Every value arrives as a string (or <code>null</code> when missing), and every value comes from outside, so check each one.</p>
+<p>Sorting needs special care: never sort by whatever field name the client sends. Keep an <strong>allow-list</strong> of fields that may be sorted. A leading minus sign, <code>sort=-createdAt</code>, is the usual way to ask for descending order.</p>
+<p>This module is the core of the list endpoint. It has no Node APIs in it, so you can run it in the browser:</p>
+<example file="tasks.js" project="api">
+export const tasks = [
+  { id: 1, title: "Buy milk", done: true, createdAt: "2026-09-01" },
+  { id: 2, title: "Write report", done: false, createdAt: "2026-09-02" },
+  { id: 3, title: "Call Ada", done: false, createdAt: "2026-09-02" },
+  { id: 4, title: "Book dentist", done: true, createdAt: "2026-09-04" },
+  { id: 5, title: "Fix bike", done: false, createdAt: "2026-09-05" },
+  { id: 6, title: "Read book", done: false, createdAt: "2026-09-06" },
+  { id: 7, title: "Water plants", done: false, createdAt: "2026-09-07" },
+];
+
+const SORTABLE = ["id", "title", "createdAt"];
+
+function wholeNumber(params, name, fallback, min, max, errors) {
+  if (!params.has(name)) return fallback;
+  const n = Number(params.get(name));
+  if (!Number.isInteger(n) || n < min || n > max) {
+    errors.push({ param: name, message: `must be a whole number from ${min} to ${max}` });
+  }
+  return n;
+}
+
+export function parseListQuery(params) {
+  const errors = [];
+  const limit = wholeNumber(params, "limit", 20, 1, 100, errors);
+  const offset = wholeNumber(params, "offset", 0, 0, 1_000_000, errors);
+  const done = params.get("done");
+  if (done !== null && done !== "true" && done !== "false") {
+    errors.push({ param: "done", message: "must be true or false" });
+  }
+  const sort = params.get("sort") ?? "id";
+  const field = sort.replace(/^-/, "");
+  if (!SORTABLE.includes(field)) {
+    errors.push({ param: "sort", message: `must be one of ${SORTABLE.join(", ")}, with an optional leading -` });
+  }
+  const q = (params.get("q") ?? "").trim().toLowerCase();
+  const query = { limit, offset, done: done === null ? null : done === "true", q, field, desc: sort.startsWith("-") };
+  return { errors, query };
+}
+
+export function listTasks(all, query) {
+  const matches = all.filter(
+    (t) => (query.done === null || t.done === query.done) && t.title.toLowerCase().includes(query.q),
+  );
+  const sorted = matches.toSorted((a, b) => {
+    const order = a[query.field] < b[query.field] ? -1 : a[query.field] > b[query.field] ? 1 : 0;
+    return query.desc ? -order : order;
+  });
+  const data = sorted.slice(query.offset, query.offset + query.limit);
+  return { data, meta: { total: matches.length, limit: query.limit, offset: query.offset } };
+}
+</example>
+<p>Try it with a few query strings, the same way the server will call it:</p>
+<example file="try-list.js" project="api">
+import { listTasks, parseListQuery, tasks } from "./tasks.js";
+
+function show(queryString) {
+  const { errors, query } = parseListQuery(new URLSearchParams(queryString));
+  if (errors.length > 0) {
+    console.log(queryString, "->", errors);
+    return;
+  }
+  const { data, meta } = listTasks(tasks, query);
+  console.log(queryString, "->", data.map((t) => `${t.id} ${t.title}`), meta);
+}
+
+show("done=false&sort=-createdAt&limit=3");
+show("q=BOOK");
+show("limit=500&sort=password");
+</example>
+<output>
+done=false&sort=-createdAt&limit=3 -> [ '7 Water plants', '6 Read book', '5 Fix bike' ] { total: 5, limit: 3, offset: 0 }
+q=BOOK -> [ '4 Book dentist', '6 Read book' ] { total: 2, limit: 20, offset: 0 }
+limit=500&sort=password -> [
+  { param: 'limit', message: 'must be a whole number from 1 to 100' },
+  {
+    param: 'sort',
+    message: 'must be one of id, title, createdAt, with an optional leading -'
+  }
+]
+</output>
+<p>The first call asked for open tasks, newest first, three at a time. <code>meta.total</code> is 5: five tasks match, but only three were sent. The search <code>q=BOOK</code> ignored upper and lower case. The last call broke two rules, and the client hears about <strong>both</strong> at once instead of fixing one, retrying and hitting the next.</p>
+<p>Tasks 2 and 3 have the same <code>createdAt</code>. <code>toSorted</code> keeps equal items in their original order, so the result is the same every time. A database gives no such promise: always add a tie-breaker, such as the id, when you sort in SQL.</p>
+</section>
+
+<section>
+<h2 id="pagination">Pagination: offset and cursor</h2>
+<p>A list can grow to millions of rows. <strong>Pagination</strong> means sending it one page at a time. There are two common ways.</p>
+<h3>Offset pagination</h3>
+<p><code>?limit=3&amp;offset=3</code> means "skip 3 items, then give me 3". It is what <code>listTasks</code> does. It is simple, and the client can jump straight to page 10. It has a weakness: if an item is added while someone is paging, everything shifts. Watch a client read the newest tasks, three per page, while a new task arrives between page 1 and page 2:</p>
+<example file="offset-problem.js">
+const tasks = [1, 2, 3, 4, 5, 6, 7].map((id) => ({ id, title: `Task ${id}` }));
+const newestFirst = () => tasks.toSorted((a, b) => b.id - a.id);
+
+const page1 = newestFirst().slice(0, 3);
+console.log("page 1:", page1.map((t) => t.id));
+
+tasks.push({ id: 8, title: "Task 8" });
+
+const page2 = newestFirst().slice(3, 6);
+console.log("page 2:", page2.map((t) => t.id));
+</example>
+<output>
+page 1: [ 7, 6, 5 ]
+page 2: [ 5, 4, 3 ]
+</output>
+<p>Task 5 appears on both pages, because the new task pushed it from position 3 to position 4. With deletes, an item can be skipped instead. On big tables, a large offset is also slow: the database still has to walk past every skipped row.</p>
+<h3>Cursor pagination</h3>
+<p>A <strong>cursor</strong> remembers <em>where</em> the last page ended instead of <em>how many</em> items to skip. The server returns a <code>nextCursor</code> with each page, and the client sends it back to get the next one. Here the cursor says "continue with ids smaller than 5". It is encoded with <code>btoa</code> (Base64) so clients treat it as an opaque token and do not build their own:</p>
+<example file="cursor.js">
+const tasks = [1, 2, 3, 4, 5, 6, 7].map((id) => ({ id, title: `Task ${id}` }));
+
+function decodeCursor(cursor) {
+  try {
+    const { before } = JSON.parse(atob(cursor));
+    return Number.isInteger(before) ? before : null;
+  } catch {
+    return null;
+  }
+}
+
+function page(limit, cursor) {
+  const before = cursor ? decodeCursor(cursor) : Infinity;
+  if (before === null) throw new Error("invalid cursor");
+  const rows = tasks.filter((t) => t.id < before).toSorted((a, b) => b.id - a.id).slice(0, limit + 1);
+  const data = rows.slice(0, limit);
+  const nextCursor = rows.length > limit ? btoa(JSON.stringify({ before: data.at(-1).id })) : null;
+  return { data: data.map((t) => t.id), nextCursor };
+}
+
+const p1 = page(3);
+console.log("page 1:", p1);
+tasks.push({ id: 8, title: "Task 8" });
+const p2 = page(3, p1.nextCursor);
+console.log("page 2:", p2);
+console.log("page 3:", page(3, p2.nextCursor));
+</example>
+<output>
+page 1: { data: [ 7, 6, 5 ], nextCursor: 'eyJiZWZvcmUiOjV9' }
+page 2: { data: [ 4, 3, 2 ], nextCursor: 'eyJiZWZvcmUiOjJ9' }
+page 3: { data: [ 1 ], nextCursor: null }
+</output>
+<p>No duplicate this time, even though task 8 arrived in the middle. The server asks for <code>limit + 1</code> rows: if the extra row exists, there is a next page. On the last page <code>nextCursor</code> is <code>null</code>, which tells the client to stop.</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th></th><th>Offset</th><th>Cursor</th></tr></thead>
+<tbody>
+<tr><td>Jump to page 10</td><td>Yes</td><td>No, only next (and sometimes previous)</td></tr>
+<tr><td>Stable while data changes</td><td>No</td><td>Yes</td></tr>
+<tr><td>Fast on huge tables</td><td>No</td><td>Yes, with an index on the sort column</td></tr>
+<tr><td>Good for</td><td>Admin tables with page numbers</td><td>Feeds, infinite scroll, syncing</td></tr>
+</tbody>
+</table></div>
+</section>
+
+<section>
+<h2 id="errors">One error format: problem details</h2>
+<p>Clients handle errors in code, so every error from your API should have the same shape. You do not have to invent one: <strong>RFC 9457</strong>, "Problem Details for HTTP APIs", is a standard for exactly this. An RFC is an official internet specification. A problem details body is JSON with these fields:</p>
+<ul>
+<li><code>type</code>: a URL that names the kind of problem. Clients compare it, so it never changes.</li>
+<li><code>title</code>: a short summary for humans, the same for every problem of this type.</li>
+<li><code>status</code>: the HTTP status code, repeated in the body.</li>
+<li><code>detail</code>: what went wrong this time.</li>
+<li><code>instance</code>: optional; which request or resource it was about.</li>
+</ul>
+<p>You may add your own fields, such as an <code>errors</code> list. The response uses the media type <code>application/problem+json</code>, so a client knows the format from the header alone.</p>
+<example file="problem.js" project="api">
+export function problem(status, type, title, detail, extra = {}) {
+  return { type: `https://example.com/problems/${type}`, title, status, detail, ...extra };
+}
+
+export function sendProblem(res, body) {
+  res.writeHead(body.status, { "Content-Type": "application/problem+json" });
+  res.end(JSON.stringify(body));
+}
+</example>
+<p>Never put a stack trace, an SQL query or an internal file path in <code>detail</code>. Log those on the server; attackers read error messages too.</p>
+</section>
+
+<section>
+<h2 id="versioning">Versioning</h2>
+<p>A <strong>breaking change</strong> is one that can make a working client fail: removing or renaming a field, changing a field's type, adding a required input, or changing what a status code means. When you must make one, publish a new <strong>version</strong> of the API and keep the old one running until clients have moved.</p>
+<p>The most common way is a version in the path: <code>/v1/tasks</code>, later <code>/v2/tasks</code>. It is visible in every log line and easy to route. Some APIs use a header instead, such as <code>Accept-Version: 2</code>.</p>
+<p><strong>Additive</strong> changes do not need a new version: a new endpoint, a new optional query parameter, or a new field in a response. That only works if clients ignore fields they do not know, which is another reason to wrap lists in <code>{"data": ...}</code> and to write your own clients that way.</p>
+</section>
+
+<section>
+<h2 id="build">Build it: the list endpoint</h2>
+<p>Now put the pieces together in a server. It serves <code>GET /v1/tasks</code> with the query parsing and listing from <code>tasks.js</code>, returns problem details for a bad query and for unknown routes, and adds a <code>Link</code> header pointing at the next page, which is a common convention. As before, the example calls itself with <code>fetch</code> and then stops:</p>
+<example file="server.js" project="api" browser="no">
+import http from "node:http";
+import { listTasks, parseListQuery, tasks } from "./tasks.js";
+import { problem, sendProblem } from "./problem.js";
+
+const server = http.createServer((req, res) => {
+  const url = new URL(req.url, "http://localhost");
+  if (req.method !== "GET" || url.pathname !== "/v1/tasks") {
+    return sendProblem(res, problem(404, "not-found", "Not Found", `No route for ${req.method} ${url.pathname}`));
+  }
+  const { errors, query } = parseListQuery(url.searchParams);
+  if (errors.length > 0) {
+    return sendProblem(res, problem(400, "invalid-query", "Invalid query", "Some query parameters are invalid.", { errors }));
+  }
+  const page = listTasks(tasks, query);
+  const headers = { "Content-Type": "application/json" };
+  if (query.offset + query.limit < page.meta.total) {
+    url.searchParams.set("offset", String(query.offset + query.limit));
+    headers.Link = `<${url.pathname}${url.search}>; rel="next"`;
+  }
+  res.writeHead(200, headers);
+  res.end(JSON.stringify(page));
+});
+
+server.listen(0, async () => {
+  const base = `http://localhost:${server.address().port}`;
+  for (const path of ["/v1/tasks?done=false&sort=title&limit=2", "/v1/tasks?limit=0", "/v2/tasks"]) {
+    const res = await fetch(base + path);
+    console.log(res.status, res.headers.get("content-type"), res.headers.get("link"));
+    console.log(JSON.stringify(await res.json(), null, 2));
+  }
+  server.close();
+});
+</example>
+<output>
+200 application/json </v1/tasks?done=false&sort=title&limit=2&offset=2>; rel="next"
+{
+  "data": [
+    {
+      "id": 3,
+      "title": "Call Ada",
+      "done": false,
+      "createdAt": "2026-09-02"
+    },
+    {
+      "id": 5,
+      "title": "Fix bike",
+      "done": false,
+      "createdAt": "2026-09-05"
+    }
+  ],
+  "meta": {
+    "total": 5,
+    "limit": 2,
+    "offset": 0
+  }
+}
+400 application/problem+json null
+{
+  "type": "https://example.com/problems/invalid-query",
+  "title": "Invalid query",
+  "status": 400,
+  "detail": "Some query parameters are invalid.",
+  "errors": [
+    {
+      "param": "limit",
+      "message": "must be a whole number from 1 to 100"
+    }
+  ]
+}
+404 application/problem+json null
+{
+  "type": "https://example.com/problems/not-found",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "No route for GET /v2/tasks"
+}
+</output>
+<p>Three requests, three well-formed answers:</p>
+<ul>
+<li>The list has two open tasks sorted by title, <code>total: 5</code>, and a <code>Link</code> header with the exact URL of the next page, so the client does not have to compute it.</li>
+<li><code>limit=0</code> got a 400 with <code>application/problem+json</code> and the list of what was wrong.</li>
+<li><code>/v2/tasks</code> does not exist, and the 404 has the very same shape. A client needs one error handler for your whole API.</li>
+</ul>
+<p>Run it on your computer by saving <code>tasks.js</code>, <code>problem.js</code> and <code>server.js</code> in one folder (with <code>"type": "module"</code> in <code>package.json</code>, as in every project so far) and running <code>node server.js</code>.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Fix the URLs">
+<p>Rewrite these endpoints in REST style: (a) <code>GET /getAllTasks</code>; (b) <code>POST /tasks/7/markDone</code>; (c) <code>GET /task?id=7</code>; (d) <code>POST /deleteTask</code> with <code>{"id": 7}</code>; (e) <code>GET /projects/3/tasks/7</code>.</p>
+<solution>
+<p>(a) <code>GET /tasks</code>. (b) <code>PATCH /tasks/7</code> with <code>{"done": true}</code>. (c) <code>GET /tasks/7</code>. (d) <code>DELETE /tasks/7</code>. (e) <code>GET /tasks/7</code>: the task has its own id, so it does not need the project in its URL.</p>
+</solution>
+</exercise>
+
+<exercise title="Filter by date">
+<p>Add a <code>since</code> parameter to <code>parseListQuery</code> and <code>listTasks</code>: only tasks with <code>createdAt</code> on or after that date. Accept only the form <code>YYYY-MM-DD</code>, and report anything else as an error. Test it with <code>since=2026-09-05</code> and <code>since=yesterday</code>.</p>
+<solution>
+<example file="since.js" project="api">
+import { listTasks, parseListQuery, tasks } from "./tasks.js";
+
+function parseWithSince(params) {
+  const { errors, query } = parseListQuery(params);
+  const since = params.get("since");
+  if (since !== null && !/^\d{4}-\d{2}-\d{2}$/.test(since)) {
+    errors.push({ param: "since", message: "must be a date like 2026-09-05" });
+  }
+  return { errors, query: { ...query, since } };
+}
+
+function listSince(all, query) {
+  const recent = query.since === null ? all : all.filter((t) => t.createdAt >= query.since);
+  return listTasks(recent, query);
+}
+
+for (const qs of ["since=2026-09-05", "since=yesterday"]) {
+  const { errors, query } = parseWithSince(new URLSearchParams(qs));
+  console.log(qs, errors.length ? errors : listSince(tasks, query).data.map((t) => t.id));
+}
+</example>
+<output>
+since=2026-09-05 [ 5, 6, 7 ]
+since=yesterday [ { param: 'since', message: 'must be a date like 2026-09-05' } ]
+</output>
+<p>Dates in the form <code>YYYY-MM-DD</code> sort correctly as plain strings, so <code>&gt;=</code> works. The new code wraps the existing functions instead of changing them.</p>
+</solution>
+</exercise>
+
+<exercise title="Offset or cursor?">
+<p>Which pagination would you pick for: (a) an activity feed in a mobile app with infinite scroll; (b) an admin screen that shows "page 4 of 30"; (c) a job that copies every task to another system overnight?</p>
+<solution>
+<p>(a) Cursor: new activity arrives all the time, and the user only scrolls forward. (b) Offset: people want page numbers, and the table is small enough. (c) Cursor: it must not skip or repeat a task, and the table may be large.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>REST URLs name resources with plural nouns (<code>/tasks</code>, <code>/tasks/7</code>). The method is the verb. Nest at most one level.</li>
+<li>Write the contract first: URLs, bodies, status codes. Wrap lists in <code>{"data": ..., "meta": ...}</code>.</li>
+<li>Validate every query parameter, and sort only by allow-listed fields.</li>
+<li>Offset pagination can jump to any page but shifts when data changes. Cursor pagination is stable and fast, but only moves forward.</li>
+<li>Send every error as RFC 9457 problem details (<code>application/problem+json</code>) and never leak internals.</li>
+<li>Put the version in the path (<code>/v1</code>). Additive changes need no new version; breaking changes do.</li>
+</ul>
+</section>

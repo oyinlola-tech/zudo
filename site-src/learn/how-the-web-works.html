@@ -1,0 +1,284 @@
+---
+title: How the web works
+description: Follow a request from your browser to a server and back, and learn what clients, servers, IP addresses, DNS, ports, HTTP, HTTPS, APIs and databases are.
+minutes: 30
+youNeed: Lessons 1 to 3
+youBuild: A tiny task API that runs on your computer and answers its own requests
+keywords: how the web works, client server, what is dns, ip address, port number, http vs https, what is an api, url parts, curl, nslookup, fetch
+---
+<section>
+<h2 id="client-server">Clients and servers</h2>
+<p>Every conversation on the web has two sides:</p>
+<ul>
+<li>The <strong>client</strong> asks. Your browser is a client. So is a phone app, the <code>curl</code> command, and any program that sends a question to another computer.</li>
+<li>The <strong>server</strong> answers. It is a program that waits for questions, usually on a computer in a data centre. The backend you will build is a server.</li>
+</ul>
+<p>The question is a <strong>request</strong> and the answer is a <strong>response</strong>. One request always gets one response. A web page with ten images makes at least eleven requests: one for the page, then one per image.</p>
+<p>Clients and servers find each other over the <strong>internet</strong>: millions of networks joined together, passing small pieces of data from computer to computer until they reach the right one.</p>
+</section>
+
+<section>
+<h2 id="ip-dns">IP addresses and domain names</h2>
+<p>Every computer on the internet has an <strong>IP address</strong>, a number that says where it is, like a postal address. There are two kinds:</p>
+<ul>
+<li><strong>IPv4</strong>: four numbers from 0 to 255, like <code>104.20.23.154</code>.</li>
+<li><strong>IPv6</strong>: a newer, longer form, like <code>2606:4700:10::6814:179a</code>. The world ran out of IPv4 addresses, so IPv6 has many more.</li>
+</ul>
+<p>People do not remember numbers, so we use <strong>domain names</strong> like <code>example.com</code>. <strong>DNS</strong> (the Domain Name System) is the internet's phone book: it turns a name into an IP address. You can ask it yourself. <code>nslookup</code> works on Windows, macOS and Linux:</p>
+<shell>
+$ nslookup example.com
+Server:		172.20.10.1
+Address:	172.20.10.1#53
+
+Non-authoritative answer:
+Name:	example.com
+Address: 104.20.23.154
+Name:	example.com
+Address: 172.66.147.243
+Name:	example.com
+Address: 2606:4700:10::6814:179a
+Name:	example.com
+Address: 2606:4700:10::ac42:93f3
+</shell>
+<p>The first two lines are the DNS server your computer asked, usually your router or your internet provider. Then come the answers: <code>example.com</code> has two IPv4 and two IPv6 addresses. Big sites have several, so that one broken machine does not take the site down. Your answers can be different: the numbers change over time and between countries.</p>
+<p>On Linux and macOS, <code>dig</code> gives a shorter answer:</p>
+<shell>
+$ dig +short example.com
+104.20.23.154
+172.66.147.243
+</shell>
+<p>One name is special: <code>localhost</code> always means "this computer". Its IPv4 address is <code>127.0.0.1</code>. When you run a server on your own computer during development, you reach it at <code>localhost</code>.</p>
+</section>
+
+<section>
+<h2 id="ports-urls">Ports and URLs</h2>
+<p>One computer runs many programs that talk to the network: a web server, a database, maybe a mail server. The IP address finds the computer. A <strong>port</strong>, a number from 1 to 65535, finds the program on it. Some ports are standard:</p>
+<div class="lx-table-wrap"><table>
+<thead><tr><th>Port</th><th>Used by</th></tr></thead>
+<tbody>
+<tr><td>80</td><td>HTTP (web, not encrypted)</td></tr>
+<tr><td>443</td><td>HTTPS (web, encrypted)</td></tr>
+<tr><td>5432</td><td>PostgreSQL, the database you use later in this course</td></tr>
+<tr><td>3000, 8080</td><td>Common choices for your own server while you develop</td></tr>
+</tbody>
+</table></div>
+<p>A <strong>URL</strong> (the web address you type) packs all of this into one line. JavaScript can take one apart with <code>new URL(...)</code>:</p>
+<example file="url.js">
+const url = new URL("https://api.example.com:8443/tasks?done=false&limit=10");
+
+console.log("protocol:", url.protocol);
+console.log("hostname:", url.hostname);
+console.log("port:", url.port);
+console.log("path:", url.pathname);
+console.log("query:", url.search);
+console.log("done:", url.searchParams.get("done"));
+
+const plain = new URL("https://example.com/");
+console.log("default port:", JSON.stringify(plain.port));
+</example>
+<output>
+protocol: https:
+hostname: api.example.com
+port: 8443
+path: /tasks
+query: ?done=false&limit=10
+done: false
+default port: ""
+</output>
+<ul>
+<li>The <strong>protocol</strong> says which language the client and server speak: <code>https</code>.</li>
+<li>The <strong>hostname</strong> is the name DNS turns into an IP address.</li>
+<li>The <strong>port</strong> picks the program. When a URL has no port, the protocol's default is used: 443 for <code>https</code>, 80 for <code>http</code>. That is why the port of <code>https://example.com/</code> is empty (<code>""</code>).</li>
+<li>The <strong>path</strong> says what you want from the server, like <code>/tasks</code>.</li>
+<li>The <strong>query</strong>, after <code>?</code>, adds options as <code>name=value</code> pairs joined by <code>&amp;</code>.</li>
+</ul>
+</section>
+
+<section>
+<h2 id="http">HTTP and HTTPS</h2>
+<p><strong>HTTP</strong> is the language of the web: the rules for how a request and a response are written. A request says what the client wants, with a <strong>method</strong> such as <code>GET</code> ("give me") or <code>POST</code> ("here is something new"), a path, and <strong>headers</strong>, extra lines of information. The response starts with a <strong>status code</strong> that says how it went, then its own headers, then the <strong>body</strong>: the page, the image or the data.</p>
+<p><code>curl</code> is a client in your terminal. With <code>-I</code> it asks only for the status and the headers:</p>
+<shell>
+$ curl -I https://example.com
+HTTP/2 200
+date: Wed, 23 Sep 2026 13:23:24 GMT
+content-type: text/html
+server: cloudflare
+last-modified: Tue, 22 Sep 2026 20:16:57 GMT
+allow: GET, HEAD
+accept-ranges: bytes
+age: 11268
+cf-cache-status: HIT
+cf-ray: a3f9dd1cda3815a5-LHR
+</shell>
+<ul>
+<li><code>HTTP/2</code> is the version of HTTP, and <code>200</code> is the status code: "OK, here it is". You have surely met <code>404</code>, "not found".</li>
+<li><code>content-type: text/html</code> says the body is a web page.</li>
+<li>The other headers are extra details, like when the page last changed.</li>
+</ul>
+<p>Without <code>-I</code>, curl prints the body: the HTML of the page. Here are its first 120 characters:</p>
+<shell>
+$ curl -s https://example.com | head -c 120
+<!doctype html><html lang="en"><head><title>Example Domain</title><link rel="icon" href="data:,"><meta name="viewport" c
+</shell>
+<p>That text is all a web page is. The browser reads it and draws it. Your dates and some header values will differ.</p>
+<note>On Windows, type <code>curl.exe</code> instead of <code>curl</code>. In Windows PowerShell, plain <code>curl</code> is a different command with different options. <code>curl.exe</code> is the real curl, which comes with Windows 10 and 11.</note>
+<h3>What the S in HTTPS adds</h3>
+<p><strong>HTTPS</strong> is HTTP sent through an encrypted connection (called TLS). Plain HTTP travels as readable text, so anyone on the same Wi-Fi, or any computer on the way, can read it and even change it. HTTPS prevents that, and it also proves that the server really is <code>example.com</code>, using a <strong>certificate</strong>. That is the padlock in your browser's address bar.</p>
+<warn title="Always HTTPS for real users">Never send a password, a login token or personal data over plain <code>http://</code>. Every public site and API you build must use HTTPS. Plain HTTP is only acceptable on <code>localhost</code>, where the data never leaves your computer.</warn>
+<p>You can watch all of this in your browser. Open the devtools (<kbd>F12</kbd>), choose the <strong>Network</strong> tab, and reload this page. Every row is one request. Click one to see its method, status code and headers.</p>
+</section>
+
+<section>
+<h2 id="api">What an API is</h2>
+<p>A web page is made for people. An <strong>API</strong> (Application Programming Interface) is made for programs. A web API is a set of URLs that a program can call to read or change data. It usually answers in <strong>JSON</strong>, a text format for data that looks like JavaScript objects.</p>
+<p>JavaScript's <code>fetch</code> sends a request from code. This script asks a free practice API for one to-do item. Save it as <code>fetch-todo.js</code>:</p>
+<example file="fetch-todo.js" browser="no" check="skip">
+const response = await fetch("https://jsonplaceholder.typicode.com/todos/1");
+console.log("Status:", response.status);
+console.log("Type:", response.headers.get("content-type"));
+
+const todo = await response.json();
+console.log(todo);
+</example>
+<p>Run it on your computer. It needs the internet:</p>
+<shell>
+$ node fetch-todo.js
+Status: 200
+Type: application/json; charset=utf-8
+{ userId: 1, id: 1, title: 'delectus aut autem', completed: false }
+</shell>
+<p>The status is <code>200</code> and the content type is <code>application/json</code>: data, not a page. <code>response.json()</code> turns the JSON text into a JavaScript object. The title is placeholder text, like "lorem ipsum". The <code>await</code> keyword makes the program wait for the answer; the lesson <a href="/learn/js-async">Asynchronous JavaScript</a> explains it.</p>
+<h3>Your own API, on your computer</h3>
+<p>Now play both sides. This script starts a tiny task API with Node.js's built-in <code>node:http</code> module, sends two requests to itself with <code>fetch</code>, prints the answers, and shuts down:</p>
+<example file="tiny-api.js" browser="no">
+import { createServer } from "node:http";
+
+const tasks = [
+  { id: 1, title: "Buy milk", done: false },
+  { id: 2, title: "Write report", done: true },
+];
+
+const server = createServer((request, response) => {
+  if (request.method === "GET" && request.url === "/tasks") {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify(tasks));
+    return;
+  }
+  response.writeHead(404, { "content-type": "application/json" });
+  response.end(JSON.stringify({ error: "Not found" }));
+});
+
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+const base = `http://127.0.0.1:${server.address().port}`;
+console.log("Listening on", base);
+
+for (const path of ["/tasks", "/nothing-here"]) {
+  const response = await fetch(base + path);
+  console.log("GET", path, "->", response.status);
+  console.log(await response.json());
+}
+
+server.close();
+</example>
+<output mask="port">
+Listening on http://127.0.0.1:37601
+GET /tasks -> 200
+[
+  { id: 1, title: 'Buy milk', done: false },
+  { id: 2, title: 'Write report', done: true }
+]
+GET /nothing-here -> 404
+{ error: 'Not found' }
+</output>
+<p>Read it as a conversation:</p>
+<ul>
+<li><code>listen(0, "127.0.0.1")</code> asks for port <code>0</code>, which means "any free port". The operating system picked one. Your number will be different. <code>127.0.0.1</code> is <code>localhost</code>, so only your own computer can reach this server.</li>
+<li>The client asked for <code>/tasks</code>. The server's function checked the method and the path, and answered <code>200</code> with the list as JSON.</li>
+<li>The client asked for a path the server does not know. It answered <code>404</code> with an error message, also as JSON.</li>
+</ul>
+<p>That is a whole backend in miniature: receive a request, decide what it means, answer with a status code and data. The lesson <a href="/learn/node-http">An HTTP server with Node.js</a> builds this properly.</p>
+</section>
+
+<section>
+<h2 id="databases">Where databases fit</h2>
+<p>The tiny API keeps its tasks in a list inside the program. Stop the program and they are gone. Real data must survive restarts and be shared by many copies of the server. It lives in a <strong>database</strong>: a separate program, often on a separate computer, built to store data safely and find it fast.</p>
+<p>Here is the whole journey when someone opens a task app, from start to end:</p>
+<ol>
+<li>The browser asks DNS for the IP address of the app's domain.</li>
+<li>It connects to that address on port 443 and sets up the encrypted HTTPS connection.</li>
+<li>It sends an HTTP request: <code>GET /tasks</code>, with headers.</li>
+<li>The server, your backend, checks the request: is it valid, and who is asking?</li>
+<li>The backend asks the database for the tasks, and the database answers.</li>
+<li>The backend sends an HTTP response: <code>200</code>, and the tasks as JSON.</li>
+<li>The browser shows them on the page.</li>
+</ol>
+<p>Notice who talks to whom. The browser only talks to your backend. It never talks to the database directly: the backend stands between them and decides what each person may read or change. That is the job this course teaches you to do well.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Take a URL apart">
+<p>Use <code>new URL(...)</code> to print the hostname, the port, the path and the value of <code>q</code> in <code>http://localhost:3000/search?q=milk</code>.</p>
+<solution>
+<example file="parts.js">
+const url = new URL("http://localhost:3000/search?q=milk");
+
+console.log(url.hostname);
+console.log(url.port);
+console.log(url.pathname);
+console.log(url.searchParams.get("q"));
+</example>
+<output>
+localhost
+3000
+/search
+milk
+</output>
+<p>This URL does name a port, <code>3000</code>, so <code>port</code> is not empty. It is a typical address for a server you run while developing.</p>
+</solution>
+</exercise>
+<exercise title="Which port?">
+<p>Which port does the client connect to for each URL? <code>https://shop.example.com/cart</code>, <code>http://example.com/</code>, and <code>http://localhost:8080/tasks</code>.</p>
+<solution>
+<p>443, 80 and 8080. The first two name no port, so the protocol's default is used: 443 for HTTPS, 80 for HTTP. The third names its port.</p>
+</solution>
+</exercise>
+<exercise title="Add a health check">
+<p>Many APIs have a <code>/health</code> path that monitoring tools call to see if the server is alive. Add one to the tiny API: <code>GET /health</code> answers <code>200</code> with <code>{ "status": "ok" }</code>. Request it with <code>fetch</code>.</p>
+<solution>
+<example file="health.js" browser="no">
+import { createServer } from "node:http";
+
+const server = createServer((request, response) => {
+  if (request.method === "GET" && request.url === "/health") {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ status: "ok" }));
+    return;
+  }
+  response.writeHead(404, { "content-type": "application/json" });
+  response.end(JSON.stringify({ error: "Not found" }));
+});
+
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
+console.log(response.status, await response.json());
+server.close();
+</example>
+<output>
+200 { status: 'ok' }
+</output>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A client sends a request; a server sends back one response. Your backend is a server.</li>
+<li>DNS turns a domain name into an IP address. A port picks the program on that computer. A URL holds the protocol, host, port, path and query.</li>
+<li>HTTP requests have a method, a path and headers; responses have a status code, headers and a body. HTTPS encrypts all of it: use it for everything real.</li>
+<li>An API is a set of URLs for programs, usually answering in JSON. The backend sits between the client and the database.</li>
+</ul>
+<p>Next: install Node.js on your computer and write your first program.</p>
+</section>

@@ -1,0 +1,444 @@
+---
+title: Typing functions
+description: Give functions parameter and return types, use optional, default and rest parameters, describe functions and callbacks as types, type async functions with Promise, and meet overloads.
+minutes: 35
+youNeed: Basic types
+youBuild: Typed task helpers - filters, callbacks and an async loader - that the compiler checks at every call
+keywords: typescript function types, parameter types, return type, optional parameters, default parameters, rest parameters, callback type, arrow function type, async function Promise type, function overloads
+---
+<section>
+<h2 id="params-returns">Parameters and return types</h2>
+<p>A function is a contract between the code that writes it and the code that calls it. In TypeScript you write the contract down: a type on every parameter, and optionally a return type after the parameter list.</p>
+<example file="basics.ts" project="fn">
+function priorityLabel(priority: number): string {
+  if (priority >= 3) return "high";
+  if (priority === 2) return "normal";
+  return "low";
+}
+
+const estimate = (hours: number, people: number): number => hours / people;
+
+console.log(priorityLabel(3), priorityLabel(1));
+console.log(estimate(6, 2));
+</example>
+<output>
+high low
+3
+</output>
+<p>Arrow functions, which you know from <a href="/learn/js-functions">the functions lesson</a>, take types in the same places. Two checks happen here:</p>
+<ul>
+<li>Inside the function, <code>priority</code> is a number, so only number operations are allowed.</li>
+<li>At every call, the arguments must match the parameters, and the result is known to be a <code>string</code>.</li>
+</ul>
+<p>What happens if you leave a type out, or break the promise of the return type?</p>
+<example file="basics.ts" project="fn" check="tsc-error">
+function titleOf(task) {
+  return task.title;
+}
+
+function isFinished(status: string): boolean {
+  if (status === "done") {
+    return true;
+  }
+}
+</example>
+<output kind="tsc">
+basics.ts:1:18 - error TS7006: Parameter 'task' implicitly has an 'any' type.
+
+1 function titleOf(task) {
+                   ~~~~
+
+basics.ts:5:38 - error TS2366: Function lacks ending return statement and return type does not include 'undefined'.
+
+5 function isFinished(status: string): boolean {
+                                       ~~~~~~~
+
+
+Found 2 errors in the same file, starting at: basics.ts:1
+</output>
+<ul>
+<li><strong>TS7006</strong>: a parameter without a type would silently become <code>any</code>, which you learned to avoid in <a href="/learn/ts-types">Basic types</a>. <code>strict</code> turns that into an error.</li>
+<li><strong>TS2366</strong>: when the status is not <code>"done"</code>, the function falls off the end and returns <code>undefined</code>, not a <code>boolean</code>. The return type made the compiler check every path.</li>
+</ul>
+<p>You may leave the return type out: TypeScript infers it from the <code>return</code> statements. Writing it is still a good habit for exported functions, because then a mistake is reported inside the function, not at some distant caller.</p>
+</section>
+
+<section>
+<h2 id="optional-default-rest">Optional, default and rest parameters</h2>
+<p>JavaScript lets callers leave arguments out. TypeScript makes you say which ones may be left out:</p>
+<example file="params.ts" project="fn">
+function formatTask(title: string, priority: number = 1, note?: string): string {
+  const base = `${title} [P${priority}]`;
+  return note === undefined ? base : `${base} - ${note}`;
+}
+
+function tagged(title: string, ...tags: string[]): string {
+  return tags.length === 0 ? title : `${title} #${tags.join(" #")}`;
+}
+
+console.log(formatTask("Buy milk"));
+console.log(formatTask("File taxes", 3));
+console.log(formatTask("Call Ada", 2, "after 5pm"));
+console.log(tagged("Buy milk", "home", "shop"));
+</example>
+<output>
+Buy milk [P1]
+File taxes [P3]
+Call Ada [P2] - after 5pm
+Buy milk #home #shop
+</output>
+<ul>
+<li><code>priority: number = 1</code> is a <strong>default parameter</strong>. Callers may leave it out, and inside the function it is always a number.</li>
+<li><code>note?: string</code> is an <strong>optional parameter</strong>. Inside the function its type is <code>string | undefined</code>, so you must check it before using it as a string.</li>
+<li><code>...tags: string[]</code> is a <strong>rest parameter</strong>. It collects any number of extra arguments into an array.</li>
+</ul>
+<p>Optional and default parameters must come after the required ones. Every call is checked against this list:</p>
+<example file="params.ts" project="fn" check="tsc-error">
+function formatTask(title: string, priority: number = 1, note?: string): string {
+  return `${title} [P${priority}] ${note ?? ""}`;
+}
+
+formatTask();
+formatTask("Buy milk", "high");
+formatTask("Buy milk", 2, "soon", "extra");
+</example>
+<output kind="tsc">
+params.ts:5:1 - error TS2554: Expected 1-3 arguments, but got 0.
+
+5 formatTask();
+  ~~~~~~~~~~
+
+  params.ts:1:21 - An argument for 'title' was not provided.
+    1 function formatTask(title: string, priority: number = 1, note?: string): string {
+                          ~~~~~~~~~~~~~
+
+params.ts:6:24 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+
+6 formatTask("Buy milk", "high");
+                         ~~~~~~
+
+params.ts:7:35 - error TS2554: Expected 1-3 arguments, but got 4.
+
+7 formatTask("Buy milk", 2, "soon", "extra");
+                                    ~~~~~~~
+
+
+Found 3 errors in the same file, starting at: params.ts:5
+</output>
+</section>
+
+<section>
+<h2 id="function-types">Functions as types</h2>
+<p>In JavaScript, a function is a value: you can store it in a variable and pass it around. So a function also has a type. A <strong>function type</strong> looks like an arrow function without a body: <code>(task: Task) =&gt; boolean</code> means "a function that takes a task and returns a boolean".</p>
+<example file="filters.ts" project="fn">
+type Task = { id: number; title: string; done: boolean; priority: number };
+type TaskFilter = (task: Task) => boolean;
+
+const isOpen: TaskFilter = (task) => !task.done;
+const isUrgent: TaskFilter = (task) => task.priority >= 3;
+
+function matchAll(task: Task, filters: TaskFilter[]): boolean {
+  return filters.every((filter) => filter(task));
+}
+
+const tasks: Task[] = [
+  { id: 1, title: "Buy milk", done: false, priority: 1 },
+  { id: 2, title: "Fix login bug", done: false, priority: 3 },
+  { id: 3, title: "Call Ada", done: true, priority: 3 },
+];
+
+const todo = tasks.filter((task) => matchAll(task, [isOpen, isUrgent]));
+console.log(todo.map((task) => task.title));
+</example>
+<output>
+[ 'Fix login bug' ]
+</output>
+<p>Notice that <code>(task) =&gt; !task.done</code> has no type on <code>task</code>, and yet there is no TS7006 error. The variable's type, <code>TaskFilter</code>, already says what the parameter is, so TypeScript fills it in. This is called <strong>contextual typing</strong>. It is also why <code>tasks.filter((task) =&gt; …)</code> never needs an annotation: <code>filter</code> is declared to call its callback with an element of the array.</p>
+</section>
+
+<section>
+<h2 id="callbacks">Callback types</h2>
+<p>A <strong>callback</strong> is a function you hand to another function, for it to call later. Its type goes on the parameter, like any other type. Here is a helper that reports progress while it works through a list:</p>
+<example file="callbacks.ts" project="fn">
+type Task = { id: number; title: string; done: boolean };
+
+function completeAll(tasks: Task[], onEach: (task: Task, index: number) => void): number {
+  let changed = 0;
+  tasks.forEach((task, index) => {
+    if (!task.done) {
+      task.done = true;
+      changed += 1;
+      onEach(task, index);
+    }
+  });
+  return changed;
+}
+
+const tasks: Task[] = [
+  { id: 1, title: "Buy milk", done: false },
+  { id: 2, title: "Call Ada", done: true },
+  { id: 3, title: "File taxes", done: false },
+];
+
+const count = completeAll(tasks, (task, index) => console.log(`#${index} ${task.title} done`));
+console.log("changed:", count);
+completeAll(tasks, () => console.log("never printed"));
+</example>
+<output>
+#0 Buy milk done
+#2 File taxes done
+changed: 2
+</output>
+<p>Two rules about callbacks are worth knowing:</p>
+<ul>
+<li><strong>A callback may take fewer parameters than the type lists.</strong> <code>() =&gt; console.log(…)</code> ignores both arguments, and that is allowed. JavaScript simply drops extra arguments.</li>
+<li><strong>A <code>void</code> return means "the result is ignored".</strong> A callback that happens to return something is still accepted, but the caller promises not to use the value.</li>
+</ul>
+<p>The parameters that are there must have the right types:</p>
+<example file="callbacks.ts" project="fn" check="tsc-error">
+type Task = { id: number; title: string; done: boolean };
+
+function completeAll(tasks: Task[], onEach: (task: Task, index: number) => void): void {
+  tasks.forEach((task, index) => onEach(task, index));
+}
+
+completeAll([], (task, index: string) => console.log(index.toUpperCase()));
+</example>
+<output kind="tsc">
+callbacks.ts:7:17 - error TS2345: Argument of type '(task: Task, index: string) => void' is not assignable to parameter of type '(task: Task, index: number) => void'.
+  Types of parameters 'index' and 'index' are incompatible.
+    Type 'number' is not assignable to type 'string'.
+
+7 completeAll([], (task, index: string) => console.log(index.toUpperCase()));
+                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Found 1 error in callbacks.ts:7
+</output>
+<p>Read long errors from the bottom up: the last line is the root cause (<code>number</code> is not <code>string</code>), and each line above it adds context.</p>
+</section>
+
+<section>
+<h2 id="async">Async functions and Promise&lt;T&gt;</h2>
+<p>In <a href="/learn/js-async">the asynchronous code lesson</a> you learned that an <code>async</code> function always returns a promise. TypeScript writes that as <code>Promise&lt;T&gt;</code>, where <code>T</code> is the type of the value the promise gives you when it is done. <code>Promise&lt;Task | undefined&gt;</code> reads "a promise of a task or undefined".</p>
+<example file="load.ts" project="fn">
+type Task = { id: number; title: string; done: boolean };
+
+const saved: Task[] = [{ id: 1, title: "Buy milk", done: false }];
+
+async function loadTask(id: number): Promise<Task | undefined> {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  return saved.find((task) => task.id === id);
+}
+
+async function titleOrDefault(id: number): Promise<string> {
+  const task = await loadTask(id);
+  return task?.title ?? `task ${id} not found`;
+}
+
+console.log(await titleOrDefault(1));
+console.log(await titleOrDefault(2));
+</example>
+<output>
+Buy milk
+task 2 not found
+</output>
+<p>Inside the function you <code>return</code> a plain <code>Task</code>; the <code>async</code> keyword wraps it in a promise. <code>await</code> unwraps it again: <code>await loadTask(id)</code> has the type <code>Task | undefined</code>.</p>
+<p>The classic async bug is forgetting <code>await</code>. JavaScript would give you a promise object, and <code>task.title</code> would quietly be <code>undefined</code>. TypeScript catches it:</p>
+<example file="load.ts" project="fn" check="tsc-error">
+type Task = { id: number; title: string };
+
+async function loadTask(id: number): Promise<Task> {
+  return { id, title: "Buy milk" };
+}
+
+const task = loadTask(1);
+console.log(task.title);
+</example>
+<output kind="tsc">
+load.ts:8:18 - error TS2339: Property 'title' does not exist on type 'Promise<Task>'.
+
+8 console.log(task.title);
+                   ~~~~~
+
+  load.ts:8:18 - Did you forget to use 'await'?
+    8 console.log(task.title);
+                       ~~~~~
+
+
+Found 1 error in load.ts:8
+</output>
+<p>A function type can be async too. <code>() =&gt; Promise&lt;string&gt;</code> is "a function with no parameters that returns a promise of a string". This helper runs jobs one after another:</p>
+<example file="jobs.ts" project="fn">
+type Job = () => Promise<string>;
+
+async function runInOrder(jobs: Job[]): Promise<string[]> {
+  const results: string[] = [];
+  for (const job of jobs) {
+    results.push(await job());
+  }
+  return results;
+}
+
+const sendEmail: Job = async () => "email sent";
+const writeLog: Job = async () => "log written";
+
+console.log(await runInOrder([sendEmail, writeLog]));
+</example>
+<output>
+[ 'email sent', 'log written' ]
+</output>
+</section>
+
+<section>
+<h2 id="overloads">Overloads, briefly</h2>
+<p>Sometimes the return type depends on what you pass in. Pass one id, get one task or <code>undefined</code>; pass a list of ids, get a list of tasks. A union return type (<code>Task | Task[] | undefined</code>) would force every caller to check which one came back. <strong>Overloads</strong> let you list each form of the call separately, followed by one function body that handles them all:</p>
+<example file="overloads.ts" project="fn">
+type Task = { id: number; title: string };
+
+const all: Task[] = [
+  { id: 1, title: "Buy milk" },
+  { id: 2, title: "Call Ada" },
+];
+
+function find(id: number): Task | undefined;
+function find(ids: number[]): Task[];
+function find(idOrIds: number | number[]): Task | Task[] | undefined {
+  if (Array.isArray(idOrIds)) {
+    return all.filter((task) => idOrIds.includes(task.id));
+  }
+  return all.find((task) => task.id === idOrIds);
+}
+
+const one = find(2);
+const many = find([1, 2, 9]);
+console.log(one?.title);
+console.log(many.length);
+</example>
+<output>
+Call Ada
+2
+</output>
+<p>The first two lines are the <strong>overload signatures</strong>: what callers see. <code>find(2)</code> has the type <code>Task | undefined</code>, and <code>find([1, 2, 9])</code> has the type <code>Task[]</code>, so <code>many.length</code> needs no check. The third signature, with the body, is the <strong>implementation</strong>. Callers cannot use it directly, and it must be compatible with every overload.</p>
+<p>Use overloads rarely. When the return type is the same for every input, a union parameter is simpler: <code>function label(id: number | string): string</code>.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="A reusable sorter">
+<p>Write a type <code>TaskCompare = (a: Task, b: Task) =&gt; number</code>, two comparers <code>byPriority</code> (highest first) and <code>byTitle</code> (A to Z, with <code>localeCompare</code>), and <code>sortTasks(tasks: readonly Task[], compare: TaskCompare): Task[]</code> that returns a sorted copy.</p>
+<solution>
+<example file="sort.ts" project="ex-sort">
+type Task = { title: string; priority: number };
+type TaskCompare = (a: Task, b: Task) => number;
+
+const byPriority: TaskCompare = (a, b) => b.priority - a.priority;
+const byTitle: TaskCompare = (a, b) => a.title.localeCompare(b.title);
+
+function sortTasks(tasks: readonly Task[], compare: TaskCompare): Task[] {
+  return [...tasks].sort(compare);
+}
+
+const tasks: Task[] = [
+  { title: "Water plants", priority: 1 },
+  { title: "Fix login bug", priority: 3 },
+  { title: "Call Ada", priority: 2 },
+];
+
+console.log(sortTasks(tasks, byPriority).map((t) => t.title));
+console.log(sortTasks(tasks, byTitle).map((t) => t.title));
+</example>
+<output>
+[ 'Fix login bug', 'Call Ada', 'Water plants' ]
+[ 'Call Ada', 'Fix login bug', 'Water plants' ]
+</output>
+<p><code>[...tasks]</code> copies the array first. It is also required: <code>sort</code> changes the array it is called on, and a <code>readonly Task[]</code> has no <code>sort</code> method.</p>
+</solution>
+</exercise>
+<exercise title="Retry an async job">
+<p>Write <code>retry(job: () =&gt; Promise&lt;string&gt;, attempts: number): Promise&lt;string&gt;</code>. It calls <code>job</code>; if the promise rejects, it tries again, up to <code>attempts</code> times in total, then throws the last error. Test it with a job that fails twice and then works.</p>
+<solution>
+<example file="retry.ts" project="ex-retry">
+async function retry(job: () => Promise<string>, attempts: number): Promise<string> {
+  let lastError: unknown;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await job();
+    } catch (error) {
+      lastError = error;
+      console.log(`attempt ${i} failed`);
+    }
+  }
+  throw lastError;
+}
+
+let calls = 0;
+async function flaky(): Promise<string> {
+  calls += 1;
+  if (calls < 3) throw new Error("timeout");
+  return "connected";
+}
+
+console.log(await retry(flaky, 5));
+</example>
+<output>
+attempt 1 failed
+attempt 2 failed
+connected
+</output>
+<p><code>return await job()</code> matters: without <code>await</code>, a rejected promise would be returned, not caught, and the loop would never retry.</p>
+</solution>
+</exercise>
+<exercise title="Spot the bugs">
+<p>Without running <code>tsc</code>, find the three errors it would report here. Then check with <code>npx tsc --noEmit</code>.</p>
+<example file="spot.ts" project="ex-spot" check="tsc-error">
+type Notify = (userId: number, message: string) => Promise<void>;
+
+const notify: Notify = async (userId, message) => {
+  console.log(`to ${userId}: ${message.trim()}`);
+};
+
+notify("7", "Your task is due");
+notify(7);
+const sent: string = notify(7, "Hi");
+</example>
+<output kind="tsc">
+spot.ts:7:8 - error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+
+7 notify("7", "Your task is due");
+         ~~~
+
+spot.ts:8:1 - error TS2554: Expected 2 arguments, but got 1.
+
+8 notify(7);
+  ~~~~~~
+
+  spot.ts:1:32 - An argument for 'message' was not provided.
+    1 type Notify = (userId: number, message: string) => Promise<void>;
+                                     ~~~~~~~~~~~~~~~
+
+spot.ts:9:7 - error TS2322: Type 'Promise<void>' is not assignable to type 'string'.
+
+9 const sent: string = notify(7, "Hi");
+        ~~~~
+
+
+Found 3 errors in the same file, starting at: spot.ts:7
+</output>
+<solution>
+<p>The id is a string, not a number; the message is missing; and <code>notify</code> returns a <code>Promise&lt;void&gt;</code>, which is not a string. Even with <code>await</code>, it would give <code>undefined</code>, because the function returns nothing.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>Type every parameter. Add a return type to exported functions so mistakes are reported inside them.</li>
+<li><code>p = 1</code> is a default, <code>p?: T</code> is optional (<code>T | undefined</code> inside), <code>...rest: T[]</code> collects extra arguments.</li>
+<li><code>(task: Task) =&gt; boolean</code> is a function type. Contextual typing fills in callback parameter types for you.</li>
+<li>A callback may ignore parameters; a <code>void</code> return means the result is ignored.</li>
+<li>An <code>async</code> function returns <code>Promise&lt;T&gt;</code>. Forgetting <code>await</code> is a type error.</li>
+<li>Overloads list several call forms for one function. Prefer a union when the return type does not change.</li>
+</ul>
+</section>

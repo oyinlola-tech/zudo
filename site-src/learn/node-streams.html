@@ -1,0 +1,307 @@
+---
+title: Streams and buffers
+description: Learn what the bytes behind text really are, then handle data piece by piece with readable, writable and transform streams, pipeline and readline, so a program can process files far bigger than its memory.
+minutes: 35
+youNeed: Files, paths and your computer
+youBuild: A program that generates a 200,000-line log file and counts its lines and words with streams
+keywords: node buffer, utf8 base64 hex encoding, Buffer.from toString, node streams, readable writable transform, stream pipeline, stream/promises, readline line by line, backpressure, drain, createReadStream, createWriteStream, gzip
+---
+<section>
+<h2 id="buffers">Bytes and buffers</h2>
+<p>A computer stores everything as <strong>bytes</strong>: numbers from 0 to 255. A file on disk, a network message and an image are all just a row of bytes. Text becomes bytes through an <strong>encoding</strong>, a rule that says which bytes stand for which character. The encoding used almost everywhere today is <strong>UTF-8</strong>.</p>
+<p>In Node.js, a row of bytes is a <strong>Buffer</strong>. <code>Buffer</code> is global, so you don't import it:</p>
+<example file="bytes.js" browser="no">
+const buf = Buffer.from("héllo", "utf8");
+
+console.log(buf);
+console.log("characters:", "héllo".length, "bytes:", buf.length);
+console.log("first byte:", buf[0]);
+
+console.log(buf.toString("utf8"));
+console.log(buf.toString("hex"));
+console.log(buf.toString("base64"));
+console.log(Buffer.from("aMOpbGxv", "base64").toString("utf8"));
+</example>
+<output>
+<Buffer 68 c3 a9 6c 6c 6f>
+characters: 5 bytes: 6
+first byte: 104
+héllo
+68c3a96c6c6f
+aMOpbGxv
+héllo
+</output>
+<ul>
+<li><code>Buffer.from(text, "utf8")</code> turns text into bytes. Node.js prints each byte in hexadecimal: <code>68</code> is <code>h</code>.</li>
+<li>The word has 5 characters but 6 bytes. English letters take one byte in UTF-8, but <code>é</code> takes two (<code>c3 a9</code>). Other characters take three or four.</li>
+<li>A buffer works like an array of numbers: <code>buf[0]</code> is 104, the code for <code>h</code>.</li>
+<li><code>toString(encoding)</code> turns bytes back into text. <strong>hex</strong> and <strong>base64</strong> are ways to write any bytes using only safe, printable characters. You will see base64 in e-mail attachments, images inside web pages and tokens.</li>
+</ul>
+<p>Why does this matter? Because data does not always arrive in one piece. If you cut the bytes of a word in the wrong place, you cut a character in half:</p>
+<example file="half.js" browser="no">
+const buf = Buffer.from("café");
+console.log(buf.length, "bytes");
+
+const first = buf.subarray(0, 4);
+const rest = buf.subarray(4);
+console.log(JSON.stringify(first.toString()), JSON.stringify(rest.toString()));
+
+console.log(Buffer.concat([first, rest]).toString());
+</example>
+<output>
+5 bytes
+"caf�" "�"
+café
+</output>
+<p><code>subarray</code> takes a slice of the bytes. The first slice ends in the middle of <code>é</code>, so each half ends up with <code>�</code>, the "replacement character", which means "these bytes are not valid text". Joining the bytes first with <code>Buffer.concat</code>, then decoding, gives the right word. Keep this in mind for the next sections: the tools you will use handle it for you, if you use them.</p>
+</section>
+
+<section>
+<h2 id="why-streams">Why streams</h2>
+<p>In the last lesson, <code>readFile</code> loaded a whole file into memory at once. That is fine for a settings file. It is not fine for a 10 GB log file, a video upload or a database export: the program runs out of memory, and while it reads, it holds on to all of it.</p>
+<p>A <strong>stream</strong> handles data piece by piece. Each piece is called a <strong>chunk</strong>. You process one chunk, let it go, and take the next, so memory use stays small whatever the size of the data. There are three kinds you will use:</p>
+<ul>
+<li>A <strong>readable</strong> stream gives you data: a file you read, a request arriving at your server.</li>
+<li>A <strong>writable</strong> stream takes data: a file you write, the response you send back.</li>
+<li>A <strong>transform</strong> stream does both: data goes in, changed data comes out. Compression is a transform.</li>
+</ul>
+<p>Streams are everywhere in Node.js. <code>process.stdout</code>, where <code>console.log</code> writes, is a writable stream. In <a href="/learn/node-http">An HTTP server with no framework</a>, every request is a readable stream and every response a writable one.</p>
+</section>
+
+<section>
+<h2 id="writable">Writing a big file, and backpressure</h2>
+<p>You need a big file to experiment with. This program writes 200,000 lines to <code>tasks.log</code> through a writable stream from <code>createWriteStream</code>:</p>
+<example file="generate.js" project="log" browser="no">
+import { once } from "node:events";
+import { createWriteStream } from "node:fs";
+
+const out = createWriteStream("tasks.log");
+let waits = 0;
+
+for (let i = 1; i <= 200_000; i++) {
+  const status = i % 3 === 0 ? "done" : "open";
+  const line = `task ${i} ${status} buy milk and call ada\n`;
+  if (!out.write(line)) {
+    waits++;
+    await once(out, "drain");
+  }
+}
+
+out.end();
+await once(out, "finish");
+console.log(`wrote ${out.bytesWritten} bytes, paused ${waits} times`);
+</example>
+<output>
+wrote 7688895 bytes, paused 117 times
+</output>
+<p>The loop makes lines much faster than the disk can save them. If it just kept calling <code>write</code>, the unsaved lines would pile up in memory. This is the problem streams call <strong>backpressure</strong>: the reader (here, the disk) pushing back on a writer that is too fast.</p>
+<p>Think of filling a bucket from a tap while the bucket drains through a small hole. <code>out.write(line)</code> returns <code>false</code> when the stream's bucket is full. That means "stop for a moment". The stream emits <code>"drain"</code> when it has room again. <code>once(out, "drain")</code>, from <code>node:events</code>, turns that event into a promise you can <code>await</code>. The program paused 117 times, and memory never held much more than 64 KB (the size of the stream's bucket) of the 7.7 MB.</p>
+<p>At the end, <code>out.end()</code> says "no more data", and the <code>"finish"</code> event says everything has been saved.</p>
+</section>
+
+<section>
+<h2 id="readable">Reading in chunks</h2>
+<p>A readable stream can be used with <code>for await</code>, which you know from <a href="/learn/js-async">Asynchronous JavaScript</a>: each round of the loop waits for the next chunk.</p>
+<example file="chunks.js" project="log" browser="no">
+import { createReadStream } from "node:fs";
+
+let chunks = 0;
+let bytes = 0;
+let biggest = 0;
+
+for await (const chunk of createReadStream("tasks.log")) {
+  chunks++;
+  bytes += chunk.length;
+  biggest = Math.max(biggest, chunk.length);
+}
+
+console.log({ chunks, bytes, biggest });
+</example>
+<output>
+{ chunks: 118, bytes: 7688895, biggest: 65536 }
+</output>
+<p>The file arrived in 118 chunks of at most 65,536 bytes (64 KB). Each chunk is a <code>Buffer</code>. The program only ever held one chunk at a time, not 7.7 MB.</p>
+<p>A chunk ends wherever 64 KB ends, which is usually in the middle of a line, and can be in the middle of a character, as you saw with <code>café</code>. So never split lines inside each chunk yourself. Use <code>readline</code>, below, which puts the pieces back together properly.</p>
+</section>
+
+<section>
+<h2 id="pipeline">Transforms and pipeline</h2>
+<p>Most of the time you connect streams: read from here, change it, write there. <code>pipeline</code> from <code>node:stream/promises</code> does exactly that, handles backpressure between every pair of streams for you, and returns a promise. This one compresses the log with gzip, a transform stream from <code>node:zlib</code>:</p>
+<example file="compress.js" project="log" browser="no">
+import { createReadStream, createWriteStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
+import { createGzip } from "node:zlib";
+
+await pipeline(createReadStream("tasks.log"), createGzip(), createWriteStream("tasks.log.gz"));
+
+const before = (await stat("tasks.log")).size;
+const after = (await stat("tasks.log.gz")).size;
+console.log(`${before} bytes became ${after} bytes`);
+</example>
+<output>
+7688895 bytes became 546399 bytes
+</output>
+<p>Three streams, one line, and the 7.7 MB file never sat in memory. The lines repeat a lot, so gzip shrinks it to about 7% of its size.</p>
+<h3>Your own transform</h3>
+<p>A <code>Transform</code> gets each chunk in its <code>transform</code> function and passes the changed chunk on by calling <code>callback(null, newChunk)</code>. The first argument is for an error. <code>Readable.from</code> makes a readable stream from an array, which is handy for trying things out:</p>
+<example file="upper.js" browser="no">
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+
+const upperCase = new Transform({
+  transform(chunk, encoding, callback) {
+    callback(null, chunk.toString().toUpperCase());
+  },
+});
+
+const source = Readable.from(["buy milk\n", "call ada\n"]);
+await pipeline(source, upperCase, process.stdout);
+</example>
+<output>
+BUY MILK
+CALL ADA
+</output>
+<h3>When a stream fails</h3>
+<p>If any stream in a pipeline fails, <code>pipeline</code> closes all of them and rejects its promise, so one <code>try</code>/<code>catch</code> covers the whole chain:</p>
+<example file="broken.js" browser="no">
+import { createReadStream, createWriteStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
+import { createGzip } from "node:zlib";
+
+try {
+  await pipeline(createReadStream("no-such.log"), createGzip(), createWriteStream("out.gz"));
+} catch (error) {
+  console.log("pipeline failed:", error.code);
+}
+</example>
+<output>
+pipeline failed: ENOENT
+</output>
+<warn title="PREFER PIPELINE OVER .pipe()">Older code connects streams with <code>a.pipe(b)</code>. It handles backpressure, but when a stream fails it does not close the others or report the error in one place. That leaves files open and errors unnoticed. Use <code>pipeline</code>.</warn>
+</section>
+
+<section>
+<h2 id="build">Build: count lines and words</h2>
+<p><code>createInterface</code> from <code>node:readline</code> takes a readable stream and gives you whole lines, one at a time, however the chunks were cut. With <code>for await</code>, reading a huge file line by line takes a few lines of code:</p>
+<example file="count.js" project="log" browser="no">
+import { createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
+
+const lines = createInterface({ input: createReadStream("tasks.log"), crlfDelay: Infinity });
+
+let lineCount = 0;
+let wordCount = 0;
+let doneCount = 0;
+
+for await (const line of lines) {
+  lineCount++;
+  wordCount += line.split(" ").filter((word) => word !== "").length;
+  if (line.includes(" done ")) doneCount++;
+}
+
+const heapMb = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(0);
+console.log({ lineCount, wordCount, doneCount });
+console.log(`JavaScript memory in use: about ${heapMb} MB`);
+</example>
+<output mask="num">
+{ lineCount: 200000, wordCount: 1600000, doneCount: 66666 }
+JavaScript memory in use: about 7 MB
+</output>
+<p><code>crlfDelay: Infinity</code> makes Windows line endings (<code>\r\n</code>) count as one line break. The program counted 200,000 lines and 1,600,000 words in a 7.7 MB file while using only a few megabytes of memory. It would use the same few megabytes for an 8 GB file.</p>
+<p>Run both programs on your computer. On macOS and Linux, the built-in <code>wc</code> ("word count") tool agrees:</p>
+<shell>
+$ node generate.js
+wrote 7688895 bytes, paused 117 times
+$ node count.js
+{ lineCount: 200000, wordCount: 1600000, doneCount: 66666 }
+JavaScript memory in use: about 5 MB
+$ wc -l -w tasks.log
+ 200000 1600000 tasks.log
+</shell>
+<p>Your memory figure may differ a little. The counts will not.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Bytes of an emoji">
+<p>Print how many characters and how many UTF-8 bytes <code>"done ✅"</code> has, and its base64 form. Then decode the base64 back.</p>
+<solution>
+<example file="emoji.js" browser="no">
+const text = "done ✅";
+const bytes = Buffer.from(text);
+
+console.log("characters:", text.length, "bytes:", bytes.length);
+const encoded = bytes.toString("base64");
+console.log(encoded);
+console.log(Buffer.from(encoded, "base64").toString());
+</example>
+<output>
+characters: 6 bytes: 8
+ZG9uZSDinIU=
+done ✅
+</output>
+<p><code>✅</code> is one character in JavaScript, but three bytes in UTF-8.</p>
+</solution>
+</exercise>
+<exercise title="Unzip and compare">
+<p>Write a pipeline that decompresses <code>tasks.log.gz</code> (use <code>createGunzip</code>) into <code>copy.log</code>. Then prove the copy is identical to <code>tasks.log</code> by comparing SHA-256 hashes, reading both files as streams.</p>
+<solution>
+<example file="unzip.js" project="log" browser="no">
+import { createHash } from "node:crypto";
+import { createReadStream, createWriteStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
+import { createGunzip } from "node:zlib";
+
+await pipeline(createReadStream("tasks.log.gz"), createGunzip(), createWriteStream("copy.log"));
+
+async function sha256(file) {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(file)) hash.update(chunk);
+  return hash.digest("hex");
+}
+
+console.log("identical:", (await sha256("tasks.log")) === (await sha256("copy.log")));
+</example>
+<output>
+identical: true
+</output>
+<p>A hash object can take its data in pieces with <code>update</code>, so hashing a file works with a stream too.</p>
+</solution>
+</exercise>
+<exercise title="The longest line">
+<p>Use <code>readline</code> to find the longest line in <code>tasks.log</code> and its line number.</p>
+<solution>
+<example file="longest.js" project="log" browser="no">
+import { createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
+
+const lines = createInterface({ input: createReadStream("tasks.log"), crlfDelay: Infinity });
+
+let number = 0;
+let longest = { number: 0, text: "" };
+
+for await (const line of lines) {
+  number++;
+  if (line.length > longest.text.length) longest = { number, text: line };
+}
+
+console.log(longest);
+</example>
+<output>
+{ number: 100000, text: 'task 100000 open buy milk and call ada' }
+</output>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A <code>Buffer</code> is a row of bytes. Text becomes bytes through an encoding, usually UTF-8, where one character can take several bytes. hex and base64 write bytes as printable text.</li>
+<li>Streams move data in chunks, so memory stays small whatever the size. Readable streams give data, writable streams take it, transforms change it.</li>
+<li>Backpressure: when <code>write</code> returns <code>false</code>, wait for <code>"drain"</code>. <code>pipeline</code> from <code>node:stream/promises</code> does that for you and reports any failure in one place.</li>
+<li>To read a file line by line, use <code>readline</code>'s <code>createInterface</code> with <code>for await</code>, never your own splitting of chunks.</li>
+</ul>
+<p>Next, you will learn npm properly: how packages, versions and lockfiles work, and how to install them safely.</p>
+</section>

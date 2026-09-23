@@ -1,0 +1,569 @@
+---
+title: Caching
+description: Keep copies of slow results so the Task API can answer again fast. Learn keys, TTL, namespaces, tags and invalidation, stampede protection, locks and cache metrics with @zudojs/cache.
+minutes: 40
+youNeed: The Task API project and the Data lessons
+youBuild: A cached task list that stays correct when tasks change
+keywords: zudojs cache, caching, ttl, cache invalidation, cache tags, getOrSet, cache stampede, cache lock, hit rate, namespace
+tier: core
+---
+<section>
+<h2 id="why">Why caching exists</h2>
+<p>Every time a client asks the Task API for its tasks, your code asks the database. The database is fast, but not free: each query crosses the network, uses a connection, and takes a few milliseconds. When the same list is asked for a hundred times a minute and changes twice a day, most of that work is wasted.</p>
+<p>A <strong>cache</strong> is a small, fast store where you keep a copy of a result that was expensive to produce. The next time you need the same result, you read the copy instead of doing the work again.</p>
+<p>To see the effect, here is a fake task database. It waits 20 milliseconds, like a real query, and counts how many queries it ran. It stands in for the repository you built in <a href="/learn/zudo-database">the database lesson</a>, so every example on this page can run in your browser:</p>
+<example file="task-db.ts" project="cache">
+export interface Task {
+  readonly id: number;
+  readonly userId: string;
+  readonly title: string;
+  readonly done: boolean;
+}
+
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+export class TaskDb {
+  queries = 0;
+  private readonly rows: Task[] = [
+    { id: 1, userId: "ada", title: "Buy milk", done: false },
+    { id: 2, userId: "ada", title: "Write report", done: true },
+    { id: 3, userId: "linus", title: "Fix bug", done: false },
+  ];
+
+  async listTasks(userId: string): Promise<Task[]> {
+    this.queries += 1;
+    await wait(20);
+    return this.rows.filter((task) => task.userId === userId);
+  }
+
+  async addTask(userId: string, title: string): Promise<Task> {
+    this.queries += 1;
+    const task: Task = { id: this.rows.length + 1, userId, title, done: false };
+    this.rows.push(task);
+    return task;
+  }
+}
+</example>
+<example file="no-cache.ts" project="cache">
+import { TaskDb } from "./task-db.js";
+
+const db = new TaskDb();
+
+for (let request = 1; request <= 3; request++) {
+  const tasks = await db.listTasks("ada");
+  console.log(`request ${request}: ${tasks.length} tasks`);
+}
+console.log("queries:", db.queries);
+</example>
+<output>
+request 1: 2 tasks
+request 2: 2 tasks
+request 3: 2 tasks
+queries: 3
+</output>
+<p>Three requests, three identical queries. With a cache, the first request runs the query and stores the answer. The next two read the copy. Two words you will see everywhere:</p>
+<ul>
+<li>A <strong>hit</strong>: the value was in the cache.</li>
+<li>A <strong>miss</strong>: it was not, so you have to do the slow work.</li>
+</ul>
+<warn title="THE PRICE OF A CACHE">A copy can be <strong>stale</strong>: the database changed, but the cache still holds the old answer. Most of this lesson is about keeping copies correct: how long they live, and how to throw them away when the data changes. If data must always be exact (a bank balance, a permission check), do not cache it.</warn>
+</section>
+
+<section>
+<h2 id="install">Install @zudojs/cache</h2>
+<p>In your <code>task-api</code> folder:</p>
+<shell>
+$ npm install @zudojs/cache
+
+added 2 packages, and audited 74 packages in 2s
+…
+</shell>
+<p>The <code>…</code> hides the same funding, audit and esbuild notes you saw when you created the project. The numbers depend on what you have installed so far. The package runs in the browser terminal too, so you can press <strong>Run in browser</strong> on every example here.</p>
+<p>To run an example on your computer, save it in <code>src/</code> next to <code>task-db.ts</code> and run it with <code>tsx</code>, for example <code>npx tsx src/no-cache.ts</code>. You should see the same output as the page.</p>
+</section>
+
+<section>
+<h2 id="first-cache">Your first cache</h2>
+<p>A <code>CacheService</code> is the object you call. Behind it sits an <strong>adapter</strong>, the actual storage. The package ships an in-memory adapter, which keeps entries in a <code>Map</code> inside your process:</p>
+<example file="first.ts" project="cache">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+import type { Task } from "./task-db.js";
+
+const cache = createCacheService({
+  adapter: createMemoryCacheAdapter({ maxEntries: 1000 }),
+  config: { defaultTtl: 60_000 },
+});
+
+const tasks: Task[] = [{ id: 1, userId: "ada", title: "Buy milk", done: false }];
+const saved = await cache.set("tasks.ada", tasks);
+console.log(saved.success, saved.key);
+
+const found = await cache.get<Task[]>("tasks.ada");
+console.log(found.hit, found.value);
+
+const missing = await cache.get<Task[]>("tasks.linus");
+console.log(missing.hit, missing.value);
+</example>
+<output>
+true zudojs:tasks.ada
+true [ { id: 1, userId: 'ada', title: 'Buy milk', done: false } ]
+false null
+</output>
+<ul>
+<li><code>maxEntries</code> caps the cache at 1,000 entries. When it is full, the entry that was used least recently is dropped. A cache is allowed to forget.</li>
+<li><code>defaultTtl</code> is how long an entry lives, in milliseconds. More on that below.</li>
+<li><code>get</code> never returns the value on its own. It returns <code>{ hit, value }</code>. Check <code>hit</code> first, because a cached value can itself be <code>null</code> or an empty list.</li>
+<li>The stored key is <code>zudojs:tasks.ada</code>. The cache added a <strong>prefix</strong>, <code>zudojs</code>, so its keys cannot clash with other data in a shared store such as Redis.</li>
+</ul>
+<warn title="COMMON MISTAKE">Writing <code>if (!found) { … load from the database … }</code>. The result object is never falsy, so that branch never runs and the cache never fills. Write <code>if (!found.hit)</code>.</warn>
+</section>
+
+<section>
+<h2 id="keys">Keys and namespaces</h2>
+<p>A <strong>key</strong> is the name you store a value under. The cache builds the full key as <code>prefix:namespace:key</code>, with a colon between the parts. Because the colon has that job, it is not allowed inside your own key. Each part may only contain letters, digits, <code>.</code>, <code>_</code> and <code>-</code>:</p>
+<example file="keys.ts">
+import { createKeyBuilder, isCacheError } from "@zudojs/cache";
+
+const keys = createKeyBuilder({ prefix: "taskapi" });
+
+console.log(keys.build("tasks.list"));
+console.log(keys.build("tasks.list", { namespace: "ada" }));
+
+try {
+  keys.build("tasks:list");
+} catch (error) {
+  if (isCacheError(error)) {
+    console.log(error.statusCode, error.message);
+  }
+}
+</example>
+<output>
+taskapi:tasks.list
+taskapi:ada:tasks.list
+400 Invalid cache key part "tasks:list": parts must match /^[a-zA-Z0-9._\-]+$/ and must not contain the separator ":".
+</output>
+<p>Why so strict? If a key could contain a colon, a key such as <code>"ada:tasks.list"</code> would look exactly like the key <code>tasks.list</code> in the namespace <code>ada</code>. Someone who controls part of a key could then read or overwrite another user's entry.</p>
+<p>A <strong>namespace</strong> groups keys. The same key in two namespaces is two different entries. In the Task API, every user sees only their own tasks, so the user id is a natural namespace:</p>
+<example file="namespaces.ts">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+
+await cache.set("tasks.list", ["Buy milk", "Write report"], { namespace: "ada" });
+await cache.set("tasks.list", ["Fix bug"], { namespace: "linus" });
+
+console.log((await cache.get("tasks.list", { namespace: "ada" })).value);
+console.log((await cache.get("tasks.list", { namespace: "linus" })).value);
+
+console.log(await cache.clear({ namespace: "ada" }));
+console.log(await cache.has("tasks.list", { namespace: "ada" }));
+console.log(await cache.has("tasks.list", { namespace: "linus" }));
+</example>
+<output>
+[ 'Buy milk', 'Write report' ]
+[ 'Fix bug' ]
+{ cleared: 1 }
+false
+true
+</output>
+<warn title="SECURITY: THE KEY MUST INCLUDE WHO IS ASKING">The classic caching data leak: you cache <code>GET /tasks</code> under the key <code>tasks.list</code> with no user in it. Ada asks first, her list is stored, and Linus now receives Ada's tasks. The key (or namespace) must contain everything the answer depends on: the user, the tenant, the filters, the page number. Take the user id from the verified login token, as in <a href="/learn/zudo-auth">the authentication lesson</a>, never from a query parameter the client can change.</warn>
+<p>A namespace is checked like a key part. An empty string or a wildcard such as <code>"*"</code> throws instead of quietly reaching every user's entries.</p>
+</section>
+
+<section>
+<h2 id="ttl">TTL: how long an entry lives</h2>
+<p><strong>TTL</strong> means "time to live": the number of milliseconds an entry stays valid after you store it. When the time is up, the cache treats the entry as missing, and the next read goes to the database and gets fresh data. A TTL is your safety net against stale data: even if you forget to clear an entry, it cannot stay wrong for longer than its TTL.</p>
+<example file="ttl.ts">
+import { createCacheService, createMemoryCacheAdapter, isCacheError } from "@zudojs/cache";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+
+await cache.set("tasks.ada", ["Buy milk"], { ttl: 50 });
+await cache.set("settings", { theme: "dark" }, { ttl: null });
+
+console.log("right away:", (await cache.get("tasks.ada")).hit);
+await wait(60);
+console.log("60 ms later:", (await cache.get("tasks.ada")).hit);
+console.log("time left:", await cache.ttl("tasks.ada"), await cache.ttl("settings"));
+
+try {
+  await cache.set("tasks.ada", ["Buy milk"], { ttl: 0 });
+} catch (error) {
+  if (isCacheError(error)) console.log(error.code);
+}
+</example>
+<output>
+right away: true
+60 ms later: false
+time left: undefined null
+CACHE_INVALID_TTL
+</output>
+<p>The entry with a 50 ms TTL was gone 60 ms later. <code>cache.ttl(key)</code> returns the milliseconds left, <code>undefined</code> for a missing key, and <code>null</code> for an entry stored with <code>ttl: null</code>, which never expires.</p>
+<p>The last line shows a common mistake: <code>ttl: 0</code> does not mean "forever". It is rejected with <code>CACHE_INVALID_TTL</code>. Write <code>ttl: null</code> for an entry that never expires.</p>
+<p>How long should a TTL be? It is a trade-off. Longer means more hits and less database work. Shorter means stale data disappears sooner. A task list that you also clear on every change (next sections) can live for minutes. Data you cannot clear reliably, such as an answer from another company's API, should live only as long as you can accept it being out of date. The default is 5 minutes, and the maximum is 24 hours.</p>
+</section>
+
+<section>
+<h2 id="get-or-set">getOrSet and the stampede</h2>
+<p>Almost all cache code does the same three steps: look in the cache; on a miss, do the slow work; store the result. <code>getOrSet</code> does all three:</p>
+<example file="get-or-set.ts" project="cache">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+import { TaskDb } from "./task-db.js";
+
+const db = new TaskDb();
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+
+for (let request = 1; request <= 3; request++) {
+  const result = await cache.getOrSet("tasks.list", () => db.listTasks("ada"), {
+    namespace: "ada",
+    ttl: 60_000,
+  });
+  console.log(`request ${request}: ${result.value.length} tasks, cached: ${result.cached}`);
+}
+console.log("queries:", db.queries);
+</example>
+<output>
+request 1: 2 tasks, cached: false
+request 2: 2 tasks, cached: true
+request 3: 2 tasks, cached: true
+queries: 1
+</output>
+<p>One query instead of three. <code>result.cached</code> tells you where the value came from.</p>
+<p>Now imagine the entry has just expired and 50 requests arrive in the same millisecond. They all miss, so they all run the query at once. The database suddenly gets 50 identical queries: a <strong>cache stampede</strong>. On a busy site this can take the database down right when the cache was supposed to protect it.</p>
+<p><code>getOrSet</code> protects you. While one computation for a key is running, other callers for the same key wait for it instead of starting their own:</p>
+<example file="stampede.ts" project="cache">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+import { TaskDb } from "./task-db.js";
+
+const db = new TaskDb();
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+
+const load = () => cache.getOrSet("tasks.list", () => db.listTasks("ada"), { namespace: "ada" });
+
+const results = await Promise.all([load(), load(), load(), load(), load()]);
+console.log("answers:", results.map((r) => r.value.length));
+console.log("queries:", db.queries);
+</example>
+<output>
+answers: [ 2, 2, 2, 2, 2 ]
+queries: 1
+</output>
+<p><code>Promise.all</code>, from <a href="/learn/js-async">the asynchronous JavaScript lesson</a>, starts all five at the same moment. Five answers, one query.</p>
+<note>This protection works inside one process. If you run three copies of the Task API, each copy can still run one query. That is usually fine. For "exactly once across servers", you need a lock in a shared store, which the lock section covers.</note>
+</section>
+
+<section>
+<h2 id="invalidation">Invalidation: when the data changes</h2>
+<p>Here is the bug every cache has at first. Ada adds a task, and her list does not show it:</p>
+<example file="stale.ts" project="cache">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+import { TaskDb } from "./task-db.js";
+
+const db = new TaskDb();
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+const list = () => cache.getOrSet("tasks.list", () => db.listTasks("ada"), { namespace: "ada" });
+
+console.log("before:", (await list()).value.length);
+await db.addTask("ada", "Call the bank");
+console.log("after: ", (await list()).value.length);
+</example>
+<output>
+before: 2
+after:  2
+</output>
+<p>The database has 3 tasks for Ada, but the cache still holds the old list of 2, and it will keep serving it until the TTL runs out. Removing entries that are no longer correct is called <strong>invalidation</strong>. You have three tools:</p>
+<ul>
+<li><code>delete(key)</code> removes one key you know.</li>
+<li><strong>Tags</strong>: labels you attach when you store an entry. <code>invalidateByTag(["tasks"])</code> removes every entry with that tag, without you listing the keys.</li>
+<li><strong>Patterns</strong>: <code>invalidateByPattern("tasks.*")</code> removes every key that matches. <code>*</code> matches any characters, but never crosses the <code>:</code> between namespace and key.</li>
+</ul>
+<p>Tags are the most useful, because one change often makes several entries stale. A new task changes the full list, the "open tasks" list and the count:</p>
+<example file="tags.ts">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+const ada = { namespace: "ada", tags: ["tasks"] };
+
+await cache.set("tasks.list", ["Buy milk", "Write report"], ada);
+await cache.set("tasks.open", ["Buy milk"], ada);
+await cache.set("tasks.count", 2, ada);
+await cache.set("profile", { name: "Ada" }, { namespace: "ada", tags: ["profile"] });
+await cache.set("tasks.list", ["Fix bug"], { namespace: "linus", tags: ["tasks"] });
+
+console.log(await cache.invalidateByTag(["tasks"], { namespace: "ada" }));
+console.log("ada list:", await cache.has("tasks.list", { namespace: "ada" }));
+console.log("ada profile:", await cache.has("profile", { namespace: "ada" }));
+console.log("linus list:", await cache.has("tasks.list", { namespace: "linus" }));
+
+console.log(await cache.invalidateByPattern("tasks.*", { namespace: "linus" }));
+</example>
+<output>
+{ cleared: 3 }
+ada list: false
+ada profile: true
+linus list: true
+{ cleared: 1 }
+</output>
+<p>Three of Ada's entries were cleared. Her profile had a different tag and stayed. Linus's list had the same tag, but tags live inside a namespace, so his entry was not touched until the pattern call removed it.</p>
+<warn title="WATCH OUT">If you tag an entry in a namespace and then call <code>invalidateByTag</code> without that namespace, nothing is cleared and no error is thrown. Pass the same namespace on both sides.</warn>
+<p>The rule to follow: <strong>every code path that writes the data also invalidates its cache entries</strong>, right after the write succeeds. Create, update, delete, and any background job that changes tasks.</p>
+</section>
+
+<section>
+<h2 id="copies">Cached objects are shared</h2>
+<p>The memory adapter stores the object you give it, not a copy. If any code changes that object later, every reader of the cache sees the change:</p>
+<example file="copies.ts">
+import { createCacheService, createMemoryCacheAdapter, JsonCacheSerializer } from "@zudojs/cache";
+
+const shared = createCacheService({ adapter: createMemoryCacheAdapter() });
+const task = { title: "Buy milk", due: new Date("2026-10-01T09:00:00Z") };
+await shared.set("task.1", task);
+task.title = "CHANGED BY ACCIDENT";
+console.log((await shared.get<typeof task>("task.1")).value?.title);
+
+const copying = createCacheService({
+  adapter: createMemoryCacheAdapter(),
+  config: { serializer: new JsonCacheSerializer() },
+});
+const task2 = { title: "Buy milk", due: new Date("2026-10-01T09:00:00Z") };
+await copying.set("task.1", task2);
+task2.title = "CHANGED BY ACCIDENT";
+const copy = (await copying.get<typeof task2>("task.1")).value;
+console.log(copy?.title, copy?.due instanceof Date);
+</example>
+<output>
+CHANGED BY ACCIDENT
+Buy milk true
+</output>
+<p>With a <code>serializer</code>, the cache turns the value into text on the way in and builds a new object on the way out, so each reader gets its own copy. <code>JsonCacheSerializer</code> also keeps <code>Date</code> objects as dates, which plain JSON does not. You will see why in <a href="/learn/zudo-serialization">the serialization lesson</a>. A cache in another process, such as Redis, always stores text, so using a serializer from the start also makes the memory adapter behave like the real thing.</p>
+</section>
+
+<section>
+<h2 id="locks">Locks: one at a time</h2>
+<p>A <strong>lock</strong> is a named ticket that only one piece of code can hold at a time. Anyone else who asks for the same name waits, or gives up. Use it around work that must not run twice at once, such as rebuilding a daily report.</p>
+<p><code>withLock(name, fn)</code> takes the lock, runs <code>fn</code>, and releases the lock, even if <code>fn</code> throws:</p>
+<example file="locks.ts">
+import { createCacheService, createMemoryCacheAdapter, isCacheError } from "@zudojs/cache";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+
+async function rebuildReport(who: string, retryAttempts = 3): Promise<string> {
+  return cache.withLock("daily-report", async () => {
+    console.log(who, "starts");
+    await wait(50);
+    console.log(who, "ends");
+    return who;
+  }, { ttl: 10_000, retryAttempts });
+}
+
+console.log(await Promise.all([rebuildReport("A"), rebuildReport("B")]));
+
+const patient = rebuildReport("C");
+const impatient = rebuildReport("D", 0).catch((error: unknown) => {
+  if (isCacheError(error)) console.log("D gave up:", error.code);
+});
+await Promise.all([patient, impatient]);
+</example>
+<output>
+A starts
+A ends
+B starts
+B ends
+[ 'A', 'B' ]
+C starts
+D gave up: CACHE_LOCK_UNAVAILABLE
+C ends
+</output>
+<p>A and B asked at the same time. B had to wait: it tried again (by default up to 3 times, 100 ms apart) and ran once A released the lock. They never overlapped. D asked with <code>retryAttempts: 0</code>, found the lock taken by C, and gave up straight away with <code>CACHE_LOCK_UNAVAILABLE</code>, before C had even finished.</p>
+<p>The <code>ttl</code> makes the lock a <strong>lease</strong>: if your process crashes while holding it, the lock frees itself after 10 seconds instead of blocking everyone forever. While <code>fn</code> runs, the lease is renewed for you, and if it is lost anyway, <code>withLock</code> throws instead of pretending it worked.</p>
+<warn title="ONE PROCESS ONLY">The built-in lock store lives in the memory of one process. Two copies of the Task API do not see each other's locks. To lock across servers, pass a lock store backed by a shared system, such as Redis, as <code>config.lockStore</code>. Lock names are keys too: <code>"report:daily"</code> is rejected, write <code>"report.daily"</code>.</warn>
+</section>
+
+<section>
+<h2 id="metrics">See what the cache is doing</h2>
+<p>A cache you cannot measure is a guess. The most important number is the <strong>hit rate</strong>: hits divided by all reads. A hit rate of 0.9 means 9 of 10 reads were served from the cache. If it is low, your TTL may be too short, or your keys too specific to ever repeat.</p>
+<p>The service counts hits, misses, sets, deletes and errors, and emits an <strong>event</strong> on every operation that you can listen to:</p>
+<example file="metrics.ts">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+
+const subscription = cache.subscribe("cache.miss", (event) => {
+  console.log("miss:", event.key);
+});
+
+await cache.get("tasks.list", { namespace: "ada" });
+await cache.set("tasks.list", ["Buy milk"], { namespace: "ada" });
+await cache.get("tasks.list", { namespace: "ada" });
+await cache.get("tasks.list", { namespace: "ada" });
+await cache.get("tasks.list", { namespace: "linus" });
+subscription.unsubscribe();
+
+console.log(cache.getStats());
+console.log(cache.getHotKeys(3));
+console.log("entries:", await cache.size());
+</example>
+<output>
+miss: zudojs:ada:tasks.list
+miss: zudojs:linus:tasks.list
+{ hits: 2, misses: 2, sets: 1, deletes: 0, errors: 0, hitRate: 0.5 }
+[ { key: 'zudojs:ada:tasks.list', hits: 2 } ]
+entries: 1
+</output>
+<ul>
+<li><code>subscribe(type, handler)</code> listens for <code>cache.hit</code>, <code>cache.miss</code>, <code>cache.set</code>, <code>cache.delete</code>, <code>cache.clear</code> or <code>cache.error</code>, or <code>"*"</code> for all. You will learn how events work in general in <a href="/learn/zudo-events">the next lesson</a>.</li>
+<li><code>getHotKeys(n)</code> lists the most-read keys. It tells you where caching pays off most.</li>
+<li><code>getLatencyStats(CacheOperation.GET)</code> gives you how long reads take (p50, p95, p99). You will send numbers like these to a dashboard in <a href="/learn/zudo-observability">the observability lesson</a>.</li>
+</ul>
+<tip title="WHEN THE CACHE IS DOWN">With Redis, the cache is a separate server that can fail. Set <code>config.failSilently: true</code> and a broken cache behaves like a miss: the request goes to the database and still succeeds, only slower. A bad key and a lock that cannot be taken still throw, because those are bugs in your code, not an outage.</tip>
+</section>
+
+<section>
+<h2 id="task-service">Put it together: a cached task service</h2>
+<p>Here is the Task API's service with caching built in. Reads go through <code>getOrSet</code>, scoped to the user and tagged. Writes go to the database first, then clear the user's task entries:</p>
+<example file="cached-task.service.ts" project="cache">
+import { createCacheService, createMemoryCacheAdapter, JsonCacheSerializer } from "@zudojs/cache";
+import type { CacheService } from "@zudojs/cache";
+import type { Task, TaskDb } from "./task-db.js";
+
+export function createTaskCache(): CacheService {
+  return createCacheService({
+    adapter: createMemoryCacheAdapter({ maxEntries: 10_000 }),
+    config: { prefix: "taskapi", defaultTtl: 5 * 60_000, serializer: new JsonCacheSerializer() },
+  });
+}
+
+export class CachedTaskService {
+  constructor(
+    private readonly db: TaskDb,
+    private readonly cache: CacheService,
+  ) {}
+
+  async list(userId: string): Promise<Task[]> {
+    const result = await this.cache.getOrSet("tasks.list", () => this.db.listTasks(userId), {
+      namespace: userId,
+      tags: ["tasks"],
+    });
+    return result.value;
+  }
+
+  async create(userId: string, title: string): Promise<Task> {
+    const task = await this.db.addTask(userId, title);
+    await this.cache.invalidateByTag(["tasks"], { namespace: userId });
+    return task;
+  }
+}
+</example>
+<example file="main.ts" project="cache">
+import { CachedTaskService, createTaskCache } from "./cached-task.service.js";
+import { TaskDb } from "./task-db.js";
+
+const db = new TaskDb();
+const cache = createTaskCache();
+const tasks = new CachedTaskService(db, cache);
+
+console.log("ada:", (await tasks.list("ada")).map((t) => t.title));
+console.log("ada:", (await tasks.list("ada")).map((t) => t.title));
+console.log("linus:", (await tasks.list("linus")).map((t) => t.title));
+
+await tasks.create("ada", "Call the bank");
+console.log("ada:", (await tasks.list("ada")).map((t) => t.title));
+
+console.log("queries:", db.queries);
+console.log("hit rate:", cache.getStats()?.hitRate);
+</example>
+<output>
+ada: [ 'Buy milk', 'Write report' ]
+ada: [ 'Buy milk', 'Write report' ]
+linus: [ 'Fix bug' ]
+ada: [ 'Buy milk', 'Write report', 'Call the bank' ]
+queries: 4
+hit rate: 0.25
+</output>
+<p>Follow the four queries: Ada's first list, Linus's list, the insert, and Ada's list again after <code>create</code> cleared it. Ada's second read was a hit, so the hit rate is 1 of 4 reads. The new task shows up straight away because <code>create</code> cleared the stale list, and Linus's cache was never touched.</p>
+<p>In the Task API, create the cache once when the app starts and register it in the container, as you did with other services in <a href="/learn/zudo-container">the dependency injection lesson</a>, so every request shares the same cache.</p>
+</section>
+
+<section>
+<h2 id="practice">Practice</h2>
+<exercise title="Cache one task">
+<p>Add a <code>get(userId, id)</code> method that caches a single task under the key <code>task.&lt;id&gt;</code> in the user's namespace, with the <code>tasks</code> tag. Check that <code>create</code> also clears it, without changing <code>create</code>.</p>
+<solution>
+<example file="one-task.ts">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+let queries = 0;
+
+async function loadTask(id: number) {
+  queries += 1;
+  return { id, title: "Buy milk" };
+}
+
+async function get(userId: string, id: number) {
+  const result = await cache.getOrSet(`task.${id}`, () => loadTask(id), {
+    namespace: userId,
+    tags: ["tasks"],
+  });
+  return result.value;
+}
+
+await get("ada", 1);
+await get("ada", 1);
+console.log("queries:", queries);
+
+await cache.invalidateByTag(["tasks"], { namespace: "ada" });
+await get("ada", 1);
+console.log("queries:", queries);
+</example>
+<output>
+queries: 1
+queries: 2
+</output>
+<p>Because the single task carries the same <code>tasks</code> tag, the <code>invalidateByTag</code> call that <code>create</code> already makes clears it too. That is the point of tags: new cached views do not need new invalidation code.</p>
+</solution>
+</exercise>
+<exercise title="Find the leak">
+<p>A teammate caches the admin report like this: <code>cache.getOrSet("report", () =&gt; buildReport(user.role))</code>. An admin and a normal user call it. What goes wrong, and how do you fix it?</p>
+<solution>
+<p>The key <code>report</code> does not include the role, but the answer depends on it. Whoever asks first fills the cache, and everyone else gets that answer. If an admin asks first, normal users receive the admin report: a data leak. Put the role in the key, for example <code>`report.${user.role}`</code>, or better, check the permission before reading the cache at all, so a normal user never reaches the admin data.</p>
+</solution>
+</exercise>
+<exercise title="Measure the hit rate">
+<p>Using <code>getOrSet</code>, read the key <code>tasks.list</code> 10 times with a TTL of 30 ms, waiting 10 ms between reads. Predict the number of misses, then print <code>getStats()</code> to check.</p>
+<solution>
+<example file="hit-rate.ts">
+import { createCacheService, createMemoryCacheAdapter } from "@zudojs/cache";
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const cache = createCacheService({ adapter: createMemoryCacheAdapter() });
+
+for (let i = 0; i < 10; i++) {
+  await cache.getOrSet("tasks.list", async () => ["Buy milk"], { ttl: 30 });
+  await wait(10);
+}
+const stats = cache.getStats();
+console.log("misses:", stats?.misses, "hits:", stats?.hits);
+</example>
+<output mask="num">
+misses: 4 hits: 6
+</output>
+<p>Every entry lives 30 ms and you read every 10 ms or so, so roughly one read in three is a miss. Timers are not exact, so your numbers can differ by one. A TTL that is short compared to how often data is read gives a low hit rate.</p>
+</solution>
+</exercise>
+</section>
+
+<section>
+<h2 id="recap">Recap</h2>
+<ul>
+<li>A cache keeps copies of slow results. A hit reads the copy, a miss does the work. The price is stale data.</li>
+<li><code>get</code> returns <code>{ hit, value }</code>. <code>getOrSet</code> does read, compute and store in one call, and stops a stampede of identical queries.</li>
+<li>Keys are <code>prefix:namespace:key</code>, with no colons in your parts. The key or namespace must include everything the answer depends on, especially the user.</li>
+<li>A TTL limits how long a copy can be wrong. <code>ttl: null</code> never expires, and <code>0</code> is not allowed.</li>
+<li>Every write path invalidates the entries it made stale: by key, by tag, or by pattern, in the same namespace.</li>
+<li><code>withLock</code> runs work one at a time. The built-in lock and memory adapter only cover one process.</li>
+<li>Watch the hit rate with <code>getStats()</code> and events, and use <code>failSilently</code> so a broken cache is only slow, not fatal.</li>
+</ul>
+</section>
