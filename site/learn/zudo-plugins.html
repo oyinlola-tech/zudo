@@ -310,7 +310,38 @@ stop  notifications
 PluginDependencyError - Plugin "slack" depends on "notifications" which is not registered.
 PluginDependencyVersionError - Plugin "slack" requires "notifications@^1.2.0", but version 2.0.0 is registered. Register a "notifications" that satisfies ^1.2.0, relax the constraint on "slack", or construct the manager with { checkVersions: false }.</pre></div>
 </figure>
-<p>Slack was registered first, but notifications started first, because Slack depends on it. On shutdown the order is reversed. Both problems are found <strong>before any hook runs</strong>: a missing plugin, and a notifications 2.0.0 that does not satisfy <code>^1.2.0</code>, because a new major version may have changed its interface. A dependency marked <code>optional: true</code> is used for ordering when it is there, and ignored when it is not.</p>
+<p>Slack was registered first, but notifications started first, because Slack depends on it. On shutdown the order is reversed. Both problems are found <strong>before any hook runs</strong>: a missing plugin, and a notifications 2.0.0 that does not satisfy <code>^1.2.0</code>, because a new major version may have changed its interface.</p>
+<p>Some dependencies are nice to have. Slack can post without the notifications plugin, only less nicely. List those under <code>optionalDependencies</code>: when the plugin is there, it starts first; when it is missing, nothing fails:</p>
+<figure class="lx-example" data-index="2" data-file="optional.ts">
+<figcaption class="lx-bar"><span class="lx-file">optional.ts</span><button type="button" class="lx-edit" data-index="2" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createPluginContext<span class="t-pn">,</span> <span class="t-ty">PluginManager</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/plugins"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Plugin</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/plugins"</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> slack<span class="t-op">:</span> <span class="t-ty">Plugin</span> <span class="t-op">=</span> <span class="t-pn">{</span>
+  metadata<span class="t-op">:</span> <span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"slack"</span><span class="t-pn">,</span> version<span class="t-op">:</span> <span class="t-str">"1.0.0"</span> <span class="t-pn">}</span><span class="t-pn">,</span>
+  optionalDependencies<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"notifications"</span><span class="t-pn">,</span> version<span class="t-op">:</span> <span class="t-str">"^1.2.0"</span> <span class="t-pn">}</span><span class="t-pn">]</span><span class="t-pn">,</span>
+  start<span class="t-op">:</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"start slack"</span><span class="t-pn">)</span><span class="t-pn">,</span>
+<span class="t-pn">}</span><span class="t-pn">;</span>
+
+<span class="t-kw">const</span> manager <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">PluginManager</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
+manager<span class="t-pn">.</span><span class="t-fn">register</span><span class="t-pn">(</span>slack<span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">await</span> manager<span class="t-pn">.</span><span class="t-fn">start</span><span class="t-pn">(</span><span class="t-fn">createPluginContext</span><span class="t-pn">(</span><span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"task-api"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+</code></pre>
+<script type="text/plain" class="lx-src">import { createPluginContext, PluginManager } from "@zudojs/plugins";
+import type { Plugin } from "@zudojs/plugins";
+
+const slack: Plugin = {
+  metadata: { name: "slack", version: "1.0.0" },
+  optionalDependencies: [{ name: "notifications", version: "^1.2.0" }],
+  start: () => console.log("start slack"),
+};
+
+const manager = new PluginManager();
+manager.register(slack);
+await manager.start(createPluginContext({ name: "task-api" }));</script>
+<div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx optional.ts</code></div><pre class="lx-no-copy">start slack</pre></div>
+</figure>
+<div class="callout callout-warning"><p class="lx-callout-label">optional: true DOES NOT MAKE A DEPENDENCY OPTIONAL</p>The dependency type also has an <code>optional</code> field, so TypeScript accepts <code>dependencies: [{ name: "notifications", optional: true }]</code>. The manager ignores that field: a missing <code>notifications</code> still throws <code>PluginDependencyError</code>. Use <code>optionalDependencies</code>.</div>
 </section>
 
 <section>
@@ -321,8 +352,8 @@ PluginDependencyVersionError - Plugin "slack" requires "notifications@^1.2.0", b
 <li><code>context.signal</code> is an <code>AbortSignal</code> that fires when the plugin system shuts down, to cancel slow work such as a <code>fetch</code>.</li>
 <li><code>register(plugin, options)</code> hands the options to <code>install(context, options)</code>. That is how an installation configures a plugin.</li>
 </ul>
-<figure class="lx-example" data-index="2" data-file="reminders.ts">
-<figcaption class="lx-bar"><span class="lx-file">reminders.ts</span><button type="button" class="lx-edit" data-index="2" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="3" data-file="reminders.ts">
+<figcaption class="lx-bar"><span class="lx-file">reminders.ts</span><button type="button" class="lx-edit" data-index="3" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createPluginContext<span class="t-pn">,</span> <span class="t-ty">PluginManager</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/plugins"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Plugin</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/plugins"</span><span class="t-pn">;</span>
 
@@ -402,8 +433,8 @@ host exits cleanly</pre></div>
 <section>
 <h2 id="rollback">Failed starts, rollback and diagnostics</h2>
 <p>What if the Slack plugin cannot reach Slack while the Task API starts? Half-started plugins are dangerous: some timers run, some connections are open, and nothing will ever stop them. So when any hook of <code>manager.start</code> throws, the manager <strong>rolls back</strong>: it stops and disposes every plugin it had already brought up, then throws the error to you:</p>
-<figure class="lx-example" data-index="3" data-file="rollback.ts">
-<figcaption class="lx-bar"><span class="lx-file">rollback.ts</span><button type="button" class="lx-edit" data-index="3" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
+<figure class="lx-example" data-index="4" data-file="rollback.ts">
+<figcaption class="lx-bar"><span class="lx-file">rollback.ts</span><button type="button" class="lx-edit" data-index="4" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
 <pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createPluginContext<span class="t-pn">,</span> <span class="t-ty">PluginManager</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/plugins"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> manager <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">PluginManager</span><span class="t-pn">(</span><span class="t-pn">{</span> hookTimeout<span class="t-op">:</span> <span class="t-num">1000</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -476,64 +507,7 @@ slack disposed unhealthy cannot reach slack.com</pre></div>
 
 <section>
 <h2 id="task-api">Put it together: plugins for the Task API</h2>
-<p>Plugins need a way to react to what the Task API does. The host offers that through <code>context.events</code>: any object with <code>on</code>, <code>off</code> and <code>emit</code>. This small <strong>event hub</strong> is enough. It also catches errors, so a broken plugin handler cannot break the request that emitted the event:</p>
-<figure class="lx-example" data-index="4" data-file="src/plugins/event-hub.ts" data-project="host">
-<figcaption class="lx-bar"><span class="lx-file">src/plugins/event-hub.ts</span><button type="button" class="lx-edit" data-index="4" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">PluginEvents</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/plugins"</span><span class="t-pn">;</span>
-
-<span class="t-kw">type</span> <span class="t-ty">Handler</span> <span class="t-op">=</span> <span class="t-pn">(</span>event<span class="t-op">:</span> <span class="t-ty">unknown</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">void</span><span class="t-pn">;</span>
-
-<span class="t-kw">export</span> <span class="t-kw">function</span> <span class="t-fn">createEventHub</span><span class="t-pn">(</span>onError<span class="t-op">:</span> <span class="t-pn">(</span>error<span class="t-op">:</span> <span class="t-ty">unknown</span><span class="t-pn">,</span> name<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">void</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">PluginEvents</span> <span class="t-pn">{</span>
-  <span class="t-kw">const</span> handlers <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">Map</span><span class="t-op">&lt;</span><span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">Set</span><span class="t-op">&lt;</span><span class="t-ty">Handler</span><span class="t-op">&gt;&gt;</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-  <span class="t-kw">return</span> <span class="t-pn">{</span>
-    <span class="t-fn">on</span><span class="t-pn">(</span>name<span class="t-pn">,</span> handler<span class="t-pn">)</span> <span class="t-pn">{</span>
-      <span class="t-kw">const</span> <span class="t-kw">set</span> <span class="t-op">=</span> handlers<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>name<span class="t-pn">)</span> <span class="t-op">??</span> <span class="t-kw">new</span> <span class="t-ty">Set</span><span class="t-op">&lt;</span><span class="t-ty">Handler</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
-      <span class="t-kw">set</span><span class="t-pn">.</span><span class="t-fn">add</span><span class="t-pn">(</span>handler<span class="t-pn">)</span><span class="t-pn">;</span>
-      handlers<span class="t-pn">.</span><span class="t-kw">set</span><span class="t-pn">(</span>name<span class="t-pn">,</span> <span class="t-kw">set</span><span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-pn">}</span><span class="t-pn">,</span>
-    <span class="t-fn">off</span><span class="t-pn">(</span>name<span class="t-pn">,</span> handler<span class="t-pn">)</span> <span class="t-pn">{</span>
-      handlers<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>name<span class="t-pn">)</span><span class="t-op">?</span><span class="t-pn">.</span><span class="t-kw">delete</span><span class="t-pn">(</span>handler<span class="t-pn">)</span><span class="t-pn">;</span>
-    <span class="t-pn">}</span><span class="t-pn">,</span>
-    <span class="t-fn">emit</span><span class="t-pn">(</span>name<span class="t-pn">,</span> payload<span class="t-pn">)</span> <span class="t-pn">{</span>
-      <span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> handler <span class="t-kw">of</span> handlers<span class="t-pn">.</span><span class="t-kw">get</span><span class="t-pn">(</span>name<span class="t-pn">)</span> <span class="t-op">??</span> <span class="t-pn">[</span><span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-pn">{</span>
-        <span class="t-kw">try</span> <span class="t-pn">{</span>
-          <span class="t-fn">handler</span><span class="t-pn">(</span>payload<span class="t-pn">)</span><span class="t-pn">;</span>
-        <span class="t-pn">}</span> <span class="t-kw">catch</span> <span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">{</span>
-          <span class="t-fn">onError</span><span class="t-pn">(</span>error<span class="t-pn">,</span> name<span class="t-pn">)</span><span class="t-pn">;</span>
-        <span class="t-pn">}</span>
-      <span class="t-pn">}</span>
-    <span class="t-pn">}</span><span class="t-pn">,</span>
-  <span class="t-pn">}</span><span class="t-pn">;</span>
-<span class="t-pn">}</span>
-</code></pre>
-<script type="text/plain" class="lx-src">import type { PluginEvents } from "@zudojs/plugins";
-
-type Handler = (event: unknown) => void;
-
-export function createEventHub(onError: (error: unknown, name: string) => void): PluginEvents {
-  const handlers = new Map<string, Set<Handler>>();
-  return {
-    on(name, handler) {
-      const set = handlers.get(name) ?? new Set<Handler>();
-      set.add(handler);
-      handlers.set(name, set);
-    },
-    off(name, handler) {
-      handlers.get(name)?.delete(handler);
-    },
-    emit(name, payload) {
-      for (const handler of handlers.get(name) ?? []) {
-        try {
-          handler(payload);
-        } catch (error) {
-          onError(error, name);
-        }
-      }
-    },
-  };
-}</script>
-</figure>
-<div class="callout callout-note"><p class="lx-callout-label">NOTE</p>Why not the event bus from <a href="/learn/zudo-events">the events lesson</a>? Its <code>on</code>, <code>off</code> and <code>emit</code> have different shapes (for example <code>off</code> takes a subscription), so TypeScript refuses it as <code>PluginEvents</code>. A hub like this one, or a small adapter around the bus, fits.</div>
+<p>Plugins need a way to react to what the Task API does. The host offers that through <code>context.events</code>. Pass it the event bus you built in <a href="/learn/zudo-events">the events lesson</a>. The plugin system adapts it for plugins: a plugin calls <code>on(name, handler)</code> and its handler receives the event's <code>payload</code>. The bus also catches errors, so a broken plugin handler cannot break the request that published the event. (This works since @zudojs/plugins 1.3.0. The adapter is exported as <code>toPluginEvents</code>, if you need it yourself.)</p>
 <p>The audit-log plugin subscribes when it starts, and unsubscribes in its cleanup list. It only uses what the context gives it, so it works in any host that offers <code>events</code> and a <code>logger</code>:</p>
 <figure class="lx-example" data-index="5" data-file="src/plugins/audit-log.plugin.ts" data-project="host">
 <figcaption class="lx-bar"><span class="lx-file">src/plugins/audit-log.plugin.ts</span><button type="button" class="lx-edit" data-index="5" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
@@ -579,22 +553,22 @@ export function createAuditLogPlugin(): Plugin {
   };
 }</script>
 </figure>
-<p>The host builds the context with its logger and the hub, loads the plugins, and emits <code>task.completed</code> whenever a task is done. The Slack plugin needs a secret webhook address, which comes from an environment variable. When it is missing, the host logs a warning and starts without Slack, instead of failing or putting a secret in the code:</p>
+<p>The host builds the context with its logger and the bus, loads the plugins, and publishes <code>task.completed</code> whenever a task is done. The Slack plugin needs a secret webhook address, which comes from an environment variable. When it is missing, the host logs a warning and starts without Slack, instead of failing or putting a secret in the code:</p>
 <figure class="lx-example" data-index="6" data-file="src/plugins/load.ts" data-project="host">
 <figcaption class="lx-bar"><span class="lx-file">src/plugins/load.ts</span><button type="button" class="lx-edit" data-index="6" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createLogger<span class="t-pn">,</span> createTextLoggerFormatter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/logger"</span><span class="t-pn">;</span>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createEventBus <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/events"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createLogger<span class="t-pn">,</span> createTextLoggerFormatter <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/logger"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createPluginContext<span class="t-pn">,</span> <span class="t-ty">PluginManager</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/plugins"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-pn">{</span> createAuditLogPlugin <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./audit-log.plugin.js"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> createEventHub <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./event-hub.js"</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> logger <span class="t-op">=</span> <span class="t-fn">createLogger</span><span class="t-pn">(</span><span class="t-pn">{</span>
   name<span class="t-op">:</span> <span class="t-str">"task-api"</span><span class="t-pn">,</span>
   formatter<span class="t-op">:</span> <span class="t-fn">createTextLoggerFormatter</span><span class="t-pn">(</span><span class="t-pn">{</span> includeTimestamp<span class="t-op">:</span> <span class="t-cn">false</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">,</span>
-  transports<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-pn">(</span>entry<span class="t-pn">)</span> <span class="t-op">=&gt;</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>entry<span class="t-pn">.</span><span class="t-prop">message</span><span class="t-pn">)</span><span class="t-pn">]</span><span class="t-pn">,</span>
+  transports<span class="t-op">:</span> <span class="t-pn">[</span><span class="t-pn">(</span>entry<span class="t-pn">)</span> <span class="t-op">=&gt;</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span>entry<span class="t-pn">.</span><span class="t-prop">formatted</span> <span class="t-op">??</span> entry<span class="t-pn">.</span><span class="t-prop">message</span><span class="t-pn">)</span><span class="t-pn">]</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">const</span> events <span class="t-op">=</span> <span class="t-fn">createEventHub</span><span class="t-pn">(</span><span class="t-pn">(</span>error<span class="t-pn">,</span> name<span class="t-pn">)</span> <span class="t-op">=&gt;</span> logger<span class="t-pn">.</span><span class="t-fn">error</span><span class="t-pn">(</span><span class="t-str">"plugin handler failed"</span><span class="t-pn">,</span> <span class="t-pn">{</span> event<span class="t-op">:</span> name<span class="t-pn">,</span> error<span class="t-op">:</span> <span class="t-ty">String</span><span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> events <span class="t-op">=</span> <span class="t-fn">createEventBus</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 events<span class="t-pn">.</span><span class="t-fn">on</span><span class="t-pn">(</span><span class="t-str">"plugin:started"</span><span class="t-pn">,</span> <span class="t-pn">(</span>event<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
-  <span class="t-kw">const</span> <span class="t-pn">{</span> plugin <span class="t-pn">}</span> <span class="t-op">=</span> event <span class="t-kw">as</span> <span class="t-pn">{</span> plugin<span class="t-op">:</span> <span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span> version<span class="t-op">?:</span> <span class="t-ty">string</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">;</span>
+  <span class="t-kw">const</span> <span class="t-pn">{</span> plugin <span class="t-pn">}</span> <span class="t-op">=</span> event<span class="t-pn">.</span><span class="t-prop">payload</span> <span class="t-kw">as</span> <span class="t-pn">{</span> plugin<span class="t-op">:</span> <span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-ty">string</span><span class="t-pn">;</span> version<span class="t-op">?:</span> <span class="t-ty">string</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">;</span>
   logger<span class="t-pn">.</span><span class="t-fn">info</span><span class="t-pn">(</span><span class="t-str">"plugin started"</span><span class="t-pn">,</span> <span class="t-pn">{</span> name<span class="t-op">:</span> plugin<span class="t-pn">.</span><span class="t-prop">name</span><span class="t-pn">,</span> version<span class="t-op">:</span> plugin<span class="t-pn">.</span><span class="t-prop">version</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
@@ -611,26 +585,27 @@ manager<span class="t-pn">.</span><span class="t-fn">register</span><span class=
 <span class="t-kw">const</span> context <span class="t-op">=</span> <span class="t-fn">createPluginContext</span><span class="t-pn">(</span><span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"task-api"</span><span class="t-pn">,</span> version<span class="t-op">:</span> <span class="t-str">"0.1.0"</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> logger<span class="t-pn">,</span> events <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">await</span> manager<span class="t-pn">.</span><span class="t-fn">start</span><span class="t-pn">(</span>context<span class="t-pn">)</span><span class="t-pn">;</span>
 
-events<span class="t-pn">.</span><span class="t-fn">emit</span><span class="t-pn">(</span><span class="t-str">"task.completed"</span><span class="t-pn">,</span> <span class="t-pn">{</span> taskId<span class="t-op">:</span> <span class="t-num">7</span><span class="t-pn">,</span> userId<span class="t-op">:</span> <span class="t-str">"ada"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> done <span class="t-op">=</span> <span class="t-kw">await</span> events<span class="t-pn">.</span><span class="t-fn">publishEvent</span><span class="t-pn">(</span><span class="t-pn">{</span> <span class="t-kw">type</span><span class="t-op">:</span> <span class="t-str">"task.completed"</span><span class="t-pn">,</span> payload<span class="t-op">:</span> <span class="t-pn">{</span> taskId<span class="t-op">:</span> <span class="t-num">7</span><span class="t-pn">,</span> userId<span class="t-op">:</span> <span class="t-str">"ada"</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"task 7:"</span><span class="t-pn">,</span> done<span class="t-pn">.</span><span class="t-prop">handlerCount</span><span class="t-pn">,</span> <span class="t-str">"handler, failed:"</span><span class="t-pn">,</span> done<span class="t-pn">.</span><span class="t-prop">failed</span><span class="t-pn">)</span><span class="t-pn">;</span>
 console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"diagnostics:"</span><span class="t-pn">,</span> manager<span class="t-pn">.</span><span class="t-fn">diagnostics</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">.</span><span class="t-prop">healthy</span><span class="t-pn">,</span> <span class="t-str">"healthy"</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 <span class="t-kw">await</span> manager<span class="t-pn">.</span><span class="t-fn">stop</span><span class="t-pn">(</span>context<span class="t-pn">)</span><span class="t-pn">;</span>
-events<span class="t-pn">.</span><span class="t-fn">emit</span><span class="t-pn">(</span><span class="t-str">"task.completed"</span><span class="t-pn">,</span> <span class="t-pn">{</span> taskId<span class="t-op">:</span> <span class="t-num">8</span><span class="t-pn">,</span> userId<span class="t-op">:</span> <span class="t-str">"ada"</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
-console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"after stop, nobody listened to task 8"</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> after <span class="t-op">=</span> <span class="t-kw">await</span> events<span class="t-pn">.</span><span class="t-fn">publishEvent</span><span class="t-pn">(</span><span class="t-pn">{</span> <span class="t-kw">type</span><span class="t-op">:</span> <span class="t-str">"task.completed"</span><span class="t-pn">,</span> payload<span class="t-op">:</span> <span class="t-pn">{</span> taskId<span class="t-op">:</span> <span class="t-num">8</span><span class="t-pn">,</span> userId<span class="t-op">:</span> <span class="t-str">"ada"</span> <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"task 8 after stop:"</span><span class="t-pn">,</span> after<span class="t-pn">.</span><span class="t-prop">handlerCount</span><span class="t-pn">,</span> <span class="t-str">"handlers"</span><span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
-<script type="text/plain" class="lx-src">import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
+<script type="text/plain" class="lx-src">import { createEventBus } from "@zudojs/events";
+import { createLogger, createTextLoggerFormatter } from "@zudojs/logger";
 import { createPluginContext, PluginManager } from "@zudojs/plugins";
 import { createAuditLogPlugin } from "./audit-log.plugin.js";
-import { createEventHub } from "./event-hub.js";
 
 const logger = createLogger({
   name: "task-api",
   formatter: createTextLoggerFormatter({ includeTimestamp: false }),
-  transports: [(entry) => console.log(entry.message)],
+  transports: [(entry) => console.log(entry.formatted ?? entry.message)],
 });
-const events = createEventHub((error, name) => logger.error("plugin handler failed", { event: name, error: String(error) }));
+const events = createEventBus();
 events.on("plugin:started", (event) => {
-  const { plugin } = event as { plugin: { name: string; version?: string } };
+  const { plugin } = event.payload as { plugin: { name: string; version?: string } };
   logger.info("plugin started", { name: plugin.name, version: plugin.version });
 });
 
@@ -647,18 +622,21 @@ if (webhook) {
 const context = createPluginContext({ name: "task-api", version: "0.1.0" }, { logger, events });
 await manager.start(context);
 
-events.emit("task.completed", { taskId: 7, userId: "ada" });
+const done = await events.publishEvent({ type: "task.completed", payload: { taskId: 7, userId: "ada" } });
+console.log("task 7:", done.handlerCount, "handler, failed:", done.failed);
 console.log("diagnostics:", manager.diagnostics().healthy, "healthy");
 
 await manager.stop(context);
-events.emit("task.completed", { taskId: 8, userId: "ada" });
-console.log("after stop, nobody listened to task 8");</script>
+const after = await events.publishEvent({ type: "task.completed", payload: { taskId: 8, userId: "ada" } });
+console.log("task 8 after stop:", after.handlerCount, "handlers");</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx src/plugins/load.ts</code></div><pre class="lx-no-copy">[WARN] [task-api] SLACK_WEBHOOK_URL is not set, running without the slack plugin
 [INFO] [task-api] plugin started name=audit-log version=1.0.0
 [INFO] [task-api] audit: task completed taskId=7 userId=ada
+task 7: 1 handler, failed: 0
 diagnostics: 1 healthy
-after stop, nobody listened to task 8</pre></div>
+task 8 after stop: 0 handlers</pre></div>
 </figure>
+<p>The plugin manager itself publishes <code>plugin:started</code> (and <code>plugin:stopped</code>, and more) on the same bus, which is where the "plugin started" line comes from. After <code>stop</code>, the audit log's cleanup list unsubscribed its handler, so task 8 reached nobody. If a plugin handler throws, <code>failed</code> counts it and <code>errors</code> holds the error for your log; the other handlers still run.</p>
 <p>The host only knows the plugin interface. You could add a Slack, a statistics or a reminder plugin without touching this code, except for the one <code>register</code> line. And <code>allowedCapabilities</code> refuses to register a plugin that asks for more than the host grants.</p>
 <div class="callout callout-warning"><p class="lx-callout-label">A PLUGIN RUNS WITH ALL THE POWER OF YOUR APP</p>Plugins are ordinary JavaScript in your process: a plugin can read every environment variable, open any file and send your data anywhere. <code>capabilities</code> is a declaration that the manager checks against your allow-list. It catches mistakes, but it is not a sandbox, and it cannot stop hostile code. Only install plugins you trust, pin their versions, and review what they do, exactly as with any other npm dependency.</div>
 </section>
@@ -702,7 +680,7 @@ after stop, nobody listened to task 8</pre></div>
     "@zudojs/plugins": "^1.2.0"
   },
   "devDependencies": {
-    "@zudojs/plugins": "^1.2.1",
+    "@zudojs/plugins": "^1.3.0",
     "typescript": "^7.0.2"
   }
 }
@@ -734,7 +712,7 @@ after stop, nobody listened to task 8</pre></div>
     "@zudojs/plugins": "^1.2.0"
   },
   "devDependencies": {
-    "@zudojs/plugins": "^1.2.1",
+    "@zudojs/plugins": "^1.3.0",
     "typescript": "^7.0.2"
   }
 }</script>
@@ -790,10 +768,10 @@ npm pack --dry-run"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="tr
 <span class="lx-res">npm notice name: @acme/zudo-plugin-audit-log</span>
 <span class="lx-res">npm notice version: 1.0.0</span>
 <span class="lx-res">npm notice filename: acme-zudo-plugin-audit-log-1.0.0.tgz</span>
-<span class="lx-res">npm notice package size: 753 B</span>
+<span class="lx-res">npm notice package size: 754 B</span>
 <span class="lx-res">npm notice unpacked size: 1.4 kB</span>
-<span class="lx-res">npm notice shasum: d3960360a58f7eb4b80760aadddb4742394050a2</span>
-<span class="lx-res">npm notice integrity: sha512-fLcqjX4vlKEvc[...]oXk5IkePu1fuA==</span>
+<span class="lx-res">npm notice shasum: d0a9da502d45b919d2af4d873693bef1bb6e3047</span>
+<span class="lx-res">npm notice integrity: sha512-IUF9tRPkgZ0cI[...]yFAz/fY6muE6w==</span>
 <span class="lx-res">npm notice total files: 4</span>
 <span class="lx-res">npm notice</span>
 <span class="lx-res">acme-zudo-plugin-audit-log-1.0.0.tgz</span></pre></figure>
@@ -804,9 +782,9 @@ npm pack --dry-run"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="tr
 <h2 id="practice">Practice</h2>
 <div class="lx-exercise"><p class="lx-exercise-label">TRY IT YOURSELF</p><h3>A statistics plugin</h3><p>Write <code>createStatsPlugin()</code>: it counts <code>task.completed</code> events per user and, in <code>stop</code>, logs the counts with <code>context.logger</code>. Remember to unsubscribe in the cleanup list.</p><details class="lx-solution"><summary>Show a solution</summary><figure class="lx-example" data-index="9" data-file="src/plugins/stats.ts" data-project="host">
 <figcaption class="lx-bar"><span class="lx-file">src/plugins/stats.ts</span><button type="button" class="lx-edit" data-index="9" title="Open in the editor: change it, save it in this browser and run it">Edit</button><span class="lx-nodeonly" title="This example uses Node.js, so run it on your computer">Node.js only</span></figcaption>
-<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createPluginContext<span class="t-pn">,</span> <span class="t-ty">PluginManager</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/plugins"</span><span class="t-pn">;</span>
+<pre class="lx-code"><code><span class="t-kw">import</span> <span class="t-pn">{</span> createEventBus <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/events"</span><span class="t-pn">;</span>
+<span class="t-kw">import</span> <span class="t-pn">{</span> createPluginContext<span class="t-pn">,</span> <span class="t-ty">PluginManager</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/plugins"</span><span class="t-pn">;</span>
 <span class="t-kw">import</span> <span class="t-kw">type</span> <span class="t-pn">{</span> <span class="t-ty">Plugin</span> <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"@zudojs/plugins"</span><span class="t-pn">;</span>
-<span class="t-kw">import</span> <span class="t-pn">{</span> createEventHub <span class="t-pn">}</span> <span class="t-kw">from</span> <span class="t-str">"./event-hub.js"</span><span class="t-pn">;</span>
 
 <span class="t-kw">function</span> <span class="t-fn">createStatsPlugin</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-op">:</span> <span class="t-ty">Plugin</span> <span class="t-pn">{</span>
   <span class="t-kw">const</span> perUser <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">Map</span><span class="t-op">&lt;</span><span class="t-ty">string</span><span class="t-pn">,</span> <span class="t-ty">number</span><span class="t-op">&gt;</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -826,18 +804,20 @@ npm pack --dry-run"><span class="lx-cmd"><span class="lx-prompt" aria-hidden="tr
   <span class="t-pn">}</span><span class="t-pn">;</span>
 <span class="t-pn">}</span>
 
-<span class="t-kw">const</span> events <span class="t-op">=</span> <span class="t-fn">createEventHub</span><span class="t-pn">(</span><span class="t-pn">(</span>error<span class="t-pn">)</span> <span class="t-op">=&gt;</span> console<span class="t-pn">.</span><span class="t-fn">log</span><span class="t-pn">(</span><span class="t-str">"handler failed:"</span><span class="t-pn">,</span> error<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">const</span> events <span class="t-op">=</span> <span class="t-fn">createEventBus</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> logger <span class="t-op">=</span> <span class="t-pn">{</span> info<span class="t-op">:</span> console<span class="t-pn">.</span><span class="t-prop">log</span><span class="t-pn">,</span> warn<span class="t-op">:</span> console<span class="t-pn">.</span><span class="t-prop">log</span><span class="t-pn">,</span> error<span class="t-op">:</span> console<span class="t-pn">.</span><span class="t-prop">log</span> <span class="t-pn">}</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> manager <span class="t-op">=</span> <span class="t-kw">new</span> <span class="t-ty">PluginManager</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">;</span>
 manager<span class="t-pn">.</span><span class="t-fn">register</span><span class="t-pn">(</span><span class="t-fn">createStatsPlugin</span><span class="t-pn">(</span><span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> context <span class="t-op">=</span> <span class="t-fn">createPluginContext</span><span class="t-pn">(</span><span class="t-pn">{</span> name<span class="t-op">:</span> <span class="t-str">"task-api"</span> <span class="t-pn">}</span><span class="t-pn">,</span> <span class="t-pn">{</span> events<span class="t-pn">,</span> logger <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">await</span> manager<span class="t-pn">.</span><span class="t-fn">start</span><span class="t-pn">(</span>context<span class="t-pn">)</span><span class="t-pn">;</span>
-<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> userId <span class="t-kw">of</span> <span class="t-pn">[</span><span class="t-str">"ada"</span><span class="t-pn">,</span> <span class="t-str">"linus"</span><span class="t-pn">,</span> <span class="t-str">"ada"</span><span class="t-pn">]</span><span class="t-pn">)</span> events<span class="t-pn">.</span><span class="t-fn">emit</span><span class="t-pn">(</span><span class="t-str">"task.completed"</span><span class="t-pn">,</span> <span class="t-pn">{</span> taskId<span class="t-op">:</span> <span class="t-num">1</span><span class="t-pn">,</span> userId <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-kw">for</span> <span class="t-pn">(</span><span class="t-kw">const</span> userId <span class="t-kw">of</span> <span class="t-pn">[</span><span class="t-str">"ada"</span><span class="t-pn">,</span> <span class="t-str">"linus"</span><span class="t-pn">,</span> <span class="t-str">"ada"</span><span class="t-pn">]</span><span class="t-pn">)</span> <span class="t-pn">{</span>
+  <span class="t-kw">await</span> events<span class="t-pn">.</span><span class="t-fn">publishEvent</span><span class="t-pn">(</span><span class="t-pn">{</span> <span class="t-kw">type</span><span class="t-op">:</span> <span class="t-str">"task.completed"</span><span class="t-pn">,</span> payload<span class="t-op">:</span> <span class="t-pn">{</span> taskId<span class="t-op">:</span> <span class="t-num">1</span><span class="t-pn">,</span> userId <span class="t-pn">}</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
+<span class="t-pn">}</span>
 <span class="t-kw">await</span> manager<span class="t-pn">.</span><span class="t-fn">stop</span><span class="t-pn">(</span>context<span class="t-pn">)</span><span class="t-pn">;</span>
 </code></pre>
-<script type="text/plain" class="lx-src">import { createPluginContext, PluginManager } from "@zudojs/plugins";
+<script type="text/plain" class="lx-src">import { createEventBus } from "@zudojs/events";
+import { createPluginContext, PluginManager } from "@zudojs/plugins";
 import type { Plugin } from "@zudojs/plugins";
-import { createEventHub } from "./event-hub.js";
 
 function createStatsPlugin(): Plugin {
   const perUser = new Map<string, number>();
@@ -857,13 +837,15 @@ function createStatsPlugin(): Plugin {
   };
 }
 
-const events = createEventHub((error) => console.log("handler failed:", error));
+const events = createEventBus();
 const logger = { info: console.log, warn: console.log, error: console.log };
 const manager = new PluginManager();
 manager.register(createStatsPlugin());
 const context = createPluginContext({ name: "task-api" }, { events, logger });
 await manager.start(context);
-for (const userId of ["ada", "linus", "ada"]) events.emit("task.completed", { taskId: 1, userId });
+for (const userId of ["ada", "linus", "ada"]) {
+  await events.publishEvent({ type: "task.completed", payload: { taskId: 1, userId } });
+}
 await manager.stop(context);</script>
 <div class="lx-out"><div class="lx-out-label">Output of <code>npx tsx src/plugins/stats.ts</code></div><pre class="lx-no-copy">tasks completed per user { ada: 2, linus: 1 }</pre></div>
 </figure></details></div>

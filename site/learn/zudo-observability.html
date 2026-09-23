@@ -196,7 +196,6 @@
   serviceName<span class="t-op">:</span> <span class="t-str">"task-api"</span><span class="t-pn">,</span>
   serviceVersion<span class="t-op">:</span> <span class="t-str">"0.1.0"</span><span class="t-pn">,</span>
   environment<span class="t-op">:</span> <span class="t-str">"development"</span><span class="t-pn">,</span>
-  redaction<span class="t-op">:</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 obs<span class="t-pn">.</span><span class="t-prop">logger</span><span class="t-pn">.</span><span class="t-fn">info</span><span class="t-pn">(</span><span class="t-str">"server started"</span><span class="t-pn">,</span> <span class="t-pn">{</span> port<span class="t-op">:</span> <span class="t-num">3000</span> <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
@@ -211,7 +210,6 @@ const obs = createObservability({
   serviceName: "task-api",
   serviceVersion: "0.1.0",
   environment: "development",
-  redaction: {},
 });
 
 obs.logger.info("server started", { port: 3000 });
@@ -225,7 +223,7 @@ await obs.shutdown();</script>
 </figure>
 <ul>
 <li>The logger works like the one from the logging lesson. Its metadata is called <code>context</code> here, and <code>child(name, context)</code> takes the name first.</li>
-<li><code>redaction: {}</code> switches on secret redaction with the default field list. <strong>Unlike @zudojs/logger, redaction here is off unless you pass this option.</strong> Always pass it.</li>
+<li>Secret redaction is on by default, with the same field list as @zudojs/logger: <code>password</code> became <code>[REDACTED]</code>. (Since @zudojs/observability 1.2.0. <code>redaction: false</code> switches it off; never do that in production.)</li>
 <li>Exporters work in <strong>batches</strong>: they collect records and send many at once, which is much cheaper than one network call per line. <code>await obs.shutdown()</code> sends what is left and closes the exporters. Without it, the last records are lost when the process exits.</li>
 </ul>
 </section>
@@ -626,7 +624,7 @@ export function instrument(obs: Observability, route: string, handler: Handler) 
 
 <span class="t-kw">const</span> wait <span class="t-op">=</span> <span class="t-pn">(</span>ms<span class="t-op">:</span> <span class="t-ty">number</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-kw">new</span> <span class="t-ty">Promise</span><span class="t-pn">(</span><span class="t-pn">(</span>resolve<span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-fn">setTimeout</span><span class="t-pn">(</span>resolve<span class="t-pn">,</span> ms<span class="t-pn">)</span><span class="t-pn">)</span><span class="t-pn">;</span>
 <span class="t-kw">const</span> obs <span class="t-op">=</span> <span class="t-fn">createObservability</span><span class="t-pn">(</span><span class="t-pn">{</span>
-  serviceName<span class="t-op">:</span> <span class="t-str">"task-api"</span><span class="t-pn">,</span> redaction<span class="t-op">:</span> <span class="t-pn">{</span><span class="t-pn">}</span><span class="t-pn">,</span> useConsoleExporters<span class="t-op">:</span> <span class="t-cn">false</span><span class="t-pn">,</span> spanExporter<span class="t-op">:</span> spanTree<span class="t-pn">,</span> logExporter<span class="t-op">:</span> logLines<span class="t-pn">,</span>
+  serviceName<span class="t-op">:</span> <span class="t-str">"task-api"</span><span class="t-pn">,</span> useConsoleExporters<span class="t-op">:</span> <span class="t-cn">false</span><span class="t-pn">,</span> spanExporter<span class="t-op">:</span> spanTree<span class="t-pn">,</span> logExporter<span class="t-op">:</span> logLines<span class="t-pn">,</span>
 <span class="t-pn">}</span><span class="t-pn">)</span><span class="t-pn">;</span>
 
 <span class="t-kw">const</span> listTasks <span class="t-op">=</span> <span class="t-fn">instrument</span><span class="t-pn">(</span>obs<span class="t-pn">,</span> <span class="t-str">"/tasks"</span><span class="t-pn">,</span> <span class="t-kw">async</span> <span class="t-pn">(</span><span class="t-pn">)</span> <span class="t-op">=&gt;</span> <span class="t-pn">{</span>
@@ -667,7 +665,7 @@ import { logLines, spanTree } from "./print.js";
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const obs = createObservability({
-  serviceName: "task-api", redaction: {}, useConsoleExporters: false, spanExporter: spanTree, logExporter: logLines,
+  serviceName: "task-api", useConsoleExporters: false, spanExporter: spanTree, logExporter: logLines,
 });
 
 const listTasks = instrument(obs, "/tasks", async () => {
@@ -866,7 +864,7 @@ await obs.shutdown();</script>
 <h2 id="recap">Recap</h2>
 <ul>
 <li>Logs say what happened, metrics say how much and how fast, traces say where the time of one request went.</li>
-<li><code>createObservability</code> gives a logger, metrics, a tracer and propagation. Pass <code>redaction: {}</code>: redaction is off without it.</li>
+<li><code>createObservability</code> gives a logger, metrics, a tracer and propagation. Secret fields are redacted by default.</li>
 <li>Counters go up, gauges go up and down, histograms give percentiles. Alert on p95, not the mean. Never put ids in labels.</li>
 <li>A trace is a tree of spans. <code>withSpan</code> makes a span active, so nested spans and log lines join it.</li>
 <li>AsyncLocalStorage carries the context through <code>await</code>s, so logs get the trace id without extra parameters.</li>
