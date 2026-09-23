@@ -1,3 +1,4 @@
+import type { DatabaseTransactionContext } from "../databaseClient/databaseClient.type.js";
 import type { Migration, MigrationRecord } from "./migration.types.js";
 
 /**
@@ -18,9 +19,11 @@ export const SQL_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /**
  * Normalizes and validates migrations.
  */
-export function normalizeMigrations(
-  migrations: readonly Migration[],
-): readonly Migration[] {
+export function normalizeMigrations<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+>(
+  migrations: readonly Migration<TTransaction>[],
+): readonly Migration<TTransaction>[] {
   if (!Array.isArray(migrations)) {
     throw new TypeError("Migrations must be an array.");
   }
@@ -46,7 +49,9 @@ export function normalizeMigrations(
 /**
  * Validates one migration.
  */
-export function validateMigration(migration: Migration): void {
+export function validateMigration<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+>(migration: Migration<TTransaction>): void {
   if (!migration || typeof migration !== "object") {
     throw new TypeError("A migration definition is required.");
   }
@@ -82,7 +87,9 @@ export function validateMigration(migration: Migration): void {
 /**
  * Returns the highest registered migration version.
  */
-export function getLatestVersion(migrations: readonly Migration[]): number {
+export function getLatestVersion(
+  migrations: readonly Pick<Migration, "version">[],
+): number {
   let latest = 0;
   for (const migration of migrations) {
     if (migration.version > latest) latest = migration.version;

@@ -98,11 +98,16 @@ export function createTransactionId(): string {
 
 /**
  * Manages transaction execution and lifecycle metadata.
+ *
+ * `TTransaction` is the transaction client handed to callbacks, taken from
+ * the {@link DatabaseClient} the manager wraps.
  */
-export class TransactionManager {
-  private readonly client: DatabaseClient;
+export class TransactionManager<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+> {
+  private readonly client: DatabaseClient<TTransaction>;
 
-  constructor(client: DatabaseClient) {
+  constructor(client: DatabaseClient<TTransaction>) {
     if (!client) {
       throw new TypeError("A database client is required.");
     }
@@ -115,7 +120,7 @@ export class TransactionManager {
    */
   public async execute<TResult>(
     callback: (
-      transaction: DatabaseTransactionContext,
+      transaction: TTransaction,
       context: TransactionContext,
     ) => Promise<TResult>,
     options: ManagedTransactionOptions = {},
@@ -139,7 +144,7 @@ export class TransactionManager {
    */
   public async run<TResult>(
     callback: (
-      transaction: DatabaseTransactionContext,
+      transaction: TTransaction,
       context: TransactionContext,
     ) => Promise<TResult>,
     options: ManagedTransactionOptions = {},
@@ -173,7 +178,7 @@ export class TransactionManager {
   /**
    * Returns the database client used by the manager.
    */
-  public getClient(): DatabaseClient {
+  public getClient(): DatabaseClient<TTransaction> {
     return this.client;
   }
 }
@@ -181,9 +186,9 @@ export class TransactionManager {
 /**
  * Creates a transaction manager.
  */
-export function createTransactionManager(
-  client: DatabaseClient,
-): TransactionManager {
+export function createTransactionManager<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+>(client: DatabaseClient<TTransaction>): TransactionManager<TTransaction> {
   return new TransactionManager(client);
 }
 
@@ -195,10 +200,13 @@ export function createTransactionManager(
  * validation, not-found, ...) propagates unchanged; driver and database
  * failures and any other thrown value become a `DatabaseError`.
  */
-export async function withTransaction<TResult>(
-  client: DatabaseClient,
+export async function withTransaction<
+  TResult,
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+>(
+  client: DatabaseClient<TTransaction>,
   callback: (
-    transaction: DatabaseTransactionContext,
+    transaction: TTransaction,
     context: TransactionContext,
   ) => Promise<TResult>,
   options?: ManagedTransactionOptions,
@@ -213,10 +221,13 @@ export async function withTransaction<TResult>(
  * callback must be idempotent with respect to any side effects performed
  * outside the transaction client (for example, sending emails).
  */
-export async function withTransactionRetry<TResult>(
-  client: DatabaseClient,
+export async function withTransactionRetry<
+  TResult,
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+>(
+  client: DatabaseClient<TTransaction>,
   callback: (
-    transaction: DatabaseTransactionContext,
+    transaction: TTransaction,
     context: TransactionContext,
   ) => Promise<TResult>,
   options: TransactionRetryOptions = {},

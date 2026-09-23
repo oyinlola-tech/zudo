@@ -83,11 +83,15 @@ export interface DatabaseLockResult {
  * Application-level lock abstraction for PostgreSQL.
  *
  * Locks are acquired inside a transaction and released when it ends.
+ * `TTransaction` is the transaction client handed to callbacks, taken from
+ * the database client.
  */
-export class DatabaseLockManager {
-  private readonly client: DatabaseClient;
+export class DatabaseLockManager<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+> {
+  private readonly client: DatabaseClient<TTransaction>;
 
-  constructor(client: DatabaseClient) {
+  constructor(client: DatabaseClient<TTransaction>) {
     if (!client) {
       throw new TypeError("A database client is required.");
     }
@@ -100,7 +104,7 @@ export class DatabaseLockManager {
    */
   public async withAdvisoryLock<TResult>(
     lockKey: string,
-    callback: (transaction: DatabaseTransactionContext) => Promise<TResult>,
+    callback: (transaction: TTransaction) => Promise<TResult>,
     options: DatabaseLockOptions = {},
   ): Promise<TResult> {
     validateLockKey(lockKey);
@@ -121,7 +125,7 @@ export class DatabaseLockManager {
   public async withRowLock<TResult>(
     tableName: string,
     id: string | number,
-    callback: (transaction: DatabaseTransactionContext) => Promise<TResult>,
+    callback: (transaction: TTransaction) => Promise<TResult>,
     options: DatabaseLockOptions = {},
   ): Promise<TResult> {
     validateIdentifier(tableName, "table name");
@@ -148,7 +152,7 @@ export class DatabaseLockManager {
   /**
    * Returns the underlying database client.
    */
-  public getClient(): DatabaseClient {
+  public getClient(): DatabaseClient<TTransaction> {
     return this.client;
   }
 }
@@ -156,8 +160,10 @@ export class DatabaseLockManager {
 /**
  * Creates a lock manager.
  */
-export function createLockManager(client: DatabaseClient): DatabaseLockManager {
-  return new DatabaseLockManager(client);
+export function createLockManager<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+>(client: DatabaseClient<TTransaction>): DatabaseLockManager<TTransaction> {
+  return new DatabaseLockManager<TTransaction>(client);
 }
 
 /**

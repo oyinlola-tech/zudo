@@ -62,9 +62,11 @@ interface MigrationRow {
  * lock before deciding what to execute, so two runners started together
  * never apply or revert the same migration twice.
  */
-export class MigrationRunner {
-  private readonly client: DatabaseClient;
-  private readonly migrations: readonly Migration[];
+export class MigrationRunner<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+> {
+  private readonly client: DatabaseClient<TTransaction>;
+  private readonly migrations: readonly Migration<TTransaction>[];
   private readonly tableName: string;
   private readonly lockKey: string;
   private readonly dialect: SqlDialect;
@@ -72,8 +74,8 @@ export class MigrationRunner {
   private readonly perItemTransaction: boolean;
 
   constructor(
-    client: DatabaseClient,
-    migrations: readonly Migration[],
+    client: DatabaseClient<TTransaction>,
+    migrations: readonly Migration<TTransaction>[],
     options: MigrationRunnerOptions = {},
   ) {
     if (!client) throw new TypeError("A database client is required.");
@@ -92,7 +94,7 @@ export class MigrationRunner {
   /**
    * Returns the migration status without executing anything.
    */
-  public async status(): Promise<MigrationStatus> {
+  public async status(): Promise<MigrationStatus<TTransaction>> {
     await this.ensureMigrationTable();
     const applied = await this.getAppliedMigrations();
     return {
@@ -274,7 +276,7 @@ export class MigrationRunner {
   }
 
   private async revertRecord(
-    transaction: DatabaseTransactionContext,
+    transaction: TTransaction,
     record: MigrationRecord,
   ): Promise<void> {
     const migration = this.migrations.find((m) => m.version === record.version);
@@ -306,7 +308,7 @@ export class MigrationRunner {
 
   private computePending(
     applied: readonly MigrationRecord[],
-  ): readonly Migration[] {
+  ): readonly Migration<TTransaction>[] {
     const versions = new Set(applied.map((record) => record.version));
     return this.migrations.filter((m) => !versions.has(m.version));
   }
@@ -333,8 +335,8 @@ export class MigrationRunner {
   }
 
   private async executeMigration(
-    transaction: DatabaseTransactionContext,
-    migration: Migration,
+    transaction: TTransaction,
+    migration: Migration<TTransaction>,
   ): Promise<void> {
     try {
       await migration.up(transaction);
@@ -348,7 +350,7 @@ export class MigrationRunner {
 
   private async recordMigration(
     transaction: DatabaseTransactionContext,
-    migration: Migration,
+    migration: Migration<TTransaction>,
   ): Promise<MigrationRecord> {
     const q = (id: string) => this.dialect.quoteIdentifier(id);
     const p = (index: number) => this.dialect.placeholder(index);
@@ -429,10 +431,12 @@ function hasVersion(records: readonly MigrationRecord[], version: number) {
 /**
  * Creates a migration runner.
  */
-export function createMigrationRunner(
-  client: DatabaseClient,
-  migrations: readonly Migration[],
+export function createMigrationRunner<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+>(
+  client: DatabaseClient<TTransaction>,
+  migrations: readonly Migration<TTransaction>[],
   options?: MigrationRunnerOptions,
-): MigrationRunner {
+): MigrationRunner<TTransaction> {
   return new MigrationRunner(client, migrations, options);
 }

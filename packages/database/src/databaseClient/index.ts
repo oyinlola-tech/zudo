@@ -19,7 +19,9 @@ export {
   type PrismaDriverAdapterLike,
   type PrismaQueryEvent,
   type PrismaTransactionOptions,
+  type PrismaSqlLike,
   type RawQueryOptions,
+  type TransactionClientOf,
 } from "./databaseClient.core.js";
 
 export {

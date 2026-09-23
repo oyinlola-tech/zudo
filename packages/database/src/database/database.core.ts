@@ -1,9 +1,9 @@
 import {
   DatabaseClient,
-  createDatabaseClient,
   type DatabaseClientOptions,
   type DatabaseTransactionContext,
   type PrismaClientLike,
+  type TransactionClientOf,
 } from "../databaseClient/databaseClient.core.js";
 
 import type {
@@ -19,17 +19,27 @@ import type {
  * This module provides a single database lifecycle entry point while
  * keeping the underlying Prisma client implementation inside the
  * database package.
+ *
+ * `TTransaction` is the transaction client handed to `transaction()`
+ * callbacks. {@link createDatabase} infers it from the wrapped client or
+ * from `options.prisma`.
  */
-export class Database {
-  private readonly client: DatabaseClient;
+export class Database<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+> {
+  private readonly client: DatabaseClient<TTransaction>;
 
   /**
    * @param options Client options, or an existing {@link DatabaseClient}
    * to wrap so a single client is shared by the facade and other managers.
    */
-  constructor(options: DatabaseClientOptions | DatabaseClient = {}) {
+  constructor(
+    options: DatabaseClientOptions | DatabaseClient<TTransaction> = {},
+  ) {
     this.client =
-      options instanceof DatabaseClient ? options : createDatabaseClient(options);
+      options instanceof DatabaseClient
+        ? options
+        : new DatabaseClient<TTransaction>(options);
   }
 
   /**
@@ -78,7 +88,7 @@ export class Database {
    * Executes work inside a database transaction.
    */
   public async transaction<TResult>(
-    callback: TransactionCallback<DatabaseTransactionContext, TResult>,
+    callback: TransactionCallback<TTransaction, TResult>,
     options?: TransactionOptions,
   ): Promise<TResult> {
     return this.client.transaction(callback, options);
@@ -90,7 +100,7 @@ export class Database {
    * This should primarily be used by repository and infrastructure
    * implementations that require direct Prisma access.
    */
-  public getClient(): DatabaseClient {
+  public getClient(): DatabaseClient<TTransaction> {
     return this.client;
   }
 
@@ -110,8 +120,25 @@ export class Database {
 }
 
 /**
- * Creates a database facade.
+ * Creates a database facade over an existing client, keeping its
+ * transaction client type.
  */
+export function createDatabase<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+>(client: DatabaseClient<TTransaction>): Database<TTransaction>;
+/**
+ * Creates a database facade from client options. The transaction client
+ * type is inferred from `options.prisma`.
+ */
+export function createDatabase<
+  TClient extends PrismaClientLike = PrismaClientLike,
+>(options?: DatabaseClientOptions<TClient>): Database<TransactionClientOf<TClient>>;
+/**
+ * Creates a database facade from client options or an existing client.
+ */
+export function createDatabase(
+  options?: DatabaseClientOptions | DatabaseClient,
+): Database;
 export function createDatabase(
   options: DatabaseClientOptions | DatabaseClient = {},
 ): Database {

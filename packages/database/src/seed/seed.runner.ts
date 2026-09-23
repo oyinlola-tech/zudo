@@ -20,8 +20,13 @@ import type { RunnerTransactionOptions } from "../migration/migration.types.js";
 
 /**
  * Defines a database seed operation.
+ *
+ * `TTransaction` is the transaction client handed to `run` and `rollback`;
+ * {@link createSeedRunner} infers it from the database client.
  */
-export interface Seed {
+export interface Seed<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+> {
   /**
    * Unique seed name.
    */
@@ -35,12 +40,12 @@ export interface Seed {
   /**
    * Executes the seed.
    */
-  readonly run: (database: DatabaseTransactionContext) => Promise<void>;
+  readonly run: (database: TTransaction) => Promise<void>;
 
   /**
    * Optional cleanup operation.
    */
-  readonly rollback?: (database: DatabaseTransactionContext) => Promise<void>;
+  readonly rollback?: (database: TTransaction) => Promise<void>;
 }
 
 /**
@@ -69,8 +74,10 @@ export interface SeedResult {
 /**
  * Seed runner status.
  */
-export interface SeedStatus {
-  readonly pending: readonly Seed[];
+export interface SeedStatus<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+> {
+  readonly pending: readonly Seed<TTransaction>[];
   readonly applied: readonly SeedRecord[];
 }
 
@@ -134,9 +141,11 @@ interface SeedRow {
  * lock before deciding what to execute, so two runners started together
  * never apply or revert the same seed twice.
  */
-export class SeedRunner {
-  private readonly client: DatabaseClient;
-  private readonly seeds: readonly Seed[];
+export class SeedRunner<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+> {
+  private readonly client: DatabaseClient<TTransaction>;
+  private readonly seeds: readonly Seed<TTransaction>[];
   private readonly tableName: string;
   private readonly lockKey: string;
   private readonly dialect: SqlDialect;
@@ -144,8 +153,8 @@ export class SeedRunner {
   private readonly perItemTransaction: boolean;
 
   constructor(
-    client: DatabaseClient,
-    seeds: readonly Seed[],
+    client: DatabaseClient<TTransaction>,
+    seeds: readonly Seed<TTransaction>[],
     options: SeedRunnerOptions = {},
   ) {
     if (!client) throw new TypeError("A database client is required.");
@@ -164,7 +173,7 @@ export class SeedRunner {
   /**
    * Returns the seed runner status.
    */
-  public async status(): Promise<SeedStatus> {
+  public async status(): Promise<SeedStatus<TTransaction>> {
     await this.ensureSeedTable();
     const applied = await this.getAppliedSeeds();
     return { pending: this.computePending(applied), applied };
@@ -342,7 +351,7 @@ export class SeedRunner {
   }
 
   private async revertRecord(
-    transaction: DatabaseTransactionContext,
+    transaction: TTransaction,
     record: SeedRecord,
   ): Promise<void> {
     const seed = this.seeds.find((candidate) => candidate.name === record.name);
@@ -369,7 +378,9 @@ export class SeedRunner {
     await this.deleteSeedRecord(transaction, seed.name);
   }
 
-  private computePending(applied: readonly SeedRecord[]): readonly Seed[] {
+  private computePending(
+    applied: readonly SeedRecord[],
+  ): readonly Seed<TTransaction>[] {
     const names = new Set(applied.map((record) => record.name));
     return this.seeds.filter((seed) => !names.has(seed.name));
   }
@@ -396,8 +407,8 @@ export class SeedRunner {
   }
 
   private async executeSeed(
-    transaction: DatabaseTransactionContext,
-    seed: Seed,
+    transaction: TTransaction,
+    seed: Seed<TTransaction>,
   ): Promise<void> {
     try {
       await seed.run(transaction);
@@ -411,7 +422,7 @@ export class SeedRunner {
 
   private async recordSeed(
     transaction: DatabaseTransactionContext,
-    seed: Seed,
+    seed: Seed<TTransaction>,
   ): Promise<SeedRecord> {
     const q = (id: string) => this.dialect.quoteIdentifier(id);
     const sql =
@@ -489,18 +500,22 @@ function hasName(records: readonly SeedRecord[], name: string): boolean {
 /**
  * Creates a seed runner.
  */
-export function createSeedRunner(
-  client: DatabaseClient,
-  seeds: readonly Seed[],
+export function createSeedRunner<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+>(
+  client: DatabaseClient<TTransaction>,
+  seeds: readonly Seed<TTransaction>[],
   options?: SeedRunnerOptions,
-): SeedRunner {
+): SeedRunner<TTransaction> {
   return new SeedRunner(client, seeds, options);
 }
 
 /**
  * Validates and sorts seed definitions (stable sort on `order`).
  */
-export function normalizeSeeds(seeds: readonly Seed[]): readonly Seed[] {
+export function normalizeSeeds<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+>(seeds: readonly Seed<TTransaction>[]): readonly Seed<TTransaction>[] {
   if (!Array.isArray(seeds)) {
     throw new TypeError("Seeds must be an array.");
   }
@@ -526,7 +541,9 @@ export function normalizeSeeds(seeds: readonly Seed[]): readonly Seed[] {
 /**
  * Validates one seed definition.
  */
-export function validateSeed(seed: Seed): void {
+export function validateSeed<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+>(seed: Seed<TTransaction>): void {
   if (!seed || typeof seed !== "object") {
     throw new TypeError("A seed definition is required.");
   }

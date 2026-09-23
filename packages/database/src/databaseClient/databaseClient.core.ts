@@ -13,7 +13,7 @@
  */
 
 import { createRequire } from "node:module";
-import type { Prisma } from "@prisma/client";
+
 import { DatabaseError, DatabaseOperation } from "@zudojs/errors";
 import type {
   DatabaseClient as DatabaseClientContract,
@@ -27,16 +27,21 @@ import type {
   TransactionOptions,
 } from "../databaseType/databaseType.type.js";
 import { createDefaultLogger } from "./databaseClient.logger.js";
+import type {
+  DatabaseTransactionContext,
+  PrismaSqlLike,
+  TransactionClientOf,
+} from "./databaseClient.type.js";
 import {
   isNonDatabaseBaseError,
   normalizeDatabaseError,
 } from "./databaseClient.errors.js";
 
-/**
- * Transaction client handed to callbacks. This is Prisma's interactive
- * transaction client (model delegates plus raw query helpers).
- */
-export type DatabaseTransactionContext = Prisma.TransactionClient;
+export type {
+  DatabaseTransactionContext,
+  PrismaSqlLike,
+  TransactionClientOf,
+} from "./databaseClient.type.js";
 
 /**
  * Isolation levels accepted by Prisma's interactive transactions. The
@@ -90,8 +95,8 @@ export interface PrismaClientLike {
  * The interactive-transaction form of Prisma's `$transaction`, which is the
  * only form `DatabaseClient` calls.
  */
-type InteractiveTransaction = <TResult>(
-  callback: (transaction: DatabaseTransactionContext) => Promise<TResult>,
+type InteractiveTransaction<TTransaction> = <TResult>(
+  callback: (transaction: TTransaction) => Promise<TResult>,
   options?: PrismaTransactionOptions,
 ) => Promise<TResult>;
 
@@ -121,13 +126,17 @@ export interface PrismaDriverAdapterLike {
  * Prisma 7 requires either a driver adapter or an already constructed
  * client; connection URLs, pool sizes and SSL flags are configured on the
  * adapter and are therefore not accepted here.
+ *
+ * `TClient` is the type of `prisma`; {@link createDatabaseClient} infers
+ * it to type the transaction client handed to callbacks.
  */
-export interface DatabaseClientOptions
-  extends Pick<DatabaseConnectionOptions, "connectionTimeoutMs" | "logging"> {
+export interface DatabaseClientOptions<
+  TClient extends PrismaClientLike = PrismaClientLike,
+> extends Pick<DatabaseConnectionOptions, "connectionTimeoutMs" | "logging"> {
   /**
    * Pre-built Prisma client. Takes precedence over `adapter`.
    */
-  readonly prisma?: PrismaClientLike;
+  readonly prisma?: TClient;
 
   /**
    * Prisma driver adapter used to construct a client when `prisma` is
@@ -149,9 +158,17 @@ export type RawQueryOptions = DatabaseOperationOptions;
  * `connect()` de-duplicates concurrent calls through a shared in-flight
  * promise, and `disconnect()` waits for an in-flight connect before
  * tearing the client down.
+ *
+ * `TTransaction` is the client handed to `transaction()` callbacks.
+ * {@link createDatabaseClient} infers it from the Prisma client passed as
+ * `prisma`, so `tx.user.create(...)` is typed by the generated client. The
+ * constructor cannot infer it; `new DatabaseClient(options)` uses the
+ * structural {@link DatabaseTransactionContext} unless a type argument is
+ * given.
  */
-export class DatabaseClient
-  implements DatabaseClientContract<DatabaseTransactionContext>
+export class DatabaseClient<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+> implements DatabaseClientContract<TTransaction>
 {
   private readonly prisma: PrismaClientLike;
   private readonly logger: DatabaseLogger;
@@ -321,7 +338,7 @@ export class DatabaseClient
    * any other thrown value, are normalised to a `DatabaseError` and logged.
    */
   public async transaction<TResult>(
-    callback: TransactionCallback<DatabaseTransactionContext, TResult>,
+    callback: TransactionCallback<TTransaction, TResult>,
     options: TransactionOptions = {},
   ): Promise<TResult> {
     if (typeof callback !== "function") {
@@ -332,7 +349,7 @@ export class DatabaseClient
     const transactionOptions = buildPrismaTransactionOptions(options);
     const interactive = this.prisma.$transaction.bind(
       this.prisma,
-    ) as InteractiveTransaction;
+    ) as InteractiveTransaction<TTransaction>;
     try {
       return await raceAbort(
         interactive(
@@ -416,11 +433,11 @@ export class DatabaseClient
    * Only available when the underlying client supports `$executeRaw`.
    */
   public async executeRaw(
-    query: Prisma.Sql,
+    query: PrismaSqlLike,
     options: RawQueryOptions = {},
   ): Promise<number> {
     const prisma = this.prisma as PrismaClientLike & {
-      $executeRaw?: (query: Prisma.Sql) => Promise<number>;
+      $executeRaw?: (query: PrismaSqlLike) => Promise<number>;
     };
     if (typeof prisma.$executeRaw !== "function") {
       throw new TypeError("The Prisma client does not support $executeRaw.");
@@ -444,11 +461,11 @@ export class DatabaseClient
    * Executes a `Prisma.sql` tagged query.
    */
   public async queryRaw<TResult = unknown>(
-    query: Prisma.Sql,
+    query: PrismaSqlLike,
     options: RawQueryOptions = {},
   ): Promise<TResult> {
     const prisma = this.prisma as PrismaClientLike & {
-      $queryRaw?: (query: Prisma.Sql) => Promise<TResult>;
+      $queryRaw?: (query: PrismaSqlLike) => Promise<TResult>;
     };
     if (typeof prisma.$queryRaw !== "function") {
       throw new TypeError("The Prisma client does not support $queryRaw.");
@@ -559,7 +576,7 @@ function resolvePrismaClientConstructor(): PrismaClientConstructor {
   if (cachedPrismaClientConstructor) return cachedPrismaClientConstructor;
 
   const guidance =
-    "Install it and run `prisma generate`, or pass an already-constructed client as `prisma` in the DatabaseClient options.";
+    "Install it and run `prisma generate`, or pass an already-constructed client as `prisma` in the DatabaseClient options (required with the `prisma-client` generator, whose client is generated into your application rather than into @prisma/client).";
 
   let module: { PrismaClient?: unknown };
   try {
@@ -721,9 +738,21 @@ export function raceAbort<T>(
   });
 }
 
-/** Creates a database client. */
-export function createDatabaseClient(
-  options: DatabaseClientOptions = {},
-): DatabaseClient {
-  return new DatabaseClient(options);
+/**
+ * Creates a database client.
+ *
+ * The transaction client handed to `transaction()` callbacks is inferred
+ * from `options.prisma`: with a generated client it is that client's own
+ * interactive transaction client, so model delegates are fully typed.
+ * Without `prisma` (adapter only) it is the structural
+ * {@link DatabaseTransactionContext}; pass the generated client type as a
+ * type argument (`createDatabaseClient<PrismaClient>({ adapter })`) to type
+ * the delegates.
+ */
+export function createDatabaseClient<
+  TClient extends PrismaClientLike = PrismaClientLike,
+>(
+  options: DatabaseClientOptions<TClient> = {},
+): DatabaseClient<TransactionClientOf<TClient>> {
+  return new DatabaseClient<TransactionClientOf<TClient>>(options);
 }

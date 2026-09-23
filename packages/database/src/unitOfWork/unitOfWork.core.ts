@@ -22,10 +22,14 @@ import type {
  * Repositories must be rebound to the transaction client handed to the
  * callback (see `BaseRepository.withTransaction`); repositories built from
  * the root client run outside the transaction.
+ *
+ * `TTransaction` is the transaction client handed to the callback.
  */
-export interface UnitOfWork {
+export interface UnitOfWork<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+> {
   execute<TResult>(
-    callback: TransactionCallback<DatabaseTransactionContext, TResult>,
+    callback: TransactionCallback<TTransaction, TResult>,
     options?: TransactionOptions,
   ): Promise<TResult>;
 }
@@ -33,17 +37,22 @@ export interface UnitOfWork {
 /**
  * Configuration for a unit of work.
  */
-export interface UnitOfWorkOptions {
-  readonly client: DatabaseClient;
+export interface UnitOfWorkOptions<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+> {
+  readonly client: DatabaseClient<TTransaction>;
 }
 
 /**
  * Prisma-backed unit of work.
  */
-export class DatabaseUnitOfWork implements UnitOfWork {
-  private readonly client: DatabaseClient;
+export class DatabaseUnitOfWork<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+> implements UnitOfWork<TTransaction>
+{
+  private readonly client: DatabaseClient<TTransaction>;
 
-  constructor(options: UnitOfWorkOptions) {
+  constructor(options: UnitOfWorkOptions<TTransaction>) {
     if (!options?.client) {
       throw new TypeError("A database client is required.");
     }
@@ -54,7 +63,7 @@ export class DatabaseUnitOfWork implements UnitOfWork {
    * Executes a callback inside a transaction.
    */
   public async execute<TResult>(
-    callback: TransactionCallback<DatabaseTransactionContext, TResult>,
+    callback: TransactionCallback<TTransaction, TResult>,
     options?: TransactionOptions,
   ): Promise<TResult> {
     if (typeof callback !== "function") {
@@ -78,7 +87,7 @@ export class DatabaseUnitOfWork implements UnitOfWork {
   /**
    * Returns the database client used by this unit of work.
    */
-  public getClient(): DatabaseClient {
+  public getClient(): DatabaseClient<TTransaction> {
     return this.client;
   }
 }
@@ -86,16 +95,21 @@ export class DatabaseUnitOfWork implements UnitOfWork {
 /**
  * Creates a database unit of work.
  */
-export function createUnitOfWork(client: DatabaseClient): DatabaseUnitOfWork {
-  return new DatabaseUnitOfWork({ client });
+export function createUnitOfWork<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+>(client: DatabaseClient<TTransaction>): DatabaseUnitOfWork<TTransaction> {
+  return new DatabaseUnitOfWork<TTransaction>({ client });
 }
 
 /**
  * Executes a callback as a single database transaction.
  */
-export async function executeUnitOfWork<TResult>(
-  client: DatabaseClient,
-  callback: TransactionCallback<DatabaseTransactionContext, TResult>,
+export async function executeUnitOfWork<
+  TResult,
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+>(
+  client: DatabaseClient<TTransaction>,
+  callback: TransactionCallback<TTransaction, TResult>,
   options?: TransactionOptions,
 ): Promise<TResult> {
   return createUnitOfWork(client).execute(callback, options);

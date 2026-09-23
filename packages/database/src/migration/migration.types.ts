@@ -8,20 +8,25 @@ import type { SqlDialectName } from "./migration.dialect.js";
  * Each migration must have a unique, monotonically ordered version. The
  * version is stored in a BIGINT column, so timestamp-style versions such as
  * `20260908120000` are supported up to `Number.MAX_SAFE_INTEGER`.
+ *
+ * `TTransaction` is the transaction client handed to `up` and `down`;
+ * `createMigrationRunner` infers it from the database client.
  */
-export interface Migration {
+export interface Migration<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+> {
   readonly version: number;
   readonly name: string;
 
   /**
    * Applies the migration.
    */
-  readonly up: (database: DatabaseTransactionContext) => Promise<void>;
+  readonly up: (database: TTransaction) => Promise<void>;
 
   /**
    * Reverts the migration.
    */
-  readonly down?: (database: DatabaseTransactionContext) => Promise<void>;
+  readonly down?: (database: TTransaction) => Promise<void>;
 }
 
 /**
@@ -44,10 +49,12 @@ export interface MigrationResult {
 /**
  * Migration status.
  */
-export interface MigrationStatus {
+export interface MigrationStatus<
+  TTransaction extends DatabaseTransactionContext = DatabaseTransactionContext,
+> {
   readonly currentVersion: number;
   readonly latestVersion: number;
-  readonly pending: readonly Migration[];
+  readonly pending: readonly Migration<TTransaction>[];
   readonly applied: readonly MigrationRecord[];
 }
 
