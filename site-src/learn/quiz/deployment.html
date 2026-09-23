@@ -125,7 +125,7 @@ database is up to date</option>
 <option correct>The final image gets only the compiled code and production packages, not the build tools</option>
 <option>So that <code>npm ci</code> runs twice for safety</option>
 <option>Because Docker cannot run <code>tsc</code> in the final image</option>
-<explain><p>In the lesson the build stage installed 85 packages and the final stage only 30. The 55 development tools never reach the image you ship.</p></explain>
+<explain><p>In the lesson the build stage installed 81 packages and the final stage only 31. The other 50 are development tools that never reach the image you ship.</p></explain>
 </question>
 
 <question id="docker-layer-cache" type="choice">
@@ -272,12 +272,60 @@ console.log(safeDatabaseUrl("postgres://taskapi:s3cret@db:5432/taskapi"));
 </question>
 
 <question id="ready-db-down" type="choice">
-<q>The lesson stops the database. What do <code>/health</code> and <code>/ready</code> answer?</q>
-<option>Both 503</option>
-<option>Both 200</option>
-<option correct><code>/health</code> 200 and <code>/ready</code> 503</option>
-<option><code>/health</code> 503 and <code>/ready</code> 200</option>
-<explain><p>The app is alive but cannot serve, so nothing restarts it and traffic stops going to it. When the database starts again, <code>/ready</code> answers 200 by itself.</p></explain>
+<q>The lesson stops the database while the app keeps running. What does <code>/health</code> answer?</q>
+<option><code>200</code> with <code>{"status":"ok"}</code>, because the app process is still alive</option>
+<option correct><code>503</code> with <code>"checks":{"postgres":"down"}</code>; the app keeps running and answers 200 again by itself when the database is back</option>
+<option>Nothing: the app crashes and Docker restarts it over and over</option>
+<option><code>500</code> with the database error message in the body</option>
+<explain><p>The generated <code>/health</code> is a readiness check: it asks every integration, here the postgres one, and answers 503 while one is down, naming which part. The <code>pool.on("error", …)</code> listener is what keeps the app alive meanwhile; without it, the database restart crashed the app.</p></explain>
+</question>
+
+<question id="pool-error-listener" type="choice">
+<q>Why does the postgres integration call <code>pool.on("error", …)</code> right after creating the pool?</q>
+<option>To retry every failed query automatically</option>
+<option>To send the database error to the client</option>
+<option correct>When the database restarts, <code>pg</code> reports the broken idle connections as an <code>error</code> event; with no listener Node.js treats it as an uncaught error and the whole app stops</option>
+<option>Because <code>pg.Pool</code> refuses to connect without it</option>
+<explain><p>With the listener the app logs one warning (<code>idle database connection lost</code>) and opens new connections when the database is back. The lesson's first run without it turned a database restart into an outage: 502 from the proxy and a restart loop.</p></explain>
+</question>
+
+<question id="pool-error-output" type="output">
+<q>A pool is an <code>EventEmitter</code>. What does this print?</q>
+<code file="pool-error.js" browser="no">
+import { EventEmitter } from "node:events";
+
+const pool = new EventEmitter();
+const lost = () => new Error("terminating connection due to administrator command");
+
+try {
+  pool.emit("error", lost());
+} catch (error) {
+  console.log("crash:", error.message);
+}
+
+pool.on("error", (error) => console.log("warn:", error.message));
+pool.emit("error", lost());
+console.log("still running");
+</code>
+<option correct>crash: terminating connection due to administrator command
+warn: terminating connection due to administrator command
+still running</option>
+<option>warn: terminating connection due to administrator command
+still running</option>
+<option>still running</option>
+<option>crash: terminating connection due to administrator command
+crash: terminating connection due to administrator command
+still running</option>
+<explain><p>Emitting <code>error</code> with no listener throws the error. In the app nobody catches it, so the process stops. Once a listener is registered, the same event is just logged and the program carries on.</p></explain>
+</question>
+
+<question id="postgres-start-check" type="choice">
+<q>You run the image with <code>docker run --rm task-api:1.0.0</code>, without a <code>DATABASE_URL</code>. What happens?</q>
+<option>The app starts and answers 500 on the first request that needs the database</option>
+<option>The app starts and uses a local SQLite file instead</option>
+<option correct>The postgres integration fails in <code>start</code>, the runtime rolls back the start-up, and the app stops with <code>DATABASE_URL is not set</code> as the cause</option>
+<option>Docker refuses to start the container</option>
+<explain><p><code>createPool</code> throws without a URL, and <code>start</code> runs <code>SELECT 1</code>, so the app refuses to start when the database is missing or unreachable, instead of failing on the first customer's request.</p></explain>
 </question>
 
 <question id="caddy-https" type="choice">
@@ -290,12 +338,38 @@ console.log(safeDatabaseUrl("postgres://taskapi:s3cret@db:5432/taskapi"));
 </question>
 
 <question id="trust-proxy-true" type="choice">
-<q>Why must you never set <code>trustProxy: true</code> on an app that is also reachable directly?</q>
+<q>The adapter's <code>trustProxy</code> comes from the <code>TRUST_PROXY</code> setting. Why must you never set it to <code>"all"</code> on an app that is also reachable directly?</q>
 <option>The app would stop answering HTTPS requests</option>
 <option correct>Anyone can send an <code>X-Forwarded-For</code> header, so an attacker could pick their own IP address and walk around your per-IP rate limit</option>
 <option>It makes the app slower</option>
 <option>Caddy refuses to connect to it</option>
-<explain><p>Believe the forwarded address only from your own proxy: <code>"loopback"</code> when nginx runs on the same machine, <code>"private"</code> inside Docker.</p></explain>
+<explain><p>Believe the forwarded address only from your own proxy: <code>"loopback"</code> when nginx runs on the same machine, <code>"private"</code> inside Docker (the lesson's <code>TRUST_PROXY: private</code>). An empty value means "trust no proxy".</p></explain>
+</question>
+
+<question id="trust-proxy-empty-output" type="output">
+<q><code>src/server.ts</code> passes <code>trustProxy: config.trustProxy || false</code> to the adapter. What does this print?</q>
+<code file="trust-proxy.js">
+function adapterTrustProxy(env) {
+  const trustProxy = env.TRUST_PROXY ?? "";
+  return trustProxy || false;
+}
+
+console.log(adapterTrustProxy({}));
+console.log(adapterTrustProxy({ TRUST_PROXY: "" }));
+console.log(adapterTrustProxy({ TRUST_PROXY: "private" }));
+</code>
+<option correct>false
+false
+private</option>
+<option>
+private</option>
+<option>undefined
+false
+private</option>
+<option>false
+false
+true</option>
+<explain><p>An empty string is falsy, so a missing or empty <code>TRUST_PROXY</code> becomes <code>false</code>: trust no proxy, the safe default. Only a value you set on purpose, such as <code>private</code>, turns trust on.</p></explain>
 </question>
 
 <question id="forwarded-for-output" type="output">
@@ -331,7 +405,7 @@ console.log(clientIp("198.51.100.9", "1.2.3.4"));
 <option correct>Back up, build a new tag, migrate, replace the app, check</option>
 <option>Migrate, back up, replace, build</option>
 <option>Build, replace, check, and back up only if something breaks</option>
-<explain><p>The backup comes first so you can recover from a bad migration. Migrate before replacing, keep the old image tag, and watch <code>/ready</code>, the logs and the dashboard afterwards.</p></explain>
+<explain><p>The backup comes first so you can recover from a bad migration. Migrate before replacing, keep the old image tag, and watch <code>/health</code>, the logs and the dashboard afterwards.</p></explain>
 </question>
 
 <question id="expand-contract" type="choice">
@@ -527,59 +601,70 @@ console.log(parseDatabaseUrl("postgres://app:pw@localhost:6543/shop"));
 </question>
 
 <question id="code-readiness" type="code" file="readiness.js">
-<q><p>Finish <code>readiness(checks)</code>. Each check is an async function that returns <code>true</code> or throws. Run every check; return <code>{ status: 200, body: { status: "ready" } }</code> if all passed, otherwise <code>{ status: 503, body: { status: "not ready" } }</code>. Do not put the error message in the body. The program should print <code>503 not ready</code> and then <code>200 ready</code>.</p></q>
+<q><p>Finish <code>health(checks)</code>, like the generated <code>/health</code>. <code>checks</code> maps a name to an async function that returns <code>true</code> or throws. Run every check and record <code>"up"</code> or <code>"down"</code> for each name. Return <code>{ status: 200, body: { status: "ok", checks } }</code> when all are up, otherwise <code>{ status: 503, body: { status: "unavailable", checks } }</code>. Do not put the error message in the body. The program should print the two lines shown in the comment.</p></q>
 <starter>
-async function readiness(checks) {
+async function health(checks) {
   // your code here
 }
 
 let dbUp = false;
-const checks = [
-  async () => {
+const checks = {
+  postgres: async () => {
     if (!dbUp) throw new Error("connect ECONNREFUSED 172.18.0.2:5432");
     return true;
   },
-];
+};
 
-let r = await readiness(checks);
-console.log(r.status, r.body.status);
+// Should print:
+// 503 {"status":"unavailable","checks":{"postgres":"down"}}
+// 200 {"status":"ok","checks":{"postgres":"up"}}
+let r = await health(checks);
+console.log(r.status, JSON.stringify(r.body));
 dbUp = true;
-r = await readiness(checks);
-console.log(r.status, r.body.status);
+r = await health(checks);
+console.log(r.status, JSON.stringify(r.body));
 </starter>
 <solution>
-async function readiness(checks) {
-  try {
-    for (const check of checks) await check();
-    return { status: 200, body: { status: "ready" } };
-  } catch {
-    return { status: 503, body: { status: "not ready" } };
+async function health(checks) {
+  const results = {};
+  for (const [name, check] of Object.entries(checks)) {
+    try {
+      await check();
+      results[name] = "up";
+    } catch {
+      results[name] = "down";
+    }
   }
+  const ready = Object.values(results).every((result) => result === "up");
+  return { status: ready ? 200 : 503, body: { status: ready ? "ok" : "unavailable", checks: results } };
 }
 
 let dbUp = false;
-const checks = [
-  async () => {
+const checks = {
+  postgres: async () => {
     if (!dbUp) throw new Error("connect ECONNREFUSED 172.18.0.2:5432");
     return true;
   },
-];
+};
 
-let r = await readiness(checks);
-console.log(r.status, r.body.status);
+// Should print:
+// 503 {"status":"unavailable","checks":{"postgres":"down"}}
+// 200 {"status":"ok","checks":{"postgres":"up"}}
+let r = await health(checks);
+console.log(r.status, JSON.stringify(r.body));
 dbUp = true;
-r = await readiness(checks);
-console.log(r.status, r.body.status);
+r = await health(checks);
+console.log(r.status, JSON.stringify(r.body));
 </solution>
 <expected>
-503 not ready
-200 ready
+503 {"status":"unavailable","checks":{"postgres":"down"}}
+200 {"status":"ok","checks":{"postgres":"up"}}
 </expected>
-<explain><p>A failed check means 503, so the proxy stops sending traffic. The error message contains an internal address, which is why it goes to the logs, never into the public response.</p></explain>
+<explain><p>A failed check means 503, so the platform stops sending traffic, and <code>checks</code> says which part is down. The error message contains an internal address, which is why it goes to the logs, never into the public response.</p></explain>
 </question>
 
-<question id="code-backoff" type="code" file="startup-backoff.js">
-<q><p>At startup the app waits for the database with retries. Finish <code>backoffSchedule(attempts, base, max)</code>: return the wait before each retry, doubling from <code>base</code> and never above <code>max</code>. The program should print <code>[ 250, 500, 1000, 2000, 2000 ]</code>.</p></q>
+<question id="code-backoff" type="code" file="deploy-backoff.js">
+<q><p>After <code>docker compose up -d app</code>, a deploy script checks <code>/health</code> until it answers 200, waiting longer between tries. Finish <code>backoffSchedule(attempts, base, max)</code>: return the wait before each try, doubling from <code>base</code> and never above <code>max</code>. The program should print <code>[ 250, 500, 1000, 2000, 2000 ]</code>.</p></q>
 <starter>
 function backoffSchedule(attempts, base, max) {
   // your code here
@@ -595,7 +680,7 @@ function backoffSchedule(attempts, base, max) {
 console.log(backoffSchedule(5, 250, 2000));
 </solution>
 <expected>[ 250, 500, 1000, 2000, 2000 ]</expected>
-<explain><p>Doubling gives the database time to start without hammering it; the cap keeps the waits short. <code>depends_on</code> with <code>service_healthy</code> helps too, but the app should still cope with a slow database.</p></explain>
+<explain><p>Doubling gives the new container time to start without hammering it; the cap keeps the waits short. If <code>/health</code> never turns 200, start the previous image tag again.</p></explain>
 </question>
 
 <question id="code-pending-migrations" type="code" file="pending.js">

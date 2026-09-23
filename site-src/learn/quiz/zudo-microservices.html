@@ -113,12 +113,12 @@ try {
 </question>
 
 <question id="why-timeout" type="choice">
-<q>In the example, inventory takes 2 seconds to answer for a lamp, and the client has <code>timeout: 1000</code>. Why is the timeout important?</q>
-<option>It makes inventory answer faster</option>
-<option correct>Orders stops waiting after one second and answers its caller with a clear 503</option>
-<option>It retries the lamp request forever until it works</option>
-<option>It cancels the order in the database</option>
-<explain><p>Without a timeout, every waiting request keeps memory and a connection busy in orders. A slow dependency can then make orders itself fall over. Give every remote call a timeout.</p></explain>
+<q>In the example, inventory takes 2 seconds to answer for a lamp. The orders service's <code>HttpClient</code> has <code>timeout: 1000</code> and <code>retry: { retries: 2, … }</code>. What happens to the lamp request?</q>
+<option>Orders waits the full 2 seconds, then answers 200</option>
+<option>The client retries the lamp request forever until it works</option>
+<option correct>Each call gives up after one second; the client retries the GET twice more after short random waits, then throws <code>HttpClientTimeoutError</code>, and orders answers its caller with a clear 503</option>
+<option>The first timeout throws at once, because a timed-out request is never retried</option>
+<explain><p>A timed-out read may be retried: the client made three calls in all (calls 3, 4 and 5 in the log), waiting a random time up to the backoff delay (full jitter) between them. Only <code>GET</code>, <code>HEAD</code> and <code>OPTIONS</code> are retried by default. Without the timeout, every waiting request would keep memory and a connection busy in orders, and a slow dependency could make orders itself fall over.</p></explain>
 </question>
 
 <question id="no-retry-after-timeout" type="choice">
@@ -127,11 +127,11 @@ try {
 <option correct>The caller cannot know whether the server did the work, so a retry could charge the card twice</option>
 <option>A timeout always means the server is down forever</option>
 <option>The server rejects every second request</option>
-<explain><p>The server may have finished the work and only the answer was lost. Retrying a read is harmless, but retrying "charge this card" could charge twice, unless you use an idempotency key.</p></explain>
+<explain><p>The server may have finished the work and only the answer was lost. Retrying a read is harmless, but retrying "charge this card" could charge twice, unless you use an idempotency key. That is why <code>HttpClient</code> retries only <code>GET</code>, <code>HEAD</code> and <code>OPTIONS</code> by default, and never a <code>POST</code> unless you ask for it.</p></explain>
 </question>
 
 <question id="correlation-id" type="choice">
-<q>The client sent <code>x-request-id: req-mug</code>, orders passed it on, and inventory logged it. Why is this useful?</q>
+<q>The client sent <code>x-request-id: req-mug</code>. <code>request.id</code> in orders reused it, orders passed it on, and inventory logged it. Why is this useful?</q>
 <option>It makes the request faster</option>
 <option>It encrypts the request between services</option>
 <option correct>It is a correlation id: you can search every service's logs for one id and see the whole story of one request</option>
@@ -140,15 +140,15 @@ try {
 </question>
 
 <question id="check-incoming-id" type="output">
-<q>The lesson checks an id from an incoming header before copying it into logs. What does this print?</q>
+<q><code>request.id</code> reuses an incoming <code>x-request-id</code> only when it has a safe format; otherwise a new random id is used. This sketch follows the same rule. What does it print?</q>
 <code file="check-id.js">
-function correlationId(incoming, fallback) {
-  return incoming && /^[\w-]{1,64}$/.test(incoming) ? incoming : fallback;
+function requestId(incoming, generated) {
+  return incoming && /^[\w.:-]{1,128}$/.test(incoming) ? incoming : generated;
 }
 
-console.log(correlationId("req-mug", "gen-1"));
-console.log(correlationId("bad\nFAKE LOG LINE", "gen-2"));
-console.log(correlationId(undefined, "gen-3"));
+console.log(requestId("req-mug", "gen-1"));
+console.log(requestId("bad\nFAKE LOG LINE", "gen-2"));
+console.log(requestId(undefined, "gen-3"));
 </code>
 <option correct>req-mug
 gen-2
@@ -162,7 +162,7 @@ undefined</option>
 <option>gen-1
 gen-2
 gen-3</option>
-<explain><p>Only letters, digits, <code>_</code> and <code>-</code> up to 64 characters pass. The second value contains a newline and spaces, so it is replaced; otherwise an attacker could write a fake line into your logs.</p></explain>
+<explain><p>Only 1 to 128 letters, digits, <code>.</code>, <code>_</code>, <code>:</code> and <code>-</code> pass. The second value contains a line break and spaces, so it is replaced; otherwise an attacker could write a fake line into your logs. Pass <code>trustRequestId: false</code> to <code>createNodeHttpAdapter</code> to always generate a new id.</p></explain>
 </question>
 
 <question id="jitter" type="choice">
@@ -171,7 +171,7 @@ gen-3</option>
 <option correct>So a thousand clients that failed at the same moment do not all retry at the same moment too</option>
 <option>To hide the real delay from attackers</option>
 <option>Because timers in Node.js are not exact</option>
-<explain><p>Without jitter, every client retries on the same schedule and hits the recovering service in waves. A little randomness spreads the retries out.</p></explain>
+<explain><p>Without jitter, every client retries on the same schedule and hits the recovering service in waves. <code>HttpClient</code> uses full jitter: it picks each wait at random between zero and the backoff delay, which spreads the retries out.</p></explain>
 </question>
 
 <question id="backoff-output" type="output">
@@ -695,23 +695,23 @@ result: false
 </question>
 
 <question id="code-correlation-id" type="code" file="correlation.js">
-<q><p>Finish <code>correlationId(incoming, fallback)</code>. Return <code>incoming</code> only when it is 1 to 64 characters of letters, digits, <code>_</code> or <code>-</code>; otherwise return <code>fallback</code>. The program should print <code>req-42 gen-1 gen-2</code>.</p></q>
+<q><p>Finish <code>requestId(incoming, generated)</code>, the rule <code>request.id</code> follows. Return <code>incoming</code> only when it is 1 to 128 characters, each a letter, digit, <code>.</code>, <code>_</code>, <code>:</code> or <code>-</code>; otherwise return <code>generated</code>. The program should print <code>req-42 edge:7.a gen-1 gen-2</code>.</p></q>
 <starter>
-function correlationId(incoming, fallback) {
+function requestId(incoming, generated) {
   // your code here
 }
 
-console.log(correlationId("req-42", "gen-0"), correlationId("x\ny", "gen-1"), correlationId(undefined, "gen-2"));
+console.log(requestId("req-42", "gen-0"), requestId("edge:7.a", "gen-9"), requestId("x\ny", "gen-1"), requestId(undefined, "gen-2"));
 </starter>
 <solution>
-function correlationId(incoming, fallback) {
-  return typeof incoming === "string" && /^[\w-]{1,64}$/.test(incoming) ? incoming : fallback;
+function requestId(incoming, generated) {
+  return typeof incoming === "string" && /^[\w.:-]{1,128}$/.test(incoming) ? incoming : generated;
 }
 
-console.log(correlationId("req-42", "gen-0"), correlationId("x\ny", "gen-1"), correlationId(undefined, "gen-2"));
+console.log(requestId("req-42", "gen-0"), requestId("edge:7.a", "gen-9"), requestId("x\ny", "gen-1"), requestId(undefined, "gen-2"));
 </solution>
-<expected>req-42 gen-1 gen-2</expected>
-<explain><p>A header comes from outside, so check its format before you copy it into logs. <code>\w</code> matches letters, digits and <code>_</code>; the anchors <code>^</code> and <code>$</code> make the whole value match.</p></explain>
+<expected>req-42 edge:7.a gen-1 gen-2</expected>
+<explain><p>A header comes from outside, so check its format before you copy it into logs. <code>\w</code> matches letters, digits and <code>_</code>; the anchors <code>^</code> and <code>$</code> make the whole value match, so a line break anywhere fails the test.</p></explain>
 </question>
 
 <question id="code-service-url" type="code" file="service-url-check.js">
