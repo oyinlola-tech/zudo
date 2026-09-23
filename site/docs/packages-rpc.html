@@ -663,17 +663,16 @@ console.<span class="fn">log</span>(response.success, response.error?.code);
         </div>
 
         <p class="mb-4 mt-6 leading-relaxed">
-          On the caller's side, catch and branch on the type. <code class="bg-black/5 px-1">RPC_TIMEOUT</code>, <code class="bg-black/5 px-1">RPC_CANCELLED</code> and <code class="bg-black/5 px-1">RPC_UNAVAILABLE</code> become their matching classes; every other code becomes an <code class="bg-black/5 px-1">RPCError</code> carrying the server's code.
+          On the caller's side, <code class="bg-black/5 px-1">RPCClient</code> rebuilds a typed error from the wire code (the same mapping is exported as <code class="bg-black/5 px-1">rpcErrorFromWire</code>), so you can branch with <code class="bg-black/5 px-1">instanceof</code> instead of comparing strings. The codes above come back as <code class="bg-black/5 px-1">RPCProcedureNotFoundError</code>, <code class="bg-black/5 px-1">RPCValidationError</code> (with its <code class="bg-black/5 px-1">issues</code>), <code class="bg-black/5 px-1">RPCInvalidRequestError</code>, <code class="bg-black/5 px-1">RPCAuthenticationError</code>, <code class="bg-black/5 px-1">RPCForbiddenError</code>, <code class="bg-black/5 px-1">RPCRateLimitedError</code>, <code class="bg-black/5 px-1">RPCTimeoutError</code>, <code class="bg-black/5 px-1">RPCCancelledError</code> or <code class="bg-black/5 px-1">RPCUnavailableError</code>. Any other code becomes a plain <code class="bg-black/5 px-1">RPCError</code>. Either way, the server's wire <code class="bg-black/5 px-1">code</code> and <code class="bg-black/5 px-1">details</code> are kept on the error.
         </p>
 
         <div class="code-block"><span class="kw">import</span> {
   <span class="tp">RPCServer</span>,
   <span class="tp">RPCClient</span>,
   <span class="fn">createRPCProcedure</span>,
-  <span class="fn">isRPCError</span>,
+  <span class="fn">createRPCMemoryTransport</span>,
   <span class="tp">RPCForbiddenError</span>,
 } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
-<span class="kw">import type</span> { <span class="tp">RPCTransport</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
 
 <span class="kw">const</span> server = <span class="kw">new</span> <span class="fn">RPCServer</span>(<span class="kw">undefined</span>, <span class="kw">undefined</span>, {
   <span class="fn">onInternalError</span>(error, requestId) {
@@ -687,22 +686,18 @@ server.<span class="fn">register</span>(
   }),
 );
 
-<span class="kw">const</span> transport: <span class="tp">RPCTransport</span> = {
-  <span class="kw">async</span> <span class="fn">send</span>(request) {
-    <span class="kw">return</span> server.<span class="fn">handle</span>(request);
-  },
-};
+<span class="kw">const</span> client = <span class="kw">new</span> <span class="fn">RPCClient</span>(<span class="fn">createRPCMemoryTransport</span>(server));
 
 <span class="kw">try</span> {
-  <span class="kw">await new</span> <span class="fn">RPCClient</span>(transport).<span class="fn">call</span>(<span class="str">"admin.purge"</span>, {});
+  <span class="kw">await</span> client.<span class="fn">call</span>(<span class="str">"admin.purge"</span>, {});
 } <span class="kw">catch</span> (error) {
-  <span class="kw">if</span> (<span class="fn">isRPCError</span>(error)) {
+  <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">RPCForbiddenError</span>) {
     console.<span class="fn">log</span>(error.code, <span class="str">"|"</span>, error.message);
   }
 }</div>
 
         <p class="mt-4 leading-relaxed">
-          <strong>What you should see:</strong> <code class="bg-black/5 px-1">RPC_FORBIDDEN | Admins only.</code> The <code class="bg-black/5 px-1">RPCForbiddenError</code> class does not survive the trip — the code does.
+          <strong>What you should see:</strong> <code class="bg-black/5 px-1">RPC_FORBIDDEN | Admins only.</code> The error object itself did not cross the boundary — only its code and message did — but the client rebuilt an <code class="bg-black/5 px-1">RPCForbiddenError</code> from that code, so the <code class="bg-black/5 px-1">instanceof</code> check passes. The same works over HTTP.
         </p>
       </section>
 
@@ -784,12 +779,12 @@ console.<span class="fn">log</span>(value, tries);
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono"><a href="/docs/packages-api" class="underline">@zudojs/api</a></td>
                 <td class="p-3">In the same process</td>
-                <td class="p-3">Operations run by <code>APIExecutor</code>. No wire, transport or serialization.</td>
+                <td class="p-3">Operations run by <code>APIExecutor</code>. Its bindings can also serve the same operations over HTTP, RPC, a queue or the CLI.</td>
               </tr>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono">@zudojs/rpc</td>
                 <td class="p-3">Another process or machine</td>
-                <td class="p-3">Procedures, a request/response envelope, and a transport you choose.</td>
+                <td class="p-3">Procedures, a request/response envelope, and a transport: in memory, HTTP, or your own.</td>
               </tr>
               <tr>
                 <td class="p-3 font-mono"><a href="/docs/packages-http" class="underline">@zudojs/http</a></td>
@@ -801,11 +796,11 @@ console.<span class="fn">log</span>(value, tries);
         </div>
 
         <p class="mt-4 leading-relaxed">
-          They stack rather than compete. A typical service exposes one HTTP route with <code class="bg-black/5 px-1">@zudojs/http</code>, feeds the parsed body into <code class="bg-black/5 px-1">server.handle()</code> from this package, and lets the handler call in-process operations from <code class="bg-black/5 px-1">@zudojs/api</code>.
+          They stack rather than compete. A typical service mounts <code class="bg-black/5 px-1">createRPCFetchHandler(server)</code> on an <code class="bg-black/5 px-1">@zudojs/http</code> router with <code class="bg-black/5 px-1">mountFetchHandler(router, "/rpc", handle)</code>, and fills the server with <code class="bg-black/5 px-1">@zudojs/api</code> operations through that package's <code class="bg-black/5 px-1">registerApiRpcProcedures(server, registry, { executor })</code>, so one operation definition becomes a procedure without a hand-written wrapper.
         </p>
 
         <div class="callout callout-note mt-4">
-          <strong class="text-zudo-blue">In plain words:</strong> pick <code>api</code> when nothing leaves the process, <code>rpc</code> when your own services talk to each other, and <code>http</code> when the caller is a browser or a third party expecting REST.
+          <strong class="text-zudo-blue">In plain words:</strong> define the work with <code>api</code>, use <code>rpc</code> when your own services call each other, and use <code>http</code> when the caller is a browser or a third party expecting REST.
         </div>
       </section>
 
@@ -871,6 +866,12 @@ console.<span class="fn">log</span>(value, tries);
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createCancellableSignal<br>cancelSignal<br>combineSignals<br>throwIfCancelled</td><td class="p-3">Make, trigger, merge and check abort signals.</td><td class="p-3">The first returns <code>{ signal, cancel }</code>; <code>combineSignals</code> returns <code>{ signal, dispose }</code> and you must <code>dispose()</code>.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">getRemainingTime<br>isDeadlineExceeded<br>throwIfDeadlineExceeded<br>readDeadline</td><td class="p-3">Work with a <code>metadata.deadline</code>.</td><td class="p-3"><code>readDeadline</code> returns <code>undefined</code> for a malformed value rather than treating it as expired.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">assertValidProcedureName<br>assertValidRequest<br>measurePayloadBytes<br>parseInput<br>parseOutput<br>toValidationIssues</td><td class="p-3">The validation the server and dispatcher already run for you.</td><td class="p-3">Call them directly only in a custom pipeline.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createRPCMemoryTransport</td><td class="p-3">Client transport to a server in the same process.</td><td class="p-3"><code>(server, { auth?, serializer? })</code>. Round-trips frames through JSON by default.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createRPCHttpTransport</td><td class="p-3">Client transport that POSTs frames with <code>fetch</code>.</td><td class="p-3"><code>({ url, headers?, fetch?, serializer?, maxResponseBytes? })</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createRPCFetchHandler</td><td class="p-3">Serves an <code>RPCServer</code> as <code>(request: Request) =&gt; Promise&lt;Response&gt;</code>.</td><td class="p-3"><code>(server, { auth?, serializer?, maxBodyBytes?, onInternalError? })</code>.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">createRPCJsonSerializer</td><td class="p-3">The default frame serializer, size- and depth-limited.</td><td class="p-3"><code>{ preserveTypes: true }</code> carries <code>Date</code>, <code>BigInt</code>, <code>Map</code>, <code>Set</code>. Use the same one on both ends.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">rpcHttpStatus<br>readBoundedBody<br>isRPCResponseFrame</td><td class="p-3">Building blocks of the HTTP transport.</td><td class="p-3">Status for a response frame; read a body with a byte cap; check a decoded value is a response frame.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">mapRPCError<br>rpcErrorFromWire</td><td class="p-3">Error to wire payload, and wire payload back to a typed error.</td><td class="p-3">What the server and <code>RPCClient</code> use. Call them only in a custom transport.</td></tr>
               <tr><td class="p-3 font-mono">isRPCError<br>createRPCError</td><td class="p-3">Type guard and factory for RPC errors.</td><td class="p-3">Re-exported from <a href="/docs/packages-errors" class="underline">@zudojs/errors</a>.</td></tr>
             </tbody>
           </table>
@@ -886,7 +887,8 @@ console.<span class="fn">log</span>(value, tries);
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCProcedure<br>RPCHandler<br>RPCProcedureOptions</td><td class="p-3">A procedure and its handler.</td><td class="p-3">Generic over input and output.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCRequest<br>RPCResponse<br>RPCErrorPayload<br>RPCMetadata</td><td class="p-3">The messages on the wire.</td><td class="p-3">Check <code>success</code> before reading <code>result</code>. Each has an Options variant for its factory.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCContext</td><td class="p-3">Per-call request, metadata, signal and state.</td><td class="p-3">Second argument to every handler and middleware.</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCTransport<br>RPCMiddleware<br>RPCInterceptor</td><td class="p-3">The pieces you implement yourself.</td><td class="p-3">Middleware is a function; a transport and an interceptor are objects.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCTransport<br>RPCMiddleware<br>RPCInterceptor</td><td class="p-3">The pieces you plug in.</td><td class="p-3">Middleware is a function; a transport and an interceptor are objects. Use a built-in transport or implement <code>RPCTransport</code> yourself.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCMemoryTransportOptions<br>RPCHttpTransportOptions<br>RPCFetchHandlerOptions<br>RPCFrameSerializer</td><td class="p-3">Options for the built-in transports.</td><td class="p-3">Memory: <code>auth</code>, <code>serializer</code> (<code>false</code> = by reference). HTTP client: <code>url</code>, <code>headers</code>, <code>fetch</code>, <code>serializer</code>, <code>maxResponseBytes</code>. Fetch handler: <code>auth</code>, <code>serializer</code>, <code>maxBodyBytes</code>, <code>onInternalError</code>.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPCServerOptions<br>RPCDispatcherOptions<br>RPCClientOptions<br>RPCCallOptions<br>RPCRequestLimits</td><td class="p-3">Everything you can configure.</td><td class="p-3">Server: <code>limits</code>, <code>dispatch</code>, <code>onInternalError</code>. Limits: <code>maxPayloadBytes</code> (1 MB), <code>maxRequestIdLength</code> (128), <code>enforceProcedureNamePattern</code> (true). Dispatch: <code>defaultTimeout</code>, <code>honourDeadline</code>, <code>interceptors</code>. Client and call: <code>timeout</code>, <code>maxPending</code>, <code>signal</code>, <code>metadata</code>.</td></tr>
               <tr><td class="p-3 font-mono">RPCSchema<br>RPCRetryOptions<br>RPCBackoff<br>RPCJitter<br>CancellableSignal</td><td class="p-3">Validation and reliability settings.</td><td class="p-3"><code>RPCSchema</code> needs only <code>safeParse</code>. Backoff: fixed, linear, exponential. Jitter: none, full, equal.</td></tr>
             </tbody>
@@ -907,6 +909,9 @@ console.<span class="fn">log</span>(value, tries);
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MAX_MIDDLEWARE</td><td class="p-3">32</td><td class="p-3">Per stack.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MAX_PROCEDURES</td><td class="p-3">4096</td><td class="p-3">Per registry.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MAX_PROCEDURE_NAME_LENGTH</td><td class="p-3">256</td><td class="p-3">Checked before the pattern, so a huge name cannot stall the regex.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">DEFAULT_RPC_HTTP_MAX_BODY_BYTES</td><td class="p-3">1114112</td><td class="p-3">Largest body <code>createRPCFetchHandler</code> reads: <code>MAX_RPC_PAYLOAD_SIZE</code> plus 64 KiB for the envelope.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MAX_RPC_FRAME_DEPTH</td><td class="p-3">128</td><td class="p-3">Nesting depth the default serializer decodes.</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">RPC_HTTP_STATUS</td><td class="p-3">Code → status map</td><td class="p-3">The table in <a href="#http-transport" class="underline">Over HTTP</a>. Unlisted codes are sent as 500.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">MAX_TIMER_DELAY</td><td class="p-3">2147483647</td><td class="p-3">Retry delays clamp to it, so a big backoff cannot overflow into an instant retry.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono">PROCEDURE_NAME_PATTERN</td><td class="p-3 font-mono">/^[a-z][a-zA-Z0-9]*(\.[a-z][a-zA-Z0-9]*)+$/</td><td class="p-3">At least two dot-separated segments.</td></tr>
               <tr><td class="p-3 font-mono">INTERNAL_ERROR_MESSAGE</td><td class="p-3">Fixed sentence</td><td class="p-3">What a caller sees instead of an unexpected exception.</td></tr>
@@ -945,7 +950,10 @@ console.<span class="fn">log</span>(value, tries);
             <strong>Retrying everything.</strong> Replaying a forbidden or invalid call burns attempts and can duplicate side effects. Use <code class="bg-black/5 px-1">retryIf</code>, and check <code class="bg-black/5 px-1">idempotent</code> from <code class="bg-black/5 px-1">registry.describe()</code>.
           </li>
           <li class="border-l-4 border-zudo-red pl-4">
-            <strong>Ignoring <code class="bg-black/5 px-1">options.signal</code> in a custom transport.</strong> The client still rejects on time, but the socket stays open. Pass the signal to <code class="bg-black/5 px-1">fetch</code> or your socket library.
+            <strong>Ignoring <code class="bg-black/5 px-1">options.signal</code> in a custom transport.</strong> The client still rejects on time, but the socket stays open. Pass the signal to <code class="bg-black/5 px-1">fetch</code> or your socket library. The built-in transports already do this.
+          </li>
+          <li class="border-l-4 border-zudo-red pl-4">
+            <strong>Using different serializers on the two ends.</strong> A server built with <code class="bg-black/5 px-1">createRPCJsonSerializer({ preserveTypes: true })</code> sends tagged values a plain-JSON client does not decode, so a <code class="bg-black/5 px-1">Date</code> arrives as something else. Pass the same serializer to <code class="bg-black/5 px-1">createRPCFetchHandler</code> and <code class="bg-black/5 px-1">createRPCHttpTransport</code>.
           </li>
         </ul>
       </section>
@@ -955,8 +963,8 @@ console.<span class="fn">log</span>(value, tries);
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATED PACKAGES</h2>
 
         <ul class="space-y-3">
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <a href="/docs/packages-api" class="font-bold underline">@zudojs/api</a> — the same shape for calls that never leave the process.</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <a href="/docs/packages-http" class="font-bold underline">@zudojs/http</a> — the HTTP layer you put in front of an RPC server.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <a href="/docs/packages-api" class="font-bold underline">@zudojs/api</a> — define operations once; <code>registerApiRpcProcedures</code> serves them as procedures.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <a href="/docs/packages-http" class="font-bold underline">@zudojs/http</a> — host <code>createRPCFetchHandler</code> on a router with <code>mountFetchHandler</code>.</li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <a href="/docs/packages-schema" class="font-bold underline">@zudojs/schema</a> — builds the <code>input</code> and <code>output</code> schemas.</li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <a href="/docs/packages-errors" class="font-bold underline">@zudojs/errors</a> — where every RPC error class is defined.</li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <a href="/docs/packages-queue" class="font-bold underline">@zudojs/queue</a> — for work the caller should not wait on.</li>
@@ -1003,6 +1011,7 @@ console.<span class="fn">log</span>(value, tries);
       <a href="#quick-start" class="toc-link">Quick Start</a>
       <a href="#procedures" class="toc-link">Procedures</a>
       <a href="#transports" class="toc-link">Transports</a>
+      <a href="#http-transport" class="toc-link">Over HTTP</a>
       <a href="#context" class="toc-link">Context</a>
       <a href="#middleware" class="toc-link">Middleware</a>
       <a href="#validation" class="toc-link">Validating Input</a>

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1A1A2E">
   <title>@zudojs/api — Transport-agnostic API layer | ZudoJS</title>
   <link rel="alternate" type="text/markdown" href="/docs/packages-api.md" title="Markdown version">
-  <meta name="description" content="@zudojs/api reference: transport-agnostic operations, interceptors, result types and execution contexts for ZudoJS apps.">
+  <meta name="description" content="@zudojs/api for ZudoJS: define an operation once and serve it over HTTP, RPC, queues and the CLI with shared validation and interceptors.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/docs/packages-api">
@@ -182,7 +182,7 @@
         <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/api</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
-          Define your application's operations once, then run them from HTTP, a CLI, a queue, or a test with the same validation, timeouts, and interceptors.
+          Define your application's operations once, then run them over HTTP, RPC, a queue, the CLI, or a test with the same validation, timeouts, and interceptors.
         </p>
         <div class="flex flex-wrap gap-2 mt-4">
           <span class="px-3 py-1 border-2 border-black text-xs font-bold">OPERATIONS</span>
@@ -201,7 +201,7 @@
           <code class="bg-black/5 px-1">@zudojs/api</code> fixes this by giving you an <em>operation</em>: a named function with a declared input, a declared output, and a handler. An <em>executor</em> runs operations for you and always returns a result object instead of throwing. A <em>registry</em> stores operations by name so a transport can look them up.
         </p>
         <p class="mb-4 leading-relaxed">
-          The package knows nothing about HTTP. It never sends a response or reads a header. Whatever calls it (a Zudo HTTP adapter, a CLI command, your test) gets back a plain <code class="bg-black/5 px-1">{ ok, data }</code> or <code class="bg-black/5 px-1">{ ok, error }</code> object and decides what to do with it.
+          The executor itself knows nothing about HTTP. It never sends a response or reads a header; whatever calls it gets back a plain <code class="bg-black/5 px-1">{ ok, data }</code> or <code class="bg-black/5 px-1">{ ok, error }</code> object. <em>Bindings</em> connect that core to real transports: one operation can be served over HTTP (<code class="bg-black/5 px-1">createApiFetchHandler</code>), RPC (<code class="bg-black/5 px-1">registerApiRpcProcedures</code>), a queue (<code class="bg-black/5 px-1">bindApiQueue</code>) and the command line (<code class="bg-black/5 px-1">runApiCli</code>), with the same errors everywhere. See <a href="#bindings" class="text-zudo-blue underline">Bindings</a>.
         </p>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
@@ -291,7 +291,7 @@ registry.<span class="fn">register</span>(getUser);
             <tr><td><span class="code-inline">input</span></td><td>Schema used to validate input before the handler runs.</td><td>Optional. Must be a <span class="code-inline">@zudojs/schema</span> schema (or any <span class="code-inline">safeParse</span> schema) or a Standard Schema; anything else throws in <span class="code-inline">defineOperation</span>. See <a href="#validation" class="text-zudo-blue underline">Validation</a>.</td></tr>
             <tr><td><span class="code-inline">output</span></td><td>Schema used to validate what the handler returns.</td><td>Optional. Same rule as <span class="code-inline">input</span>.</td></tr>
             <tr><td><span class="code-inline">timeout</span></td><td>Deadline in milliseconds.</td><td>Optional. Default 30 000. Must be a positive integer up to 3 600 000.</td></tr>
-            <tr><td><span class="code-inline">metadata</span></td><td>Descriptive extras: <span class="code-inline">description</span>, <span class="code-inline">tags</span>, <span class="code-inline">version</span>, <span class="code-inline">deprecated</span>, <span class="code-inline">idempotent</span>, <span class="code-inline">timeout</span>.</td><td>Optional. Frozen once registered. <span class="code-inline">tags</span> powers <span class="code-inline">registry.findByTag()</span>.</td></tr>
+            <tr><td><span class="code-inline">metadata</span></td><td>Descriptive extras: <span class="code-inline">description</span>, <span class="code-inline">tags</span>, <span class="code-inline">version</span>, <span class="code-inline">deprecated</span>, <span class="code-inline">idempotent</span>, <span class="code-inline">timeout</span>, and <span class="code-inline">http</span>.</td><td>Optional. Frozen once registered. <span class="code-inline">tags</span> powers <span class="code-inline">registry.findByTag()</span>. <span class="code-inline">http: { method, path }</span> sets the HTTP route, e.g. <span class="code-inline">{ method: "GET", path: "/users/:id" }</span>; the default is <span class="code-inline">POST /&lt;name&gt;</span>. It is checked by <span class="code-inline">defineOperation</span>.</td></tr>
           </tbody>
         </table>
 
@@ -456,7 +456,7 @@ console.<span class="fn">log</span>(<span class="fn">normalizeRequestId</span>(<
 
         <p class="mb-4 leading-relaxed">To send a specific error to the client, throw an <code class="bg-black/5 px-1">APIError</code> instead. Those pass through untouched. <code class="bg-black/5 px-1">createAPIError(message, { statusCode, expose })</code> builds one quickly, and classes such as <code class="bg-black/5 px-1">APIAuthenticationError</code> (401) and <code class="bg-black/5 px-1">APIAuthorizationError</code> (403) take just a message.</p>
 
-        <p class="mb-4 leading-relaxed">The transport then maps the result onto its protocol. This is the pattern from the README:</p>
+        <p class="mb-4 leading-relaxed">The transport then maps the result onto its protocol. The <a href="#bindings" class="text-zudo-blue underline">bindings</a> do this for you; if you call the executor from your own code, this is the pattern:</p>
 
         <div class="code-block mb-4"><span class="kw">if</span> (result.ok) {
   <span class="fn">respond</span>(<span class="num">200</span>, result.data);
@@ -585,6 +585,174 @@ console.<span class="fn">log</span>(registry.<span class="fn">getAll</span>().le
         </table>
       </section>
 
+      <!-- ==================== SECTION: BINDINGS ==================== -->
+      <section id="bindings" class="mt-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">BINDINGS: ONE OPERATION, MANY TRANSPORTS</h2>
+        <p class="mb-4 leading-relaxed">A <em>binding</em> connects your operations to one way of calling them. The package ships four, and you can use any mix of them on the same registry:</p>
+
+        <table class="doc-table mb-6">
+          <thead><tr><th>Transport</th><th>Function</th><th>What the caller does</th></tr></thead>
+          <tbody>
+            <tr><td>HTTP</td><td><span class="code-inline">createApiFetchHandler(registry, options)</span></td><td>Sends <span class="code-inline">POST /users.create</span> (or the route you chose) with a JSON body.</td></tr>
+            <tr><td>RPC</td><td><span class="code-inline">registerApiRpcProcedures(server, registry, options)</span></td><td>Calls <span class="code-inline">client.call("users.create", input)</span> through <a href="/docs/packages-rpc" class="text-zudo-blue underline">@zudojs/rpc</a>.</td></tr>
+            <tr><td>Queue</td><td><span class="code-inline">bindApiQueue(queue, registry, options)</span></td><td>Adds a job named after the operation to a <a href="/docs/packages-queue" class="text-zudo-blue underline">@zudojs/queue</a> queue.</td></tr>
+            <tr><td>CLI</td><td><span class="code-inline">runApiCli(registry, argv, options)</span></td><td>Runs <span class="code-inline">app users.create --name Ann</span> in a terminal.</td></tr>
+          </tbody>
+        </table>
+
+        <p class="mb-4 leading-relaxed">Every binding behaves the same way. It runs the call through the <code class="bg-black/5 px-1">APIExecutor</code> you pass as <code class="bg-black/5 px-1">executor</code>, so your interceptors apply on every transport. It validates input with the operation's schema. It sets <code class="bg-black/5 px-1">TransportContextKey</code> on the context to <code class="bg-black/5 px-1">"http"</code>, <code class="bg-black/5 px-1">"rpc"</code>, <code class="bg-black/5 px-1">"queue"</code> or <code class="bg-black/5 px-1">"cli"</code>, so a handler can tell where a call came from. And it hands every failure the caller was not allowed to see to <code class="bg-black/5 px-1">onInternalError(error, requestId)</code>, which is where you log it.</p>
+
+        <p class="mb-4 leading-relaxed">The <code class="bg-black/5 px-1">state</code> option builds <code class="bg-black/5 px-1">context.state</code> from whatever the transport hands over: the <code class="bg-black/5 px-1">Request</code> for HTTP, the <code class="bg-black/5 px-1">RPCContext</code> for RPC, the <code class="bg-black/5 px-1">Job</code> for a queue, the parsed invocation for the CLI. Throw an <code class="bg-black/5 px-1">APIError</code> there, such as <code class="bg-black/5 px-1">APIAuthenticationError</code>, to refuse the call.</p>
+
+        <p class="mb-4 leading-relaxed">The examples below share this setup. <code class="bg-black/5 px-1">metadata.http</code> is optional: it picks the HTTP method and path. Without it, an operation is served at <code class="bg-black/5 px-1">POST /&lt;operation name&gt;</code>.</p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">objectSchema</span>, <span class="fn">stringSchema</span> } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
+<span class="kw">import</span> { <span class="fn">defineOperation</span>, <span class="tp">APIOperationRegistry</span>, <span class="tp">APIExecutor</span> } <span class="kw">from</span> <span class="str">"@zudojs/api"</span>;
+
+<span class="kw">const</span> getUser = <span class="fn">defineOperation</span>({
+  <span class="prop">name</span>: <span class="str">"users.get"</span>,
+  <span class="prop">input</span>: <span class="fn">objectSchema</span>({ id: <span class="fn">stringSchema</span>() }),
+  <span class="prop">metadata</span>: { http: { method: <span class="str">"GET"</span>, path: <span class="str">"/users/:id"</span> } }, <span class="cmt">// default: POST /users.get</span>
+  <span class="prop">handler</span>: <span class="kw">async</span> (<span class="param">input</span>) =&gt; ({ id: input.id, name: <span class="str">"Alice"</span> }),
+});
+
+<span class="kw">const</span> registry = <span class="kw">new</span> <span class="tp">APIOperationRegistry</span>();
+registry.<span class="fn">register</span>(getUser);
+registry.<span class="fn">freeze</span>();
+
+<span class="kw">const</span> executor = <span class="kw">new</span> <span class="tp">APIExecutor</span>({ interceptors: [] }); <span class="cmt">// your interceptors go here</span></div>
+
+        <h3 class="text-h3 mb-3 mt-8" id="bindings-http">HTTP</h3>
+        <p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">createApiFetchHandler</code> returns a <em>fetch handler</em>: a function that takes a web-standard <code class="bg-black/5 px-1">Request</code> and returns a <code class="bg-black/5 px-1">Response</code>. Any server that speaks the Fetch API can run it, including <a href="/docs/packages-http" class="text-zudo-blue underline">@zudojs/http</a>, <code class="bg-black/5 px-1">Bun.serve</code> and <code class="bg-black/5 px-1">Deno.serve</code>. This package never imports <code class="bg-black/5 px-1">@zudojs/http</code>; <code class="bg-black/5 px-1">@zudojs/http</code> mounts it.</p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createApiFetchHandler</span> } <span class="kw">from</span> <span class="str">"@zudojs/api"</span>;
+<span class="kw">import</span> { <span class="fn">createRouter</span>, <span class="fn">mountFetchHandler</span> } <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
+
+<span class="kw">const</span> router = <span class="fn">createRouter</span>();
+
+<span class="cmt">// Serves GET /api/users/:id. No basePath: mountFetchHandler strips "/api" first.</span>
+<span class="fn">mountFetchHandler</span>(router, <span class="str">"/api"</span>, <span class="fn">createApiFetchHandler</span>(registry, { executor }));</div>
+
+        <div class="code-block mb-4">$ curl http://127.0.0.1:3000/api/users/u1
+<span class="cmt">{"ok":true,"data":{"id":"u1","name":"Alice"}}</span></div>
+
+        <div class="callout callout-warning mb-4">
+          <strong class="text-sm uppercase tracking-wider text-zudo-red">Watch out</strong>
+          <p class="text-sm mt-1">Do not set <span class="code-inline">basePath</span> when you mount on <span class="code-inline">@zudojs/http</span>. <span class="code-inline">mountFetchHandler</span> already removes the mount path from the URL, so a <span class="code-inline">basePath: "/api"</span> as well would make the handler look for <span class="code-inline">/api/api/users/u1</span> and answer 404. Use <span class="code-inline">basePath</span> only when the server hands the handler the full URL, as <span class="code-inline">Bun.serve({ fetch: handle })</span> does.</p>
+        </div>
+
+        <p class="mb-4 leading-relaxed">Where input comes from: <code class="bg-black/5 px-1">GET</code> and <code class="bg-black/5 px-1">DELETE</code> routes read the query string, so every value arrives as a string (use a coercing schema such as <code class="bg-black/5 px-1">coerceNumberSchema()</code> for numbers). <code class="bg-black/5 px-1">POST</code>, <code class="bg-black/5 px-1">PUT</code> and <code class="bg-black/5 px-1">PATCH</code> read a JSON body of at most <code class="bg-black/5 px-1">maxBodyBytes</code> (1 MiB by default). Path parameters are merged over either one and win. The request id comes from a safe <code class="bg-black/5 px-1">x-request-id</code> header and is echoed back, and the call runs under <code class="bg-black/5 px-1">request.signal</code>, so a client that disconnects cancels it.</p>
+
+        <h3 class="text-h3 mb-3 mt-8" id="bindings-errors">What a failure looks like</h3>
+        <p class="mb-4 leading-relaxed">Every binding reports a failure in the same client-safe shape, <code class="bg-black/5 px-1">APIWireError</code>: <code class="bg-black/5 px-1">{ code, message, statusCode, requestId, issues? }</code>. Over HTTP it is the body <code class="bg-black/5 px-1">{ "ok": false, "error": { … } }</code>, sent with the error's status. The message is the error's own only when the error is <code class="bg-black/5 px-1">expose: true</code>; otherwise it is the fixed <code class="bg-black/5 px-1">"An internal error occurred."</code>. Stack traces, causes and metadata never leave the process.</p>
+
+        <table class="doc-table mb-6">
+          <thead><tr><th>What went wrong</th><th>HTTP status</th><th><span class="code-inline">error.code</span> and message</th></tr></thead>
+          <tbody>
+            <tr><td>Input failed the schema</td><td>422</td><td><span class="code-inline">ERR_API_VALIDATION</span>, with <span class="code-inline">issues</span> such as <span class="code-inline">["a: invalid"]</span>.</td></tr>
+            <tr><td>The handler threw a domain error, e.g. <span class="code-inline">APIConflictError("Seat already taken.")</span></td><td>Its own, e.g. 409</td><td>Its own code and message: <span class="code-inline">ERR_API_CONFLICT</span>, <span class="code-inline">"Seat already taken."</span></td></tr>
+            <tr><td>The handler threw anything else</td><td>500</td><td><span class="code-inline">ERR_API_INTERNAL</span>, <span class="code-inline">"An internal error occurred."</span> The real error goes to <span class="code-inline">onInternalError</span>.</td></tr>
+            <tr><td>No operation at that method and path</td><td>404</td><td><span class="code-inline">ERR_API_NOT_FOUND</span>. A known path with the wrong method gets 405 and an <span class="code-inline">Allow</span> header.</td></tr>
+            <tr><td>The handler ran past its timeout</td><td>504</td><td><span class="code-inline">ERR_API_TIMEOUT</span>, <span class="code-inline">"An internal error occurred."</span></td></tr>
+          </tbody>
+        </table>
+        <p class="mb-4 leading-relaxed">A body that is too large, not JSON, or unreadable gets 413, 415 or 400. The same failures reach the other transports as their own kind of error: an RPC caller gets a typed RPC error, a queue job fails, and the CLI exits with a non-zero code.</p>
+
+        <h3 class="text-h3 mb-3 mt-8" id="bindings-rpc">RPC</h3>
+        <p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">registerApiRpcProcedures</code> turns each operation into an <a href="/docs/packages-rpc" class="text-zudo-blue underline">@zudojs/rpc</a> procedure on a server (or procedure registry). Build <code class="bg-black/5 px-1">state</code> from <code class="bg-black/5 px-1">rpc.auth</code>, the identity the transport verified, never from frame metadata, which the caller writes.</p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">RPCServer</span>, <span class="tp">RPCClient</span>, <span class="fn">createRPCMemoryTransport</span> } <span class="kw">from</span> <span class="str">"@zudojs/rpc"</span>;
+<span class="kw">import</span> { <span class="fn">registerApiRpcProcedures</span> } <span class="kw">from</span> <span class="str">"@zudojs/api"</span>;
+
+<span class="kw">const</span> server = <span class="kw">new</span> <span class="tp">RPCServer</span>();
+<span class="fn">registerApiRpcProcedures</span>(server, registry, {
+  executor,
+  <span class="prop">state</span>: (<span class="param">rpc</span>) =&gt; ({ user: rpc.auth?.userId }),
+});
+
+<span class="kw">const</span> client = <span class="kw">new</span> <span class="tp">RPCClient</span>(<span class="fn">createRPCMemoryTransport</span>(server));
+console.<span class="fn">log</span>(<span class="kw">await</span> client.<span class="fn">call</span>(<span class="str">"users.get"</span>, { id: <span class="str">"u1"</span> })); <span class="cmt">// { id: "u1", name: "Alice" }</span></div>
+
+        <p class="mb-4 leading-relaxed">Procedure names default to the operation name, which must then be a valid RPC name such as <code class="bg-black/5 px-1">"users.get"</code>; pass <code class="bg-black/5 px-1">procedureName</code> to map other names. API errors become their RPC equivalents (<code class="bg-black/5 px-1">RPC_VALIDATION_ERROR</code> with issues, <code class="bg-black/5 px-1">RPC_UNAUTHENTICATED</code>, <code class="bg-black/5 px-1">RPC_FORBIDDEN</code>, <code class="bg-black/5 px-1">RPC_TIMEOUT</code>, …), and a domain error keeps its own code, such as <code class="bg-black/5 px-1">ERR_API_CONFLICT</code>. To serve the same server over HTTP, mount <code class="bg-black/5 px-1">createRPCFetchHandler(server)</code> with <code class="bg-black/5 px-1">mountFetchHandler(router, "/rpc", …)</code>.</p>
+
+        <h3 class="text-h3 mb-3 mt-8" id="bindings-queue">Queues</h3>
+        <p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">bindApiQueue</code> makes a <a href="/docs/packages-queue" class="text-zudo-blue underline">@zudojs/queue</a> queue run operations as background jobs. The job name is the operation name and <code class="bg-black/5 px-1">job.data</code> is the input.</p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createInMemoryQueue</span>, <span class="fn">createQueueName</span> } <span class="kw">from</span> <span class="str">"@zudojs/queue"</span>;
+<span class="kw">import</span> { <span class="fn">bindApiQueue</span> } <span class="kw">from</span> <span class="str">"@zudojs/api"</span>;
+
+<span class="kw">const</span> queue = <span class="fn">createInMemoryQueue</span>(<span class="fn">createQueueName</span>(<span class="str">"operations"</span>));
+<span class="fn">bindApiQueue</span>(queue, registry, { executor });
+
+<span class="kw">await</span> queue.<span class="fn">add</span>(<span class="str">"users.get"</span>, { id: <span class="str">"u1"</span> }, { attempts: <span class="num">1</span> });</div>
+
+        <p class="mb-4 leading-relaxed">Success completes the job with the operation's output. A failure throws an <code class="bg-black/5 px-1">APIError</code> carrying the client-safe message, so the queue retries and dead-letters the job as usual. Validation failures are retried too, which cannot help, so enqueue input you have not checked with <code class="bg-black/5 px-1">attempts: 1</code>.</p>
+
+        <h3 class="text-h3 mb-3 mt-8" id="bindings-cli">CLI</h3>
+        <p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">runApiCli</code> turns a command line into an operation call, prints the output as JSON, and returns an exit code. Put it in a small executable file:</p>
+
+        <div class="code-block mb-4"><span class="cmt">#!/usr/bin/env node</span>
+<span class="kw">import</span> { <span class="fn">runApiCli</span> } <span class="kw">from</span> <span class="str">"@zudojs/api"</span>;
+
+<span class="kw">const</span> controller = <span class="kw">new</span> <span class="tp">AbortController</span>();
+process.<span class="fn">once</span>(<span class="str">"SIGINT"</span>, () =&gt; controller.<span class="fn">abort</span>());
+
+process.exitCode = <span class="kw">await</span> <span class="fn">runApiCli</span>(registry, process.argv.<span class="fn">slice</span>(<span class="num">2</span>), {
+  executor,
+  <span class="prop">programName</span>: <span class="str">"app"</span>,
+  <span class="prop">signal</span>: controller.signal,
+});</div>
+
+        <div class="code-block mb-4">$ app users.get --id u1
+<span class="cmt">{"id":"u1","name":"Alice"}</span>
+$ app users.create --json '{"name":"Ann"}' --address.city Paris --admin
+$ app --help   <span class="cmt"># lists the operations</span></div>
+
+        <p class="mb-4 leading-relaxed">The operation name comes first (or pass <code class="bg-black/5 px-1">operation</code> for a single-purpose program). <code class="bg-black/5 px-1">--field value</code> and <code class="bg-black/5 px-1">--field=value</code> set fields; kebab-case becomes camelCase, dots nest, repeated flags collect into an array, <code class="bg-black/5 px-1">--flag</code> is <code class="bg-black/5 px-1">true</code> and <code class="bg-black/5 px-1">--no-flag</code> is <code class="bg-black/5 px-1">false</code>. Values that look like JSON (numbers, <code class="bg-black/5 px-1">true</code>, <code class="bg-black/5 px-1">null</code>, <code class="bg-black/5 px-1">{…}</code>, <code class="bg-black/5 px-1">[…]</code>) are parsed; anything else stays a string. On failure the <code class="bg-black/5 px-1">{ ok: false, error }</code> body goes to stderr and the exit code tells a script what kind of failure it was:</p>
+
+        <table class="doc-table mb-6">
+          <thead><tr><th>Exit code</th><th><span class="code-inline">APICliExitCode</span></th><th>When</th></tr></thead>
+          <tbody>
+            <tr><td>0</td><td><span class="code-inline">OK</span></td><td>The operation succeeded.</td></tr>
+            <tr><td>65</td><td><span class="code-inline">INVALID_INPUT</span></td><td>Input failed validation (a 400 or 422).</td></tr>
+            <tr><td>64</td><td><span class="code-inline">USAGE</span></td><td>Bad command line: unknown operation or malformed option.</td></tr>
+            <tr><td>75</td><td><span class="code-inline">TIMEOUT</span></td><td>The operation timed out.</td></tr>
+            <tr><td>1</td><td><span class="code-inline">FAILURE</span></td><td>Any other client error, such as a 409 conflict.</td></tr>
+            <tr><td>77</td><td><span class="code-inline">PERMISSION</span></td><td>Not signed in or not allowed (401, 403).</td></tr>
+            <tr><td>69</td><td><span class="code-inline">UNAVAILABLE</span></td><td>Rate limited or unavailable (429, 503); try again later.</td></tr>
+            <tr><td>70</td><td><span class="code-inline">INTERNAL</span></td><td>Internal error.</td></tr>
+            <tr><td>130</td><td><span class="code-inline">CANCELLED</span></td><td>Cancelled through the abort signal (Ctrl+C).</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ==================== SECTION: ROUTES AND OPENAPI ==================== -->
+      <section id="routes-and-openapi" class="mt-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ROUTES AND OPENAPI</h2>
+        <p class="mb-4 leading-relaxed">The HTTP binding works out a route for every operation. You can read that route table yourself, for logging, for tests, or to document the API.</p>
+
+        <p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">describeApiRoutes(operations, { basePath })</code> returns one frozen <code class="bg-black/5 px-1">APIOperationRoute</code> per operation: <code class="bg-black/5 px-1">operationId</code>, <code class="bg-black/5 px-1">method</code>, <code class="bg-black/5 px-1">path</code>, <code class="bg-black/5 px-1">pathParams</code>, <code class="bg-black/5 px-1">inputSource</code> (<code class="bg-black/5 px-1">"query"</code> or <code class="bg-black/5 px-1">"body"</code>), the input and output schemas, and the description, tags, deprecation and version from <code class="bg-black/5 px-1">metadata</code>. It throws on an invalid route or two operations that claim the same one, which is the check <code class="bg-black/5 px-1">createApiFetchHandler</code> runs at startup too.</p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">describeApiRoutes</span> } <span class="kw">from</span> <span class="str">"@zudojs/api"</span>;
+
+<span class="kw">for</span> (<span class="kw">const</span> route <span class="kw">of</span> <span class="fn">describeApiRoutes</span>(registry, { basePath: <span class="str">"/api"</span> })) {
+  console.<span class="fn">log</span>(route.method, route.path, route.inputSource);
+}
+<span class="cmt">// GET /api/users/:id query</span></div>
+
+        <p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">toOpenAPIRouteDescriptors(operations, { basePath })</code> turns the same routes into <a href="/docs/packages-openapi" class="text-zudo-blue underline">@zudojs/openapi</a> route descriptors, so one call documents exactly what the fetch handler serves:</p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createOpenAPIDocumentFromRoutes</span> } <span class="kw">from</span> <span class="str">"@zudojs/openapi"</span>;
+<span class="kw">import</span> { <span class="fn">toOpenAPIRouteDescriptors</span> } <span class="kw">from</span> <span class="str">"@zudojs/api"</span>;
+
+<span class="kw">const</span> document = <span class="fn">createOpenAPIDocumentFromRoutes</span>(
+  <span class="fn">toOpenAPIRouteDescriptors</span>(registry, { basePath: <span class="str">"/api"</span> }),
+  { info: { title: <span class="str">"Users"</span>, version: <span class="str">"1.0.0"</span> } },
+);</div>
+
+        <p class="mb-4 leading-relaxed">Here <code class="bg-black/5 px-1">basePath</code> is right even when you mount with <code class="bg-black/5 px-1">mountFetchHandler</code>: the document should show the full public path. The input schema becomes <code class="bg-black/5 px-1">query</code> (for <code class="bg-black/5 px-1">GET</code> and <code class="bg-black/5 px-1">DELETE</code>) or <code class="bg-black/5 px-1">body</code>, with path fields moved to <code class="bg-black/5 px-1">params</code>. The responses document 200 with the <code class="bg-black/5 px-1">{ ok: true, data }</code> envelope around the output schema, and 422, 404, 409, 500 and 504 with the <code class="bg-black/5 px-1">{ ok: false, error }</code> body. Only <code class="bg-black/5 px-1">@zudojs/schema</code> schemas are converted; with another schema library the input stays undocumented and <code class="bg-black/5 px-1">data</code> is <code class="bg-black/5 px-1">unknown</code>.</p>
+      </section>
+
       <!-- ==================== SECTION: API REFERENCE ==================== -->
       <section id="api-reference" class="mt-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">API REFERENCE</h2>
@@ -605,6 +773,13 @@ console.<span class="fn">log</span>(registry.<span class="fn">getAll</span>().le
             <tr><td><span class="code-inline">createNoopInterceptor()</span></td><td>Interceptor that only calls <span class="code-inline">next()</span>.</td><td></td></tr>
             <tr><td><span class="code-inline">normalizeAPIError(error, operationName?)</span></td><td>Turns any thrown value into an <span class="code-inline">APIError</span>.</td><td>Non-API errors become <span class="code-inline">APIInternalError</span> with the original on <span class="code-inline">cause</span>. <span class="code-inline">toJSON()</span> includes <span class="code-inline">cause</span> (message and stack), so serialise selected fields for clients.</td></tr>
             <tr><td><span class="code-inline">createAPIError(message, options?)</span> / <span class="code-inline">isAPIError(value)</span></td><td>Build or detect a generic <span class="code-inline">APIError</span>.</td><td>Re-exported from <span class="code-inline">@zudojs/errors</span>.</td></tr>
+            <tr><td><span class="code-inline">createApiFetchHandler(operations, options?)</span></td><td>Serves operations as <span class="code-inline">(request: Request) =&gt; Promise&lt;Response&gt;</span>.</td><td>Options: <span class="code-inline">executor</span>, <span class="code-inline">state</span>, <span class="code-inline">onInternalError</span>, <span class="code-inline">basePath</span>, <span class="code-inline">maxBodyBytes</span>, <span class="code-inline">serializer</span>. Throws at creation on invalid or conflicting routes.</td></tr>
+            <tr><td><span class="code-inline">registerApiRpcProcedures(target, operations, options?)</span> / <span class="code-inline">createApiRpcProcedure(op, options?)</span></td><td>Expose operations as <span class="code-inline">@zudojs/rpc</span> procedures.</td><td>Returns the registered names. Extra option: <span class="code-inline">procedureName</span>. <span class="code-inline">apiErrorToRPCError(error, procedure)</span> is the error mapping.</td></tr>
+            <tr><td><span class="code-inline">bindApiQueue(queue, operations, options?)</span> / <span class="code-inline">createApiQueueProcessor(op, options?)</span></td><td>Run operations as <span class="code-inline">@zudojs/queue</span> jobs.</td><td>Job name = operation name; <span class="code-inline">job.data</span> = input.</td></tr>
+            <tr><td><span class="code-inline">runApiCli(operations, argv, options?)</span> / <span class="code-inline">parseApiCliArgs(argv, expectOperation)</span></td><td>Run an operation from a command line; resolves to an exit code.</td><td>Options add <span class="code-inline">io</span>, <span class="code-inline">signal</span>, <span class="code-inline">operation</span>, <span class="code-inline">programName</span>.</td></tr>
+            <tr><td><span class="code-inline">describeApiRoutes(operations, { basePath? })</span> / <span class="code-inline">resolveApiRoute(op, basePath?)</span></td><td>The HTTP route of every operation / of one.</td><td>Throws on invalid or conflicting routes.</td></tr>
+            <tr><td><span class="code-inline">toOpenAPIRouteDescriptors(operations, { basePath? })</span> / <span class="code-inline">toOpenAPIRouteDescriptor(route)</span></td><td>Routes as <span class="code-inline">@zudojs/openapi</span> descriptors.</td><td>Feed to <span class="code-inline">createOpenAPIDocumentFromRoutes</span>. <span class="code-inline">apiSuccessBodySchema</span> / <span class="code-inline">apiWireErrorBodySchema</span> build the envelope schemas.</td></tr>
+            <tr><td><span class="code-inline">toApiWireResult(result, requestId)</span> / <span class="code-inline">toApiWireError(error, requestId)</span></td><td>Client-safe form of a result or error.</td><td>What every binding sends. Use them when you call the executor yourself.</td></tr>
           </tbody>
         </table>
 
@@ -628,6 +803,9 @@ console.<span class="fn">log</span>(registry.<span class="fn">getAll</span>().le
             <tr><td><span class="code-inline">APIInterceptor</span> / <span class="code-inline">APIExecutionContext</span></td><td>Interceptor contract and the object it receives.</td><td><span class="code-inline">input</span> is writable; <span class="code-inline">result</span> is set after <span class="code-inline">next()</span>.</td></tr>
             <tr><td><span class="code-inline">APIExecutorOptions</span></td><td>Options object for <span class="code-inline">new APIExecutor()</span>.</td><td></td></tr>
             <tr><td><span class="code-inline">APIResult&lt;T&gt;</span> / <span class="code-inline">APISuccess&lt;T&gt;</span> / <span class="code-inline">APIFailure</span></td><td>Result union and its two halves.</td><td></td></tr>
+            <tr><td><span class="code-inline">APIWireResult&lt;T&gt;</span> / <span class="code-inline">APIWireError</span></td><td>The client-safe result every binding sends.</td><td><span class="code-inline">{ code, message, statusCode, requestId, issues? }</span>.</td></tr>
+            <tr><td><span class="code-inline">APIOperationRoute</span> / <span class="code-inline">APIOperationHttpOptions</span></td><td>One operation's HTTP route / the <span class="code-inline">metadata.http</span> field.</td><td>Also <span class="code-inline">APIHttpMethod</span>, <span class="code-inline">APIRouteInputSource</span>, <span class="code-inline">DescribeApiRoutesOptions</span>.</td></tr>
+            <tr><td><span class="code-inline">APIBindingOptions</span> and each binding's options</td><td><span class="code-inline">APIFetchHandlerOptions</span>, <span class="code-inline">APIRpcBindingOptions</span>, <span class="code-inline">APIQueueBindingOptions</span>, <span class="code-inline">APICliOptions</span>.</td><td>All share <span class="code-inline">executor</span>, <span class="code-inline">state</span>, <span class="code-inline">onInternalError</span>.</td></tr>
             <tr><td><span class="code-inline">APIErrorOptions</span></td><td>Options for <span class="code-inline">createAPIError</span>.</td><td><span class="code-inline">statusCode</span>, <span class="code-inline">code</span>, <span class="code-inline">expose</span>, <span class="code-inline">cause</span>, <span class="code-inline">endpoint</span>, <span class="code-inline">method</span>.</td></tr>
           </tbody>
         </table>
@@ -660,6 +838,11 @@ console.<span class="fn">log</span>(registry.<span class="fn">getAll</span>().le
             <tr><td><span class="code-inline">MAX_VALIDATION_ISSUES</span> / <span class="code-inline">MAX_VALIDATION_ISSUE_LENGTH</span></td><td>20 issues / 200 characters each.</td><td>Caps on client-facing validation errors.</td></tr>
             <tr><td><span class="code-inline">MAX_OPERATION_NAME_LENGTH</span> / <span class="code-inline">MAX_REQUEST_ID_LENGTH</span></td><td>128 characters each.</td><td></td></tr>
             <tr><td><span class="code-inline">RequestIdContextKey</span>, <span class="code-inline">CorrelationIdContextKey</span>, <span class="code-inline">TenantIdContextKey</span>, <span class="code-inline">UserIdContextKey</span>, <span class="code-inline">StartTimeContextKey</span></td><td>Built-in context keys.</td><td>All strings except <span class="code-inline">StartTimeContextKey</span> (number).</td></tr>
+            <tr><td><span class="code-inline">TransportContextKey</span></td><td>Which binding ran the call.</td><td><span class="code-inline">"http" | "rpc" | "queue" | "cli"</span>; unset when you call the executor yourself.</td></tr>
+            <tr><td><span class="code-inline">APICliExitCode</span></td><td>Exit codes from <span class="code-inline">runApiCli</span>.</td><td>See the table in <a href="#bindings-cli" class="text-zudo-blue underline">CLI</a>.</td></tr>
+            <tr><td><span class="code-inline">API_INTERNAL_ERROR_MESSAGE</span></td><td><span class="code-inline">"An internal error occurred."</span></td><td>Sent in place of any non-exposed message.</td></tr>
+            <tr><td><span class="code-inline">DEFAULT_API_MAX_BODY_BYTES</span></td><td>1 048 576 (1 MiB).</td><td>Default <span class="code-inline">maxBodyBytes</span> for the fetch handler.</td></tr>
+            <tr><td><span class="code-inline">API_RPC_TIMEOUT_MARGIN_MS</span></td><td>1 000 ms.</td><td>Extra time the RPC procedure allows, so the operation's own timeout is what a slow call reports.</td></tr>
           </tbody>
         </table>
       </section>
@@ -673,6 +856,8 @@ console.<span class="fn">log</span>(registry.<span class="fn">getAll</span>().le
           <li><strong>Sending <code class="bg-black/5 px-1">result.error.message</code> to every client.</strong> Internal errors carry a generic message, but only if you honour <code class="bg-black/5 px-1">expose</code>. Send the message when <code class="bg-black/5 px-1">expose</code> is true, otherwise a fixed string.</li>
           <li><strong>Using <code class="bg-black/5 px-1">timeout: 0</code> to "disable" the deadline.</strong> <code class="bg-black/5 px-1">defineOperation</code> throws a <code class="bg-black/5 px-1">RangeError</code>. Pick a real number up to one hour.</li>
           <li><strong>Building a context key as a plain object.</strong> <code class="bg-black/5 px-1">{ name: "x", type: undefined }</code> does not satisfy <code class="bg-black/5 px-1">APIContextKey</code>; it lacks the <code class="bg-black/5 px-1">id</code> symbol. Use <code class="bg-black/5 px-1">createContextKey&lt;T&gt;("x")</code>.</li>
+          <li><strong>Setting <code class="bg-black/5 px-1">basePath</code> and also mounting under a prefix.</strong> <code class="bg-black/5 px-1">mountFetchHandler(router, "/api", …)</code> already strips <code class="bg-black/5 px-1">/api</code>, so a <code class="bg-black/5 px-1">basePath: "/api"</code> on <code class="bg-black/5 px-1">createApiFetchHandler</code> makes every route 404. Set one or the other.</li>
+          <li><strong>Enqueueing unchecked input with retries.</strong> A job whose input fails validation is retried like any failure and can never succeed. Add it with <code class="bg-black/5 px-1">attempts: 1</code>, or validate before enqueueing.</li>
           <li><strong>Registering the same name twice.</strong> Usually a module imported from two paths. The registry throws <code class="bg-black/5 px-1">APIDuplicateOperationError</code>; register once at startup, then <code class="bg-black/5 px-1">freeze()</code>.</li>
         </ul>
       </section>
@@ -682,7 +867,10 @@ console.<span class="fn">log</span>(registry.<span class="fn">getAll</span>().le
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATED PACKAGES</h2>
         <ul class="list-disc pl-5 space-y-2 mb-6">
           <li><a href="/docs/packages-errors" class="text-zudo-blue underline font-bold">@zudojs/errors</a> — the source of every <code class="bg-black/5 px-1">APIError</code> class, <code class="bg-black/5 px-1">ErrorCode</code>, and <code class="bg-black/5 px-1">BaseError.toJSON()</code>.</li>
-          <li><a href="/docs/packages-http" class="text-zudo-blue underline font-bold">@zudojs/http</a> — the HTTP server. Reach for it when you need routes; call the executor from inside a route handler.</li>
+          <li><a href="/docs/packages-http" class="text-zudo-blue underline font-bold">@zudojs/http</a> — the HTTP server. Mount <code class="bg-black/5 px-1">createApiFetchHandler</code> on a router with <code class="bg-black/5 px-1">mountFetchHandler</code>.</li>
+          <li><a href="/docs/packages-rpc" class="text-zudo-blue underline font-bold">@zudojs/rpc</a> — serves operations to other services through <code class="bg-black/5 px-1">registerApiRpcProcedures</code>.</li>
+          <li><a href="/docs/packages-queue" class="text-zudo-blue underline font-bold">@zudojs/queue</a> — runs operations as background jobs through <code class="bg-black/5 px-1">bindApiQueue</code>.</li>
+          <li><a href="/docs/packages-openapi" class="text-zudo-blue underline font-bold">@zudojs/openapi</a> — turns <code class="bg-black/5 px-1">toOpenAPIRouteDescriptors</code> into an OpenAPI document.</li>
           <li><a href="/docs/packages-schema" class="text-zudo-blue underline font-bold">@zudojs/schema</a> — Zudo's own schema library; its schemas are validated natively as <code class="bg-black/5 px-1">input</code> / <code class="bg-black/5 px-1">output</code>.</li>
           <li><a href="/docs/packages-cqrs" class="text-zudo-blue underline font-bold">@zudojs/cqrs</a> — when you want commands and queries split into separate buses on top of operations.</li>
           <li><a href="/docs/packages-permissions" class="text-zudo-blue underline font-bold">@zudojs/permissions</a> — authorization rules you can call from an interceptor. This package has no policy system of its own.</li>
@@ -751,6 +939,8 @@ console.<span class="fn">log</span>(registry.<span class="fn">getAll</span>().le
       <a href="#executor-and-results" class="toc-link">EXECUTOR AND RESULTS</a>
       <a href="#interceptors" class="toc-link">INTERCEPTORS</a>
       <a href="#registry" class="toc-link">REGISTRY</a>
+      <a href="#bindings" class="toc-link">BINDINGS</a>
+      <a href="#routes-and-openapi" class="toc-link">ROUTES AND OPENAPI</a>
       <a href="#api-reference" class="toc-link">API REFERENCE</a>
       <a href="#common-mistakes" class="toc-link">COMMON MISTAKES</a>
       <a href="#related" class="toc-link">RELATED PACKAGES</a>

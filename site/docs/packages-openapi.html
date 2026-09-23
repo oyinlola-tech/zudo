@@ -248,7 +248,7 @@ console.<span class="fn">log</span>(<span class="tp">JSON</span>.<span class="fn
 
         <p class="mb-4">A <em>route</em> here is a method, a path, and some metadata. The metadata lives under <code class="bg-black/5 px-1">metadata.openapi</code> and holds the fields OpenAPI calls an <em>operation</em>: what this endpoint is called, what it takes, and what it returns.</p>
 
-        <p class="mb-4">Every field is optional. This is the full set:</p>
+        <p class="mb-4">Every field is optional. The main ones:</p>
 
         <table class="doc-table mb-6">
           <thead>
@@ -259,9 +259,11 @@ console.<span class="fn">log</span>(<span class="tp">JSON</span>.<span class="fn
             <tr><td><code>summary</code> / <code>description</code></td><td>Short and long human text.</td></tr>
             <tr><td><code>tags</code></td><td>Groups endpoints together in the rendered page.</td></tr>
             <tr><td><code>parameters</code></td><td>Path, query, header or cookie inputs. Each has <code>name</code>, <code>in</code>, and optionally <code>schema</code>, <code>required</code>, <code>example</code>.</td></tr>
+            <tr><td><code>params</code> / <code>query</code> / <code>headers</code> / <code>cookies</code></td><td>Shorthand: one object schema each, and every property becomes a parameter.</td></tr>
             <tr><td><code>requestBody</code></td><td>The body the endpoint accepts, keyed by media type.</td></tr>
-            <tr><td><code>responses</code></td><td>Keyed by status code, a <code>4XX</code>-style range, or <code>default</code>. Each needs a <code>description</code>.</td></tr>
-            <tr><td><code>security</code> / <code>servers</code> / <code>externalDocs</code></td><td>Per-operation overrides of the document-level values.</td></tr>
+            <tr><td><code>body</code></td><td>Shorthand: a schema sent as <code>application/json</code>, or <code>{ schema, contentType?, required? }</code>.</td></tr>
+            <tr><td><code>responses</code></td><td>Keyed by status code, a <code>4XX</code>-style range, or <code>default</code>. Each is a Response Object with a <code>description</code>, or the shorthand <code>{ schema }</code>, whose description defaults to the reason phrase.</td></tr>
+            <tr><td><code>security</code> / <code>servers</code> / <code>externalDocs</code></td><td>Per-operation overrides of the document-level values. <code>security: []</code> marks the operation public.</td></tr>
             <tr><td><code>deprecated</code></td><td>Marks the endpoint as going away.</td></tr>
             <tr><td><code>hidden</code></td><td>Leaves the route out of the generated document entirely.</td></tr>
           </tbody>
@@ -302,8 +304,90 @@ console.<span class="fn">log</span>(<span class="tp">Object</span>.<span class="
         <p class="mb-4">Since v1.4.0 &ldquo;the same route&rdquo; means the same method and the same <em>OpenAPI path template</em>, not the same source string. <code class="bg-black/5 px-1">GET /users/:id</code> and <code class="bg-black/5 px-1">GET /users/{id}</code> both become the path item <code class="bg-black/5 px-1">/users/{id}</code>, so the second one is now rejected with an <code class="bg-black/5 px-1">OpenAPIRouteError</code>. Before v1.4.0 both registered and generation silently kept only the last one: an operation disappeared from the published document and <code class="bg-black/5 px-1">validate()</code> reported nothing wrong. <code class="bg-black/5 px-1">hasRoute</code>, <code class="bg-black/5 px-1">setRoute</code> and <code class="bg-black/5 px-1">removeRoute</code> accept either spelling for the same route.</p>
 
         <div class="callout callout-warning">
-          <strong class="text-zudo-yellow">Watch out:</strong> OpenAPI has no optional or wildcard path segments. <code>/files/*</code> and <code>/users/:id?</code> both throw an <code>OpenAPIRouteError</code> instead of quietly producing a path template no tool understands.
+          <strong class="text-zudo-yellow">Watch out:</strong> OpenAPI has no optional or wildcard path segments. <code>/files/*</code> and <code>/users/:id?</code> both throw an <code>OpenAPIRouteError</code> instead of quietly producing a path template no tool understands. Generating from an <code>@zudojs/http</code> router avoids this: the router resolves those patterns first (an optional segment becomes two paths, a wildcard a <code>{rest}</code> slot).
         </div>
+      </section>
+
+      <!-- From a route table -->
+      <section id="from-routes" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">GENERATING FROM A ROUTE TABLE</h2>
+
+        <p class="mb-4">Most of the time you do not want to call <code class="bg-black/5 px-1">addRoute</code> once per endpoint. Your routes already exist somewhere — in a router, or in a list of operations — and the document should come from that list, so it can never describe an endpoint that is not there.</p>
+
+        <p class="mb-4"><code class="bg-black/5 px-1">createOpenAPIDocumentFromRoutes(routes, { info })</code> does that. <code class="bg-black/5 px-1">routes</code> is a plain array of <em>route descriptors</em>: one object per endpoint, holding its method, its path, and the same documentation fields as <code class="bg-black/5 px-1">metadata.openapi</code>, all flattened into one object. Schemas can be <code class="bg-black/5 px-1">@zudojs/schema</code> schemas, which are converted for you.</p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createOpenAPIDocumentFromRoutes</span> } <span class="kw">from</span> <span class="str">"@zudojs/openapi"</span>;
+<span class="kw">import</span> { objectSchema, stringSchema } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
+
+<span class="kw">const</span> user = <span class="fn">objectSchema</span>({ id: <span class="fn">stringSchema</span>().<span class="fn">uuid</span>(), name: <span class="fn">stringSchema</span>() });
+
+<span class="kw">const</span> document = <span class="fn">createOpenAPIDocumentFromRoutes</span>(
+  [
+    {
+      method: <span class="str">"GET"</span>,
+      path: <span class="str">"/users/:id"</span>,
+      summary: <span class="str">"Get a user"</span>,
+      tags: [<span class="str">"users"</span>],
+      responses: { <span class="str">"200"</span>: { schema: user }, <span class="str">"404"</span>: { description: <span class="str">"No such user"</span> } },
+    },
+    {
+      method: <span class="str">"POST"</span>,
+      path: <span class="str">"/users"</span>,
+      operationId: <span class="str">"users.create"</span>,
+      body: <span class="fn">objectSchema</span>({ name: <span class="fn">stringSchema</span>() }),
+      responses: { <span class="str">"201"</span>: { schema: user } },
+    },
+    { method: <span class="str">"GET"</span>, path: <span class="str">"/health"</span>, security: [] }, <span class="cmt">// public</span>
+  ],
+  {
+    info: { title: <span class="str">"Users API"</span>, version: <span class="str">"1.0.0"</span> },
+    securitySchemes: { bearer: { type: <span class="str">"http"</span>, scheme: <span class="str">"bearer"</span> } },
+    security: [{ bearer: [] }], <span class="cmt">// every route needs a bearer token...</span>
+    validate: <span class="kw">true</span>,
+  },
+);
+
+console.<span class="fn">log</span>(<span class="tp">Object</span>.<span class="fn">keys</span>(document.paths));
+<span class="cmt">// [ '/users/{id}', '/users', '/health' ]</span></div>
+
+        <p class="mb-4"><strong>What happened:</strong> <code class="bg-black/5 px-1">/users/:id</code> became <code class="bg-black/5 px-1">/users/{id}</code> with a required <code class="bg-black/5 px-1">id</code> parameter, the body schema became a required <code class="bg-black/5 px-1">application/json</code> request body, the <code class="bg-black/5 px-1">404</code> kept its description, and the <code class="bg-black/5 px-1">200</code> and <code class="bg-black/5 px-1">201</code> got theirs from the reason phrase. <code class="bg-black/5 px-1">validate: true</code> throws an <code class="bg-black/5 px-1">OpenAPIValidationError</code> if the result is invalid.</p>
+
+        <div class="callout callout-note mb-6">
+          <strong class="text-zudo-blue">In plain words:</strong> <code>security: []</code> on a route means "this one is public". It overrides the document-wide <code>security</code>, so <code>/health</code> needs no token while every other route does. Leaving <code>security</code> out means "use the document's setting".
+        </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">The route descriptor</h3>
+        <p class="mb-4">An <code class="bg-black/5 px-1">OpenAPIRouteDescriptor</code> is <code class="bg-black/5 px-1">RouteOpenAPIMetadata</code> plus <code class="bg-black/5 px-1">method</code> and <code class="bg-black/5 px-1">path</code>. Only those two are required.</p>
+
+        <table class="doc-table mb-6">
+          <thead>
+            <tr><th>Field</th><th>What it does</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>method</code></td><td>Any case. It must be one an OpenAPI path item can hold: <code>get put post delete options head patch trace</code>.</td></tr>
+            <tr><td><code>path</code></td><td><code>/users/:id</code> or <code>/users/{id}</code>. Optional, regex-constrained and wildcard segments have no OpenAPI spelling; the route source resolves them before handing the path over.</td></tr>
+            <tr><td><code>summary</code>, <code>description</code>, <code>operationId</code>, <code>tags</code>, <code>deprecated</code>, <code>servers</code>, <code>externalDocs</code></td><td>Copied to the operation.</td></tr>
+            <tr><td><code>security</code></td><td>Operation security. <code>[]</code> marks it public and overrides the document's security.</td></tr>
+            <tr><td><code>params</code>, <code>query</code>, <code>headers</code>, <code>cookies</code></td><td>One object schema each; every property becomes a parameter. <code>required</code> comes from the schema, and path parameters are always required.</td></tr>
+            <tr><td><code>body</code></td><td>A schema (sent as <code>application/json</code>, required), or <code>{ schema, contentType?, required?, description?, example? }</code>. A raw <code>requestBody</code> wins over it.</td></tr>
+            <tr><td><code>responses</code></td><td>Keyed by status, <code>NXX</code> range or <code>default</code>: a Response Object, or <code>{ schema, description?, contentType?, headers?, example? }</code>. The description defaults to the reason phrase, e.g. "Not Found".</td></tr>
+            <tr><td><code>parameters</code></td><td>Explicit parameters. Highest precedence.</td></tr>
+            <tr><td><code>inferredParameters</code></td><td>Parameters the source worked out itself, such as a regex constraint. Lowest precedence.</td></tr>
+            <tr><td><code>hidden</code></td><td><code>true</code> leaves the operation out.</td></tr>
+          </tbody>
+        </table>
+
+        <p class="mb-4">Every path template slot is documented as a required string parameter even when nothing declares it. A declared path parameter the template does not contain is dropped with a warning, rather than producing an invalid document. Warnings reach <code class="bg-black/5 px-1">onSchemaWarning</code> under the name <code class="bg-black/5 px-1">"routes"</code> and <code class="bg-black/5 px-1">manager.routeWarnings()</code>.</p>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Where descriptors come from</h3>
+        <ul class="space-y-2 mb-4">
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> <a href="/docs/packages-http" class="text-zudo-blue underline">@zudojs/http</a> builds them from a router's registered routes: <code class="bg-black/5 px-1">generateOpenAPIDocument(router, { info })</code> and <code class="bg-black/5 px-1">mountOpenAPI(router, { info })</code> call this function for you.</li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <a href="/docs/packages-api" class="text-zudo-blue underline">@zudojs/api</a> builds them from operations: <code class="bg-black/5 px-1">toOpenAPIRouteDescriptors(registry, { basePath })</code>.</li>
+          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> Or write the array yourself, as above.</li>
+        </ul>
+
+        <h3 class="text-lg font-bold mb-3 mt-6">Keeping a manager instead</h3>
+        <p class="mb-4"><code class="bg-black/5 px-1">createOpenAPIManagerFromRoutes(routes, options)</code> takes the same arguments but returns the <code class="bg-black/5 px-1">OpenAPIManager</code>, so you can serve it with <code class="bg-black/5 px-1">toResponse()</code> and <code class="bg-black/5 px-1">toUIResponse()</code>. When your routes change, <code class="bg-black/5 px-1">manager.setRoutes(routes.map(routeDescriptorToRouteInfo))</code> replaces the whole route set at once, rejecting duplicates before anything changes. <code class="bg-black/5 px-1">routeDescriptorToRouteInfo</code> converts one descriptor into the <code class="bg-black/5 px-1">{ method, path, metadata }</code> shape <code class="bg-black/5 px-1">addRoute</code> takes.</p>
       </section>
 
       <!-- Schemas -->
@@ -554,6 +638,8 @@ console.<span class="fn">log</span>(page.body.<span class="fn">startsWith</span>
 app.<span class="fn">get</span>(<span class="str">"/openapi.json"</span>, () =&gt; manager.<span class="fn">toResponse</span>());
 app.<span class="fn">get</span>(<span class="str">"/docs"</span>, () =&gt; manager.<span class="fn">toUIResponse</span>({ specUrl: <span class="str">"/openapi.json"</span> }));</div>
 
+        <p class="mb-4">On <a href="/docs/packages-http" class="text-zudo-blue underline">@zudojs/http</a> you do not write these two handlers: <code class="bg-black/5 px-1">mountOpenAPI(router, { info })</code> registers both, generated from the router's own routes.</p>
+
         <p class="mb-4">Open <code class="bg-black/5 px-1">/docs</code> and you get a browsable page: every endpoint listed by tag, expandable request and response shapes, and a "try it out" button that sends a real request.</p>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Swagger UI or ReDoc</h3>
@@ -731,6 +817,8 @@ console.<span class="fn">log</span>(<span class="fn">toOpenAPIYAML</span>(docume
             <tr><td><code>addRoute(route)</code></td><td>Registers a route.</td><td>Throws on a duplicate method + OpenAPI path template.</td></tr>
             <tr><td><code>setRoute(route)</code></td><td>Registers a route, replacing any existing one.</td><td>—</td></tr>
             <tr><td><code>removeRoute(method, path)</code></td><td>Removes a route.</td><td>Returns whether one was removed.</td></tr>
+            <tr><td><code>setRoutes(routes)</code></td><td>Replaces the whole route set.</td><td>Rejects duplicates before anything changes. Chainable.</td></tr>
+            <tr><td><code>routeWarnings()</code></td><td>Warnings from the last route conversion.</td><td>For example a declared path parameter the path lacks.</td></tr>
             <tr><td><code>addSchema(name, schema)</code></td><td>Converts a <code>@zudojs/schema</code> schema and registers it.</td><td>Conversion warnings land in <code>schemaWarnings()</code>.</td></tr>
             <tr><td><code>addRawSchema(name, schema)</code></td><td>Registers an already-converted OpenAPI schema.</td><td>No conversion.</td></tr>
             <tr><td><code>setInfo</code>, <code>addServer</code>, <code>addTag</code></td><td>Set document metadata.</td><td>Chainable.</td></tr>
@@ -753,6 +841,9 @@ console.<span class="fn">log</span>(<span class="fn">toOpenAPIYAML</span>(docume
         <table class="doc-table mb-6">
           <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
+            <tr><td><code>createOpenAPIDocumentFromRoutes(routes, options)</code></td><td>Generates a document from route descriptors.</td><td>See <a href="#from-routes" class="text-zudo-blue underline">Generating from a route table</a>.</td></tr>
+            <tr><td><code>createOpenAPIManagerFromRoutes(routes, options)</code></td><td>The same, returning the manager.</td><td>For <code>toResponse</code> / <code>toUIResponse</code>.</td></tr>
+            <tr><td><code>routeDescriptorToRouteInfo(descriptor)</code></td><td>Descriptor to <code>{ method, path, metadata }</code>.</td><td>Throws <code>OpenAPIRouteError</code> on an unsupported method.</td></tr>
             <tr><td><code>renderOpenAPIUI(options)</code></td><td>Returns a complete HTML documentation page.</td><td>Swagger UI or ReDoc.</td></tr>
             <tr><td><code>zudoLogo(overrides?)</code></td><td>The default logo object.</td><td>Frozen; pass overrides for a variant.</td></tr>
             <tr><td><code>svgToDataUri(svg)</code></td><td>Encodes an SVG string as a compact data URI.</td><td>No network request needed to show it.</td></tr>
@@ -782,6 +873,7 @@ console.<span class="fn">log</span>(<span class="fn">toOpenAPIYAML</span>(docume
             <tr><td><code>OpenAPIDocumentResponse</code></td><td><code>{ status, headers, body }</code> for the spec.</td><td>Returned by <code>toResponse</code>.</td></tr>
             <tr><td><code>OpenAPILogo</code></td><td><code>{ url, href?, altText?, backgroundColor? }</code>.</td><td>The shape of <code>info["x-logo"]</code>.</td></tr>
             <tr><td><code>RouteInfo</code> / <code>RouteMetadata</code> / <code>RouteOpenAPIMetadata</code> / <code>RouteParameterMetadata</code></td><td>What <code>addRoute</code> accepts.</td><td>—</td></tr>
+            <tr><td><code>OpenAPIRouteDescriptor</code> / <code>OpenAPIDocumentFromRoutesOptions</code></td><td>Input to <code>createOpenAPIDocumentFromRoutes</code>.</td><td>Options: <code>info</code> (required), <code>validate</code>, <code>securitySchemes</code>, <code>schemas</code>, plus the manager options.</td></tr>
             <tr><td><code>OpenAPIValidationResult</code> / <code>OpenAPIValidationIssue</code></td><td>Validator output.</td><td>An issue is <code>{ path, message, severity }</code>.</td></tr>
             <tr><td><code>SchemaConversionResult</code> / <code>SchemaConversionOptions</code></td><td>Converter input and output.</td><td>—</td></tr>
             <tr><td><code>OpenAPIDocument</code>, <code>OpenAPIOperation</code>, <code>OpenAPISchema</code>, …</td><td>The specification object types.</td><td>Mirror the OpenAPI standard; all exported from the package root.</td></tr>
@@ -859,8 +951,8 @@ console.<span class="fn">log</span>(<span class="fn">toOpenAPIYAML</span>(docume
 
         <ul class="space-y-3">
           <li><a href="/docs/packages-schema" class="font-bold text-zudo-blue underline">@zudojs/schema</a> — defines the schemas <code>addSchema</code> converts. Start here if you have no schemas yet.</li>
-          <li><a href="/docs/packages-http" class="font-bold text-zudo-blue underline">@zudojs/http</a> — the server that turns <code>{ status, headers, body }</code> into a real response.</li>
-          <li><a href="/docs/packages-api" class="font-bold text-zudo-blue underline">@zudojs/api</a> — defines the operations whose metadata feeds <code>addRoute</code>.</li>
+          <li><a href="/docs/packages-http" class="font-bold text-zudo-blue underline">@zudojs/http</a> — <code>generateOpenAPIDocument(router)</code> and <code>mountOpenAPI(router)</code> document a router's own routes with this package.</li>
+          <li><a href="/docs/packages-api" class="font-bold text-zudo-blue underline">@zudojs/api</a> — <code>toOpenAPIRouteDescriptors(registry)</code> turns operations into route descriptors.</li>
           <li><a href="/docs/packages-errors" class="font-bold text-zudo-blue underline">@zudojs/errors</a> — the <code>BaseError</code> every OpenAPI error extends.</li>
           <li><a href="/docs/packages-validation" class="font-bold text-zudo-blue underline">@zudojs/validation</a> — checks incoming requests at runtime, which OpenAPI only describes.</li>
         </ul>
@@ -905,6 +997,7 @@ console.<span class="fn">log</span>(<span class="fn">toOpenAPIYAML</span>(docume
       <a href="#installation" class="toc-link">Installation</a>
       <a href="#quick-start" class="toc-link">Quick Start</a>
       <a href="#routes" class="toc-link">Describing Routes</a>
+      <a href="#from-routes" class="toc-link">From A Route Table</a>
       <a href="#schemas" class="toc-link">Schemas</a>
       <a href="#version-differences" class="toc-link">3.0 vs 3.1</a>
       <a href="#validation" class="toc-link">Validation</a>

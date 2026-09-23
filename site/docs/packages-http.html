@@ -9,7 +9,7 @@
   <link rel="icon" type="image/svg+xml" href="/assets/zudo-favicon.svg">
   <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
-  <meta name="description" content="@zudojs/http docs: HTTP server, routing, middleware, client, CORS, CSP and security headers, streaming, multipart, cookies and compression for ZudoJS.">
+  <meta name="description" content="@zudojs/http docs for ZudoJS: server, router, middleware, client, CORS and security headers, OpenAPI from routes, and fetch handler mounting.">
   <!-- seo:start -->
   <meta name="robots" content="index, follow, max-image-preview:large">
   <link rel="canonical" href="https://zudojs.oyinlola.site/docs/packages-http">
@@ -256,6 +256,7 @@ console.<span class="fn">log</span>(<span class="str">`Listening on http://127.0
           <tr><td><code>remoteAddress</code></td><td>The caller's IP address</td><td>The socket peer. <code>X-Forwarded-For</code> is read only when the adapter's <code>trustProxy</code> matches that peer, and <code>trustProxy</code> defaults to <code>false</code>.</td></tr>
           <tr><td><code>protocol / hostname / port</code></td><td>The scheme, host and port the request arrived on</td><td>From the socket and the <code>Host</code> header. <code>X-Forwarded-Proto</code> and <code>X-Forwarded-Host</code> are read only under <code>trustProxy</code>, and a forwarded scheme that is not <code>http</code> or <code>https</code> is discarded.</td></tr>
           <tr><td><code>getState(key) / setState(key, value)</code></td><td>Per-request scratch space</td><td>Use it to pass data between middleware and handlers.</td></tr>
+          <tr><td><code>signal</code></td><td>An <code>AbortSignal</code>, or <code>undefined</code></td><td>The Node adapter sets one that aborts when the client disconnects. Before, a signal passed in was dropped, so it could never fire.</td></tr>
           </tbody>
         </table>
         <h3 class="text-lg font-bold mb-3 mt-6">Response: what you can set</h3>
@@ -410,6 +411,7 @@ $ curl -X DELETE http://127.0.0.1:3000/users/1
           <tr><td><code>ctx.query</code></td><td>Query string as an object</td><td>Repeated keys become arrays.</td></tr>
           <tr><td><code>ctx.route</code></td><td>The matched route definition</td><td>Has <code>id</code>, <code>method</code>, <code>path</code>, <code>name</code>, <code>metadata</code>.</td></tr>
           <tr><td><code>ctx.state</code></td><td>A <code>Map</code> shared by this request's middleware and handler</td><td></td></tr>
+          <tr><td><code>ctx.signal</code></td><td>An <code>AbortSignal</code></td><td>On the Node adapter it aborts when the client disconnects before the response is finished. Pass it to slow work.</td></tr>
           </tbody>
         </table>
         <h3 class="text-lg font-bold mb-3 mt-6">Groups and route middleware</h3>
@@ -580,6 +582,124 @@ console.<span class="fn">log</span>(response.status, response.body, response.hea
         </table>
       </section>
 
+      <!-- ==================== OPENAPI ==================== -->
+      <section id="openapi" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">OPENAPI FROM YOUR ROUTES</h2>
+        <p class="mb-4 leading-relaxed">An <em>OpenAPI document</em> is a JSON file that describes every endpoint of an HTTP API: its path, method, inputs and responses. Tools read it to show browsable docs, generate client code, or check the API in CI. Writing it by hand means keeping a second list of routes in sync with the real one, and it drifts.</p>
+        <p class="mb-4 leading-relaxed">Here the document is generated from the routes the router actually registered. A route documents itself through the <code class="bg-black/5 px-1">openapi</code> route option; schemas may be <a href="/docs/packages-schema" class="underline">@zudojs/schema</a> schemas or raw OpenAPI schema objects. The generation itself is done by <a href="/docs/packages-openapi" class="underline">@zudojs/openapi</a>.</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { objectSchema, stringSchema } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
+<span class="kw">import</span> {
+  createRouter,
+  createResponseContext,
+  generateOpenAPIDocument,
+  mountOpenAPI,
+} <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
+
+<span class="kw">const</span> user = <span class="fn">objectSchema</span>({ id: <span class="fn">stringSchema</span>(), name: <span class="fn">stringSchema</span>() });
+<span class="kw">const</span> router = <span class="fn">createRouter</span>();
+
+router.<span class="fn">get</span>(<span class="str">"/users/:id"</span>, (ctx) =&gt; <span class="fn">createResponseContext</span>().<span class="fn">json</span>({ id: ctx.params.id, name: <span class="str">"Ada"</span> }), {
+  openapi: {
+    summary: <span class="str">"Get a user"</span>,
+    tags: [<span class="str">"users"</span>],
+    responses: { <span class="str">"200"</span>: { schema: user }, <span class="str">"404"</span>: { description: <span class="str">"No such user"</span> } },
+  },
+});
+
+router.<span class="fn">post</span>(<span class="str">"/users"</span>, () =&gt; <span class="fn">createResponseContext</span>().<span class="fn">setStatus</span>(<span class="num">201</span>).<span class="fn">json</span>({ id: <span class="str">"u1"</span>, name: <span class="str">"Ada"</span> }), {
+  openapi: { body: <span class="fn">objectSchema</span>({ name: <span class="fn">stringSchema</span>() }), responses: { <span class="str">"201"</span>: { schema: user } } },
+});
+
+router.<span class="fn">get</span>(<span class="str">"/health"</span>, () =&gt; <span class="fn">createResponseContext</span>().<span class="fn">json</span>({ ok: <span class="kw">true</span> }), { openapi: <span class="kw">false</span> }); <span class="cmt">// never documented</span>
+
+<span class="cmt">// A one-off document, e.g. to write to a file in CI:</span>
+<span class="kw">const</span> document = <span class="fn">generateOpenAPIDocument</span>(router, {
+  info: { title: <span class="str">"Users API"</span>, version: <span class="str">"1.0.0"</span> },
+});
+console.<span class="fn">log</span>(<span class="tp">Object</span>.<span class="fn">keys</span>(document.paths).<span class="fn">sort</span>());
+<span class="cmt">// [ "/users", "/users/{id}" ]</span>
+
+<span class="cmt">// Or serve it: GET /openapi.json and a Swagger UI page at GET /docs.</span>
+<span class="fn">mountOpenAPI</span>(router, { info: { title: <span class="str">"Users API"</span>, version: <span class="str">"1.0.0"</span> } });</div>
+        <p class="mb-4 leading-relaxed">Dispatch the router from a server as in <a href="#router" class="underline">Router</a>, then open <code>http://127.0.0.1:3000/docs</code> to browse the API. The routes <code class="bg-black/5 px-1">mountOpenAPI</code> adds are hidden from the document themselves, and the document follows the router: a route registered later appears on the next request to <code class="bg-black/5 px-1">/openapi.json</code>.</p>
+        <h3 class="text-lg font-bold mb-3 mt-6">What the <code>openapi</code> route option takes</h3>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Field</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+          <tr><td><code>summary / description / operationId / tags / deprecated</code></td><td>Copied onto the operation</td><td>Router groups can set <code>openapi</code> defaults: tags are merged, every other field is overridden by the route.</td></tr>
+          <tr><td><code>params / query / headers / cookies</code></td><td>One object schema each; every property becomes a parameter</td><td>Path parameters are always required.</td></tr>
+          <tr><td><code>body</code></td><td>The request body</td><td>A schema (sent as <code>application/json</code>), or <code>{ schema, contentType?, required? }</code>.</td></tr>
+          <tr><td><code>responses</code></td><td>Keyed by status, e.g. <code>"200"</code>, <code>"4XX"</code>, <code>"default"</code></td><td><code>{ schema }</code> or <code>{ description }</code>; the description defaults to the reason phrase.</td></tr>
+          <tr><td><code>security</code></td><td>Who may call it</td><td><code>[]</code> marks the route public, overriding document-wide security.</td></tr>
+          <tr><td><code>false</code> or <code>{ hidden: true }</code></td><td>Leave the route out</td><td>Use it for health checks and internal endpoints.</td></tr>
+          </tbody>
+        </table>
+        <h3 class="text-lg font-bold mb-3 mt-6">How route paths become OpenAPI paths</h3>
+        <p class="mb-4 leading-relaxed">OpenAPI writes path parameters as <code>{id}</code> and has no optional or wildcard segments, so each router pattern is translated:</p>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Route pattern</th><th>In the document</th><th>Notes</th></tr></thead>
+          <tbody>
+          <tr><td><code>/users/:id</code>, <code>/users/{id}</code></td><td><code>/users/{id}</code></td><td>Every slot is documented as a parameter, even when the route declares nothing about it.</td></tr>
+          <tr><td><code>/users/:id(\d+)</code></td><td><code>/users/{id}</code></td><td>The parameter gets the expression as its <code>pattern</code>.</td></tr>
+          <tr><td><code>/users/:id?</code></td><td><code>/users</code> and <code>/users/{id}</code></td><td>An optional segment is documented as both paths.</td></tr>
+          <tr><td><code>/assets/*rest</code></td><td><code>/assets/{rest}</code></td><td>Pass <code>wildcards: "exclude"</code> to drop such routes instead.</td></tr>
+          </tbody>
+        </table>
+        <p class="mb-4 leading-relaxed">Left out of the document: <code>all()</code> routes, <code>CONNECT</code>, routes with <code>openapi: false</code> or <code>{ hidden: true }</code>, and anything matched by <code>exclude</code> (an exact path, <code>"/internal/*"</code>, a <code>RegExp</code>, or a predicate). The router's automatic <code>HEAD</code> and <code>OPTIONS</code> answers are not registered routes, so they never appear. With <code>undocumented: "exclude"</code>, only routes that declare <code>openapi</code> are documented.</p>
+        <h3 class="text-lg font-bold mb-3 mt-6">Options</h3>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Option</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+          <tr><td><code>info</code></td><td>Title and version of the API</td><td>Required. Both functions take the <code>createOpenAPIDocumentFromRoutes</code> options too, e.g. <code>servers</code>, <code>securitySchemes</code>, <code>security</code>, <code>schemas</code>, <code>validate</code>.</td></tr>
+          <tr><td><code>exclude / undocumented / wildcards</code></td><td>Which routes are documented</td><td>See above.</td></tr>
+          <tr><td><code>path</code></td><td>Where <code>mountOpenAPI</code> serves the JSON document</td><td>Default <code>/openapi.json</code>.</td></tr>
+          <tr><td><code>docsPath</code></td><td>Where the documentation page is served</td><td>Default <code>/docs</code>; <code>false</code> for none.</td></tr>
+          <tr><td><code>yamlPath</code></td><td>A YAML copy of the document</td><td>Off by default.</td></tr>
+          <tr><td><code>ui</code></td><td>Documentation page options</td><td>For example <code>{ renderer: "redoc" }</code>. Set <code>ui.specUrl</code> when the router is served under a prefix.</td></tr>
+          <tr><td><code>middleware</code></td><td>Runs before the documentation routes</td><td>Use it to put the docs behind a login.</td></tr>
+          </tbody>
+        </table>
+        <p class="mb-4 leading-relaxed"><code>mountOpenAPI</code> returns <code>{ document(), unmount() }</code>. <code>createRouterOpenAPI(router, options)</code> gives you the underlying <code>OpenAPIManager</code>, rebuilt only when the route table changes.</p>
+      </section>
+
+      <!-- ==================== MOUNTING FETCH HANDLERS ==================== -->
+      <section id="mounting-fetch-handlers" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">MOUNTING WEB-STANDARD HANDLERS</h2>
+        <p class="mb-4 leading-relaxed">A <em>fetch handler</em> is a function that takes a web-standard <code>Request</code> and returns a <code>Response</code> (or a promise of one). It is the shape Bun, Deno and edge runtimes use, and it is what other Zudo packages hand you: <code class="bg-black/5 px-1">createRPCFetchHandler</code> from <a href="/docs/packages-rpc" class="underline">@zudojs/rpc</a> and <code class="bg-black/5 px-1">createApiFetchHandler</code> from <a href="/docs/packages-api" class="underline">@zudojs/api</a>.</p>
+        <p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">mountFetchHandler(router, basePath, handler, options?)</code> serves one under a path of a router or router group, with no glue code:</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { createRouter, mountFetchHandler } <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
+
+<span class="kw">const</span> router = <span class="fn">createRouter</span>();
+
+<span class="kw">const</span> unmount = <span class="fn">mountFetchHandler</span>(router, <span class="str">"/hello"</span>, <span class="kw">async</span> (request) =&gt; {
+  <span class="kw">const</span> url = <span class="kw">new</span> <span class="fn">URL</span>(request.url);
+  <span class="kw">return</span> <span class="tp">Response</span>.<span class="fn">json</span>({ path: url.pathname, prefix: request.headers.<span class="fn">get</span>(<span class="str">"x-forwarded-prefix"</span>) });
+});
+
+<span class="cmt">// Real ones:</span>
+<span class="cmt">// mountFetchHandler(router, "/rpc", createRPCFetchHandler(rpcServer));</span>
+<span class="cmt">// mountFetchHandler(router, "/api", createApiFetchHandler(registry, { executor }));</span></div>
+        <div class="code-block mb-4">$ curl http://127.0.0.1:3000/hello/world
+<span class="cmt">{"path":"/world","prefix":"/hello"}</span></div>
+        <p class="mb-4 leading-relaxed">The handler sees the original method, query, headers (connection-scoped ones removed) and body. By default the mount path is stripped from its URL and passed along as <code>x-forwarded-prefix</code>, which is why <code>/hello/world</code> arrives as <code>/world</code>. So a handler that has its own base path setting, such as <code>createApiFetchHandler</code>'s <code>basePath</code>, should leave it unset. The returned function removes the mount again.</p>
+        <p class="mb-4 leading-relaxed">The <code>Response</code> is streamed back with its status, status text and headers intact, and several <code>Set-Cookie</code> headers stay separate instead of being folded into one broken header. A handler that throws, or returns something that is not a <code>Response</code>, fails the request like any route: a generic <code>500</code> unless the error carries a status.</p>
+        <table class="doc-table mb-6">
+          <thead><tr><th>Option</th><th>What it does</th><th>Notes</th></tr></thead>
+          <tbody>
+          <tr><td><code>methods</code></td><td>Methods routed to the handler</td><td>Default: every method.</td></tr>
+          <tr><td><code>stripPrefix</code></td><td>Remove the mount path from the handler's URL</td><td>Default <code>true</code>.</td></tr>
+          <tr><td><code>middleware</code></td><td>Middleware run before the handler</td><td>For example an auth check.</td></tr>
+          <tr><td><code>origin</code></td><td>Origin for <code>request.url</code> when the request has no usable host</td><td>Default <code>http://localhost</code>.</td></tr>
+          <tr><td><code>name / openapi</code></td><td>Route name and documentation</td><td><code>openapi</code> defaults to <code>false</code>: a mounted handler documents its own operations.</td></tr>
+          </tbody>
+        </table>
+        <p class="mb-4 leading-relaxed"><code>toWebRequest(context)</code> does the request conversion on its own, if you want to call a fetch handler from inside a normal route.</p>
+        <div class="callout callout-tip mb-6">
+          <strong class="text-zudo-green">Client disconnects</strong>
+          <p class="mt-1">The handler's <code>request.signal</code> aborts when the client goes away. The same is now true everywhere on the Node adapter: <code>request.signal</code> and the router's <code>ctx.signal</code> abort when the client disconnects, and a streamed response body stops being read. Pass the signal to database calls and <code>fetch</code> so abandoned requests stop doing work.</p>
+        </div>
+      </section>
+
       <!-- ==================== CLIENT ==================== -->
       <section id="client" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">HTTP CLIENT</h2>
@@ -735,6 +855,10 @@ console.<span class="fn">log</span>(
           <tr><td><code>isHttpError(value)</code></td><td>Type guard for <code>HttpError</code></td><td></td></tr>
           <tr><td><code>getStatusText(code)</code></td><td><code>404</code> to <code>"Not Found"</code></td><td></td></tr>
           <tr><td><code>getCurrentRequestContext()</code></td><td>The request being handled, from anywhere in the call stack</td><td>Only inside <code>runWithRequestContext</code>. Working since v1.3.0: the <code>AsyncLocalStorage</code> behind it was loaded in a way that never resolved under ESM, so it always returned <code>undefined</code>.</td></tr>
+          <tr><td><code>generateOpenAPIDocument(router, options)</code></td><td>OpenAPI document from the registered routes</td><td>See <a href="#openapi" class="underline">OpenAPI from your routes</a>.</td></tr>
+          <tr><td><code>mountOpenAPI(router, options)</code></td><td>Serves <code>/openapi.json</code> and a docs page at <code>/docs</code></td><td>Returns <code>{ document, unmount }</code>. <code>createRouterOpenAPI</code> returns the manager instead.</td></tr>
+          <tr><td><code>mountFetchHandler(router, basePath, handler, options?)</code></td><td>Serves a <code>Request</code> → <code>Response</code> handler under a path</td><td>Returns an unmount function. See <a href="#mounting-fetch-handlers" class="underline">Mounting</a>.</td></tr>
+          <tr><td><code>toWebRequest(context, options?)</code></td><td>Converts a request context into a web <code>Request</code></td><td>What <code>mountFetchHandler</code> uses.</td></tr>
           <tr><td><code>getRequestIP(request, trustProxy?)</code> / <code>getRequestProtocol(request, trustProxy?)</code></td><td>The client address and scheme of a raw Node request</td><td><code>trustProxy</code> defaults to <code>false</code>, so forwarded headers are ignored unless you pass one.</td></tr>
           </tbody>
         </table>
@@ -766,6 +890,9 @@ console.<span class="fn">log</span>(
           <tr><td><code>HttpClientOptions / HttpClientRequestConfig</code></td><td>Client and per-request options</td><td></td></tr>
           <tr><td><code>HttpClientResponse&amp;lt;T&amp;gt;</code></td><td><code>{ data, status, statusText, ok, headers, url, raw }</code></td><td></td></tr>
           <tr><td><code>CorsOptions / CorsResult</code></td><td>Input and output of <code>evaluateCors</code></td><td></td></tr>
+          <tr><td><code>HttpOpenAPIOptions / HttpOpenAPIMountOptions</code></td><td>Options for <code>generateOpenAPIDocument</code> / <code>mountOpenAPI</code></td><td></td></tr>
+          <tr><td><code>HttpRouteOpenAPI</code></td><td>The <code>openapi</code> route option</td><td>Route metadata from <code>@zudojs/openapi</code>, or <code>false</code>.</td></tr>
+          <tr><td><code>HttpFetchHandler / MountFetchHandlerOptions</code></td><td>A fetch handler and the mount options</td><td></td></tr>
           </tbody>
         </table>
         <h3 class="text-lg font-bold mb-3 mt-6">Errors</h3>
@@ -811,7 +938,9 @@ console.<span class="fn">log</span>(
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RELATED PACKAGES</h2>
         <ul class="space-y-2 mb-6">
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><a href="/docs/packages-errors" class="underline">@zudojs/errors</a> — the base classes behind <code>HttpError</code>, <code>HttpClientError</code>, and the server errors.</span></li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><a href="/docs/packages-api" class="underline">@zudojs/api</a> — define operations once and call them from HTTP handlers, CLI commands, or workers.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><a href="/docs/packages-api" class="underline">@zudojs/api</a> — define operations once; mount <code>createApiFetchHandler</code> here with <code>mountFetchHandler</code>.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><a href="/docs/packages-rpc" class="underline">@zudojs/rpc</a> — typed procedure calls; mount <code>createRPCFetchHandler</code> here the same way.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><a href="/docs/packages-openapi" class="underline">@zudojs/openapi</a> — the generator behind <code>generateOpenAPIDocument</code>, and the full route metadata shape.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><a href="/docs/packages-security" class="underline">@zudojs/security</a> — rate limiting and input validation to run inside middleware.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><a href="/docs/packages-logger" class="underline">@zudojs/logger</a> — structured logging for request and response events.</span></li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> <span><a href="/docs/packages-core" class="underline">@zudojs/core</a> — application lifecycle so the server starts and stops with the rest of your app.</span></li>
@@ -861,6 +990,8 @@ console.<span class="fn">log</span>(
       <a href="#router" class="toc-link">Router</a>
       <a href="#middleware" class="toc-link">Middleware</a>
       <a href="#errors" class="toc-link">Errors</a>
+      <a href="#openapi" class="toc-link">OpenAPI From Your Routes</a>
+      <a href="#mounting-fetch-handlers" class="toc-link">Mounting Fetch Handlers</a>
       <a href="#client" class="toc-link">HTTP Client</a>
       <a href="#cors-and-security-headers" class="toc-link">CORS &amp; Security Headers</a>
       <a href="#api-reference" class="toc-link">API Reference</a>
