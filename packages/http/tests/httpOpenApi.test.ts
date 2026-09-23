@@ -138,7 +138,8 @@ describe("generateOpenAPIDocument", () => {
     });
     expect(document.paths["/users"]!.get!.operationId).toBe("users.get");
     expect(document.paths["/users/{id}"]!.get!.operationId).toBe("users.get_1");
-    expect(warnings).toHaveLength(1);
+    /* Undocumented responses also warn now; count only the duplicates. */
+    expect(warnings.filter((w) => !/no responses are documented/u.test(w))).toHaveLength(1);
   });
 
   it("merges group documentation into its routes", () => {

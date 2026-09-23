@@ -157,15 +157,10 @@ describe("HttpMiddlewarePipeline execution", () => {
       throw new Error("inner");
     });
 
+    /* What the handler threw propagates as-is, not wrapped. */
     await expect(
       pipeline.execute(request(), createResponseContext()),
-    ).rejects.toMatchObject({
-      errors: expect.arrayContaining([
-        expect.objectContaining({
-          message: "HTTP middleware error handler threw an error.",
-        }),
-      ]),
-    });
+    ).rejects.toThrow(/^handler exploded$/);
   });
 
   it("rejects a middleware that calls next() twice", async () => {

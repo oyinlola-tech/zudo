@@ -13,6 +13,8 @@
  * ones that take effect.
  */
 
+import { INCOMING_REQUEST_ID_PATTERN } from "../httpRequest/requestId/httpRequest.requestId.js";
+
 /** Configuration for HTTP request security guards. */
 export interface HTTPSecurityConfig {
   /** Maximum request body size in bytes (default: 1MB). */
@@ -64,7 +66,9 @@ export const DEFAULT_SECURITY_CONFIG: Required<HTTPSecurityConfig> =
     requireHost: true,
     trustProxy: false,
     maxRequestIdLength: 128,
-    requestIdPattern: /^[a-zA-Z0-9_-]+$/,
+    // Same rule the adapter uses to reuse an incoming x-request-id, so an id
+    // it would accept (trace ids like `svc.a:123`) is not refused here first.
+    requestIdPattern: INCOMING_REQUEST_ID_PATTERN,
     enableCrlfProtection: true,
     enableSmugglingProtection: true,
   });

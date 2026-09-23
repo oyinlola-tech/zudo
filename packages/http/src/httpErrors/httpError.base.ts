@@ -11,7 +11,11 @@ import { HttpError as BaseHttpError } from "@zudojs/errors";
 
 import type { HttpErrorOptions } from "./httpError.type.js";
 
-import { normalizeHeaders, getStatusText } from "./httpError.util.js";
+import {
+  defaultErrorCode,
+  normalizeHeaders,
+  getStatusText,
+} from "./httpError.util.js";
 
 /**
  * HTTP error with response-specific properties.
@@ -44,7 +48,7 @@ export class HttpError extends BaseHttpError {
 
     super(message ?? statusText, {
       statusCode: status,
-      code: options.code,
+      code: options.code ?? defaultErrorCode(status),
       expose: options.expose ?? status < 500,
       metadata: options.metadata,
       cause: options.cause,

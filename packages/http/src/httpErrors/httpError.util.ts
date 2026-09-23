@@ -10,6 +10,8 @@
 
 import { getStatusText as lookupStatusText } from "../httpStatus/httpStatus.lookup.js";
 
+import { statusName } from "../httpStatus/httpStatus.name.js";
+
 /**
  * Normalizes header keys to lowercase.
  */
@@ -40,4 +42,17 @@ export function normalizeHeaders(
  */
 export function getStatusText(status: number): string {
   return lookupStatusText(status);
+}
+
+/**
+ * The default error code for a status: its symbolic name, as the factories
+ * use (`415` gives `"UNSUPPORTED_MEDIA_TYPE"`, `404` `"NOT_FOUND"`).
+ * `undefined` for a status with no name, which keeps the shared default.
+ * `new HttpError(415, msg)` without a code used to report
+ * `ERR_OPERATION_FAILED`.
+ */
+export function defaultErrorCode(status: number): string | undefined {
+  const name = statusName(status);
+
+  return name === "UNKNOWN" ? undefined : name;
 }
