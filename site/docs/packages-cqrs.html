@@ -142,7 +142,7 @@
 
       <!-- HEADER -->
             <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/cqrs</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Command Query Responsibility Segregation — separate read and write models with typed handlers.
@@ -539,6 +539,42 @@ console.<span class="fn">log</span>(bus.<span class="fn">getCommandTypes</span>(
         </div>
       </section>
 
+      <!-- ==================== RESULT VALUES ==================== -->
+      <section id="result-values" class="mb-12">
+        <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">RESULT VALUES</h2>
+        <p class="mb-4">
+          The buses return the handler's value and throw on failure. Some infrastructure (a job runner, an outbox) prefers to keep a failure as a <em>value</em> instead. <code class="bg-gray-100 px-1 font-bold">createCommandResult</code> and <code class="bg-gray-100 px-1 font-bold">createFailedCommandResult</code> wrap a value with its <code class="bg-gray-100 px-1 font-bold">status</code>, <code class="bg-gray-100 px-1 font-bold">commandType</code> and <code class="bg-gray-100 px-1 font-bold">executedAt</code>. <code class="bg-gray-100 px-1 font-bold">unwrapCommandResult</code> turns a result back into a plain value, and throws when the status is <code class="bg-gray-100 px-1 font-bold">"failure"</code>.
+        </p>
+        <div class="code-block">
+<span class="kw">import</span> {
+  <span class="fn">createCommandResult</span>,
+  <span class="fn">createFailedCommandResult</span>,
+  <span class="fn">unwrapCommandResult</span>,
+  <span class="tp">CommandFailedError</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/cqrs"</span>;
+
+<span class="kw">const</span> command = { type: <span class="str">"PlaceOrder"</span> };
+
+<span class="kw">const</span> ok = <span class="fn">createCommandResult</span>({ orderId: <span class="str">"o-1"</span> }, { command });
+console.<span class="fn">log</span>(<span class="fn">unwrapCommandResult</span>(ok));
+<span class="cmt">// { orderId: 'o-1' }</span>
+
+<span class="kw">const</span> failed = <span class="fn">createFailedCommandResult</span>({ reason: <span class="str">"out of stock"</span> }, { command });
+<span class="kw">try</span> {
+  <span class="fn">unwrapCommandResult</span>(failed);
+} <span class="kw">catch</span> (error) {
+  <span class="kw">if</span> (error <span class="kw">instanceof</span> <span class="tp">CommandFailedError</span>) {
+    console.<span class="fn">log</span>(error.code, error.commandType, error.failure);
+  }
+}
+<span class="cmt">// ERR_COMMAND_FAILED PlaceOrder { reason: 'out of stock' }</span>
+        </div>
+        <p class="mt-4 mb-4">The failure payload is on <code class="bg-gray-100 px-1 font-bold">error.failure</code> and on <code class="bg-gray-100 px-1 font-bold">error.cause</code>. Queries work the same way: <code class="bg-gray-100 px-1 font-bold">unwrapQueryResult</code> throws <code class="bg-gray-100 px-1 font-bold">QueryFailedError</code> (code <code class="bg-gray-100 px-1 font-bold">ERR_QUERY_FAILED</code>, with <code class="bg-gray-100 px-1 font-bold">queryType</code>). Both errors are defined in <a href="/docs/packages-errors" class="text-zudo-blue font-bold">@zudojs/errors</a> and re-exported here.</p>
+        <div class="callout callout-warning">
+          <strong>Changed in 1.2.0:</strong> before 1.2.0, <code class="bg-gray-100 px-1 font-bold">unwrapCommandResult</code> and <code class="bg-gray-100 px-1 font-bold">unwrapQueryResult</code> returned the failure payload as if it were the value. Code that checks <code class="bg-gray-100 px-1 font-bold">isFailedCommandResult</code> first is unaffected; code that unwrapped a failure now gets an exception.
+        </div>
+      </section>
+
       <!-- ==================== ERRORS ==================== -->
       <section id="errors" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">ERRORS</h2>
@@ -556,6 +592,7 @@ console.<span class="fn">log</span>(bus.<span class="fn">getCommandTypes</span>(
             <tr><td><code>DuplicateHandlerError</code></td><td><code>register</code> called twice for one type.</td><td>Status 409. Use <code>replace</code>.</td></tr>
             <tr><td><code>InvalidHandlerTypeError</code>, <code>InvalidHandlerKindError</code></td><td>Bad type string; registry kind not <code>"command"</code>/<code>"query"</code>.</td><td></td></tr>
             <tr><td><code>HandlerConfigurationError</code></td><td>Handler is not a function or object with <code>execute()</code>.</td><td>Also conflicting decorators.</td></tr>
+            <tr><td><code>CommandFailedError</code> / <code>QueryFailedError</code></td><td>Thrown by <code>unwrapCommandResult</code> / <code>unwrapQueryResult</code> for a failed result.</td><td>Codes <code>ERR_COMMAND_FAILED</code> / <code>ERR_QUERY_FAILED</code>, status 500. Payload on <code>failure</code> and <code>cause</code>.</td></tr>
             <tr><td><code>InvalidMiddlewareError</code>, <code>MiddlewareExecutionError</code></td><td>Middleware is not a function; <code>next()</code> called twice.</td><td></td></tr>
             <tr><td><code>EventHandlerExecutionError</code>, <code>EventPublishError</code></td><td>Error classes for your own event code.</td><td>The buses on this page do not throw them.</td></tr>
           </tbody>
@@ -581,7 +618,7 @@ console.<span class="fn">log</span>(bus.<span class="fn">getCommandTypes</span>(
             <tr><td><code>isCommandHandler</code>, <code>isCommandHandlerLike</code></td><td>Class instance / anything the bus accepts.</td><td><code>getCommandType(c)</code> and <code>commandType(type)</code> read or fix a type string.</td></tr>
             <tr><td><code>createExecutionContext(input?)</code></td><td>Frozen context with a generated <code>requestId</code>.</td><td><code>correlationId</code> defaults to it. <code>createChildExecutionContext(parent, overrides?)</code> makes a child sharing that correlation.</td></tr>
             <tr><td><code>withUser</code>, <code>withTenant</code>, <code>withSource</code>, <code>withContextMetadata</code></td><td>Copy of a context with one field changed.</td><td>Readers: <code>getUserId</code>, <code>getTenantId</code>, <code>getRequestId</code>, <code>getCorrelationId</code>, <code>getCausationId</code>, <code>hasUser</code>, <code>hasTenant</code>, <code>sharesCorrelation</code>, <code>serializeExecutionContext</code>.</td></tr>
-            <tr><td><code>createCommandResult(value, { command })</code></td><td>Wraps a value with <code>status</code>, <code>commandType</code>, <code>executedAt</code>.</td><td>Optional; buses do not produce these. Also <code>createFailedCommandResult</code>, <code>isSuccessfulCommandResult</code>, <code>unwrapCommandResult</code>, <code>withCommandResultMetadata</code>.</td></tr>
+            <tr><td><code>createCommandResult(value, { command })</code></td><td>Wraps a value with <code>status</code>, <code>commandType</code>, <code>executedAt</code>.</td><td>Optional; buses do not produce these. Also <code>createFailedCommandResult</code>, <code>isSuccessfulCommandResult</code>, <code>isFailedCommandResult</code>, <code>unwrapCommandResult</code> (throws <code>CommandFailedError</code> for a failure; see <a href="#result-values" class="text-zudo-blue font-bold">Result values</a>), <code>withCommandResultMetadata</code>.</td></tr>
             <tr><td><code>createCqrsEvent(input)</code></td><td>Frozen event with aggregate fields.</td><td>With <code>createEventId</code>, <code>isCqrsEvent</code>, <code>isAggregateEvent</code>, <code>getEventType</code>, <code>getAggregateId</code>, <code>createCqrsEventHandler</code>.</td></tr>
             <tr><td><code>createEventBus(options?)</code></td><td>Re-export from <code>@zudojs/events</code>.</td><td>Also <code>createStartedEventBus</code>, <code>EventBus</code>, <code>EventBusState</code>.</td></tr>
             <tr><td><code>createEventResult(options)</code></td><td>Summary value for a publish.</td><td><code>isEventPublished</code>, <code>isEventFailed</code>, <code>hasEventHandlerFailures</code>, <code>getEventErrors</code>.</td></tr>
@@ -695,6 +732,7 @@ console.<span class="fn">log</span>(bus.<span class="fn">getCommandTypes</span>(
       <a href="#execution-context" class="toc-link">EXECUTION CONTEXT</a>
       <a href="#events" class="toc-link">EVENTS</a>
       <a href="#registry-and-decorators" class="toc-link">REGISTRY AND DECORATORS</a>
+      <a href="#result-values" class="toc-link">RESULT VALUES</a>
       <a href="#errors" class="toc-link">ERRORS</a>
       <a href="#api-reference" class="toc-link">API REFERENCE</a>
       <a href="#common-mistakes" class="toc-link">COMMON MISTAKES</a>

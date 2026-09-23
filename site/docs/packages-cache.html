@@ -177,7 +177,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.1</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/cache</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Keep copies of slow results so you can serve them again fast, with expiry, tags, locks and per-tenant scoping.
@@ -270,7 +270,7 @@ console.<span class="fn">log</span>(missing.hit, missing.value);
           A <em>key</em> is the name you store a value under. Before the key reaches the adapter, a <em>key builder</em> turns it into a full key of the form <code>prefix:namespace:key</code>. The default prefix is <code>zudojs</code> and the default separator is <code>:</code>, so <code>set("user.123", ...)</code> is stored as <code>zudojs:user.123</code>.
         </p>
         <p class="mb-4 leading-relaxed">
-          Every part is checked. A part may only contain letters, digits, <code>.</code>, <code>_</code> and <code>-</code>, and it must not contain the separator. The full key may be at most 256 characters. A bad key throws a <code>CacheError</code> right away.
+          Every part is checked. A part may only contain letters, digits, <code>.</code>, <code>_</code> and <code>-</code>, and it must not contain the separator. The full key may be at most 256 characters. A bad key throws a <code>CacheError</code> right away, with code <code>ERR_INVALID_INPUT</code> and <code>statusCode</code> 400. Since v1.2.0 that rejection is also counted in <code>getStats().errors</code> and emitted as a <code>cache.error</code> event, like an invalid TTL.
         </p>
         <p class="mb-4 leading-relaxed">
           The separator is the only thing that marks where the namespace ends and your key begins. If your key could contain it, <code>set("admin:x")</code> would land inside the <code>admin</code> namespace. Rejecting the separator in each part closes that hole.
@@ -355,7 +355,7 @@ console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span cl
 <span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"timed"</span>,   <span class="str">"v"</span>, { ttl: <span class="num">10_000</span> });
 <span class="kw">await</span> cache.<span class="fn">set</span>(<span class="str">"forever"</span>, <span class="str">"v"</span>, { ttl: <span class="kw">null</span> });
 
-console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">ttl</span>(<span class="str">"timed"</span>));   <span class="cmt">// 9999.52… (milliseconds left, not rounded; yours will differ)</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">ttl</span>(<span class="str">"timed"</span>));   <span class="cmt">// 9998 (whole milliseconds left, rounded down; yours may differ slightly)</span>
 console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">ttl</span>(<span class="str">"forever"</span>)); <span class="cmt">// null  (never expires)</span>
 console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">ttl</span>(<span class="str">"missing"</span>)); <span class="cmt">// undefined (no such key)</span>
 
@@ -452,7 +452,7 @@ console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span cl
 console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">has</span>(<span class="str">"user.1"</span>));                <span class="cmt">// false</span>
 console.<span class="fn">log</span>(<span class="kw">await</span> cache.<span class="fn">has</span>(<span class="str">"post.1"</span>));                <span class="cmt">// true</span></div>
         <p class="mb-4 leading-relaxed">
-          Tags live inside a namespace. A tag added under <code>tenant-a</code> is only visible to <code>invalidateByTag(tags, { namespace: "tenant-a" })</code> or to a service configured with that namespace. A tag must be a non-empty string of at most 128 characters.
+          Tags live inside a namespace. A tag added under <code>tenant-a</code> is only visible to <code>invalidateByTag(tags, { namespace: "tenant-a" })</code> or to a service configured with that namespace. A tag must be a non-empty string of at most 128 characters with no NUL character. Since v1.2.0 an invalid tag, including <code>tags: [""]</code>, throws <code>ERR_INVALID_INPUT</code> (status 400), the same code as an invalid key; it used to surface as <code>CACHE_OPERATION_FAILED</code>, which reads like an adapter fault.
         </p>
 
         <div class="callout callout-warning mb-4">
@@ -533,7 +533,7 @@ console.<span class="fn">log</span>(imported); <span class="cmt">// 42</span></d
       <section id="observability" class="mb-16">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">SEEING WHAT THE CACHE DOES</h2>
         <p class="mb-4 leading-relaxed">
-          The service counts hits, misses, sets, deletes and errors, and it emits an <em>event</em> (a small message you can listen for) on every operation. Stats are on by default; turn them off with <code>config.collectStats: false</code>, after which <code>getStats()</code> returns <code>null</code>.
+          The service counts hits, misses, sets, deletes and errors (including rejected input: an invalid key, namespace, pattern, tag or TTL), and it emits an <em>event</em> (a small message you can listen for) on every operation. Stats are on by default; turn them off with <code>config.collectStats: false</code>, after which <code>getStats()</code> returns <code>null</code>.
         </p>
 
         <p class="mb-2 leading-relaxed">This listens for misses, does a few reads, and prints the counters.</p>
@@ -598,7 +598,7 @@ subscription.<span class="fn">unsubscribe</span>();</div>
               <tr><td><code>set(key, value, { ttl?, tags?, namespace?, overwrite?, metadata? })</code></td><td>Writes one entry.</td><td>Returns <code>{ success, key, expiresAt, skipped? }</code>. <code>overwrite: false</code> skips existing keys.</td></tr>
               <tr><td><code>has(key, opts?)</code> / <code>delete(key, opts?)</code></td><td>Existence check / removal.</td><td><code>delete</code> returns <code>{ deleted, key }</code>.</td></tr>
               <tr><td><code>getOrSet&lt;T&gt;(key, fn, opts?)</code></td><td>Read, or compute and store.</td><td>Returns <code>{ value, cached }</code>. Options add <code>forceRefresh</code>.</td></tr>
-              <tr><td><code>ttl(key, opts?)</code> / <code>expire(key, ttl, opts?)</code></td><td>Remaining lifetime / set a new lifetime.</td><td><code>ttl</code> returns ms, <code>null</code> (never) or <code>undefined</code> (missing).</td></tr>
+              <tr><td><code>ttl(key, opts?)</code> / <code>expire(key, ttl, opts?)</code></td><td>Remaining lifetime / set a new lifetime.</td><td><code>ttl</code> returns whole ms (rounded down, since v1.2.0), <code>null</code> (never) or <code>undefined</code> (missing).</td></tr>
               <tr><td><code>clear({ namespace?, pattern? })</code></td><td>Removes everything, or only matching entries.</td><td>Returns <code>{ cleared }</code>.</td></tr>
               <tr><td><code>invalidateByTag(tags, { namespace? })</code></td><td>Removes entries carrying any of the tags.</td><td>Scoped to the namespace.</td></tr>
               <tr><td><code>invalidateByPattern(pattern, { namespace? })</code></td><td>Removes entries matching a glob.</td><td><code>*</code> stops at <code>:</code>; <code>**</code> spans.</td></tr>
@@ -673,7 +673,7 @@ subscription.<span class="fn">unsubscribe</span>();</div>
             <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
             <tbody>
               <tr><td><code>CacheError</code>, <code>isCacheError</code></td><td>Error class and type guard.</td><td>Has <code>message</code>, <code>code</code>, <code>statusCode</code>, <code>operation</code>, <code>key</code>.</td></tr>
-              <tr><td><code>CacheErrorCode</code></td><td>Codes this package sets: <code>CACHE_DISABLED</code>, <code>CACHE_OPERATION_FAILED</code>, <code>CACHE_INVALID_TTL</code>, <code>CACHE_MIDDLEWARE_RESULT_MISSING</code>, <code>CACHE_LOCK_UNAVAILABLE</code>, <code>CACHE_LOCK_ACQUIRE_FAILED</code>, <code>CACHE_LOCK_LOST</code>.</td><td>Type only. An invalid key, namespace, pattern or lock name throws with the shared code <code>ERR_INVALID_INPUT</code> (status 400), which is not in this union. There is no <code>CACHE_INVALID_KEY</code> code. An invalid tag passed to <code>set</code> surfaces as <code>CACHE_OPERATION_FAILED</code>.</td></tr>
+              <tr><td><code>CacheErrorCode</code></td><td>Codes this package sets: <code>CACHE_DISABLED</code>, <code>CACHE_OPERATION_FAILED</code>, <code>CACHE_INVALID_TTL</code>, <code>CACHE_MIDDLEWARE_RESULT_MISSING</code>, <code>CACHE_LOCK_UNAVAILABLE</code>, <code>CACHE_LOCK_ACQUIRE_FAILED</code>, <code>CACHE_LOCK_LOST</code>.</td><td>Type only. An invalid key, namespace, pattern, tag or lock name throws with the shared code <code>ERR_INVALID_INPUT</code> (<code>ErrorCode.INVALID_INPUT</code>, status 400), which is not in this union. There is no <code>CACHE_INVALID_KEY</code> code. Before v1.2.0 an invalid tag surfaced as <code>CACHE_OPERATION_FAILED</code>.</td></tr>
               <tr><td><code>CacheOperation</code></td><td>Enum of operation names (<code>GET</code>, <code>SET</code>, <code>DELETE</code>, <code>LOCK_ACQUIRE</code>, ...).</td><td>Pass to <code>getLatencyStats</code>.</td></tr>
               <tr><td><code>cacheInvalidKeyError</code>, <code>cacheSerializationError</code>, <code>cacheDeserializationError</code>, <code>cacheConnectionError</code>, <code>cacheTimeoutError</code>, <code>cacheAdapterNotConfiguredError</code></td><td>Factories for building a <code>CacheError</code> of each kind.</td><td>Useful inside a custom adapter.</td></tr>
             </tbody>

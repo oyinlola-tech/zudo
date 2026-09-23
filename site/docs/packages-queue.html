@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.4.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/queue</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Background job and asynchronous task infrastructure. Provides an in-memory queue with processors, workers, retry policies, dead letter handling, middleware, serialization, and event emission.
@@ -228,8 +228,8 @@ console.<span class="fn">log</span>(finished?.state); <span class="cmt">// "comp
           What you should see: <code class="bg-black/5 px-1">waiting</code>, then the "Sending ..." line, then <code class="bg-black/5 px-1">completed</code>. The queue starts polling for work the moment you call <code class="bg-black/5 px-1">process()</code>, so you never have to start it by hand.
         </p>
 
-        <div class="callout callout-warning">
-          <strong class="text-zudo-yellow">Watch out:</strong> the queue's poll timer is <code class="bg-black/5 px-1">unref()</code>'d, so the queue does not keep Node running. The quick start works because it waits with its own <code class="bg-black/5 px-1">setTimeout</code>. A script that only calls <code class="bg-black/5 px-1">process()</code> and <code class="bg-black/5 px-1">add()</code> exits with code 0 before the job runs. In a service, an HTTP server or similar keeps the process alive.
+        <div class="callout callout-tip">
+          <strong class="text-zudo-green">Process lifetime:</strong> since v1.4.0, pending work keeps Node running. While the queue has waiting, delayed, retrying or running jobs that one of its processors can run, its poll timer is referenced, so a script that only calls <code class="bg-black/5 px-1">process()</code> and <code class="bg-black/5 px-1">add()</code> runs the job before it exits. An idle queue, a paused one, jobs no processor handles and a closed queue never hold the process open. Pass <code class="bg-black/5 px-1">keepAlive: false</code> in <code class="bg-black/5 px-1">QueueOptions</code> to get the old unreferenced timer back. (Before v1.4.0 such a script exited with code 0 before the job ran.)
         </div>
 
         <div class="callout callout-warning">
@@ -244,11 +244,27 @@ console.<span class="fn">log</span>(finished?.state); <span class="cmt">// "comp
           A <strong>job</strong> is one unit of work. It has a <code class="bg-black/5 px-1">name</code> (which processor should run it), <code class="bg-black/5 px-1">data</code> (the input), and a <code class="bg-black/5 px-1">state</code> that the queue moves through as work happens. You never build a job by hand; <code class="bg-black/5 px-1">queue.add()</code> builds it and returns it.
         </p>
         <p class="mb-4 leading-relaxed">
-          A <strong>processor</strong> is an <code class="bg-black/5 px-1">async</code> function registered with <code class="bg-black/5 px-1">queue.process(name, fn)</code>. The queue calls it with two arguments: the job, and a <code class="bg-black/5 px-1">JobContext</code>. The context carries an <code class="bg-black/5 px-1">AbortSignal</code> that fires if the job times out or the queue shuts down, plus an <code class="bg-black/5 px-1">updateProgress()</code> method.
+          A <strong>processor</strong> is an <code class="bg-black/5 px-1">async</code> function registered with <code class="bg-black/5 px-1">queue.process(name, fn)</code>. The queue calls it with two arguments: the job, and a <code class="bg-black/5 px-1">JobContext</code>. The context carries an <code class="bg-black/5 px-1">AbortSignal</code> that fires if the job times out or the queue shuts down, the 1-based <code class="bg-black/5 px-1">attemptNumber</code>, and an <code class="bg-black/5 px-1">updateProgress()</code> method.
         </p>
         <p class="mb-4 leading-relaxed">
-          Inside a processor, <code class="bg-black/5 px-1">job.attempt</code> counts the attempts that have <em>already failed</em>, so it starts at <strong>0</strong>: a job with <code class="bg-black/5 px-1">attempts: 3</code> runs with <code class="bg-black/5 px-1">job.attempt</code> equal to 0, then 1, then 2. Add 1 if you want to log "attempt 1 of 3". <code class="bg-black/5 px-1">job.maxAttempts</code> holds the total.
+          Inside a processor, <code class="bg-black/5 px-1">job.attempt</code> counts the attempts that have <em>already failed</em>, so it starts at <strong>0</strong>: a job with <code class="bg-black/5 px-1">attempts: 3</code> runs with <code class="bg-black/5 px-1">job.attempt</code> equal to 0, then 1, then 2. For a human-readable count use the context's <code class="bg-black/5 px-1">attemptNumber</code> (new in v1.4.0), which is 1-based and always <code class="bg-black/5 px-1">job.attempt + 1</code>, the same convention as <code class="bg-black/5 px-1">ctx.attempt</code> in <a href="/docs/packages-scheduler" class="text-zudo-blue underline">@zudojs/scheduler</a>. <code class="bg-black/5 px-1">job.maxAttempts</code> holds the total.
         </p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createInMemoryQueue</span>, <span class="fn">createQueueName</span>, <span class="fn">createFixedBackoff</span> } <span class="kw">from</span> <span class="str">"@zudojs/queue"</span>;
+
+<span class="kw">const</span> queue = <span class="fn">createInMemoryQueue</span>(<span class="fn">createQueueName</span>(<span class="str">"flaky"</span>));
+
+queue.<span class="fn">process</span>(<span class="str">"sync"</span>, <span class="kw">async</span> (job, ctx) =&gt; {
+  console.<span class="fn">log</span>(<span class="str">`job.attempt=${job.attempt} attempt ${ctx.attemptNumber} of ${job.maxAttempts}`</span>);
+  <span class="kw">if</span> (ctx.attemptNumber &lt; <span class="num">3</span>) <span class="kw">throw</span> <span class="kw">new</span> <span class="tp">Error</span>(<span class="str">"not yet"</span>);
+});
+
+<span class="kw">await</span> queue.<span class="fn">add</span>(<span class="str">"sync"</span>, {}, { <span class="prop">attempts</span>: <span class="num">3</span>, <span class="prop">backoff</span>: <span class="fn">createFixedBackoff</span>(<span class="num">10</span>) });
+<span class="kw">await</span> <span class="kw">new</span> <span class="tp">Promise</span>((resolve) =&gt; <span class="fn">setTimeout</span>(resolve, <span class="num">300</span>));
+<span class="cmt">// job.attempt=0 attempt 1 of 3</span>
+<span class="cmt">// job.attempt=1 attempt 2 of 3</span>
+<span class="cmt">// job.attempt=2 attempt 3 of 3</span>
+<span class="kw">await</span> queue.<span class="fn">close</span>();</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Job states</h3>
         <p class="mb-3">The <code class="bg-black/5 px-1">JobState</code> enum lists every state. Its values are lowercase strings, so <code class="bg-black/5 px-1">job.state === "completed"</code> works.</p>
@@ -313,7 +329,7 @@ console.<span class="fn">log</span>((<span class="kw">await</span> queue.<span c
             <tr><td><code>backoff</code></td><td>How long to wait between attempts (see Retries)</td><td>exponential, 1s to 30s</td></tr>
             <tr><td><code>delay</code></td><td>Milliseconds to wait before the job may run</td><td><code>0</code></td></tr>
             <tr><td><code>scheduledAt</code></td><td>A <code>Date</code> before which the job may not run</td><td>now</td></tr>
-            <tr><td><code>priority</code></td><td>Higher numbers run first; ties run oldest-first</td><td><code>50</code></td></tr>
+            <tr><td><code>priority</code></td><td>Higher numbers run first; within a priority, jobs run in the order they became runnable (when added, or when a delayed job came due). A retried job keeps its place</td><td><code>50</code></td></tr>
             <tr><td><code>timeout</code></td><td>Milliseconds before a running job is aborted and failed. A timeout aborts <code>context.signal</code>; the job's slot and its retry wait up to <code>timeoutGraceMs</code> (default 5000) for the processor to stop, so honour the signal.</td><td><code>30000</code></td></tr>
             <tr><td><code>deduplicationKey</code></td><td>Reject a second job with the same key while the first exists</td><td>none</td></tr>
             <tr><td><code>metadata</code></td><td>Any extra data you want stored on the job. The key <code>zudo:context</code> is reserved by the queue and stripped from whatever you pass (see below)</td><td>none</td></tr>
@@ -326,26 +342,29 @@ console.<span class="fn">log</span>((<span class="kw">await</span> queue.<span c
 
         <h3 class="text-lg font-bold mb-3 mt-6">Dates and other non-JSON values in <code>data</code></h3>
         <p class="mb-3">
-          <code class="bg-black/5 px-1">add()</code> copies the payload through the queue's serializer, and the default one is plain JSON. A <code class="bg-black/5 px-1">Date</code> in <code class="bg-black/5 px-1">data</code> therefore reaches the processor as an ISO <strong>string</strong>, while the TypeScript type still says <code class="bg-black/5 px-1">Date</code>. The compiler is happy and <code class="bg-black/5 px-1">job.data.dueAt.getTime()</code> throws <code class="bg-black/5 px-1">TypeError: job.data.dueAt.getTime is not a function</code> at run time. A <code class="bg-black/5 px-1">BigInt</code> makes <code class="bg-black/5 px-1">add()</code> throw <code class="bg-black/5 px-1">JobSerializationError</code>, and a <code class="bg-black/5 px-1">Map</code> or <code class="bg-black/5 px-1">Set</code> arrives as an empty <code class="bg-black/5 px-1">{}</code>.
+          <code class="bg-black/5 px-1">add()</code> copies the payload through the queue's serializer. Since v1.4.0 the default <code class="bg-black/5 px-1">JsonSerializer</code> preserves types, so a <code class="bg-black/5 px-1">Date</code> in <code class="bg-black/5 px-1">data</code> reaches the processor as a <code class="bg-black/5 px-1">Date</code>, matching what <code class="bg-black/5 px-1">Queue&lt;{ dueAt: Date }&gt;</code> promises. <code class="bg-black/5 px-1">BigInt</code>, <code class="bg-black/5 px-1">Map</code>, <code class="bg-black/5 px-1">Set</code>, <code class="bg-black/5 px-1">Uint8Array</code> and <code class="bg-black/5 px-1">Error</code> round-trip too. Output for plain JSON data is unchanged. No options are needed:
         </p>
-        <p class="mb-3">Pass a type-preserving serializer and they arrive intact:</p>
-        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createInMemoryQueue</span>, <span class="fn">createQueueName</span>, <span class="fn">createJsonSerializer</span> } <span class="kw">from</span> <span class="str">"@zudojs/queue"</span>;
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createInMemoryQueue</span>, <span class="fn">createQueueName</span> } <span class="kw">from</span> <span class="str">"@zudojs/queue"</span>;
 
-<span class="kw">interface</span> <span class="tp">Reminder</span> { <span class="prop">userId</span>: <span class="tp">string</span>; <span class="prop">dueAt</span>: <span class="tp">Date</span>; }
+<span class="kw">interface</span> <span class="tp">Reminder</span> { <span class="prop">userId</span>: <span class="tp">string</span>; <span class="prop">dueAt</span>: <span class="tp">Date</span>; <span class="prop">tags</span>: <span class="tp">Set</span>&lt;<span class="tp">string</span>&gt;; }
 
-<span class="kw">const</span> queue = <span class="fn">createInMemoryQueue</span>&lt;<span class="tp">Reminder</span>&gt;(<span class="fn">createQueueName</span>(<span class="str">"reminders"</span>), {
-  <span class="prop">serializer</span>: <span class="fn">createJsonSerializer</span>({ <span class="prop">preserveTypes</span>: <span class="kw">true</span> }),
-});
+<span class="kw">const</span> queue = <span class="fn">createInMemoryQueue</span>&lt;<span class="tp">Reminder</span>&gt;(<span class="fn">createQueueName</span>(<span class="str">"reminders"</span>));
 
 queue.<span class="fn">process</span>(<span class="str">"remind"</span>, <span class="kw">async</span> (job) =&gt; {
-  console.<span class="fn">log</span>(job.data.dueAt <span class="kw">instanceof</span> <span class="tp">Date</span>, job.data.dueAt.<span class="fn">toISOString</span>());
+  console.<span class="fn">log</span>(job.data.dueAt <span class="kw">instanceof</span> <span class="tp">Date</span>, job.data.dueAt.<span class="fn">toISOString</span>(), job.data.tags.<span class="fn">has</span>(<span class="str">"vip"</span>));
 });
 
-<span class="kw">await</span> queue.<span class="fn">add</span>(<span class="str">"remind"</span>, { <span class="prop">userId</span>: <span class="str">"u1"</span>, <span class="prop">dueAt</span>: <span class="kw">new</span> <span class="tp">Date</span>(<span class="str">"2026-10-01T09:00:00Z"</span>) });
+<span class="kw">await</span> queue.<span class="fn">add</span>(<span class="str">"remind"</span>, {
+  <span class="prop">userId</span>: <span class="str">"u1"</span>,
+  <span class="prop">dueAt</span>: <span class="kw">new</span> <span class="tp">Date</span>(<span class="str">"2026-10-01T09:00:00Z"</span>),
+  <span class="prop">tags</span>: <span class="kw">new</span> <span class="tp">Set</span>([<span class="str">"vip"</span>]),
+});
 <span class="kw">await</span> <span class="kw">new</span> <span class="tp">Promise</span>((resolve) =&gt; <span class="fn">setTimeout</span>(resolve, <span class="num">200</span>));
-<span class="cmt">// true 2026-10-01T09:00:00.000Z</span>
+<span class="cmt">// true 2026-10-01T09:00:00.000Z true</span>
 <span class="kw">await</span> queue.<span class="fn">close</span>();</div>
-        <p class="mb-3"><code class="bg-black/5 px-1">createJsonSerializer({ preserveTypes: true })</code> uses the tagged format of <a href="/docs/packages-serialization" class="text-zudo-blue underline">@zudojs/serialization</a>, so <code class="bg-black/5 px-1">Date</code>, <code class="bg-black/5 px-1">BigInt</code>, <code class="bg-black/5 px-1">Map</code> and <code class="bg-black/5 px-1">Set</code> round-trip.</p>
+        <p class="mb-3">
+          The default uses the tagged format of <a href="/docs/packages-serialization" class="text-zudo-blue underline">@zudojs/serialization</a>. <code class="bg-black/5 px-1">createJsonSerializer()</code> also defaults to <code class="bg-black/5 px-1">preserveTypes: true</code>; pass <code class="bg-black/5 px-1">serializer: createJsonSerializer({ preserveTypes: false })</code> for plain JSON, where a <code class="bg-black/5 px-1">Date</code> becomes its ISO string (type such fields as <code class="bg-black/5 px-1">string</code>). Class instances still lose their prototype through JSON; to keep them, pass <code class="bg-black/5 px-1">serializer: PassthroughSerializer</code> (or <code class="bg-black/5 px-1">serializePayloads: false</code>) and the in-memory queue stores the payload by reference. Before v1.4.0 the default was plain JSON: a <code class="bg-black/5 px-1">Date</code> arrived as a string, a <code class="bg-black/5 px-1">BigInt</code> made <code class="bg-black/5 px-1">add()</code> throw, and a <code class="bg-black/5 px-1">Map</code> or <code class="bg-black/5 px-1">Set</code> arrived as <code class="bg-black/5 px-1">{}</code>.
+        </p>
 
         <p class="mb-3">This example uses priority, delay and deduplication together. <code class="bg-black/5 px-1">JobPriorityLevels</code> is a set of named numbers you can use instead of guessing.</p>
         <div class="code-block mb-4"><span class="kw">import</span> {
@@ -469,10 +488,10 @@ console.<span class="fn">log</span>((<span class="kw">await</span> queue.<span c
 } <span class="kw">from</span> <span class="str">"@zudojs/queue"</span>;
 
 <span class="cmt">// Keep only the 50 most recent failures.</span>
-<span class="kw">const</span> store = <span class="fn">createInMemoryDeadLetterStore</span>({ <span class="prop">maxEntries</span>: <span class="num">50</span> });
+<span class="kw">const</span> store = <span class="fn">createInMemoryDeadLetterStore</span>&lt;<span class="tp">never</span>&gt;({ <span class="prop">maxEntries</span>: <span class="num">50</span> });
 
 <span class="cmt">// Or opt back into the pre-1.3.0 unbounded behaviour.</span>
-<span class="kw">const</span> unbounded = <span class="fn">createInMemoryDeadLetterStore</span>({
+<span class="kw">const</span> unbounded = <span class="fn">createInMemoryDeadLetterStore</span>&lt;<span class="tp">never</span>&gt;({
   <span class="prop">maxEntries</span>: <span class="tp">Number</span>.POSITIVE_INFINITY,
 });
 
@@ -481,6 +500,9 @@ console.<span class="fn">log</span>((<span class="kw">await</span> queue.<span c
 });
 
 <span class="kw">await</span> queue.<span class="fn">close</span>(); <span class="cmt">// `store` is yours: close() leaves it alone</span></div>
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out (types, v1.4.0):</strong> <code class="bg-black/5 px-1">QueueOptions.deadLetterStore</code> is typed <code class="bg-black/5 px-1">DeadLetterStore&lt;never&gt;</code>, while <code class="bg-black/5 px-1">createInMemoryDeadLetterStore()</code> returns <code class="bg-black/5 px-1">DeadLetterStore&lt;unknown&gt;</code> by default. Under <code class="bg-black/5 px-1">strict</code> the default-typed store is rejected with TS2322, so pass the type argument <code class="bg-black/5 px-1">&lt;never&gt;</code> as above when you hand the store to a queue.
+        </div>
         <div class="callout callout-tip">
           <strong class="text-zudo-green">Who clears it:</strong> <code class="bg-black/5 px-1">close()</code> clears the dead-letter store the queue created for itself, so a closed queue holds onto nothing. A store you passed in as <code class="bg-black/5 px-1">deadLetterStore</code> is left alone, as before &mdash; you own its contents and its lifetime.
         </div>
@@ -529,7 +551,8 @@ console.<span class="fn">log</span>(worker.<span class="fn">getStats</span>());
           <thead><tr><th>Option</th><th>What it does</th><th>Default</th></tr></thead>
           <tbody>
             <tr><td><code>concurrency</code></td><td>How many jobs this worker runs at the same time</td><td><code>1</code></td></tr>
-            <tr><td><code>pollInterval</code></td><td>Milliseconds to wait before asking again when the queue is empty. The worker uses this value on every poll.</td><td><code>100</code></td></tr>
+            <tr><td><code>pollInterval</code></td><td>Milliseconds between re-checks while idle. The in-memory queue wakes a started worker as soon as a job becomes runnable (<code>Queue.onJobReady</code>), so this only bounds how often an idle worker looks again</td><td><code>100</code></td></tr>
+            <tr><td><code>keepAlive</code></td><td>Whether a started worker holds the Node.js process open until <code>stop()</code> or <code>forceStop()</code>. <code>false</code> leaves its timers unreferenced</td><td><code>true</code></td></tr>
             <tr><td><code>timeoutMs</code></td><td>Timeout for jobs that carry none of their own</td><td>queue default (30 s)</td></tr>
             <tr><td><code>middleware</code></td><td>Extra middleware run after the queue's own</td><td>none</td></tr>
             <tr><td><code>drainTimeout</code></td><td>How long <code>stop()</code> waits for running jobs before forcing</td><td><code>30000</code></td></tr>
@@ -583,7 +606,7 @@ queue.<span class="fn">process</span>(<span class="str">"send-email"</span>, <sp
       <section id="events" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">EVENTS</h2>
         <p class="mb-4 leading-relaxed">
-          The queue can tell you when things happen: a job was created, started, completed, failed, cancelled, or will retry, and a worker started, stopped or hit an error. By default it tells nobody. To listen, create an <strong>event emitter</strong> (an object you can subscribe to) and hand it to the queue as <code class="bg-black/5 px-1">QueueOptions.eventEmitter</code>.
+          The queue can tell you when things happen: a job was created, started, completed, failed, cancelled, or will retry, and a worker started, stopped or hit an error. Since v1.4.0 every queue has an <strong>event emitter</strong> (an object you can subscribe to) out of the box: a queue created without one gets an in-memory emitter, reachable as <code class="bg-black/5 px-1">queue.events</code>. Before v1.4.0 the default was a silent no-op. To share one emitter between queues, or to plug in your own, create it and hand it to the queue as <code class="bg-black/5 px-1">QueueOptions.eventEmitter</code>.
         </p>
         <p class="mb-3">Subscribe with <code class="bg-black/5 px-1">on(event, handler)</code>. It returns a function that unsubscribes.</p>
         <div class="code-block mb-4"><span class="kw">import</span> {
@@ -662,8 +685,18 @@ queue.<span class="fn">process</span>(<span class="str">"resize"</span>, <span c
 
 <span class="kw">await</span> queue.<span class="fn">close</span>();</div>
         <p class="mb-3">
-          <code class="bg-black/5 px-1">Queue.events</code> is optional on the <code class="bg-black/5 px-1">Queue</code> interface, so reach it with <code class="bg-black/5 px-1">queue.events?.</code>. The in-memory queue always has one: a queue created without an <code class="bg-black/5 px-1">eventEmitter</code> exposes the no-op emitter, so a worker can report itself unconditionally.
+          <code class="bg-black/5 px-1">Queue.events</code> is optional on the <code class="bg-black/5 px-1">Queue</code> interface, so reach it with <code class="bg-black/5 px-1">queue.events?.</code>. The in-memory queue always has one: a queue created without an <code class="bg-black/5 px-1">eventEmitter</code> exposes its own in-memory emitter, so you can subscribe with no set-up at all:
         </p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createInMemoryQueue</span>, <span class="fn">createQueueName</span> } <span class="kw">from</span> <span class="str">"@zudojs/queue"</span>;
+
+<span class="kw">const</span> queue = <span class="fn">createInMemoryQueue</span>(<span class="fn">createQueueName</span>(<span class="str">"emails"</span>));
+queue.events?.<span class="fn">on</span>(<span class="str">"job:completed"</span>, ({ job }) =&gt; console.<span class="fn">log</span>(<span class="str">"completed"</span>, job.name));
+
+queue.<span class="fn">process</span>(<span class="str">"send-email"</span>, <span class="kw">async</span> () =&gt; {});
+<span class="kw">await</span> queue.<span class="fn">add</span>(<span class="str">"send-email"</span>, {});
+<span class="kw">await</span> <span class="kw">new</span> <span class="tp">Promise</span>((resolve) =&gt; <span class="fn">setTimeout</span>(resolve, <span class="num">100</span>));
+<span class="cmt">// completed send-email</span>
+<span class="kw">await</span> queue.<span class="fn">close</span>();</div>
 
         <div class="callout callout-tip">
           <strong class="text-zudo-green">Tip:</strong> a handler that throws does not break the job. The remaining handlers still run and processing continues. Since v1.3.0 the failure goes to <code class="bg-black/5 px-1">logger.error</code> when a logger is configured &mdash; either <code class="bg-black/5 px-1">createInMemoryQueueEventEmitter({ logger })</code> or <code class="bg-black/5 px-1">QueueOptions.logger</code>, which the queue hands to the emitter it was given &mdash; and to <code class="bg-black/5 px-1">process.emitWarning</code> otherwise. It is never written to <code class="bg-black/5 px-1">console</code>. Pass <code class="bg-black/5 px-1">onHandlerError</code> to take it over entirely.
@@ -721,7 +754,7 @@ console.<span class="fn">log</span>(emails.<span class="fn">isDisposed</span>())
             <tr><td><code>calculateRetryDelay(attempt, backoff?)</code></td><td>Milliseconds to wait before the given attempt</td><td>Returns 0 without a backoff</td></tr>
             <tr><td><code>shouldRetry(attempt, maxAttempts)</code></td><td><code>attempt &lt; maxAttempts</code></td><td></td></tr>
             <tr><td><code>createInMemoryQueueEventEmitter(options?)</code></td><td>Emitter you can subscribe to with <code>on()</code></td><td><code>options.onHandlerError</code>, <code>options.logger</code> (a throwing listener's error, default <code>process.emitWarning</code>); class <code>InMemoryQueueEventEmitter</code> also exported, with <code>setLogger()</code> and <code>removeAllListeners()</code></td></tr>
-            <tr><td><code>createNoopQueueEventEmitter()</code></td><td>Emitter that drops every event</td><td>The queue's default</td></tr>
+            <tr><td><code>createNoopQueueEventEmitter()</code></td><td>Emitter that drops every event</td><td>Pass as <code>eventEmitter</code> to silence a queue; the default was this before v1.4.0</td></tr>
             <tr><td><code>createLoggingMiddleware(logger?)</code></td><td>Logs start, completion and failure of each job</td><td><code>logger.info(message, data)</code></td></tr>
             <tr><td><code>createTimeoutMiddleware(ms, onTimeout?)</code></td><td>Fails a job that runs longer than <code>ms</code></td><td>The queue already applies one per job</td></tr>
             <tr><td><code>createMiddlewareChain(middleware[])</code></td><td>Combines several middleware into one</td><td></td></tr>
@@ -730,7 +763,7 @@ console.<span class="fn">log</span>(emails.<span class="fn">isDisposed</span>())
             <tr><td><code>createJobProgress(percent, options?)</code></td><td>Builds a <code>JobProgress</code> for <code>ctx.updateProgress()</code></td><td>Clamps to 0..100</td></tr>
             <tr><td><code>createJobResult(data, durationMs)</code></td><td>Builds a successful <code>JobResult</code></td><td>Also <code>createJobErrorResult(error, durationMs)</code></td></tr>
             <tr><td><code>createProcessorRegistry()</code></td><td>Standalone name-to-processor map</td><td>Not used by <code>Queue</code>; the queue keeps its own</td></tr>
-            <tr><td><code>createJsonSerializer(options?)</code></td><td>JSON serializer with <code>space</code> / <code>preserveTypes</code></td><td>Constants <code>JsonSerializer</code> (default) and <code>PassthroughSerializer</code></td></tr>
+            <tr><td><code>createJsonSerializer(options?)</code></td><td>JSON serializer with <code>space</code> / <code>preserveTypes</code> (default <code>true</code>)</td><td>Constants <code>JsonSerializer</code> (default, type-preserving) and <code>PassthroughSerializer</code> (stores payloads by reference)</td></tr>
           </tbody>
         </table>
 
@@ -738,7 +771,7 @@ console.<span class="fn">log</span>(emails.<span class="fn">isDisposed</span>())
         <table class="doc-table mb-6">
           <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr><td><code>add(name, data, options?)</code></td><td>Stores a job and returns it</td><td>Throws when paused (by default), closed, duplicate, or payload not JSON-serializable</td></tr>
+            <tr><td><code>add(name, data, options?)</code></td><td>Stores a job and returns it, and wakes the poller and any idle worker at once</td><td>Throws when paused (by default), closed, duplicate, or the payload cannot be serialized (a cyclic object, for example)</td></tr>
             <tr><td><code>process(name, processor)</code></td><td>Registers the processor for a job name and starts polling</td><td>One processor per name; a later call replaces it</td></tr>
             <tr><td><code>getJob(id)</code></td><td>Current copy of a job, or <code>null</code></td><td>Jobs are immutable; re-fetch to see new state</td></tr>
             <tr><td><code>getNextJob()</code></td><td>Peeks at the next runnable job</td><td>Does not claim it</td></tr>
@@ -747,7 +780,8 @@ console.<span class="fn">log</span>(emails.<span class="fn">isDisposed</span>())
             <tr><td><code>getDeadLetterJobs()</code></td><td>All <code>DeadLetterJob</code> entries</td><td></td></tr>
             <tr><td><code>pause()</code> / <code>resume()</code> / <code>isPaused()</code></td><td>Stop and restart processing</td><td></td></tr>
             <tr><td><code>close()</code> / <code>isDisposed()</code></td><td>Drain and shut down</td><td>Idempotent; clears a dead-letter store the queue created itself, not one you supplied</td></tr>
-            <tr><td><code>events</code></td><td>The emitter this queue publishes on</td><td>Optional on the interface; a worker uses it to emit <code>worker:started</code> / <code>worker:stopped</code> / <code>worker:error</code></td></tr>
+            <tr><td><code>events</code></td><td>The emitter this queue publishes on</td><td>Optional on the interface; in-memory by default. A worker uses it to emit <code>worker:started</code> / <code>worker:stopped</code> / <code>worker:error</code></td></tr>
+            <tr><td><code>onJobReady(listener)</code></td><td>Calls <code>listener</code> whenever a job may have become runnable; returns an unsubscribe function</td><td>Optional on the interface; the in-memory queue implements it. A <code>Worker</code> subscribes on <code>start()</code> and unsubscribes on <code>stop()</code></td></tr>
           </tbody>
         </table>
 
@@ -756,13 +790,14 @@ console.<span class="fn">log</span>(emails.<span class="fn">isDisposed</span>())
           <thead><tr><th>Name</th><th>What it does</th><th>Default</th></tr></thead>
           <tbody>
             <tr><td><code>concurrency</code></td><td>Jobs the queue's own loop runs at once</td><td><code>1</code></td></tr>
-            <tr><td><code>pollInterval</code></td><td>Delay before the queue's own loop first checks for work. Only the first poll uses it; see the note below</td><td><code>50</code></td></tr>
+            <tr><td><code>pollInterval</code></td><td>Milliseconds between polls of the queue's own loop. When set, every poll uses it. Either way, <code>add()</code>, a delayed job coming due, an elapsed retry backoff, <code>resume()</code> and a finished job wake the loop at once</td><td>unset: 50&nbsp;ms, backing off to 2000&nbsp;ms while idle</td></tr>
+            <tr><td><code>keepAlive</code></td><td>Whether pending work (waiting, delayed, retrying or running jobs a processor can run) holds the Node.js process open. <code>false</code> leaves every timer unreferenced</td><td><code>true</code></td></tr>
             <tr><td><code>defaultJobOptions</code></td><td><code>JobOptions</code> applied to every <code>add()</code></td><td>none</td></tr>
             <tr><td><code>middleware</code></td><td>Middleware run around every processor</td><td><code>[]</code></td></tr>
-            <tr><td><code>eventEmitter</code></td><td>Where lifecycle events go</td><td>no-op</td></tr>
+            <tr><td><code>eventEmitter</code></td><td>Where lifecycle events go</td><td>an in-memory emitter, exposed as <code>queue.events</code></td></tr>
             <tr><td><code>deadLetterStore</code></td><td>Where exhausted jobs go</td><td>in-memory, last <code>1000</code></td></tr>
             <tr><td><code>logger</code></td><td>Destination for errors with no caller to receive them; also handed to an <code>InMemoryQueueEventEmitter</code> so a throwing listener reaches <code>logger.error</code></td><td>none (<code>process.emitWarning</code>)</td></tr>
-            <tr><td><code>serializer</code> / <code>serializePayloads</code></td><td>Payloads are copied through JSON on <code>add()</code>; set <code>false</code> to store by reference</td><td><code>JsonSerializer</code> / <code>true</code></td></tr>
+            <tr><td><code>serializer</code> / <code>serializePayloads</code></td><td>Payloads are copied through the serializer on <code>add()</code> (the default keeps <code>Date</code>, <code>BigInt</code>, <code>Map</code>, <code>Set</code>, <code>Uint8Array</code> and <code>Error</code>); set <code>serializePayloads: false</code> or use <code>PassthroughSerializer</code> to store by reference</td><td><code>JsonSerializer</code> / <code>true</code></td></tr>
             <tr><td><code>pauseRejectsAdd</code></td><td>Whether <code>add()</code> throws while paused</td><td><code>true</code></td></tr>
             <tr><td><code>retainSettledJobs</code></td><td>Finished jobs kept before the oldest are dropped</td><td><code>1000</code></td></tr>
             <tr><td><code>closeTimeout</code></td><td>How long <code>close()</code> waits for running jobs</td><td><code>30000</code></td></tr>
@@ -772,8 +807,8 @@ console.<span class="fn">log</span>(emails.<span class="fn">isDisposed</span>())
             <tr><td><code>contextCarriers</code></td><td>Context (tenant, correlation id, trace ids) carried from <code>add()</code> into the processor; see <code>captureContext</code> / <code>runWithContext</code> and the README section "Carrying context across the queue"</td><td>none</td></tr>
           </tbody>
         </table>
-        <div class="callout callout-warning mb-6">
-          <strong class="text-zudo-yellow">Watch out: pickup latency.</strong> <code class="bg-black/5 px-1">QueueOptions.pollInterval</code> is honoured only for the first poll after <code class="bg-black/5 px-1">process()</code>. After that the queue's own loop polls every 50&nbsp;ms, and once it has found nothing for half a second it doubles the wait on each empty poll, up to 2000&nbsp;ms. <code class="bg-black/5 px-1">add()</code> resets that back-off but does not wake the sleeping poller, so a job added to a queue that has been idle can wait up to about 2 seconds before it starts, whatever <code class="bg-black/5 px-1">pollInterval</code> says. If pickup latency matters, run a <code class="bg-black/5 px-1">Worker</code>, which polls at its own <code class="bg-black/5 px-1">pollInterval</code> every time.
+        <div class="callout callout-tip mb-6">
+          <strong class="text-zudo-green">Pickup latency:</strong> since v1.4.0, work does not wait for the next poll. <code class="bg-black/5 px-1">add()</code> and every other event that makes a job runnable wake the queue's loop (and any started <code class="bg-black/5 px-1">Worker</code>) immediately, so a job added after an idle spell starts within milliseconds instead of after up to 2 seconds, and 40 instant jobs at concurrency 1 finish in tens of milliseconds. Before v1.4.0 <code class="bg-black/5 px-1">pollInterval</code> applied only to the first poll.
         </div>
 
         <h3 class="text-lg font-bold mb-3">Types and constants</h3>
@@ -787,7 +822,7 @@ console.<span class="fn">log</span>(emails.<span class="fn">isDisposed</span>())
             <tr><td><code>QueueMiddleware</code>, <code>QueueMiddlewareContext</code></td><td>Middleware function and its <code>ctx</code></td><td></td></tr>
             <tr><td><code>QueueEventEmitter</code>, <code>QueueEventMap</code></td><td>Emitter interface and the event-name-to-payload map</td><td></td></tr>
             <tr><td><code>DeadLetterJob</code>, <code>DeadLetterStore</code></td><td>Dead-letter entry and store interface</td><td></td></tr>
-            <tr><td><code>Serializer</code></td><td><code>serialize(data): string</code> / <code>deserialize(string)</code></td><td></td></tr>
+            <tr><td><code>Serializer</code></td><td><code>serialize(data): string</code> / <code>deserialize(string)</code></td><td>Optional <code>passthrough: true</code> tells the in-memory queue to store payloads by reference</td></tr>
             <tr><td><code>JobState</code>, <code>WorkerState</code>, <code>BackoffType</code></td><td>Enums of lowercase string values</td><td><code>BackoffType.FIXED</code>, <code>BackoffType.EXPONENTIAL</code></td></tr>
             <tr><td><code>JobPriorityLevels</code></td><td><code>LOW 10</code>, <code>NORMAL 50</code>, <code>HIGH 100</code>, <code>CRITICAL 200</code></td><td>Frozen object</td></tr>
             <tr><td><code>DEFAULT_JOB_OPTIONS</code></td><td><code>{ attempts: 1, timeout: 30000 }</code></td><td>Also <code>mergeJobOptions(options?)</code></td></tr>
@@ -805,7 +840,7 @@ console.<span class="fn">log</span>(emails.<span class="fn">isDisposed</span>())
             <tr><td><code>QueueError</code></td><td>Base class; also <code>add()</code> on a paused queue</td><td>All others extend it</td></tr>
             <tr><td><code>QueueDisposedError</code></td><td><code>add()</code>, <code>process()</code> or <code>resume()</code> after <code>close()</code></td><td></td></tr>
             <tr><td><code>JobDuplicateError</code></td><td><code>deduplicationKey</code> already in use</td><td></td></tr>
-            <tr><td><code>JobSerializationError</code></td><td>Payload cannot be JSON-serialized</td><td>Cyclic objects, for example</td></tr>
+            <tr><td><code>JobSerializationError</code></td><td>Payload cannot be serialized</td><td>Cyclic objects, for example</td></tr>
             <tr><td><code>JobTimeoutError</code></td><td>A job ran past its timeout</td><td>Counts as a failed attempt</td></tr>
             <tr><td><code>JobMaxAttemptsError</code></td><td>Recorded on the job when it is dead-lettered</td><td>Appears as <code>DeadLetterJob.error</code></td></tr>
             <tr><td><code>JobStalledError</code></td><td>A job was reclaimed after <code>stalledAfter</code></td><td>Needs <code>stalledAfter &gt; 0</code></td></tr>
@@ -822,8 +857,8 @@ console.<span class="fn">log</span>(emails.<span class="fn">isDisposed</span>())
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <span><strong>Importing errors from <code class="bg-black/5 px-1">@zudojs/queue</code>.</strong> The import is <code class="bg-black/5 px-1">undefined</code> at runtime and <code class="bg-black/5 px-1">instanceof</code> checks silently fail. Import <code class="bg-black/5 px-1">JobTimeoutError</code> and friends from <code class="bg-black/5 px-1">@zudojs/errors</code>.</span></li>
           <li class="flex gap-2"><span class="text-zudo-yellow font-bold">&rarr;</span> <span><strong>Reading <code class="bg-black/5 px-1">job.state</code> from the object <code class="bg-black/5 px-1">add()</code> returned.</strong> Jobs are immutable snapshots, so it stays <code class="bg-black/5 px-1">"waiting"</code> forever. Call <code class="bg-black/5 px-1">queue.getJob(job.id)</code> to see the current state.</span></li>
           <li class="flex gap-2"><span class="text-zudo-green font-bold">&rarr;</span> <span><strong>Expecting <code class="bg-black/5 px-1">attempts: 3</code> to retry instantly.</strong> Without a <code class="bg-black/5 px-1">backoff</code> the default is exponential starting at 1 second, so a test that waits 200 ms sees only one attempt. Pass <code class="bg-black/5 px-1">createFixedBackoff(10)</code> in tests.</span></li>
-          <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> <span><strong>Adding a payload that is not plain JSON.</strong> Class instances lose their methods, a <code class="bg-black/5 px-1">Date</code> arrives as a string even though its type says <code class="bg-black/5 px-1">Date</code>, and cyclic objects throw <code class="bg-black/5 px-1">JobSerializationError</code>. Put IDs and plain data in the job, or pass <code class="bg-black/5 px-1">serializer: createJsonSerializer({ preserveTypes: true })</code> to keep dates, BigInts, maps and sets.</span></li>
-          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">&rarr;</span> <span><strong>Treating <code class="bg-black/5 px-1">job.attempt</code> as 1-based.</strong> It is 0 on the first run. Use <code class="bg-black/5 px-1">job.attempt + 1</code> for a human-readable count.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">&rarr;</span> <span><strong>Adding class instances or cyclic objects.</strong> The default serializer keeps <code class="bg-black/5 px-1">Date</code>, <code class="bg-black/5 px-1">BigInt</code>, <code class="bg-black/5 px-1">Map</code>, <code class="bg-black/5 px-1">Set</code>, <code class="bg-black/5 px-1">Uint8Array</code> and <code class="bg-black/5 px-1">Error</code>, but class instances lose their methods and cyclic objects throw <code class="bg-black/5 px-1">JobSerializationError</code>. Put IDs and plain data in the job, or pass <code class="bg-black/5 px-1">serializer: PassthroughSerializer</code> to store payloads by reference.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-yellow font-bold">&rarr;</span> <span><strong>Treating <code class="bg-black/5 px-1">job.attempt</code> as 1-based.</strong> It is 0 on the first run. Use the processor context's <code class="bg-black/5 px-1">ctx.attemptNumber</code> (1-based, equal to <code class="bg-black/5 px-1">job.attempt + 1</code>) for a human-readable count.</span></li>
           <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <span><strong>Forgetting <code class="bg-black/5 px-1">close()</code>.</strong> Jobs you never awaited are abandoned and pending retries are lost when the process exits. Close every queue (or <code class="bg-black/5 px-1">manager.closeAll()</code>) during shutdown.</span></li>
         </ul>
       </section>

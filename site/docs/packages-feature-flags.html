@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.4.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/feature-flags</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Feature flag system with deterministic rollouts, a rule engine, multiple providers, variants, snapshots, and evaluation context. Toggle features without redeploying.
@@ -149,7 +149,7 @@ pnpm add @zudojs/feature-flags
 yarn add @zudojs/feature-flags</div>
 
         <div class="callout callout-note">
-          <strong class="text-zudo-blue">Peer Dependencies:</strong> @zudojs/feature-flags depends on @zudojs/errors (v1.2.0) for its error hierarchy and @zudojs/types (v1.1.1) for its shared type guards.
+          <strong class="text-zudo-blue">Peer Dependencies:</strong> @zudojs/feature-flags depends on @zudojs/errors (v1.3.0) for its error hierarchy and @zudojs/types (v1.2.0) for its shared type guards.
         </div>
       </section>
 
@@ -203,12 +203,12 @@ yarn add @zudojs/feature-flags</div>
             <tbody>
               <tr class="border-b-2 border-black/10">
                 <td class="p-3 font-mono text-sm">@zudojs/errors</td>
-                <td class="p-3">1.2.0</td>
+                <td class="p-3">1.3.0</td>
                 <td class="p-3">Feature flag error hierarchy (FeatureFlagError, NotFoundError, ProviderError, etc.)</td>
               </tr>
               <tr>
                 <td class="p-3 font-mono text-sm">@zudojs/types</td>
-                <td class="p-3">1.1.1</td>
+                <td class="p-3">1.2.0</td>
                 <td class="p-3">Shared type guards (<code>isPlainObject</code>, re-exported here and deprecated in favour of importing it from @zudojs/types)</td>
               </tr>
             </tbody>
@@ -247,7 +247,8 @@ yarn add @zudojs/feature-flags</div>
         <div class="code-block"><span class="kw">interface</span> <span class="tp">FeatureFlag</span> {
   <span class="kw">readonly</span> key: <span class="tp">string</span>;
   <span class="kw">readonly</span> defaultValue: <span class="tp">FeatureFlagValue</span>;
-  <span class="kw">readonly</span> enabled: <span class="tp">boolean</span>;
+  <span class="kw">readonly</span> enabled: <span class="tp">boolean</span>;       <span class="cm">// the kill switch</span>
+  <span class="kw">readonly</span> offValue?: <span class="tp">FeatureFlagValue</span>; <span class="cm">// served while the flag is off (new in v1.4.0)</span>
   <span class="kw">readonly</span> description?: <span class="tp">string</span>;
   <span class="kw">readonly</span> state?: <span class="tp">FeatureFlagState</span>;
   <span class="kw">readonly</span> visibility?: <span class="tp">FeatureFlagVisibility</span>;
@@ -257,10 +258,29 @@ yarn add @zudojs/feature-flags</div>
   <span class="kw">readonly</span> metadata?: <span class="tp">FeatureFlagMetadata</span>;
 }</div>
 
-        <div class="border-4 border-black bg-zudo-red/10 p-4 mt-4 mb-6">
-          <p class="font-bold mb-2"><code class="bg-black/5 px-1">enabled: false</code> does not mean "off". It means "serve <code class="bg-black/5 px-1">defaultValue</code>".</p>
-          <p class="text-sm mb-2">A disabled flag skips its rules and returns its <code class="bg-black/5 px-1">defaultValue</code> with <code class="bg-black/5 px-1">reason: "disabled"</code>. So <code class="bg-black/5 px-1">{ key: "new-checkout", enabled: false, defaultValue: true }</code> makes <code class="bg-black/5 px-1">isEnabled("new-checkout")</code> return <strong><code class="bg-black/5 px-1">true</code></strong>. Flipping <code class="bg-black/5 px-1">enabled</code> to <code class="bg-black/5 px-1">false</code> as a kill switch on such a flag fails <em>open</em>: the feature stays on for everyone, even for a flag whose rules would have said <code class="bg-black/5 px-1">false</code>.</p>
-          <p class="text-sm">Make <code class="bg-black/5 px-1">defaultValue</code> the <strong>safe</strong> value, the one you want when the flag is switched off, cannot be loaded, or no rule matches: <code class="bg-black/5 px-1">false</code> for a boolean feature, and the old behaviour for a variant. Turn the feature on with rules, not with <code class="bg-black/5 px-1">defaultValue: true</code>. The environment provider always sets <code class="bg-black/5 px-1">defaultValue</code> to the parsed value, so <code class="bg-black/5 px-1">FEATURE_X=true</code> stays on however <code class="bg-black/5 px-1">enabled</code> is set; remove or change the variable to switch it off.</p>
+        <h3 class="text-lg font-bold mb-3 mt-6">When a flag is off</h3>
+        <p class="mb-3 text-sm">A flag is <em>off</em> when it has <code class="bg-black/5 px-1">enabled: false</code> or <code class="bg-black/5 px-1">state: "disabled"</code>, is a <code class="bg-black/5 px-1">"draft"</code>, is <code class="bg-black/5 px-1">"archived"</code> or past <code class="bg-black/5 px-1">metadata.expiresAt</code>, or is blocked by a dependency. An off flag skips its rules and serves its <strong>off value</strong>:</p>
+        <ul class="space-y-2 mb-4 text-sm">
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">1.</span> <span><code class="bg-black/5 px-1">offValue</code>, when the flag declares one;</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">2.</span> <span>otherwise <code class="bg-black/5 px-1">false</code> for a boolean flag, so the kill switch always turns a boolean feature off;</span></li>
+          <li class="flex gap-2"><span class="text-zudo-red font-bold">3.</span> <span>otherwise <code class="bg-black/5 px-1">defaultValue</code> for a string, number or object flag, which has no natural "off".</span></li>
+        </ul>
+        <div class="code-block"><span class="kw">import</span> { <span class="fn">createFeatureFlags</span>, <span class="fn">createMemoryProvider</span> } <span class="kw">from</span> <span class="str">"@zudojs/feature-flags"</span>;
+
+<span class="kw">const</span> flags = <span class="fn">createFeatureFlags</span>({
+  provider: <span class="fn">createMemoryProvider</span>([
+    { key: <span class="str">"new-checkout"</span>, enabled: <span class="kw">false</span>, defaultValue: <span class="kw">true</span> },
+    { key: <span class="str">"theme"</span>, enabled: <span class="kw">false</span>, defaultValue: <span class="str">"blue"</span>, offValue: <span class="str">"grey"</span> },
+    { key: <span class="str">"legacy-api"</span>, enabled: <span class="kw">false</span>, defaultValue: <span class="kw">false</span>, offValue: <span class="kw">true</span> },
+  ]),
+});
+
+<span class="kw">const</span> checkout = <span class="kw">await</span> flags.<span class="fn">evaluate</span>(<span class="str">"new-checkout"</span>);
+console.<span class="fn">log</span>(checkout.value, checkout.reason);         <span class="cm">// false disabled</span>
+console.<span class="fn">log</span>((<span class="kw">await</span> flags.<span class="fn">evaluate</span>(<span class="str">"theme"</span>)).value);   <span class="cm">// grey</span>
+console.<span class="fn">log</span>(<span class="kw">await</span> flags.<span class="fn">isEnabled</span>(<span class="str">"legacy-api"</span>));     <span class="cm">// true</span></div>
+        <div class="callout callout-warning mt-4">
+          <strong class="text-zudo-yellow">Changed in v1.4.0 (behaviour change):</strong> the kill switch now fails closed. Up to v1.3.x an off flag served <code>defaultValue</code>, so <code>{ enabled: false, defaultValue: true }</code> stayed <strong>on</strong> for everyone, and <code>state: "disabled"</code> was not honoured at all. If you relied on a killed flag serving <code>true</code>, declare <code>offValue: true</code>. <code>defaultValue</code> is still what an <em>on</em> flag serves when no rule matches.
         </div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">FeatureFlagMetadata</h3>
@@ -461,11 +481,11 @@ yarn add @zudojs/feature-flags</div>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">target_match</td><td class="p-3">User or tenant rule matched</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">percentage_rollout</td><td class="p-3">Percentage rollout matched</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">variant_assignment</td><td class="p-3">Variant assigned</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">disabled</td><td class="p-3">Flag is disabled</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">disabled</td><td class="p-3">Flag is off: <code>enabled: false</code>, <code>state: "disabled"</code> or <code>state: "draft"</code>. Serves the off value.</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">not_found</td><td class="p-3">Flag does not exist</td></tr>
               <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">error</td><td class="p-3">Provider unreachable (<code>provider.getAll()</code> or <code>provider.get()</code> threw); reported to <code>onError</code>. This is how <code>evaluate()</code> reports an outage &mdash; <code>snapshot()</code> and <code>getAll()</code> reject instead.</td></tr>
-              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">dependency_disabled</td><td class="p-3">A required dependency is not on for this context (disabled, draft, archived, expired, or evaluates false)</td></tr>
-              <tr><td class="p-3 font-mono text-sm">expired</td><td class="p-3">Flag is <code>state: "archived"</code> or <code>metadata.expiresAt</code> is in the past (a schedule rule outside its window simply does not match)</td></tr>
+              <tr class="border-b-2 border-black/10"><td class="p-3 font-mono text-sm">dependency_disabled</td><td class="p-3">A required dependency is not on for this context (disabled, draft, archived, expired, or evaluates false). Serves the off value.</td></tr>
+              <tr><td class="p-3 font-mono text-sm">expired</td><td class="p-3">Flag is <code>state: "archived"</code> or <code>metadata.expiresAt</code> is in the past (a schedule rule outside its window simply does not match). Serves the off value.</td></tr>
             </tbody>
           </table>
         </div>
@@ -718,10 +738,11 @@ provider.<span class="fn">set</span>({
 provider.<span class="fn">delete</span>(<span class="str">"new-ui"</span>);</div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">createEnvironmentProvider</h3>
-        <p class="mb-3 text-sm">Reads <code>FEATURE_&lt;KEY&gt;</code> environment variables. Parses booleans, numbers, and strings automatically. The key is the variable name with the prefix removed and its case <strong>kept</strong>: <code>FEATURE_TASK_EXPORT</code> becomes the flag <code>"TASK_EXPORT"</code>, not <code>"task-export"</code> or <code>"task_export"</code>. Ask for it by that exact name: <code>isEnabled("task-export")</code> finds nothing and returns <code>false</code>.</p>
+        <p class="mb-3 text-sm">Reads <code>FEATURE_&lt;KEY&gt;</code> environment variables. Parses booleans, numbers, and strings automatically, and sets both <code>defaultValue</code> and <code>enabled: true</code> from the variable, so <code>FEATURE_X=false</code> is how you switch it off. The key is the variable name with the prefix removed, lower-cased, and <code>_</code> turned into <code>-</code>: <code>FEATURE_TASK_EXPORT</code> becomes the flag <code>"task-export"</code>, the same key a memory or remote provider uses, so the variable overrides that flag in a composite. <code>get()</code> normalizes the key it is asked for the same way, so <code>"TASK_EXPORT"</code>, <code>"task_export"</code> and <code>"task-export"</code> all find the flag.</p>
         <div class="code-block"><span class="kw">interface</span> <span class="tp">EnvironmentProviderOptions</span> {
   <span class="kw">readonly</span> prefix?: <span class="tp">string</span>;   <span class="cm">// default: "FEATURE_"</span>
   <span class="kw">readonly</span> env?: <span class="tp">Readonly</span>&lt;<span class="tp">Record</span>&lt;<span class="tp">string</span>, <span class="tp">string</span> | <span class="tp">undefined</span>&gt;&gt;;
+  <span class="kw">readonly</span> keyFormat?: <span class="str">"kebab"</span> | <span class="str">"preserve"</span>;  <span class="cm">// default: "kebab"</span>
 }
 
 <span class="kw">function</span> <span class="fn">createEnvironmentProvider</span>(
@@ -730,8 +751,12 @@ provider.<span class="fn">delete</span>(<span class="str">"new-ui"</span>);</div
 
         <div class="code-block"><span class="cm">// FEATURE_DARK_MODE=true FEATURE_ROLLOUT_PERCENT=25</span>
 <span class="kw">const</span> provider = <span class="fn">createEnvironmentProvider</span>();
-<span class="kw">const</span> flag = <span class="kw">await</span> provider.<span class="fn">get</span>(<span class="str">"DARK_MODE"</span>);
-<span class="cm">// flag: { key: "DARK_MODE", defaultValue: true, enabled: true } (prefix stripped, no case change)</span></div>
+<span class="kw">const</span> flag = <span class="kw">await</span> provider.<span class="fn">get</span>(<span class="str">"dark-mode"</span>);
+<span class="cm">// flag: { key: "dark-mode", enabled: true, defaultValue: true }</span>
+<span class="cm">// get("DARK_MODE") finds the same flag; getAll() keys are "dark-mode", "rollout-percent"</span></div>
+        <div class="callout callout-warning mt-4">
+          <strong class="text-zudo-yellow">Changed in v1.4.0:</strong> up to v1.3.x the key kept its case (<code>FEATURE_TASK_EXPORT</code> was the flag <code>"TASK_EXPORT"</code>), so an environment variable never overrode the <code>"task-export"</code> flag from another provider. Only the keys returned by <code>getAll()</code> and <code>snapshot()</code> change; lookups by the old spelling still work. Pass <code>keyFormat: "preserve"</code> to keep the old keys, which also turns off the lookup normalization.
+        </div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">createCompositeProvider</h3>
         <p class="mb-3 text-sm">Queries providers in order. First provider to return a flag wins. <code>getAll()</code> merges with earlier providers taking priority.</p>
@@ -1117,7 +1142,7 @@ registry.<span class="fn">size</span>;            <span class="cm">// 2</span></
             </div>
             <div>
               <div class="font-bold mb-2">Dependencies</div>
-              <div class="font-mono text-black/70">@zudojs/errors (1.1.0)</div>
+              <div class="font-mono text-black/70">@zudojs/errors (1.3.0), @zudojs/types (1.2.0)</div>
             </div>
           </div>
         </div>

@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.4.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.5.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/openapi</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Turns your routes and schemas into an OpenAPI 3.0 or 3.1 document, checks that the document is valid, and serves it — together with a ready-made documentation page.
@@ -182,7 +182,7 @@
 
         <div class="code-block mb-4">$ npm install @zudojs/openapi</div>
 
-        <p class="mb-4">The runtime dependencies are <code class="bg-black/5 px-1">@zudojs/errors</code> (v1.2.0) and <code class="bg-black/5 px-1">@zudojs/constants</code> (v1.1.1), which supplies the schema ceilings the converter emits. Install <code class="bg-black/5 px-1">@zudojs/schema</code> too if you want to register schemas rather than hand-written OpenAPI objects:</p>
+        <p class="mb-4">The runtime dependencies are <code class="bg-black/5 px-1">@zudojs/errors</code> (v1.3.0) and <code class="bg-black/5 px-1">@zudojs/constants</code> (v1.1.2), which supplies the schema ceilings the converter emits. Install <code class="bg-black/5 px-1">@zudojs/schema</code> too if you want to register schemas rather than hand-written OpenAPI objects:</p>
 
         <div class="code-block mb-4">$ npm install @zudojs/schema</div>
 
@@ -262,7 +262,7 @@ console.<span class="fn">log</span>(<span class="tp">JSON</span>.<span class="fn
             <tr><td><code>params</code> / <code>query</code> / <code>headers</code> / <code>cookies</code></td><td>Shorthand: one object schema each, and every property becomes a parameter.</td></tr>
             <tr><td><code>requestBody</code></td><td>The body the endpoint accepts, keyed by media type.</td></tr>
             <tr><td><code>body</code></td><td>Shorthand: a schema sent as <code>application/json</code>, or <code>{ schema, contentType?, required? }</code>.</td></tr>
-            <tr><td><code>responses</code></td><td>Keyed by status code, a <code>4XX</code>-style range, or <code>default</code>. Each is a Response Object with a <code>description</code>, or the shorthand <code>{ schema }</code>, whose description defaults to the reason phrase.</td></tr>
+            <tr><td><code>responses</code></td><td>Keyed by status code, a <code>4XX</code>-style range, or <code>default</code>. Each is a Response Object with a <code>description</code>, or the shorthand <code>{ schema }</code>, whose description defaults to the reason phrase. Leave it out and the operation gets <code>default: "Undocumented response"</code> plus a warning (see <a href="#undocumented-responses" class="text-zudo-blue underline">below</a>).</td></tr>
             <tr><td><code>security</code> / <code>servers</code> / <code>externalDocs</code></td><td>Per-operation overrides of the document-level values. <code>security: []</code> marks the operation public.</td></tr>
             <tr><td><code>deprecated</code></td><td>Marks the endpoint as going away.</td></tr>
             <tr><td><code>hidden</code></td><td>Leaves the route out of the generated document entirely.</td></tr>
@@ -306,6 +306,41 @@ console.<span class="fn">log</span>(<span class="tp">Object</span>.<span class="
         <div class="callout callout-warning">
           <strong class="text-zudo-yellow">Watch out:</strong> OpenAPI has no optional or wildcard path segments. <code>/files/*</code> and <code>/users/:id?</code> both throw an <code>OpenAPIRouteError</code> instead of quietly producing a path template no tool understands. Generating from an <code>@zudojs/http</code> router avoids this: the router resolves those patterns first (an optional segment becomes two paths, a wildcard a <code>{rest}</code> slot).
         </div>
+
+        <h3 class="text-lg font-bold mb-3 mt-6" id="undocumented-responses">Routes with no documented responses</h3>
+
+        <p class="mb-4">OpenAPI requires every operation to list at least one response. If a route declares none (no <code class="bg-black/5 px-1">responses</code> field, or <code class="bg-black/5 px-1">responses: {}</code>), the generator does not make one up. It emits a <code class="bg-black/5 px-1">default</code> response described as <code class="bg-black/5 px-1">"Undocumented response"</code>, which keeps the document valid while saying honestly that nothing is known, and it reports a warning so you can fix the route:</p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createOpenAPIDocumentFromRoutes</span> } <span class="kw">from</span> <span class="str">"@zudojs/openapi"</span>;
+
+<span class="kw">const</span> options = {
+  info: { title: <span class="str">"Users API"</span>, version: <span class="str">"1.0.0"</span> },
+  onRouteWarning: (<span class="param">message</span>) =&gt; console.<span class="fn">warn</span>(<span class="str">"warning:"</span>, message),
+};
+
+<span class="cmt">// No responses declared.</span>
+<span class="kw">const</span> before = <span class="fn">createOpenAPIDocumentFromRoutes</span>([{ method: <span class="str">"DELETE"</span>, path: <span class="str">"/users/:id"</span> }], options);
+console.<span class="fn">log</span>(before.paths[<span class="str">"/users/{id}"</span>].delete.responses);
+
+<span class="cmt">// The response the endpoint really sends.</span>
+<span class="kw">const</span> after = <span class="fn">createOpenAPIDocumentFromRoutes</span>(
+  [{ method: <span class="str">"DELETE"</span>, path: <span class="str">"/users/:id"</span>, responses: { <span class="str">"204"</span>: { description: <span class="str">"User deleted"</span> } } }],
+  options,
+);
+console.<span class="fn">log</span>(after.paths[<span class="str">"/users/{id}"</span>].delete.responses);</div>
+
+        <div class="code-block mb-4">$ node responses.mjs
+<span class="cmt">warning: DELETE /users/:id: no responses are documented; emitted "default: Undocumented response".</span>
+<span class="cmt">{ default: { description: 'Undocumented response' } }</span>
+<span class="cmt">{ '204': { description: 'User deleted' } }</span></div>
+
+        <p class="mb-4">Before v1.5.0 such a route got an invented <code class="bg-black/5 px-1">"200": { description: "OK" }</code>. That was a guess, and often a wrong one: a <code class="bg-black/5 px-1">DELETE</code> that answers <code class="bg-black/5 px-1">204 No Content</code> was published as returning <code class="bg-black/5 px-1">200</code>, so a client generated from the document expected a body that never came. The guess also hid the problem, because the validator's &ldquo;every operation declares a response&rdquo; check could never fire.</p>
+
+        <p class="mb-4">The warning reaches three places: the <code class="bg-black/5 px-1">onRouteWarning(message)</code> option (accepted by <code class="bg-black/5 px-1">new OpenAPIManager</code>, <code class="bg-black/5 px-1">createOpenAPIDocumentFromRoutes</code> and <code class="bg-black/5 px-1">createOpenAPIManagerFromRoutes</code>), <code class="bg-black/5 px-1">onSchemaWarning</code> under the name <code class="bg-black/5 px-1">"routes"</code>, and <code class="bg-black/5 px-1">manager.routeWarnings()</code>. <code class="bg-black/5 px-1">@zudojs/http</code>'s <code class="bg-black/5 px-1">generateOpenAPIDocument</code> passes its own <code class="bg-black/5 px-1">onRouteWarning</code> through, so these arrive next to its duplicate-route warnings.</p>
+
+        <div class="callout callout-warning">
+          <strong class="text-zudo-yellow">Watch out:</strong> regenerate any checked-in spec after upgrading to v1.5.0. Every operation that relied on the invented <code>200</code> now shows <code>default</code> instead, and each one logs a warning. The fix is to declare the responses the endpoint really returns; the warning then goes away.
+        </div>
       </section>
 
       <!-- From a route table -->
@@ -337,7 +372,12 @@ console.<span class="fn">log</span>(<span class="tp">Object</span>.<span class="
       body: <span class="fn">objectSchema</span>({ name: <span class="fn">stringSchema</span>() }),
       responses: { <span class="str">"201"</span>: { schema: user } },
     },
-    { method: <span class="str">"GET"</span>, path: <span class="str">"/health"</span>, security: [] }, <span class="cmt">// public</span>
+    {
+      method: <span class="str">"GET"</span>,
+      path: <span class="str">"/health"</span>,
+      security: [], <span class="cmt">// public</span>
+      responses: { <span class="str">"200"</span>: { description: <span class="str">"The service is up"</span> } },
+    },
   ],
   {
     info: { title: <span class="str">"Users API"</span>, version: <span class="str">"1.0.0"</span> },
@@ -377,7 +417,7 @@ console.<span class="fn">log</span>(<span class="tp">Object</span>.<span class="
           </tbody>
         </table>
 
-        <p class="mb-4">Every path template slot is documented as a required string parameter even when nothing declares it. A declared path parameter the template does not contain is dropped with a warning, rather than producing an invalid document. Warnings reach <code class="bg-black/5 px-1">onSchemaWarning</code> under the name <code class="bg-black/5 px-1">"routes"</code> and <code class="bg-black/5 px-1">manager.routeWarnings()</code>.</p>
+        <p class="mb-4">Every path template slot is documented as a required string parameter even when nothing declares it. A declared path parameter the template does not contain is dropped with a warning, rather than producing an invalid document. Warnings reach <code class="bg-black/5 px-1">onRouteWarning</code>, <code class="bg-black/5 px-1">onSchemaWarning</code> under the name <code class="bg-black/5 px-1">"routes"</code>, and <code class="bg-black/5 px-1">manager.routeWarnings()</code>. A route with no responses warns too (see <a href="#undocumented-responses" class="text-zudo-blue underline">Routes with no documented responses</a>).</p>
 
         <h3 class="text-lg font-bold mb-3 mt-6">Where descriptors come from</h3>
         <ul class="space-y-2 mb-4">
@@ -535,21 +575,24 @@ console.<span class="fn">log</span>(<span class="fn">convertSchema</span>(price,
 manager.<span class="fn">addRoute</span>({
   method: <span class="str">"get"</span>,
   path: <span class="str">"/orders/:id"</span>,
-  metadata: {
-    openapi: { responses: { <span class="str">"200"</span>: { description: <span class="str">"OK"</span> } } },
-  },
+  metadata: { openapi: { operationId: <span class="str">"orders.get"</span>, responses: { <span class="str">"200"</span>: { description: <span class="str">"The order"</span> } } } },
+});
+manager.<span class="fn">addRoute</span>({
+  method: <span class="str">"get"</span>,
+  path: <span class="str">"/orders"</span>,
+  metadata: { openapi: { operationId: <span class="str">"orders.get"</span>, responses: { <span class="str">"200"</span>: { description: <span class="str">"All orders"</span> } } } }, <span class="cmt">// copy-paste slip</span>
 });
 
 <span class="kw">const</span> result = manager.<span class="fn">validate</span>();
 console.<span class="fn">log</span>(result.valid);              <span class="cmt">// false</span>
-console.<span class="fn">log</span>(result.errors[<span class="num">0</span>].message); <span class="cmt">// mentions the missing "id" parameter</span></div>
+console.<span class="fn">log</span>(result.errors[<span class="num">0</span>].message); <span class="cmt">// 'Duplicate operationId "orders.get" (also used by GET /orders/{id}).'</span></div>
 
-        <p class="mb-4">The path says <code class="bg-black/5 px-1">{id}</code> but no parameter declares it, so the document claims a slot nothing fills. Add <code class="bg-black/5 px-1">parameters: [{ name: "id", in: "path" }]</code> and it passes.</p>
+        <p class="mb-4">Two operations share the <code class="bg-black/5 px-1">operationId</code> <code class="bg-black/5 px-1">"orders.get"</code>, so a code generator would produce two methods with the same name. Rename the second one (say, <code class="bg-black/5 px-1">"orders.list"</code>) and it passes.</p>
 
         <h3 class="text-lg font-bold mb-3 mt-6">What it checks</h3>
         <ul class="space-y-2 mb-6">
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> Required document fields are present and <code class="bg-black/5 px-1">openapi</code> names a supported version.</li>
-          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> Every operation declares at least one response, keyed by a status code, a <code class="bg-black/5 px-1">4XX</code>-style range or <code class="bg-black/5 px-1">default</code>, each with a description.</li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">→</span> Every operation declares at least one response, keyed by a status code, a <code class="bg-black/5 px-1">4XX</code>-style range or <code class="bg-black/5 px-1">default</code>, each with a description. Generated documents always pass this one (an undocumented route gets <code class="bg-black/5 px-1">default</code> and a <a href="#undocumented-responses" class="text-zudo-blue underline">warning</a>), so it matters most for documents built by hand.</li>
           <li class="flex gap-2"><span class="text-zudo-yellow font-bold">→</span> Path templates and <code class="bg-black/5 px-1">in: "path"</code> parameters agree in both directions, path parameters are required, no parameter is declared twice in one list (an operation-level parameter may override a path-level one), and no two paths are identical apart from their template parameter names.</li>
           <li class="flex gap-2"><span class="text-zudo-green font-bold">→</span> <code class="bg-black/5 px-1">operationId</code> values are unique and within <code class="bg-black/5 px-1">MAX_OPERATION_ID_LENGTH</code>.</li>
           <li class="flex gap-2"><span class="text-zudo-red font-bold">→</span> Every <code class="bg-black/5 px-1">security</code> requirement names a scheme declared in <code class="bg-black/5 px-1">components.securitySchemes</code>, and every declared scheme is used somewhere.</li>
@@ -818,7 +861,7 @@ console.<span class="fn">log</span>(<span class="fn">toOpenAPIYAML</span>(docume
             <tr><td><code>setRoute(route)</code></td><td>Registers a route, replacing any existing one.</td><td>—</td></tr>
             <tr><td><code>removeRoute(method, path)</code></td><td>Removes a route.</td><td>Returns whether one was removed.</td></tr>
             <tr><td><code>setRoutes(routes)</code></td><td>Replaces the whole route set.</td><td>Rejects duplicates before anything changes. Chainable.</td></tr>
-            <tr><td><code>routeWarnings()</code></td><td>Warnings from the last route conversion.</td><td>For example a declared path parameter the path lacks.</td></tr>
+            <tr><td><code>routeWarnings()</code></td><td>Warnings from the last route conversion.</td><td>For example a declared path parameter the path lacks, or a route with no documented responses.</td></tr>
             <tr><td><code>addSchema(name, schema)</code></td><td>Converts a <code>@zudojs/schema</code> schema and registers it.</td><td>Conversion warnings land in <code>schemaWarnings()</code>.</td></tr>
             <tr><td><code>addRawSchema(name, schema)</code></td><td>Registers an already-converted OpenAPI schema.</td><td>No conversion.</td></tr>
             <tr><td><code>setInfo</code>, <code>addServer</code>, <code>addTag</code></td><td>Set document metadata.</td><td>Chainable.</td></tr>
@@ -855,7 +898,7 @@ console.<span class="fn">log</span>(<span class="fn">toOpenAPIYAML</span>(docume
             <tr><td><code>toOpenAPIPath(path)</code></td><td><code>/users/:id</code> → <code>/users/{id}</code>.</td><td>Throws on wildcard or optional segments.</td></tr>
             <tr><td><code>extractPathParameters(path)</code></td><td>Parameter names in a path template.</td><td>—</td></tr>
             <tr><td><code>convertRouteToOpenAPI(method, path, metadata?)</code></td><td>Turns one route into an operation.</td><td>—</td></tr>
-            <tr><td><code>buildResponses(metadata?)</code></td><td>The <code>responses</code> object for an operation.</td><td>Synthesizes a <code>200</code> only when none are declared.</td></tr>
+            <tr><td><code>buildResponses(metadata?)</code></td><td>The <code>responses</code> object for an operation.</td><td>When none are declared, returns <code>{ default: { description: "Undocumented response" } }</code>; it never invents a <code>200</code>.</td></tr>
             <tr><td><code>isOpenAPIMethod(method)</code></td><td>Whether a string is an OpenAPI method.</td><td>Type guard.</td></tr>
             <tr><td><code>toOpenAPIJSON(document)</code> / <code>toOpenAPIYAML(document)</code></td><td>Serialize a document.</td><td>YAML quotes ambiguous strings.</td></tr>
             <tr><td><code>createOpenAPIError</code> / <code>isOpenAPIError</code> / <code>formatIssuePath</code></td><td>Error helpers.</td><td><code>formatIssuePath</code> renders an issue path as <code>paths./orders.get</code>.</td></tr>
@@ -866,7 +909,7 @@ console.<span class="fn">log</span>(<span class="fn">toOpenAPIYAML</span>(docume
         <table class="doc-table mb-6">
           <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr><td><code>OpenAPIManagerOptions</code></td><td>Constructor options.</td><td><code>version</code>, <code>info</code>, <code>servers</code>, <code>tags</code>, <code>security</code>, <code>cacheTtlMs</code>, <code>onSchemaWarning</code>, <code>branding</code>, <code>now</code>.</td></tr>
+            <tr><td><code>OpenAPIManagerOptions</code></td><td>Constructor options.</td><td><code>version</code>, <code>info</code>, <code>servers</code>, <code>tags</code>, <code>security</code>, <code>cacheTtlMs</code>, <code>onSchemaWarning</code>, <code>onRouteWarning</code>, <code>branding</code>, <code>now</code>.</td></tr>
             <tr><td><code>OpenAPIUIOptions</code></td><td>Options for the documentation page.</td><td>See the table in <a href="#serving" class="text-zudo-blue underline">Serving</a>.</td></tr>
             <tr><td><code>OpenAPIUIRenderer</code></td><td><code>"swagger" | "redoc"</code>.</td><td>—</td></tr>
             <tr><td><code>OpenAPIUIResponse</code></td><td><code>{ status, headers, body }</code> for the page.</td><td>Returned by <code>toUIResponse</code>.</td></tr>
@@ -903,6 +946,7 @@ console.<span class="fn">log</span>(<span class="fn">toOpenAPIYAML</span>(docume
             <tr><td><code>MAX_OPERATION_ID_LENGTH</code></td><td><code>128</code></td><td>Longer ids fail validation.</td></tr>
             <tr><td><code>COMPONENT_REF_PREFIX</code></td><td><code>"#/components"</code></td><td>Prefix of every local <code>$ref</code>.</td></tr>
             <tr><td><code>DEFAULT_MEDIA_TYPE</code></td><td><code>"application/json"</code></td><td>Content type of <code>toResponse()</code>.</td></tr>
+            <tr><td><code>UNDOCUMENTED_RESPONSE_DESCRIPTION</code></td><td><code>"Undocumented response"</code></td><td>Description of the <code>default</code> response a route with none gets.</td></tr>
             <tr><td><code>DEFAULT_SERVER_URL</code></td><td><code>"http://localhost"</code></td><td>Fallback server URL.</td></tr>
             <tr><td><code>DOCUMENT_CACHE_TTL_MS</code></td><td><code>300000</code></td><td>Five minutes. Override with <code>cacheTtlMs</code>.</td></tr>
             <tr><td><code>STATUS_CODE_CATEGORIES</code></td><td><code>1XX</code>…<code>5XX</code></td><td>The range keys OpenAPI allows.</td></tr>
@@ -919,8 +963,8 @@ console.<span class="fn">log</span>(<span class="fn">toOpenAPIYAML</span>(docume
 
         <ul class="space-y-4">
           <li class="border-l-4 border-zudo-red pl-4">
-            <strong>Leaving a path parameter out of <code>parameters</code>.</strong><br>
-            <span class="text-sm text-black/70">The path says <code>{id}</code> but nothing declares it, so validation fails and generated clients have no way to pass the value. Add <code>{ name: "id", in: "path" }</code>; you do not need to set <code>required</code>, it is forced to <code>true</code>.</span>
+            <strong>Leaving out the responses.</strong><br>
+            <span class="text-sm text-black/70">A route with no <code>responses</code> is published with a <code>default</code> &ldquo;Undocumented response&rdquo;, and every generated client has to guess what comes back. Declare the real ones, such as <code>"204"</code> for a delete, and listen to <code>onRouteWarning</code> so a new undocumented route shows up in your logs.</span>
           </li>
           <li class="border-l-4 border-zudo-blue pl-4">
             <strong>Serving the spec but not a page, or a page but not the spec.</strong><br>
@@ -961,9 +1005,9 @@ console.<span class="fn">log</span>(<span class="fn">toOpenAPIYAML</span>(docume
       <!-- EXPORT INDEX -->
       <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
-        <p class="mb-5 text-sm">Every name <code>@zudojs/openapi</code> exports from its package root at v1.4.0 &mdash; <strong>137</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/openapi</code> exports from its package root at v1.5.0 &mdash; <strong>138</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
         <details class="border-2 border-black p-5 bg-white">
-          <summary class="font-bold cursor-pointer select-none">Show all 137 exports</summary>
+          <summary class="font-bold cursor-pointer select-none">Show all 138 exports</summary>
           <div class="mt-5">
           <div class="mb-5">
             <div class="font-bold text-sm uppercase tracking-wider mb-2">Classes <span class="text-black/60 font-normal">(17)</span></div>
@@ -982,8 +1026,8 @@ console.<span class="fn">log</span>(<span class="fn">toOpenAPIYAML</span>(docume
             <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ComponentSection</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">OpenAPIHttpMethod</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">OpenAPIParameterLocation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">OpenAPIPaths</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">OpenAPIResponses</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">OpenAPISchemaInput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">OpenAPIUIRenderer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">OpenAPIVersion</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RouteConversionOptions</code></div>
           </div>
           <div class="mb-5">
-            <div class="font-bold text-sm uppercase tracking-wider mb-2">Constants <span class="text-black/60 font-normal">(24)</span></div>
-            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">COMPONENT_REF_PREFIX</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_MEDIA_TYPE</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_OPENAPI_VERSION</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_SERVER_URL</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DOCUMENT_CACHE_TTL_MS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_OPERATION_ID_LENGTH</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PATH_TEMPLATE_PARAMETER</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">REDOC_VERSION</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RESPONSE_KEY_PATTERN</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">STATUS_CODE_CATEGORIES</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SUPPORTED_OPENAPI_VERSIONS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SWAGGER_UI_VERSION</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_FAVICON_DATA_URI</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_FAVICON_SVG</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_MARK_DARK_DATA_URI</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_MARK_DARK_SVG</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_MARK_DATA_URI</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_MARK_SVG</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_SITE_URL</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_WORDMARK_DARK_DATA_URI</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_WORDMARK_DARK_SVG</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_WORDMARK_DATA_URI</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_WORDMARK_SVG</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDOLIB_TO_OPENAPI_METHODS</code></div>
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Constants <span class="text-black/60 font-normal">(25)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">COMPONENT_REF_PREFIX</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_MEDIA_TYPE</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_OPENAPI_VERSION</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DEFAULT_SERVER_URL</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DOCUMENT_CACHE_TTL_MS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_OPERATION_ID_LENGTH</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">PATH_TEMPLATE_PARAMETER</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">REDOC_VERSION</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">RESPONSE_KEY_PATTERN</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">STATUS_CODE_CATEGORIES</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SUPPORTED_OPENAPI_VERSIONS</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">SWAGGER_UI_VERSION</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UNDOCUMENTED_RESPONSE_DESCRIPTION</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_FAVICON_DATA_URI</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_FAVICON_SVG</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_MARK_DARK_DATA_URI</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_MARK_DARK_SVG</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_MARK_DATA_URI</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_MARK_SVG</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_SITE_URL</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_WORDMARK_DARK_DATA_URI</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_WORDMARK_DARK_SVG</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_WORDMARK_DATA_URI</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDO_WORDMARK_SVG</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ZUDOLIB_TO_OPENAPI_METHODS</code></div>
           </div>
           </div>
         </details>
@@ -997,6 +1041,7 @@ console.<span class="fn">log</span>(<span class="fn">toOpenAPIYAML</span>(docume
       <a href="#installation" class="toc-link">Installation</a>
       <a href="#quick-start" class="toc-link">Quick Start</a>
       <a href="#routes" class="toc-link">Describing Routes</a>
+      <a href="#undocumented-responses" class="toc-link toc-link-nested">No Documented Responses</a>
       <a href="#from-routes" class="toc-link">From A Route Table</a>
       <a href="#schemas" class="toc-link">Schemas</a>
       <a href="#version-differences" class="toc-link">3.0 vs 3.1</a>

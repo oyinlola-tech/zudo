@@ -49,8 +49,8 @@
     "@context": "https://schema.org",
     "@type": "TechArticle",
     "headline": "@zudojs/api — Transport-agnostic API layer",
-    "description": "Complete reference for @zudojs/api v1.1.0. Define transport-agnostic operations, interceptors, result types, and execution contexts.",
-    "version": "1.1.0",
+    "description": "Complete reference for @zudojs/api v1.2.0. Define transport-agnostic operations, interceptors, result types, and execution contexts.",
+    "version": "1.2.0",
     "programmingLanguage": "TypeScript",
     "runtimePlatform": "Node.js >= 24.0.0",
     "license": "https://opensource.org/licenses/MIT",
@@ -179,7 +179,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/api</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Define your application's operations once, then run them over HTTP, RPC, a queue, the CLI, or a test with the same validation, timeouts, and interceptors.
@@ -241,7 +241,7 @@
       <!-- ==================== SECTION: QUICK START ==================== -->
       <section id="quick-start" class="mt-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">QUICK START</h2>
-        <p class="mb-4 leading-relaxed">This example defines one operation, registers it, and runs it. The two type arguments on <code class="bg-black/5 px-1">defineOperation</code> tell TypeScript what the input and output look like.</p>
+        <p class="mb-4 leading-relaxed">This example defines one operation, registers it, and runs it. The two type arguments on <code class="bg-black/5 px-1">defineOperation</code> tell TypeScript what the input and output look like. (When the operation has an <code class="bg-black/5 px-1">input</code> schema you can leave them out; see <a href="#validation-types" class="text-zudo-blue underline">Letting the schema type the handler</a>.)</p>
 
         <div class="code-block mb-4"><span class="kw">import</span> {
   <span class="fn">defineOperation</span>,
@@ -309,7 +309,7 @@ registry.<span class="fn">register</span>(getUser);
   <span class="prop">timeout</span>: <span class="num">5_000</span>,
   <span class="prop">metadata</span>: { description: <span class="str">"Fetch one user by id"</span>, tags: [<span class="str">"Users"</span>] },
   <span class="prop">handler</span>: <span class="kw">async</span> (<span class="param">input</span>, <span class="param">context</span>) =&gt; {
-    <span class="cmt">// context.signal fires if the caller cancels; pass it to anything that supports it.</span>
+    <span class="cmt">// context.signal fires on timeout or cancellation; pass it to anything that supports it.</span>
     <span class="kw">return</span> { id: input.id, name: <span class="str">"Alice"</span> };
   },
 });
@@ -321,7 +321,38 @@ console.<span class="fn">log</span>(getUser.name, getUser.timeout); <span class=
           <p class="text-sm mt-1">There is no way to switch the deadline off. <span class="code-inline">timeout: 0</span>, a negative number, or <span class="code-inline">NaN</span> throws a <span class="code-inline">RangeError</span> at definition time. If you need longer than an hour, the work belongs in a queue, not an operation.</p>
         </div>
 
-        <p class="mb-4 leading-relaxed">The timeout stops the executor from <em>waiting</em>; it cannot stop the handler's code from running. To make long work truly cancellable, pass <code class="bg-black/5 px-1">context.signal</code> to your database client or <code class="bg-black/5 px-1">fetch</code>.</p>
+        <h3 class="text-h3 mb-3 mt-8" id="operations-signal">Stopping work when the deadline passes</h3>
+        <p class="mb-4 leading-relaxed">JavaScript cannot forcibly stop a running function. What it can do is <em>ask</em> it to stop, through an <code class="bg-black/5 px-1">AbortSignal</code>: an object that "fires" once, and that <code class="bg-black/5 px-1">fetch</code>, most database drivers and Node's timers all listen to. Every handler receives one as <code class="bg-black/5 px-1">context.signal</code>, even when the caller never supplied a signal. It fires in two cases:</p>
+        <ul class="list-disc pl-5 mb-4 space-y-1">
+          <li>The operation runs past its <code class="bg-black/5 px-1">timeout</code>. The signal's <code class="bg-black/5 px-1">reason</code> is the <code class="bg-black/5 px-1">APITimeoutError</code> (504) the call fails with.</li>
+          <li>The caller's own signal aborts, for example because an HTTP client disconnected. The <code class="bg-black/5 px-1">reason</code> is the <code class="bg-black/5 px-1">ErrorCode.OPERATION_CANCELLED</code> error the call fails with.</li>
+        </ul>
+        <p class="mb-4 leading-relaxed">It does not fire when the handler finishes normally. In this example the handler waits one second, but the operation only allows 100 ms:</p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">setTimeout</span> <span class="kw">as</span> sleep } <span class="kw">from</span> <span class="str">"node:timers/promises"</span>;
+<span class="kw">import</span> { <span class="fn">defineOperation</span>, <span class="tp">APIExecutor</span>, <span class="fn">createAPIContext</span> } <span class="kw">from</span> <span class="str">"@zudojs/api"</span>;
+
+<span class="kw">const</span> slowReport = <span class="fn">defineOperation</span>({
+  <span class="prop">name</span>: <span class="str">"reports.build"</span>,
+  <span class="prop">timeout</span>: <span class="num">100</span>,
+  <span class="prop">handler</span>: <span class="kw">async</span> (<span class="param">_input</span>, <span class="param">context</span>) =&gt; {
+    context.signal.<span class="fn">addEventListener</span>(<span class="str">"abort"</span>, () =&gt; {
+      console.<span class="fn">log</span>(<span class="str">"handler stopped:"</span>, context.signal.reason.statusCode);
+    });
+    <span class="kw">await</span> <span class="fn">sleep</span>(<span class="num">1_000</span>, <span class="kw">undefined</span>, { signal: context.signal }); <span class="cmt">// gives up when the signal fires</span>
+    console.<span class="fn">log</span>(<span class="str">"never printed"</span>);
+    <span class="kw">return</span> { done: <span class="kw">true</span> };
+  },
+});
+
+<span class="kw">const</span> result = <span class="kw">await</span> <span class="kw">new</span> <span class="tp">APIExecutor</span>().<span class="fn">execute</span>(slowReport, {}, <span class="fn">createAPIContext</span>(<span class="str">"req-1"</span>, {}));
+console.<span class="fn">log</span>(result.ok, !result.ok &amp;&amp; result.error.statusCode);</div>
+
+        <div class="code-block mb-4">$ node report.mjs
+<span class="cmt">handler stopped: 504</span>
+<span class="cmt">false 504</span></div>
+
+        <p class="mb-4 leading-relaxed">Before v1.2.0 the executor stopped <em>waiting</em> at the deadline but never fired the signal, so a handler kept running after the caller had been told it failed. If the caller then retried, the work (sending an email, charging a card) happened twice. A handler that ignores <code class="bg-black/5 px-1">context.signal</code> still behaves that way: its result is thrown away, but its code runs to the end. So pass the signal on to anything slow.</p>
       </section>
 
       <!-- ==================== SECTION: VALIDATION ==================== -->
@@ -329,7 +360,7 @@ console.<span class="fn">log</span>(getUser.name, getUser.timeout); <span class=
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">VALIDATION</h2>
         <p class="mb-4 leading-relaxed">A <em>schema</em> is an object that can check whether a value has the right shape. The executor accepts a <code class="bg-black/5 px-1">@zudojs/schema</code> schema (or any schema with a <code class="bg-black/5 px-1">safeParse</code> method), or any schema that follows the <a href="https://standardschema.dev" class="text-zudo-blue underline">Standard Schema</a> spec, which Zod, Valibot, and ArkType all implement. You never import a validation library from <code class="bg-black/5 px-1">@zudojs/api</code> itself.</p>
 
-        <p class="mb-4 leading-relaxed">When <code class="bg-black/5 px-1">input</code> is a schema, the executor validates before calling the handler and hands the handler the schema's cleaned-up value. When <code class="bg-black/5 px-1">output</code> is a schema, the handler's return value is validated too, and the cleaned value becomes <code class="bg-black/5 px-1">result.data</code>. Any other value in those fields is rejected: <code class="bg-black/5 px-1">defineOperation</code> and <code class="bg-black/5 px-1">register</code> throw a <code class="bg-black/5 px-1">TypeError</code>, and the executor fails closed with a 500 without running the handler.</p>
+        <p class="mb-4 leading-relaxed">When <code class="bg-black/5 px-1">input</code> is a schema, the executor validates immediately before calling the handler (after every <a href="#interceptors" class="text-zudo-blue underline">interceptor</a> has run) and hands the handler the schema's cleaned-up value. When <code class="bg-black/5 px-1">output</code> is a schema, the handler's return value is validated too, and the cleaned value becomes <code class="bg-black/5 px-1">result.data</code>. Any other value in those fields is rejected: <code class="bg-black/5 px-1">defineOperation</code> and <code class="bg-black/5 px-1">register</code> throw a <code class="bg-black/5 px-1">TypeError</code>, and the executor fails closed with a 500 without running the handler.</p>
 
         <p class="mb-4 leading-relaxed">The example below writes a tiny schema by hand so you can see the whole thing. In a real app you would pass a Zod schema in the same spot with no other changes.</p>
 
@@ -374,12 +405,36 @@ console.<span class="fn">log</span>(getUser.name, getUser.timeout); <span class=
         </div>
 
         <p class="mb-4 leading-relaxed">Output failures work differently. A handler returning the wrong shape is a bug on your side, not the client's, so it becomes an <code class="bg-black/5 px-1">APIInternalError</code> (status 500, <code class="bg-black/5 px-1">expose: false</code>) whose message names only the failing paths.</p>
+
+        <h3 class="text-h3 mb-3 mt-8" id="validation-types">Letting the schema type the handler</h3>
+        <p class="mb-4 leading-relaxed">When an operation has an <code class="bg-black/5 px-1">input</code> schema, you do not need type arguments. <code class="bg-black/5 px-1">defineOperation</code> reads the handler's <code class="bg-black/5 px-1">input</code> type from the schema: the value a <code class="bg-black/5 px-1">@zudojs/schema</code> or Zod schema produces on success, or a Standard Schema's declared output type. That works even when you write the definition inline, straight inside <code class="bg-black/5 px-1">register()</code> or an operation list:</p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">objectSchema</span>, <span class="fn">stringSchema</span> } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
+<span class="kw">import</span> { <span class="fn">defineOperation</span>, <span class="tp">APIOperationRegistry</span>, <span class="kw">type</span> <span class="tp">InferAPISchemaOutput</span> } <span class="kw">from</span> <span class="str">"@zudojs/api"</span>;
+
+<span class="kw">const</span> TodoInput = <span class="fn">objectSchema</span>({ title: <span class="fn">stringSchema</span>().<span class="fn">min</span>(<span class="num">3</span>) });
+
+<span class="kw">const</span> registry = <span class="kw">new</span> <span class="tp">APIOperationRegistry</span>();
+registry.<span class="fn">register</span>(
+  <span class="fn">defineOperation</span>({
+    <span class="prop">name</span>: <span class="str">"todos.create"</span>,
+    <span class="prop">input</span>: TodoInput,
+    <span class="cmt">// input is { title: string }, inferred from TodoInput.</span>
+    <span class="prop">handler</span>: <span class="kw">async</span> (<span class="param">input</span>) =&gt; ({ title: input.title.<span class="fn">toUpperCase</span>() }),
+  }),
+);
+
+<span class="kw">type</span> <span class="tp">Todo</span> = <span class="tp">InferAPISchemaOutput</span>&lt;<span class="kw">typeof</span> TodoInput&gt;; <span class="cmt">// { title: string }</span></div>
+
+        <p class="mb-4 leading-relaxed">Before v1.2.0 this inline form did not compile: TypeScript inferred <code class="bg-black/5 px-1">input</code> as <code class="bg-black/5 px-1">never</code>, so every property access was an error. Explicit type arguments, <code class="bg-black/5 px-1">defineOperation&lt;TInput, TOutput&gt;(…)</code>, still work exactly as before and win over the schema. The return type is never inferred from the schema; it is whatever the handler returns.</p>
       </section>
 
       <!-- ==================== SECTION: EXECUTION CONTEXT ==================== -->
       <section id="execution-context" class="mt-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">EXECUTION CONTEXT</h2>
-        <p class="mb-4 leading-relaxed">The <em>context</em> is a small object that travels with one request through interceptors and into the handler. It carries a request id, optional cancellation signal, a <code class="bg-black/5 px-1">state</code> object you choose, and typed key/value slots.</p>
+        <p class="mb-4 leading-relaxed">The <em>context</em> is a small object that travels with one request through interceptors and into the handler. It carries a request id, an optional cancellation signal, a <code class="bg-black/5 px-1">state</code> object you choose, and typed key/value slots.</p>
+
+        <p class="mb-4 leading-relaxed">The handler gets a slightly different object from the one you pass to <code class="bg-black/5 px-1">execute()</code>: a view of it whose <code class="bg-black/5 px-1">signal</code> is always present and also fires on timeout (see <a href="#operations-signal" class="text-zudo-blue underline">Stopping work when the deadline passes</a>). Everything else, <code class="bg-black/5 px-1">requestId</code>, <code class="bg-black/5 px-1">state</code>, <code class="bg-black/5 px-1">get</code>/<code class="bg-black/5 px-1">set</code> and <code class="bg-black/5 px-1">metadata</code>, is the caller's context itself, so a value an interceptor sets is the value the handler reads.</p>
 
         <p class="mb-4 leading-relaxed">A <em>context key</em> is a named, typed slot. You create one with <code class="bg-black/5 px-1">createContextKey&lt;T&gt;(name)</code>, then <code class="bg-black/5 px-1">context.set(key, value)</code> and <code class="bg-black/5 px-1">context.get(key)</code>. Each key has its own hidden identity, so two keys with the same name never clash.</p>
 
@@ -424,7 +479,7 @@ console.<span class="fn">log</span>(<span class="fn">normalizeRequestId</span>(<
       <!-- ==================== SECTION: EXECUTOR AND RESULTS ==================== -->
       <section id="executor-and-results" class="mt-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">EXECUTOR AND RESULTS</h2>
-        <p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">APIExecutor.execute(operation, input, context)</code> runs one operation and always resolves to an <code class="bg-black/5 px-1">APIResult</code>. It validates input, runs interceptors, enforces the timeout and abort signal, runs the handler, validates output, and converts anything thrown into a failure result.</p>
+        <p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">APIExecutor.execute(operation, input, context)</code> runs one operation and always resolves to an <code class="bg-black/5 px-1">APIResult</code>. In order, it runs the interceptors, validates the input they pass on, runs the handler under the timeout and abort signal, validates the output, and converts anything thrown into a failure result.</p>
 
         <p class="mb-4 leading-relaxed">A result is one of two frozen shapes. Check <code class="bg-black/5 px-1">result.ok</code> and TypeScript narrows the type for you:</p>
         <ul class="list-disc pl-5 mb-4 space-y-1">
@@ -466,7 +521,7 @@ console.<span class="fn">log</span>(<span class="fn">normalizeRequestId</span>(<
   });
 }</div>
 
-        <p class="mb-4 leading-relaxed">Two other failures the executor produces on its own: a handler slower than its timeout fails with <code class="bg-black/5 px-1">APITimeoutError</code> (504), and a context whose <code class="bg-black/5 px-1">signal</code> is aborted fails with code <code class="bg-black/5 px-1">ErrorCode.OPERATION_CANCELLED</code> (status 499). Branch on the code, not the status, for cancellation.</p>
+        <p class="mb-4 leading-relaxed">Two other failures the executor produces on its own: a handler slower than its timeout fails with <code class="bg-black/5 px-1">APITimeoutError</code> (504), and a context whose <code class="bg-black/5 px-1">signal</code> is aborted fails with code <code class="bg-black/5 px-1">ErrorCode.OPERATION_CANCELLED</code> (status 499). In both cases the handler's <code class="bg-black/5 px-1">context.signal</code> fires too, so a handler that listens to it stops. Branch on the code, not the status, for cancellation.</p>
 
         <div class="callout callout-note mb-4">
           <strong class="text-sm uppercase tracking-wider text-zudo-blue">In plain words</strong>
@@ -479,7 +534,7 @@ console.<span class="fn">log</span>(<span class="fn">normalizeRequestId</span>(<
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INTERCEPTORS</h2>
         <p class="mb-4 leading-relaxed">An <em>interceptor</em> is code that runs around every operation: something before the handler, then <code class="bg-black/5 px-1">await next()</code>, then something after. You give the executor a list of them, and the first one in the list is the outermost. At most 32 are allowed.</p>
 
-        <p class="mb-4 leading-relaxed">Each interceptor receives an <code class="bg-black/5 px-1">APIExecutionContext</code> with four fields: <code class="bg-black/5 px-1">operation</code>, <code class="bg-black/5 px-1">input</code> (writable), <code class="bg-black/5 px-1">context</code> (the request context), and <code class="bg-black/5 px-1">result</code> (set after <code class="bg-black/5 px-1">next()</code> resolves). It can replace the input, short-circuit by returning a result without calling <code class="bg-black/5 px-1">next()</code>, or observe the result afterwards.</p>
+        <p class="mb-4 leading-relaxed">Each interceptor receives an <code class="bg-black/5 px-1">APIExecutionContext</code> with four fields: <code class="bg-black/5 px-1">operation</code>, <code class="bg-black/5 px-1">input</code> (writable, and not yet validated: see <a href="#interceptor-order" class="text-zudo-blue underline">below</a>), <code class="bg-black/5 px-1">context</code> (the request context), and <code class="bg-black/5 px-1">result</code> (set after <code class="bg-black/5 px-1">next()</code> resolves). It can replace the input, short-circuit by returning a result without calling <code class="bg-black/5 px-1">next()</code>, or observe the result afterwards.</p>
 
         <p class="mb-4 leading-relaxed">This example has a timing interceptor and an auth interceptor. The auth one returns a failure early when no user id is on the context, so the handler never runs.</p>
 
@@ -536,6 +591,78 @@ console.<span class="fn">log</span>(allowed.ok &amp;&amp; allowed.data); <span c
         </div>
 
         <p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">createNoopInterceptor()</code> returns an interceptor that just calls <code class="bg-black/5 px-1">next()</code>. It is handy as a placeholder in tests.</p>
+
+        <h3 class="text-h3 mb-3 mt-8" id="interceptor-order">Interceptors run before validation</h3>
+        <p class="mb-4 leading-relaxed">Since v1.2.0 the interceptors run first and input validation runs last, immediately before the handler. Earlier versions validated first. That order was a security problem in three ways:</p>
+        <ul class="list-disc pl-5 mb-4 space-y-1">
+          <li><strong>It told strangers about your schema.</strong> An anonymous caller who sent bad input got a 422 listing which fields were wrong, instead of the 401 your authentication interceptor would have sent. Someone with no account could map out your API's inputs.</li>
+          <li><strong>Invalid calls were invisible.</strong> Logging, metrics and rate-limit interceptors never ran for them, so a flood of malformed requests was neither logged nor limited.</li>
+          <li><strong>The schema could be skipped.</strong> An interceptor that replaced <code class="bg-black/5 px-1">ctx.input</code> handed the handler a value no schema had checked.</li>
+        </ul>
+        <p class="mb-4 leading-relaxed">Now every interceptor sees every call, and whatever input the last interceptor passes on is what gets validated. This example uses a <code class="bg-black/5 px-1">@zudojs/schema</code> schema that requires a title of at least 3 characters:</p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">objectSchema</span>, <span class="fn">stringSchema</span> } <span class="kw">from</span> <span class="str">"@zudojs/schema"</span>;
+<span class="kw">import</span> {
+  <span class="fn">defineOperation</span>, <span class="tp">APIExecutor</span>, <span class="fn">createAPIContext</span>, <span class="fn">apiFailure</span>,
+  <span class="tp">APIAuthenticationError</span>, <span class="const">UserIdContextKey</span>, <span class="kw">type</span> <span class="tp">APIInterceptor</span>,
+} <span class="kw">from</span> <span class="str">"@zudojs/api"</span>;
+
+<span class="kw">const</span> createTodo = <span class="fn">defineOperation</span>({
+  <span class="prop">name</span>: <span class="str">"todos.create"</span>,
+  <span class="prop">input</span>: <span class="fn">objectSchema</span>({ title: <span class="fn">stringSchema</span>().<span class="fn">min</span>(<span class="num">3</span>) }),
+  <span class="prop">handler</span>: <span class="kw">async</span> (<span class="param">input</span>) =&gt; ({ title: input.title }),
+});
+
+<span class="kw">const</span> logCalls: <span class="tp">APIInterceptor</span> = {
+  <span class="kw">async</span> <span class="fn">intercept</span>(<span class="param">ctx</span>, <span class="param">next</span>) {
+    <span class="kw">const</span> result = <span class="kw">await</span> <span class="fn">next</span>();
+    console.<span class="fn">log</span>(<span class="str">"log:"</span>, ctx.operation.name, result.ok ? <span class="str">"ok"</span> : result.error.statusCode);
+    <span class="kw">return</span> result;
+  },
+};
+
+<span class="kw">const</span> requireUser: <span class="tp">APIInterceptor</span> = {
+  <span class="kw">async</span> <span class="fn">intercept</span>(<span class="param">ctx</span>, <span class="param">next</span>) {
+    <span class="kw">if</span> (ctx.context.<span class="fn">get</span>(<span class="const">UserIdContextKey</span>) === <span class="kw">undefined</span>) {
+      <span class="kw">return</span> <span class="fn">apiFailure</span>(<span class="kw">new</span> <span class="tp">APIAuthenticationError</span>(<span class="str">"Sign in first."</span>));
+    }
+    <span class="kw">return</span> <span class="fn">next</span>();
+  },
+};
+
+<span class="kw">const</span> executor = <span class="kw">new</span> <span class="tp">APIExecutor</span>({ interceptors: [logCalls, requireUser] });
+
+<span class="cmt">// 1. Anonymous and invalid: refused as anonymous, the schema is never described.</span>
+<span class="kw">const</span> anonymous = <span class="kw">await</span> executor.<span class="fn">execute</span>(createTodo, { title: <span class="str">""</span> }, <span class="fn">createAPIContext</span>(<span class="str">"req-1"</span>, {}));
+console.<span class="fn">log</span>(anonymous.ok, !anonymous.ok &amp;&amp; anonymous.error.statusCode);
+
+<span class="cmt">// 2. Signed in and invalid: now validation answers, and the logger saw it.</span>
+<span class="kw">const</span> signedIn = <span class="fn">createAPIContext</span>(<span class="str">"req-2"</span>, {});
+signedIn.<span class="fn">set</span>(<span class="const">UserIdContextKey</span>, <span class="str">"u_1"</span>);
+<span class="kw">const</span> invalid = <span class="kw">await</span> executor.<span class="fn">execute</span>(createTodo, { title: <span class="str">""</span> }, signedIn);
+console.<span class="fn">log</span>(invalid.ok, !invalid.ok &amp;&amp; invalid.error.statusCode, !invalid.ok &amp;&amp; invalid.error.issues);
+
+<span class="cmt">// 3. An interceptor that swaps in bad input cannot sneak it past the schema.</span>
+<span class="kw">const</span> swapInput: <span class="tp">APIInterceptor</span> = {
+  <span class="kw">async</span> <span class="fn">intercept</span>(<span class="param">ctx</span>, <span class="param">next</span>) {
+    ctx.input = { title: <span class="str">""</span> };
+    <span class="kw">return</span> <span class="fn">next</span>();
+  },
+};
+<span class="kw">const</span> swapped = <span class="kw">await</span> <span class="kw">new</span> <span class="tp">APIExecutor</span>([swapInput]).<span class="fn">execute</span>(createTodo, { title: <span class="str">"Buy milk"</span> }, <span class="fn">createAPIContext</span>(<span class="str">"req-3"</span>, {}));
+console.<span class="fn">log</span>(swapped.ok, !swapped.ok &amp;&amp; swapped.error.statusCode);</div>
+
+        <div class="code-block mb-4">$ node order.mjs
+<span class="cmt">log: todos.create 401</span>
+<span class="cmt">false 401</span>
+<span class="cmt">log: todos.create 422</span>
+<span class="cmt">false 422 [ 'title: invalid' ]</span>
+<span class="cmt">false 422</span></div>
+
+        <div class="callout callout-warning mb-4">
+          <strong class="text-sm uppercase tracking-wider text-zudo-red">Watch out</strong>
+          <p class="text-sm mt-1">If you wrote interceptors for an earlier version: <span class="code-inline">ctx.input</span> is now the input exactly as the caller sent it, not yet validated, coerced or transformed. Treat it as untrusted, and do not rely on a schema default or coercion having been applied. Anything you put back into <span class="code-inline">ctx.input</span> is validated before the handler sees it. The bindings answer exactly as before (HTTP status and <span class="code-inline">APIWireError</span>, RPC error classes, queue failures, CLI exit codes), and they still refuse <span class="code-inline">__proto__</span> / <span class="code-inline">constructor</span> / <span class="code-inline">prototype</span> keys before any interceptor runs (see <a href="#bindings-security" class="text-zudo-blue underline">Unsafe input</a>).</p>
+        </div>
       </section>
 
       <!-- ==================== SECTION: REGISTRY ==================== -->
@@ -600,7 +727,7 @@ console.<span class="fn">log</span>(registry.<span class="fn">getAll</span>().le
           </tbody>
         </table>
 
-        <p class="mb-4 leading-relaxed">Every binding behaves the same way. It runs the call through the <code class="bg-black/5 px-1">APIExecutor</code> you pass as <code class="bg-black/5 px-1">executor</code>, so your interceptors apply on every transport. It validates input with the operation's schema. It sets <code class="bg-black/5 px-1">TransportContextKey</code> on the context to <code class="bg-black/5 px-1">"http"</code>, <code class="bg-black/5 px-1">"rpc"</code>, <code class="bg-black/5 px-1">"queue"</code> or <code class="bg-black/5 px-1">"cli"</code>, so a handler can tell where a call came from. And it hands every failure the caller was not allowed to see to <code class="bg-black/5 px-1">onInternalError(error, requestId)</code>, which is where you log it.</p>
+        <p class="mb-4 leading-relaxed">Every binding behaves the same way. It runs the call through the <code class="bg-black/5 px-1">APIExecutor</code> you pass as <code class="bg-black/5 px-1">executor</code>, so your interceptors apply on every transport. It validates input with the operation's schema, after the interceptors. It sets <code class="bg-black/5 px-1">TransportContextKey</code> on the context to <code class="bg-black/5 px-1">"http"</code>, <code class="bg-black/5 px-1">"rpc"</code>, <code class="bg-black/5 px-1">"queue"</code> or <code class="bg-black/5 px-1">"cli"</code>, so a handler can tell where a call came from. And it hands every failure the caller was not allowed to see to <code class="bg-black/5 px-1">onInternalError(error, requestId)</code>, which is where you log it.</p>
 
         <p class="mb-4 leading-relaxed">The <code class="bg-black/5 px-1">state</code> option builds <code class="bg-black/5 px-1">context.state</code> from whatever the transport hands over: the <code class="bg-black/5 px-1">Request</code> for HTTP, the <code class="bg-black/5 px-1">RPCContext</code> for RPC, the <code class="bg-black/5 px-1">Job</code> for a queue, the parsed invocation for the CLI. Throw an <code class="bg-black/5 px-1">APIError</code> there, such as <code class="bg-black/5 px-1">APIAuthenticationError</code>, to refuse the call.</p>
 
@@ -675,7 +802,7 @@ registry.<span class="fn">freeze</span>();
 <span class="kw">const</span> client = <span class="kw">new</span> <span class="tp">RPCClient</span>(<span class="fn">createRPCMemoryTransport</span>(server));
 console.<span class="fn">log</span>(<span class="kw">await</span> client.<span class="fn">call</span>(<span class="str">"users.get"</span>, { id: <span class="str">"u1"</span> })); <span class="cmt">// { id: "u1", name: "Alice" }</span></div>
 
-        <p class="mb-4 leading-relaxed">Procedure names default to the operation name, which must then be a valid RPC name such as <code class="bg-black/5 px-1">"users.get"</code>; pass <code class="bg-black/5 px-1">procedureName</code> to map other names. API errors become their RPC equivalents (<code class="bg-black/5 px-1">RPC_VALIDATION_ERROR</code> with issues, <code class="bg-black/5 px-1">RPC_UNAUTHENTICATED</code>, <code class="bg-black/5 px-1">RPC_FORBIDDEN</code>, <code class="bg-black/5 px-1">RPC_TIMEOUT</code>, …), and a domain error keeps its own code, such as <code class="bg-black/5 px-1">ERR_API_CONFLICT</code>. The message follows the same rule as over HTTP: an error built with <code class="bg-black/5 px-1">expose: false</code> keeps its code but travels with the generic <code class="bg-black/5 px-1">"An internal error occurred."</code>, even when that code has an RPC equivalent. So <code class="bg-black/5 px-1">createAPIError("Stripe rejected key sk_live_…", { code: ErrorCode.API_UNAVAILABLE })</code> reaches an RPC caller as <code class="bg-black/5 px-1">RPC_UNAVAILABLE</code> without the text; before this release that message was sent. To serve the same server over HTTP, mount <code class="bg-black/5 px-1">createRPCFetchHandler(server)</code> with <code class="bg-black/5 px-1">mountFetchHandler(router, "/rpc", …)</code>.</p>
+        <p class="mb-4 leading-relaxed">Procedure names default to the operation name, which must then be a valid RPC name such as <code class="bg-black/5 px-1">"users.get"</code>; pass <code class="bg-black/5 px-1">procedureName</code> to map other names. API errors become their RPC equivalents (<code class="bg-black/5 px-1">RPC_VALIDATION_ERROR</code> with issues, <code class="bg-black/5 px-1">RPC_UNAUTHENTICATED</code>, <code class="bg-black/5 px-1">RPC_FORBIDDEN</code>, <code class="bg-black/5 px-1">RPC_TIMEOUT</code>, …), and a domain error keeps its own code, such as <code class="bg-black/5 px-1">ERR_API_CONFLICT</code>. The message follows the same rule as over HTTP: an error built with <code class="bg-black/5 px-1">expose: false</code> keeps its code but travels with the generic <code class="bg-black/5 px-1">"An internal error occurred."</code>, even when that code has an RPC equivalent. So <code class="bg-black/5 px-1">createAPIError("Stripe rejected key sk_live_…", { code: ErrorCode.API_UNAVAILABLE })</code> reaches an RPC caller as <code class="bg-black/5 px-1">RPC_UNAVAILABLE</code> with <code class="bg-black/5 px-1">"An internal error occurred."</code> in place of the text; before v1.2.0 that message was sent. To serve the same server over HTTP, mount <code class="bg-black/5 px-1">createRPCFetchHandler(server)</code> with <code class="bg-black/5 px-1">mountFetchHandler(router, "/rpc", …)</code>.</p>
 
         <h3 class="text-h3 mb-3 mt-8" id="bindings-queue">Queues</h3>
         <p class="mb-4 leading-relaxed"><code class="bg-black/5 px-1">bindApiQueue</code> makes a <a href="/docs/packages-queue" class="text-zudo-blue underline">@zudojs/queue</a> queue run operations as background jobs. The job name is the operation name and <code class="bg-black/5 px-1">job.data</code> is the input.</p>
@@ -783,7 +910,7 @@ $ app --help   <span class="cmt"># lists the operations</span></div>
         <table class="doc-table mb-6">
           <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr><td><span class="code-inline">defineOperation(options)</span></td><td>Validates and freezes an operation definition.</td><td>Throws <span class="code-inline">TypeError</span> / <span class="code-inline">RangeError</span> on a bad name, handler, or timeout.</td></tr>
+            <tr><td><span class="code-inline">defineOperation(options)</span></td><td>Validates and freezes an operation definition.</td><td>Throws <span class="code-inline">TypeError</span> / <span class="code-inline">RangeError</span> on a bad name, handler, or timeout. Without type arguments, the handler's input type comes from the <span class="code-inline">input</span> schema.</td></tr>
             <tr><td><span class="code-inline">resolveOperationTimeout(op)</span></td><td>Returns the effective timeout in ms.</td><td>Order: <span class="code-inline">timeout</span>, then <span class="code-inline">metadata.timeout</span>, then the default.</td></tr>
             <tr><td><span class="code-inline">createAPIContext(requestId, state, signal?)</span></td><td>Builds a frozen request context.</td><td>Throws <span class="code-inline">TypeError</span> on an invalid request id.</td></tr>
             <tr><td><span class="code-inline">createContextKey&lt;T&gt;(name)</span></td><td>Creates a typed context key.</td><td>Name must be a non-empty string.</td></tr>
@@ -819,9 +946,10 @@ $ app --help   <span class="cmt"># lists the operations</span></div>
           <tbody>
             <tr><td><span class="code-inline">APIOperation&lt;TInput, TOutput&gt;</span></td><td>The frozen object <span class="code-inline">defineOperation</span> returns.</td><td><span class="code-inline">AnyAPIOperation</span> is what the registry accepts.</td></tr>
             <tr><td><span class="code-inline">DefineOperationOptions</span> / <span class="code-inline">APIOperationMetadata</span></td><td>Input to <span class="code-inline">defineOperation</span> and its <span class="code-inline">metadata</span> field.</td><td></td></tr>
+            <tr><td><span class="code-inline">InferAPISchemaOutput&lt;S&gt;</span> / <span class="code-inline">APIInputSchema</span> / <span class="code-inline">DefineOperationWithSchemaOptions</span></td><td>The type a schema produces on success / any schema the executor accepts / the <span class="code-inline">defineOperation</span> options whose input type comes from the schema.</td><td>See <a href="#validation-types" class="text-zudo-blue underline">Letting the schema type the handler</a>.</td></tr>
             <tr><td><span class="code-inline">APIHandler&lt;TInput, TOutput&gt;</span></td><td><span class="code-inline">(input, context) =&gt; Promise&lt;TOutput&gt;</span></td><td></td></tr>
             <tr><td><span class="code-inline">APIContext&lt;TState&gt;</span> / <span class="code-inline">APIContextKey&lt;T&gt;</span></td><td>Request context and its typed keys.</td><td>Keys carry an <span class="code-inline">id: symbol</span>; always use <span class="code-inline">createContextKey</span>.</td></tr>
-            <tr><td><span class="code-inline">APIInterceptor</span> / <span class="code-inline">APIExecutionContext</span></td><td>Interceptor contract and the object it receives.</td><td><span class="code-inline">input</span> is writable; <span class="code-inline">result</span> is set after <span class="code-inline">next()</span>.</td></tr>
+            <tr><td><span class="code-inline">APIInterceptor</span> / <span class="code-inline">APIExecutionContext</span></td><td>Interceptor contract and the object it receives.</td><td><span class="code-inline">input</span> is writable and not yet validated; <span class="code-inline">result</span> is set after <span class="code-inline">next()</span>.</td></tr>
             <tr><td><span class="code-inline">APIExecutorOptions</span></td><td>Options object for <span class="code-inline">new APIExecutor()</span>.</td><td></td></tr>
             <tr><td><span class="code-inline">APIResult&lt;T&gt;</span> / <span class="code-inline">APISuccess&lt;T&gt;</span> / <span class="code-inline">APIFailure</span></td><td>Result union and its two halves.</td><td></td></tr>
             <tr><td><span class="code-inline">APIWireResult&lt;T&gt;</span> / <span class="code-inline">APIWireError</span></td><td>The client-safe result every binding sends.</td><td><span class="code-inline">{ code, message, statusCode, requestId, issues? }</span>.</td></tr>
@@ -880,6 +1008,8 @@ $ app --help   <span class="cmt"># lists the operations</span></div>
           <li><strong>Setting <code class="bg-black/5 px-1">basePath</code> and also mounting under a prefix.</strong> <code class="bg-black/5 px-1">mountFetchHandler(router, "/api", …)</code> already strips <code class="bg-black/5 px-1">/api</code>, so a <code class="bg-black/5 px-1">basePath: "/api"</code> on <code class="bg-black/5 px-1">createApiFetchHandler</code> makes every route 404. Set one or the other.</li>
           <li><strong>Enqueueing unchecked input with retries.</strong> A job whose input fails validation is retried like any failure and can never succeed. Add it with <code class="bg-black/5 px-1">attempts: 1</code>, or validate before enqueueing.</li>
           <li><strong>Posting a form or <code class="bg-black/5 px-1">text/plain</code> to a body route.</strong> The HTTP binding answers 415 by design (a CSRF defence). Send the body as JSON with <code class="bg-black/5 px-1">content-type: application/json</code>.</li>
+          <li><strong>Treating <code class="bg-black/5 px-1">ctx.input</code> in an interceptor as validated.</strong> Interceptors run before validation, so <code class="bg-black/5 px-1">ctx.input</code> is exactly what the caller sent. Check the context (who is calling), not the input; leave the input to the schema.</li>
+          <li><strong>Ignoring <code class="bg-black/5 px-1">context.signal</code> in a slow handler.</strong> On timeout the caller gets a 504, but a handler that never looks at the signal keeps running and finishes its side effects anyway. Pass the signal to <code class="bg-black/5 px-1">fetch</code>, your database client or your loop checks.</li>
           <li><strong>Registering the same name twice.</strong> Usually a module imported from two paths. The registry throws <code class="bg-black/5 px-1">APIDuplicateOperationError</code>; register once at startup, then <code class="bg-black/5 px-1">freeze()</code>.</li>
         </ul>
       </section>
@@ -920,9 +1050,9 @@ $ app --help   <span class="cmt"># lists the operations</span></div>
       <!-- EXPORT INDEX -->
       <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
-        <p class="mb-5 text-sm">Every name <code>@zudojs/api</code> exports from its package root at v1.1.1 &mdash; <strong>102</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/api</code> exports from its package root at v1.2.0 &mdash; <strong>105</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
         <details class="border-2 border-black p-5 bg-white">
-          <summary class="font-bold cursor-pointer select-none">Show all 102 exports</summary>
+          <summary class="font-bold cursor-pointer select-none">Show all 105 exports</summary>
           <div class="mt-5">
           <div class="mb-5">
             <div class="font-bold text-sm uppercase tracking-wider mb-2">Classes <span class="text-black/60 font-normal">(16)</span></div>
@@ -933,12 +1063,12 @@ $ app --help   <span class="cmt"># lists the operations</span></div>
             <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">apiErrorToRPCError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">apiFailure</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">apiSuccess</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">apiSuccessBodySchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">bindApiQueue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createAPIContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createAPIError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createApiFetchHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createApiQueueProcessor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createApiRpcProcedure</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createContextKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">createNoopInterceptor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">defineOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">describeApiRoutes</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isAPIError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isApiFailure</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isAPISchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isApiSuccess</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isValidRequestId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeAPIError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">normalizeRequestId</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">parseApiCliArgs</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">registerApiRpcProcedures</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">resolveApiRoute</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">resolveOperationTimeout</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">runApiCli</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toApiWireError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toApiWireResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toOpenAPIRouteDescriptor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">toOpenAPIRouteDescriptors</code></div>
           </div>
           <div class="mb-5">
-            <div class="font-bold text-sm uppercase tracking-wider mb-2">Interfaces <span class="text-black/60 font-normal">(24)</span></div>
-            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIBindingOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APICliInvocation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APICliIO</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APICliOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIContextKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIExecutionContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIExecutorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIFailure</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIFetchHandlerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIInterceptor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIOperationHttpOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIOperationMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIOperationRoute</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIQueueTarget</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIRpcBindingOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIRpcProcedureTarget</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APISchemaIssue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APISuccess</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIWireError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DefineOperationOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DescribeApiRoutesOptions</code></div>
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Interfaces <span class="text-black/60 font-normal">(25)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIBindingOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APICliInvocation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APICliIO</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APICliOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIContextKey</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIErrorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIExecutionContext</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIExecutorOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIFailure</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIFetchHandlerOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIInterceptor</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIOperationHttpOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIOperationMetadata</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIOperationRoute</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIQueueTarget</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIRpcBindingOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIRpcProcedureTarget</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APISchemaIssue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APISuccess</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIWireError</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DefineOperationOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DefineOperationWithSchemaOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">DescribeApiRoutesOptions</code></div>
           </div>
           <div class="mb-5">
-            <div class="font-bold text-sm uppercase tracking-wider mb-2">Type aliases <span class="text-black/60 font-normal">(13)</span></div>
-            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AnyAPIOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APICliExitCodeValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APICliParseResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIHttpMethod</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIOperationSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIQueueBindingOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIRouteInputSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APISchemaResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APITransportKind</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIWireResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ToOpenAPIRouteDescriptorsOptions</code></div>
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Type aliases <span class="text-black/60 font-normal">(15)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AnyAPIOperation</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APICliExitCodeValue</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APICliParseResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIHandler</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIHttpMethod</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIInputSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIOperationSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIQueueBindingOptions</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIRouteInputSource</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APISchemaResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APITransportKind</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">APIWireResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">InferAPISchemaOutput</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ToOpenAPIRouteDescriptorsOptions</code></div>
           </div>
           <div class="mb-5">
             <div class="font-bold text-sm uppercase tracking-wider mb-2">Constants <span class="text-black/60 font-normal">(19)</span></div>
@@ -956,10 +1086,12 @@ $ app --help   <span class="cmt"># lists the operations</span></div>
       <a href="#installation" class="toc-link">INSTALLATION</a>
       <a href="#quick-start" class="toc-link">QUICK START</a>
       <a href="#operations" class="toc-link">OPERATIONS</a>
+      <a href="#operations-signal" class="toc-link toc-link-nested">Stopping on timeout</a>
       <a href="#validation" class="toc-link">VALIDATION</a>
       <a href="#execution-context" class="toc-link">EXECUTION CONTEXT</a>
       <a href="#executor-and-results" class="toc-link">EXECUTOR AND RESULTS</a>
       <a href="#interceptors" class="toc-link">INTERCEPTORS</a>
+      <a href="#interceptor-order" class="toc-link toc-link-nested">Order and validation</a>
       <a href="#registry" class="toc-link">REGISTRY</a>
       <a href="#bindings" class="toc-link">BINDINGS</a>
       <a href="#bindings-security" class="toc-link toc-link-nested">Unsafe input</a>

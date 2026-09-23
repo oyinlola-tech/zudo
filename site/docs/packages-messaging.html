@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/messaging</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           An in-process message bus: one part of your program sends a named message, other parts handle it and send an answer back, all without the two sides knowing about each other.
@@ -372,8 +372,8 @@ console.<span class="fn">log</span>(nobody.duration &gt;= <span class="num">0</s
           <strong class="text-zudo-yellow">Watch out:</strong> A handler that is already running is not interrupted. Long handlers should check <code>context.signal.aborted</code> between steps and stop themselves. A timed-out dispatch comes back with <code>result.error instanceof MessageTimeoutError</code>.
         </div>
 
-        <div class="callout callout-danger">
-          <strong class="text-zudo-red">Cancelling does not always fail the dispatch:</strong> if you abort your own <code>signal</code> while the <em>last</em> handler is running, and that handler ignores the signal and returns normally, the dispatch comes back with <code>success: true</code> and the handler's value. There is no later handler left to skip, so nothing records the abort. (A <code>timeout</code> is different: it still fails with <code>MessageTimeoutError</code>.) If a cancelled dispatch must never look successful, have handlers call <code>context.signal.throwIfAborted()</code> after each <code>await</code>; the dispatch then fails with a <code>MessageHandlerError</code> whose cause is the abort.
+        <div class="callout callout-note">
+          <strong class="text-zudo-blue">Changed in v1.2.0:</strong> an abort always fails the dispatch. If your own <code>signal</code> aborts while the <em>last</em> (or only) handler is running, the dispatch now settles promptly with <code>success: false</code> and a <code>MessageDispatchAbortedError</code> in <code>result.error</code>, even if that handler ignores the signal and later returns normally. As with a timeout, the dispatch does not wait for such a handler, and <code>result.handlerResults</code> lists only the handlers that finished. This applies to the bus and to a dispatcher used directly. Before v1.2.0 that case came back as <code>success: true</code>. Handlers should still honour the signal (for example <code>context.signal.throwIfAborted()</code> after each <code>await</code>) so the work itself stops:
         </div>
 
         <div class="code-block mb-4">bus.<span class="fn">on</span>(<span class="str">"report.build"</span>, <span class="kw">async</span> (message, context) =&gt; {
@@ -434,7 +434,7 @@ console.<span class="fn">log</span>(result.value); <span class="cmt">// "pong"</
           A <em>correlation id</em> is a label shared by every message that belongs to one bigger operation, such as one HTTP request. A <em>causation id</em> is the id of the single message that directly caused this one. Together they let you trace "why did this happen?" through a chain of messages. If you set neither, both default to the message's own id.
         </p>
         <p class="mb-3"><code class="bg-black/5 px-1">createDerivedMessage</code> builds a follow-up message that inherits the parent's correlation id and records the parent as its cause.</p>
-        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createMessage</span>, <span class="fn">createDerivedMessage</span>, <span class="fn">toCorrelationId</span> } <span class="kw">from</span> <span class="str">"@zudojs/messaging"</span>;
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createMessage</span>, <span class="fn">createDerivedMessage</span>, <span class="fn">toCorrelationId</span>, <span class="fn">toCausationId</span> } <span class="kw">from</span> <span class="str">"@zudojs/messaging"</span>;
 
 <span class="kw">const</span> placed = <span class="fn">createMessage</span>({
   type: <span class="str">"order.placed"</span>,
@@ -448,7 +448,7 @@ console.<span class="fn">log</span>(result.value); <span class="cmt">// "pong"</
 });
 
 console.<span class="fn">log</span>(paid.correlationId);              <span class="cmt">// "req-abc" — inherited</span>
-console.<span class="fn">log</span>(paid.causationId === placed.id);  <span class="cmt">// true — placed caused paid</span></div>
+console.<span class="fn">log</span>(paid.causationId === <span class="fn">toCausationId</span>(placed.id));  <span class="cmt">// true — placed caused paid</span></div>
         <p class="mb-3">Inside a handler, read the ids from the context. This handler dispatches a follow-up on the same bus, keeping the chain intact.</p>
         <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createMessageBus</span>, <span class="fn">createDerivedMessage</span> } <span class="kw">from</span> <span class="str">"@zudojs/messaging"</span>;
 
@@ -470,9 +470,24 @@ bus.<span class="fn">on</span>(<span class="str">"order.paid"</span>, <span clas
           <strong class="text-zudo-blue">In plain words:</strong> Handlers receive the same context as middleware: <code>DispatchOptions.context</code> headers, state and id overrides, plus anything middleware put into <code>context.state</code>.
         </div>
 
-        <div class="callout callout-warning">
-          <strong class="text-zudo-yellow">Watch out: put the correlation id on the message.</strong> <code>bus.send(input, { context: { correlationId } })</code> sets <code>context.correlationId</code> for that one dispatch only. It is not written to the message, so <code>message.correlationId</code> stays <code>undefined</code>, and <code>createDerivedMessage(message, …)</code> in the handler starts a new chain whose correlation id is the new message's own id. To carry a request id through follow-up messages, put it in the input: <code>bus.send({ type, payload, correlationId: toCorrelationId("req-abc") })</code>.
+        <div class="callout callout-note">
+          <strong class="text-zudo-blue">Changed in v1.2.0:</strong> <code>bus.send(input, { context: { correlationId, causationId } })</code> now writes those identifiers onto the message it builds, unless the input carries its own. <code>message.correlationId</code> in the handler is therefore the request id, and <code>createDerivedMessage(message, &hellip;)</code> continues the chain instead of starting a new one. Before v1.2.0 the context ids applied to that one dispatch only and never reached the message.
         </div>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createMessageBus</span>, <span class="fn">createDerivedMessage</span>, <span class="fn">toCorrelationId</span> } <span class="kw">from</span> <span class="str">"@zudojs/messaging"</span>;
+
+<span class="kw">const</span> bus = <span class="fn">createMessageBus</span>();
+
+bus.<span class="fn">on</span>(<span class="str">"order.placed"</span>, <span class="kw">async</span> (message) =&gt; {
+  <span class="kw">const</span> paid = <span class="fn">createDerivedMessage</span>(message, { <span class="prop">type</span>: <span class="str">"order.paid"</span>, <span class="prop">payload</span>: <span class="kw">null</span> });
+  console.<span class="fn">log</span>(message.correlationId, paid.correlationId);
+}, { <span class="prop">id</span>: <span class="str">"take-payment"</span> });
+
+<span class="kw">await</span> bus.<span class="fn">send</span>(
+  { <span class="prop">type</span>: <span class="str">"order.placed"</span>, <span class="prop">payload</span>: <span class="kw">null</span> },
+  { <span class="prop">context</span>: { <span class="prop">correlationId</span>: <span class="fn">toCorrelationId</span>(<span class="str">"req-abc"</span>) } },
+);
+<span class="cmt">// req-abc req-abc</span>
+bus.<span class="fn">dispose</span>();</div>
       </section>
 
       <!-- Messaging vs Events -->
@@ -616,7 +631,7 @@ dispatcher.<span class="fn">dispose</span>(); <span class="cmt">// later dispatc
               <tr><td><code>MessageHandlerError</code></td><td>A handler threw.</td><td>Appears in <code>result.error</code>; has <code>handlerId</code>, <code>cause</code>.</td></tr>
               <tr><td><code>DuplicateMessageHandlerError</code></td><td>Handler id already registered.</td><td>Thrown by <code>on()</code> / <code>addHandler()</code>.</td></tr>
               <tr><td><code>MessageBusDisposedError</code></td><td>Bus used after <code>dispose()</code>.</td><td>Rejects the dispatch promise.</td></tr>
-              <tr><td><code>MessageDispatchAbortedError</code></td><td>Signal aborted before or between handlers.</td><td>Rejects if aborted up front; otherwise returned as <code>result.error</code>. Not reported if the abort lands while the last handler runs.</td></tr>
+              <tr><td><code>MessageDispatchAbortedError</code></td><td>Signal aborted before or between handlers.</td><td>Rejects if aborted up front; otherwise returned as <code>result.error</code>, including an abort while the last handler runs (since v1.2.0).</td></tr>
               <tr><td><code>MessageTimeoutError</code></td><td>A dispatch ran past its <code>timeout</code> or <code>defaultTimeout</code>.</td><td>Returned as <code>result.error</code>, even when the last handler finishes later.</td></tr>
               <tr><td><code>MessageError</code>, <code>MessageDispatchError</code>, <code>InvalidMessageError</code>, <code>MessageTypeNotFoundError</code>, <code>MessageHandlerNotFoundError</code>, <code>MessageMiddlewareError</code>, <code>MessageValidationError</code></td><td>Shared hierarchy for messaging errors.</td><td>Not thrown by this package itself, apart from <code>MessageError</code> as described above.</td></tr>
             </tbody>
@@ -639,9 +654,6 @@ dispatcher.<span class="fn">dispose</span>(); <span class="cmt">// later dispatc
           </li>
           <li class="border-l-4 border-zudo-red pl-4">
             <strong>Expecting a timeout to stop a running handler</strong> → the timer only aborts a signal; the handler keeps going; the dispatch result carries a <code>MessageTimeoutError</code>. → Check <code>context.signal.aborted</code> inside long handlers, or call <code>context.signal.throwIfAborted()</code> after each <code>await</code>.
-          </li>
-          <li class="border-l-4 border-zudo-red pl-4">
-            <strong>Passing the correlation id only in <code>DispatchOptions.context</code></strong> → the handler sees it on <code>context.correlationId</code>, but it is not on the message, so <code>createDerivedMessage</code> starts a new chain. → Set <code>correlationId</code> on the message input itself.
           </li>
           <li class="border-l-4 border-zudo-red pl-4">
             <strong>Expecting <code>result.value</code> to always be a single value</strong> → with two or more handlers it is an array in priority order, and with none it is <code>[]</code>. → Check <code>result.handlerResults.length</code> when the handler count can vary.

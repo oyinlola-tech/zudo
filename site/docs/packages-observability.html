@@ -123,7 +123,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/observability</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Logs, metrics and traces for a Zudojs application, behind one small facade you can point at any backend.
@@ -177,7 +177,7 @@
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
         <div class="code-block mb-4">$ npm install @zudojs/observability</div>
 
-        <p class="mb-4 leading-relaxed">The only runtime dependency is <code class="bg-black/5 px-1">@zudojs/errors</code> at <code class="bg-black/5 px-1">1.1.0</code>, which npm installs for you. Node 24 or newer is required — context propagation uses Node's built-in <code class="bg-black/5 px-1">AsyncLocalStorage</code>, so this package does not run in a browser.</p>
+        <p class="mb-4 leading-relaxed">The runtime dependencies are <code class="bg-black/5 px-1">@zudojs/errors</code> and <code class="bg-black/5 px-1">@zudojs/logger</code> (whose secret-field rules the redactor reuses), which npm installs for you. Node 24 or newer is required — context propagation uses Node's built-in <code class="bg-black/5 px-1">AsyncLocalStorage</code>, so this package does not run in a browser.</p>
 
         <div class="callout callout-note mb-4">
           <p class="text-sm">These docs follow the framework source. If an export shown here is missing from the version you installed, update to the latest <code>@zudojs</code> release.</p>
@@ -196,7 +196,7 @@
 <span class="kw">const</span> obs = <span class="fn">createObservability</span>({
   <span class="prop">serviceName</span>: <span class="str">"orders-api"</span>,
   <span class="prop">logLevel</span>: <span class="tp">LogLevel</span>.<span class="const">INFO</span>,
-  <span class="prop">redaction</span>: {}, <span class="cmt">// off unless you set it; see Redaction</span>
+  <span class="cmt">// Redaction is on by default; see Redaction.</span>
 });
 
 obs.<span class="prop">logger</span>.<span class="fn">info</span>(<span class="str">"server started"</span>, { <span class="prop">port</span>: <span class="num">3000</span> });
@@ -210,7 +210,7 @@ span.<span class="fn">end</span>();
 <span class="cmt">// Pushes everything still buffered, then closes the exporters.</span>
 <span class="kw">await</span> obs.<span class="fn">shutdown</span>();</div>
 
-        <p class="mb-4 leading-relaxed"><strong>What you should see.</strong> Four JSON lines on stdout: one log record, one span, and the metric snapshot <em>twice</em> (see the note below). The log line looks like this (formatted here for reading; it prints on a single line):</p>
+        <p class="mb-4 leading-relaxed"><strong>What you should see.</strong> Three JSON lines on stdout: one log record, one span, and one metric snapshot. The log line looks like this (formatted here for reading; it prints on a single line):</p>
         <div class="code-block mb-4">{
   <span class="prop">"timestamp"</span>: <span class="str">"2026-09-09T10:15:00.412Z"</span>,
   <span class="prop">"level"</span>: <span class="str">"info"</span>,
@@ -224,9 +224,9 @@ span.<span class="fn">end</span>();
           <p class="text-sm">Printing to the console is the default, not a choice you made. <code>useConsoleExporters</code> defaults to <code>true</code>, so a deployed service will spray JSON at stdout until you pass real exporters or set it to <code>false</code>.</p>
         </div>
 
-        <div class="callout callout-warning mb-4">
-          <p class="text-sm font-bold mb-1">WATCH OUT — THE LAST METRIC SNAPSHOT IS EXPORTED TWICE</p>
-          <p class="text-sm">In 1.1.1, <code>shutdown()</code> exports the final metric snapshot twice, so the <code>http.requests</code> line above appears two times with the same value and timestamp. A backend that <em>adds up</em> counter exports will count the last interval double. Deduplicate on name, labels and timestamp in your exporter, or treat exported counter values as cumulative totals rather than increments.</p>
+        <div class="callout callout-note mb-4">
+          <p class="text-sm font-bold mb-1">CHANGED IN 1.2.0</p>
+          <p class="text-sm"><code>shutdown()</code> exports the final metric snapshot once. Up to 1.1.x it exported it twice, with the same value and timestamp, so a backend that adds up counter exports counted the last interval double. If you added deduplication in your exporter for that, you can remove it. <code>flush()</code> is unchanged.</p>
         </div>
 
         <div class="callout callout-tip mb-4">
@@ -499,20 +499,19 @@ span.<span class="fn">end</span>();
 
         <p class="mb-4 leading-relaxed"><em>Redaction</em> means replacing a sensitive value with a placeholder before it leaves the process. Telemetry is the classic accidental leak: a request body lands in a log context, the log ships to a vendor, and a password is now in someone else's database.</p>
 
-        <div class="border-4 border-black bg-zudo-red/10 p-4 mb-6">
-          <p class="font-bold mb-2">Redaction is OFF by default here, which is the opposite of <code class="bg-black/5 px-1">@zudojs/logger</code>.</p>
-          <p class="text-sm mb-2">If you do not set <code class="bg-black/5 px-1">redaction</code> in the config, <strong>nothing is redacted</strong>. <code class="bg-black/5 px-1">obs.logger.info("login", { email, password })</code> prints <code class="bg-black/5 px-1">"password":"hunter2"</code> in clear text, and span attributes go out the same way. <code class="bg-black/5 px-1">@zudojs/logger</code>'s <code class="bg-black/5 px-1">createLogger</code> prints <code class="bg-black/5 px-1">password=[REDACTED]</code> for the same call, so code moved from one to the other silently starts leaking.</p>
-          <p class="text-sm">Always pass <code class="bg-black/5 px-1">redaction: {}</code> (or your own <code class="bg-black/5 px-1">fields</code> list spread over <code class="bg-black/5 px-1">DEFAULT_SENSITIVE_FIELDS</code>) to <code class="bg-black/5 px-1">createObservability</code>. With it, the same call prints <code class="bg-black/5 px-1">"password":"[REDACTED]"</code>.</p>
+        <p class="mb-4 leading-relaxed">Redaction is <strong>on by default</strong>, as it is in <a href="/docs/packages-logger" class="text-zudo-blue underline">@zudojs/logger</a>. With no <code class="bg-black/5 px-1">redaction</code> option, every field name the logger redacts by default (<code class="bg-black/5 px-1">password</code>, <code class="bg-black/5 px-1">passphrase</code>, <code class="bg-black/5 px-1">token</code>, <code class="bg-black/5 px-1">jwt</code>, <code class="bg-black/5 px-1">bearer</code>, <code class="bg-black/5 px-1">authorization</code>, <code class="bg-black/5 px-1">cookie</code>, <code class="bg-black/5 px-1">sid</code>, <code class="bg-black/5 px-1">pwd</code>, API keys, card numbers and more) is redacted, along with this package's own <code class="bg-black/5 px-1">DEFAULT_SENSITIVE_FIELDS</code>. It is applied inside the logger and inside the span, so every processor and exporter downstream sees the already-redacted value.</p>
+
+        <div class="callout callout-note mb-4">
+          <p class="text-sm font-bold mb-1">CHANGED IN 1.2.0</p>
+          <p class="text-sm">Up to 1.1.x redaction was off unless you passed <code>redaction</code>, so <code>obs.logger.info("login", { password })</code> exported the password in clear text. You no longer need <code>redaction: {}</code>; it still works and means the same as leaving the option out. To turn redaction off, pass <code>redaction: false</code>.</p>
         </div>
 
-        <p class="mb-4 leading-relaxed">Once you opt in, redaction is applied inside the logger and inside the span, so every processor and exporter downstream sees the already-redacted value.</p>
-
-        <p class="mb-3 leading-relaxed">This turns redaction on and shows what it catches in both a log and a span.</p>
+        <p class="mb-3 leading-relaxed">This uses the defaults and shows what they catch in both a log and a span.</p>
         <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createObservability</span> } <span class="kw">from</span> <span class="str">"@zudojs/observability"</span>;
 
 <span class="kw">const</span> obs = <span class="fn">createObservability</span>({
   <span class="prop">serviceName</span>: <span class="str">"orders-api"</span>,
-  <span class="prop">redaction</span>: {}, <span class="cmt">// opt in; {} means "use the defaults"</span>
+  <span class="cmt">// No redaction option: the default rules apply. redaction: false turns them off.</span>
 });
 
 obs.<span class="prop">logger</span>.<span class="fn">info</span>(<span class="str">"login attempt"</span>, {
@@ -535,9 +534,9 @@ span.<span class="fn">end</span>();
           <table class="doc-table">
             <thead><tr><th>Data</th><th>Redacted?</th><th>Notes</th></tr></thead>
             <tbody>
-              <tr><td>Log context fields</td><td><strong>Yes</strong>, once you opt in</td><td>Nested objects, arrays and instances of your own classes are walked too; built-ins such as <code>Error</code>, <code>Date</code>, <code>Map</code> and <code>Set</code> are left intact.</td></tr>
-              <tr><td>Span attributes</td><td><strong>Yes</strong>, once you opt in</td><td>Applied on <code>setAttribute</code>, before any processor sees it.</td></tr>
-              <tr><td>Span event attributes</td><td><strong>Yes</strong>, once you opt in</td><td>Covers <code>addEvent</code>.</td></tr>
+              <tr><td>Log context fields</td><td><strong>Yes</strong>, by default</td><td>Nested objects, arrays and instances of your own classes are walked too; built-ins such as <code>Error</code>, <code>Date</code>, <code>Map</code> and <code>Set</code> are left intact.</td></tr>
+              <tr><td>Span attributes</td><td><strong>Yes</strong>, by default</td><td>Applied on <code>setAttribute</code>, before any processor sees it.</td></tr>
+              <tr><td>Span event attributes</td><td><strong>Yes</strong>, by default</td><td>Covers <code>addEvent</code>.</td></tr>
               <tr><td>The log message string</td><td><strong>No</strong></td><td>Only named fields are examined. Never interpolate a secret into the message.</td></tr>
               <tr><td>The error you pass to a log method</td><td><strong>No</strong></td><td>Its name, message and stack reach the exporter as written.</td></tr>
               <tr><td>Error message and stack on a span</td><td><strong>No</strong></td><td><code>recordError</code> stores them as strings under non-sensitive keys, so the field rules never fire. Set <code>captureStackTraces: false</code> to drop the stack.</td></tr>
@@ -550,15 +549,12 @@ span.<span class="fn">end</span>();
         <h3 class="text-lg font-bold mb-3 mt-6">Tuning the rules</h3>
         <p class="mb-4 leading-relaxed">Matching is case-insensitive and, by default, word-aware. <code class="bg-black/5 px-1">userPassword</code>, <code class="bg-black/5 px-1">x-api-key</code> and <code class="bg-black/5 px-1">accessToken</code> all match; <code class="bg-black/5 px-1">shippingAddress</code> and <code class="bg-black/5 px-1">authorId</code> do not, even though they contain the letters <code class="bg-black/5 px-1">pin</code> and <code class="bg-black/5 px-1">auth</code>. Pass <code class="bg-black/5 px-1">matchMode: "exact"</code> to match whole names only.</p>
 
-        <p class="mb-3 leading-relaxed">This adds a field, a pattern and a custom rule on top of the defaults.</p>
-        <div class="code-block mb-4"><span class="kw">import</span> {
-  <span class="fn">redactObject</span>,
-  <span class="const">DEFAULT_SENSITIVE_FIELDS</span>,
-} <span class="kw">from</span> <span class="str">"@zudojs/observability"</span>;
+        <p class="mb-3 leading-relaxed">This adds two patterns and a custom rule on top of the defaults. <code class="bg-black/5 px-1">patterns</code> and <code class="bg-black/5 px-1">customRedactor</code> add to the default rules; <code class="bg-black/5 px-1">fields</code> replaces them (see the warning below).</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">redactObject</span>, <span class="kw">type</span> <span class="tp">RedactionConfig</span> } <span class="kw">from</span> <span class="str">"@zudojs/observability"</span>;
 
-<span class="kw">const</span> config = {
-  <span class="prop">fields</span>: [...<span class="const">DEFAULT_SENSITIVE_FIELDS</span>, <span class="str">"nationalId"</span>],
-  <span class="prop">patterns</span>: [<span class="str">/^x-.*-token$/i</span>],
+<span class="kw">const</span> config: <span class="tp">RedactionConfig</span> = {
+  <span class="cmt">// patterns add to the defaults; fields would replace them</span>
+  <span class="prop">patterns</span>: [<span class="str">/^nationalId$/i</span>, <span class="str">/^x-.*-token$/i</span>],
   <span class="prop">replacement</span>: <span class="str">"***"</span>,
   <span class="prop">customRedactor</span>: (<span class="param">key</span>, <span class="param">value</span>) =&gt;
     key === <span class="str">"email"</span> &amp;&amp; <span class="kw">typeof</span> value === <span class="str">"string"</span>
@@ -570,16 +566,17 @@ console.<span class="fn">log</span>(<span class="fn">redactObject</span>({
   <span class="prop">email</span>: <span class="str">"ada@example.com"</span>,
   <span class="prop">nationalId</span>: <span class="str">"A123"</span>,
   <span class="str">"x-refresh-token"</span>: <span class="str">"rt_1"</span>,
+  <span class="prop">jwt</span>: <span class="str">"eyJhbGciOi"</span>,
   <span class="prop">orderId</span>: <span class="str">"o_9"</span>,
 }, config));
 <span class="cmt">// { email: "***@example.com", nationalId: "***",</span>
-<span class="cmt">//   "x-refresh-token": "***", orderId: "o_9" }</span></div>
+<span class="cmt">//   "x-refresh-token": "***", jwt: "***", orderId: "o_9" }</span></div>
 
         <p class="mb-4 leading-relaxed">Traversal stops at depth 8 by default (raise it with <code class="bg-black/5 px-1">maxDepth</code>) and is cycle-aware. Anything cut off is replaced with <code class="bg-black/5 px-1">MAX_DEPTH_MARKER</code> or <code class="bg-black/5 px-1">CIRCULAR_MARKER</code>, both exported so you can recognise them.</p>
 
         <div class="callout callout-warning mb-4">
           <p class="text-sm font-bold mb-1">WATCH OUT</p>
-          <p class="text-sm">Supplying <code>fields</code> <em>replaces</em> the built-in list rather than adding to it. Spread <code>DEFAULT_SENSITIVE_FIELDS</code> in, as above, unless you really mean to start from scratch.</p>
+          <p class="text-sm">Supplying <code>fields</code> <em>replaces</em> the default rules rather than adding to them &mdash; and <code>DEFAULT_SENSITIVE_FIELDS</code> is only part of the default. The logger's names (<code>jwt</code>, <code>sid</code>, <code>pwd</code>, <code>passphrase</code>, <code>bearer</code> and others) are added only while <code>fields</code> is unset. Tested: <code>fields: [...DEFAULT_SENSITIVE_FIELDS, "nationalId"]</code> left <code>jwt: "eyJhbGciOi"</code> in clear text. To add names, use <code>patterns</code> as above, or spread both lists: <code>fields: [...DEFAULT_SENSITIVE_FIELDS, ...DEFAULT_LOGGER_SECRET_FIELDS, "nationalId"]</code>, with <code>DEFAULT_LOGGER_SECRET_FIELDS</code> imported from <code>@zudojs/logger</code>.</p>
         </div>
       </section>
 
@@ -650,7 +647,7 @@ billing.<span class="prop">tracer</span>.<span class="fn">startSpan</span>(<span
               <tr><td><code>useConsoleExporters</code></td><td>Fall back to console exporters when none is supplied.</td><td><code>true</code></td></tr>
               <tr><td><code>sampler</code></td><td>Which traces to record.</td><td><code>AlwaysOnSampler</code></td></tr>
               <tr><td><code>processors</code></td><td>Your own span processors. Supplying them disables the built-in batch processor.</td><td>one <code>BatchSpanProcessor</code></td></tr>
-              <tr><td><code>redaction</code></td><td>Turns redaction on for log contexts and span attributes.</td><td>off</td></tr>
+              <tr><td><code>redaction</code></td><td>Redaction rules for log contexts and span attributes (<code>RedactionConfig</code>), or <code>false</code> to turn redaction off.</td><td>on, with the default rules</td></tr>
               <tr><td><code>metrics</code></td><td><code>MetricsRegistryOptions</code>: <code>maxSeries</code>, <code>histogramBoundaries</code>, <code>onCardinalityLimit</code>.</td><td>cap 10,000</td></tr>
               <tr><td><code>spanLimits</code></td><td>Per-span caps on attributes, events and string length.</td><td>128 / 128 / 128 / 4096</td></tr>
               <tr><td><code>resource</code></td><td>Extra attributes stamped on every span.</td><td><code>{}</code></td></tr>
@@ -693,7 +690,7 @@ billing.<span class="prop">tracer</span>.<span class="fn">startSpan</span>(<span
               <tr><td><code>getCurrentContext()</code>, <code>requireCurrentContext()</code></td><td>Read the active context.</td><td>The first may return <code>undefined</code>; the second invents a new trace.</td></tr>
               <tr><td><code>createConsoleLogExporter</code>, <code>createConsoleSpanExporter</code>, <code>createConsoleMetricExporter</code></td><td>Print telemetry as JSON.</td><td>Take <code>ConsoleExporterOptions</code> (<code>pretty</code>, <code>console</code>).</td></tr>
               <tr><td><code>createBatchSpanProcessor</code>, <code>createSimpleSpanProcessor</code>, <code>createBatchLogProcessor</code></td><td>Buffer or forward telemetry to an exporter.</td><td>Batch options: <code>batchSize</code>, <code>flushIntervalMs</code>, <code>maxQueueSize</code>, <code>onError</code>, <code>onDrop</code>.</td></tr>
-              <tr><td><code>createRedactor(config?)</code>, <code>createStructureRedactor(config?)</code></td><td>Redact one field, or walk a whole structure.</td><td>Used internally when <code>redaction</code> is set.</td></tr>
+              <tr><td><code>createRedactor(config?)</code>, <code>createStructureRedactor(config?)</code></td><td>Redact one field, or walk a whole structure.</td><td>Used internally unless <code>redaction</code> is <code>false</code>.</td></tr>
               <tr><td><code>redactObject(object, config?)</code>, <code>redactValue(value, config?)</code>, <code>isSensitiveField(key, config?)</code></td><td>One-shot redaction helpers.</td><td>Handy in tests and in your own sinks.</td></tr>
               <tr><td><code>generateTraceId()</code>, <code>generateSpanId()</code>, <code>isValidTraceId</code>, <code>isValidSpanId</code></td><td>W3C-shaped IDs: 32 and 16 hex characters.</td><td>Applied by every context factory: an invalid inbound ID starts a fresh trace. Use <code>parseTraceparent</code> / <code>formatTraceparent</code> for W3C headers.</td></tr>
               <tr><td><code>logLevelToName</code>, <code>logLevelFromName</code>, <code>parseLogLevel</code>, <code>shouldLog</code>, <code>getLogLevelNames</code></td><td>Convert between levels and names.</td><td><code>parseLogLevel</code> returns <code>undefined</code> on junk — good for env vars.</td></tr>
@@ -764,7 +761,7 @@ billing.<span class="prop">tracer</span>.<span class="fn">startSpan</span>(<span
           <table class="doc-table">
             <thead><tr><th>Name</th><th>What it is</th><th>Notes</th></tr></thead>
             <tbody>
-              <tr><td><code>DEFAULT_SENSITIVE_FIELDS</code></td><td>The built-in redaction field list.</td><td>Spread it when adding your own.</td></tr>
+              <tr><td><code>DEFAULT_SENSITIVE_FIELDS</code></td><td>This package's own redaction field list.</td><td>Not the whole default: the logger's <code>DEFAULT_LOGGER_SECRET_FIELDS</code> are added while <code>fields</code> is unset. Spread both if you set <code>fields</code>.</td></tr>
               <tr><td><code>DEFAULT_BUCKET_BOUNDARIES</code></td><td>Default histogram buckets, 1 to 10,000.</td><td>Tuned for millisecond latencies.</td></tr>
               <tr><td><code>CIRCULAR_MARKER</code>, <code>MAX_DEPTH_MARKER</code></td><td>Placeholders left by the redactor.</td><td><code>"[CIRCULAR]"</code> and <code>"[MAX_DEPTH]"</code>.</td></tr>
               <tr><td><code>INVALID_PROPAGATION_CONTEXT</code></td><td>All-zero context used by the noop manager.</td><td>Frozen.</td></tr>
@@ -780,11 +777,11 @@ billing.<span class="prop">tracer</span>.<span class="fn">startSpan</span>(<span
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">COMMON MISTAKES</h2>
         <ul class="space-y-4">
           <li class="border-l-4 border-zudo-red pl-4"><strong>Exiting without <code>await obs.shutdown()</code>.</strong> Buffered logs, spans and the final metric snapshot are dropped, and the process may hang on the metric timer. Await <code>shutdown()</code> in your termination handler.</li>
-          <li class="border-l-4 border-zudo-red pl-4"><strong>Assuming secrets are stripped.</strong> With no <code>redaction</code> key, passwords and tokens are printed verbatim. Set <code>redaction: {}</code> at minimum, and keep secrets out of log messages, error messages and metric labels — none of those are covered.</li>
+          <li class="border-l-4 border-zudo-red pl-4"><strong>Assuming every secret is stripped.</strong> Redaction covers named fields in log contexts and span attributes. Log messages, error messages and stacks, and metric labels are not covered, so keep secrets out of them. And never ship <code>redaction: false</code> outside a local debugging session.</li>
           <li class="border-l-4 border-zudo-red pl-4"><strong>Putting an ID in a metric label.</strong> <code>{ path: "/orders/9182" }</code> creates one series per order. You hit the 10,000-series cap, new series are refused, and your graphs go flat. Use the route template.</li>
           <li class="border-l-4 border-zudo-red pl-4"><strong>Deploying with the console exporters.</strong> <code>useConsoleExporters</code> defaults to <code>true</code>, so production writes JSON to stdout. Pass real exporters or set it to <code>false</code>.</li>
           <li class="border-l-4 border-zudo-red pl-4"><strong>Forgetting <code>span.end()</code> on the error path.</strong> The span is never exported and never released. End it in a <code>finally</code>.</li>
-          <li class="border-l-4 border-zudo-red pl-4"><strong>Replacing <code>fields</code> instead of extending it.</strong> <code>redaction: { fields: ["myToken"] }</code> discards the built-in list, so <code>password</code> stops being redacted. Spread <code>DEFAULT_SENSITIVE_FIELDS</code> first.</li>
+          <li class="border-l-4 border-zudo-red pl-4"><strong>Replacing <code>fields</code> instead of extending the rules.</strong> <code>redaction: { fields: ["myToken"] }</code> discards the default rules, so <code>password</code> stops being redacted. Add names with <code>patterns</code>, or spread both <code>DEFAULT_SENSITIVE_FIELDS</code> and <code>@zudojs/logger</code>'s <code>DEFAULT_LOGGER_SECRET_FIELDS</code>.</li>
           <li class="border-l-4 border-zudo-red pl-4"><strong>Leaving <code>onError</code> unset.</strong> Dropped batches, failing exporters and cardinality warnings all go nowhere. Wire it to your own logger.</li>
         </ul>
       </section>

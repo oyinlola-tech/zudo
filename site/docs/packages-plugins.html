@@ -118,7 +118,7 @@
       </div>
 
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.2.0</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.3.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/plugins</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Controlled extension system for the Zudojs framework. Provides plugin registration, dependency resolution with cycle detection, lifecycle management, and orchestration for Zudojs applications.
@@ -166,7 +166,7 @@
 
       <section id="installation" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-        <p class="mb-3">Install the package. Its three helper packages (<code class="bg-black/5 px-1">@zudojs/errors</code>, <code class="bg-black/5 px-1">@zudojs/constants</code>, <code class="bg-black/5 px-1">@zudojs/types</code>) are pulled in automatically.</p>
+        <p class="mb-3">Install the package. Its one dependency, <code class="bg-black/5 px-1">@zudojs/errors</code>, is pulled in automatically. <code class="bg-black/5 px-1">@zudojs/events</code> is optional: install it only if you want to pass an <code class="bg-black/5 px-1">EventBus</code> as the <code class="bg-black/5 px-1">events</code> option.</p>
         <div class="code-block mb-4">$ npm install @zudojs/plugins</div>
 
         <div class="callout callout-note">
@@ -275,7 +275,7 @@ manager.<span class="fn">register</span>(banner, { text: <span class="str">"hell
   <span class="kw">readonly</span> container?: <span class="tp">PluginContainer</span>; <span class="cmt">// { register(token, provider) }</span>
   <span class="kw">readonly</span> config?: <span class="tp">PluginConfig</span>;       <span class="cmt">// { get(key) }</span>
   <span class="kw">readonly</span> logger?: <span class="tp">PluginLogger</span>;       <span class="cmt">// { info, warn, error }</span>
-  <span class="kw">readonly</span> events?: <span class="tp">PluginEvents</span>;       <span class="cmt">// { on, off, emit }</span>
+  <span class="kw">readonly</span> events?: <span class="tp">PluginEvents</span>;       <span class="cmt">// { on, off, emit }; a bus is adapted to this</span>
   <span class="kw">readonly</span> signal: <span class="tp">AbortSignal</span>;         <span class="cmt">// aborted on shutdown</span>
 
   <span class="fn">onDispose</span>(handler: () =&gt; <span class="tp">void</span> | <span class="tp">Promise</span>&lt;<span class="tp">void</span>&gt;): <span class="tp">void</span>;
@@ -429,7 +429,7 @@ manager.<span class="fn">register</span>({ metadata: { name: <span class="str">"
             <tr><td class="font-mono">onError(error, pluginName)</td><td>Called for each failure during <code>stop()</code>. Shutdown continues past the failing plugin.</td><td>logs through the <code>logger</code> option (or the context logger); otherwise a <code>ZudoPluginWarning</code> process warning</td></tr>
             <tr><td class="font-mono">logger</td><td>Logger for teardown failures when <code>onError</code> is omitted.</td><td>context logger</td></tr>
             <tr><td class="font-mono">checkVersions</td><td>Enforce <code>version</code> ranges on dependencies at <code>start()</code>.</td><td><code>true</code></td></tr>
-            <tr><td class="font-mono">events</td><td>Event sink (<code>on</code>/<code>off</code>/<code>emit</code>) for <code>plugin:registered</code>. Registration happens before any plugin context exists, so lifecycle events sent through <code>context.events</code> cannot cover it.</td><td>unset (no registration event)</td></tr>
+            <tr><td class="font-mono">events</td><td>Event sink (<code>on</code>/<code>off</code>/<code>emit</code>) or an <code>@zudojs/events</code> <code>EventBus</code>, for <code>plugin:registered</code>. Registration happens before any plugin context exists, so lifecycle events sent through <code>context.events</code> cannot cover it. A failed emit here is reported through <code>onError</code>.</td><td>unset (no registration event)</td></tr>
             <tr><td class="font-mono">allowedCapabilities</td><td>List of strings a plugin's <code>metadata.capabilities</code> may contain. Anything else is rejected at <code>register()</code>.</td><td>unset (allow all)</td></tr>
           </tbody>
         </table>
@@ -471,7 +471,7 @@ console.<span class="fn">log</span>(report.total, report.healthy, report.degrade
 console.<span class="fn">log</span>(report.plugins[<span class="num">0</span>]?.state, report.plugins[<span class="num">0</span>]?.health.status); <span class="cmt">// started healthy</span></div>
 
         <p class="mb-3">
-          If your context has an <code class="bg-black/5 px-1">events</code> object, the manager emits an event at every state change. Subscribe <em>before</em> calling <code class="bg-black/5 px-1">start()</code>. Node's built-in <code class="bg-black/5 px-1">EventEmitter</code> has the right shape.
+          If your context has an <code class="bg-black/5 px-1">events</code> object, the manager emits an event at every state change. Subscribe <em>before</em> calling <code class="bg-black/5 px-1">start()</code>. Node's built-in <code class="bg-black/5 px-1">EventEmitter</code> has the right shape, and so does an <code class="bg-black/5 px-1">@zudojs/events</code> bus (see below).
         </p>
         <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">EventEmitter</span> } <span class="kw">from</span> <span class="str">"node:events"</span>;
 <span class="kw">import</span> { <span class="tp">PluginManager</span>, <span class="fn">createPluginContext</span>, <span class="const">PLUGIN_EVENTS</span> } <span class="kw">from</span> <span class="str">"@zudojs/plugins"</span>;
@@ -491,51 +491,73 @@ manager.<span class="fn">register</span>({ metadata: { name: <span class="str">"
           Event names live on <code class="bg-black/5 px-1">PLUGIN_EVENTS</code>: <code class="bg-black/5 px-1">INSTALLING</code>, <code class="bg-black/5 px-1">INSTALLED</code>, <code class="bg-black/5 px-1">INITIALIZING</code>, <code class="bg-black/5 px-1">INITIALIZED</code>, <code class="bg-black/5 px-1">STARTING</code>, <code class="bg-black/5 px-1">STARTED</code>, <code class="bg-black/5 px-1">STOPPING</code>, <code class="bg-black/5 px-1">STOPPED</code>, <code class="bg-black/5 px-1">DISPOSING</code>, <code class="bg-black/5 px-1">DISPOSED</code> and <code class="bg-black/5 px-1">FAILED</code>. Each event payload is a <code class="bg-black/5 px-1">PluginLifecycleEvent</code> with <code class="bg-black/5 px-1">plugin</code>, <code class="bg-black/5 px-1">state</code>, <code class="bg-black/5 px-1">previousState</code>, <code class="bg-black/5 px-1">timestamp</code> and, on failure, <code class="bg-black/5 px-1">error</code>.
         </p>
         <div class="callout callout-note">
-          <strong class="text-zudo-blue">Note:</strong> <code>register()</code> emits <code>PLUGIN_EVENTS.REGISTERED</code> only through the manager&#39;s <code>events</code> option, because no plugin context exists yet; events sent through <code>context.events</code> start with <code>INSTALLING</code>. A listener that throws is logged and does not interrupt the lifecycle.
+          <strong class="text-zudo-blue">Note:</strong> <code>register()</code> emits <code>PLUGIN_EVENTS.REGISTERED</code> only through the manager&#39;s <code>events</code> option, because no plugin context exists yet; events sent through <code>context.events</code> start with <code>INSTALLING</code>.
         </div>
 
-        <div class="border-4 border-black bg-zudo-red/10 p-4 mt-4 mb-6">
-          <p class="font-bold mb-2">An <code class="bg-black/5 px-1">emit</code> that returns a rejected promise crashes the process.</p>
-          <p class="text-sm mb-2">"A listener that throws does not interrupt the lifecycle" only covers an <code class="bg-black/5 px-1">emit</code> that throws <em>synchronously</em>. <code class="bg-black/5 px-1">PluginEvents.emit</code> is typed to return <code class="bg-black/5 px-1">void</code>, and the manager never looks at what it returns. If your <code class="bg-black/5 px-1">emit</code> is <code class="bg-black/5 px-1">async</code> (or returns a promise) and that promise rejects, nobody handles it: <code class="bg-black/5 px-1">manager.start()</code> resolves normally, and a moment later Node stops the process with an unhandled rejection and exit code 1. Tested: an <code class="bg-black/5 px-1">async emit</code> that throws on <code class="bg-black/5 px-1">plugin:started</code> printed <code class="bg-black/5 px-1">start() resolved</code> and then exited 1.</p>
-          <p class="text-sm">This is the usual way to hit it: <code class="bg-black/5 px-1">@zudojs/events</code>' <code class="bg-black/5 px-1">EventBus</code> has an async <code class="bg-black/5 px-1">emit</code>, and it is not a <code class="bg-black/5 px-1">PluginEvents</code> anyway (its <code class="bg-black/5 px-1">off</code> takes a subscription, so passing it fails with <code class="bg-black/5 px-1">TS2322</code>). Put an adapter in between that keeps <code class="bg-black/5 px-1">emit</code> synchronous and catches the promise:</p>
+        <h3 class="text-lg font-bold mb-2 mt-6">A failing listener never stops the lifecycle</h3>
+        <p class="mb-3">
+          An <code class="bg-black/5 px-1">emit</code> may throw, or it may be <code class="bg-black/5 px-1">async</code> and return a promise that rejects. Either way the manager catches the failure, reports it, and carries on. A failure from the manager's own <code class="bg-black/5 px-1">events</code> option goes to <code class="bg-black/5 px-1">onError</code>. A failure from <code class="bg-black/5 px-1">context.events</code> goes to the context's <code class="bg-black/5 px-1">logger.error</code>, or, with no logger, to a <code class="bg-black/5 px-1">ZudoPluginWarning</code> process warning.
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">PluginManager</span>, <span class="fn">createPluginContext</span> } <span class="kw">from</span> <span class="str">"@zudojs/plugins"</span>;
+<span class="kw">import type</span> { <span class="tp">PluginEvents</span> } <span class="kw">from</span> <span class="str">"@zudojs/plugins"</span>;
+
+<span class="kw">const</span> events: <span class="tp">PluginEvents</span> = {
+  <span class="fn">on</span>() {},
+  <span class="fn">off</span>() {},
+  <span class="kw">async</span> <span class="fn">emit</span>(name) {
+    <span class="kw">throw new</span> <span class="fn">Error</span>(<span class="str">`could not deliver ${name}`</span>);
+  },
+};
+
+<span class="kw">const</span> logger = { info: console.<span class="fn">log</span>, warn: console.<span class="fn">warn</span>, error: console.<span class="fn">error</span> };
+<span class="kw">const</span> manager = <span class="kw">new</span> <span class="fn">PluginManager</span>();
+manager.<span class="fn">register</span>({ metadata: { name: <span class="str">"greeter"</span> } });
+
+<span class="kw">await</span> manager.<span class="fn">start</span>(<span class="fn">createPluginContext</span>({ name: <span class="str">"my-app"</span> }, { events, logger }));
+console.<span class="fn">log</span>(<span class="str">"start() resolved and the process keeps running"</span>);
+<span class="cmt">// logger.error prints one line per event, such as:</span>
+<span class="cmt">// Listener for "plugin:started" threw. { plugin: 'greeter', event: 'plugin:started', error: 'could not deliver plugin:started' }</span></div>
+        <div class="callout callout-note">
+          <strong class="text-zudo-blue">Changed in 1.3.0:</strong> before 1.3.0 only a synchronous throw was caught. A rejected promise from an <code>async emit</code> escaped as an unhandled rejection after <code>start()</code> had resolved, and Node stopped the process with exit code 1. <code>PluginEvents.emit</code> is now typed <code>void | PromiseLike&lt;unknown&gt;</code>.
         </div>
 
+        <h3 class="text-lg font-bold mb-2 mt-6">Using an @zudojs/events bus</h3>
+        <p class="mb-3">
+          Both the manager's <code class="bg-black/5 px-1">events</code> option and <code class="bg-black/5 px-1">createPluginContext(meta, { events })</code> accept an <a href="/docs/packages-events" class="text-zudo-blue underline">@zudojs/events</a> <code class="bg-black/5 px-1">EventBus</code> as it is. The manager wraps it with <code class="bg-black/5 px-1">toPluginEvents()</code>, so inside a hook <code class="bg-black/5 px-1">context.events</code> is still a <code class="bg-black/5 px-1">PluginEvents</code>:
+        </p>
+        <ul class="space-y-2 mb-4 text-sm">
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <span><code class="bg-black/5 px-1">emit(name, payload)</code> publishes <code class="bg-black/5 px-1">{ type: name, payload }</code> and returns the publish promise. The bus normalizes names, so <code class="bg-black/5 px-1">plugin:started</code> arrives as the type <code class="bg-black/5 px-1">plugin.started</code>, and <code class="bg-black/5 px-1">"plugin.*"</code> matches every lifecycle event.</span></li>
+          <li class="flex gap-2"><span class="text-zudo-blue font-bold">&rarr;</span> <span><code class="bg-black/5 px-1">on(name, handler)</code> subscribes on the bus and hands the handler the event's <code class="bg-black/5 px-1">payload</code>; <code class="bg-black/5 px-1">off(name, handler)</code> cancels that subscription.</span></li>
+        </ul>
         <div class="code-block mb-4"><span class="kw">import</span> { <span class="fn">createEventBus</span> } <span class="kw">from</span> <span class="str">"@zudojs/events"</span>;
-<span class="kw">import type</span> { <span class="tp">EventBus</span>, <span class="tp">EventSubscription</span> } <span class="kw">from</span> <span class="str">"@zudojs/events"</span>;
 <span class="kw">import</span> { <span class="tp">PluginManager</span>, <span class="fn">createPluginContext</span>, <span class="const">PLUGIN_EVENTS</span> } <span class="kw">from</span> <span class="str">"@zudojs/plugins"</span>;
-<span class="kw">import type</span> { <span class="tp">PluginEvents</span>, <span class="tp">PluginLifecycleEvent</span> } <span class="kw">from</span> <span class="str">"@zudojs/plugins"</span>;
-
-<span class="kw">function</span> <span class="fn">toPluginEvents</span>(bus: <span class="tp">EventBus</span>, onError: (error: <span class="tp">unknown</span>) =&gt; <span class="tp">void</span>): <span class="tp">PluginEvents</span> {
-  <span class="kw">const</span> subscriptions = <span class="kw">new</span> <span class="tp">Map</span>&lt;<span class="tp">string</span>, <span class="tp">Map</span>&lt;(event: <span class="tp">unknown</span>) =&gt; <span class="tp">void</span>, <span class="tp">EventSubscription</span>&gt;&gt;();
-  <span class="kw">return</span> {
-    <span class="fn">on</span>(name, handler) {
-      <span class="kw">const</span> byHandler = subscriptions.<span class="fn">get</span>(name) ?? <span class="kw">new</span> <span class="tp">Map</span>();
-      byHandler.<span class="fn">set</span>(handler, bus.<span class="fn">on</span>(name, (event) =&gt; <span class="fn">handler</span>(event.payload)));
-      subscriptions.<span class="fn">set</span>(name, byHandler);
-    },
-    <span class="fn">off</span>(name, handler) {
-      <span class="kw">const</span> subscription = subscriptions.<span class="fn">get</span>(name)?.<span class="fn">get</span>(handler);
-      <span class="kw">if</span> (subscription) bus.<span class="fn">off</span>(subscription);
-      subscriptions.<span class="fn">get</span>(name)?.<span class="fn">delete</span>(handler);
-    },
-    <span class="fn">emit</span>(name, payload) {
-      <span class="cmt">// Stay synchronous and never let the promise escape unhandled.</span>
-      bus.<span class="fn">emit</span>({ type: name, payload }).<span class="fn">catch</span>(onError);
-    },
-  };
-}
+<span class="kw">import type</span> { <span class="tp">PluginLifecycleEvent</span> } <span class="kw">from</span> <span class="str">"@zudojs/plugins"</span>;
 
 <span class="kw">const</span> bus = <span class="fn">createEventBus</span>();
 bus.<span class="fn">on</span>(<span class="const">PLUGIN_EVENTS</span>.STARTED, (event) =&gt; {
   <span class="kw">const</span> { plugin } = event.payload <span class="kw">as</span> <span class="tp">PluginLifecycleEvent</span>;
   console.<span class="fn">log</span>(<span class="str">`${plugin.name} started`</span>);
 });
+bus.<span class="fn">on</span>(<span class="str">"report.ready"</span>, (event) =&gt; console.<span class="fn">log</span>(<span class="str">"report ready:"</span>, event.payload));
 
-<span class="kw">const</span> events = <span class="fn">toPluginEvents</span>(bus, (error) =&gt; console.<span class="fn">error</span>(<span class="str">"plugin event delivery failed"</span>, error));
-<span class="kw">const</span> manager = <span class="kw">new</span> <span class="fn">PluginManager</span>();
-manager.<span class="fn">register</span>({ metadata: { name: <span class="str">"greeter"</span> } });
-<span class="kw">await</span> manager.<span class="fn">start</span>(<span class="fn">createPluginContext</span>({ name: <span class="str">"my-app"</span> }, { events }));
-<span class="cmt">// prints: greeter started</span></div>
+<span class="kw">const</span> manager = <span class="kw">new</span> <span class="fn">PluginManager</span>({ events: bus });
+manager.<span class="fn">register</span>({
+  metadata: { name: <span class="str">"reports"</span> },
+  <span class="kw">async</span> <span class="fn">start</span>(context) {
+    <span class="cmt">// context.events is a PluginEvents view of the bus.</span>
+    <span class="kw">await</span> context.events?.<span class="fn">emit</span>(<span class="str">"report.ready"</span>, { rows: <span class="num">3</span> });
+  },
+});
+
+<span class="kw">await</span> manager.<span class="fn">start</span>(<span class="fn">createPluginContext</span>({ name: <span class="str">"my-app"</span> }, { events: bus }));
+<span class="cmt">// prints: report ready: { rows: 3 }</span>
+<span class="cmt">//         reports started</span></div>
+        <p class="mb-3">
+          <code class="bg-black/5 px-1">toPluginEvents(source)</code> is exported if you want the same view yourself; it returns a <code class="bg-black/5 px-1">PluginEvents</code> sink unchanged. <code class="bg-black/5 px-1">isPluginEventBus(source)</code> tells the two apart: a bus is recognised by its <code class="bg-black/5 px-1">publishEvent</code> method.
+        </p>
+        <div class="callout callout-note">
+          <strong class="text-zudo-blue">Changed in 1.3.0:</strong> earlier versions had no adapter. A bus passed with a cast crashed with <code>InvalidEventError</code>, because its <code>emit</code> expects an event object rather than a name, so you had to write the adapter by hand. Remove that adapter when you upgrade.
+        </div>
       </section>
 
       <section id="api-reference" class="mb-12">
@@ -557,7 +579,9 @@ manager.<span class="fn">register</span>({ metadata: { name: <span class="str">"
         <table class="doc-table mb-6">
           <thead><tr><th>Name</th><th>What it does</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr><td class="font-mono">createPluginContext(metadata, options?)</td><td>Builds the template context you pass to <code>start()</code> and <code>stop()</code>.</td><td>Options: <code>container</code>, <code>config</code>, <code>logger</code>, <code>events</code>, <code>disposables</code>, <code>abortController</code>.</td></tr>
+            <tr><td class="font-mono">createPluginContext(metadata, options?)</td><td>Builds the template context you pass to <code>start()</code> and <code>stop()</code>.</td><td>Options: <code>container</code>, <code>config</code>, <code>logger</code>, <code>events</code> (a <code>PluginEvents</code> sink or an <code>EventBus</code>), <code>disposables</code>, <code>abortController</code>.</td></tr>
+            <tr><td class="font-mono">toPluginEvents(source)</td><td>Adapts an event bus to <code>PluginEvents</code>; returns a sink unchanged.</td><td>The manager and <code>createPluginContext</code> call it for you. Added in 1.3.0.</td></tr>
+            <tr><td class="font-mono">isPluginEventBus(source)</td><td><code>true</code> for a bus (it has <code>publishEvent</code>), <code>false</code> for a <code>PluginEvents</code> sink.</td><td>Added in 1.3.0.</td></tr>
             <tr><td class="font-mono">createOwnedPluginContext(metadata, options?)</td><td>Same, but also returns the <code>disposables</code> array and an <code>abort()</code> function.</td><td>For tests and custom managers that need to trigger teardown themselves.</td></tr>
             <tr><td class="font-mono">assertResolutionValid(resolution)</td><td>Throws <code>PluginDependencyError</code> or <code>PluginDependencyCycleError</code> if a resolution has problems.</td><td>Pairs with <code>DependencyResolver.resolve()</code>.</td></tr>
             <tr><td class="font-mono">satisfiesVersion(version, range)</td><td>Returns <code>true</code>, <code>false</code>, or <code>undefined</code> if the range is not understood.</td><td>Supports <code>^</code>, <code>~</code>, <code>&gt;=</code>, <code>&gt;</code>, <code>&lt;=</code>, <code>&lt;</code>, exact and <code>*</code>.</td></tr>
@@ -588,7 +612,8 @@ manager.<span class="fn">register</span>({ metadata: { name: <span class="str">"
             <tr><td class="font-mono">PluginMetadata</td><td><code>name</code> (required), <code>version</code>, <code>description</code>, <code>author</code>, <code>homepage</code>, <code>keywords</code>, <code>capabilities</code>.</td><td>All strings or string arrays.</td></tr>
             <tr><td class="font-mono">PluginDependency</td><td><code>{ name, version?, optional? }</code>.</td><td>Put optional ones in <code>optionalDependencies</code>.</td></tr>
             <tr><td class="font-mono">PluginContext</td><td>What hooks receive.</td><td>See <a href="#plugin-context" class="text-zudo-blue underline">The plugin context</a>.</td></tr>
-            <tr><td class="font-mono">PluginContainer, PluginConfig, PluginLogger, PluginEvents, PluginDisposable</td><td>The small service interfaces a context can carry.</td><td>Structural: any object with the methods qualifies.</td></tr>
+            <tr><td class="font-mono">PluginContainer, PluginConfig, PluginLogger, PluginEvents, PluginDisposable</td><td>The small service interfaces a context can carry.</td><td>Structural: any object with the methods qualifies. <code>PluginEvents.emit</code> may return a promise.</td></tr>
+            <tr><td class="font-mono">PluginEventBus, PluginEventSource</td><td>The part of an event bus the manager uses (<code>publishEvent</code>, <code>on</code>), and <code>PluginEvents | PluginEventBus</code>.</td><td><code>PluginEventSource</code> is what the <code>events</code> options accept.</td></tr>
             <tr><td class="font-mono">PluginManagerOptions</td><td>Constructor options for <code>PluginManager</code>.</td><td>See <a href="#manager-options" class="text-zudo-blue underline">Manager options</a>.</td></tr>
             <tr><td class="font-mono">PluginState</td><td>The twelve state names.</td><td>Includes <code>"failed"</code>.</td></tr>
             <tr><td class="font-mono">PluginDiagnosticReport, PluginDiagnostic, PluginHealth, PluginHealthStatus</td><td>Shape of <code>diagnostics()</code> output.</td><td><code>PluginHealthStatus</code> is <code>"healthy" | "degraded" | "unhealthy"</code>.</td></tr>

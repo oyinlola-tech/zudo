@@ -118,7 +118,7 @@
       </div>
 
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.0.3</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.0</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/validation</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Check untrusted input against Zod schemas and reusable constraints, and get back one result shape you can read field by field.
@@ -184,7 +184,7 @@
       <!-- INSTALLATION -->
       <section id="installation" class="mb-12">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2">INSTALLATION</h2>
-        <p class="mb-3">Install the package. It pulls in <code>zod</code> (v4) and <code>@zudojs/errors</code> as regular dependencies, so you do not install those separately.</p>
+        <p class="mb-3">Install the package. It pulls in <code>zod</code> (v4), <code>@zudojs/errors</code>, <code>@zudojs/constants</code> and <code>@zudojs/types</code> as regular dependencies, so you do not install those separately.</p>
         <div class="code-block mb-4">$ npm install @zudojs/validation</div>
 
         <div class="callout callout-note">
@@ -521,12 +521,53 @@ console.<span class="fn">log</span>(<span class="fn">getSerializationDepth</span
           <tbody>
             <tr><td><code>assertDepthWithinLimit(value, maxDepth)</code></td><td>Rejects nesting deeper than <code>maxDepth</code></td><td><code>SerializationDepthError</code> (400)</td></tr>
             <tr><td><code>assertSizeWithinLimit(value, maxBytes)</code></td><td>Rejects an estimated JSON size above <code>maxBytes</code></td><td><code>SerializationPayloadTooLargeError</code> (413)</td></tr>
-            <tr><td><code>assertNoCircularReference(value, path?, maxDepth?)</code></td><td>Rejects a value that contains itself</td><td><code>CircularReferenceError</code> (500)</td></tr>
+            <tr><td><code>assertNoCircularReference(value, path?, maxDepth?)</code></td><td>Rejects a value that contains itself, or that nests deeper than <code>maxDepth</code></td><td><code>CircularReferenceError</code> (500) for a cycle; <code>SerializationDepthError</code> (400) past <code>maxDepth</code></td></tr>
             <tr><td><code>hasCircularReference(value)</code></td><td>Same check, returns <code>boolean</code></td><td>never</td></tr>
             <tr><td><code>getSerializationDepth(value, limit?)</code></td><td>Measures nesting depth (0 for a primitive), capped at <code>limit</code></td><td>never</td></tr>
             <tr><td><code>estimateSerializedSize(value, maxBytes?)</code></td><td>Estimates JSON byte size without building the string, stopping at <code>maxBytes</code>. Defaults to <code>SerializationLimits.MAX_SIZE</code> (10,485,760 bytes / 10&nbsp;MB)</td><td>never</td></tr>
           </tbody>
         </table>
+        <h3 class="text-lg font-bold mb-3 mt-6" id="too-deep-is-a-400">Too-deep input is a 400</h3>
+        <p class="mb-3 leading-relaxed">
+          These guards exist to check input from outside your program, so a payload that nests too deep is the <em>client's</em> mistake, not a crash in your server. <code>assertDepthWithinLimit</code> and <code>assertNoCircularReference</code> therefore throw <code>SerializationDepthError</code> with <code>statusCode: 400</code> and <code>expose: true</code>. <em>Exposed</em> means the message is safe to send back to the caller; it contains only the depth that was found and the limit, never any of the payload.
+        </p>
+        <p class="mb-3">An HTTP layer that honours an error's status turns it into a <code>400 Bad Request</code> with no extra code. Here is a <a href="/docs/packages-http" class="text-zudo-blue underline">@zudojs/http</a> handler that guards its body before using it:</p>
+        <div class="code-block mb-4"><span class="kw">import</span> { createNodeHttpAdapter, createResponseContext } <span class="kw">from</span> <span class="str">"@zudojs/http"</span>;
+<span class="kw">import</span> { <span class="fn">assertDepthWithinLimit</span> } <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
+
+<span class="kw">const</span> adapter = <span class="fn">createNodeHttpAdapter</span>({
+  port: <span class="num">3000</span>,
+  handler: (request) =&gt; {
+    <span class="kw">const</span> body = <span class="tp">JSON</span>.<span class="fn">parse</span>(<span class="kw">new</span> <span class="fn">TextDecoder</span>().<span class="fn">decode</span>(request.body <span class="kw">as</span> <span class="tp">Uint8Array</span>));
+    <span class="fn">assertDepthWithinLimit</span>(body, <span class="num">32</span>); <span class="cmt">// throws a 400 for hostile nesting</span>
+    <span class="kw">return</span> <span class="fn">createResponseContext</span>().<span class="fn">json</span>({ ok: <span class="kw">true</span> });
+  },
+});
+
+<span class="kw">await</span> adapter.<span class="fn">start</span>();</div>
+        <div class="code-block mb-4">$ curl -i -X POST http://127.0.0.1:3000/import -d "$(printf '[%.0s' {1..100}; printf ']%.0s' {1..100})"
+<span class="cmt">HTTP/1.1 400 Bad Request</span>
+<span class="cmt">{"error":"Maximum serialization depth exceeded: 33 &gt; 32","code":"ERR_MAX_DEPTH_EXCEEDED"}</span>
+<span class="cmt"></span>
+$ curl -X POST http://127.0.0.1:3000/import -d '{"a":[1,2]}'
+<span class="cmt">{"ok":true}</span></div>
+        <p class="mb-3 text-sm">
+          Before v1.1.0 the same request was answered <code>500 Internal Server Error</code>: the error was an unexposed server error, so a client that sent bad input saw what looked like your bug. The error class did not change, so <code>instanceof SerializationDepthError</code> checks still match. <a href="/docs/packages-serialization" class="text-zudo-blue underline">@zudojs/serialization</a> calls these guards, so a depth failure from <code>JSONSerializer</code> (serialize or deserialize) is now a 400 as well.
+        </p>
+        <p class="mb-3 text-sm">
+          The options the guards pass are exported as <code>UNTRUSTED_DEPTH_ERROR</code> (<code>{ statusCode: 400, expose: true }</code>). <code>SerializationDepthError</code> from <a href="/docs/packages-errors" class="text-zudo-blue underline">@zudojs/errors</a> takes them as an optional third argument; constructed without it, the error is still an unexposed <code>500</code>, which is right when your own code, not a client, built the too-deep value:
+        </p>
+        <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">SerializationDepthError</span> } <span class="kw">from</span> <span class="str">"@zudojs/errors"</span>;
+<span class="kw">import</span> { <span class="tp">UNTRUSTED_DEPTH_ERROR</span> } <span class="kw">from</span> <span class="str">"@zudojs/validation"</span>;
+
+<span class="kw">const</span> internal = <span class="kw">new</span> <span class="fn">SerializationDepthError</span>(<span class="num">33</span>, <span class="num">32</span>);
+<span class="kw">const</span> fromClient = <span class="kw">new</span> <span class="fn">SerializationDepthError</span>(<span class="num">33</span>, <span class="num">32</span>, <span class="tp">UNTRUSTED_DEPTH_ERROR</span>);
+
+console.<span class="fn">log</span>(internal.statusCode, internal.expose);     <span class="cmt">// 500 false</span>
+console.<span class="fn">log</span>(fromClient.statusCode, fromClient.expose); <span class="cmt">// 400 true</span></div>
+        <p class="mb-3 text-sm">
+          The size and cycle guards are unchanged: <code>assertSizeWithinLimit</code> still throws <code>SerializationPayloadTooLargeError</code> (413) and a cycle is still <code>CircularReferenceError</code> (500). Neither is exposed.
+        </p>
         <h3 class="text-lg font-bold mb-3 mt-6">The size budget</h3>
         <p class="mb-3 leading-relaxed">
           <code>estimateSerializedSize(value, maxBytes?)</code> charges every <em>occurrence</em> of a value, the way a serializer expands it. The cycle and depth guards can memoise a shared subtree and visit it once; the size estimate cannot, so a graph of <code>n</code> shared <code>{ a: node, b: node }</code> pairs expands to <code>2^n</code> visits. The budget is the only thing that bounds that work.
@@ -613,6 +654,7 @@ console.<span class="fn">log</span>(<span class="fn">getSerializationDepth</span
             <tr><td><code>ValidationErrorCode</code></td><td>Enum of <code>validationCode</code> values</td><td><code>INVALID_INPUT</code>, <code>REQUIRED</code>, <code>INVALID_TYPE</code>, <code>INVALID_FORMAT</code>, <code>INVALID_VALUE</code>, <code>CONSTRAINT_FAILED</code>, <code>SCHEMA_FAILED</code>, <code>UNKNOWN</code></td></tr>
             <tr><td><code>isValidationError(e)</code>, <code>hasValidationErrorCode(e, code)</code>, <code>toValidationError(e)</code>, <code>createValidationError(issues)</code></td><td>Inspect or build validation errors</td><td><code>toValidationError</code> wraps any thrown value</td></tr>
             <tr><td><code>ValidationResult</code>, <code>ValidationSuccess</code>, <code>ValidationFailure</code>, <code>ValidationIssue</code></td><td>Result types</td><td></td></tr>
+            <tr><td><code>UNTRUSTED_DEPTH_ERROR</code></td><td><code>{ statusCode: 400, expose: true }</code></td><td>The options the depth guards give <code>SerializationDepthError</code>. See <a href="#too-deep-is-a-400" class="text-zudo-blue underline">Too-deep input is a 400</a></td></tr>
             <tr><td><code>ValidationSchema&lt;T&gt;</code>, <code>ParseOptions</code></td><td>Alias for <code>ZodType&lt;T&gt;</code>; options for <code>validate</code>/<code>parse</code></td><td></td></tr>
             <tr><td><code>ValidationConstraint</code>, <code>ConstraintOptions</code>, <code>ValidationStep</code>, <code>ValidationComposer</code>, <code>ValidationParser</code>, <code>ValidationNormalizer</code>, <code>ValidationTransformer</code>, <code>ValidationRule</code></td><td>Types of the objects each factory returns</td><td></td></tr>
           </tbody>
@@ -647,9 +689,9 @@ console.<span class="fn">log</span>(<span class="fn">getSerializationDepth</span
       <!-- EXPORT INDEX -->
       <section id="export-index" class="mb-16" aria-labelledby="export-index-heading">
         <h2 class="text-2xl font-black mb-4 border-b-4 border-black pb-2" id="export-index-heading">COMPLETE EXPORT INDEX</h2>
-        <p class="mb-5 text-sm">Every name <code>@zudojs/validation</code> exports from its package root at v1.0.3 &mdash; <strong>178</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
+        <p class="mb-5 text-sm">Every name <code>@zudojs/validation</code> exports from its package root at v1.1.0 &mdash; <strong>179</strong> in total, generated from the package&rsquo;s own entry point rather than written by hand. The sections above explain the ones you reach for most; this is the exhaustive list, so nothing shipped is undocumented. Names not covered above are typically internal helpers and supporting types.</p>
         <details class="border-2 border-black p-5 bg-white">
-          <summary class="font-bold cursor-pointer select-none">Show all 178 exports</summary>
+          <summary class="font-bold cursor-pointer select-none">Show all 179 exports</summary>
           <div class="mt-5">
           <div class="mb-5">
             <div class="font-bold text-sm uppercase tracking-wider mb-2">Classes <span class="text-black/60 font-normal">(12)</span></div>
@@ -668,8 +710,8 @@ console.<span class="fn">log</span>(<span class="fn">getSerializationDepth</span
             <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AsyncNormalizer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">AsyncValidationTransform</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">Normalizer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">TraversalHalt</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationResult</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationSchema</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationStep</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ValidationTransform</code></div>
           </div>
           <div class="mb-5">
-            <div class="font-bold text-sm uppercase tracking-wider mb-2">Constants <span class="text-black/60 font-normal">(19)</span></div>
-            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ascii</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">digits</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">email</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">even</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">finiteNumber</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">futureDate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">httpUrl</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">integer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isoDate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">letters</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_MEASURABLE_DEPTH</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">nonEmptyString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">nonNegative</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">odd</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">pastDate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">positive</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">required</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">slug</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">uuid</code></div>
+            <div class="font-bold text-sm uppercase tracking-wider mb-2">Constants <span class="text-black/60 font-normal">(20)</span></div>
+            <div class="flex flex-wrap gap-1"><code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">ascii</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">digits</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">email</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">even</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">finiteNumber</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">futureDate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">httpUrl</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">integer</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">isoDate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">letters</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">MAX_MEASURABLE_DEPTH</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">nonEmptyString</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">nonNegative</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">odd</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">pastDate</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">positive</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">required</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">slug</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">UNTRUSTED_DEPTH_ERROR</code> <code class="inline-block bg-black/5 px-1.5 py-0.5 text-xs">uuid</code></div>
           </div>
           <div class="mb-5">
             <div class="font-bold text-sm uppercase tracking-wider mb-2">Enums <span class="text-black/60 font-normal">(1)</span></div>
@@ -694,6 +736,7 @@ console.<span class="fn">log</span>(<span class="fn">getSerializationDepth</span
       <a href="#normalize-and-transform" class="toc-link">Normalize and Transform</a>
       <a href="#registry-and-factory" class="toc-link">Registry and Factory</a>
       <a href="#structural-guards" class="toc-link">Structural Guards</a>
+      <a href="#too-deep-is-a-400" class="toc-link toc-link-nested">Too-Deep Input Is a 400</a>
       <a href="#api-reference" class="toc-link">API Reference</a>
       <a href="#common-mistakes" class="toc-link">Common Mistakes</a>
       <a href="#related" class="toc-link">Related Packages</a>
