@@ -606,6 +606,34 @@ console.<span class="fn">log</span>(clean.tags);          <span class="cmt">// [
           <strong>Changed in 1.2.0:</strong> <code>sanitizeObject</code> throws a <code>ConfigurationError</code> when <code>maxDepth</code> is present but is not an integer of 1 or more. The guard runs before the object is entered, so <code>maxDepth: 0</code> used to discard the argument itself and return <code>undefined</code> under a non-optional <code>T</code> &mdash; every field read off the result then threw at a call site TypeScript had called safe. <code>Number(process.env.MAX_DEPTH)</code> with the variable unset is the same shape of mistake as a <code>NaN</code> body limit.
         </div>
 
+        <h3 id="unsafe-keys" class="text-lg font-bold mb-3 mt-6">Refusing prototype-polluting data</h3>
+        <p class="mb-4">
+          Every JavaScript object has a hidden link to a shared <em>prototype</em> that supplies its inherited properties. <code class="bg-black/5 px-1">JSON.parse</code> keeps a key named <code class="bg-black/5 px-1">__proto__</code>, <code class="bg-black/5 px-1">constructor</code> or <code class="bg-black/5 px-1">prototype</code> as an ordinary property, so it reaches your handler intact. The moment your code copies that object with <code class="bg-black/5 px-1">Object.assign</code>, a <code class="bg-black/5 px-1">for&hellip;in</code> merge or a bracket assignment, the key can rewrite the prototype instead, and a field like <code class="bg-black/5 px-1">isAdmin</code> suddenly appears on objects that never had it. That attack is called <em>prototype pollution</em>.
+        </p>
+        <p class="mb-4">
+          <code class="bg-black/5 px-1">findUnsafeKey(value)</code> looks through decoded, untrusted data and returns the first of those three keys it finds, at any depth, or <code class="bg-black/5 px-1">undefined</code> when there is none. It walks plain objects and arrays only, iteratively (so a deeply nested payload cannot overflow the stack) and cycle-safe (an object that refers to itself is visited once).
+        </p>
+
+        <div class="code-block mb-4"><span class="kw">import</span> { findUnsafeKey } <span class="kw">from</span> <span class="str">"@zudojs/security"</span>;
+
+<span class="kw">const</span> body = <span class="tp">JSON</span>.<span class="fn">parse</span>(<span class="str">'{"user":{"name":"Ada","settings":{"__proto__":{"isAdmin":true}}}}'</span>);
+
+<span class="kw">const</span> unsafe = <span class="fn">findUnsafeKey</span>(body);
+<span class="kw">if</span> (unsafe !== <span class="kw">undefined</span>) {
+  <span class="cmt">// Refuse the request (400) rather than trying to repair it.</span>
+  console.<span class="fn">log</span>(<span class="str">`Refused: body contains "${unsafe}"`</span>); <span class="cmt">// Refused: body contains "__proto__"</span>
+}
+
+console.<span class="fn">log</span>(<span class="fn">findUnsafeKey</span>({ items: [{ id: <span class="num">1</span> }, { id: <span class="num">2</span> }] })); <span class="cmt">// undefined</span></div>
+
+        <p class="mb-4">
+          Which one to use: <code class="bg-black/5 px-1">findUnsafeKey</code> checks a whole <em>value</em>, such as a request body, a queue job or an RPC payload, and is the one to call on anything you decoded. <code class="bg-black/5 px-1">containsPrototypePollution(input)</code> checks a single <em>string</em>, such as a key name or a path segment you are about to use as a property name. <code class="bg-black/5 px-1">sanitizeObject</code> silently drops the keys and hands back a cleaned copy; <code class="bg-black/5 px-1">findUnsafeKey</code> lets you refuse the input instead, which is usually the better answer, because a client that sends <code class="bg-black/5 px-1">__proto__</code> is not sending you anything you want to process.
+        </p>
+
+        <div class="callout callout-note">
+          <strong>Already done for you:</strong> <code>@zudojs/rpc</code> refuses an RPC frame whose payload or metadata carries one of these keys (<code>RPC_INVALID_REQUEST</code>), and every <code>@zudojs/api</code> binding refuses them in its input (400 over HTTP, a validation error over RPC, queues and the CLI). Both use this function.
+        </div>
+
         <h3 class="text-lg font-bold mb-3 mt-6">Escaping for HTML</h3>
         <p class="mb-4">
           <code class="bg-black/5 px-1">escapeHtml</code> replaces <code class="bg-black/5 px-1">&amp;</code>, <code class="bg-black/5 px-1">&lt;</code>, <code class="bg-black/5 px-1">&gt;</code>, <code class="bg-black/5 px-1">"</code>, <code class="bg-black/5 px-1">'</code> and the backtick with their HTML entities. That is enough for element text and for a <em>quoted</em> attribute value.
@@ -949,7 +977,8 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
             <tr><td><code>detectThreats(input)</code></td><td>Labels what it recognised.</td><td>Any of <code>"SQL_INJECTION"</code>, <code>"XSS"</code>, <code>"NULL_BYTE"</code>, <code>"CONTROL_CHARACTERS"</code>. Heuristic.</td></tr>
             <tr><td><code>containsSqlInjection(input)</code></td><td>Regex guess at SQL injection.</td><td>High false-positive rate. Never a substitute for parameterised queries.</td></tr>
             <tr><td><code>containsXss(input)</code></td><td>Regex guess at XSS.</td><td>Misses real attacks. Encode on output instead.</td></tr>
-            <tr><td><code>containsPrototypePollution(input)</code></td><td>Is this string one of the three dangerous keys?</td><td>Exact match only.</td></tr>
+            <tr><td><code>containsPrototypePollution(input)</code></td><td>Is this string one of the three dangerous keys?</td><td>Exact match on one string. For a whole decoded value use <code>findUnsafeKey</code>.</td></tr>
+            <tr><td><code>findUnsafeKey(value)</code></td><td>First <code>__proto__</code>, <code>constructor</code> or <code>prototype</code> key anywhere in decoded data, or <code>undefined</code>.</td><td>Plain objects and arrays only; iterative and cycle-safe. See <a href="#unsafe-keys" class="underline">Refusing prototype-polluting data</a>.</td></tr>
             <tr><td><code>withoutStickyFlags(pattern)</code></td><td>Copies a regex without <code>g</code> and <code>y</code>.</td><td>Use before repeated <code>.test()</code> calls.</td></tr>
             <tr><td><code>PROTOTYPE_POLLUTION_KEYS</code>, <code>SQL_INJECTION_PATTERNS</code>, <code>XSS_PATTERNS</code></td><td>The lists behind those checks.</td><td>None carries the <code>g</code> flag, by design.</td></tr>
           </tbody>
@@ -1077,6 +1106,7 @@ console.<span class="fn">log</span>(<span class="const">DEFAULT_BODY_LIMITS</spa
       <a href="#csrf" class="toc-link">CSRF</a>
       <a href="#rate-limiting" class="toc-link">Rate Limiting</a>
       <a href="#input-sanitization" class="toc-link">Input Sanitization</a>
+      <a href="#unsafe-keys" class="toc-link toc-link-nested">Prototype-Polluting Data</a>
       <a href="#url-validation" class="toc-link">URL Validation</a>
       <a href="#cookies" class="toc-link">Secure Cookies</a>
       <a href="#headers-and-body" class="toc-link">Headers &amp; Body Limits</a>

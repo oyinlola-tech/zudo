@@ -122,7 +122,7 @@
 
       <!-- Header -->
       <div class="border-4 border-black p-8 mb-10 relative">
-        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.1</div>
+        <div class="absolute -top-3 left-6 px-3 py-1 bg-zudo-red text-zudo-white font-black text-sm border-2 border-black">v1.1.2</div>
         <h1 class="text-4xl font-black mb-3 mt-2">@zudojs/scheduler</h1>
         <p class="text-lg text-black/70 leading-relaxed max-w-2xl">
           Runs your code later, or over and over: after a delay, at a date, on a fixed interval, or on a cron schedule — inside one Node.js process.
@@ -230,6 +230,11 @@ scheduler.<span class="fn">start</span>();
 <span class="cm">beat 1</span>
 <span class="cm">beat 1</span>
 <span class="cm">stopped</span></div>
+
+        <div class="callout callout-warning mb-6">
+          <p class="text-sm font-bold mb-1">THE SCHEDULER DOES NOT KEEP YOUR PROCESS ALIVE</p>
+          <p class="text-sm">Every timer the scheduler arms is <code>unref()</code>'d. A script whose only work is a scheduler exits straight away with code 0 and never runs a job &mdash; no error, no output. The quick start works only because its own <code>setTimeout</code> holds the process open for 3.5 seconds. In a real service something else keeps Node running: an HTTP server, a queue worker, an open socket. In a standalone script, hold the process open yourself, for example with <code>setInterval(() =&gt; {}, 1 &lt;&lt; 30)</code>, and clear it on shutdown.</p>
+        </div>
 
         <div class="callout callout-note mb-6">
           <p class="text-sm font-bold mb-1">IN PLAIN WORDS</p>
@@ -346,9 +351,15 @@ handle.state;          <span class="cm">// "active" | "paused" | "cancelled" | "
 scheduler.<span class="fn">at</span>(<span class="kw">new</span> <span class="tp">Date</span>(<span class="tp">Date</span>.<span class="fn">now</span>() - <span class="num">60_000</span>), <span class="str">"report"</span>, { misfire: <span class="str">"skip"</span> });
 <span class="cm">// throws InvalidScheduleError</span></div>
 
-        <div class="callout callout-warning mb-6">
-          <p class="text-sm font-bold mb-1">NOT IMPLEMENTED YET</p>
-          <p class="text-sm">The third misfire value, <code>"catch-up"</code>, replays each missed occurrence, rescheduling from the last fire time. <code>priority</code> breaks ties between schedules due at the same instant (higher first). A one-shot resumed after its fire time follows its misfire policy: <code>run-once</code>/<code>catch-up</code> fire it immediately, <code>skip</code> retires it. Misfire policies apply to one-shots (<code>at</code>, <code>after</code>). A schedule added after <code>start()</code> fires on time; the timer is re-armed on every add.</p>
+        <p class="mb-4 leading-relaxed">
+          The third misfire value, <code>"catch-up"</code>, matters for <em>recurring</em> schedules. If the process is blocked past several fire times of an <code>every()</code> or <code>cron()</code> schedule, the default <code>"run-once"</code> runs once and then resumes from the current time, so the missed occurrences are dropped. <code>"catch-up"</code> computes each next time from the fire time that just ran instead of from now, so every missed occurrence is replayed, one per tick, until the schedule is current again. For a one-shot, <code>"catch-up"</code> behaves like <code>"run-once"</code>.
+        </p>
+
+        <div class="code-block mb-4">scheduler.<span class="fn">every</span>(<span class="str">"1h"</span>, <span class="str">"hourly-rollup"</span>, { misfire: <span class="str">"catch-up"</span> });</div>
+
+        <div class="callout callout-note mb-6">
+          <p class="text-sm font-bold mb-1">MORE MISFIRE RULES</p>
+          <p class="text-sm">A one-shot resumed after its fire time follows its misfire policy: <code>run-once</code>/<code>catch-up</code> fire it immediately, <code>skip</code> retires it. A paused recurring schedule always resumes from now, whatever its policy. <code>priority</code> breaks ties between schedules due at the same instant (higher first); it never lets a schedule jump ahead of one due earlier. A schedule added after <code>start()</code> fires on time, because the timer is re-armed on every add.</p>
         </div>
       </section>
 
@@ -479,7 +490,7 @@ scheduler.<span class="fn">cron</span>(<span class="str">"30 2 * * 1-5"</span>, 
         </p>
 
         <p class="mb-4 leading-relaxed">
-          The <code>overlap</code> option on the schedule decides. Set it per schedule, since two schedules of the same job can want different answers.
+          The <code>overlap</code> option on the schedule decides. Set it per schedule, since two schedules of the same job can want different answers, or set a default for every schedule of a job with <code>options.overlap</code> in <code>define()</code>. The schedule's own value wins.
         </p>
 
         <div class="overflow-x-auto mb-6">
@@ -488,6 +499,7 @@ scheduler.<span class="fn">cron</span>(<span class="str">"30 2 * * 1-5"</span>, 
             <tbody>
               <tr><td><code>"allow"</code> (default)</td><td>The new run starts alongside the old one. Two copies run at once.</td><td>Runs are independent and safe to double up.</td></tr>
               <tr><td><code>"skip"</code></td><td>The new run is dropped. The old one continues undisturbed.</td><td>A slow run has already covered the work.</td></tr>
+              <tr><td><code>"queue"</code></td><td>The new run is held and starts when the old one finishes. At most one run at a time; held runs execute one after another.</td><td>Every fire time must run, but never two at once.</td></tr>
               <tr><td><code>"replace"</code></td><td>The old run is aborted through its <code>ctx.signal</code>, then the new one starts.</td><td>Only the freshest result matters.</td></tr>
             </tbody>
           </table>
@@ -520,17 +532,24 @@ scheduler.<span class="fn">start</span>();
         <p class="mb-4 leading-relaxed">Without <code>overlap: "skip"</code> that same program prints <code>runs started: 8</code> or so.</p>
 
         <div class="callout callout-warning mb-6">
-          <p class="text-sm font-bold mb-1">NOT IMPLEMENTED YET</p>
-          <p class="text-sm">The <code>OverlapPolicy</code> type also lists <code>"queue"</code>, but nothing implements it: it currently behaves like <code>"allow"</code>. Use <code>"skip"</code> or <code>"replace"</code>.</p>
+          <p class="text-sm font-bold mb-1">WATCH OUT: A QUEUE THAT NEVER CATCHES UP</p>
+          <p class="text-sm">With <code>"queue"</code>, a job that is always slower than its interval builds a backlog: in the program above it would still be working through held runs long after the schedule fired. The backlog is capped at 1,024 held runs per schedule; fire times beyond that are dropped. <code>stop()</code> without <code>drain</code> and <code>cancel()</code> discard held runs.</p>
         </div>
 
         <h3 class="text-lg font-bold mb-3 mt-6">The separate global ceiling</h3>
 
         <p class="mb-4 leading-relaxed">
-          <code>overlap</code> is per schedule. <code>maxConcurrency</code> on the scheduler caps how many job runs may be in flight <em>in total</em>, across every schedule. It defaults to 10. Anything over the ceiling stays on the queue and is picked up on a later tick, not dropped.
+          <code>overlap</code> is per schedule. <code>maxConcurrency</code> on the scheduler caps how many job runs may be in flight <em>in total</em>, across every schedule. It defaults to 10. Anything over the ceiling stays on the queue and is picked up on a later tick, not dropped. Between the two sits <code>options.concurrency</code> on a job: the most runs of that one job in flight at once, across every schedule that fires it. A fire time at that ceiling is held and started when a run finishes.
         </p>
 
-        <div class="code-block mb-4"><span class="kw">const</span> scheduler = <span class="kw">new</span> <span class="tp">Scheduler</span>({ maxConcurrency: <span class="num">2</span> });</div>
+        <div class="code-block mb-4"><span class="kw">const</span> scheduler = <span class="kw">new</span> <span class="tp">Scheduler</span>({ maxConcurrency: <span class="num">2</span> });
+
+scheduler.<span class="fn">define</span>({
+  id: <span class="str">"reindex"</span>,
+  name: <span class="str">"Reindex a tenant"</span>,
+  options: { concurrency: <span class="num">1</span> },
+  handler: reindex,
+});</div>
       </section>
 
       <!-- Failures -->
@@ -545,7 +564,7 @@ scheduler.<span class="fn">start</span>();
           A <strong>retry policy</strong> says how many attempts to make and how long to wait between them. <code>strategy</code> picks the shape of that wait: <code>"fixed"</code> always waits <code>delay</code>; <code>"linear"</code> waits <code>delay &times; attempt</code>; <code>"exponential"</code> doubles each time. <code>maxDelay</code> caps it, and <code>jitter: true</code> randomises it so many failing jobs do not all retry in the same instant.
         </p>
 
-        <p class="mb-4 leading-relaxed">This job fails twice and succeeds on the third attempt, then fails permanently the next time round.</p>
+        <p class="mb-4 leading-relaxed">This job fails twice and succeeds on the third attempt. <code>attempts</code> is the total number of tries, including the first, and <code>ctx.attempt</code> counts from 1.</p>
 
         <div class="code-block mb-4"><span class="kw">import</span> { <span class="tp">Scheduler</span> } <span class="kw">from</span> <span class="str">"@zudojs/scheduler"</span>;
 
@@ -580,7 +599,7 @@ scheduler.<span class="fn">define</span>({
 scheduler.<span class="fn">after</span>(<span class="str">"1s"</span>, <span class="str">"flaky"</span>);
 scheduler.<span class="fn">start</span>();</div>
 
-        <p class="mb-4 leading-relaxed">You should see <code>attempt 1</code>, then <code>attempt 2</code> about a second later, then <code>attempt 3</code>, and no error line &mdash; the third attempt succeeded. Had all three failed, <code>onError</code> would have printed once.</p>
+        <p class="mb-4 leading-relaxed">You should see <code>attempt 1</code>, then <code>attempt 2</code> up to a second later (<code>jitter</code> picks a random wait below the computed delay), then <code>attempt 3</code>, and no error line &mdash; the third attempt succeeded. Had all three failed, <code>onError</code> would have printed once.</p>
 
         <p class="mb-4 leading-relaxed">The error you receive tells you <em>how</em> it failed:</p>
 
@@ -610,23 +629,32 @@ scheduler.<span class="fn">start</span>();</div>
         </p>
 
         <p class="mb-4 leading-relaxed">
-          <code>stop()</code> is <code>async</code> &mdash; always <code>await</code> it. By default it aborts every run in flight and waits for them to settle. Pass <code>{ drain: true }</code> to let them finish instead, and <code>timeoutMs</code> to bound the wait either way. Calling it when already stopped rejects with <code>SchedulerStoppedError</code>.
+          <code>stop()</code> is <code>async</code> &mdash; always <code>await</code> it. By default it aborts every run in flight and waits for them to settle. Pass <code>{ drain: true }</code> to let them finish instead, and <code>timeoutMs</code> to bound the wait either way.
         </p>
+
+        <div class="callout callout-warning mb-6">
+          <p class="text-sm font-bold mb-1">GUARD <code>stop()</code> IN SHUTDOWN HOOKS</p>
+          <p class="text-sm"><code>stop()</code> rejects with <code>SchedulerStoppedError</code> when the scheduler is not running &mdash; if <code>start()</code> was never called, or on a second <code>stop()</code>. Shutdown code often runs twice (SIGINT then SIGTERM, or a signal handler plus a lifecycle hook), or runs after a boot that failed before <code>start()</code>. Check <code>scheduler.isRunning</code> first, as below.</p>
+        </div>
 
         <div class="code-block mb-4"><span class="cm">// Let running jobs finish, but wait no longer than 30 seconds.</span>
 process.<span class="fn">on</span>(<span class="str">"SIGTERM"</span>, <span class="kw">async</span> () =&gt; {
-  <span class="kw">await</span> scheduler.<span class="fn">stop</span>({ drain: <span class="kw">true</span>, timeoutMs: <span class="num">30_000</span> });
+  <span class="kw">if</span> (scheduler.isRunning) {
+    <span class="kw">await</span> scheduler.<span class="fn">stop</span>({ drain: <span class="kw">true</span>, timeoutMs: <span class="num">30_000</span> });
+  }
   console.<span class="fn">log</span>(<span class="str">"scheduler stopped"</span>);
   process.<span class="fn">exit</span>(<span class="num">0</span>);
 });</div>
 
-        <p class="mb-4 leading-relaxed">Two read-only properties let you inspect the scheduler, and two methods let you inspect its schedules.</p>
+        <p class="mb-4 leading-relaxed">Two read-only properties let you inspect the scheduler, two methods let you inspect its schedules, and <code>getExecutions()</code> returns the last 100 runs.</p>
 
         <div class="code-block mb-4">console.<span class="fn">log</span>(scheduler.isRunning);      <span class="cm">// true</span>
 console.<span class="fn">log</span>(scheduler.scheduleCount);  <span class="cm">// 3</span>
 console.<span class="fn">log</span>(scheduler.<span class="fn">listSchedules</span>().<span class="fn">map</span>((s) =&gt; s.jobId));
 <span class="cm">// [ 'cleanup', 'report', 'heartbeat' ]</span>
-console.<span class="fn">log</span>(scheduler.<span class="fn">getSchedule</span>(handle.id)?.nextRunAt);</div>
+console.<span class="fn">log</span>(scheduler.<span class="fn">getSchedule</span>(handle.id)?.nextRunAt);
+console.<span class="fn">log</span>(scheduler.<span class="fn">getExecutions</span>(<span class="str">"cleanup"</span>).<span class="fn">map</span>((e) =&gt; e.status));
+<span class="cm">// [ 'completed', 'failed', 'running' ]</span></div>
       </section>
 
       <!-- Scheduler vs queue -->
@@ -664,7 +692,7 @@ console.<span class="fn">log</span>(scheduler.<span class="fn">getSchedule</span
 
         <div class="callout callout-danger mb-6">
           <p class="text-sm font-bold mb-1">DANGER: MULTIPLE INSTANCES</p>
-          <p class="text-sm">Deploy three copies of a service that schedules a nightly billing job and the billing runs three times. This package has no cross-process lock. <code>SchedulerStoreError</code> and <code>SchedulerLockError</code> exist in the error list for future persistence work; no store or lock is implemented today.</p>
+          <p class="text-sm">Deploy three copies of a service that schedules a nightly billing job and the billing runs three times. This package has no cross-process lock. <code>SchedulerStoreError</code> and <code>SchedulerLockError</code> exist in <code>@zudojs/errors</code> for future persistence work; this package does not re-export them, and no store or lock is implemented today.</p>
         </div>
       </section>
 
@@ -686,9 +714,10 @@ console.<span class="fn">log</span>(scheduler.<span class="fn">getSchedule</span
               <tr><td><code>every(duration, jobId, options?)</code></td><td>Runs repeatedly on an interval.</td><td>First run is one interval away.</td></tr>
               <tr><td><code>cron(expression, jobId, options?)</code></td><td>Runs repeatedly on a cron schedule.</td><td>Options also accept <code>timezone</code>.</td></tr>
               <tr><td><code>start()</code></td><td>Starts the timer loop.</td><td>Throws <code>SchedulerAlreadyStartedError</code> if already running.</td></tr>
-              <tr><td><code>stop(options?)</code></td><td>Stops and waits for in-flight runs.</td><td><code>async</code>. Options: <code>drain</code>, <code>timeoutMs</code>.</td></tr>
+              <tr><td><code>stop(options?)</code></td><td>Stops and waits for in-flight runs.</td><td><code>async</code>. Options: <code>drain</code>, <code>timeoutMs</code>. Rejects with <code>SchedulerStoppedError</code> when not running.</td></tr>
               <tr><td><code>getSchedule(scheduleId)</code></td><td>Snapshot of one schedule, or <code>undefined</code>.</td><td>Read-only copy.</td></tr>
               <tr><td><code>listSchedules()</code></td><td>Snapshots of every live schedule.</td><td>Completed and cancelled ones are gone.</td></tr>
+              <tr><td><code>getExecutions(jobId?)</code></td><td>Recorded runs, oldest first, as <code>JobExecution</code> records.</td><td>At most 100 (<code>MAX_EXECUTION_HISTORY</code>). Pass a job id to filter.</td></tr>
               <tr><td><code>isRunning</code> / <code>scheduleCount</code></td><td>Getters for state and live schedule count.</td><td>Read-only.</td></tr>
             </tbody>
           </table>
@@ -722,7 +751,7 @@ console.<span class="fn">log</span>(scheduler.<span class="fn">getSchedule</span
               <tr><td><code>JobRegistry</code></td><td>Holds job definitions: <code>register</code>, <code>get</code>, <code>getOrThrow</code>, <code>has</code>, <code>list</code>, <code>unregister</code>, <code>clear</code>.</td><td>The scheduler builds one unless you pass your own.</td></tr>
               <tr><td><code>JobExecutor</code></td><td>Runs one job under a timeout, an abort signal and the retry policy.</td><td><code>new JobExecutor(clock)</code>; <code>execute(job, executionId, scheduledAt, attempt, signal, data?)</code>.</td></tr>
               <tr><td><code>PriorityQueue</code></td><td>Min-heap of schedules ordered by <code>nextRunAt</code>.</td><td><code>enqueue</code> throws <code>RangeError</code> on an invalid date.</td></tr>
-              <tr><td><code>SystemClock</code></td><td>Real time: <code>now()</code> and <code>nowMs()</code>.</td><td>Pass any object with those two methods as <code>clock</code> to fake time in tests.</td></tr>
+              <tr><td><code>SystemClock</code></td><td>Real time: <code>now()</code> and <code>nowMs()</code>.</td><td>Pass any object with those two methods as <code>clock</code> to fake time in tests. The <code>Clock</code> interface itself is not exported from the package root; declare <code>{ now(): Date; nowMs(): number }</code> yourself.</td></tr>
               <tr><td><code>DelayTrigger</code>, <code>DateTrigger</code>, <code>IntervalTrigger</code>, <code>CronTrigger</code></td><td>Compute the next fire time. Each has <code>next(after)</code>.</td><td>The scheduler picks one for you; use them directly to preview times.</td></tr>
               <tr><td><code>ScheduleHandleImpl</code></td><td>The concrete <code>ScheduleHandle</code>.</td><td>You get an instance back from <code>after</code>/<code>at</code>/<code>every</code>/<code>cron</code>; rarely constructed by hand.</td></tr>
             </tbody>
@@ -737,9 +766,9 @@ console.<span class="fn">log</span>(scheduler.<span class="fn">getSchedule</span
               <tr><td><code>JobDefinition</code></td><td><code>{ id, name, handler, options? }</code>.</td><td>What <code>define()</code> takes.</td></tr>
               <tr><td><code>JobHandler&lt;T&gt;</code></td><td><code>(context: JobContext&lt;T&gt;) =&gt; Promise&lt;void&gt; | void</code>.</td><td>The return value is ignored.</td></tr>
               <tr><td><code>JobContext&lt;T&gt;</code></td><td><code>jobId</code>, <code>executionId</code>, <code>scheduledAt</code>, <code>startedAt</code>, <code>attempt</code>, <code>data</code>, <code>signal</code>.</td><td>The single argument your handler gets.</td></tr>
-              <tr><td><code>JobOptions</code></td><td><code>timeout</code>, <code>retry</code>, <code>concurrency</code>, <code>overlap</code>.</td><td><code>concurrency</code> is accepted but not applied; use the scheduler's <code>maxConcurrency</code>.</td></tr>
+              <tr><td><code>JobOptions</code></td><td><code>timeout</code>, <code>retry</code>, <code>concurrency</code>, <code>overlap</code>.</td><td><code>concurrency</code> caps this job's runs in flight; <code>overlap</code> is the default for its schedules.</td></tr>
               <tr><td><code>RetryPolicy</code></td><td><code>attempts</code>, <code>strategy</code>, <code>delay</code>, <code>maxDelay?</code>, <code>jitter?</code>.</td><td><code>strategy</code> is <code>RetryStrategy</code>: fixed, linear or exponential.</td></tr>
-              <tr><td><code>ScheduleOptions</code></td><td><code>timezone</code>, <code>misfire</code>, <code>priority</code>.</td><td>The scheduler methods additionally accept <code>overlap</code> and <code>data</code> inline; this exported type does not list them.</td></tr>
+              <tr><td><code>ScheduleOptions</code></td><td><code>timezone</code>, <code>misfire</code>, <code>overlap</code>, <code>priority</code>, <code>data</code>.</td><td><code>data</code> reaches the handler as <code>ctx.data</code>.</td></tr>
               <tr><td><code>Schedule</code></td><td><code>id</code>, <code>jobId</code>, <code>type</code>, <code>expression?</code>, <code>nextRunAt</code>, <code>lastRunAt?</code>, <code>state</code>, <code>options?</code>.</td><td>What <code>getSchedule()</code> returns.</td></tr>
               <tr><td><code>ScheduleHandle</code></td><td><code>id</code>, <code>state</code>, <code>pause</code>, <code>resume</code>, <code>cancel</code>, <code>nextRun</code>.</td><td>Returned by every scheduling method.</td></tr>
               <tr><td><code>Trigger</code></td><td><code>{ next(after: Date): Date | null }</code>.</td><td>Implement it for a custom timing rule.</td></tr>
@@ -747,7 +776,7 @@ console.<span class="fn">log</span>(scheduler.<span class="fn">getSchedule</span
               <tr><td><code>SchedulerOptions</code>, <code>SchedulerErrorEvent</code></td><td>Constructor options, and the <code>{ scheduleId, jobId, executionId, error }</code> given to <code>onError</code>.</td><td></td></tr>
               <tr><td><code>ScheduleType</code>, <code>ScheduleState</code>, <code>JobState</code>, <code>OverlapPolicy</code>, <code>MisfirePolicy</code></td><td>String unions used above.</td><td>Executions are recorded with a <code>status</code> and returned by <code>getExecutions()</code> (last 100).</td></tr>
               <tr><td><code>SchedulerJobId</code>, <code>ScheduleId</code>, <code>ExecutionId</code></td><td>Aliases for <code>string</code>.</td><td>Documentation only.</td></tr>
-              <tr><td><code>JobExecution</code>, <code>JobExecutionResult</code></td><td>Shapes for an execution record and its result.</td><td><code>JobExecutionResult</code> is what <code>JobExecutor.execute</code> resolves to. Nothing produces <code>JobExecution</code>: there is no execution history.</td></tr>
+              <tr><td><code>JobExecution</code>, <code>JobExecutionResult</code></td><td>Shapes for an execution record and its result.</td><td><code>JobExecutionResult</code> is what <code>JobExecutor.execute</code> resolves to on success (it rejects on failure). <code>getExecutions()</code> returns <code>JobExecution</code> records.</td></tr>
               <tr><td><code>ScheduleHandleBinding</code>, <code>SchedulerErrorOptions</code></td><td>The wiring a handle needs; the options bag for scheduler errors.</td><td>Only needed if you build a handle yourself.</td></tr>
             </tbody>
           </table>
@@ -766,7 +795,7 @@ console.<span class="fn">log</span>(scheduler.<span class="fn">getSchedule</span
               <tr><td><code>SchedulerAlreadyStartedError</code> / <code>SchedulerStoppedError</code></td><td><code>start()</code> while running; <code>stop()</code> while stopped.</td><td><code>stop()</code> rejects rather than throwing synchronously.</td></tr>
               <tr><td><code>SchedulerJobAlreadyExistsError</code> / <code>SchedulerJobNotFoundError</code></td><td>Duplicate <code>define()</code>; <code>JobRegistry.getOrThrow</code> on an unknown id.</td><td></td></tr>
               <tr><td><code>SchedulerJobExecutionError</code> / <code>SchedulerJobTimeoutError</code> / <code>SchedulerJobCancelledError</code></td><td>A run threw, ran too long, or was aborted.</td><td>These reach you through <code>onError</code>.</td></tr>
-              <tr><td><code>SchedulerNotStartedError</code>, <code>ScheduleNotFoundError</code>, <code>ScheduleAlreadyExistsError</code>, <code>SchedulerStoreError</code>, <code>SchedulerLockError</code></td><td>Declared for completeness.</td><td>Exported, but nothing in this package throws them yet.</td></tr>
+              <tr><td><code>SchedulerNotStartedError</code>, <code>ScheduleNotFoundError</code>, <code>ScheduleAlreadyExistsError</code>, <code>SchedulerStoreError</code>, <code>SchedulerLockError</code></td><td>Never thrown by this package.</td><td>Not exported from <code>@zudojs/scheduler</code>; import them from <code>@zudojs/errors</code> if you build a durable scheduler on top.</td></tr>
             </tbody>
           </table>
         </div>
@@ -784,7 +813,7 @@ console.<span class="fn">log</span>(scheduler.<span class="fn">getSchedule</span
               <tr><td><code>DEFAULT_OVERLAP_POLICY</code></td><td><code>"allow"</code></td><td>Applied when <code>overlap</code> is omitted.</td></tr>
               <tr><td><code>MAX_TIMER_DELAY</code></td><td>2,147,483,647</td><td>Longest single <code>setTimeout</code> the loop will arm.</td></tr>
               <tr><td><code>MAX_JOBS</code> / <code>MAX_SCHEDULES</code></td><td>4,096 each</td><td>Hard caps; exceeding either throws.</td></tr>
-              <tr><td><code>MAX_EXECUTION_HISTORY</code>, <code>SCHEDULER_TICK_INTERVAL</code></td><td>100, 1,000</td><td>Exported but unused &mdash; the loop sleeps until the next fire time rather than ticking on a fixed interval.</td></tr>
+              <tr><td><code>MAX_EXECUTION_HISTORY</code></td><td>100</td><td>How many runs <code>getExecutions()</code> keeps. There is no fixed tick interval: the loop sleeps until the next fire time.</td></tr>
             </tbody>
           </table>
         </div>
@@ -796,8 +825,9 @@ console.<span class="fn">log</span>(scheduler.<span class="fn">getSchedule</span
 
         <ul class="space-y-4">
           <li><strong>Scheduling before defining.</strong> &rarr; <code>InvalidJobError: Job "x" is not registered.</code> &rarr; Call <code>define()</code> first; the scheduler checks the registry at scheduling time.</li>
+          <li><strong>Running a scheduler with nothing else in the process.</strong> &rarr; The script exits at once with code 0 and no job ever runs, because the scheduler's timers are <code>unref()</code>'d. &rarr; Keep the process alive with a server or worker, or with your own timer.</li>
           <li><strong>Forgetting <code>start()</code>.</strong> &rarr; Schedules exist, <code>nextRun()</code> returns a date, nothing ever runs. &rarr; Call <code>scheduler.start()</code> once at boot.</li>
-          <li><strong>Not awaiting <code>stop()</code>.</strong> &rarr; The process exits mid-job, or an unhandled rejection appears on shutdown. &rarr; <code>await scheduler.stop({ drain: true, timeoutMs: 30_000 })</code>.</li>
+          <li><strong>Not awaiting <code>stop()</code>.</strong> &rarr; The process exits mid-job, or an unhandled rejection appears on shutdown. &rarr; <code>await scheduler.stop({ drain: true, timeoutMs: 30_000 })</code>, guarded by <code>if (scheduler.isRunning)</code> so a second call does not reject with <code>SchedulerStoppedError</code>.</li>
           <li><strong>Leaving out <code>onError</code>.</strong> &rarr; A job that throws every run fails in total silence. &rarr; Pass <code>onError</code> to the constructor and log the event.</li>
           <li><strong>Passing a number where a duration string goes.</strong> &rarr; <code>every(5000, "job")</code> is a type error, and <code>every("5", "job")</code> throws <code>InvalidDurationError</code>. &rarr; Write the unit: <code>"5s"</code>.</li>
           <li><strong>Ignoring <code>ctx.signal</code> in a long handler.</strong> &rarr; A timeout or <code>stop()</code> reports the job as cancelled while the work keeps running. &rarr; Pass the signal to <code>fetch</code>, database drivers and anything else that accepts one.</li>
