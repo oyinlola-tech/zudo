@@ -10,13 +10,14 @@ import type {
 
 import { createLoggerTransport } from "../loggerTransport.core.js";
 
-import { serializeTransportEntry } from "../loggerTransportHelpers/loggerTransportHelpers.js";
+import { formatTransportLine } from "../loggerTransportHelpers/loggerTransportHelpers.js";
 
 /**
  * Creates a simple console transport.
  *
- * Uses the standard console methods rather than depending on
- * Node.js-specific APIs.
+ * Prints one line per record through the standard console methods (no
+ * Node.js-specific APIs): `entry.formatted` when the logger's formatter
+ * produced it, otherwise the entry as a single JSON line.
  */
 export function createConsoleLoggerTransport(
   options: LoggerTransportOptions = {},
@@ -27,7 +28,11 @@ export function createConsoleLoggerTransport(
     enabled: options.enabled ?? true,
 
     write(entry): void {
-      const payload = serializeTransportEntry(entry);
+      // One line per record: the formatter's line (text or JSON), or the
+      // entry as JSON. Printing the record object showed the timestamp and
+      // level twice beside a text line, and spread a structured record over
+      // several lines of console output.
+      const payload = formatTransportLine(entry);
 
       switch (entry.levelName) {
         case "fatal":

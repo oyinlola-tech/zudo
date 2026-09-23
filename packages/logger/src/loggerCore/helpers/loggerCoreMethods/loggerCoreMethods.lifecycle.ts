@@ -2,7 +2,11 @@
  * ZudojsLogger lifecycle methods.
  */
 
-import { LoggerLevel } from "../../../loggerLevel/loggerLevel.type.js";
+import {
+  resolveLoggerLevel,
+  type LoggerLevel,
+  type LoggerLevelLike,
+} from "../../../loggerLevel/loggerLevel.type.js";
 
 import { createLoggerTransport } from "../../../loggerTransport/loggerTransport.core.js";
 
@@ -15,19 +19,19 @@ import { throwCollectedFailures } from "../../../loggerErrors/loggerError.helper
 import type { ZudojsLoggerContext } from "../../core/loggerCore.core.js";
 
 /**
- * Sets the logger level.
+ * Sets the logger level from an enum value or a case-insensitive name.
  */
 export function setLoggerLevel(
   ctx: ZudojsLoggerContext,
-  level: LoggerLevel,
+  level: LoggerLevelLike,
 ): void {
   ctx.assertActive();
 
-  if (
-    !Number.isInteger(level) ||
-    level < LoggerLevel.FATAL ||
-    level > LoggerLevel.TRACE
-  ) {
+  let resolved: LoggerLevel;
+
+  try {
+    resolved = resolveLoggerLevel(level);
+  } catch {
     throw new LoggerConfigurationError(
       `Invalid logger level: ${String(level)}.`,
     );
@@ -37,7 +41,7 @@ export function setLoggerLevel(
 
   ctx.updateConfiguration({
     ...ctx.configuration,
-    level,
+    level: resolved,
   });
 }
 

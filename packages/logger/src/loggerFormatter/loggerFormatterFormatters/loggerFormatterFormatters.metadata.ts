@@ -11,17 +11,24 @@ import { escapeLogText } from "../../loggerEntry/loggerEntryHelpers/loggerEntryH
 
 /**
  * Formats metadata as key=value pairs.
+ *
+ * @param includeStackTrace - `false` leaves the stack out of any Error in
+ *   the metadata, as the text formatter's option of the same name promises.
  */
 export function formatMetadata(
   metadata: Record<string, unknown>,
   separator: string,
+  includeStackTrace = true,
 ): string {
   return (
     Object.entries(metadata)
       .filter(([, value]) => value !== undefined)
       // Metadata KEYS are as attacker-influenceable as values (a header
       // name, a form field) and were previously interpolated raw.
-      .map(([key, value]) => `${escapeLogText(key)}=${formatValue(value)}`)
+      .map(
+        ([key, value]) =>
+          `${escapeLogText(key)}=${formatValue(value, includeStackTrace)}`,
+      )
       .join(separator)
   );
 }
@@ -29,7 +36,7 @@ export function formatMetadata(
 /**
  * Formats an arbitrary metadata value.
  */
-export function formatValue(value: unknown): string {
+export function formatValue(value: unknown, includeStackTrace = true): string {
   if (value === null) {
     return "null";
   }
@@ -46,7 +53,12 @@ export function formatValue(value: unknown): string {
   }
 
   if (typeof value === "object") {
-    return escapeLogText(JSON.stringify(serializeLoggerValue(value)));
+    const serialized = serializeLoggerValue(
+      value,
+      new WeakSet<object>(),
+      includeStackTrace,
+    );
+    return escapeLogText(JSON.stringify(serialized));
   }
 
   return escapeLogText(String(value));
@@ -107,7 +119,10 @@ export function formatError(error: Error, includeStackTrace: boolean): string {
     return `\n${lines.join("\n")}`;
   }
 
-  const serialized = serializeLoggerError(error);
+  // Name and message only: the fallback used to serialize the stack as
+  // well, so `includeStackTrace: false` still printed every frame (and the
+  // absolute paths in them) inside the JSON.
+  const serialized = serializeLoggerError(error, false);
 
   return `error=${escapeLogText(JSON.stringify(serialized))}`;
 }

@@ -6,17 +6,21 @@ import { LOGGER_UNREADABLE_TOKEN } from "./loggerEntryHelpers.sanitize.js";
 
 /**
  * Serializes an error-like object into a plain object.
+ *
+ * @param includeStack - `false` leaves the stack out (its frames carry
+ *   absolute file paths). Defaults to `true`.
  */
-export function serializeLoggerError(error: {
-  name?: string;
-  message: string;
-  stack?: string;
-}): Record<string, unknown> {
-  return {
-    name: error.name,
-    message: error.message,
-    stack: error.stack,
-  };
+export function serializeLoggerError(
+  error: {
+    name?: string;
+    message: string;
+    stack?: string;
+  },
+  includeStack = true,
+): Record<string, unknown> {
+  return includeStack
+    ? { name: error.name, message: error.message, stack: error.stack }
+    : { name: error.name, message: error.message };
 }
 
 /**
@@ -25,11 +29,13 @@ export function serializeLoggerError(error: {
  * `seen` tracks the ANCESTOR PATH only, so only a genuine back-edge
  * becomes "[Circular]"; `Map` and `Set` keep their contents; and a
  * property whose getter throws becomes "[Unreadable]" rather than
- * taking the whole log line down.
+ * taking the whole log line down. `includeErrorStack: false` leaves the
+ * stack out of every Error found in the value.
  */
 export function serializeLoggerValue(
   value: unknown,
   seen: WeakSet<object> = new WeakSet<object>(),
+  includeErrorStack = true,
 ): unknown {
   if (
     value === null ||
@@ -48,7 +54,7 @@ export function serializeLoggerValue(
     return value.toISOString();
   }
   if (value instanceof Error) {
-    return serializeLoggerError(value);
+    return serializeLoggerError(value, includeErrorStack);
   }
   if (typeof value === "function") {
     return `[Function ${value.name || "anonymous"}]`;
@@ -67,11 +73,15 @@ export function serializeLoggerValue(
 
   try {
     if (Array.isArray(value)) {
-      return value.map((item) => serializeLoggerValue(item, seen));
+      return value.map((item) =>
+        serializeLoggerValue(item, seen, includeErrorStack),
+      );
     }
 
     if (value instanceof Set) {
-      return Array.from(value, (item) => serializeLoggerValue(item, seen));
+      return Array.from(value, (item) =>
+        serializeLoggerValue(item, seen, includeErrorStack),
+      );
     }
 
     const result: Record<string, unknown> = {};
@@ -92,7 +102,7 @@ export function serializeLoggerValue(
       for (const [key, item] of value.entries()) {
         define(
           typeof key === "string" ? key : String(key),
-          serializeLoggerValue(item, seen),
+          serializeLoggerValue(item, seen, includeErrorStack),
         );
       }
       return result;
@@ -106,7 +116,7 @@ export function serializeLoggerValue(
         define(key, LOGGER_UNREADABLE_TOKEN);
         continue;
       }
-      define(key, serializeLoggerValue(item, seen));
+      define(key, serializeLoggerValue(item, seen, includeErrorStack));
     }
     return result;
   } finally {

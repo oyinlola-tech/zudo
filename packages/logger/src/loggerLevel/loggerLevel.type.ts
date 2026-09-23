@@ -20,6 +20,14 @@ export enum LoggerLevel {
 export type LoggerLevelName =
   "fatal" | "error" | "warn" | "info" | "debug" | "trace";
 
+/**
+ * A level as configuration accepts it: the enum value, or its name in any
+ * case (`"error"`, `"ERROR"`). `"warning"` and `"information"` are accepted
+ * at runtime as aliases of `"warn"` and `"info"`.
+ */
+export type LoggerLevelLike =
+  LoggerLevel | LoggerLevelName | Uppercase<LoggerLevelName>;
+
 /** Converts a logger level into its canonical name. */
 export function loggerLevelToName(level: LoggerLevel): LoggerLevelName {
   switch (level) {
@@ -62,6 +70,19 @@ export function loggerLevelFromName(
     default:
       throw new InvalidLoggerLevelError(name);
   }
+}
+
+/**
+ * Resolves a configured level (enum value or case-insensitive name) to its
+ * enum value.
+ *
+ * @throws InvalidLoggerLevelError when the value is neither.
+ */
+export function resolveLoggerLevel(level: LoggerLevelLike): LoggerLevel {
+  const value: unknown = level;
+  if (isLoggerLevel(value)) return value;
+  if (typeof value === "string") return loggerLevelFromName(value.trim());
+  throw new InvalidLoggerLevelError(value);
 }
 
 /** Checks whether a value is a valid LoggerLevel. */

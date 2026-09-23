@@ -2,7 +2,10 @@
  * ContextLogger wrapper implementation.
  */
 
-import type { LoggerLevel } from "../../loggerLevel/loggerLevel.type.js";
+import type {
+  LoggerLevel,
+  LoggerLevelLike,
+} from "../../loggerLevel/loggerLevel.type.js";
 
 import type { LogMetadata } from "../../loggerEntry/loggerEntry.type.js";
 
@@ -96,7 +99,7 @@ export class ContextLogger implements Logger {
     );
   }
 
-  setLevel(level: LoggerLevel): void {
+  setLevel(level: LoggerLevelLike): void {
     this.logger.setLevel(level);
   }
 

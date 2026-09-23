@@ -2,7 +2,10 @@
  * Core logger implementation.
  */
 
-import { LoggerLevel } from "../../loggerLevel/loggerLevel.type.js";
+import {
+  LoggerLevel,
+  type LoggerLevelLike,
+} from "../../loggerLevel/loggerLevel.type.js";
 
 import type { LogMetadata } from "../../loggerEntry/loggerEntry.type.js";
 
@@ -33,6 +36,7 @@ import {
 
 import {
   logAtLevel,
+  levelOptions,
   childLogger,
   withContextLogger,
   setLoggerLevel,
@@ -118,22 +122,22 @@ export class ZudojsLogger implements Logger, ZudojsLoggerContext {
   }
 
   fatal(message: string, metadata?: LogMetadata): void {
-    logAtLevel(this, LoggerLevel.FATAL, message, { metadata });
+    logAtLevel(this, LoggerLevel.FATAL, message, levelOptions(metadata));
   }
   error(message: string, metadata?: LogMetadata): void {
-    logAtLevel(this, LoggerLevel.ERROR, message, { metadata });
+    logAtLevel(this, LoggerLevel.ERROR, message, levelOptions(metadata));
   }
   warn(message: string, metadata?: LogMetadata): void {
-    logAtLevel(this, LoggerLevel.WARN, message, { metadata });
+    logAtLevel(this, LoggerLevel.WARN, message, levelOptions(metadata));
   }
   info(message: string, metadata?: LogMetadata): void {
-    logAtLevel(this, LoggerLevel.INFO, message, { metadata });
+    logAtLevel(this, LoggerLevel.INFO, message, levelOptions(metadata));
   }
   debug(message: string, metadata?: LogMetadata): void {
-    logAtLevel(this, LoggerLevel.DEBUG, message, { metadata });
+    logAtLevel(this, LoggerLevel.DEBUG, message, levelOptions(metadata));
   }
   trace(message: string, metadata?: LogMetadata): void {
-    logAtLevel(this, LoggerLevel.TRACE, message, { metadata });
+    logAtLevel(this, LoggerLevel.TRACE, message, levelOptions(metadata));
   }
 
   log(level: LoggerLevel, message: string, options: LogOptions = {}): void {
@@ -147,7 +151,7 @@ export class ZudojsLogger implements Logger, ZudojsLoggerContext {
     return withContextLogger(this, context);
   }
 
-  setLevel(level: LoggerLevel): void {
+  setLevel(level: LoggerLevelLike): void {
     setLoggerLevel(this, level);
   }
   enable(): void {

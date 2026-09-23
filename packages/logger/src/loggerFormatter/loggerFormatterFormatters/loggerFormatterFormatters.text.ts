@@ -99,14 +99,21 @@ export function createTextLoggerFormatter(
       }
 
       if (includeMetadata && Object.keys(entry.metadata).length > 0) {
-        parts.push(formatMetadata(entry.metadata, metadataSeparator));
+        parts.push(
+          formatMetadata(entry.metadata, metadataSeparator, includeStackTrace),
+        );
       }
 
-      if (entry.error) {
-        parts.push(formatError(entry.error, includeStackTrace));
+      const line = parts.join(" ");
+
+      if (!entry.error) {
+        return line;
       }
 
-      return parts.join(" ");
+      // A stack starts on its own line; joining it with " " left a trailing
+      // space after the message.
+      const error = formatError(entry.error, includeStackTrace);
+      return error.startsWith("\n") ? `${line}${error}` : `${line} ${error}`;
     },
     { name: options.name ?? "text" },
   );

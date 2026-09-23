@@ -11,7 +11,7 @@ export {
   dispatchEntrySync,
 } from "./loggerCoreMethods.dispatch.js";
 
-export { logAtLevel } from "./loggerCoreMethods.level.js";
+export { logAtLevel, levelOptions } from "./loggerCoreMethods.level.js";
 
 export { childLogger, withContextLogger } from "./loggerCoreMethods.child.js";
 

@@ -87,7 +87,7 @@ describe("LOG-06", () => {
     const out: string[] = [];
     const logger = createLogger({
       formatter: createJsonLoggerFormatter(),
-      transports: [{ name: "c", enabled: true, write: (e: LoggerEntry) => void out.push(e.message) }],
+      transports: [{ name: "c", enabled: true, write: (e: LoggerEntry) => void out.push(e.formatted ?? e.message) }],
     });
     logger.info("req", { auth: "Basic dXNlcjpodW50ZXIy", passenger: "Ada" });
     await logger.flush();

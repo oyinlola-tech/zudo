@@ -23,6 +23,21 @@ import { dispatchEntrySync } from "./loggerCoreMethods.dispatch.js";
 import type { ZudojsLoggerContext } from "../../core/loggerCore.core.js";
 
 /**
+ * Turns the second argument of `logger.error(message, x)` and friends into
+ * log options. An `Error` becomes the entry's `error` (with its stack)
+ * instead of being read as metadata, where it has no enumerable fields and
+ * vanished without trace.
+ */
+export function levelOptions(
+  metadata: LogOptions["metadata"] | undefined,
+): LogOptions {
+  // The static type says metadata, but JavaScript callers (and code typed
+  // loosely) routinely pass the caught error here.
+  const value: unknown = metadata;
+  return value instanceof Error ? { error: value } : { metadata };
+}
+
+/**
  * Level logging methods extracted from ZudojsLogger.
  */
 export function logAtLevel(

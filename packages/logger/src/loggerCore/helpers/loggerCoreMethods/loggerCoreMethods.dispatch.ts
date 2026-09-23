@@ -13,6 +13,8 @@ import {
 
 import { isLoggerTransport } from "../../../loggerTransport/loggerTransportGuard.js";
 
+import { toJsonLogLine } from "../../../loggerTransport/loggerTransportHelpers/loggerTransportHelpers.js";
+
 import {
   LoggerFormatterError,
   LoggerTimeoutError,
@@ -92,19 +94,19 @@ async function withTransportTimeout(
 /**
  * Builds the payload handed to a transport.
  *
- * `LoggerFormattedOutput` is `string | Record<string, unknown>`. A
- * string replaces the message; an OBJECT is the formatted record and is
- * merged over the entry, so a transport sees the formatter's fields.
- * The object branch used to be computed and then discarded, which made
- * `createStructuredLoggerFormatter()` pure overhead on every log call
- * and handed the transport the raw, unformatted entry instead.
+ * `LoggerFormattedOutput` is `string | Record<string, unknown>`. A string
+ * is the formatted line and is carried in `formatted`; `message` stays the
+ * caller's raw message. (It used to be replaced by the line, so a transport
+ * could not get the message back without parsing it out again.) An OBJECT
+ * is the formatted record: it is merged over the entry, so a transport sees
+ * the formatter's fields, and `formatted` is that record as one JSON line.
  */
 function toTransportPayload(
   entry: LoggerEntry,
   formatted: unknown,
 ): LoggerEntry {
   if (typeof formatted === "string") {
-    return { ...entry, message: formatted };
+    return { ...entry, formatted };
   }
 
   if (
@@ -115,6 +117,7 @@ function toTransportPayload(
     return {
       ...entry,
       ...(formatted as Record<string, unknown>),
+      formatted: toJsonLogLine(formatted),
     } as unknown as LoggerEntry;
   }
 
@@ -158,19 +161,14 @@ function toFormatterError(
 async function writeTransport(
   configuration: LoggerConfiguration,
   transport: ReturnType<typeof createLoggerTransport>,
-  entry: LoggerEntry,
-  formatted: unknown,
+  payload: LoggerEntry,
 ): Promise<void> {
   const transportContext = {
     loggerName: configuration.name,
     environment: configuration.environment,
   };
 
-  await writeLoggerTransport(
-    transport.transport,
-    toTransportPayload(entry, formatted),
-    transportContext,
-  );
+  await writeLoggerTransport(transport.transport, payload, transportContext);
 }
 
 /**
@@ -203,15 +201,12 @@ function formatEntry(
 function writeTransportMaybeSync(
   configuration: LoggerConfiguration,
   transport: ReturnType<typeof createLoggerTransport>,
-  entry: LoggerEntry,
-  formatted: unknown,
+  payload: LoggerEntry,
 ): void | Promise<void> {
   const transportContext = {
     loggerName: configuration.name,
     environment: configuration.environment,
   };
-
-  const payload = toTransportPayload(entry, formatted);
 
   const target = transport.transport;
 
@@ -228,10 +223,10 @@ export async function dispatchEntry(
   entry: LoggerEntry,
   handleError: (error: Error) => void,
 ): Promise<void> {
-  let formatted: unknown;
+  let payload: LoggerEntry;
 
   try {
-    formatted = formatEntry(configuration, entry);
+    payload = toTransportPayload(entry, formatEntry(configuration, entry));
   } catch (error) {
     handleError(toFormatterError(resolveFormatterName(configuration), error));
     return;
@@ -255,7 +250,7 @@ export async function dispatchEntry(
       await withTransportTimeout(
         configuration.transportTimeout,
         registered.name,
-        writeTransport(configuration, registered, entry, formatted),
+        writeTransport(configuration, registered, payload),
       );
     } catch (error) {
       handleError(toTransportError(transportName, error));
@@ -288,10 +283,10 @@ export function dispatchEntrySync(
     );
   }
 
-  let formatted: unknown;
+  let payload: LoggerEntry;
 
   try {
-    formatted = formatEntry(configuration, entry);
+    payload = toTransportPayload(entry, formatEntry(configuration, entry));
   } catch (error) {
     handleError(toFormatterError(resolveFormatterName(configuration), error));
     return;
@@ -317,8 +312,7 @@ export function dispatchEntrySync(
       const result = writeTransportMaybeSync(
         configuration,
         registered,
-        entry,
-        formatted,
+        payload,
       );
 
       if (result instanceof Promise) {

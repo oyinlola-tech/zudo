@@ -63,7 +63,7 @@ describe("MSG-L-01", () => {
     expect(record["metadata"]).toEqual({ k: 1 });
   });
 
-  it("still passes a string formatter's output as entry.message", () => {
+  it("passes a string formatter's output as entry.formatted, keeping the raw message", () => {
     const sink = recorder();
 
     const logger = createLogger({
@@ -73,8 +73,8 @@ describe("MSG-L-01", () => {
 
     logger.info("hello");
 
-    expect(typeof sink.records[0]!["message"]).toBe("string");
-    expect(String(sink.records[0]!["message"])).toContain('"hello"');
+    expect(sink.records[0]!["message"]).toBe("hello");
+    expect(String(sink.records[0]!["formatted"])).toContain('"hello"');
   });
 });
 

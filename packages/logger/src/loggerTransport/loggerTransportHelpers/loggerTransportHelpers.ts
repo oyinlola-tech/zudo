@@ -62,6 +62,31 @@ export function serializeTransportEntry(
 }
 
 /**
+ * Renders a record as one line of JSON.
+ *
+ * Values go through `serializeLoggerValue` first, so a cycle becomes
+ * `"[Circular]"`, a BigInt its decimal string and an Error its name,
+ * message and stack. `JSON.stringify` escapes `\n`; U+2028 and U+2029,
+ * which it leaves raw and some viewers break lines on, are escaped too.
+ */
+export function toJsonLogLine(record: unknown): string {
+  const json = JSON.stringify(serializeLoggerValue(record)) ?? "null";
+
+  return json.replace(/\u2028/gu, "\\u2028").replace(/\u2029/gu, "\\u2029");
+}
+
+/**
+ * The text a line-oriented transport (console, file, stream) prints for an
+ * entry: the formatter's line when there is one, otherwise the entry as a
+ * single JSON line.
+ */
+export function formatTransportLine(entry: LoggerEntry): string {
+  return typeof entry.formatted === "string"
+    ? entry.formatted
+    : toJsonLogLine(serializeTransportEntry(entry));
+}
+
+/**
  * Safely closes a transport.
  */
 export async function closeLoggerTransport(

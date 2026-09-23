@@ -33,9 +33,20 @@ export interface LoggerEntry {
   readonly levelName: LoggerLevelName;
 
   /**
-   * Human-readable message.
+   * The message as the caller logged it. A transport receives it unchanged;
+   * the formatter's rendering of the whole record is in `formatted`.
    */
   readonly message: string;
+
+  /**
+   * The record rendered as one line by the logger's formatter: the string a
+   * text or JSON formatter returned, or the JSON line of the record an
+   * object formatter (`createStructuredLoggerFormatter`) returned. Set on
+   * entries a logger hands to its transports. Line-oriented transports
+   * print `entry.formatted ?? entry.message`; `message` is always the raw
+   * message the caller logged.
+   */
+  readonly formatted?: string;
 
   /**
    * Structured metadata.

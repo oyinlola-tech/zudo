@@ -1,4 +1,8 @@
-import { LoggerLevel } from "../loggerLevel/loggerLevel.type.js";
+import {
+  LoggerLevel,
+  resolveLoggerLevel,
+  type LoggerLevelLike,
+} from "../loggerLevel/loggerLevel.type.js";
 import type { LoggerContextData } from "../loggerContext/loggerContext.core.js";
 import type { LoggerFormatterLike } from "../loggerFormatter/loggerFormatter.type.js";
 import type { LoggerTransportLike } from "../loggerTransport/loggerTransport.type.js";
@@ -7,7 +11,8 @@ import type { LoggerRedactionOptions } from "../loggerEntry/loggerEntryHelpers/l
 /** Options used to configure a Zudojs logger. */
 export interface LoggerOptions {
   readonly name?: string;
-  readonly level?: LoggerLevel;
+  /** Threshold: `LoggerLevel.WARN`, or a name such as `"warn"` / `"WARN"`. */
+  readonly level?: LoggerLevelLike;
   readonly environment?: string;
   readonly metadata?: LoggerContextData;
   readonly formatter?: LoggerFormatterLike;
@@ -34,7 +39,8 @@ export interface LoggerOptions {
 export interface ChildLoggerOptions {
   readonly name?: string;
   readonly metadata?: LoggerContextData;
-  readonly level?: LoggerLevel;
+  /** Threshold: `LoggerLevel.DEBUG`, or a name such as `"debug"`. */
+  readonly level?: LoggerLevelLike;
 }
 
 /** Options for a single log operation. */
@@ -124,7 +130,10 @@ export function resolveLoggerOptions(
 
   return Object.freeze({
     name: options.name ?? "zudojs",
-    level: options.level ?? LoggerLevel.INFO,
+    level:
+      options.level === undefined
+        ? LoggerLevel.INFO
+        : resolveLoggerLevel(options.level),
     environment: options.environment,
     metadata: Object.freeze({ ...(options.metadata ?? {}) }),
     formatter: options.formatter ?? "text",
@@ -163,7 +172,10 @@ export function createChildLoggerOptions(
 ): LoggerOptions {
   return {
     name: options.name ?? parent.name,
-    level: options.level ?? parent.level,
+    level:
+      options.level === undefined
+        ? parent.level
+        : resolveLoggerLevel(options.level),
     environment: parent.environment,
     metadata: { ...parent.metadata, ...(options.metadata ?? {}) },
     formatter: parent.formatter,

@@ -6,6 +6,8 @@
 
 export {
   serializeTransportEntry,
+  toJsonLogLine,
+  formatTransportLine,
   closeLoggerTransport,
   flushLoggerTransport,
 } from "./loggerTransportHelpers.js";

@@ -75,7 +75,7 @@ describe("LOG-R9-02: per-call context reaches every formatter", () => {
       formatter: createTextLoggerFormatter(),
     });
     logger.log(LoggerLevel.INFO, "hello", { context: { tenant: "acme" } });
-    expect(entries[0]!.message).toContain("tenant=acme");
+    expect(entries[0]!.formatted).toContain("tenant=acme");
     expect(entries[0]!.metadata["tenant"]).toBe("acme");
   });
 
@@ -124,7 +124,7 @@ describe("LOG-R9-03: entry.context carries the active context identifiers", () =
     logger
       .withContext(createLoggerContext({ requestId: "req-1" }))
       .info("handled");
-    const line = entries[0]!.message;
+    const line = entries[0]!.formatted ?? "";
     expect(line.split("requestId=req-1").length - 1).toBe(1);
   });
 
