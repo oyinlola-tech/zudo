@@ -11,6 +11,23 @@ import type {
 
 export type ProviderToken<T = unknown> = Token<T> | InjectionToken<T>;
 
+/**
+ * The parameter list a factory receives for an `inject` list: each token is
+ * mapped to the type it resolves to, so `[DB, Clock]` gives `[Db, Clock]`.
+ * Untyped string/symbol tokens map to `unknown`, and a non-tuple
+ * `readonly ProviderToken[]` gives `unknown[]`, as before.
+ */
+export type InjectedDependencies<Deps extends readonly ProviderToken[]> = {
+  -readonly [K in keyof Deps]: Deps[K] extends ProviderToken<infer U>
+    ? U
+    : never;
+};
+
+/** A factory whose parameters are typed from its `inject` list. */
+export type InjectedFactory<T, Deps extends readonly ProviderToken[]> = (
+  ...dependencies: InjectedDependencies<Deps>
+) => T;
+
 export interface ClassProvider<T> {
   readonly useClass: Constructor<T>;
   /**
@@ -110,11 +127,21 @@ export function classProvider<T>(
 ): ClassProvider<T> {
   return Object.freeze({ useClass, inject: Object.freeze([...inject]) });
 }
-export function factoryProvider<T>(
-  useFactory: (...dependencies: unknown[]) => T,
-  inject: readonly ProviderToken[] = [],
+/**
+ * Builds a factory provider. The factory's parameters are inferred from the
+ * `inject` tokens, in order.
+ */
+export function factoryProvider<
+  T,
+  const Deps extends readonly ProviderToken[] = readonly [],
+>(
+  useFactory: InjectedFactory<T, Deps>,
+  inject: Deps = [] as unknown as Deps,
 ): FactoryProvider<T> {
-  return Object.freeze({ useFactory, inject: Object.freeze([...inject]) });
+  return Object.freeze({
+    useFactory: useFactory as (...dependencies: unknown[]) => T,
+    inject: Object.freeze([...inject]),
+  });
 }
 export function valueProvider<T>(useValue: T): ValueProvider<T> {
   return Object.freeze({ useValue });
@@ -136,14 +163,21 @@ export function provideClass<T>(
     inject: Object.freeze([...inject]),
   });
 }
-export function provideFactory<T>(
+/**
+ * Builds a factory registration. The factory's parameters are inferred from
+ * the `inject` tokens, in order.
+ */
+export function provideFactory<
+  T,
+  const Deps extends readonly ProviderToken[] = readonly [],
+>(
   provide: ProviderToken<T>,
-  useFactory: (...dependencies: unknown[]) => T,
-  inject: readonly ProviderToken[] = [],
+  useFactory: InjectedFactory<T, Deps>,
+  inject: Deps = [] as unknown as Deps,
 ): FactoryRegistration<T> {
   return Object.freeze({
     provide,
-    useFactory,
+    useFactory: useFactory as (...dependencies: unknown[]) => T,
     inject: Object.freeze([...inject]),
   });
 }

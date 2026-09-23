@@ -79,13 +79,19 @@ export function isStringToken<T = unknown>(token: Token<T>): token is string {
   return typeof token === "string";
 }
 
+/**
+ * Returns a human-readable name for a token, used in error messages and as
+ * the default registration name.
+ *
+ * A symbol token (including every `createToken`/`createGlobalToken` token)
+ * is shown by its description, so errors read `MissingService` rather than
+ * `Symbol(MissingService)`. A symbol without a description is `Symbol()`.
+ */
 export function describeToken<T>(token: Token<T> | InjectionToken<T>): string {
   const resolved = unwrapToken(token);
   if (typeof resolved === "string") return resolved;
   if (typeof resolved === "symbol")
-    return resolved.description
-      ? `Symbol(${resolved.description})`
-      : "Symbol()";
+    return resolved.description ? resolved.description : "Symbol()";
   if (typeof resolved === "function")
     return resolved.name || "AnonymousConstructor";
   return "UnknownToken";

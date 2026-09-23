@@ -15,6 +15,7 @@
 
 import type {
   ContainerProvider,
+  InjectedFactory,
   ProviderToken,
 } from "../containerProvider/containerProvider.core.js";
 import {
@@ -153,13 +154,27 @@ export class Container implements ContainerLike {
     });
   }
 
-  registerFactory<T>(
+  /**
+   * Registers a factory. Its parameters are typed from the `inject` tokens,
+   * in order: `registerFactory(API, (db) => new Api(db), [DB])` types `db`
+   * as `Db` when `DB` is a `createToken<Db>()` or class token, and rejects a
+   * factory whose parameters do not match. String/symbol tokens give
+   * `unknown`.
+   */
+  registerFactory<
+    T,
+    const Deps extends readonly ProviderToken[] = readonly [],
+  >(
     token: RegistrationToken<T>,
-    factory: (...deps: unknown[]) => T,
-    inject: readonly ProviderToken[] = [],
+    factory: InjectedFactory<T, Deps>,
+    inject: Deps = [] as unknown as Deps,
     options: CreateRegistrationOptions = {},
   ): ContainerRegistration<T> {
-    return this.register(token, factoryProvider(factory, inject), options);
+    return this.register(
+      token,
+      factoryProvider<T, Deps>(factory, inject),
+      options,
+    );
   }
 
   registerExisting<T>(
