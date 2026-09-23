@@ -427,7 +427,7 @@ describe("BaseRepository", () => {
         repo.paginateCursor(undefined, {
           cursor: encodeCursor({ id: "u1", role: "admin" }),
         }),
-      ).rejects.toThrow(/unexpected field "role"/);
+      ).rejects.toThrow(/unexpected field\./);
 
       await expect(
         repo.paginateCursor(undefined, { cursor: encodeCursor(["u1"]) }),

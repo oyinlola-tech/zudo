@@ -16,8 +16,10 @@ import {
   DatabaseError,
   DatabaseOperation,
   ErrorCategory,
+  isBaseError,
   isDatabaseError,
   ErrorCode,
+  type BaseError,
   type DatabaseErrorOptions,
 } from "@zudojs/errors";
 
@@ -41,6 +43,20 @@ export function isDatabaseErrorLike(value: unknown): value is DatabaseError {
     typeof candidate.code === "string" &&
     typeof candidate.statusCode === "number"
   );
+}
+
+/**
+ * Determines whether an error is a `@zudojs/errors` `BaseError` that is
+ * *not* a database failure: a domain, application, validation, not-found
+ * or other error raised by caller code.
+ *
+ * Transaction helpers (`DatabaseClient.transaction`, `withTransaction`,
+ * `TransactionManager`, units of work) roll back on such an error and
+ * rethrow the same instance unchanged, instead of wrapping it in a 500
+ * `DatabaseError` and logging it as a database failure.
+ */
+export function isNonDatabaseBaseError(value: unknown): value is BaseError {
+  return isBaseError(value) && !isDatabaseErrorLike(value);
 }
 
 /**

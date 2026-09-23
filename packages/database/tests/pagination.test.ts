@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { ValidationError } from "@zudojs/errors";
 import {
   normalizePagination,
   normalizePage,
@@ -208,7 +209,7 @@ describe("Pagination", () => {
     });
 
     it("rejects malformed cursors", () => {
-      expect(() => decodeCursor("")).toThrow(TypeError);
+      expect(() => decodeCursor("")).toThrow(ValidationError);
       expect(() => decodeCursor("not-json!!")).toThrow(/Invalid pagination cursor/);
     });
 
@@ -238,7 +239,7 @@ describe("Pagination", () => {
 
       expect(() =>
         decodeCursor(forged, { allowedFields: ["id"] }),
-      ).toThrow(/unexpected field "passwordHash"/);
+      ).toThrow(/unexpected field\./);
 
       expect(() =>
         decodeCursor(encodeCursor(null), { allowedFields: ["id"] }),

@@ -6,6 +6,7 @@ import type {
 } from "../databaseClient/databaseClient.core.js";
 import {
   isDatabaseErrorLike,
+  isNonDatabaseBaseError,
   isRetryableTransactionError,
   normalizeDatabaseError,
   withDatabaseErrorMetadata,
@@ -127,9 +128,14 @@ export class TransactionManager {
    * Executes a callback inside a managed transaction and returns the
    * result together with the final context (`status: "committed"`).
    *
-   * On failure the thrown `DatabaseError` carries `transactionId`,
-   * `transactionStatus: "failed"` and the supplied metadata; use
-   * {@link getTransactionContextFromError} to recover the context.
+   * On a database failure the thrown `DatabaseError` carries
+   * `transactionId`, `transactionStatus: "failed"` and the supplied
+   * metadata; use {@link getTransactionContextFromError} to recover the
+   * context.
+   *
+   * A non-database `BaseError` thrown by the callback (for example a
+   * `NotFoundError` or `DomainError`) rolls the transaction back and is
+   * rethrown as the same, unmodified instance.
    */
   public async run<TResult>(
     callback: (
@@ -152,6 +158,7 @@ export class TransactionManager {
       );
       return { result, context: withStatus(base, "committed") };
     } catch (error) {
+      if (isNonDatabaseBaseError(error)) throw error;
       const failed = withStatus(base, "failed");
       throw attachTransactionContext(
         normalizeDatabaseError(error, {
@@ -182,6 +189,11 @@ export function createTransactionManager(
 
 /**
  * Executes a managed database transaction.
+ *
+ * The transaction rolls back when the callback throws. A `@zudojs/errors`
+ * `BaseError` that is not a `DatabaseError` (domain, application,
+ * validation, not-found, ...) propagates unchanged; driver and database
+ * failures and any other thrown value become a `DatabaseError`.
  */
 export async function withTransaction<TResult>(
   client: DatabaseClient,

@@ -32,6 +32,7 @@ export {
   getDatabaseErrorCode,
   getDatabaseErrorKind,
   isDatabaseErrorLike,
+  isNonDatabaseBaseError,
   toDatabaseErrorInfo,
   RETRYABLE_DATABASE_CODES,
   type DatabaseErrorKind,

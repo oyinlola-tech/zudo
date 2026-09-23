@@ -27,7 +27,10 @@ import type {
   TransactionOptions,
 } from "../databaseType/databaseType.type.js";
 import { createDefaultLogger } from "./databaseClient.logger.js";
-import { normalizeDatabaseError } from "./databaseClient.errors.js";
+import {
+  isNonDatabaseBaseError,
+  normalizeDatabaseError,
+} from "./databaseClient.errors.js";
 
 /**
  * Transaction client handed to callbacks. This is Prisma's interactive
@@ -65,10 +68,16 @@ export interface PrismaTransactionOptions {
 export interface PrismaClientLike {
   $connect(): Promise<void>;
   $disconnect(): Promise<void>;
-  $transaction<TResult>(
-    callback: (transaction: DatabaseTransactionContext) => Promise<TResult>,
-    options?: PrismaTransactionOptions,
-  ): Promise<TResult>;
+  /**
+   * Declared loosely on purpose. Prisma 7 generates the client into the
+   * application (`prisma-client` generator), and its overloaded
+   * `$transaction` (batch array or interactive callback) cannot be assigned
+   * to a single generic signature, so a real client failed to type-check
+   * against this interface and needed a cast. Any `$transaction` is
+   * accepted here; `DatabaseClient` only ever calls the interactive form
+   * (see `InteractiveTransaction`).
+   */
+  $transaction(...args: never[]): Promise<unknown>;
   $queryRawUnsafe<TResult = unknown>(
     query: string,
     ...values: unknown[]
@@ -76,6 +85,15 @@ export interface PrismaClientLike {
   $executeRawUnsafe(query: string, ...values: unknown[]): Promise<number>;
   $on?(event: "query", callback: (event: PrismaQueryEvent) => void): void;
 }
+
+/**
+ * The interactive-transaction form of Prisma's `$transaction`, which is the
+ * only form `DatabaseClient` calls.
+ */
+type InteractiveTransaction = <TResult>(
+  callback: (transaction: DatabaseTransactionContext) => Promise<TResult>,
+  options?: PrismaTransactionOptions,
+) => Promise<TResult>;
 
 /**
  * Prisma query log event.
@@ -295,6 +313,12 @@ export class DatabaseClient
    * is released at the same moment. Racing only the outer promise let the
    * callback finish and the transaction commit after the caller had
    * already been told it was aborted.
+   *
+   * A `@zudojs/errors` `BaseError` thrown by the callback that is not a
+   * `DatabaseError` (a `NotFoundError`, `DomainError`, `ValidationError`,
+   * ...) rolls the transaction back and is rethrown unchanged, without
+   * being logged as a database failure. Driver and database failures, and
+   * any other thrown value, are normalised to a `DatabaseError` and logged.
    */
   public async transaction<TResult>(
     callback: TransactionCallback<DatabaseTransactionContext, TResult>,
@@ -306,9 +330,12 @@ export class DatabaseClient
     throwIfAborted(options.signal);
     await this.ensureConnected();
     const transactionOptions = buildPrismaTransactionOptions(options);
+    const interactive = this.prisma.$transaction.bind(
+      this.prisma,
+    ) as InteractiveTransaction;
     try {
       return await raceAbort(
-        this.prisma.$transaction(
+        interactive(
           async (transaction) =>
             raceAbort(callback(transaction), options.signal),
           transactionOptions,
@@ -316,6 +343,12 @@ export class DatabaseClient
         options.signal,
       );
     } catch (error) {
+      if (isNonDatabaseBaseError(error)) {
+        this.logger.debug("Database transaction rolled back by caller error.", {
+          code: error.code,
+        });
+        throw error;
+      }
       const normalized = normalizeDatabaseError(error, {
         operation: DatabaseOperation.TRANSACTION,
         fallbackMessage: "Database transaction failed.",

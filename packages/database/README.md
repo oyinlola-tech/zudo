@@ -116,7 +116,21 @@ const next = await users.paginateCursor(undefined, {
   limit: 25,
   sort: [{ field: "createdAt", direction: "desc" }],
 });
+// Page back: `previousCursor` is set on any non-empty page requested with a
+// cursor. The rows come back in the requested sort order.
+const back = await users.paginateCursor(undefined, {
+  cursor: next.meta.previousCursor,
+  limit: 25,
+  sort: [{ field: "createdAt", direction: "desc" }],
+});
 ```
+
+A missing, forged, tampered or malformed cursor rejects with a
+`ValidationError` (400, exposable, `issues[0].code` such as
+`"cursor_signature"`) before any query runs. The message never echoes the
+cursor or its contents. Building keyset pages by hand? Fetch with
+`keysetFetchSort(sort, getKeysetDirection(payload))` and pass that
+`direction` to `createKeysetPage`.
 
 ## Migrations and seeds
 
@@ -163,7 +177,14 @@ to size it for long-running steps.
 
 ## Errors
 
-Every failure surfaces as a `DatabaseError` from `@zudojs/errors`. Prisma codes
+Errors your own transaction callback throws that are already `@zudojs/errors`
+errors but not database errors (a `NotFoundError`, `DomainError`,
+`ValidationError`, ...) roll the transaction back and propagate **unchanged**
+from `transaction()`, `withTransaction()`, `TransactionManager` and units of
+work: same instance, same status, and not logged as a database error.
+Everything else, driver and database failures included, is normalised as below.
+
+Every database failure surfaces as a `DatabaseError` from `@zudojs/errors`. Prisma codes
 are mapped to `databaseCode`, an `ErrorCode` and an HTTP status (`P2002` /
 `P2003` → 409, `P2025` → 404, `P2034` → retryable, `P1xxx` → 503 with a fixed
 message that never includes the host name).
@@ -208,6 +229,10 @@ await locks.withAdvisoryLock("reports:nightly", async (tx) => {
 await locks.withRowLock("orders", orderId, async (tx) => {
   await tx.$executeRawUnsafe('UPDATE "orders" SET "status" = $1 WHERE "id" = $2', "paid", orderId);
 }, { mode: "for-no-key-update", skipLocked: true });
+
+// The connection manager reconnects with exponential back-off after failed
+// health checks. The back-off wait keeps the process alive until the reconnect
+// finishes; `disconnect()` / `destroy()` cancel it immediately.
 
 const health = await checkDatabaseHealth(client, { timeoutMs: 2_000 });
 health.status; // "healthy" | "degraded" | "unhealthy"

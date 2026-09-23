@@ -43,3 +43,16 @@ export {
   type KeysetPageOptions,
   type KeysetWhere,
 } from "./pagination.keyset.js";
+
+export {
+  KEYSET_BACKWARD_KEY,
+  getKeysetDirection,
+  reverseKeysetSort,
+  keysetFetchSort,
+  type KeysetDirection,
+} from "./pagination.keysetDirection.js";
+
+export {
+  createInvalidCursorError,
+  type InvalidCursorReason,
+} from "./pagination.cursorError.js";

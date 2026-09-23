@@ -19,6 +19,11 @@ import {
   createKeysetPage,
   decodeKeysetCursor,
 } from "../pagination/pagination.keyset.js";
+import {
+  type KeysetDirection,
+  getKeysetDirection,
+  keysetFetchSort,
+} from "../pagination/pagination.keysetDirection.js";
 import type { QueryBuilder } from "../queryBuilder/queryBuilder.core.js";
 import {
   toPrismaArgs,
@@ -427,6 +432,11 @@ export abstract class BaseRepository<
    * tiebreaker), `limit + 1` rows are fetched and the extra row decides
    * `hasNextPage`. Cursors are validated against the sort fields and, when
    * `cursorSecret` is configured, signed.
+   *
+   * Pass `meta.nextCursor` to page forward and `meta.previousCursor` to
+   * page backward; both come back in `options.sort` order. A forged,
+   * tampered or malformed cursor rejects with a `ValidationError` (400)
+   * before any query runs.
    */
   public async paginateCursor<TField extends string = string>(
     filter?: TWhereInput,
@@ -438,21 +448,25 @@ export abstract class BaseRepository<
 
     const sort = this.buildCursorSort(options?.sort);
 
-    const orderBy = this.buildOrderBy(sort);
-
     const limit = normalizeLimit(options?.limit);
 
     const cursor = options?.cursor ?? null;
 
     let where: unknown = this.scope(filter);
 
+    let direction: KeysetDirection = "forward";
+
     if (cursor !== null) {
       const payload = decodeKeysetCursor(cursor, sort, this.cursorSecret);
+
+      direction = getKeysetDirection(payload);
 
       const keyset = buildKeysetWhere(payload, sort);
 
       where = where === undefined ? keyset : { AND: [where, keyset] };
     }
+
+    const orderBy = this.buildOrderBy(keysetFetchSort(sort, direction));
 
     const rows = await this.execute(
       "paginateCursor",
@@ -472,6 +486,7 @@ export abstract class BaseRepository<
         limit,
         cursor,
         secret: this.cursorSecret,
+        direction,
       },
     );
   }

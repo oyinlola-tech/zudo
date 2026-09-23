@@ -94,7 +94,9 @@ function createCommitTrackingPrisma(): PrismaClientLike & {
     log,
     async $connect() {},
     async $disconnect() {},
-    async $transaction(callback) {
+    async $transaction(
+      callback: (transaction: DatabaseTransactionContext) => Promise<unknown>,
+    ) {
       log.push("BEGIN");
       try {
         const result = await callback(tx);

@@ -4,7 +4,10 @@ import type {
   DatabaseTransactionContext,
   DatabaseClient,
 } from "../databaseClient/databaseClient.core.js";
-import { normalizeDatabaseError } from "../databaseClient/databaseClient.errors.js";
+import {
+  isNonDatabaseBaseError,
+  normalizeDatabaseError,
+} from "../databaseClient/databaseClient.errors.js";
 
 import type {
   TransactionCallback,
@@ -62,6 +65,7 @@ export class DatabaseUnitOfWork implements UnitOfWork {
       try {
         return await callback(transaction);
       } catch (error) {
+        if (isNonDatabaseBaseError(error)) throw error;
         throw normalizeDatabaseError(error, {
           operation: DatabaseOperation.TRANSACTION,
           fallbackMessage: "Unit of work execution failed.",

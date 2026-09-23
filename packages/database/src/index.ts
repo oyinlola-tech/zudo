@@ -64,6 +64,7 @@ export {
   getDatabaseErrorCode,
   getDatabaseErrorKind,
   isDatabaseErrorLike,
+  isNonDatabaseBaseError,
   toDatabaseErrorInfo,
   RETRYABLE_DATABASE_CODES,
   type DatabaseClientOptions,
@@ -223,6 +224,11 @@ export {
   buildKeysetWhere,
   createKeysetCursor,
   createKeysetPage,
+  KEYSET_BACKWARD_KEY,
+  getKeysetDirection,
+  reverseKeysetSort,
+  keysetFetchSort,
+  createInvalidCursorError,
   normalizeCursorPagination,
   createCursorPaginationMeta,
   createCursorPaginatedResult,
@@ -238,6 +244,8 @@ export {
   type DecodeCursorOptions,
   type KeysetPageOptions,
   type KeysetWhere,
+  type KeysetDirection,
+  type InvalidCursorReason,
 } from "./pagination/index.js";
 
 // Relations

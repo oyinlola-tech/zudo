@@ -5,6 +5,7 @@ import type {
   PaginationMeta,
   PaginatedResult,
 } from "../databaseType/databaseType.type.js";
+import { createInvalidCursorError } from "./pagination.cursorError.js";
 
 /**
  * Default pagination values.
@@ -389,13 +390,20 @@ export function encodeCursor(
  * When `secret` is supplied the signature is verified; when
  * `allowedFields` is supplied the payload must be a flat object whose keys
  * are all allowed and whose values are primitives.
+ *
+ * A missing, forged, tampered or malformed cursor throws a
+ * `ValidationError` (HTTP 400) whose message never echoes the cursor. An
+ * invalid `secret` is a programming error and still throws `TypeError`.
  */
 export function decodeCursor<T = unknown>(
   cursor: string,
   options: DecodeCursorOptions = {},
 ): T {
   if (typeof cursor !== "string" || cursor.trim().length === 0) {
-    throw new TypeError("A cursor value is required.");
+    throw createInvalidCursorError(
+      "A cursor value is required.",
+      "cursor_required",
+    );
   }
 
   let payload = cursor;
@@ -406,7 +414,10 @@ export function decodeCursor<T = unknown>(
     const separator = cursor.lastIndexOf(CURSOR_SIGNATURE_SEPARATOR);
 
     if (separator <= 0) {
-      throw new TypeError("Invalid pagination cursor signature.");
+      throw createInvalidCursorError(
+        "Invalid pagination cursor signature.",
+        "cursor_signature",
+      );
     }
 
     payload = cursor.slice(0, separator);
@@ -419,7 +430,10 @@ export function decodeCursor<T = unknown>(
       signature.length !== expected.length ||
       !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
     ) {
-      throw new TypeError("Invalid pagination cursor signature.");
+      throw createInvalidCursorError(
+        "Invalid pagination cursor signature.",
+        "cursor_signature",
+      );
     }
   }
 
@@ -428,9 +442,11 @@ export function decodeCursor<T = unknown>(
   try {
     decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
   } catch (error) {
-    throw new TypeError("Invalid pagination cursor.", {
-      cause: error,
-    });
+    throw createInvalidCursorError(
+      "Invalid pagination cursor.",
+      "cursor_malformed",
+      error,
+    );
   }
 
   if (options.allowedFields !== undefined) {
@@ -449,15 +465,19 @@ export function validateCursorPayload(
   allowedFields: readonly string[],
 ): asserts value is CursorPayload {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new TypeError("Pagination cursor payload must be an object.");
+    throw createInvalidCursorError(
+      "Pagination cursor payload must be an object.",
+      "cursor_payload",
+    );
   }
 
   const allowed = new Set(allowedFields);
 
   for (const [key, entry] of Object.entries(value)) {
     if (FORBIDDEN_CURSOR_KEYS.has(key) || !allowed.has(key)) {
-      throw new TypeError(
-        `Pagination cursor contains an unexpected field "${key}".`,
+      throw createInvalidCursorError(
+        "Pagination cursor contains an unexpected field.",
+        "cursor_field",
       );
     }
 
@@ -467,8 +487,9 @@ export function validateCursorPayload(
       typeof entry !== "number" &&
       typeof entry !== "boolean"
     ) {
-      throw new TypeError(
-        `Pagination cursor field "${key}" must be a primitive value.`,
+      throw createInvalidCursorError(
+        "Pagination cursor fields must be primitive values.",
+        "cursor_payload",
       );
     }
   }

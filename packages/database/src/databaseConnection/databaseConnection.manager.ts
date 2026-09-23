@@ -62,7 +62,9 @@ export interface DatabaseReconnectOptions {
 
   /**
    * Base delay between reconnect attempts; doubles each attempt up to
-   * `maxDelayMs`. Defaults to 500 ms.
+   * `maxDelayMs`. Defaults to 500 ms. The wait keeps the process alive
+   * (a reconnect is never abandoned because the event loop drained) and
+   * is cancelled by `disconnect()` / `destroy()`.
    */
   readonly baseDelayMs?: number;
 
@@ -121,6 +123,7 @@ export class DatabaseConnectionManager {
   private healthCheckInFlight?: Promise<void>;
   private consecutiveFailures = 0;
   private reconnectPromise?: Promise<void>;
+  private reconnectAbort?: AbortController;
   private lastHealth?: DetailedDatabaseHealth;
   private destroyed = false;
 
@@ -184,10 +187,12 @@ export class DatabaseConnectionManager {
   }
 
   /**
-   * Closes the database connection.
+   * Closes the database connection. Cancels an in-progress reconnect,
+   * including its backoff wait, so no further attempt is made.
    */
   public async disconnect(): Promise<void> {
     this.stopHealthChecks();
+    this.cancelReconnect();
 
     const status = this.client.getStatus();
     if (status === "disconnected" || status === "disconnecting") return;
@@ -341,33 +346,44 @@ export class DatabaseConnectionManager {
 
   private reconnectWithBackoff(): Promise<void> {
     if (this.reconnectPromise) return this.reconnectPromise;
-    this.reconnectPromise = this.performReconnect().finally(() => {
+    const abort = new AbortController();
+    this.reconnectAbort = abort;
+    this.reconnectPromise = this.performReconnect(abort.signal).finally(() => {
       this.reconnectPromise = undefined;
+      if (this.reconnectAbort === abort) this.reconnectAbort = undefined;
     });
     return this.reconnectPromise;
   }
 
-  private async performReconnect(): Promise<void> {
+  private cancelReconnect(): void {
+    this.reconnectAbort?.abort();
+    this.reconnectAbort = undefined;
+  }
+
+  private async performReconnect(signal: AbortSignal): Promise<void> {
     const policy = this.reconnect;
     if (!policy) return;
 
     for (let attempt = 1; attempt <= policy.maxAttempts; attempt += 1) {
-      if (this.destroyed) return;
+      if (this.destroyed || signal.aborted) return;
       this.emit("reconnecting", undefined, attempt);
       try {
         await this.client.disconnect().catch(() => undefined);
+        if (signal.aborted) return;
         await this.client.connect();
+        if (signal.aborted) return;
         this.consecutiveFailures = 0;
         this.emit("connected", undefined, attempt);
         return;
       } catch (error) {
+        if (signal.aborted) return;
         this.emit("error", error, attempt);
         if (attempt === policy.maxAttempts) return;
         const delay = Math.min(
           policy.maxDelayMs,
           policy.baseDelayMs * Math.pow(2, attempt - 1),
         );
-        if (delay > 0) await sleep(delay);
+        if (delay > 0) await sleep(delay, signal);
       }
     }
   }
@@ -394,10 +410,27 @@ export class DatabaseConnectionManager {
   }
 }
 
-function sleep(milliseconds: number): Promise<void> {
+/**
+ * Backoff wait between reconnect attempts. The timer is deliberately *not*
+ * unref'd: a script whose only pending work is a reconnect must stay alive
+ * until the reconnect finishes. Aborting `signal` (from `disconnect()` or
+ * `destroy()`) clears the timer and resolves at once.
+ */
+function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, milliseconds);
-    (timer as { unref?: () => void }).unref?.();
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 

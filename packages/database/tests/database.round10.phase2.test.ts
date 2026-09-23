@@ -27,12 +27,13 @@ describe("INF-18 (default logger goes through @zudojs/logger)", () => {
     createDefaultLogger().warn("slow query", { password: "hunter2", ms: 900 });
     await tick();
     expect(warn).toHaveBeenCalledTimes(1);
+    // The console transport prints the formatted line (it used to print a
+    // record object that repeated the timestamp and level).
     const [payload] = warn.mock.calls[0] ?? [];
-    expect(payload).toMatchObject({
-      level: "warn",
-      message: expect.stringContaining("slow query") as unknown,
-      metadata: { password: "[REDACTED]", ms: 900 },
-    });
+    expect(payload).toEqual(expect.stringContaining("[WARN]"));
+    expect(payload).toEqual(expect.stringContaining("slow query"));
+    expect(payload).toEqual(expect.stringContaining("password=[REDACTED]"));
+    expect(payload).toEqual(expect.stringContaining("ms=900"));
     expect(JSON.stringify(warn.mock.calls)).not.toContain("hunter2");
   });
 
