@@ -281,7 +281,9 @@ export class CacheService implements CacheHealthChecker {
     try {
       const remaining = await this.store.ttl?.(fullKey);
       return typeof remaining === "number" && Number.isFinite(remaining)
-        ? Math.max(0, Math.floor(remaining))
+        ? remaining > 0
+          ? Math.max(1, Math.floor(remaining))
+          : 0
         : remaining;
     } catch (error) {
       if (this.failSilently) return undefined;

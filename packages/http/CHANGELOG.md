@@ -1,5 +1,11 @@
 # @zudojs/http
 
+## 1.4.1
+
+### Patch Changes
+
+- A guard response returned inside an `HttpMiddlewarePipeline` is now written onto the ambient response, so headers an outer middleware set before `next()` (CORS, request id, security headers) are kept on the refusal, as they already were on the router and route-dispatcher paths. README: the request guard's `X-Request-Id` check uses the same character set as request-id reuse.
+
 ## 1.4.0
 
 ### Minor Changes

@@ -1,5 +1,12 @@
 # @zudojs/testing
 
+## 1.2.1
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @zudojs/http@1.4.1
+
 ## 1.2.0
 
 ### Minor Changes

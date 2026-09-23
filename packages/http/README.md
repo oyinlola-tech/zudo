@@ -83,8 +83,9 @@ answers 502 and never exposes the cause.
   UUID is generated, so an id copied into logs can never carry spaces,
   quotes or control characters. `createNodeHttpAdapter({ trustRequestId:
   false })` always generates one. The request guard's own `X-Request-Id`
-  check (letters, digits, `_`, `-`) still answers 400 to a malformed header
-  first unless it is tuned or turned off.
+  check uses the same character set and length, so an id the adapter would
+  reuse is never refused first; anything else is answered with 400 unless the
+  guard is tuned or turned off.
 - Signed-cookie signatures are compared with `@zudojs/crypto`'s constant-time
   `timingSafeEqualString`.
 - Contexts built by the stock adapters log through a `@zudojs/logger` console

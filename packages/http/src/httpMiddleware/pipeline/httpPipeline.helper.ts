@@ -22,7 +22,10 @@ import {
 
 import { HttpMiddlewareError } from "../httpMiddleware.error.js";
 
-import { guardResponseToContext } from "./httpPipeline.guardResponse.js";
+import {
+  applyGuardResponse,
+  guardResponseToContext,
+} from "./httpPipeline.guardResponse.js";
 
 export async function nextResult(
   context: HttpMiddlewareContext,
@@ -61,7 +64,12 @@ export function normalizeResult(
    * were a response context.
    */
   if (isGuardResponse(result)) {
-    return guardResponseToContext(result);
+    // Written onto the ambient response when there is one, so headers an
+    // outer middleware set before `next()` (CORS, request id, security
+    // headers) survive a refusal, as they do on the router path.
+    return fallback instanceof ResponseContext
+      ? applyGuardResponse(fallback, result)
+      : guardResponseToContext(result);
   }
 
   /*

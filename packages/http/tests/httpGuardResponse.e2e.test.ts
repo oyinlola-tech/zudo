@@ -145,6 +145,26 @@ describe("the other middleware entry points", () => {
     expect(JSON.parse(String(response.body))).toEqual({ error: "Bad" });
   });
 
+  it("HttpMiddlewarePipeline keeps headers an outer middleware set before next()", async () => {
+    const pipeline = new http.HttpMiddlewarePipeline();
+    pipeline.use(async ({ response }, next) => {
+      response.setHeader("x-request-id", "req-1");
+      return next();
+    });
+    pipeline.use(async () =>
+      createGuardResponse({ status: 403, body: { error: "Forbidden" } }),
+    );
+
+    const response = await pipeline.execute(
+      http.createRequestContext({ method: "GET", url: "/" }),
+      http.createResponseContext(),
+    );
+
+    expect(response.status).toBe(403);
+    expect(response.headers["x-request-id"]).toBe("req-1");
+    expect(JSON.parse(String(response.body))).toEqual({ error: "Forbidden" });
+  });
+
   it("RouteDispatcher writes a guard response onto the dispatch response", async () => {
     const effects: string[] = [];
     const router = guardedRouter(
