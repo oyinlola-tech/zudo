@@ -41,6 +41,28 @@ scheduler.start();
 await scheduler.stop({ timeoutMs: 30_000 });
 ```
 
+## Starting and stopping
+
+A started scheduler keeps the Node.js process alive until `stop()`, so a
+script whose only work is a scheduler runs its jobs instead of exiting
+straight away. Pass `keepAlive: false` for a scheduler that should never hold
+the process open by itself (the behaviour before 1.2.0).
+
+`stop()` is idempotent: calling it on a scheduler that never started, or
+calling it twice, resolves instead of throwing `SchedulerStoppedError`.
+`stop({ drain: true })` lets running jobs finish instead of aborting them.
+
+For deterministic tests, pass your own clock. `Clock` is exported from the
+package root:
+
+```typescript
+import { Scheduler } from "@zudojs/scheduler";
+import type { Clock } from "@zudojs/scheduler";
+
+const clock: Clock = { now: () => new Date(0), nowMs: () => 0 };
+const scheduler = new Scheduler({ clock });
+```
+
 ## Scheduling
 
 Four entry points, each returning a `ScheduleHandle`:
@@ -103,6 +125,15 @@ scheduler.define({
 A timeout raises `SchedulerJobTimeoutError` and **aborts the handler** via
 `ctx.signal`; anything else raises `SchedulerJobExecutionError` carrying the
 original error as `cause`.
+
+`ctx.attempt` is the attempt in progress, **1-based**: `1` on the first run,
+`2` on the first retry. `ctx.attemptNumber` is the same number under the name
+`@zudojs/queue` uses for its processor context, so both packages count
+attempts the same way.
+
+An invalid cron expression throws `CronParseError` with the expression quoted
+first and the reason after it:
+`Invalid cron expression "99 0 * * *": Cron field "minute" value 99 is outside 0-59.`
 
 ## Concurrency and overlap
 
@@ -175,6 +206,10 @@ scheduler.getExecutions("cleanup");
 //    "cancelled" | "running", scheduledAt, startedAt, completedAt,
 //    duration, attempt, error? }]
 ```
+
+`attempt` is the attempt that settled the run — `3` for a run whose retry
+policy let it succeed on its third try — and, while the run is still going,
+the attempt currently in progress.
 
 ## Features
 

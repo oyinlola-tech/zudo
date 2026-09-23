@@ -724,12 +724,13 @@ describe("SCH-08: construction, validation and shutdown", () => {
     expect(() => s.after("1s", "nope")).toThrow();
   });
 
-  it("refuses a double start and a stop while stopped", async () => {
+  it("refuses a double start; a stop while stopped is a no-op", async () => {
     const s = new Scheduler();
     s.start();
     expect(() => s.start()).toThrow();
     await s.stop();
-    await expect(s.stop()).rejects.toThrow();
+    // stop() became idempotent in batch 5; it used to reject here.
+    await expect(s.stop()).resolves.toBeUndefined();
   });
 
   it("can drain instead of aborting", async () => {

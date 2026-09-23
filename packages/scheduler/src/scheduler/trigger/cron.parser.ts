@@ -84,7 +84,7 @@ export interface ParsedCron {
 export function parseCron(expression: string): ParsedCron {
   const trimmed = expression.trim().toLowerCase();
   if (trimmed.length === 0) {
-    throw new CronParseError("Cron expression cannot be empty", expression);
+    throw new CronParseError(expression, "Cron expression cannot be empty");
   }
 
   const expanded = MACROS[trimmed] ?? trimmed;
@@ -92,8 +92,8 @@ export function parseCron(expression: string): ParsedCron {
 
   if (fields.length !== 5) {
     throw new CronParseError(
-      `Cron expression must have 5 fields (minute hour day-of-month month day-of-week), got ${fields.length}`,
       expression,
+      `Cron expression must have 5 fields (minute hour day-of-month month day-of-week), got ${fields.length}`,
     );
   }
 
@@ -120,8 +120,8 @@ function parseField(
 ): Set<number> {
   if (field.length === 0) {
     throw new CronParseError(
-      `Cron field "${bounds.name}" is empty`,
       expression,
+      `Cron field "${bounds.name}" is empty`,
     );
   }
 
@@ -133,15 +133,15 @@ function parseField(
 
     if (stepPart !== undefined && !/^\d+$/.test(stepPart)) {
       throw new CronParseError(
-        `Cron field "${bounds.name}" has an invalid step: "${part}"`,
         expression,
+        `Cron field "${bounds.name}" has an invalid step: "${part}"`,
       );
     }
     const step = stepPart === undefined ? 1 : Number(stepPart);
     if (step === 0) {
       throw new CronParseError(
-        `Cron field "${bounds.name}" has a zero step: "${part}"`,
         expression,
+        `Cron field "${bounds.name}" has a zero step: "${part}"`,
       );
     }
 
@@ -167,8 +167,8 @@ function parseField(
 
       if (start > end) {
         throw new CronParseError(
-          `Cron field "${bounds.name}" has an inverted range: "${rangePart}"`,
           expression,
+          `Cron field "${bounds.name}" has an inverted range: "${rangePart}"`,
         );
       }
     } else {
@@ -185,8 +185,8 @@ function parseField(
 
   if (values.size === 0) {
     throw new CronParseError(
-      `Cron field "${bounds.name}" matches no values: "${field}"`,
       expression,
+      `Cron field "${bounds.name}" matches no values: "${field}"`,
     );
   }
 
@@ -222,16 +222,16 @@ function resolveValue(
     value = DAY_NAMES[raw] as number;
   } else {
     throw new CronParseError(
-      `Cron field "${bounds.name}" has an invalid value: "${raw}"`,
       expression,
+      `Cron field "${bounds.name}" has an invalid value: "${raw}"`,
     );
   }
 
   const max = rawDayOfWeek && bounds.name === "dayOfWeek" ? 7 : bounds.max;
   if (value < bounds.min || value > max) {
     throw new CronParseError(
-      `Cron field "${bounds.name}" value ${value} is outside ${bounds.min}-${bounds.max}`,
       expression,
+      `Cron field "${bounds.name}" value ${value} is outside ${bounds.min}-${bounds.max}`,
     );
   }
 

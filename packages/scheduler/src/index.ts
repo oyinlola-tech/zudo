@@ -107,6 +107,7 @@ export type { ParsedCron } from "./scheduler/trigger/index.js";
 
 // Clock
 export { SystemClock, createSystemClock } from "./scheduler/clock/index.js";
+export type { Clock } from "./scheduler/clock/index.js";
 
 // Registry
 export { JobRegistry } from "./scheduler/registry/index.js";

@@ -43,6 +43,8 @@ export class JobExecutor {
    * @param attempt - The attempt number to start from (1-based).
    * @param signal - Signal that aborts the job and stops further retries.
    * @param data - Optional payload handed to the handler.
+   * @param hooks - `onAttempt` is told the 1-based number of each attempt as
+   *   it starts, so a caller can record the attempt that settled the run.
    * @returns The execution result.
    */
   async execute(
@@ -52,6 +54,7 @@ export class JobExecutor {
     attempt: number,
     signal: AbortSignal,
     data?: unknown,
+    hooks?: { readonly onAttempt?: (attempt: number) => void },
   ): Promise<JobExecutionResult> {
     const retry = job.options?.retry;
     const maxAttempts = Math.max(1, retry?.attempts ?? 1);
@@ -66,6 +69,8 @@ export class JobExecutor {
           job.id,
         );
       }
+
+      hooks?.onAttempt?.(currentAttempt);
 
       try {
         await this.runOnce(

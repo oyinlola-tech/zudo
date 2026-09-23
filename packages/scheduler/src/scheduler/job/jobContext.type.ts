@@ -10,7 +10,17 @@ export interface JobContext<T = unknown> {
 
   readonly startedAt: Date;
 
+  /**
+   * The attempt in progress, 1-based: `1` on the first run, `2` on the first
+   * retry. Counts attempts within one execution, per the job's retry policy.
+   */
   readonly attempt: number;
+
+  /**
+   * Alias of {@link JobContext.attempt}, named as in `@zudojs/queue`, whose
+   * processor context carries the same 1-based `attemptNumber`.
+   */
+  readonly attemptNumber: number;
 
   readonly data: T;
 
@@ -35,6 +45,7 @@ export function createJobContext<T = unknown>(
     scheduledAt,
     startedAt,
     attempt,
+    attemptNumber: attempt,
     data,
     signal,
   });

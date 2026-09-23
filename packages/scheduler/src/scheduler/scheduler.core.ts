@@ -22,7 +22,6 @@ import { createSchedule } from "./schedule/schedule.type.js";
 
 import {
   SchedulerAlreadyStartedError,
-  SchedulerStoppedError,
   SchedulerJobCancelledError,
   SchedulerJobNotFoundError,
   SchedulerJobTimeoutError,
@@ -99,6 +98,12 @@ export interface SchedulerOptions {
   readonly maxConcurrency?: number;
   /** Called when a job execution fails. */
   readonly onError?: (event: SchedulerErrorEvent) => void;
+  /**
+   * Whether a started scheduler keeps the Node.js process alive until
+   * `stop()` (default: true). Pass `false` for a scheduler that should never
+   * by itself hold the process open.
+   */
+  readonly keepAlive?: boolean;
 }
 
 /**
@@ -128,6 +133,8 @@ export class Scheduler {
   private readonly maxConcurrency: number;
 
   private readonly onError: ((event: SchedulerErrorEvent) => void) | undefined;
+
+  private readonly keepAlive: boolean;
 
   /** Executions currently in flight, across all schedules. */
   private readonly inFlight = new Set<Promise<void>>();
@@ -199,6 +206,7 @@ export class Scheduler {
     this.queue = opts.queue ?? new PriorityQueue();
     this.maxConcurrency = opts.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY;
     this.onError = opts.onError;
+    this.keepAlive = opts.keepAlive ?? true;
   }
 
   /** Whether the scheduler is currently running. */
@@ -226,6 +234,9 @@ export class Scheduler {
   /**
    * Stops the scheduler, aborting in-flight jobs and waiting for them to settle.
    *
+   * Idempotent: on a scheduler that never started, or one already stopped, it
+   * only waits for any executions still settling.
+   *
    * @param options - `drain` waits for running jobs to finish instead of
    *   aborting them; `timeoutMs` bounds the wait either way.
    */
@@ -234,7 +245,8 @@ export class Scheduler {
     readonly timeoutMs?: number;
   }): Promise<void> {
     if (!this.running) {
-      throw new SchedulerStoppedError();
+      await this.settle(options?.timeoutMs);
+      return;
     }
 
     this.running = false;
@@ -607,7 +619,10 @@ export class Scheduler {
 
     const delay = this.calculateDelay();
     this.timer = setTimeout(() => this.tick(), delay);
-    if (this.timer.unref) this.timer.unref();
+    // Referenced by default: a started scheduler is the process's reason to
+    // stay alive until stop(). An unreferenced timer let a script that only
+    // ran a scheduler exit 0 before anything fired.
+    if (!this.keepAlive) this.timer.unref?.();
   }
 
   /**
@@ -743,6 +758,7 @@ export class Scheduler {
         1,
         controller.signal,
         record.options.data,
+        { onAttempt: (attempt) => this.recordAttempt(executionId, attempt) },
       )
       .then(() => {
         this.finishExecution(executionId, "completed", startedAt);
@@ -819,6 +835,18 @@ export class Scheduler {
     while (this.executionHistory.length > MAX_EXECUTION_HISTORY) {
       this.executionHistory.shift();
     }
+  }
+
+  /** Records the attempt an execution is on, if it is still in the history. */
+  private recordAttempt(executionId: string, attempt: number): void {
+    const index = this.executionHistory.findIndex(
+      (entry) => entry.id === executionId,
+    );
+    if (index === -1) return;
+    this.executionHistory[index] = {
+      ...this.executionHistory[index]!,
+      attempt,
+    };
   }
 
   /** Completes the record for an execution, if it is still in the history. */
