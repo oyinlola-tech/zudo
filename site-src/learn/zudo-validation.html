@@ -83,9 +83,9 @@ for (const query of [
 }
 </example>
 <output>
-{} -> { page: 1, limit: 20, done: undefined, priority: undefined }
+{} -> { page: 1, limit: 20 }
 {"page":"2","limit":"10","done":"false","priority":"high"} -> { page: 2, limit: 10, done: false, priority: 'high' }
-{"done":"yes"} -> { page: 1, limit: 20, done: true, priority: undefined }
+{"done":"yes"} -> { page: 1, limit: 20, done: true }
 {"limit":"7.5","page":""} -> [
   'page: Cannot coerce string to number',
   'limit: Expected integer, received 7.5'
@@ -97,7 +97,7 @@ for (const query of [
 </output>
 <p>Read the results:</p>
 <ul>
-<li>An empty query got the defaults: page 1, 20 per page.</li>
+<li>An empty query got the defaults: page 1, 20 per page. The optional <code>done</code> and <code>priority</code> were not sent, so they are not in the result at all.</li>
 <li><code>"2"</code> became the number 2, and <code>"false"</code> the boolean <code>false</code>. <code>"yes"</code> is also accepted as <code>true</code>, like <code>"1"</code> and <code>"on"</code>.</li>
 <li><code>"7.5"</code> is a number but not a whole one, and an empty <code>page=</code> is refused instead of becoming 0.</li>
 <li>A repeated key (an array) cannot become one number, and <code>"urgent"</code> is not an allowed priority.</li>
@@ -110,16 +110,18 @@ for (const query of [
 <p>A schema can also <strong>transform</strong>: return a changed value after the check passes. You already use small built-in ones, <code>trim()</code> and <code>toLowerCase()</code>. <code>.transform(fn)</code> runs your own function, and the output type follows whatever the function returns:</p>
 <example file="transform.ts">
 import { schema } from "@zudojs/schema";
-import type { Infer } from "@zudojs/schema";
+import type { Infer, SchemaInput } from "@zudojs/schema";
 
 const TagList = schema
   .string()
   .max(200)
   .transform((text) => text.split(",").map((tag) => tag.trim().toLowerCase()).filter((tag) => tag.length > 0));
 
+type TagListInput = SchemaInput<typeof TagList>;
 type TagListOutput = Infer<typeof TagList>;
 
-const output: TagListOutput = TagList.parse(" Home, URGENT,,errands ");
+const input: TagListInput = " Home, URGENT,,errands ";
+const output: TagListOutput = TagList.parse(input);
 console.log(output);
 console.log(TagList.safeParse(42).success);
 </example>
@@ -127,40 +129,39 @@ console.log(TagList.safeParse(42).success);
 [ 'home', 'urgent', 'errands' ]
 false
 </output>
-<p>The schema accepts a <code>string</code>, and <code>Infer</code> says what it gives back: a <code>string[]</code>. The transform only ran because the input was a valid string of at most 200 characters; for <code>42</code> it never ran.</p>
-<note><code>SchemaInput&lt;typeof TagList&gt;</code> should name the input type, <code>string</code>. In <code>@zudojs/schema</code> 1.1.1 it wrongly gives the output type <code>string[]</code> for schemas built with the <code>.transform()</code> method. The wrapper form, <code>schema.transform(schema.string(), fn)</code>, gets it right.</note>
-<p><code>.transform()</code> and <code>.refine()</code> exist as methods on string and number schemas. For any other schema, such as an object, use the wrapper functions <code>schema.transform(inner, fn)</code> and <code>schema.refine(inner, check, message)</code>.</p>
+<p><code>SchemaInput</code> names what the schema accepts, a <code>string</code>, and <code>Infer</code> says what it gives back: a <code>string[]</code>. The transform only ran because the input was a valid string of at most 200 characters; for <code>42</code> it never ran.</p>
+<p><code>.transform()</code> and <code>.refine()</code> exist as methods on every simple schema: strings, numbers, booleans, enums and the <code>coerce</code> schemas. For an object or an array, use the wrapper functions <code>schema.transform(inner, fn)</code> and <code>schema.refine(inner, check, message)</code>.</p>
 </section>
 
 <section>
 <h2 id="refine">Refinements: your own rules</h2>
 <p>Built-in rules cover types, lengths and formats. A <strong>refinement</strong> adds a rule of your own: a function that returns <code>true</code> when the value is fine, plus the message to report when it is not.</p>
-<p>The Task API gets due dates. <code>schema.string().date()</code> checks that a string <em>looks</em> like <code>YYYY-MM-DD</code>. Test it on some dates that do not exist:</p>
+<p>The Task API gets due dates. <code>schema.string().date()</code> accepts a real calendar date written as <code>YYYY-MM-DD</code>. Your own rule on top: the team does not work at weekends, so a due date must be a weekday:</p>
 <example file="dates.ts">
 import { schema } from "@zudojs/schema";
 
-const LooksLikeDate = schema.string().date();
+const CalendarDate = schema.string().date();
 
-function isRealDate(text: string): boolean {
-  const [year, month, day] = text.split("-").map(Number);
-  const date = new Date(Date.UTC(year ?? 0, (month ?? 0) - 1, day ?? 0));
-  return date.toISOString().slice(0, 10) === text;
+function isWeekday(text: string): boolean {
+  const day = new Date(`${text}T00:00:00Z`).getUTCDay();
+  return day !== 0 && day !== 6;
 }
 
-const DueDate = LooksLikeDate.refine(isRealDate, "Must be a real calendar date");
+const DueDate = CalendarDate.refine(isWeekday, "Due dates must be on a weekday");
 
-for (const text of ["2026-10-01", "2026-02-30", "2026-13-45", "1 October"]) {
+for (const text of ["2026-10-01", "2026-10-03", "2026-02-30", "2026-13-45", "1 October"]) {
   const result = DueDate.safeParse(text);
-  console.log(text.padEnd(10), LooksLikeDate.safeParse(text).success, result.success ? "ok" : result.issues[0]?.message);
+  console.log(text.padEnd(10), CalendarDate.safeParse(text).success, result.success ? "ok" : result.issues[0]?.message);
 }
 </example>
 <output>
 2026-10-01 true ok
-2026-02-30 true Must be a real calendar date
-2026-13-45 true Must be a real calendar date
+2026-10-03 true Due dates must be on a weekday
+2026-02-30 false Invalid date format
+2026-13-45 false Invalid date format
 1 October  false Invalid date format
 </output>
-<p>The middle column shows that <code>.date()</code> alone accepted 30 February and month 13: in <code>@zudojs/schema</code> 1.1.1 it only checks the shape of the text. The refinement closes that gap. <code>isRealDate</code> builds the date and checks that it did not roll over into another month (30 February would become 2 March).</p>
+<p>The middle column shows what <code>.date()</code> alone decides. It checks the shape of the text <em>and</em> that the date exists: 30 February and month 13 are refused (since <code>@zudojs/schema</code> 1.2.0; older versions only checked the shape), although the message for them still says "Invalid date format". Only 3 October 2026 passed <code>.date()</code> and then failed the refinement, because it is a Saturday. <code>getUTCDay()</code> returns 0 for Sunday and 6 for Saturday.</p>
 <p>A rule that compares two fields belongs on the object. <code>schema.refine</code> wraps the object schema. The <code>path</code>-less issue it reports belongs to the whole object:</p>
 <example file="object-refine.ts">
 import { schema } from "@zudojs/schema";
@@ -192,8 +193,8 @@ true
 
 <section>
 <h2 id="updates">Partial updates and unknown fields</h2>
-<p>A <code>PATCH /tasks/:id</code> request changes only the fields it sends. The obvious idea is <code>NewTaskSchema.partial()</code>, which makes every field optional. Look at what it does with fields that have a <strong>default</strong>:</p>
-<example file="partial-trap.ts">
+<p>A <code>PATCH /tasks/:id</code> request changes only the fields it sends. <code>NewTaskSchema.partial()</code> makes every field optional. Look at what it does with a field that has a <strong>default</strong>:</p>
+<example file="partial.ts">
 import { schema } from "@zudojs/schema";
 
 const NewTaskSchema = schema.object({
@@ -201,27 +202,27 @@ const NewTaskSchema = schema.object({
   priority: schema.default(schema.enum(["low", "normal", "high"] as const), "normal"),
 });
 
-const changes = NewTaskSchema.partial().parse({ title: "Walk the dog" });
-console.log(changes);
+console.log(NewTaskSchema.parse({ title: "Walk the dog" }));
+console.log(NewTaskSchema.partial().parse({ title: "Walk the dog" }));
 </example>
 <output>
 { title: 'Walk the dog', priority: 'normal' }
+{ title: 'Walk the dog' }
 </output>
-<p>The client only sent a title, but the result also contains <code>priority: 'normal'</code>: the default still runs inside <code>partial()</code>. Merged into a stored task with priority <code>high</code>, this update would quietly reset it to <code>normal</code>. Defaults describe <em>creating</em> a task; an update must not invent values. So write the update schema on its own, with no defaults.</p>
-<p>What about fields the client must not change at all, such as <code>id</code> or <code>createdAt</code>? By default an object schema <strong>strips</strong> unknown keys: they disappear from the result. That is already safe. <code>.strict()</code> goes further and <strong>rejects</strong> them, so a client that sends a field you do not accept learns about its mistake instead of wondering why nothing changed:</p>
+<p>Creating a task fills in <code>priority: 'normal'</code>. The partial version does not: it contains exactly the fields the client sent. That is what an update needs. Defaults describe <em>creating</em> a task, and an update must not invent values, or it would quietly reset a stored <code>high</code> priority to <code>normal</code>. This is how <code>partial()</code> works since <code>@zudojs/schema</code> 1.2.0.</p>
+<p>What about fields the client must not change at all, such as <code>id</code> or <code>createdAt</code>? By default an object schema <strong>strips</strong> unknown keys: they disappear from the result. That is already safe. <code>.strict()</code> goes further and <strong>rejects</strong> them, so a client that sends a field you do not accept learns about its mistake instead of wondering why nothing changed. A refinement also refuses an empty update:</p>
 <example file="update-schema.ts">
 import { schema } from "@zudojs/schema";
 
+const NewTaskSchema = schema.object({
+  title: schema.string().trim().min(3).max(100),
+  done: schema.default(schema.boolean(), false),
+  priority: schema.default(schema.enum(["low", "normal", "high"] as const), "normal"),
+});
+
 const UpdateTaskSchema = schema.refine(
-  schema
-    .object({
-      title: schema.string().trim().min(3).max(100),
-      done: schema.boolean(),
-      priority: schema.enum(["low", "normal", "high"] as const),
-    })
-    .partial()
-    .strict(),
-  (changes) => Object.values(changes).some((value) => value !== undefined),
+  NewTaskSchema.partial().strict(),
+  (changes) => Object.keys(changes).length > 0,
   "Send at least one field to change",
 );
 
@@ -231,12 +232,12 @@ for (const body of [{ done: true }, { title: "Walk", id: 1, createdAt: "2020-01-
 }
 </example>
 <output>
-{"done":true} -> { title: undefined, done: true, priority: undefined }
+{"done":true} -> { done: true }
 {"title":"Walk","id":1,"createdAt":"2020-01-01"} -> [ 'Unknown key: id', 'Unknown key: createdAt' ]
 {} -> [ 'Send at least one field to change' ]
 </output>
 <p>Blindly copying request fields onto a stored object is a classic security hole called <strong>mass assignment</strong>: a client adds <code>"ownerId": 1</code> or <code>"role": "admin"</code> to a request and takes over data or rights. An explicit schema that lists exactly the changeable fields, strict or stripping, is the defence. Never spread the raw body (<code>{ ...task, ...body }</code>).</p>
-<p>Spreading the <em>parsed</em> changes is not safe either, for a different reason. Look again at the first result above: <code>{ title: undefined, done: true, priority: undefined }</code>. In <code>@zudojs/schema</code> 1.1.1, a partial object keeps every field as a key, set to <code>undefined</code> when the client did not send it. Spreading that over a stored task wipes the fields the client never mentioned:</p>
+<p>The <em>parsed</em> changes are a different matter. They only contain allowed fields, and only the ones the client sent, so merging them over the stored task keeps everything else:</p>
 <example file="merge.ts">
 import { schema } from "@zudojs/schema";
 
@@ -248,18 +249,14 @@ const UpdateTask = schema
 const stored = { id: 1, title: "Buy milk", done: false };
 const changes = UpdateTask.parse({ done: true });
 
-console.log("spread:", { ...stored, ...changes });
-
-const sent = Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== undefined));
-console.log("sent only:", sent);
-console.log("merged:", { ...stored, ...sent });
+console.log("changes:", changes);
+console.log("merged:", { ...stored, ...changes });
 </example>
 <output>
-spread: { id: 1, title: undefined, done: true }
-sent only: { done: true }
+changes: { done: true }
 merged: { id: 1, title: 'Buy milk', done: true }
 </output>
-<p>The plain spread lost the title. A database layer would then save it as empty (<code>NULL</code>). Either drop the <code>undefined</code> values first, as <code>sent</code> does, or copy each field with <code>??</code>, as the Task API's service does below.</p>
+<p>The title the client did not mention is still there. The Task API's service below still copies each field by name with <code>??</code>. That is one line longer, but it makes the list of changeable fields visible right where the stored task is written.</p>
 </section>
 
 <section>
@@ -267,10 +264,7 @@ merged: { id: 1, title: 'Buy milk', done: true }
 <p>A route has up to three inputs to check: route parameters, the query string and the body. A small helper makes each check one line. It uses <code>parse</code>, so a failure throws a <code>SchemaError</code>, which <code>@zudojs/http</code> already answers with 400. To also show <em>which</em> fields failed, this version catches the error and returns the issues:</p>
 <example file="route.ts" browser="no">
 import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
-import type { HttpRequestContext } from "@zudojs/http";
-import { SchemaError } from "@zudojs/errors";
-import { schema } from "@zudojs/schema";
-import type { SchemaIssue } from "@zudojs/schema";
+import { isSchemaValidationError, schema } from "@zudojs/schema";
 
 const Params = schema.object({ id: schema.coerce.number().int().min(1) });
 const Query = schema.object({ fields: schema.optional(schema.enum(["title", "all"] as const)) });
@@ -281,10 +275,10 @@ router.get("/tasks/:id", (ctx) => {
     const { id } = Params.parse(ctx.params);
     const { fields } = Query.parse(ctx.query);
     const task = { id, title: "Buy milk", done: false };
-    return createResponseContext().json(fields === "title" ? { id, title: task.title } : task);
+    return fields === "title" ? { id, title: task.title } : task;
   } catch (error) {
-    if (error instanceof SchemaError) {
-      const issues = (error.issues as readonly SchemaIssue[]).map((i) => `${i.path.join(".")}: ${i.message}`);
+    if (isSchemaValidationError(error)) {
+      const issues = error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
       return createResponseContext({ status: 400 }).json({ error: "ERR_VALIDATION", issues });
     }
     throw error;
@@ -293,7 +287,7 @@ router.get("/tasks/:id", (ctx) => {
 
 const server = createHttpServer({
   adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
-  handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+  handler: async (request) => (await router.dispatch(request)).response,
 });
 await server.start();
 for (const path of ["/tasks/1?fields=title", "/tasks/0", "/tasks/abc?fields=everything"]) {
@@ -307,7 +301,7 @@ await server.stop();
 /tasks/0 400 {"error":"ERR_VALIDATION","issues":["id: Expected >= 1, received 0"]}
 /tasks/abc?fields=everything 400 {"error":"ERR_VALIDATION","issues":["id: Cannot coerce string to number"]}
 </output>
-<p><code>error.issues as readonly SchemaIssue[]</code> is the type assertion you know from <a href="/learn/zudo-first-code#service">Your first Zudo code</a>. It is needed because, in the published <code>@zudojs/errors</code> 1.2.0, <code>SchemaError.issues</code> is typed <code>unknown[]</code>: <code>@zudojs/errors</code> sits below <code>@zudojs/schema</code> and cannot import its types. That is a known bug and a fix is on the way; until then, the assertion is safe here because this error came from a schema. With <code>safeParse</code> you need no assertion at all, because <code>result.issues</code> is properly typed.</p>
+<p><code>isSchemaValidationError</code> is the type guard you know from <a href="/learn/zudo-first-code#service">Your first Zudo code</a>: after it, <code>error.issues</code> is typed as schema issues. With <code>safeParse</code> you need no guard at all, because <code>result.issues</code> is already typed.</p>
 <p>Catching in every route would repeat the same lines everywhere. In <a href="/learn/zudo-errors">The ZudoJS error system</a> one error handler does it for all routes, so routes can simply call <code>parse</code>.</p>
 </section>
 
@@ -381,11 +375,11 @@ for (const [label, body] of bodies) {
 </example>
 <output>
 normal -> passed
-too deep -> SerializationDepthError 500 Maximum serialization depth exceeded: 11 > 10
+too deep -> SerializationDepthError 400 Maximum serialization depth exceeded: 11 > 10
 too big -> SerializationPayloadTooLargeError 413 Serialized payload too large: 100013 bytes (max: 16384)
 </output>
 <p>Both hostile bodies were stopped. The size check is an estimate: it counts two bytes per character, so it is deliberately on the high side.</p>
-<p>Look at the status codes. The size error is a 413, as it should be. The depth error says 500, although the <code>@zudojs/validation</code> documentation promises 400; in version 1.0.3 a deep body would therefore be answered as a server error. The Task API code below turns it into a 400 itself, because a too-deep body is the client's mistake.</p>
+<p>Look at the status codes. The size error is a <strong>413 Payload Too Large</strong>, and the depth error a <strong>400 Bad Request</strong>: both are the client's mistake, so thrown from a route they become the right 4xx answer by themselves.</p>
 <note><code>@zudojs/validation</code> also offers a complete schema system based on the Zod library (<code>validate</code>, <code>z.object(...)</code>). It does not share schemas with <code>@zudojs/schema</code>. Pick one per project; this course uses <code>@zudojs/schema</code> and only borrows the guards.</note>
 </section>
 
@@ -407,8 +401,8 @@ export const NewTaskSchema = schema.object({
 export type NewTask = Infer<typeof NewTaskSchema>;
 
 export const UpdateTaskSchema = schema.refine(
-  schema.object({ title: Title, done: schema.boolean(), priority: Priority }).partial().strict(),
-  (changes) => Object.values(changes).some((value) => value !== undefined),
+  NewTaskSchema.partial().strict(),
+  (changes) => Object.keys(changes).length > 0,
   "Send at least one field to change",
 );
 export type TaskChanges = Infer<typeof UpdateTaskSchema>;
@@ -524,7 +518,7 @@ import { assertDepthWithinLimit, assertSizeWithinLimit } from "@zudojs/validatio
 export function readJson(request: HttpRequestContext): unknown {
   const type = request.getHeader("content-type") ?? "";
   if (!type.startsWith("application/json")) {
-    throw new HttpError(415, "Send JSON with Content-Type: application/json", { code: "UNSUPPORTED_MEDIA_TYPE" });
+    throw new HttpError(415, "Send JSON with Content-Type: application/json");
   }
   let body: unknown;
   try {
@@ -532,11 +526,7 @@ export function readJson(request: HttpRequestContext): unknown {
   } catch {
     throw badRequest("The request body is not valid JSON");
   }
-  try {
-    assertDepthWithinLimit(body, 10);
-  } catch {
-    throw badRequest("The request body is nested too deeply");
-  }
+  assertDepthWithinLimit(body, 10);
   assertSizeWithinLimit(body, 65_536);
   return body;
 }
@@ -553,13 +543,9 @@ import { ListTasksQuery, TaskIdParams, TaskResponse, UpdateTaskSchema } from "..
 const send = (task: StoredTask) => TaskResponse.parse(task);
 
 export function registerTaskRoutes(router: HttpRouter, tasks: TaskService): void {
-  router.get("/tasks", (ctx) =>
-    createResponseContext().json(tasks.list(ListTasksQuery.parse(ctx.query)).map(send)),
-  );
+  router.get("/tasks", (ctx) => tasks.list(ListTasksQuery.parse(ctx.query)).map(send));
 
-  router.get("/tasks/:id", (ctx) =>
-    createResponseContext().json(send(tasks.get(TaskIdParams.parse(ctx.params).id))),
-  );
+  router.get("/tasks/:id", (ctx) => send(tasks.get(TaskIdParams.parse(ctx.params).id)));
 
   router.post("/tasks", (ctx) => {
     const task = tasks.create(readJson(ctx.request));
@@ -569,14 +555,13 @@ export function registerTaskRoutes(router: HttpRouter, tasks: TaskService): void
   router.patch("/tasks/:id", (ctx) => {
     const { id } = TaskIdParams.parse(ctx.params);
     const changes = UpdateTaskSchema.parse(readJson(ctx.request));
-    return createResponseContext().json(send(tasks.update(id, changes)));
+    return send(tasks.update(id, changes));
   });
 }
 </example>
 <p>A check script exercises all of it against a real server:</p>
 <example file="src/check-validation.ts" project="task-api" browser="no">
 import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
-import type { HttpRequestContext } from "@zudojs/http";
 import { TaskStore } from "./repositories/task.store.js";
 import { registerTaskRoutes } from "./routes/tasks.routes.js";
 import { TaskService } from "./services/task.service.js";
@@ -586,7 +571,7 @@ const router = createRouter();
 registerTaskRoutes(router, service);
 const server = createHttpServer({
   adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
-  handler: async (request: HttpRequestContext) => (await router.dispatch(request)).response,
+  handler: async (request) => (await router.dispatch(request)).response,
 });
 await server.start();
 const base = `http://127.0.0.1:${server.address?.port}`;
@@ -646,8 +631,8 @@ console.log(ListTasksQuery.parse({}));
 </example>
 <output>
 " MILK " -> { q: 'milk' }
-"" -> String must be at least 1 characters
-{ q: undefined }
+"" -> String must be at least 1 character
+{}
 </output>
 <p><code>URLSearchParams</code> and the router decode <code>%20</code> into a space before your schema sees the value. An empty <code>q=</code> is refused rather than matching everything; leaving the parameter out entirely is what "no search" looks like.</p>
 </solution>
@@ -703,8 +688,8 @@ SchemaError Validation failed
 <li>Validate at the trust boundary: route parameters, query strings, headers and bodies. Services then work with clean, typed data.</li>
 <li>Issues have <code>code</code>, <code>path</code> and <code>message</code>; turn them into per-field messages for clients.</li>
 <li>Query strings, parameters and environment variables are text: use <code>schema.coerce</code>. JSON bodies are not: use the normal schemas.</li>
-<li><code>.transform()</code> changes the output (and its type); <code>.refine()</code> and <code>schema.refine()</code> add your own synchronous rules. Check that dates are real, not just date-shaped.</li>
-<li>Write update schemas by hand without defaults, use <code>.strict()</code> to refuse unknown fields, never spread a raw body onto stored data (mass assignment), and drop <code>undefined</code> values before merging parsed changes.</li>
+<li><code>.transform()</code> changes the output (and its type); <code>.refine()</code> and <code>schema.refine()</code> add your own synchronous rules. <code>.date()</code> accepts only real calendar dates.</li>
+<li>For an update, <code>partial()</code> of the create schema keeps only the fields the client sent and applies no defaults. Add <code>.strict()</code> to refuse unknown fields, and never spread a raw body onto stored data (mass assignment).</li>
 <li>A response schema is an allow-list for what leaves the server.</li>
 <li><code>@zudojs/validation</code>'s depth and size guards stop hostile JSON before a schema walks it.</li>
 </ul>

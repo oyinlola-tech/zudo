@@ -239,6 +239,7 @@ await runtime.stop();
 /ready  200 { ready: true, health: 'healthy' }
 </output>
 <p>While the database was down, <code>/ready</code> answered 503 and the runtime reported itself <code>degraded</code>, but <code>/health</code> still said 200, so nothing would restart it. When the database came back, the app became ready again by itself. Readiness checks that hang count as failed after 5 seconds, so a stuck database cannot hang the probe.</p>
+<note>The <code>/health</code> route of a project made by <code>zudojs create</code> is a <em>readiness</em> check: it answers 503 while the app starts or stops, and when an integration added with <code>zudojs add</code> (the database, Redis) is down. Use it as the readiness probe. If your platform also wants a liveness probe, add a trivial route like the <code>/health</code> above.</note>
 <warn title="KEEP PROBES QUIET">Health endpoints are public by default. Return only a status, never versions, hostnames, connection strings or error messages that help an attacker.</warn>
 </section>
 
@@ -284,7 +285,7 @@ client: 200 { saved: true }
 server: stopped
 </output>
 <p>Read the order of the lines. After the stop began, a new request was refused at once, so a load balancer sends it to another server. The order already being saved finished, and its client got a normal 200. Only then did the server report <code>stopped</code>.</p>
-<p>In the generated <code>src/server.ts</code> the same thing is wired to the real signals: on <code>SIGINT</code> or <code>SIGTERM</code> it calls <code>server.stop()</code>, then <code>runtime.stop()</code>, which shuts the modules down in reverse order (closing database pools, flushing logs), then exits. Keep your <code>gracefulShutdownTimeout</code> shorter than the platform's wait, or the platform kills the process mid-shutdown.</p>
+<p>In the generated <code>src/server.ts</code> the same thing is wired to the real signals: on <code>SIGINT</code> or <code>SIGTERM</code> it first lets the integrations close long-lived connections such as WebSockets, then calls <code>server.stop()</code>, then <code>runtime.stop()</code>, which shuts the modules down in reverse order (closing database pools, flushing logs), then exits. Keep your <code>gracefulShutdownTimeout</code> shorter than the platform's wait, or the platform kills the process mid-shutdown.</p>
 </section>
 
 <section>
@@ -320,7 +321,7 @@ attempt 4: 429, retry after 60 s
 attempt 5: 429, retry after 60 s
 another client: allowed
 </output>
-<p>In an app you use <code>createRateLimitMiddleware({ max, windowMs })</code> from <code>@zudojs/http</code>, which answers <code>429 Too Many Requests</code> with a <code>Retry-After</code> header. Two production details:</p>
+<p>In an app you use <code>createRateLimitMiddleware({ max, windowMs })</code> from <code>@zudojs/http</code>, which answers <code>429 Too Many Requests</code> with a <code>Retry-After</code> header. A project made by <code>zudojs create</code> already applies it to every route, set by <code>RATE_LIMIT_MAX</code> and <code>RATE_LIMIT_WINDOW_MS</code>. Give the login route a much stricter limiter of its own, like the one above. Two production details:</p>
 <ul>
 <li><strong>Behind a proxy</strong>, every request comes from the proxy's address. Set <code>trustProxy</code> on the adapter to the proxy you run, as the deployment lesson shows, or everyone shares one bucket.</li>
 <li><strong>With several app servers</strong>, an in-memory limiter counts per server. For a strict limit, keep the counters in Redis, shared by all servers.</li>

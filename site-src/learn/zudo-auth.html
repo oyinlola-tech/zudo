@@ -289,7 +289,7 @@ other audience: { valid: false, error: 'Invalid audience' }
 <h2 id="login">Logging in with the auth service</h2>
 <p>You could build login from these pieces yourself. Don't. <code>createAuthService</code> puts them together correctly: password check, session, tokens bound to the session, lockouts. It does not own your database. You give it three small functions: find a user by email, find a user by id, check a password. Here they work on a <code>Map</code> that stands in for the users table:</p>
 <example file="users.ts" project="task-auth" browser="no">
-import { hashPassword, toUserId, verifyPassword } from "@zudojs/auth";
+import { hashPassword, normalizeLoginIdentifier, toUserId, verifyPassword } from "@zudojs/auth";
 import type { AuthUser, UserId } from "@zudojs/auth";
 
 interface UserRow {
@@ -299,14 +299,10 @@ interface UserRow {
 
 const byEmail = new Map<string, UserRow>();
 
-export function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
-}
-
 export async function registerUser(id: string, email: string, password: string): Promise<AuthUser> {
   const user: AuthUser = {
     id: toUserId(id),
-    email: normalizeEmail(email),
+    email: normalizeLoginIdentifier(email),
     roles: ["user"],
     active: true,
     createdAt: new Date(),
@@ -316,7 +312,7 @@ export async function registerUser(id: string, email: string, password: string):
 }
 
 export async function findUserByEmail(email: string): Promise<AuthUser | null> {
-  return byEmail.get(normalizeEmail(email))?.user ?? null;
+  return byEmail.get(normalizeLoginIdentifier(email))?.user ?? null;
 }
 
 export async function findUserById(id: UserId): Promise<AuthUser | null> {
@@ -336,7 +332,7 @@ export async function checkPassword(id: UserId, password: string): Promise<boole
 <p>Two decisions in this file are about security:</p>
 <ul>
 <li>A new user always gets <code>roles: ["user"]</code>. The role is decided by the server, never taken from what the client sends. Otherwise anyone could register with <code>"roles": ["admin"]</code>.</li>
-<li>Emails are trimmed and lower-cased before they are stored and before they are looked up, so <code>" Ada@Example.com"</code> finds the same account.</li>
+<li>Emails go through <code>normalizeLoginIdentifier</code> before they are stored and before they are looked up. It trims them and lower-cases an email address, so <code>" Ada@Example.com"</code> finds the same account. <code>auth.login</code> uses the same function on what the user typed, so both sides agree.</li>
 </ul>
 <p>Now the service. Every option is explained below it:</p>
 <example file="auth.ts" project="task-auth" browser="no">
@@ -521,10 +517,10 @@ try {
 </example>
 <output>
 new pair: true
-replay -> 403 Refresh token has already been used
+replay -> 401 Refresh token has already been used
 new token -> 401 Session is no longer active
 </output>
-<p>Even the new, honest token died. That is on purpose: the server cannot tell whether the thief or the user made the first refresh, so it logs everyone out and the real user simply logs in again.</p>
+<p>The replay is refused with a <code>TokenRevokedError</code>: status 401 and code <code>ERR_TOKEN_REVOKED</code>, because the client has to log in again. Even the new, honest token died. That is on purpose: the server cannot tell whether the thief or the user made the first refresh, so it logs everyone out and the real user simply logs in again.</p>
 <warn title="COMMON MISTAKE">The package also exports a standalone <code>refreshAccessToken</code>. It only checks the signature and expiry: no rotation, no session, no revocation. A stolen refresh token then works for 7 days. For users, always use <code>auth.refresh</code>.</warn>
 </section>
 
@@ -567,7 +563,6 @@ export function currentUser(ctx: HttpRouterContext): TokenPayload {
 </ul>
 <p>The server has a login route, a logout route, and task routes where every user sees only their own tasks:</p>
 <example file="server.ts" project="task-auth" browser="no">
-import { AccountLockedError, AuthRateLimitError } from "@zudojs/auth";
 import { badRequest, createNodeHttpAdapter, createRateLimitMiddleware, createResponseContext, createRouter } from "@zudojs/http";
 import type { HttpRouterContext } from "@zudojs/http";
 import { schema } from "@zudojs/schema";
@@ -596,16 +591,8 @@ const loginLimit = createRateLimitMiddleware({ max: 10, windowMs: 60_000 });
 
 router.post("/auth/login", async (ctx) => {
   const body = LoginBody.parse(readJson(ctx));
-  try {
-    const { tokens } = await auth.login({ identifier: body.email, password: body.password });
-    return createResponseContext().json({ accessToken: tokens.accessToken, expiresIn: tokens.expiresIn });
-  } catch (error) {
-    if (error instanceof AccountLockedError || error instanceof AuthRateLimitError) {
-      const wait = String(error.metadata.retryAfterSeconds ?? 60);
-      return createResponseContext().setStatus(error.statusCode).setHeader("retry-after", wait).json({ error: error.message });
-    }
-    throw error;
-  }
+  const { tokens } = await auth.login({ identifier: body.email, password: body.password });
+  return createResponseContext().json({ accessToken: tokens.accessToken, expiresIn: tokens.expiresIn });
 }, { middleware: [loginLimit] });
 
 router.post("/auth/logout", async (ctx) => {
@@ -640,7 +627,7 @@ export async function startServer(): Promise<{ url: string; stop: () => Promise<
 <p>What to notice:</p>
 <ul>
 <li>The login body is checked with a schema from <a href="/learn/zudo-validation">the validation lesson</a>, including a maximum length. A 10 MB "password" is rejected before any hashing.</li>
-<li>Errors thrown by <code>auth.login</code>, such as <code>InvalidCredentialsError</code>, already carry a status code, so the HTTP layer turns them into a 401 answer by itself. Only lockouts are caught, to add a <code>Retry-After</code> header.</li>
+<li>Errors thrown by <code>auth.login</code> already carry a status code, so the HTTP layer turns them into the right answer by itself: <code>InvalidCredentialsError</code> becomes 401, and a lockout becomes 423 with a <code>Retry-After</code> header. The login route needs no <code>try</code>/<code>catch</code>.</li>
 <li>Logout uses <code>user.sid</code> from the <strong>verified token</strong>. Never take a session id from the request body: a caller could then end someone else's session.</li>
 <li><code>POST /tasks</code> sets <code>ownerId</code> from the token. Anything the client puts in the body about <em>who</em> they are is ignored, because the schema only keeps <code>title</code>.</li>
 <li><code>port: 0</code> lets the operating system pick a free port, so the test below never clashes with a running server.</li>
@@ -783,14 +770,14 @@ await server.stop();
 3 401  {"error":"Invalid credentials","code":"ERR_INVALID_CREDENTIALS"}
 4 401  {"error":"Invalid credentials","code":"ERR_INVALID_CREDENTIALS"}
 5 401  {"error":"Invalid credentials","code":"ERR_INVALID_CREDENTIALS"}
-6 423 retry after 900 s {"error":"Account is locked due to too many failed attempts"}
-7 423 retry after 900 s {"error":"Account is locked due to too many failed attempts"}
-8 423 retry after 900 s {"error":"Account is locked due to too many failed attempts"}
-9 423 retry after 900 s {"error":"Account is locked due to too many failed attempts"}
-10 423 retry after 900 s {"error":"Account is locked due to too many failed attempts"}
+6 423 retry after 900 s {"error":"Account is locked due to too many failed attempts","code":"ERR_ACCOUNT_LOCKED"}
+7 423 retry after 900 s {"error":"Account is locked due to too many failed attempts","code":"ERR_ACCOUNT_LOCKED"}
+8 423 retry after 900 s {"error":"Account is locked due to too many failed attempts","code":"ERR_ACCOUNT_LOCKED"}
+9 423 retry after 900 s {"error":"Account is locked due to too many failed attempts","code":"ERR_ACCOUNT_LOCKED"}
+10 423 retry after 900 s {"error":"Account is locked due to too many failed attempts","code":"ERR_ACCOUNT_LOCKED"}
 11 429  {"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}}
 </output>
-<p>Guesses 1 to 5 get 401. Guesses 6 to 10 hit the account lockout, 423, with a <code>Retry-After</code> header that tells a well-behaved client how long to wait. Request 11 never reaches the login code: the rate limiter answers 429 (Too Many Requests) first. Its <code>Retry-After</code> is the number of seconds left in the current minute.</p>
+<p>Guesses 1 to 5 get 401. Guesses 6 to 10 hit the account lockout: 423 with the code <code>ERR_ACCOUNT_LOCKED</code>, and a <code>Retry-After</code> header that tells a well-behaved client how long to wait. The error carries the header itself, so the server sends it without any extra code. Request 11 never reaches the login code: the rate limiter answers 429 (Too Many Requests) first. Its <code>Retry-After</code> is the number of seconds left in the current minute.</p>
 <note>The memory stores count per process. If you run two copies of the server, each has its own counters, and an attacker gets twice the guesses. Real deployments keep these counters in a shared store such as Redis.</note>
 </section>
 
