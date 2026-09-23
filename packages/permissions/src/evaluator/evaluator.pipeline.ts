@@ -18,7 +18,7 @@ import type {
   AuthorizationOptions,
   PolicyEffect,
 } from "../permissionTypes/index.js";
-import { policyGrants } from "../policy/policyEffect.core.js";
+import { resolvePolicyMode } from "../policy/policyEffect.core.js";
 import { resolveRolePermissions } from "../role/roleHierarchy.js";
 import {
   matches,
@@ -283,12 +283,26 @@ export interface PolicyOutcome {
   readonly cacheable: boolean;
   readonly evaluated: readonly string[];
   /**
-   * Whether the allow may grant on its own: every applicable policy allowed
-   * and at least one of them has the `"grant"` effect. `false` for a denial,
-   * and for an allow from constraining policies only, which then needs a
-   * role, permission or rule to grant.
+   * Whether the allow may grant on its own: no policy denied and at least
+   * one granting policy allowed. `false` for a denial, and for an allow from
+   * constraining policies only, which then needs a role, permission or rule
+   * to grant.
    */
   readonly grants: boolean;
+}
+
+/** A policy denial as the decision it produces. */
+function policyDenial(
+  policy: PermissionPolicyDefinition,
+  reason: string,
+  publicReason: string,
+): PermissionDecision {
+  return Object.freeze({
+    allowed: false,
+    reason,
+    policy: policy.name,
+    publicReason,
+  });
 }
 
 /**
@@ -297,6 +311,12 @@ export interface PolicyOutcome {
  * Policies are evaluated highest priority first and short-circuit on the
  * first denial. A policy that throws or times out denies — an authorization
  * check that cannot complete must not fall through to "allowed".
+ *
+ * A policy with its own `effect: "grant"` only ever adds access: when it
+ * returns `allowed: false`, throws or times out it abstains, as if it had
+ * not applied, so an ownership policy cannot take away what the actor's
+ * roles grant. A constraining policy's denial, and a `"legacyGrant"`
+ * policy's (no `effect`, engine `defaultPolicyEffect: "grant"`), still deny.
  */
 export async function evaluatePolicies(
   context: PermissionContext,
@@ -320,12 +340,15 @@ export async function evaluatePolicies(
   // configured timeout mean anything at all.
   const timeoutMs = authOptions?.policyTimeout ?? options.policyTimeout;
   const evaluated: string[] = [];
+  const allowedBy: PermissionPolicyDefinition[] = [];
   let cacheable = true;
+  let grants = false;
 
   for (const policy of [...applicable, ...denyOnly]) {
     assertNotAborted(context.signal ?? authOptions?.signal);
     evaluated.push(policy.name);
     if (policy.cacheable === false) cacheable = false;
+    const mode = resolvePolicyMode(policy, options.defaultPolicyEffect);
 
     try {
       const result = await withTimeout(
@@ -335,17 +358,21 @@ export async function evaluatePolicies(
       );
 
       if (!result.allowed) {
+        if (mode === "grant") continue;
         return {
-          decision: Object.freeze({
-            allowed: false,
-            reason: result.reason ?? `policy:${policy.name}`,
-            policy: policy.name,
-            publicReason: result.publicReason ?? "Access denied",
-          }),
+          decision: policyDenial(
+            policy,
+            result.reason ?? `policy:${policy.name}`,
+            result.publicReason ?? "Access denied",
+          ),
           cacheable,
           evaluated,
           grants: false,
         };
+      }
+      if (applicable.includes(policy)) {
+        allowedBy.push(policy);
+        if (mode !== "constrain") grants = true;
       }
     } catch (error) {
       if (error instanceof AuthorizationAbortedError) throw error;
@@ -353,14 +380,15 @@ export async function evaluatePolicies(
         reportable(error, (cause) => new PolicyError(policy.name, cause)),
         `Policy.${policy.name}`,
       );
+      cacheable = false;
+      if (mode === "grant") continue;
       // Policy error — fail closed.
       return {
-        decision: Object.freeze({
-          allowed: false,
-          reason: `policy_error:${policy.name}`,
-          policy: policy.name,
-          publicReason: "Access denied",
-        }),
+        decision: policyDenial(
+          policy,
+          `policy_error:${policy.name}`,
+          "Access denied",
+        ),
         cacheable: false,
         evaluated,
         grants: false,
@@ -368,19 +396,15 @@ export async function evaluatePolicies(
     }
   }
 
-  if (applicable.length === 0) {
+  if (allowedBy.length === 0) {
     return { decision: null, cacheable, evaluated, grants: false };
   }
-
-  const grants = applicable.some((policy) =>
-    policyGrants(policy, options.defaultPolicyEffect),
-  );
 
   return {
     decision: Object.freeze({
       allowed: true,
       reason: grants ? "policy_allow" : "policy_pass",
-      policy: applicable.map((policy) => policy.name).join(","),
+      policy: allowedBy.map((policy) => policy.name).join(","),
     }),
     cacheable,
     evaluated,

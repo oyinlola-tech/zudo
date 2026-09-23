@@ -301,7 +301,9 @@ export async function evaluate(
  * the permission. It used to grant on its own, so a "business-hours" policy
  * handed `task:delete` to an actor with no roles at all. Only a policy with
  * `effect: "grant"` (or an engine with `defaultPolicyEffect: "grant"`) can
- * grant access the rules did not — and even then it never overrides a
+ * grant access the rules did not. A per-policy `effect: "grant"` policy that
+ * does not allow abstains, so it never reaches here as a denial and cannot
+ * take away what the rules granted. A granting policy never overrides a
  * denial, including one the *rules* produced. "The rules did not allow"
  * covers two cases: no rule matched, and a deny rule matched. Treating them
  * alike let an allowing policy for `post:*` cancel a `deny post:update` rule
