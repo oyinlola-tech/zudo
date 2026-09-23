@@ -6,6 +6,7 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
+import { describeType } from "../schemaBase/schemaBase.describe.js";
 import {
   addIssue,
   childContext,
@@ -45,9 +46,9 @@ export class ArraySchema<TOutput> extends Schema<TOutput[]> {
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_TYPE,
         path: [...ctx.path],
-        message: `Expected array, received ${typeof input}`,
+        message: `Expected array, received ${describeType(input)}`,
         expected: "array",
-        received: typeof input,
+        received: describeType(input),
       });
       failValidation();
     }

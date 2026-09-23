@@ -5,6 +5,7 @@
  */
 
 import type { SchemaParseContext } from "../schemaBase/index.js";
+import { describeType } from "../schemaBase/schemaBase.describe.js";
 import { ModifiableSchema } from "../schemaModifiers/schemaModifiable.core.js";
 import { addIssue, failValidation } from "../schemaBase/index.js";
 import { SchemaIssueCode } from "@zudojs/constants";
@@ -39,9 +40,9 @@ export class BooleanSchema extends ModifiableSchema<boolean> {
     addIssue(ctx, {
       code: SchemaIssueCode.INVALID_TYPE,
       path: [...ctx.path],
-      message: `Expected boolean, received ${typeof input}`,
+      message: `Expected boolean, received ${describeType(input)}`,
       expected: "boolean",
-      received: typeof input,
+      received: describeType(input),
     });
     failValidation();
   }

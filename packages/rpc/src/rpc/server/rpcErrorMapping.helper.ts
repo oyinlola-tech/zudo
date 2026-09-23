@@ -20,7 +20,7 @@ import {
 
 import { INTERNAL_ERROR_MESSAGE } from "../constants/rpcConstants.core.js";
 
-import { mapExposedBaseError } from "./rpcBaseErrorMapping.helper.js";
+import { mapExposedBaseError, withheldRPCErrorCode } from "./rpcBaseErrorMapping.helper.js";
 
 /**
  * Wire codes for the error types the server maps.
@@ -70,7 +70,8 @@ export interface RPCMappedError {
  * exposed — an `RPCInternalError`, a non-exposed custom `RPCError` or
  * `BaseError`, or any other error — is answered with
  * {@link INTERNAL_ERROR_MESSAGE}, so exception text, stack traces and
- * causes never reach the remote side.
+ * causes never reach the remote side — nor does a non-exposed custom
+ * code ({@link withheldRPCErrorCode}).
  */
 export function mapRPCError(error: unknown): RPCMappedError {
   if (error instanceof RPCInternalError || !(error instanceof Error)) {
@@ -86,9 +87,9 @@ export function mapRPCError(error: unknown): RPCMappedError {
   }
 
   if (isRPCError(error)) {
-    return error.expose === false
-      ? internalFailure(error.code)
-      : exposed(error.code, error.message, undefined);
+    return error.expose === true
+      ? exposed(error.code, error.message, undefined)
+      : internalFailure(withheldRPCErrorCode(error.code));
   }
 
   const base = mapExposedBaseError(error);

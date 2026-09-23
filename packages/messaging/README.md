@@ -117,6 +117,11 @@ that ignores its signal. `handlerResults` still lists every handler that
 finished. Before 1.2.0 an abort during the last handler was reported as
 `success: true`.
 
+Cancellation uses only `AbortSignal` and `setTimeout`, so it works in
+browsers and other non-Node runtimes. 1.2.0 scheduled the abort with Node's
+`setImmediate`, and aborting a dispatch in a browser threw
+`ReferenceError: setImmediate is not defined`; later releases do not.
+
 ## Timeouts
 
 `timeout` is honoured by the dispatcher itself, so it applies whether you hold

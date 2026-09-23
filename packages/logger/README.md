@@ -151,8 +151,13 @@ logger.info("login", { user: "alice", password: "hunter2" });
 // metadata: { user: "alice", password: "[REDACTED]" }
 
 createLogger({ redact: { keys: ["ssn"], replacement: "***" } });
-createLogger({ redact: { enabled: false } }); // opt out
+createLogger({ redact: false }); // opt out
+createLogger({ redact: { enabled: false } }); // same as redact: false
 ```
+
+`redact` takes a boolean or an options object (`enabled`, `keys`, `pattern`,
+`replacement`). `true` or omitting it keeps the default. Child loggers inherit
+the parent's setting.
 
 ## Log injection
 

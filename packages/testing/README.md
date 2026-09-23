@@ -206,6 +206,14 @@ own, and `logger: createLogger({ name })` from `@zudojs/logger` prints.
 - `createStub()` hands back the same no-op for a given property every time,
   so `stub.handler === stub.handler` and a register/unregister pair written
   against a stub actually unregisters.
+- The overrides passed to `createStub()` are the stub's own enumerable
+  properties, so `Object.keys(stub)`, `{ ...stub }` and
+  `expect.objectContaining({ send })` see them. The unstubbed no-ops are
+  answered on access only and are not own keys. `asymmetricMatch` is answered
+  with `undefined`, so Vitest's `equals` does not mistake a stub for a matcher.
+- `createSpyMethod(...).restore()` only puts the original method back. The
+  recorded `calls`, `results` and `errors` are kept, so you can assert on them
+  after restoring. Calls made after `restore()` are not recorded.
 - `InMemoryTestStorage.set(key, value, 0)` means "already expired", not "no
   expiry"; only an omitted TTL (or `Infinity`) never expires, and a `NaN` TTL
   throws. `delete()` returns `false` for an entry that has already expired.

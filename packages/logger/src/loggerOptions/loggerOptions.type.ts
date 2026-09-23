@@ -7,6 +7,7 @@ import type { LoggerContextData } from "../loggerContext/loggerContext.core.js";
 import type { LoggerFormatterLike } from "../loggerFormatter/loggerFormatter.type.js";
 import type { LoggerTransportLike } from "../loggerTransport/loggerTransport.type.js";
 import type { LoggerRedactionOptions } from "../loggerEntry/loggerEntryHelpers/loggerEntryHelpers.sanitize.js";
+import { resolveRedactionOptions } from "./loggerOptions.redact.js";
 
 /** Options used to configure a Zudojs logger. */
 export interface LoggerOptions {
@@ -30,9 +31,10 @@ export interface LoggerOptions {
    * Redaction is ON by default: fields whose NAME looks like a secret
    * (password, token, api key, credential, authorization, cookie) are
    * replaced with "[REDACTED]" before an entry reaches a formatter.
-   * Pass `{ enabled: false }` to opt out.
+   * Pass `false` (or `{ enabled: false }`) to opt out, or an options object
+   * to customize the matched keys, pattern and replacement.
    */
-  readonly redact?: LoggerRedactionOptions;
+  readonly redact?: boolean | LoggerRedactionOptions;
 }
 
 /** Options used when creating a child logger. */
@@ -159,7 +161,7 @@ export function resolveLoggerOptions(
     inheritContext:
       options.inheritContext ?? DEFAULT_LOGGER_OPTIONS.inheritContext,
     mutable: options.mutable ?? DEFAULT_LOGGER_OPTIONS.mutable,
-    redact: Object.freeze({ ...(options.redact ?? {}) }),
+    redact: resolveRedactionOptions(options.redact),
   });
 }
 

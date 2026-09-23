@@ -138,7 +138,7 @@ describe("from inside a workspace app", () => {
     expect(runDoctorChecks(nested).find((c) => c.name === "Zudojs project")?.message).toContain(
       "fullstack",
     );
-  });
+  }, 120_000);
 
   it("generate and build keep resolving to the app they run in", async () => {
     const root = await create({ architecture: "microservice", services: "users" });

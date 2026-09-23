@@ -27,7 +27,7 @@ describe("mapRPCError", () => {
     expect(mapRPCError("string thrown").internal).toBe(true);
     expect(mapRPCError(new RPCInternalError("detail")).payload.message).toBe(INTERNAL_ERROR_MESSAGE);
     expect(mapRPCError(new RPCError("hidden", { code: "X" })).payload).toEqual({
-      code: "X",
+      code: "RPC_INTERNAL_ERROR",
       message: INTERNAL_ERROR_MESSAGE,
     });
   });

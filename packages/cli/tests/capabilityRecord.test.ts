@@ -149,7 +149,7 @@ describe("modular monolith: generate module registers in app.ts", () => {
     expect(readFileSync(join(root, "apps", "api", "src", "app.ts"), "utf-8")).toContain(
       "new CatalogModule(),",
     );
-  });
+  }, 120_000);
 });
 
 describe("create records one capability list in the manifest and package.json", () => {

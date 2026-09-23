@@ -6,6 +6,7 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
+import { describeType } from "../schemaBase/schemaBase.describe.js";
 import { addIssue, failValidation } from "../schemaBase/index.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 import { TransformSchema } from "./schemaTransform.core.js";
@@ -45,9 +46,9 @@ export class NumberSchema extends Schema<number> {
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_TYPE,
         path: [...ctx.path],
-        message: `Expected number, received ${typeof input}`,
+        message: `Expected number, received ${describeType(input)}`,
         expected: "number",
-        received: typeof input,
+        received: describeType(input),
       });
       failValidation();
     }

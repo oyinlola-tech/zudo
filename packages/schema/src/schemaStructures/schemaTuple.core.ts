@@ -6,6 +6,7 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
+import { describeType } from "../schemaBase/schemaBase.describe.js";
 import {
   addIssue,
   childContext,
@@ -39,9 +40,9 @@ export class TupleSchema<
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_TYPE,
         path: [...ctx.path],
-        message: `Expected tuple, received ${typeof input}`,
+        message: `Expected tuple, received ${describeType(input)}`,
         expected: "tuple",
-        received: typeof input,
+        received: describeType(input),
       });
       failValidation();
     }

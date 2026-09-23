@@ -131,6 +131,7 @@ describe("BATCH7-RUNTIME-9: exported error classes are thrown", () => {
       handleSignals: true,
       handleFatalErrors: false,
       exit: () => undefined,
+      setExitCode: () => undefined,
     });
     const failure = new Error("stop failed");
     handler.register(async () => {

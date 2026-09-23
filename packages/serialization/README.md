@@ -150,8 +150,19 @@ serializer.serialize({ error }, { preserveTypes: true }); // name, message, code
 serializer.serialize({ error }, { preserveTypes: true, includeStack: true });
 ```
 
-On the way back, a wire-supplied stack is attached as a non-enumerable
-`originalStack` rather than overwriting the reconstructed error's own.
+On the way back:
+
+- A built-in subclass (`TypeError`, `RangeError`, `SyntaxError`,
+  `ReferenceError`, `EvalError`, `URIError`, `AggregateError`) is rebuilt with
+  its own constructor, so `instanceof TypeError` still holds. Any other name
+  is rebuilt as a plain `Error` with `name` set. An `AggregateError` comes back
+  with an empty `errors` array, because the inner errors are not serialized.
+- `.stack` is only the header line (`"TypeError: bad input"`) with no frames.
+  The reader's own frames would point at the deserializer, not at where the
+  error was thrown.
+- A wire-supplied stack (sent with `includeStack`) is attached as a
+  non-enumerable `originalStack`. It never overwrites `.stack`, because it is
+  text the sender controls.
 
 ## Envelopes
 

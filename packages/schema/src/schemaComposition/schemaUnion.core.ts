@@ -12,7 +12,7 @@ import {
   failValidation,
   rethrowUnexpected,
 } from "../schemaBase/index.js";
-import { describeValue } from "../schemaBase/schemaBase.describe.js";
+import { describeType, describeValue } from "../schemaBase/schemaBase.describe.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
 /** Helper type to infer union output from schema array. */
@@ -147,9 +147,9 @@ export class DiscriminatedUnionSchema<
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_TYPE,
         path: [...ctx.path],
-        message: `Expected object for discriminated union, received ${Array.isArray(input) ? "array" : typeof input}`,
+        message: `Expected object for discriminated union, received ${describeType(input)}`,
         expected: "object",
-        received: Array.isArray(input) ? "array" : typeof input,
+        received: describeType(input),
       });
       failValidation();
     }

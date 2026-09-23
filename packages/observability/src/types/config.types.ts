@@ -62,11 +62,18 @@ export type RedactionMatchMode = "exact" | "contains";
 /** Configuration for redacting sensitive fields from logs and traces. */
 export interface RedactionConfig {
   /**
-   * Field names to redact (case-insensitive). Defaults to a built-in list
-   * covering passwords, tokens, cookies, keys and card numbers, plus every
-   * name @zudojs/logger's default matcher redacts. Setting it replaces both.
+   * Extra field names to redact (case-insensitive), added to the defaults:
+   * `DEFAULT_SENSITIVE_FIELDS` and @zudojs/logger's default matcher stay in
+   * force, so a list can only ever add redaction. Set
+   * {@link RedactionConfig.replaceDefaults} to use this list alone.
    */
   readonly fields?: readonly string[];
+  /**
+   * `true` makes {@link RedactionConfig.fields} replace the default names and
+   * the logger's matcher instead of extending them — the pre-1.2.1 meaning
+   * of `fields`. Ignored when `fields` is not set. Default: `false`.
+   */
+  readonly replaceDefaults?: boolean;
   /**
    * Additional patterns tested against the field name. Useful for
    * conventions a name list cannot express, such as `/^x-.*-token$/i`.

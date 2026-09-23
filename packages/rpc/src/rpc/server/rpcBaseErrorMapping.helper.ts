@@ -8,6 +8,8 @@ import { isBaseError, RateLimitError, ValidationError } from "@zudojs/errors";
 
 import type { RPCErrorPayload } from "../types/rpcResponse.type.js";
 
+import { RPC_HTTP_STATUS } from "../transport/http/rpcHttpStatus.helper.js";
+
 /** Wire code for each HTTP-style status an exposable error can carry. */
 const STATUS_WIRE_CODES: ReadonlyMap<number, string> = new Map([
   [400, "RPC_VALIDATION_ERROR"],
@@ -64,4 +66,17 @@ export function mapExposedBaseError(error: unknown): RPCErrorPayload | undefined
     message: error.message,
     ...(details !== undefined ? { details } : {}),
   };
+}
+
+/**
+ * The wire code for an `RPCError` that was not built to be exposed.
+ *
+ * A standard wire code (a key of `RPC_HTTP_STATUS`, such as
+ * `RPC_UNAVAILABLE`) is public vocabulary and callers act on it, so it
+ * travels. Any other code — `new RPCError("…", { code: "TASK_SECRET" })` —
+ * is server detail just as the message is, and goes out as
+ * `RPC_INTERNAL_ERROR`.
+ */
+export function withheldRPCErrorCode(code: string): string {
+  return Object.hasOwn(RPC_HTTP_STATUS, code) ? code : "RPC_INTERNAL_ERROR";
 }

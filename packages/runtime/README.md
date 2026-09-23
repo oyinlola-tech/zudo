@@ -86,6 +86,33 @@ to reject; if it fails, the runtime logs a `RuntimeSignalError` (with the
 failure as `cause`) as the `error` field of its "Shutdown handler
 failed." entry.
 
+## Signals and exit codes
+
+With `handleSignals: true`, a `SIGTERM` or `SIGINT` runs a graceful
+`stop()`, and the runtime holds the process open until that shutdown has
+finished — every `onShutdown` and `onDestroy` hook runs, even when nothing
+else is keeping the event loop alive or a hook closes the last open socket
+before its async work is done. (Node's signal listeners do not keep the
+process alive by themselves; before this was fixed, a process with nothing
+else pending exited with code 0 mid-shutdown, still `running` or
+`stopping`.)
+
+When the shutdown is over the runtime lets the process exit on its own
+rather than calling `process.exit()`, so your own `SIGTERM` listeners and
+pending writes still finish:
+
+- clean shutdown: the exit code is left alone (0 unless you set one);
+- failed shutdown — `stop()` rejected, or a module's hook failed
+  (`status.shutdownFailures` is non-empty): `process.exitCode` is set
+  to `1` and the failure is logged as a `RuntimeSignalError`;
+- fatal error (`exitOnFatalError`): `process.exit(1)` once shutdown ends;
+- second `SIGTERM`/`SIGINT` during shutdown (`forceExitOnSecondSignal`):
+  `process.exit(1)` at once.
+
+If something outside the runtime still holds a handle (a server you did not
+close in a module), the process stays up after the runtime has stopped, as
+it would without the runtime.
+
 ```typescript
 import { RuntimeStartError } from "@zudojs/runtime";
 

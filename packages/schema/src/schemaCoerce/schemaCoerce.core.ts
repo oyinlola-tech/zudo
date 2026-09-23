@@ -10,6 +10,7 @@
  */
 
 import type { SchemaParseContext } from "../schemaBase/index.js";
+import { describeType } from "../schemaBase/schemaBase.describe.js";
 import { ModifiableSchema } from "../schemaModifiers/schemaModifiable.core.js";
 import { addIssue, failValidation } from "../schemaBase/index.js";
 import { SchemaIssueCode, SerializationLimits } from "@zudojs/constants";
@@ -66,9 +67,9 @@ export class CoerceNumberSchema extends ModifiableSchema<number> {
     addIssue(ctx, {
       code: SchemaIssueCode.COERCION_FAILED,
       path: [...ctx.path],
-      message: `Cannot coerce ${describe(input)} to number`,
+      message: `Cannot coerce ${describeType(input)} to number`,
       expected: "number",
-      received: typeof input,
+      received: describeType(input),
     });
     failValidation();
   }
@@ -130,9 +131,9 @@ export class CoerceBooleanSchema extends ModifiableSchema<boolean> {
     addIssue(ctx, {
       code: SchemaIssueCode.COERCION_FAILED,
       path: [...ctx.path],
-      message: `Cannot coerce ${describe(input)} to boolean`,
+      message: `Cannot coerce ${describeType(input)} to boolean`,
       expected: "boolean",
-      received: typeof input,
+      received: describeType(input),
     });
     failValidation();
   }
@@ -197,9 +198,9 @@ export class CoerceStringSchema extends ModifiableSchema<string> {
     addIssue(ctx, {
       code: SchemaIssueCode.COERCION_FAILED,
       path: [...ctx.path],
-      message: `Cannot coerce ${describe(input)} to string`,
+      message: `Cannot coerce ${describeType(input)} to string`,
       expected: "string",
-      received: typeof input,
+      received: describeType(input),
     });
     failValidation();
   }
@@ -254,20 +255,12 @@ export class CoerceBigIntSchema extends ModifiableSchema<bigint> {
     addIssue(ctx, {
       code: SchemaIssueCode.COERCION_FAILED,
       path: [...ctx.path],
-      message: `Cannot coerce ${describe(input)} to bigint`,
+      message: `Cannot coerce ${describeType(input)} to bigint`,
       expected: "bigint",
-      received: typeof input,
+      received: describeType(input),
     });
     failValidation();
   }
-}
-
-/** Describes a value for an error message without ever throwing. */
-function describe(value: unknown): string {
-  if (value === null) return "null";
-  if (typeof value === "symbol") return "symbol";
-  if (Array.isArray(value)) return "array";
-  return typeof value;
 }
 
 /** Creates a coercion number schema. */

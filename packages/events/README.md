@@ -50,12 +50,38 @@ await bus.publishEvent({
 - Event bus with a middleware pipeline (`use()`, constructor and per-publish middleware)
 - Sequential or parallel handler dispatch with `THROW` / `CONTINUE` error modes
 - Handler priorities, one-time handlers, per-handler timeouts
-- Wildcard subscriptions (`"user.*"`, `"*"`)
+- Wildcard subscriptions (`"user.*"`, `"*"`) — multi-level, see [Wildcard patterns](#wildcard-patterns)
 - Event registry for typed definitions; handlers registered on the registry are dispatched by the bus
 - Deep-frozen events (`freezeEvents`, on by default) so handlers cannot alter what other handlers see: handlers receive a frozen *copy* (`createFrozenEventSnapshot`), so the publisher's own objects are never frozen, and Map, Set and Date values (including `event.timestamp`) become read-only variants that throw on mutation. Class instances are passed by reference.
 - A handler unsubscribed by an earlier handler in the same dispatch, or left over after the bus is disposed mid-dispatch, does not run
 - Listener-leak warnings (`maxListeners`, reported through `onWarning` or, by default, `process.emitWarning` with type `ZudojsEventsWarning`) and an `onError` hook for fire-and-forget publishes
 - Typed error classes from `@zudojs/errors` (`EventHandlerError`, `EventMiddlewareError`, `EventDispatchAbortedError`, …)
+
+## Wildcard patterns
+
+A handler's event type can be an exact type, a namespace wildcard, or the
+catch-all `"*"`:
+
+| Pattern | Matches | Does not match |
+|---------|---------|----------------|
+| `"task.created"` | `task.created` | `task.created.v2`, `task` |
+| `"task.*"` | `task`, `task.created`, `task.sub.created` (any depth) | `tasks.created`, `order.created` |
+| `"*"` | every event | — |
+
+A namespace wildcard is **multi-level**: `"task.*"` matches every event
+under `task` at any depth, plus the bare `task` event, like a prefix match
+on whole segments. There is no single-level form — `"task.*.created"`,
+`"task.cre*"` and other positions are rejected as invalid patterns. To
+handle only direct children, filter in the handler:
+
+```typescript
+import { getEventTypeSegments } from "@zudojs/events";
+
+bus.on("task.*", (event) => {
+  if (getEventTypeSegments(event.type).length !== 2) return; // task.x only
+  // ...
+});
+```
 
 ## Lifecycle
 

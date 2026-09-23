@@ -6,6 +6,7 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
+import { describeType } from "../schemaBase/schemaBase.describe.js";
 import {
   addIssue,
   childContext,
@@ -34,9 +35,9 @@ export class MapSchema<TKey, TValue> extends Schema<Map<TKey, TValue>> {
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_TYPE,
         path: [...ctx.path],
-        message: `Expected Map, received ${typeof input}`,
+        message: `Expected Map, received ${describeType(input)}`,
         expected: "Map",
-        received: typeof input,
+        received: describeType(input),
       });
       failValidation();
     }
@@ -91,9 +92,9 @@ export class SetSchema<TValue> extends Schema<Set<TValue>> {
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_TYPE,
         path: [...ctx.path],
-        message: `Expected Set, received ${typeof input}`,
+        message: `Expected Set, received ${describeType(input)}`,
         expected: "Set",
-        received: typeof input,
+        received: describeType(input),
       });
       failValidation();
     }

@@ -97,7 +97,11 @@ export interface SpyMethod<TObj, TMethod extends keyof TObj> {
   readonly results: readonly unknown[];
   readonly errors: readonly unknown[];
   readonly callCount: number;
-  /** Reinstates the original method exactly as it was found. */
+  /**
+   * Reinstates the original method exactly as it was found. The recorded
+   * `calls`, `results` and `errors` are kept, so they can be asserted after
+   * restoring; calls made after `restore()` are not recorded.
+   */
   restore: () => void;
 }
 
@@ -118,6 +122,7 @@ export interface SpyMethod<TObj, TMethod extends keyof TObj> {
  * expect(spy.calls).toHaveLength(1);
  *
  * spy.restore();
+ * expect(spy.calls).toHaveLength(1); // still recorded after restore
  * ```
  */
 export function createSpyMethod<TObj, TMethod extends keyof TObj>(
@@ -166,9 +171,6 @@ export function createSpyMethod<TObj, TMethod extends keyof TObj>(
     restore: (): void => {
       if (wasOwnProperty) target[key] = original;
       else delete target[key];
-      calls.length = 0;
-      results.length = 0;
-      errors.length = 0;
     },
   };
 }

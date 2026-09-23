@@ -21,40 +21,14 @@ import { createDefaultSecretFieldMatcher } from "@zudojs/logger";
 
 import type { RedactionConfig } from "../types.js";
 
+import { DEFAULT_SENSITIVE_FIELDS } from "./redaction.defaults.js";
+
 /**
  * @zudojs/logger's default secret-name matcher. The default rules here
  * include it, so a field the logger redacts is never exported in the clear
  * by this package.
  */
 const isLoggerSecretField = createDefaultSecretFieldMatcher();
-
-/** Default sensitive field names, matched case-insensitively. */
-export const DEFAULT_SENSITIVE_FIELDS: readonly string[] = [
-  "password",
-  "passwd",
-  "secret",
-  "token",
-  "authorization",
-  "auth",
-  "cookie",
-  "session",
-  "credential",
-  "api_key",
-  "apikey",
-  "access_token",
-  "refresh_token",
-  "private_key",
-  "client_secret",
-  "credit_card",
-  "creditcard",
-  "card_number",
-  "cardnumber",
-  "cvv",
-  "ssn",
-  "social_security",
-  "pin",
-  "otp",
-];
 
 const DEFAULT_REPLACEMENT = "[REDACTED]";
 const DEFAULT_MAX_DEPTH = 8;
@@ -112,9 +86,14 @@ interface CompiledRedaction {
 }
 
 function compile(config?: RedactionConfig): CompiledRedaction {
-  const fields = (config?.fields ?? DEFAULT_SENSITIVE_FIELDS).map((field) =>
-    field.toLowerCase(),
-  );
+  const configured = config?.fields;
+  const replaceDefaults =
+    configured !== undefined && config?.replaceDefaults === true;
+  const fields = (
+    replaceDefaults
+      ? configured
+      : [...DEFAULT_SENSITIVE_FIELDS, ...(configured ?? [])]
+  ).map((field) => field.toLowerCase());
   const patterns = config?.patterns ?? [];
   const matchMode = config?.matchMode ?? "contains";
   const exact = new Set(fields);
@@ -123,8 +102,7 @@ function compile(config?: RedactionConfig): CompiledRedaction {
     fields.map((field) => field.replace(/[^a-z0-9]/g, "")).filter(Boolean),
   );
 
-  const withLoggerDefaults =
-    config?.fields === undefined && matchMode === "contains";
+  const withLoggerDefaults = !replaceDefaults && matchMode === "contains";
 
   const isSensitive = (key: string): boolean => {
     const lower = key.toLowerCase();

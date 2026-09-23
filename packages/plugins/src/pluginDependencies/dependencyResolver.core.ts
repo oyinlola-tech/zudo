@@ -52,7 +52,8 @@ export class DependencyResolver {
    * Optional dependencies that are present participate in ordering — a
    * plugin that optionally integrates with a peer must still start after
    * it — while optional dependencies that are absent are ignored rather
-   * than reported missing.
+   * than reported missing. A dependency is optional when it is listed in
+   * `optionalDependencies` or carries `optional: true` in `dependencies`.
    */
   public resolve(plugins: Map<string, ResolvablePlugin>): DependencyResolution {
     const missingDetails: MissingDependency[] = [];
@@ -60,7 +61,7 @@ export class DependencyResolver {
 
     for (const [name, plugin] of plugins) {
       for (const dep of plugin.dependencies ?? []) {
-        if (!plugins.has(dep.name)) {
+        if (dep.optional !== true && !plugins.has(dep.name)) {
           missingDetails.push({ plugin: name, dependency: dep.name });
         }
       }

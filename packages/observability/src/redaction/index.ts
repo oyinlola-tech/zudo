@@ -10,7 +10,7 @@ export {
   redactObject,
   redactValue,
   isSensitiveField,
-  DEFAULT_SENSITIVE_FIELDS,
   CIRCULAR_MARKER,
   MAX_DEPTH_MARKER,
 } from "./redaction.core.js";
+export { DEFAULT_SENSITIVE_FIELDS } from "./redaction.defaults.js";

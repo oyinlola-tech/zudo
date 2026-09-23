@@ -102,6 +102,24 @@ and the dependency itself. Cycles throw `PluginDependencyCycleError` with
 the cycle path. Optional dependencies that are present still participate in
 ordering; optional dependencies that are absent are ignored.
 
+A dependency is optional when it is listed in `optionalDependencies` or
+marked `optional: true` inside `dependencies` — the two forms are
+equivalent:
+
+```typescript
+manager.register({
+  metadata: { name: "@acme/api" },
+  dependencies: [
+    { name: "@acme/db" }, // required: start() throws if it is missing
+    { name: "@acme/metrics", optional: true }, // skipped when missing
+  ],
+});
+// Same as: optionalDependencies: [{ name: "@acme/metrics" }]
+```
+
+When `@acme/metrics` is registered, `@acme/api` starts after it, and any
+`version` constraint on it is enforced.
+
 Declared versions are enforced before any hook runs:
 
 ```typescript

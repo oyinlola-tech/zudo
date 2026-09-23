@@ -9,12 +9,14 @@
  *
  * `then` is the important one: answering it makes the stub a thenable, so
  * `await stub` calls it expecting a promise callback. The fake never resolves,
- * and the test hangs until it times out with no indication why.
+ * and the test hangs until it times out with no indication why. Likewise
+ * `asymmetricMatch` makes Vitest's `equals` treat the stub as a matcher.
  */
 const NON_CALLABLE_KEYS: ReadonlySet<PropertyKey> = new Set([
   "then",
   "catch",
   "finally",
+  "asymmetricMatch",
   Symbol.toPrimitive,
   Symbol.iterator,
   Symbol.asyncIterator,
@@ -25,7 +27,9 @@ const NON_CALLABLE_KEYS: ReadonlySet<PropertyKey> = new Set([
  * Creates a stub object from an interface.
  *
  * All methods return undefined by default. Override specific methods
- * by passing an overrides object.
+ * by passing an overrides object. The overrides are the stub's own
+ * enumerable properties, so `Object.keys(stub)`, `{ ...stub }` and
+ * `expect.objectContaining` see them; unstubbed no-ops are not own keys.
  *
  * @typeParam T - The interface type to stub.
  * @param overrides - Optional method implementations.
@@ -74,6 +78,17 @@ export function createStub<T extends object>(
 
     has(_target, prop) {
       return !NON_CALLABLE_KEYS.has(prop);
+    },
+
+    ownKeys() {
+      return Reflect.ownKeys(overrides);
+    },
+
+    getOwnPropertyDescriptor(_target, prop) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(overrides, prop);
+      return descriptor === undefined
+        ? undefined
+        : { ...descriptor, configurable: true };
     },
   });
 }

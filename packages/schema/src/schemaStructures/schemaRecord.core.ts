@@ -6,6 +6,7 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
+import { describeType } from "../schemaBase/schemaBase.describe.js";
 import {
   addIssue,
   childContext,
@@ -53,9 +54,9 @@ export class RecordSchema<TValue> extends Schema<Record<string, TValue>> {
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_TYPE,
         path: [...ctx.path],
-        message: `Expected record, received ${Array.isArray(input) ? "array" : typeof input}`,
+        message: `Expected record, received ${describeType(input)}`,
         expected: "record",
-        received: Array.isArray(input) ? "array" : typeof input,
+        received: describeType(input),
       });
       failValidation();
     }

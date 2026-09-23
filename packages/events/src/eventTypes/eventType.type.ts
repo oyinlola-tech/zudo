@@ -80,6 +80,10 @@ export function isValidEventType(value: unknown): value is EventType {
  * Supported forms are an exact event type, a namespace wildcard
  * ("user.*") and the catch-all "*". Wildcards in any other
  * position ("user.*.created", "user.cre*") are rejected.
+ *
+ * A namespace wildcard is multi-level: "user.*" matches every event
+ * under "user" at any depth, and "user" itself (see matchesEventType).
+ * There is no single-level form.
  */
 export function isValidEventTypePattern(
   value: unknown,
@@ -232,8 +236,16 @@ export function normalizeEventTypePattern(
  * "user.created" matches "user.*"
  * "user"         matches "user.*" (a namespace pattern also
  *                matches the bare namespace event)
+ * "user.profile.updated" matches "user.*" (multi-level: the
+ *                wildcard covers every depth below the namespace)
  * "user.created" matches "*"
  * "order.created" does not match "user.*"
+ * "username.set" does not match "user.*" (segments, not prefixes)
+ *
+ * A "*" segment stands for the rest of the type, not for one segment,
+ * and there is no single-level wildcard. To handle only direct children,
+ * subscribe to "user.*" and check
+ * `getEventTypeSegments(event.type).length === 2` in the handler.
  *
  * Both arguments are expected to be normalized (see
  * normalizeEventType / normalizeEventTypePattern); no
@@ -282,10 +294,13 @@ export function isChildEventType(type: EventType, parent: EventType): boolean {
 /**
  * Creates a wildcard pattern for an event namespace.
  *
+ * The pattern is multi-level: it matches every event type under the
+ * namespace at any depth, and the bare namespace itself.
+ *
  * Example:
  *
  * createEventTypePattern("user")
- * → "user.*"
+ * → "user.*" (matches "user", "user.created", "user.profile.updated")
  */
 export function createEventTypePattern(namespace: string): EventTypePattern {
   const normalized = normalizeEventType(namespace);

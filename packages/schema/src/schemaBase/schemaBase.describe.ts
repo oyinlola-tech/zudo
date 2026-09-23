@@ -37,3 +37,17 @@ export function describeThrown(value: unknown): string {
     return describeValue(value);
   }
 }
+
+/**
+ * Names the runtime type of a value for an issue's `received` field.
+ *
+ * `typeof` reports `"object"` for `null` and for arrays, which produced
+ * messages such as "Expected object, received object" for `null`. This
+ * distinguishes `null`, arrays and `NaN` from the plain `typeof` result.
+ */
+export function describeType(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  if (typeof value === "number" && Number.isNaN(value)) return "NaN";
+  return typeof value;
+}

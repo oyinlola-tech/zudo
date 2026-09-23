@@ -245,7 +245,7 @@ Every error class from `@zudojs/errors`' RPC family is re-exported. The
 server maps them to wire codes (`RPC_PROCEDURE_NOT_FOUND`,
 `RPC_VALIDATION_ERROR`, `RPC_UNAUTHENTICATED`, `RPC_FORBIDDEN`,
 `RPC_RATE_LIMITED`, `RPC_TIMEOUT`, …). A custom `RPCError` subclass keeps its
-own `code`.
+own `code` only when it is built with `expose: true` (see below).
 
 `mapRPCError(error)` is the mapping the server and the fetch handler share. Use it in a custom transport to produce the same wire payloads.
 
@@ -262,7 +262,15 @@ thrown with `expose: false` — an `RPCInternalError`, an
 `expose: false`), a non-exposed `BaseError`, or any other error — is
 answered with the fixed `INTERNAL_ERROR_MESSAGE`; the
 original error is handed to `onInternalError(error, requestId)` so it can be
-logged against the request id. A handler result that fails the procedure's
+logged against the request id.
+
+A non-exposed error's code is withheld as well: `new RPCError("…", { code:
+"TASK_SECRET" })` goes out as `{ code: "RPC_INTERNAL_ERROR", message:
+INTERNAL_ERROR_MESSAGE }`, because a custom code is server detail just as the
+message is. The one exception is a standard wire code — a key of
+`RPC_HTTP_STATUS`, such as `RPC_UNAVAILABLE` or `RPC_TIMEOUT` — which is
+public vocabulary a client acts on (retries, status), so it travels with the
+generic message. To send a custom code, build the error with `expose: true`. A handler result that fails the procedure's
 `output` schema is treated the same way: it is the server's fault, not the
 caller's.
 

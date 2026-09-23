@@ -54,17 +54,22 @@ export function assertDispatchNotAborted(
  * The rejection waits one macrotask. A handler that aborts and then returns
  * synchronously has its result recorded first, so `handlerResults` still
  * lists every handler that finished.
+ *
+ * The macrotask is a `setTimeout(…, 0)`, not `setImmediate`: the package is
+ * not Node-only, and browsers have no `setImmediate`, so an abort there
+ * threw a `ReferenceError`. A microtask would not do — the dispatch records
+ * a handler's result several promise hops after the handler returns.
  */
 export function abortRejection(
   signal: AbortSignal,
   message: Message,
 ): AbortRejection {
-  let pending: ReturnType<typeof setImmediate> | undefined;
+  let pending: ReturnType<typeof setTimeout> | undefined;
   let onAbort: (() => void) | undefined;
 
   const promise = new Promise<never>((_resolve, reject) => {
     onAbort = (): void => {
-      pending = setImmediate(() => reject(abortErrorFor(signal, message)));
+      pending = setTimeout(() => reject(abortErrorFor(signal, message)), 0);
     };
     signal.addEventListener("abort", onAbort, { once: true });
   });
@@ -76,7 +81,7 @@ export function abortRejection(
     promise,
     dispose: () => {
       if (onAbort) signal.removeEventListener("abort", onAbort);
-      if (pending !== undefined) clearImmediate(pending);
+      if (pending !== undefined) clearTimeout(pending);
     },
   };
 }

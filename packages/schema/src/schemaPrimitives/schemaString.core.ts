@@ -6,6 +6,7 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
+import { describeType } from "../schemaBase/schemaBase.describe.js";
 import { addIssue, failValidation } from "../schemaBase/index.js";
 import {
   SchemaIssueCode,
@@ -64,9 +65,9 @@ export class StringSchema extends Schema<string> {
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_TYPE,
         path: [...ctx.path],
-        message: `Expected string, received ${typeof input}`,
+        message: `Expected string, received ${describeType(input)}`,
         expected: "string",
-        received: typeof input,
+        received: describeType(input),
       });
       failValidation();
     }

@@ -1,6 +1,11 @@
 import type { Logger } from "@zudojs/logger";
 
 import { RuntimeSignalError } from "../runtimeError/runtimeError.base.js";
+import {
+  flushPendingSignals,
+  holdEventLoop,
+  setProcessExitCode,
+} from "./signalHandler.keepAlive.js";
 
 /**
  * Options controlling signal and fatal-error handling.
@@ -31,6 +36,12 @@ export interface SignalHandlerOptions {
   readonly fatalExitTimeout?: number;
   /** Exit hook, injected for testing. Defaults to `process.exit`. */
   readonly exit?: (code: number) => void;
+  /**
+   * Exit-code hook, injected for testing. Defaults to setting
+   * `process.exitCode`. Called with `1` when a signal-triggered shutdown
+   * fails; a clean shutdown leaves the exit code alone.
+   */
+  readonly setExitCode?: (code: number) => void;
 }
 
 /** Default grace period for a fatal-error shutdown. */
@@ -46,6 +57,7 @@ export class SignalHandler {
   private isShuttingDown = false;
   private registered = false;
   private forcedExitTimer: ReturnType<typeof setTimeout> | null = null;
+  private flushedPendingSignals = false;
 
   public constructor(logger: Logger, options: SignalHandlerOptions) {
     this.logger = logger;
@@ -69,8 +81,10 @@ export class SignalHandler {
     this.isShuttingDown = false;
 
     if (this.options.handleSignals) {
+      this.flushedPendingSignals = false;
       process.on("SIGTERM", this.handleTermination);
       process.on("SIGINT", this.handleInterruption);
+      process.on("beforeExit", this.handleBeforeExit);
     }
 
     if (this.options.handleFatalErrors) {
@@ -99,6 +113,7 @@ export class SignalHandler {
     if (this.options.handleSignals) {
       process.off("SIGTERM", this.handleTermination);
       process.off("SIGINT", this.handleInterruption);
+      process.off("beforeExit", this.handleBeforeExit);
     }
 
     if (this.options.handleFatalErrors) {
@@ -126,6 +141,16 @@ export class SignalHandler {
   private handleInterruption = (): void => {
     this.logger.info("Received SIGINT signal.");
     this.initiateShutdown("SIGINT");
+  };
+
+  /**
+   * Gives a signal delivered just before the loop drained one turn to be
+   * dispatched, once per registration so an idle process still exits.
+   */
+  private handleBeforeExit = (): void => {
+    if (this.flushedPendingSignals || this.isShuttingDown) return;
+    this.flushedPendingSignals = true;
+    flushPendingSignals();
   };
 
   /**
@@ -191,6 +216,9 @@ export class SignalHandler {
    *
    * A second termination signal exits immediately: an operator pressing
    * Ctrl-C again on a stuck shutdown is asking for exactly that.
+   *
+   * The event loop is held open until the shutdown settles, and a failed
+   * shutdown sets a non-zero exit code.
    */
   private initiateShutdown(source: string): void | Promise<void> {
     if (this.isShuttingDown) {
@@ -211,15 +239,22 @@ export class SignalHandler {
 
     this.isShuttingDown = true;
 
-    if (this.shutdownHandler) {
-      return Promise.resolve(this.shutdownHandler()).catch((error: unknown) => {
-        const signalError = new RuntimeSignalError(source, { cause: error });
+    const handler = this.shutdownHandler;
 
-        this.logger.error("Shutdown handler failed.", {
-          errorMessage: signalError.message,
-          error: signalError,
-        });
-      });
+    if (handler) {
+      const release = holdEventLoop();
+
+      return new Promise<void>((resolve) => resolve(handler()))
+        .catch((error: unknown) => {
+          const signalError = new RuntimeSignalError(source, { cause: error });
+
+          this.logger.error("Shutdown handler failed.", {
+            errorMessage: signalError.message,
+            error: signalError,
+          });
+          (this.options.setExitCode ?? setProcessExitCode)(1);
+        })
+        .finally(release);
     }
   }
 

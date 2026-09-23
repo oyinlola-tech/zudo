@@ -71,6 +71,7 @@ import { createEvent } from "@zudojs/events";
 import {
   RuntimeRollbackError,
   RuntimeStateError,
+  RuntimeStopError,
   toRuntimeError,
 } from "../runtimeError/index.js";
 
@@ -685,14 +686,29 @@ export class DefaultRuntime implements Runtime {
 
   /**
    * Runs shutdown in response to a termination signal.
+   *
+   * Rejects when the stop failed or a module failed to shut down, so the
+   * signal handler logs a `RuntimeSignalError` and sets a non-zero exit
+   * code. Swallowing the failure here let a broken shutdown exit with 0.
    */
   private async handleShutdownSignal(): Promise<void> {
-    try {
-      await this.stop();
-    } catch (error) {
-      this.logger.error("Shutdown failed.", {
-        errorMessage: error instanceof Error ? error.message : String(error),
-      });
+    await this.stop();
+
+    const failures = this._shutdownFailures;
+
+    if (failures.length > 0) {
+      throw new RuntimeStopError(
+        `Runtime stopped with ${failures.length} module failure(s): ` +
+          failures.map((failure) => failure.moduleId).join(", ") +
+          ".",
+        {
+          phase: "shutdown",
+          cause:
+            failures.length === 1
+              ? failures[0]!.error
+              : new AggregateError(failures.map((failure) => failure.error)),
+        },
+      );
     }
   }
 

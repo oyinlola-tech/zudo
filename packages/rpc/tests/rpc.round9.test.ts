@@ -83,7 +83,7 @@ describe("RPC-R9-02 errors built with expose: false never put their message on t
     expect(seen[0]?.message).toContain("hunter2");
   });
 
-  it("keeps the code of a custom RPCError subclass but hides a non-exposed message", async () => {
+  it("hides both the message and the custom code of a non-exposed RPCError subclass", async () => {
     class LedgerError extends RPCError {
       constructor() {
         super("ledger shard /var/lib/ledger/3 is corrupt", { code: "LEDGER_FAULT" });
@@ -98,7 +98,7 @@ describe("RPC-R9-02 errors built with expose: false never put their message on t
     );
 
     const response = await s.handle(createRPCRequest({ id: "1", procedure: "ledger.get", payload: {} }));
-    expect(response.error).toEqual({ code: "LEDGER_FAULT", message: INTERNAL_ERROR_MESSAGE });
+    expect(response.error).toEqual({ code: "RPC_INTERNAL_ERROR", message: INTERNAL_ERROR_MESSAGE });
     expect(seen).toHaveLength(1);
   });
 

@@ -6,6 +6,7 @@
 
 import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
+import { describeType } from "../schemaBase/schemaBase.describe.js";
 import {
   addIssue,
   countIssues,
@@ -82,9 +83,9 @@ export class ObjectSchema<
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_TYPE,
         path: [...ctx.path],
-        message: `Expected object, received ${Array.isArray(input) ? "array" : typeof input}`,
+        message: `Expected object, received ${describeType(input)}`,
         expected: "object",
-        received: Array.isArray(input) ? "array" : typeof input,
+        received: describeType(input),
       });
       failValidation();
     }
