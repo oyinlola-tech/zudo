@@ -4,15 +4,15 @@
  * Schemas for null, undefined, unknown, any, and never types.
  */
 
-import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
+import { ModifiableSchema } from "../schemaModifiers/schemaModifiable.core.js";
 import { addIssue, failValidation } from "../schemaBase/index.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
 /**
  * Schema that only accepts null.
  */
-export class NullSchema extends Schema<null> {
+export class NullSchema extends ModifiableSchema<null> {
   public readonly _type = "null";
 
   public _parse(ctx: SchemaParseContext, input: unknown): null {
@@ -33,7 +33,7 @@ export class NullSchema extends Schema<null> {
 /**
  * Schema that only accepts undefined.
  */
-export class UndefinedSchema extends Schema<undefined> {
+export class UndefinedSchema extends ModifiableSchema<undefined> {
   public readonly _type = "undefined";
 
   public _parse(ctx: SchemaParseContext, input: unknown): undefined {
@@ -54,7 +54,7 @@ export class UndefinedSchema extends Schema<undefined> {
 /**
  * Schema that accepts any value without validation.
  */
-export class AnySchema extends Schema<unknown> {
+export class AnySchema extends ModifiableSchema<unknown> {
   public readonly _type = "any";
 
   public _parse(_ctx: SchemaParseContext, input: unknown): unknown {
@@ -65,7 +65,7 @@ export class AnySchema extends Schema<unknown> {
 /**
  * Schema that accepts any value without validation (alias).
  */
-export class UnknownSchema extends Schema<unknown> {
+export class UnknownSchema extends ModifiableSchema<unknown> {
   public readonly _type = "unknown";
 
   public _parse(_ctx: SchemaParseContext, input: unknown): unknown {
@@ -76,7 +76,7 @@ export class UnknownSchema extends Schema<unknown> {
 /**
  * Schema that never accepts any value.
  */
-export class NeverSchema extends Schema<never> {
+export class NeverSchema extends ModifiableSchema<never> {
   public readonly _type = "never";
 
   public _parse(ctx: SchemaParseContext, input: unknown): never {
@@ -119,7 +119,7 @@ export function neverSchema(): NeverSchema {
 /**
  * Schema that only accepts BigInt values.
  */
-export class BigIntSchema extends Schema<bigint> {
+export class BigIntSchema extends ModifiableSchema<bigint> {
   public readonly _type = "bigint";
 
   public _parse(ctx: SchemaParseContext, input: unknown): bigint {
@@ -140,7 +140,7 @@ export class BigIntSchema extends Schema<bigint> {
 /**
  * Schema that only accepts symbols.
  */
-export class SymbolSchema extends Schema<symbol> {
+export class SymbolSchema extends ModifiableSchema<symbol> {
   public readonly _type = "symbol";
 
   public _parse(ctx: SchemaParseContext, input: unknown): symbol {

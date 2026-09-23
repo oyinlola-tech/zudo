@@ -86,6 +86,62 @@ callback that throws is reported as a
 Anything else thrown during parsing — a genuine defect — propagates out of
 `safeParse` instead of being flattened into "invalid input".
 
+## Strings: URLs, dates and times
+
+`string().url()` accepts absolute `http:` and `https:` URLs only, so a
+`javascript:` or `data:` URL is never valid by default. For other schemes,
+list them (case-insensitive, parsed with the WHATWG `URL` parser):
+
+```typescript
+const Env = schema.object({
+  DATABASE_URL: schema.string().url({ protocols: ["postgres", "postgresql"] }),
+  REDIS_URL: schema.string().url({ protocols: ["redis", "rediss"] }),
+  // Any scheme, including javascript: and data:. Only for values that are
+  // never rendered as a link or followed.
+  WEBHOOK: schema.string().url({ protocols: "any" }),
+});
+```
+
+`date()` (`YYYY-MM-DD`), `datetime()` (`YYYY-MM-DDTHH:mm:ss[.fff]` with an
+optional `Z` or `±hh:mm` offset) and `time()` (`HH:mm[:ss]`) check real
+values, not only the shape: the month is 01-12, the day exists in that
+month (29 February only in leap years), hours are 00-23, minutes and
+seconds 00-59, and an offset is at most `±23:59`. `"2026-02-30"` and
+`"2026-02-28T25:61:00Z"` are rejected.
+
+## Optional fields, `partial()` and defaults
+
+A key the input leaves out stays out of the parsed object; it does not
+come back as an own property set to `undefined` (which a repository or a
+spread would read as "clear this column"). A key the input sends as
+`undefined` is kept. The inferred type matches: an optional field is an
+optional property, so it works with `exactOptionalPropertyTypes`.
+
+```typescript
+const User = schema.object({ name: schema.string(), bio: schema.string().optional() });
+User.parse({ name: "Ada" });   // { name: "Ada" }, no `bio` key
+type U = Infer<typeof User>;   // { name: string; bio?: string | undefined }
+```
+
+`partial()` makes every field optional and does **not** apply `.default()`
+to a key the input leaves out, so an update schema built from a create
+schema never resets the fields the caller did not send:
+
+```typescript
+const Task = schema.object({
+  title: schema.string(),
+  done: schema.boolean().default(false),
+});
+Task.parse({ title: "t" });      // { title: "t", done: false }
+Task.partial().parse({});        // {}
+```
+
+Every primitive (`string`, `number`, `boolean`, `bigint`, `symbol`,
+`literal`, `enum`, the sentinel schemas and the `coerce` schemas) has the
+same chainable modifiers: `.optional()`, `.nullable()`, `.default()`,
+`.refine()` and `.transform()`. `SchemaInput<typeof s>` of
+`schema.string().transform(Number)` is `string`, its input.
+
 ## Coercion
 
 For query parameters and form data, where everything arrives as a string:

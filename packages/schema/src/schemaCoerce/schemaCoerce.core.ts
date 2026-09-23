@@ -9,18 +9,12 @@
  * plausible reading of a query parameter, and both used to be accepted.
  */
 
-import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
+import { ModifiableSchema } from "../schemaModifiers/schemaModifiable.core.js";
 import { addIssue, failValidation } from "../schemaBase/index.js";
 import { SchemaIssueCode, SerializationLimits } from "@zudojs/constants";
 import { NumberSchema } from "../schemaPrimitives/schemaNumber.core.js";
 import { StringSchema } from "../schemaPrimitives/schemaString.core.js";
-import {
-  OptionalModifierSchema,
-  NullableModifierSchema,
-} from "../schemaModifiers/schemaOptionalNullable.core.js";
-import { DefaultSchema } from "../schemaModifiers/schemaDefault.core.js";
-import { RefineSchema } from "../schemaModifiers/schemaRefine.core.js";
 
 /**
  * Longest digit run accepted by BigInt coercion (shared with
@@ -33,7 +27,7 @@ const BIGINT_TEXT_PATTERN = new RegExp(
 /**
  * Coerces input to a number before validating.
  */
-export class CoerceNumberSchema extends Schema<number> {
+export class CoerceNumberSchema extends ModifiableSchema<number> {
   public readonly _type = "coerce.number";
 
   constructor(
@@ -103,29 +97,6 @@ export class CoerceNumberSchema extends Schema<number> {
   public positive(): CoerceNumberSchema {
     return new CoerceNumberSchema(this._constraints.positive());
   }
-
-  /** Makes this schema optional (accepts undefined). */
-  public optional(): Schema<number | undefined> {
-    return new OptionalModifierSchema(this);
-  }
-
-  /** Makes this schema nullable (accepts null). */
-  public nullable(): Schema<number | null> {
-    return new NullableModifierSchema(this);
-  }
-
-  /** Adds a default value when input is undefined. */
-  public default(defaultValue: number | (() => number)): Schema<number> {
-    return new DefaultSchema(this, defaultValue);
-  }
-
-  /** Adds a custom refinement check. */
-  public refine(
-    check: (value: number) => boolean,
-    message: string,
-  ): Schema<number> {
-    return new RefineSchema(this, check, message);
-  }
 }
 
 /**
@@ -136,7 +107,7 @@ export class CoerceNumberSchema extends Schema<number> {
  *
  * String comparisons are case-insensitive and ignore surrounding whitespace.
  */
-export class CoerceBooleanSchema extends Schema<boolean> {
+export class CoerceBooleanSchema extends ModifiableSchema<boolean> {
   public readonly _type = "coerce.boolean";
 
   private static readonly TRUE = new Set(["true", "1", "yes", "on"]);
@@ -165,21 +136,6 @@ export class CoerceBooleanSchema extends Schema<boolean> {
     });
     failValidation();
   }
-
-  /** Makes this schema optional (accepts undefined). */
-  public optional(): Schema<boolean | undefined> {
-    return new OptionalModifierSchema(this);
-  }
-
-  /** Makes this schema nullable (accepts null). */
-  public nullable(): Schema<boolean | null> {
-    return new NullableModifierSchema(this);
-  }
-
-  /** Adds a default value when input is undefined. */
-  public default(defaultValue: boolean | (() => boolean)): Schema<boolean> {
-    return new DefaultSchema(this, defaultValue);
-  }
 }
 
 /**
@@ -189,7 +145,7 @@ export class CoerceBooleanSchema extends Schema<boolean> {
  * stringify to `"[object Object]"` and a symbol throws outright, so both are
  * rejected rather than silently producing nonsense.
  */
-export class CoerceStringSchema extends Schema<string> {
+export class CoerceStringSchema extends ModifiableSchema<string> {
   public readonly _type = "coerce.string";
 
   constructor(
@@ -267,27 +223,12 @@ export class CoerceStringSchema extends Schema<string> {
   public regex(pattern: RegExp): CoerceStringSchema {
     return new CoerceStringSchema(this._constraints.regex(pattern));
   }
-
-  /** Makes this schema optional (accepts undefined). */
-  public optional(): Schema<string | undefined> {
-    return new OptionalModifierSchema(this);
-  }
-
-  /** Makes this schema nullable (accepts null). */
-  public nullable(): Schema<string | null> {
-    return new NullableModifierSchema(this);
-  }
-
-  /** Adds a default value when input is undefined. */
-  public default(defaultValue: string | (() => string)): Schema<string> {
-    return new DefaultSchema(this, defaultValue);
-  }
 }
 
 /**
  * Coerces input to a BigInt before validating.
  */
-export class CoerceBigIntSchema extends Schema<bigint> {
+export class CoerceBigIntSchema extends ModifiableSchema<bigint> {
   public readonly _type = "coerce.bigint";
 
   public _parse(ctx: SchemaParseContext, input: unknown): bigint {
@@ -318,16 +259,6 @@ export class CoerceBigIntSchema extends Schema<bigint> {
       received: typeof input,
     });
     failValidation();
-  }
-
-  /** Makes this schema optional (accepts undefined). */
-  public optional(): Schema<bigint | undefined> {
-    return new OptionalModifierSchema(this);
-  }
-
-  /** Makes this schema nullable (accepts null). */
-  public nullable(): Schema<bigint | null> {
-    return new NullableModifierSchema(this);
   }
 }
 

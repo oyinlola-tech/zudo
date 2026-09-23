@@ -4,8 +4,8 @@
  * Boolean schema with optional coercion.
  */
 
-import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
+import { ModifiableSchema } from "../schemaModifiers/schemaModifiable.core.js";
 import { addIssue, failValidation } from "../schemaBase/index.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
@@ -17,7 +17,7 @@ interface BooleanSchemaConfig {
 /**
  * Schema for boolean values.
  */
-export class BooleanSchema extends Schema<boolean> {
+export class BooleanSchema extends ModifiableSchema<boolean> {
   public readonly _type = "boolean";
   private readonly _config: BooleanSchemaConfig;
 

@@ -20,6 +20,7 @@ import {
   SCHEMA_FORBIDDEN_KEYS,
   SCHEMA_DEFAULT_MAX_OBJECT_KEYS,
 } from "@zudojs/constants";
+import type { ObjectShapeOutput } from "../schemaInference/schemaInfer.type.js";
 import { checkKeyCount } from "./schemaRecord.core.js";
 
 /** Shape type — record of property names to schemas. */
@@ -156,11 +157,7 @@ export class ObjectSchema<
           // `.optional()` can return undefined.
           try {
             const produced = schema._parse(childCtx, undefined);
-            if (produced !== undefined) {
-              defineKey(result, key, produced);
-            } else {
-              defineKey(result, key, undefined);
-            }
+            defineResultKey(result, key, produced, present);
           } catch (error) {
             rethrowUnexpected(error);
             if (ctx.options.abortEarly) break;
@@ -172,7 +169,7 @@ export class ObjectSchema<
         // a schema that does is not a required field.
         const probe = probeUndefined(schema, childCtx);
         if (probe.accepted) {
-          defineKey(result, key, probe.value);
+          defineResultKey(result, key, probe.value, present);
           continue;
         }
 
@@ -274,15 +271,25 @@ export class ObjectSchema<
     });
   }
 
-  /** Makes all properties optional. */
+  /**
+   * Makes all properties optional.
+   *
+   * A key absent from the input stays absent from the output, and a
+   * `.default()` is NOT applied to it: an update schema built with
+   * `partial()` must not reset every defaulted field the caller left out.
+   * A value that is present is still validated, defaults and all.
+   */
   public partial(): ObjectSchema<{ [K in keyof TOutput]?: TOutput[K] }> {
     const newShape: Record<string, Schema<unknown>> = {};
     for (const key of this._keys) {
       const schema = this._config.shape[key];
       if (schema) {
-        newShape[key] = ACCEPTS_UNDEFINED.has(schema._type)
-          ? schema
-          : new OptionalSchema(schema);
+        newShape[key] =
+          schema._type === "optional" ||
+          schema._type === "any" ||
+          schema._type === "unknown"
+            ? schema
+            : new OptionalSchema(schema);
       }
     }
     return new ObjectSchema({
@@ -412,6 +419,24 @@ function unwrapOptional(schema: Schema<unknown>): Schema<unknown> {
 }
 
 /**
+ * Records the value produced for a key the input did not supply a value
+ * for. An absent key whose schema produced `undefined` (an `.optional()`)
+ * stays absent: an own `undefined` key reads as "set this to nothing" to a
+ * repository or a spread, and wiped stored columns. A key the input held
+ * as `undefined` keeps its own key.
+ */
+function defineResultKey(
+  target: Record<string, unknown>,
+  key: string,
+  value: unknown,
+  present: boolean,
+): void {
+  if (value !== undefined || present) {
+    defineKey(target, key, value);
+  }
+}
+
+/**
  * Assigns a key without invoking an inherited setter.
  *
  * Input keys are screened against SCHEMA_FORBIDDEN_KEYS, but a *shape* key is
@@ -450,8 +475,6 @@ export class OptionalSchema<T> extends Schema<T | undefined> {
 /** Creates an object schema from a shape. */
 export function objectSchema<T extends Record<string, Schema<unknown>>>(
   shape: T,
-): ObjectSchema<{
-  [K in keyof T]: T[K] extends Schema<infer U> ? U : never;
-}> {
+): ObjectSchema<ObjectShapeOutput<T>> {
   return new ObjectSchema({ shape: shape as unknown as SchemaShape });
 }

@@ -18,6 +18,7 @@ import {
   SchemaIssueCode,
   SCHEMA_DEFAULT_MAX_ARRAY_LENGTH,
 } from "@zudojs/constants";
+import { formatCount } from "@zudojs/types";
 
 /** Configuration for array schema. */
 interface ArraySchemaConfig<T> {
@@ -95,7 +96,7 @@ export class ArraySchema<TOutput> extends Schema<TOutput[]> {
       addIssue(ctx, {
         code: SchemaIssueCode.TOO_LARGE,
         path: [...ctx.path],
-        message: `Array must have at most ${hardMax} items`,
+        message: `Array must have at most ${formatCount(hardMax, "item")}`,
         expected: `<= ${hardMax}`,
         received: String(length),
       });
@@ -106,7 +107,7 @@ export class ArraySchema<TOutput> extends Schema<TOutput[]> {
       addIssue(ctx, {
         code: SchemaIssueCode.TOO_SMALL,
         path: [...ctx.path],
-        message: `Array must have at least ${c.min} items`,
+        message: `Array must have at least ${formatCount(c.min, "item")}`,
         expected: `>= ${c.min}`,
         received: String(length),
       });
@@ -116,7 +117,7 @@ export class ArraySchema<TOutput> extends Schema<TOutput[]> {
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_LENGTH,
         path: [...ctx.path],
-        message: `Array must have exactly ${c.length} items`,
+        message: `Array must have exactly ${formatCount(c.length, "item")}`,
         expected: String(c.length),
         received: String(length),
       });

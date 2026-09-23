@@ -4,8 +4,8 @@
  * Enum schema for constrained value sets.
  */
 
-import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
+import { ModifiableSchema } from "../schemaModifiers/schemaModifiable.core.js";
 import { addIssue, failValidation } from "../schemaBase/index.js";
 import { describeValue } from "../schemaBase/schemaBase.describe.js";
 import { SchemaIssueCode } from "@zudojs/constants";
@@ -13,7 +13,7 @@ import { SchemaIssueCode } from "@zudojs/constants";
 /**
  * Schema for a fixed set of allowed values.
  */
-export class EnumSchema<T extends string | number> extends Schema<T> {
+export class EnumSchema<T extends string | number> extends ModifiableSchema<T> {
   public readonly _type = "enum";
 
   constructor(private readonly _values: readonly T[]) {

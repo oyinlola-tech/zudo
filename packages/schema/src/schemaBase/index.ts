@@ -22,6 +22,7 @@ export {
   isSchemaFailure,
   unwrapSchemaResult,
   countIssues,
+  isSchemaValidationError,
 } from "./schemaBase.result.js";
 export {
   createParseContext,

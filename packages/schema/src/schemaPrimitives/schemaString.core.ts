@@ -12,11 +12,26 @@ import {
   SCHEMA_STRING_FORMATS,
   SCHEMA_DEFAULT_MAX_STRING_LENGTH,
 } from "@zudojs/constants";
+import { formatCount } from "@zudojs/types";
+
 import { OptionalModifierSchema } from "../schemaModifiers/schemaOptionalNullable.core.js";
 import { NullableModifierSchema } from "../schemaModifiers/schemaOptionalNullable.core.js";
 import { DefaultSchema } from "../schemaModifiers/schemaDefault.core.js";
 import { RefineSchema } from "../schemaModifiers/schemaRefine.core.js";
 import { TransformSchema } from "./schemaTransform.core.js";
+import {
+  isCalendarDate,
+  isCalendarDateTime,
+  isClockTime,
+  isUrlWithProtocol,
+  normalizeUrlProtocols,
+  type StringUrlOptions,
+  type UrlProtocolPolicy,
+} from "./schemaStringFormat/index.js";
+
+/** Range checks run after a format's pattern matched. */
+const FORMAT_RANGE_CHECKS: Readonly<Record<string, (value: string) => boolean>> =
+  { date: isCalendarDate, datetime: isCalendarDateTime, time: isClockTime };
 
 /** Configuration for string schema constraints. */
 interface StringSchemaConfig {
@@ -25,6 +40,8 @@ interface StringSchemaConfig {
   readonly length?: number;
   readonly pattern?: RegExp;
   readonly format?: string;
+  /** Scheme policy set by `url({ protocols })`; parsed with WHATWG URL. */
+  readonly urlProtocols?: UrlProtocolPolicy;
   readonly trim?: boolean;
   readonly toLowerCase?: boolean;
   readonly toUpperCase?: boolean;
@@ -62,7 +79,7 @@ export class StringSchema extends Schema<string> {
       addIssue(ctx, {
         code: SchemaIssueCode.TOO_LARGE,
         path: [...ctx.path],
-        message: `String must be at most ${hardMax} characters`,
+        message: `String must be at most ${formatCount(hardMax, "character")}`,
         expected: `<= ${hardMax}`,
         received: String(input.length),
       });
@@ -93,7 +110,7 @@ export class StringSchema extends Schema<string> {
       addIssue(ctx, {
         code: SchemaIssueCode.TOO_SMALL,
         path: [...ctx.path],
-        message: `String must be at least ${c.min} characters`,
+        message: `String must be at least ${formatCount(c.min, "character")}`,
         expected: `>= ${c.min}`,
         received: String(value.length),
       });
@@ -103,7 +120,7 @@ export class StringSchema extends Schema<string> {
       addIssue(ctx, {
         code: SchemaIssueCode.TOO_LARGE,
         path: [...ctx.path],
-        message: `String must be at most ${c.max} characters`,
+        message: `String must be at most ${formatCount(c.max, "character")}`,
         expected: `<= ${c.max}`,
         received: String(value.length),
       });
@@ -113,7 +130,7 @@ export class StringSchema extends Schema<string> {
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_LENGTH,
         path: [...ctx.path],
-        message: `String must be exactly ${c.length} characters`,
+        message: `String must be exactly ${formatCount(c.length, "character")}`,
         expected: String(c.length),
         received: String(value.length),
       });
@@ -163,7 +180,12 @@ export class StringSchema extends Schema<string> {
         `Unknown string format "${format}". Known formats: ${Object.keys(formats).sort().join(", ")}`,
       );
     }
-    if (!pattern.test(value)) {
+    const protocols = format === "url" ? this._config.urlProtocols : undefined;
+    const valid =
+      protocols === undefined
+        ? pattern.test(value) && (FORMAT_RANGE_CHECKS[format]?.(value) ?? true)
+        : isUrlWithProtocol(value, protocols);
+    if (!valid) {
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_FORMAT,
         path: [...ctx.path],
@@ -209,9 +231,16 @@ export class StringSchema extends Schema<string> {
     return new StringSchema({ ...this._config, format: "email" });
   }
 
-  /** Validates URL format. */
-  public url(): StringSchema {
-    return new StringSchema({ ...this._config, format: "url" });
+  /**
+   * Validates a URL. By default only absolute `http:` and `https:` URLs
+   * pass, so `javascript:` and `data:` URLs are refused. Pass `protocols`
+   * to accept other schemes (parsed with the WHATWG `URL` parser), e.g.
+   * `url({ protocols: ["postgres", "postgresql"] })` for a database URL, or
+   * `{ protocols: "any" }` for any scheme.
+   */
+  public url(options: StringUrlOptions = {}): StringSchema {
+    const urlProtocols = normalizeUrlProtocols(options.protocols);
+    return new StringSchema({ ...this._config, format: "url", urlProtocols });
   }
 
   /** Validates UUID format. */
@@ -224,12 +253,16 @@ export class StringSchema extends Schema<string> {
     return new StringSchema({ ...this._config, format: "uuid-v4" });
   }
 
-  /** Validates ISO datetime format. */
+  /**
+   * Validates an ISO 8601 date-time (`YYYY-MM-DDTHH:mm:ss[.fff][Z|±hh:mm]`)
+   * that names a real instant: calendar date, 00-23 hours, 00-59 minutes and
+   * seconds, and a valid offset.
+   */
   public datetime(): StringSchema {
     return new StringSchema({ ...this._config, format: "datetime" });
   }
 
-  /** Validates date-only format. */
+  /** Validates a real `YYYY-MM-DD` calendar date (leap years included). */
   public date(): StringSchema {
     return new StringSchema({ ...this._config, format: "date" });
   }
@@ -244,7 +277,7 @@ export class StringSchema extends Schema<string> {
     return new StringSchema({ ...this._config, format: "ipv6" });
   }
 
-  /** Validates time-of-day format. */
+  /** Validates a `HH:mm` or `HH:mm:ss` time of day (00-23, 00-59). */
   public time(): StringSchema {
     return new StringSchema({ ...this._config, format: "time" });
   }

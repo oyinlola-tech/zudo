@@ -45,6 +45,7 @@ export {
   isSchemaFailure,
   unwrapSchemaResult,
   countIssues,
+  isSchemaValidationError,
   createParseContext,
   childContext,
   addIssue,
@@ -82,6 +83,7 @@ export {
   unknownSchema,
   neverSchema,
 } from "./schemaPrimitives/index.js";
+export type { StringUrlOptions } from "./schemaPrimitives/index.js";
 
 export {
   ObjectSchema,
@@ -124,6 +126,7 @@ export {
   refineSchema,
   TransformModifierSchema,
   transformSchema,
+  ModifiableSchema,
 } from "./schemaModifiers/index.js";
 
 export {
@@ -141,6 +144,7 @@ export type {
   Infer,
   SchemaInput,
   SchemaOutput,
+  ObjectShapeOutput,
 } from "./schemaInference/index.js";
 
 export { schema } from "./schemaRoot/index.js";

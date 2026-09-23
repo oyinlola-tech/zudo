@@ -4,4 +4,9 @@
  * Type inference utilities for extracting types from schemas.
  */
 
-export type { Infer, SchemaInput, SchemaOutput } from "./schemaInfer.type.js";
+export type {
+  Infer,
+  SchemaInput,
+  SchemaOutput,
+  ObjectShapeOutput,
+} from "./schemaInfer.type.js";

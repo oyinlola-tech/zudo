@@ -4,6 +4,8 @@
  * Type inference utilities for extracting TypeScript types from schemas.
  */
 
+import type { Prettify } from "@zudojs/types";
+
 import type { Schema } from "../schemaBase/index.js";
 
 /**
@@ -38,3 +40,25 @@ export type SchemaInput<TSchema> =
  * Infers the output type of a schema (alias for Infer).
  */
 export type SchemaOutput<TSchema> = Infer<TSchema>;
+
+/**
+ * The parsed type of an object shape. A key whose schema can produce
+ * `undefined` (`.optional()`, `any()`, `unknown()`) is an optional property:
+ * when the input leaves it out, the parsed object leaves it out too, which
+ * is what `exactOptionalPropertyTypes` expects.
+ *
+ * @example
+ * const s = schema.object({ a: schema.number(), b: schema.string().optional() });
+ * type T = Infer<typeof s>; // { a: number; b?: string | undefined }
+ */
+export type ObjectShapeOutput<TShape> = Prettify<
+  {
+    [K in keyof TShape as undefined extends Infer<TShape[K]>
+      ? never
+      : K]: Infer<TShape[K]>;
+  } & {
+    [K in keyof TShape as undefined extends Infer<TShape[K]>
+      ? K
+      : never]?: Infer<TShape[K]>;
+  }
+>;

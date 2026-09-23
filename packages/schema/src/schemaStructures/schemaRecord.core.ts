@@ -19,6 +19,8 @@ import {
   SCHEMA_FORBIDDEN_KEYS,
   SCHEMA_DEFAULT_MAX_OBJECT_KEYS,
 } from "@zudojs/constants";
+import { formatCount } from "@zudojs/types";
+
 import { StringSchema } from "../schemaPrimitives/index.js";
 
 /**
@@ -134,7 +136,7 @@ export function checkKeyCount(
   addIssue(ctx, {
     code: SchemaIssueCode.TOO_LARGE,
     path: [...ctx.path],
-    message: `Object must have at most ${limit} keys`,
+    message: `Object must have at most ${formatCount(limit, "key")}`,
     expected: `<= ${limit}`,
     received: String(count),
   });

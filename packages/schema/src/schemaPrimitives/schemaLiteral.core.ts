@@ -4,8 +4,8 @@
  * Literal schema for exact value matching.
  */
 
-import { Schema } from "../schemaBase/index.js";
 import type { SchemaParseContext } from "../schemaBase/index.js";
+import { ModifiableSchema } from "../schemaModifiers/schemaModifiable.core.js";
 import { addIssue, failValidation } from "../schemaBase/index.js";
 import { describeValue } from "../schemaBase/schemaBase.describe.js";
 import { SchemaIssueCode } from "@zudojs/constants";
@@ -15,7 +15,7 @@ import { SchemaIssueCode } from "@zudojs/constants";
  */
 export class LiteralSchema<
   T extends string | number | boolean | null,
-> extends Schema<T> {
+> extends ModifiableSchema<T> {
   public readonly _type = "literal";
 
   constructor(private readonly _expected: T) {

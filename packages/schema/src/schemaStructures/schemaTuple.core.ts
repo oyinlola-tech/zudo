@@ -15,10 +15,11 @@ import {
   rethrowUnexpected,
 } from "../schemaBase/index.js";
 import { SchemaIssueCode } from "@zudojs/constants";
+import { formatCount } from "@zudojs/types";
 
 /** Helper type to infer tuple output type. */
 type InferTuple<T extends readonly Schema<unknown>[]> = {
-  [K in keyof T]: T[K] extends Schema<infer U> ? U : never;
+  [K in keyof T]: T[K] extends Schema<infer U, unknown> ? U : never;
 };
 
 /**
@@ -49,7 +50,7 @@ export class TupleSchema<
       addIssue(ctx, {
         code: SchemaIssueCode.INVALID_LENGTH,
         path: [...ctx.path],
-        message: `Tuple must have exactly ${this._schemas.length} elements`,
+        message: `Tuple must have exactly ${formatCount(this._schemas.length, "element")}`,
         expected: String(this._schemas.length),
         received: String(input.length),
       });

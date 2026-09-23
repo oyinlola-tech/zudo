@@ -16,3 +16,4 @@ export {
   TransformModifierSchema,
   transformSchema,
 } from "./schemaTransform.core.js";
+export { ModifiableSchema } from "./schemaModifiable.core.js";

@@ -8,7 +8,12 @@ import { addIssue, countIssues, failValidation } from "../schemaBase/index.js";
 import { describeThrown } from "../schemaBase/schemaBase.describe.js";
 import { SchemaIssueCode } from "@zudojs/constants";
 
-export class TransformSchema<TInput, TOutput> extends Schema<TOutput> {
+/**
+ * Applies `fn` to the value `base` produced. `TInput` is also the schema's
+ * input type, so `SchemaInput<typeof string().transform(Number)>` is
+ * `string` (it used to report the output type, `number`).
+ */
+export class TransformSchema<TInput, TOutput> extends Schema<TOutput, TInput> {
   public readonly _type = "transform";
 
   constructor(

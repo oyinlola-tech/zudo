@@ -17,7 +17,7 @@ import { SchemaIssueCode } from "@zudojs/constants";
 
 /** Helper type to infer union output from schema array. */
 type UnionOutput<TSchemas extends readonly Schema<unknown>[]> =
-  TSchemas[number] extends Schema<infer U> ? U : never;
+  TSchemas[number] extends Schema<infer U, unknown> ? U : never;
 
 /**
  * Forks a context for one union branch.

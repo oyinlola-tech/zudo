@@ -5,6 +5,7 @@
  */
 
 export { StringSchema, stringSchema } from "./schemaString.core.js";
+export type { StringUrlOptions } from "./schemaStringFormat/index.js";
 export { TransformSchema } from "./schemaTransform.core.js";
 export { NumberSchema, numberSchema } from "./schemaNumber.core.js";
 export { BooleanSchema, booleanSchema } from "./schemaBoolean.core.js";

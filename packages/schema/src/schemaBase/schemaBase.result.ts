@@ -73,10 +73,45 @@ export function unwrapSchemaResult<T>(result: SchemaResult<T>): T {
   if (result.success) {
     return result.data;
   }
-  throw new SchemaError(
+  throw new SchemaError<SchemaIssue>(
     `Schema validation failed with ${result.issues.length} issue(s): ${result.issues
       .map((i) => i.message)
       .join("; ")}`,
     { issues: [...result.issues] },
   );
+}
+
+/** Checks one value has the fields every SchemaIssue carries. */
+function isSchemaIssue(value: unknown): value is SchemaIssue {
+  if (typeof value !== "object" || value === null) return false;
+  const issue = value as { code?: unknown; path?: unknown; message?: unknown };
+  return (
+    typeof issue.code === "string" &&
+    Array.isArray(issue.path) &&
+    typeof issue.message === "string"
+  );
+}
+
+/**
+ * Narrows a caught value to a validation error thrown by `parse()` or
+ * `unwrapSchemaResult()`, with `issues` typed as `SchemaIssue[]`.
+ *
+ * `SchemaError` lives in `@zudojs/errors`, which sits below this package and
+ * cannot name `SchemaIssue`, so `instanceof SchemaError` alone leaves
+ * `issues` as `unknown[]`. This guard also checks each issue's shape, so the
+ * narrowing is true at runtime and not just a cast.
+ *
+ * @example
+ * try {
+ *   userSchema.parse(input);
+ * } catch (error) {
+ *   if (isSchemaValidationError(error)) {
+ *     for (const issue of error.issues) console.log(issue.path, issue.message);
+ *   }
+ * }
+ */
+export function isSchemaValidationError(
+  value: unknown,
+): value is SchemaError<SchemaIssue> {
+  return value instanceof SchemaError && value.issues.every(isSchemaIssue);
 }

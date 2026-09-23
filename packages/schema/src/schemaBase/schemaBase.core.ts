@@ -6,6 +6,7 @@
  */
 
 import type {
+  SchemaIssue,
   SchemaParseContext,
   SchemaParseOptions,
   SchemaResult,
@@ -57,7 +58,7 @@ export abstract class Schema<TOutput, TInput = TOutput> {
       // this check `parse` would hand back that partial value while
       // `safeParse` reported the very same input as invalid.
       if (countIssues(ctx) > 0) {
-        throw new SchemaError("Validation failed", {
+        throw new SchemaError<SchemaIssue>("Validation failed", {
           issues: [...ctx.issues],
         });
       }
@@ -67,7 +68,7 @@ export abstract class Schema<TOutput, TInput = TOutput> {
       if (error instanceof SchemaError) {
         throw error;
       }
-      throw new SchemaError(describeThrown(error), {
+      throw new SchemaError<SchemaIssue>(describeThrown(error), {
         issues: ctx.issues.length > 0 ? ctx.issues : undefined,
         cause: error,
       });
