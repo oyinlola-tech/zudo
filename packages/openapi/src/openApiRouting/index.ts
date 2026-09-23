@@ -10,6 +10,10 @@ export type {
   RouteParameterMetadata,
   RouteInfo,
   OpenAPIHttpMethod,
+  OpenAPISchemaInput,
+  OpenAPIRouteBody,
+  OpenAPIRouteResponse,
+  RouteConversionOptions,
 } from "./routeMetadata.type.js";
 
 export {
@@ -22,3 +26,11 @@ export {
 } from "./routeConverter.core.js";
 
 export { OpenAPIRouteScannerImpl } from "./routeScanner.core.js";
+
+export { buildOperationParameters } from "./routeSchema.core.js";
+
+export {
+  buildOperationRequestBody,
+  buildOperationResponses,
+  describeResponseKey,
+} from "./routeContent.core.js";

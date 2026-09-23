@@ -1,5 +1,8 @@
 import type { OpenAPIRoute } from "../openApiRegistry/openApiRegistry.type.js";
-import type { RouteInfo } from "./routeMetadata.type.js";
+import type {
+  RouteConversionOptions,
+  RouteInfo,
+} from "./routeMetadata.type.js";
 import { convertRouteToOpenAPI, toOpenAPIPath } from "./routeConverter.core.js";
 import { OpenAPIRouteError } from "../openApiErrors/openApiError.types.js";
 
@@ -78,8 +81,12 @@ export class OpenAPIRouteScannerImpl {
     return this.routes.size;
   }
 
-  /** Converts every registered route into an OpenAPI operation. */
-  public scan(): readonly OpenAPIRoute[] {
+  /**
+   * Converts every registered route into an OpenAPI operation. `options`
+   * sets the version declared schemas are converted for and receives their
+   * conversion warnings.
+   */
+  public scan(options?: RouteConversionOptions): readonly OpenAPIRoute[] {
     const result: OpenAPIRoute[] = [];
 
     for (const route of this.routes.values()) {
@@ -88,6 +95,7 @@ export class OpenAPIRouteScannerImpl {
         route.method,
         route.path,
         route.metadata,
+        options,
       );
       result.push({
         method: converted.method,

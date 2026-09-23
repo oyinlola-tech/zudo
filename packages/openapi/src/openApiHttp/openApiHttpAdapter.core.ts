@@ -53,11 +53,23 @@ export interface OpenAPIManagerOptions {
    * invalidates the cache regardless.
    */
   readonly cacheTtlMs?: number;
-  /** Reports what a schema conversion could not express. */
+  /**
+   * Reports what a schema conversion could not express: component schemas
+   * under their component name, route-declared schemas and parameters under
+   * `"routes"` once per generation.
+   */
   readonly onSchemaWarning?: (
     name: string,
     warnings: readonly string[],
   ) => void;
+  /**
+   * Receives each route warning of a generation as it is produced, each
+   * prefixed with the route (`DELETE /users/:id: ...`): route-declared
+   * schemas or parameters that could not be expressed, and operations that
+   * document no responses. The same messages are returned by
+   * {@link OpenAPIManager.routeWarnings}.
+   */
+  readonly onRouteWarning?: (message: string) => void;
   /** Supplies the clock, for tests. */
   readonly now?: () => number;
   /**
@@ -102,6 +114,12 @@ export class OpenAPIManager {
   /** True when `branding` was a caller-supplied logo rather than the default. */
   private readonly customLogo: boolean;
 
+  private readonly onSchemaWarning:
+    | ((name: string, warnings: readonly string[]) => void)
+    | undefined;
+  private readonly onRouteWarning: ((message: string) => void) | undefined;
+  private lastRouteWarnings: readonly string[] = [];
+
   private cachedDocument?: OpenAPIDocument;
   private cachedAt = 0;
   /** Whether the cached document was produced by a validating generate. */
@@ -122,6 +140,8 @@ export class OpenAPIManager {
       version: options.version ?? DEFAULT_OPENAPI_VERSION,
       onWarning: options.onSchemaWarning,
     });
+    this.onSchemaWarning = options.onSchemaWarning;
+    this.onRouteWarning = options.onRouteWarning;
     this.cacheTtlMs = options.cacheTtlMs ?? DOCUMENT_CACHE_TTL_MS;
     this.now = options.now ?? (() => Date.now());
     this.logo =
@@ -186,6 +206,19 @@ export class OpenAPIManager {
     return this.invalidateCache();
   }
 
+  /**
+   * Replaces every registered route with `routes`, for keeping the document
+   * in step with a live route table. Duplicates are rejected before anything
+   * is replaced, so a failed call leaves the previous routes in place.
+   */
+  public setRoutes(routes: readonly RouteInfo[]): this {
+    const next = new OpenAPIRouteScannerImpl();
+    for (const route of routes) next.addRoute(route);
+    this.scanner.clear();
+    for (const route of routes) this.scanner.addRoute(route);
+    return this.invalidateCache();
+  }
+
   /** Removes a route. Returns whether one was removed. */
   public removeRoute(method: OpenAPIHttpMethod, path: string): boolean {
     const removed = this.scanner.removeRoute(method, path);
@@ -216,6 +249,15 @@ export class OpenAPIManager {
     return this.schemas.warnings();
   }
 
+  /**
+   * The route warnings of the last generation, each prefixed with the route
+   * (`GET /users/:id: ...`): what could not be expressed for route-declared
+   * schemas and parameters, and operations that document no responses.
+   */
+  public routeWarnings(): readonly string[] {
+    return this.lastRouteWarnings;
+  }
+
   /* ── Generation ──────────────────────────────────────────────────────── */
 
   /**
@@ -229,8 +271,20 @@ export class OpenAPIManager {
     // hidden, so `removeRoute()` had no effect once a document had been
     // generated.
     this.registry.clearRoutes();
-    for (const route of this.scanner.scan()) {
+    const routeWarnings: string[] = [];
+    const scanned = this.scanner.scan({
+      version: this.registry.version,
+      onWarning: (message) => {
+        routeWarnings.push(message);
+        this.onRouteWarning?.(message);
+      },
+    });
+    for (const route of scanned) {
       this.registry.setRoute(route);
+    }
+    this.lastRouteWarnings = Object.freeze(routeWarnings);
+    if (routeWarnings.length > 0) {
+      this.onSchemaWarning?.("routes", this.lastRouteWarnings);
     }
 
     // Brand the document unless the caller supplied a logo or opted out.

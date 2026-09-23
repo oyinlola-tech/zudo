@@ -56,6 +56,12 @@ export const RESPONSE_KEY_PATTERN = /^(default|[1-5](XX|\d{2}))$/;
 export const PATH_TEMPLATE_PARAMETER = /\{([^{}]+)\}/g;
 
 /**
+ * Description of the `default` response emitted for an operation that
+ * documents no responses. No status code is invented for it.
+ */
+export const UNDOCUMENTED_RESPONSE_DESCRIPTION = "Undocumented response";
+
+/**
  * Default server URL.
  */
 export const DEFAULT_SERVER_URL = "http://localhost";

@@ -27,3 +27,9 @@ export {
   unescapeJsonPointerSegment,
   type ComponentSection,
 } from "./references.core.js";
+
+export {
+  isSchemaDefinition,
+  resolveSchemaInput,
+  type SchemaInputOptions,
+} from "./schemaInput.core.js";

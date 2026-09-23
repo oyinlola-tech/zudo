@@ -1,13 +1,17 @@
 import type {
   OpenAPIOperation,
-  OpenAPIParameter,
   OpenAPIResponses,
 } from "../openApiTypes/openApiTypes.core.js";
 import type {
   OpenAPIHttpMethod,
+  RouteConversionOptions,
   RouteMetadata,
-  RouteParameterMetadata,
 } from "./routeMetadata.type.js";
+import { buildOperationParameters } from "./routeSchema.core.js";
+import {
+  buildOperationRequestBody,
+  buildOperationResponses,
+} from "./routeContent.core.js";
 import { OpenAPIRouteError } from "../openApiErrors/openApiError.types.js";
 import { PATH_TEMPLATE_PARAMETER } from "../openApiConstants/openApiConstants.core.js";
 
@@ -105,41 +109,33 @@ export function extractPathParameters(path: string): readonly string[] {
   return names;
 }
 
-function toParameter(parameter: RouteParameterMetadata): OpenAPIParameter {
-  return {
-    name: parameter.name,
-    in: parameter.in,
-    ...(parameter.description ? { description: parameter.description } : {}),
-    // A path parameter is required by the specification, so declaring one
-    // that is not required is a document that cannot validate.
-    required: parameter.in === "path" ? true : (parameter.required ?? false),
-    ...(parameter.deprecated ? { deprecated: true } : {}),
-    ...(parameter.schema !== undefined ? { schema: parameter.schema } : {}),
-    ...(parameter.example !== undefined ? { example: parameter.example } : {}),
-  };
-}
-
 /**
  * Builds the `responses` object for an operation.
  *
- * Every documented response is carried through. Only when a route documents
- * none at all is a `200` synthesized, because `responses` is required.
+ * Every documented response is carried through. A route that documents none
+ * gets a `default` "Undocumented response" and a warning through
+ * `options.onWarning`; no `200` is invented.
  */
-export function buildResponses(metadata?: RouteMetadata): OpenAPIResponses {
-  const declared = metadata?.openapi?.responses;
-  if (declared && Object.keys(declared).length > 0) {
-    return Object.freeze({ ...declared });
-  }
-  return Object.freeze({ "200": { description: "OK" } });
+export function buildResponses(
+  metadata?: RouteMetadata,
+  options?: RouteConversionOptions,
+): OpenAPIResponses {
+  return buildOperationResponses(metadata?.openapi, "responses", options);
 }
 
 /**
  * Converts a route with metadata into an OpenAPI operation.
+ *
+ * Every path template slot is documented as a required path parameter even
+ * when the route declares none; schemas declared as `params`, `query`,
+ * `headers`, `cookies`, `body` or response `schema` are converted for
+ * `options.version`.
  */
 export function convertRouteToOpenAPI(
   method: string,
   path: string,
   metadata?: RouteMetadata,
+  options: RouteConversionOptions = {},
 ): {
   method: OpenAPIHttpMethod;
   path: string;
@@ -155,6 +151,14 @@ export function convertRouteToOpenAPI(
 
   const openApiPath = toOpenAPIPath(path);
   const meta = metadata?.openapi;
+  const context = `${method.toUpperCase()} ${path}`;
+  const parameters = buildOperationParameters(
+    extractPathParameters(openApiPath),
+    meta,
+    context,
+    options,
+  );
+  const requestBody = buildOperationRequestBody(meta, context, options);
 
   const operation: OpenAPIOperation = {
     ...(meta?.operationId ? { operationId: meta.operationId } : {}),
@@ -162,14 +166,15 @@ export function convertRouteToOpenAPI(
     ...(meta?.description ? { description: meta.description } : {}),
     ...(meta?.tags?.length ? { tags: [...meta.tags] } : {}),
     ...(meta?.deprecated !== undefined ? { deprecated: meta.deprecated } : {}),
-    ...(meta?.parameters?.length
-      ? { parameters: meta.parameters.map(toParameter) }
-      : {}),
-    ...(meta?.requestBody ? { requestBody: meta.requestBody } : {}),
-    ...(meta?.security?.length ? { security: [...meta.security] } : {}),
+    ...(parameters.length > 0 ? { parameters } : {}),
+    ...(requestBody ? { requestBody } : {}),
+    // An empty list is meaningful: it marks the operation public, overriding
+    // document-level security. Dropping it documented a public route as
+    // requiring every global scheme.
+    ...(meta?.security !== undefined ? { security: [...meta.security] } : {}),
     ...(meta?.servers?.length ? { servers: [...meta.servers] } : {}),
     ...(meta?.externalDocs ? { externalDocs: meta.externalDocs } : {}),
-    responses: buildResponses(metadata),
+    responses: buildOperationResponses(meta, context, options),
   };
 
   return {

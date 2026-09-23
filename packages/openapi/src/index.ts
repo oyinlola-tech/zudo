@@ -4,7 +4,9 @@
  * API contract and documentation engine for the Zudojs framework.
  *
  * Generates OpenAPI specifications from application routes, schemas,
- * and metadata. Supports OpenAPI 3.0 and 3.1.
+ * and metadata. Supports OpenAPI 3.0 and 3.1. A route table from any source
+ * becomes a document through `createOpenAPIDocumentFromRoutes`;
+ * `@zudojs/http` uses it to document a router's registered routes.
  *
  * @example
  * ```ts
@@ -114,6 +116,7 @@ export {
   PATH_TEMPLATE_PARAMETER,
   DEFAULT_SERVER_URL,
   DOCUMENT_CACHE_TTL_MS,
+  UNDOCUMENTED_RESPONSE_DESCRIPTION,
 } from "./openApiConstants/index.js";
 
 /* ─── Routing ───────────────────────────────────────────────────────────── */
@@ -126,6 +129,10 @@ export {
   isOpenAPIMethod,
   ZUDOLIB_TO_OPENAPI_METHODS,
   OpenAPIRouteScannerImpl,
+  buildOperationParameters,
+  buildOperationRequestBody,
+  buildOperationResponses,
+  describeResponseKey,
 } from "./openApiRouting/index.js";
 export type {
   RouteMetadata,
@@ -133,7 +140,23 @@ export type {
   RouteParameterMetadata,
   RouteInfo,
   OpenAPIHttpMethod,
+  OpenAPISchemaInput,
+  OpenAPIRouteBody,
+  OpenAPIRouteResponse,
+  RouteConversionOptions,
 } from "./openApiRouting/index.js";
+
+/* ─── Generation from a route table ────────────────────────────────────── */
+
+export {
+  createOpenAPIDocumentFromRoutes,
+  createOpenAPIManagerFromRoutes,
+  routeDescriptorToRouteInfo,
+} from "./openApiFromRoutes/index.js";
+export type {
+  OpenAPIRouteDescriptor,
+  OpenAPIDocumentFromRoutesOptions,
+} from "./openApiFromRoutes/index.js";
 
 /* ─── Schema conversion ─────────────────────────────────────────────────── */
 
@@ -145,8 +168,11 @@ export {
   createComponentReference,
   escapeJsonPointerSegment,
   unescapeJsonPointerSegment,
+  isSchemaDefinition,
+  resolveSchemaInput,
 } from "./openApiSchema/index.js";
 export type {
+  SchemaInputOptions,
   SchemaConverter,
   SchemaConversionResult,
   SchemaConversionOptions,

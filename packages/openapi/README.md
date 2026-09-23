@@ -51,8 +51,12 @@ const yaml = manager.toYAML();
 ```
 
 Every documented response reaches the document — `4xx`, `5xx` and `default`
-included. `:id` becomes `{id}`, and a path parameter is marked required
-because the specification requires it.
+included. `:id` becomes `{id}`, every template slot is documented as a
+required path parameter (declared or not), and `params` / `query` /
+`headers` / `body` / response `schema` fields accept `@zudojs/schema` schemas
+— see [Generating from a route table](#generating-from-a-route-table). To
+generate from an `@zudojs/http` router instead of adding routes by hand, use
+that package's `generateOpenAPIDocument(router)` or `mountOpenAPI(router)`.
 
 Generation is idempotent: call `generate()` as often as you like.
 
@@ -133,6 +137,83 @@ scheme is read after stripping the control characters browsers ignore, so
 (the assets base lands in `<script src>`), an empty `specUrl` throws, and
 `customCss` containing `</style>` throws — that sequence ends the style block
 and lets the rest be parsed as HTML.
+
+## Generating from a route table
+
+`createOpenAPIDocumentFromRoutes(routes, options)` builds a document from a
+list of structural `OpenAPIRouteDescriptor`s, so any route source can be
+documented from what it actually registers. `@zudojs/http`'s
+`generateOpenAPIDocument(router)` and `mountOpenAPI(router)` feed it the
+router's routes; other sources (such as `@zudojs/api` operations) build the
+same descriptors.
+
+```typescript
+import { createOpenAPIDocumentFromRoutes } from "@zudojs/openapi";
+import { objectSchema, stringSchema } from "@zudojs/schema";
+
+const user = objectSchema({ id: stringSchema().uuid(), name: stringSchema() });
+
+const document = createOpenAPIDocumentFromRoutes(
+  [
+    { method: "GET", path: "/users/:id", summary: "Get a user", tags: ["users"],
+      responses: { "200": { schema: user }, "404": { description: "No such user" } } },
+    { method: "POST", path: "/users", operationId: "users.create",
+      body: objectSchema({ name: stringSchema() }),
+      responses: { "201": { schema: user } } },
+  ],
+  {
+    info: { title: "Users API", version: "1.0.0" },
+    securitySchemes: { bearer: { type: "http", scheme: "bearer" } },
+    security: [{ bearer: [] }],
+    schemas: { User: user },   // components; converted when they are @zudojs/schema schemas
+    validate: true,
+  },
+);
+```
+
+An `OpenAPIRouteDescriptor` is `RouteOpenAPIMetadata` plus `method` and
+`path`, flattened:
+
+| Field | Meaning |
+| --- | --- |
+| `method` | Any case; must be `get put post delete options head patch trace` |
+| `path` | `/users/:id` or `/users/{id}`; optional/regex/wildcard segments are resolved by the source |
+| `summary`, `description`, `operationId`, `tags`, `deprecated`, `servers`, `externalDocs` | Copied to the operation |
+| `security` | Operation security; `[]` marks it public (overrides document security) |
+| `params`, `query`, `headers`, `cookies` | One object schema each; every property becomes a parameter (`required` from the schema; path parameters always required) |
+| `body` | A schema (sent as `application/json`, required) or `{ schema, contentType?, required?, description?, example? }`; a raw `requestBody` wins |
+| `responses` | Per status / `NXX` / `default`: a Response Object, or `{ schema, description?, contentType?, headers?, example? }` (description defaults to the reason phrase, e.g. "Not Found") |
+| `parameters` | Explicit parameters, highest precedence |
+| `inferredParameters` | Parameters the source derived itself (e.g. a regex constraint), lowest precedence |
+| `hidden` | `true` leaves the operation out |
+
+Every path template slot is documented as a required string parameter even
+when nothing declares it, and a declared path parameter the template does
+not contain is dropped with a warning rather than producing an invalid
+document. The same metadata fields work in `manager.addRoute({ method, path,
+metadata: { openapi } })`. Conversion warnings reach `onRouteWarning`
+(one message at a time), `onSchemaWarning` under the name `"routes"`, and
+`manager.routeWarnings()`, each prefixed with the route (`DELETE /users/:id: ...`).
+
+No response status is invented. A route that documents no responses (or
+`responses: {}`) gets a spec-valid `default` response described as
+`"Undocumented response"` (`UNDOCUMENTED_RESPONSE_DESCRIPTION`) and a route
+warning, so the omission shows up instead of a `204` DELETE being published
+as `200`:
+
+```typescript
+const document = createOpenAPIDocumentFromRoutes(
+  [{ method: "DELETE", path: "/users/:id" }],
+  { info, onRouteWarning: (message) => logger.warn(message) },
+);
+// paths["/users/{id}"].delete.responses → { default: { description: "Undocumented response" } }
+// warned: "DELETE /users/:id: no responses are documented; ..."
+```
+
+`createOpenAPIManagerFromRoutes(routes, options)` returns the manager instead
+(for `toResponse` / `toUIResponse`); `manager.setRoutes(routes)` replaces its
+whole route set, rejecting duplicates before anything changes, and
+`routeDescriptorToRouteInfo` converts a descriptor to `addRoute`'s shape.
 
 ## Branding
 

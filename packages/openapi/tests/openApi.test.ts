@@ -151,7 +151,9 @@ describe("convertRouteToOpenAPI", () => {
     const result = convertRouteToOpenAPI("get", "/users");
     expect(result.method).toBe("get");
     expect(result.path).toBe("/users");
-    expect(result.operation.responses["200"]?.description).toBe("OK");
+    expect(result.operation.responses).toEqual({
+      default: { description: "Undocumented response" },
+    });
   });
 
   it("includes metadata in the operation", () => {
@@ -881,11 +883,13 @@ describe("OpenAPIManager", () => {
     manager.addRoute({
       method: "get",
       path: "/users/{id}",
-      metadata: { openapi: { responses: { "200": { description: "OK" } } } },
+      metadata: { openapi: { responses: { "20x": { description: "OK" } } } },
     });
 
     // Generating without validation caches a document that is in fact invalid
-    // (a template parameter with no declaration).
+    // (a response key that is neither a status, a range nor "default"). An
+    // undeclared template parameter no longer works for this: every slot is
+    // now documented automatically.
     manager.generate(false);
     expect(() => manager.getDocument(true)).toThrow(OpenAPIValidationError);
   });
