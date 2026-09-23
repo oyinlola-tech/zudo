@@ -385,8 +385,8 @@ too big -> SerializationPayloadTooLargeError 413 Serialized payload too large: 1
 
 <section>
 <h2 id="task-api">Put it in the Task API</h2>
-<p>Now give the Task API a filtered, paginated list and a <code>PATCH</code> route. First the schemas. Replace <code>src/validators/task.schema.ts</code>:</p>
-<example file="src/validators/task.schema.ts" project="task-api" browser="no">
+<p>Now give the Task API a filtered, paginated list and a <code>PATCH</code> route. First the schemas. Replace <code>src/dtos/tasks.dto.ts</code>:</p>
+<example file="src/dtos/tasks.dto.ts" project="task-api" browser="no">
 import { schema } from "@zudojs/schema";
 import type { Infer } from "@zudojs/schema";
 
@@ -427,7 +427,7 @@ export const TaskResponse = schema.object({
 </example>
 <p>The <code>TaskStore</code> is unchanged. The service gets a filtered <code>list</code> and an <code>update</code> method. Its input types come from the schemas, so it trusts that the route has validated them:</p>
 <details class="lx-solution"><summary>Show the unchanged task store</summary>
-<file name="src/repositories/task.store.ts" project="task-api">
+<file name="src/repositories/tasks.store.ts" project="task-api">
 export type Priority = "low" | "normal" | "high";
 
 export interface StoredTask {
@@ -450,11 +450,11 @@ export class TaskStore {
 }
 </file>
 </details>
-<example file="src/services/task.service.ts" project="task-api" browser="no">
+<example file="src/services/tasks.service.ts" project="task-api" browser="no">
 import { ConflictError, NotFoundError } from "@zudojs/errors";
-import type { StoredTask, TaskStore } from "../repositories/task.store.js";
-import { ListTasksQuery, NewTaskSchema } from "../validators/task.schema.js";
-import type { ListTasks, TaskChanges } from "../validators/task.schema.js";
+import { ListTasksQuery, NewTaskSchema } from "../dtos/tasks.dto.js";
+import type { ListTasks, TaskChanges } from "../dtos/tasks.dto.js";
+import type { StoredTask, TaskStore } from "../repositories/tasks.store.js";
 
 export interface Clock {
   now(): Date;
@@ -509,36 +509,153 @@ export class TaskService {
   }
 }
 </example>
-<p>When <code>list</code> is called without a query, it uses the schema's defaults (page 1, 20 tasks), so the check scripts from earlier lessons keep working. <code>update</code> copies each field explicitly: only the three changeable fields can ever change, whatever the request contained. In <code>src/utils/http.ts</code>, <code>readJson</code> now runs the guards on every body:</p>
-<example file="src/utils/http.ts" project="task-api" browser="no">
-import { badRequest, HttpError } from "@zudojs/http";
-import type { HttpRequestContext } from "@zudojs/http";
-import { assertDepthWithinLimit, assertSizeWithinLimit } from "@zudojs/validation";
-
-export function readJson(request: HttpRequestContext): unknown {
-  const type = request.getHeader("content-type") ?? "";
-  if (!type.startsWith("application/json")) {
+<p>When <code>list</code> is called without a query, it uses the schema's defaults (page 1, 20 tasks), so the check scripts from earlier lessons keep working. <code>update</code> copies each field explicitly: only the three changeable fields can ever change, whatever the request contained.</p>
+<p>In <code>src/utils/http.ts</code>, <code>readJsonBody</code> now runs the guards on every body, right after parsing. Add <code>import { assertDepthWithinLimit, assertSizeWithinLimit } from "@zudojs/validation";</code> at the top (the package is already in the project's dependencies), and change the end of the function. Delete <code>parseId</code> from the same file: the <code>TaskIdParams</code> schema replaces it.</p>
+<example file="src/utils/http.ts (part)" browser="no" check="skip">
+/**
+ * The request body parsed as JSON; `undefined` when there is none.
+ * A body that is not sent as JSON is answered with 415, malformed JSON with 400,
+ * JSON nested deeper than 10 levels with 400 and more than 64 KB of data with 413.
+ */
+export function readJsonBody(ctx: HttpRouterContext): unknown {
+  const body: unknown = ctx.request.body;
+  if (body === undefined || body === null) return undefined;
+  const text =
+    body instanceof Uint8Array
+      ? new TextDecoder().decode(body)
+      : typeof body === "string"
+        ? body
+        : undefined;
+  if (text === undefined) return body;
+  if (text.trim() === "") return undefined;
+  const type = ctx.request.getHeader("content-type") ?? "";
+  if (!type.toLowerCase().startsWith("application/json")) {
     throw new HttpError(415, "Send JSON with Content-Type: application/json");
   }
-  let body: unknown;
+  let data: unknown;
   try {
-    body = JSON.parse(new TextDecoder().decode(request.body as Uint8Array));
+    data = JSON.parse(text) as unknown;
   } catch {
-    throw badRequest("The request body is not valid JSON");
+    throw badRequest("The request body is not valid JSON.");
   }
-  assertDepthWithinLimit(body, 10);
-  assertSizeWithinLimit(body, 65_536);
-  return body;
+  assertDepthWithinLimit(data, 10);
+  assertSizeWithinLimit(data, 65_536);
+  return data;
 }
 </example>
-<p>The routes validate every input and send every task through <code>TaskResponse</code>. The old <code>parseId</code> helper is replaced by the <code>TaskIdParams</code> schema:</p>
+<details class="lx-solution"><summary>Show the whole src/utils/http.ts</summary>
+<file name="src/utils/http.ts" project="task-api">
+import {
+  HttpError,
+  badRequest,
+  createResponseContext,
+  type HttpMiddleware,
+  type HttpResponseContext,
+  type HttpRouterContext,
+} from "@zudojs/http";
+import type { SchemaIssue } from "@zudojs/schema";
+import { generateSecurityHeaders } from "@zudojs/security";
+import { assertDepthWithinLimit, assertSizeWithinLimit } from "@zudojs/validation";
+
+/** A JSON response with `status`. */
+export function json(status: number, data: unknown): HttpResponseContext {
+  return createResponseContext({ status }).json(data);
+}
+
+/** A response with no body (for example 204). */
+export function empty(status: number): HttpResponseContext {
+  return createResponseContext({ status });
+}
+
+/** 400 listing where the input failed validation, without echoing it back. */
+export function validationFailed(issues: readonly SchemaIssue[]): HttpResponseContext {
+  return json(400, {
+    error: "Validation failed",
+    issues: issues.map((issue) => ({
+      path: issue.path.map(String).join("."),
+      message: issue.message,
+    })),
+  });
+}
+
+/**
+ * The request body parsed as JSON; `undefined` when there is none.
+ * A body that is not sent as JSON is answered with 415, malformed JSON with 400,
+ * JSON nested deeper than 10 levels with 400 and more than 64 KB of data with 413.
+ */
+export function readJsonBody(ctx: HttpRouterContext): unknown {
+  const body: unknown = ctx.request.body;
+  if (body === undefined || body === null) return undefined;
+  const text =
+    body instanceof Uint8Array
+      ? new TextDecoder().decode(body)
+      : typeof body === "string"
+        ? body
+        : undefined;
+  if (text === undefined) return body;
+  if (text.trim() === "") return undefined;
+  const type = ctx.request.getHeader("content-type") ?? "";
+  if (!type.toLowerCase().startsWith("application/json")) {
+    throw new HttpError(415, "Send JSON with Content-Type: application/json");
+  }
+  let data: unknown;
+  try {
+    data = JSON.parse(text) as unknown;
+  } catch {
+    throw badRequest("The request body is not valid JSON.");
+  }
+  assertDepthWithinLimit(data, 10);
+  assertSizeWithinLimit(data, 65_536);
+  return data;
+}
+
+/**
+ * The response for an error that carries an exposed 4xx status
+ * (NotFoundError, badRequest(), ...). Anything else is left to the server,
+ * which answers a generic 500 and never leaks the message.
+ */
+export function errorResponse(error: unknown): HttpResponseContext | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const candidate = error as {
+    readonly statusCode?: unknown;
+    readonly expose?: unknown;
+    readonly message?: unknown;
+    readonly code?: unknown;
+  };
+  const status = candidate.statusCode;
+  if (typeof status !== "number" || status < 400 || status > 499) return undefined;
+  if (candidate.expose !== true || typeof candidate.message !== "string") return undefined;
+  return json(status, {
+    error: candidate.message,
+    ...(typeof candidate.code === "string" ? { code: candidate.code } : {}),
+  });
+}
+
+/**
+ * Adds the @zudojs/security default headers (CSP, HSTS, nosniff,
+ * X-Frame-Options DENY, ...) to every response that does not set its own:
+ * the /docs page, for instance, sends a CSP that allows its assets.
+ */
+export function securityHeaders(): HttpMiddleware {
+  const defaults = Object.entries(generateSecurityHeaders());
+  return async (_context, next) => {
+    const response = (await next()).clone();
+    const present = new Set(Object.keys(response.headers).map((name) => name.toLowerCase()));
+    for (const [name, value] of defaults) {
+      if (!present.has(name.toLowerCase())) response.setHeader(name, value);
+    }
+    return response;
+  };
+}
+</file>
+</details>
+<p>The routes validate every input and send every task through <code>TaskResponse</code>:</p>
 <example file="src/routes/tasks.routes.ts" project="task-api" browser="no">
-import { createResponseContext } from "@zudojs/http";
 import type { HttpRouter } from "@zudojs/http";
-import type { StoredTask } from "../repositories/task.store.js";
-import type { TaskService } from "../services/task.service.js";
-import { readJson } from "../utils/http.js";
-import { ListTasksQuery, TaskIdParams, TaskResponse, UpdateTaskSchema } from "../validators/task.schema.js";
+import { ListTasksQuery, TaskIdParams, TaskResponse, UpdateTaskSchema } from "../dtos/tasks.dto.js";
+import type { StoredTask } from "../repositories/tasks.store.js";
+import type { TaskService } from "../services/tasks.service.js";
+import { json, readJsonBody } from "../utils/http.js";
 
 const send = (task: StoredTask) => TaskResponse.parse(task);
 
@@ -548,13 +665,13 @@ export function registerTaskRoutes(router: HttpRouter, tasks: TaskService): void
   router.get("/tasks/:id", (ctx) => send(tasks.get(TaskIdParams.parse(ctx.params).id)));
 
   router.post("/tasks", (ctx) => {
-    const task = tasks.create(readJson(ctx.request));
-    return createResponseContext({ status: 201 }).setHeader("location", `/tasks/${task.id}`).json(send(task));
+    const task = tasks.create(readJsonBody(ctx));
+    return json(201, send(task)).setHeader("location", `/tasks/${task.id}`);
   });
 
   router.patch("/tasks/:id", (ctx) => {
     const { id } = TaskIdParams.parse(ctx.params);
-    const changes = UpdateTaskSchema.parse(readJson(ctx.request));
+    const changes = UpdateTaskSchema.parse(readJsonBody(ctx));
     return send(tasks.update(id, changes));
   });
 }
@@ -562,9 +679,9 @@ export function registerTaskRoutes(router: HttpRouter, tasks: TaskService): void
 <p>A check script exercises all of it against a real server:</p>
 <example file="src/check-validation.ts" project="task-api" browser="no">
 import { createHttpServer, createNodeHttpAdapter, createRouter } from "@zudojs/http";
-import { TaskStore } from "./repositories/task.store.js";
+import { TaskStore } from "./repositories/tasks.store.js";
 import { registerTaskRoutes } from "./routes/tasks.routes.js";
-import { TaskService } from "./services/task.service.js";
+import { TaskService } from "./services/tasks.service.js";
 
 const service = new TaskService(new TaskStore(), { now: () => new Date("2026-09-23T09:00:00Z") });
 const router = createRouter();
@@ -609,6 +726,7 @@ GET /tasks?done=false&limit=1&page=2 200 [{"id":3,"title":"Water the plants","do
 GET /tasks?limit=500 400 {"error":"Validation failed","code":"ERR_SCHEMA_VALIDATION"}
 PATCH /tasks/2 413 {"error":"Content Too Large"}
 </shell>
+<p><code>registerRoutes</code> already registers <code>registerTaskRoutes</code>, so the running server has the new <code>PATCH /tasks/:id</code> route as soon as <code>npm run dev</code> restarts.</p>
 </section>
 
 <section>

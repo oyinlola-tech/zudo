@@ -164,7 +164,7 @@ strict-transport-security: max-age=31536000; includeSubDomains; preload
 <li><code>Strict-Transport-Security</code> (HSTS): "only ever talk to me over HTTPS" for a year.</li>
 </ul>
 <p>The middleware also sends a few more (<code>Permissions-Policy</code> and the cross-origin headers). You get all of them with one line, and you never have to remember them.</p>
-<warn title="HSTS AND PLAIN HTTP">Browsers remember HSTS. If a server on <code>localhost</code> sends it, some browsers then refuse plain <code>http://localhost</code> for a year. For a plain-HTTP development server, use <code>createSecurityMiddleware({ strictTransportSecurity: "max-age=0" })</code>, which tells browsers to forget it, and keep the default in production behind HTTPS. <a href="/learn/zudo-security#headers">Security for every public API</a> goes deeper into CSP and HSTS.</warn>
+<warn title="HSTS AND LOCALHOST">Browsers remember HSTS, but they only accept it from an HTTPS answer: over plain <code>http://</code> they ignore it. If a development server on <code>localhost</code> ever answers over HTTPS (with a local certificate, or behind a local proxy) and sends HSTS, browsers then refuse plain <code>http://localhost</code> for a year, on every port. For such a server, use <code>createSecurityMiddleware({ strictTransportSecurity: "max-age=0" })</code>, which tells browsers to forget it, and keep the default in production behind HTTPS. <a href="/learn/zudo-security#headers">Security for every public API</a> goes deeper into CSP and HSTS.</warn>
 </section>
 
 <section>
@@ -221,13 +221,7 @@ CORS: credentials cannot be combined with a wildcard origin ("*"). Enumerate the
 <section>
 <h2 id="rate-limit">Rate limiting</h2>
 <p>A public API must limit how many requests one client can send. Without a limit, one script can flood the Task API with junk tasks or guess passwords all day. A <strong>rate limiter</strong> counts requests per client within a time window and answers <strong>429 Too Many Requests</strong> when the client goes over.</p>
-<p>The limiter lives in <code>@zudojs/security</code>. <code>@zudojs/http</code> already uses it internally, so npm has it, but add it to your project because you are going to import it yourself:</p>
-<shell title="Terminal on your computer">
-$ npm install @zudojs/security
-up to date, audited 72 packages in 3s
-…
-</shell>
-<p>"up to date" means npm already had it; now it is also listed in your <code>package.json</code>. <code>createRateLimiter</code> counts per <strong>key</strong>, usually the client's IP address:</p>
+<p>The limiter lives in <code>@zudojs/security</code>. The Task API already lists that package in its <code>package.json</code>, because the generated security headers come from it too. In another project, run <code>npm install @zudojs/security</code>. <code>createRateLimiter</code> counts per <strong>key</strong>, usually the client's IP address:</p>
 <example file="limiter.ts" browser="no">
 import { createRateLimiter } from "@zudojs/security";
 
@@ -373,123 +367,289 @@ server: stopped
 
 <section>
 <h2 id="task-api">Put it in the Task API</h2>
-<p>The Task API's middleware goes in its own file, next to the empty <code>src/middlewares/index.ts</code> the CLI created. <code>buildPipeline</code> takes the router and the allowed origins, and returns the pipeline with every middleware from this lesson in the right order:</p>
-<example file="src/middlewares/pipeline.ts" project="task-api" browser="no">
-import {
-  createCorsMiddleware,
-  createRateLimitMiddleware,
-  createSecurityMiddleware,
-  HttpMiddlewarePipeline,
-} from "@zudojs/http";
-import type { HttpMiddleware, HttpRouter } from "@zudojs/http";
-import { createRateLimiter } from "@zudojs/security";
-
-export interface PipelineOptions {
-  readonly corsOrigins: readonly string[];
-  readonly production: boolean;
-}
-
-export function buildPipeline(router: HttpRouter, options: PipelineOptions): HttpMiddlewarePipeline {
-  const writes = createRateLimitMiddleware({ limiter: createRateLimiter({ windowMs: 60_000, max: 20 }) });
-  const limitWrites: HttpMiddleware = (context, next) =>
-    ["GET", "HEAD", "OPTIONS"].includes(context.request.method) ? next() : writes(context, next);
-
-  const pipeline = new HttpMiddlewarePipeline();
-  pipeline.use(
-    createSecurityMiddleware(options.production ? {} : { strictTransportSecurity: "max-age=0" }),
-    { name: "security", priority: -100 },
-  );
-  pipeline.use(createCorsMiddleware({ allowOrigin: options.corsOrigins, credentials: true }), { name: "cors" });
-  pipeline.use(createRateLimitMiddleware({ windowMs: 60_000, max: 300 }), { name: "rate-limit" });
-  pipeline.use(limitWrites, { name: "write-limit" });
-  pipeline.use(async (context) => (await router.dispatch(context.request)).response, { name: "router" });
-  return pipeline;
+<p>Open <code>src/server.ts</code> and find the pipeline. The CLI already built most of this lesson into it:</p>
+<example file="src/server.ts (part)" browser="no" check="skip">
+const pipeline = new HttpMiddlewarePipeline({
+  middlewares: [
+    securityHeaders(),
+    createCorsMiddleware({ allowOrigin: config.corsOrigins }),
+    createRateLimitMiddleware({ windowMs: config.rateLimit.windowMs, max: config.rateLimit.max }),
+    // zudojs:server-middleware:start
+    // zudojs:server-middleware:end
+    dispatch,
+  ],
+});
+</example>
+<p>A pipeline can take its middleware as a list, in order, instead of <code>pipeline.use()</code> calls. Read it from the top:</p>
+<ul>
+<li><code>securityHeaders()</code> comes from <code>src/utils/http.ts</code>. It is first, so <em>every</em> answer gets the headers, even a 429 or a CORS preflight. It uses <code>generateSecurityHeaders()</code> from <code>@zudojs/security</code>, the same kind of set as <code>createSecurityMiddleware()</code>, with a stricter Content-Security-Policy and a two-year HSTS. It only adds a header the response has not set itself, because the <code>/docs</code> page sends its own CSP to load its scripts.</li>
+<li><code>createCorsMiddleware</code> takes its allow-list from the <code>CORS_ORIGINS</code> setting. Empty means no website at all, the safe default.</li>
+<li><code>createRateLimitMiddleware</code> gives each client 300 requests per minute, from <code>RATE_LIMIT_MAX</code> and <code>RATE_LIMIT_WINDOW_MS</code>. CORS comes before it, so a preflight does not use up the client's allowance.</li>
+<li><code>dispatch</code> is last: it hands the request to the router.</li>
+</ul>
+<p>Here is the helper, so you can see there is no magic in it:</p>
+<example file="src/utils/http.ts (part)" browser="no" check="skip">
+export function securityHeaders(): HttpMiddleware {
+  const defaults = Object.entries(generateSecurityHeaders());
+  return async (_context, next) => {
+    const response = (await next()).clone();
+    const present = new Set(Object.keys(response.headers).map((name) => name.toLowerCase()));
+    for (const [name, value] of defaults) {
+      if (!present.has(name.toLowerCase())) response.setHeader(name, value);
+    }
+    return response;
+  };
 }
 </example>
-<p>The order matters. Security headers come first so that <em>every</em> answer gets them, even a 429 or a CORS preflight. CORS comes before the rate limits, so a preflight does not use up the client's allowance. The router is last.</p>
-<p>A check script with a stand-in route proves the order works:</p>
-<example file="src/check-middleware.ts" project="task-api" browser="no">
-import { createHttpServer, createNodeHttpAdapter, createResponseContext, createRouter } from "@zudojs/http";
-import { buildPipeline } from "./middlewares/pipeline.js";
+<p>All work happens <em>after</em> <code>next()</code>, like <code>responseTime</code> earlier in this lesson. The <code>// zudojs:server-middleware</code> markers are where <code>zudojs add</code> puts the middleware of a feature it adds.</p>
+<p>One thing from this lesson is missing: a stricter limit for writes. Creating tasks costs more than reading them. Put it in the empty <code>src/middlewares/</code> folder. The file name follows the CLI's naming for middleware:</p>
+<example file="src/middlewares/write-limit.middleware.ts" project="task-api" browser="no">
+import { createRateLimitMiddleware } from "@zudojs/http";
+import type { HttpMiddleware } from "@zudojs/http";
 
-const router = createRouter();
-router.get("/tasks", () => []);
+const READS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-const pipeline = buildPipeline(router, { corsOrigins: ["http://localhost:5173"], production: false });
-const server = createHttpServer({
-  adapter: createNodeHttpAdapter({ host: "127.0.0.1", port: 0 }),
-  handler: (request) => pipeline.execute(request, createResponseContext()),
-});
-await server.start();
-
-const response = await fetch(`http://127.0.0.1:${server.address?.port}/tasks`, {
-  headers: { origin: "http://localhost:5173" },
-});
-console.log(response.status, await response.text());
-for (const name of ["access-control-allow-origin", "x-frame-options", "strict-transport-security"]) {
-  console.log(`${name}: ${response.headers.get(name)}`);
+/** A stricter rate limit for requests that change data. Reads pass straight through. */
+export function writeLimitMiddleware(options: { readonly windowMs: number; readonly max: number }): HttpMiddleware {
+  const limit = createRateLimitMiddleware(options);
+  return (context, next) => (READS.has(context.request.method) ? next() : limit(context, next));
 }
-await server.stop();
+</example>
+<p>Export it from <code>src/middlewares/index.ts</code>:</p>
+<example file="src/middlewares/index.ts" project="task-api" browser="no">
+export { writeLimitMiddleware } from "./write-limit.middleware.js";
+</example>
+<p>In <code>src/server.ts</code>, import it with <code>import { writeLimitMiddleware } from "./middlewares/index.js";</code> and add it after the general rate limit, below the markers. The limit of 20 writes a minute is written in the code for one more lesson; <a href="/learn/zudo-config">Configuration</a> moves it into a setting:</p>
+<example file="src/server.ts (part)" browser="no" check="skip">
+    createRateLimitMiddleware({ windowMs: config.rateLimit.windowMs, max: config.rateLimit.max }),
+    // zudojs:server-middleware:start
+    // zudojs:server-middleware:end
+    writeLimitMiddleware({ windowMs: 60_000, max: 20 }),
+    dispatch,
+</example>
+<p>A check script builds the same order with a stand-in route and a limit of 2 writes, and runs it without a server:</p>
+<details class="lx-solution"><summary>Show src/utils/http.ts, which the script imports</summary>
+<file name="src/utils/http.ts" project="task-api">
+import {
+  HttpError,
+  badRequest,
+  createResponseContext,
+  type HttpMiddleware,
+  type HttpResponseContext,
+  type HttpRouterContext,
+} from "@zudojs/http";
+import type { SchemaIssue } from "@zudojs/schema";
+import { generateSecurityHeaders } from "@zudojs/security";
+
+/** A JSON response with `status`. */
+export function json(status: number, data: unknown): HttpResponseContext {
+  return createResponseContext({ status }).json(data);
+}
+
+/** A response with no body (for example 204). */
+export function empty(status: number): HttpResponseContext {
+  return createResponseContext({ status });
+}
+
+/** 400 listing where the input failed validation, without echoing it back. */
+export function validationFailed(issues: readonly SchemaIssue[]): HttpResponseContext {
+  return json(400, {
+    error: "Validation failed",
+    issues: issues.map((issue) => ({
+      path: issue.path.map(String).join("."),
+      message: issue.message,
+    })),
+  });
+}
+
+/**
+ * The request body parsed as JSON; `undefined` when there is none.
+ * A body that is not sent as JSON is answered with 415, malformed JSON with 400.
+ */
+export function readJsonBody(ctx: HttpRouterContext): unknown {
+  const body: unknown = ctx.request.body;
+  if (body === undefined || body === null) return undefined;
+  const text =
+    body instanceof Uint8Array
+      ? new TextDecoder().decode(body)
+      : typeof body === "string"
+        ? body
+        : undefined;
+  if (text === undefined) return body;
+  if (text.trim() === "") return undefined;
+  const type = ctx.request.getHeader("content-type") ?? "";
+  if (!type.toLowerCase().startsWith("application/json")) {
+    throw new HttpError(415, "Send JSON with Content-Type: application/json");
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw badRequest("The request body is not valid JSON.");
+  }
+}
+
+/** A task id from the path; anything but a positive whole number is answered with 400. */
+export function parseId(raw: string | undefined): number {
+  const id = Number(raw);
+  if (!Number.isSafeInteger(id) || id < 1) {
+    throw badRequest("The task id must be a positive whole number");
+  }
+  return id;
+}
+
+/**
+ * The response for an error that carries an exposed 4xx status
+ * (NotFoundError, badRequest(), ...). Anything else is left to the server,
+ * which answers a generic 500 and never leaks the message.
+ */
+export function errorResponse(error: unknown): HttpResponseContext | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const candidate = error as {
+    readonly statusCode?: unknown;
+    readonly expose?: unknown;
+    readonly message?: unknown;
+    readonly code?: unknown;
+  };
+  const status = candidate.statusCode;
+  if (typeof status !== "number" || status < 400 || status > 499) return undefined;
+  if (candidate.expose !== true || typeof candidate.message !== "string") return undefined;
+  return json(status, {
+    error: candidate.message,
+    ...(typeof candidate.code === "string" ? { code: candidate.code } : {}),
+  });
+}
+
+/**
+ * Adds the @zudojs/security default headers (CSP, HSTS, nosniff,
+ * X-Frame-Options DENY, ...) to every response that does not set its own:
+ * the /docs page, for instance, sends a CSP that allows its assets.
+ */
+export function securityHeaders(): HttpMiddleware {
+  const defaults = Object.entries(generateSecurityHeaders());
+  return async (_context, next) => {
+    const response = (await next()).clone();
+    const present = new Set(Object.keys(response.headers).map((name) => name.toLowerCase()));
+    for (const [name, value] of defaults) {
+      if (!present.has(name.toLowerCase())) response.setHeader(name, value);
+    }
+    return response;
+  };
+}
+</file>
+</details>
+<example file="src/check-middleware.ts" project="task-api" browser="no">
+import { createCorsMiddleware, createRequestContext, createResponseContext, HttpMiddlewarePipeline } from "@zudojs/http";
+import { writeLimitMiddleware } from "./middlewares/write-limit.middleware.js";
+import { securityHeaders } from "./utils/http.js";
+
+const pipeline = new HttpMiddlewarePipeline({
+  middlewares: [
+    securityHeaders(),
+    createCorsMiddleware({ allowOrigin: ["http://localhost:5173"] }),
+    writeLimitMiddleware({ windowMs: 60_000, max: 2 }),
+    async (context) => context.response.setStatus(context.request.method === "POST" ? 201 : 200).json({ ok: true }),
+  ],
+});
+
+for (const method of ["POST", "POST", "POST", "GET"]) {
+  const request = createRequestContext({ method, url: "/tasks", headers: { origin: "http://localhost:5173" } });
+  const { status, headers } = await pipeline.execute(request, createResponseContext());
+  console.log(method, status, "retry-after:", headers["retry-after"], "cors:", headers["access-control-allow-origin"], "frame:", headers["x-frame-options"]);
+}
 </example>
 <output>
-200 []
-access-control-allow-origin: http://localhost:5173
-x-frame-options: DENY
-strict-transport-security: max-age=0
+POST 201 retry-after: undefined cors: http://localhost:5173 frame: DENY
+POST 201 retry-after: undefined cors: http://localhost:5173 frame: DENY
+POST 429 retry-after: 60 cors: http://localhost:5173 frame: DENY
+GET 200 retry-after: undefined cors: http://localhost:5173 frame: DENY
 </output>
-<p>In <code>src/server.ts</code>, the handler now runs the pipeline, and the signal handler also disposes the container at the end. The origins are hard-coded for one more lesson; <a href="/learn/zudo-config">Configuration</a> moves them into settings:</p>
-<example file="src/server.ts (part)" project="task-api" browser="no" check="skip">
-import { buildPipeline } from "./middlewares/pipeline.js";
-
-const pipeline = buildPipeline(router, {
-  corsOrigins: ["http://localhost:5173"],
-  production: process.env["NODE_ENV"] === "production",
-});
-
+<p>The third write got 429, reading still works, and even the 429 carries the security and CORS headers, because both come before the limit.</p>
+<p>The shutdown code at the end of <code>src/server.ts</code> already follows <a href="#shutdown">the order above</a>: let integrations close long-lived connections (<code>drainIntegrations</code>), stop the HTTP server, stop the runtime, exit with 0, or log and exit with 1 on failure. Three small changes finish it:</p>
+<ul>
+<li>Pass <code>gracefulShutdownTimeout: 20_000</code> to <code>createHttpServer</code>, so requests in progress get 20 seconds, well inside the 30 seconds many platforms wait after <code>SIGTERM</code>.</li>
+<li>In <code>src/app.ts</code>, add <code>disposeContainerOnStop: true</code> to the options of <code>createRuntime</code>, next to <code>handleSignals: false</code>. <code>runtime.stop()</code> then disposes the container after every module has stopped.</li>
+<li>In the signal loop, change <code>process.once(signal, …)</code> to <code>process.on(signal, …)</code>. Under <code>npm run dev</code>, one <kbd>Ctrl</kbd> + <kbd>C</kbd> reaches the server twice: once from the terminal and once passed on by <code>tsx watch</code>. With <code>once</code>, the second signal finds no listener, and Node.js ends the process in the middle of the shutdown. With <code>on</code>, the <code>if (stopping) return;</code> line the CLI wrote ignores it.</li>
+</ul>
+<example file="src/server.ts (part)" browser="no" check="skip">
 const server = createHttpServer({
-  adapter: createNodeHttpAdapter({ host: process.env["HOST"] ?? "0.0.0.0", port: resolvePort() }),
-  handler: (request) => pipeline.execute(request, createResponseContext()),
+  adapter: createNodeHttpAdapter({ server: httpServer, host: config.host, port: config.port }),
+  handler: (request: HttpRequestContext) => pipeline.execute(request, createResponseContext()),
   gracefulShutdownTimeout: 20_000,
 });
 
-// In the existing SIGINT/SIGTERM handler:
-void server
-  .stop()
-  .then(() => runtime.stop())
-  .then(() => runtime.context.container.dispose())
-  .then(() => process.exit(0))
-  .catch((error: unknown) => {
-    console.error(error);
-    process.exit(1);
+await server.start();
+console.log(`Listening on http://${config.host}:${server.address?.port ?? config.port}`);
+
+let stopping = false;
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => {
+    if (stopping) return;
+    stopping = true;
+    void drainIntegrations(integrations)
+      .then(() => server.stop())
+      .then(() => runtime.stop())
+      .then(() => {
+        process.exit(0);
+      })
+      .catch((error: unknown) => {
+        console.error(error);
+        process.exit(1);
+      });
   });
+}
 </example>
-<p>Restart <code>npm run dev</code> and look at the headers of a real answer:</p>
+<p>Now try the real thing. To let one web app in, start the server with <code>CORS_ORIGINS</code> set for that one command:</p>
 <shell title="Terminal on your computer">
 $ npx tsx src/check-middleware.ts
-200 []
-access-control-allow-origin: http://localhost:5173
-x-frame-options: DENY
-strict-transport-security: max-age=0
+POST 201 retry-after: undefined cors: http://localhost:5173 frame: DENY
+POST 201 retry-after: undefined cors: http://localhost:5173 frame: DENY
+POST 429 retry-after: 60 cors: http://localhost:5173 frame: DENY
+GET 200 retry-after: undefined cors: http://localhost:5173 frame: DENY
+$ CORS_ORIGINS=http://localhost:5173 npm run dev
+…
+Listening on http://0.0.0.0:3000
+</shell>
+<p>In a second terminal, read a task as that web app would, then create 21 tasks in a row. <code>seq 1 20</code> counts from 1 to 20, and <code>-w "%{http_code} "</code> makes <code>curl</code> print only the status:</p>
+<shell title="Second terminal">
 $ curl -i http://localhost:3000/tasks/1 -H "origin: http://localhost:5173"
 HTTP/1.1 200 OK
 content-type: application/json
-access-control-allow-credentials: true
 access-control-allow-origin: http://localhost:5173
 vary: Origin
-content-security-policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
-strict-transport-security: max-age=0
 x-content-type-options: nosniff
 x-frame-options: DENY
-referrer-policy: strict-origin-when-cross-origin
 …
 content-length: 113
-Date: Wed, 23 Sep 2026 14:12:48 GMT
+Date: Wed, 23 Sep 2026 19:51:45 GMT
 Connection: keep-alive
 Keep-Alive: timeout=5
 
 {"id":1,"title":"Read the runtime lesson","done":true,"priority":"normal","createdAt":"2026-09-23T09:00:00.000Z"}
+$ for i in $(seq 1 20); do curl -s -o /dev/null -w "%{http_code} " -X POST http://localhost:3000/tasks -H "content-type: application/json" -d "{\"title\":\"Task number $i\"}"; done; echo
+201 201 201 201 201 201 201 201 201 201 201 201 201 201 201 201 201 201 201 201
+$ curl -i -X POST http://localhost:3000/tasks -H "content-type: application/json" -d '{"title":"One too many"}'
+HTTP/1.1 429 Too Many Requests
+retry-after: 60
+x-ratelimit-remaining: 0
+x-ratelimit-limit: 20
+x-ratelimit-reset: 1790193166
+content-type: application/json; charset=utf-8
+x-content-type-options: nosniff
+x-frame-options: DENY
+…
+
+{"error":{"code":"RATE_LIMIT_EXCEEDED","message":"Too many requests"}}
 </shell>
-<p>Every answer now carries the security headers and, for your own app's origin, the CORS headers. Errors thrown by routes still become the right status: <code>curl http://localhost:3000/tasks/7</code> answers 404 as before. Press <kbd>Ctrl</kbd> + <kbd>C</kbd> and the last log lines are the runtime's "Graceful shutdown complete." and "Runtime stopped.": the server stopped first, then the modules.</p>
+<p>Your own app's origin got the CORS headers, the 21st write got 429 with <code>Retry-After</code>, and <code>curl http://localhost:3000/tasks</code> still answers 200. <code>x-ratelimit-reset</code> is the time the window ends, in seconds since 1970. The loop is for macOS, Linux and Git Bash; on Windows PowerShell, run the <code>curl.exe</code> command 21 times with the arrow keys instead. Now press <kbd>Ctrl</kbd> + <kbd>C</kbd> in the server's terminal:</p>
+<shell title="Terminal on your computer">
+^C2026-09-23T19:51:45.445Z [INFO] [task-api] Initiating graceful shutdown. timeoutMs=30000
+2026-09-23T19:51:45.445Z [INFO] [task-api] All modules stopped. modules=["tasks","store","integrations"] durationMs=0
+2026-09-23T19:51:45.446Z [INFO] [task-api] store closed
+2026-09-23T19:51:45.446Z [INFO] [task-api] All modules destroyed. durationMs=0
+2026-09-23T19:51:45.446Z [INFO] [task-api] Graceful shutdown complete.
+2026-09-23T19:51:45.447Z [INFO] [task-api] Runtime stopped. runtimeId=rt_e7dcf43c4f0445f1b53b77293d27fd2e
+</shell>
+<p>The HTTP server stopped first (it prints nothing), then the runtime stopped the modules, and the container was disposed last. <code>timeoutMs=30000</code> is the runtime's own <code>shutdownTimeout</code> for the modules; the 20 seconds you set are for the requests.</p>
 </section>
 
 <section>
@@ -559,10 +719,10 @@ https://tasks.example.com.evil.example -> null
 <h2 id="recap">Recap</h2>
 <ul>
 <li>Middleware runs around the route: work before <code>next()</code>, work after it, or answer early without calling it. Lower <code>priority</code> runs first and wraps the rest.</li>
-<li><code>createSecurityMiddleware()</code> sends a safe set of security headers. Use <code>max-age=0</code> for HSTS on a plain-HTTP development server.</li>
+<li><code>createSecurityMiddleware()</code> sends a safe set of security headers. Use <code>max-age=0</code> for HSTS on a development server that answers over HTTPS.</li>
 <li><code>createCorsMiddleware({ allowOrigin: [...] })</code> allows only listed origins. CORS protects browsers, not your server, and <code>"*"</code> with credentials is refused.</li>
 <li><code>createRateLimiter</code> from <code>@zudojs/security</code> counts requests per client in a sliding window; <code>createRateLimitMiddleware</code> answers 429 with <code>Retry-After</code>.</li>
 <li><code>server.stop()</code> refuses new connections and waits for requests in progress. Stop the server, then the runtime, then dispose the container.</li>
 </ul>
-<p>The allowed origins, the limits and the port are still written in the code. The next lesson moves them into <strong>configuration</strong>, where development and production can differ.</p>
+<p>The CLI already reads the allowed origins, the general rate limit and the port from settings; only your write limit is still written in the code. The next lesson explains how that <strong>configuration</strong> works, moves the write limit into it, and makes production stricter than development.</p>
 </section>
