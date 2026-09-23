@@ -176,4 +176,5 @@ export {
   detectThreats,
   escapeHtml,
   stripHtml,
+  findUnsafeKey,
 } from "./input/index.js";

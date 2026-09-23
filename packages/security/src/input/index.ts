@@ -14,3 +14,4 @@ export {
   escapeHtml,
   stripHtml,
 } from "./input.core.js";
+export { findUnsafeKey } from "./input.unsafeKey.js";

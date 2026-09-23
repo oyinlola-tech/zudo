@@ -17,6 +17,22 @@
  *
  * Bind the token to a session wherever you have one: without `sessionId`, a
  * token minted for one user validates for every other user.
+ *
+ * Error contract: the verifiers (`validateCsrfToken`, `verifyDoubleSubmit`,
+ * `CsrfProtection.verify`) return `false` for anything wrong with the
+ * *request* — a missing, malformed, non-string, forged, expired or
+ * mismatched token, or a request with no method. They throw
+ * `ConfigurationError` only for a *configuration* mistake: a secret shorter
+ * than {@link MIN_CSRF_SECRET_LENGTH} (32) characters, or an unusable
+ * `methods` list. Load the secret from the environment and refuse to start
+ * without it; never fall back to a hard-coded string:
+ *
+ * ```typescript
+ * const secret = process.env.CSRF_SECRET;
+ * if (!secret || secret.length < MIN_CSRF_SECRET_LENGTH) {
+ *   throw new Error("Set CSRF_SECRET to at least 32 random characters.");
+ * }
+ * ```
  */
 
 import type { CsrfConfig } from "../types/security.type.js";
@@ -255,7 +271,10 @@ export function validateCsrfToken(
  * @param requestToken - Token taken from the request header or form field.
  * @param secret - The secret key for verification.
  * @param options - Maximum lifetime and session binding.
- * @returns True when the request carries a matching, valid token.
+ * @returns True when the request carries a matching, valid token; `false`
+ *   for a missing, non-string, mismatched, forged or expired one.
+ * @throws {ConfigurationError} only when the secret is empty or shorter than
+ *   {@link MIN_CSRF_SECRET_LENGTH} — a misconfiguration, never a bad token.
  */
 export function verifyDoubleSubmit(
   cookieToken: string | undefined,
@@ -264,7 +283,15 @@ export function verifyDoubleSubmit(
   options?: number | CsrfTokenOptions,
 ): boolean {
   assertUsableSecret(secret);
-  if (!cookieToken || !requestToken) {
+  // Both values come from the request. A non-string (a parsed-body number, an
+  // array from a header bag) used to reach `Buffer.from` and throw a
+  // TypeError out of a function whose contract is a boolean.
+  if (
+    typeof cookieToken !== "string" ||
+    typeof requestToken !== "string" ||
+    cookieToken.length === 0 ||
+    requestToken.length === 0
+  ) {
     return false;
   }
 
@@ -280,13 +307,18 @@ export function verifyDoubleSubmit(
  *
  * @param method - The HTTP method.
  * @param config - Optional CSRF configuration.
- * @returns True if CSRF protection is required.
+ * @returns True if CSRF protection is required. A missing or non-string
+ *   method is treated as requiring it, so a malformed request fails closed.
  */
 export function requiresCsrfProtection(
   method: string,
   config?: CsrfConfig,
 ): boolean {
   assertUsableMethods(config?.methods);
+
+  if (typeof method !== "string") {
+    return true;
+  }
 
   if (SAFE_METHODS.includes(method.toUpperCase())) {
     return false;
@@ -315,6 +347,7 @@ export function extractCsrfTokenFromHeaders(
   headerName?: string,
 ): string | undefined {
   const name = (headerName ?? DEFAULT_HEADER_NAME).toLowerCase();
+  if (headers === null || typeof headers !== "object") return undefined;
 
   let value: string | string[] | undefined;
   for (const key of Object.keys(headers)) {
@@ -328,7 +361,7 @@ export function extractCsrfTokenFromHeaders(
     return value;
   }
 
-  if (Array.isArray(value) && value.length > 0) {
+  if (Array.isArray(value) && typeof value[0] === "string") {
     return value[0];
   }
 
@@ -347,6 +380,7 @@ export function extractCsrfTokenFromCookies(
   cookieName?: string,
 ): string | undefined {
   const name = cookieName ?? DEFAULT_COOKIE_NAME;
+  if (typeof cookieHeader !== "string") return undefined;
 
   const cookies = cookieHeader.split(";").map((pair) => {
     const eqIndex = pair.indexOf("=");
@@ -457,7 +491,8 @@ export interface CsrfProtection {
    * Verify a request under the double-submit pattern.
    *
    * Returns `true` for a method that does not require protection, so it can be
-   * called unconditionally.
+   * called unconditionally, and `false` — never a throw — for a request whose
+   * token is missing, malformed, forged, expired or for another session.
    */
   verify(
     request: CsrfVerifiableRequest,
@@ -518,6 +553,9 @@ export function createCsrfProtection(
     },
 
     verify(request, options) {
+      if (request === null || typeof request !== "object") {
+        return false;
+      }
       if (!requiresCsrfProtection(request.method, config)) {
         return true;
       }

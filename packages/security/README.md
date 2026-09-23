@@ -155,14 +155,23 @@ Two patterns, both on the same HMAC-SHA256 token. Bind the token to a session
 wherever you have one — an unbound token is valid for every user.
 
 The shortest correct version binds your configuration once. `secret` must be at
-least 32 characters — the signature is HMAC-SHA256, so a shorter one adds no
-strength:
+least 32 characters (`MIN_CSRF_SECRET_LENGTH`) — the signature is HMAC-SHA256,
+so a shorter one adds no strength. Read it from the environment and refuse to
+start without it. Never write `process.env.CSRF_SECRET ?? "some-string"`: a
+hard-coded fallback is a secret anyone can read in your source, and a short
+one throws at the first call. Generate one with
+`node -e 'console.log(require("node:crypto").randomBytes(32).toString("hex"))'`.
 
 ```typescript
-import { createCsrfProtection } from "@zudojs/security";
+import { createCsrfProtection, MIN_CSRF_SECRET_LENGTH } from "@zudojs/security";
+
+const secret = process.env.CSRF_SECRET;
+if (!secret || secret.length < MIN_CSRF_SECRET_LENGTH) {
+  throw new Error(`CSRF_SECRET must be set to at least ${MIN_CSRF_SECRET_LENGTH} characters`);
+}
 
 const csrf = createCsrfProtection({
-  secret: process.env.CSRF_SECRET, // >= 32 chars
+  secret,
   cookieName: "app_csrf",
   headerName: "x-app-csrf",
   expiration: 3600,
@@ -210,10 +219,16 @@ if (requiresCsrfProtection(request.method)) {
 }
 ```
 
-`validateCsrfToken` and `verifyDoubleSubmit` hold the secret to the same
-32-character minimum as `generateCsrfToken`, and throw `ConfigurationError`
-otherwise — a verifier given `process.env.CSRF_SECRET ?? ""` used to accept
-tokens signed with an empty key.
+**What returns `false` and what throws.** `csrf.verify`, `verifyDoubleSubmit`
+and `validateCsrfToken` return `false` for anything wrong with the request: a
+missing, malformed, non-string, forged, expired or mismatched token, a token
+bound to another session, or a request with no method (treated as needing
+protection). They throw `ConfigurationError` only for a configuration mistake:
+a secret shorter than 32 characters — the same minimum `generateCsrfToken`
+enforces, so a verifier given `process.env.CSRF_SECRET ?? ""` cannot accept
+tokens signed with an empty key — or an empty or invalid `methods` list. A
+throw from a CSRF check therefore means "fix your configuration", never "this
+request is bad".
 
 The cookie is `Secure` and `HttpOnly` by default, which suits the synchroniser
 token pattern where the server renders the token into the page. For the
@@ -268,6 +283,13 @@ could never apply to it.
 `serializeCookie` validates before it writes: the value is percent-encoded, and
 an unsafe name, attribute, `Max-Age` or `Expires` throws. `SameSite=None` and
 `Partitioned` require `Secure`.
+
+`Domain` must be a hostname — labels of letters, digits and hyphens separated
+by dots, with an optional leading dot (`example.com`, `.example.com`) — and
+anything else (spaces, colons, backslashes, empty labels) throws
+`ValidationError`. `Path` may not contain a control character, `;` or `,`.
+Previously only a real CR, LF, NUL, `;` or `,` was refused, so the literal text
+`a\r\nX-Evil: 1` was written into `Domain=` unchanged.
 
 `parseCookieHeader` validates on the way in too. A name that is not an RFC 6265
 token, or a value carrying a control character, is reported in `errors` and

@@ -13,6 +13,7 @@ import {
   DEFAULT_SENSITIVE_COOKIE_NAMES,
   isSensitiveCookieName,
 } from "./cookie.sensitive.js";
+import { assertCookieDomain, assertCookiePath } from "./cookie.attribute.js";
 
 /** Maximum cookie header size (4KB). */
 const MAX_COOKIE_HEADER_SIZE = 4096;
@@ -37,9 +38,6 @@ const COOKIE_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
  * quote, comma, semicolon, and backslash.
  */
 const COOKIE_VALUE_PATTERN = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]*$/;
-
-/** Characters that must never reach an attribute value. */
-const ATTRIBUTE_UNSAFE = /[;,\r\n\x00]/;
 
 /**
  * Control characters that are never acceptable inside a parsed cookie value,
@@ -165,12 +163,12 @@ export function serializeCookie(
   const parts = [`${cookie.name}=${encodedValue}`];
 
   if (cookie.path) {
-    assertSafeAttribute("Path", cookie.path);
+    assertCookiePath(cookie.path);
     parts.push(`Path=${cookie.path}`);
   }
 
   if (cookie.domain) {
-    assertSafeAttribute("Domain", cookie.domain);
+    assertCookieDomain(cookie.domain);
     parts.push(`Domain=${cookie.domain}`);
   }
 
@@ -229,15 +227,6 @@ export function serializeCookie(
   }
 
   return parts.join("; ");
-}
-
-/** Throws when an attribute value could terminate the attribute or the header. */
-function assertSafeAttribute(attribute: string, value: string): void {
-  if (ATTRIBUTE_UNSAFE.test(value)) {
-    throw new ValidationError(
-      `Cookie ${attribute} contains invalid characters (injection risk): ${JSON.stringify(value)}`,
-    );
-  }
 }
 
 /**
